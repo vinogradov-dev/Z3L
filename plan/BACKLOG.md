@@ -42,17 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **K3** the order package is written from a command line, without opening a window
-  Why: A package is useless if producing it needs a window and a person. The report pipeline
-   runs over saved files, and the assistant milestone already needs a headless job over a
-   project, so the exporter has to be reachable from a command line in the same binary.
-  Shape: furnicraft export <scene.fcs> --out <dir> [--format bundle|single] [--no-timestamp]:
-   the subcommand is handled before the window starts, prints one line per written table, and
-   exits non-zero with a readable message on a bad path, an unreadable scene or an unknown
-   format. No second binary, no new dependency.
-  Done: A CLI test writes a package from a fixture and checks its manifest and one table; no
-   window opens; the help text names the flags; cargo xtask ci is green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/Cargo.toml`
 - `[ ]` **R1** the pre-release rename: the product name leaves the code before the first release, so a
   later choice of name is one constant and no refactor. The work is measured and scripted in
   `plan/rename.md`; read that file, not the tree. Four parts, each its own commit: (1) give the
@@ -399,6 +388,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
 
 ## Done
+
+- `[x]` **K3** the order package is written from a command line, without opening a window
+  Why: A package is useless if producing it needs a window and a person. The report pipeline
+   runs over saved files, and the assistant milestone already needs a headless job over a
+   project, so the exporter has to be reachable from a command line in the same binary.
+  Shape: furnicraft export <scene.fcs> --out <dir> [--format bundle|single] [--no-timestamp]:
+   the subcommand is handled before the window starts, prints one line per written table, and
+   exits non-zero with a readable message on a bad path, an unreadable scene or an unknown
+   format. No second binary, no new dependency.
+  Done: A CLI test writes a package from a fixture and checks its manifest and one table; no
+   window opens; the help text names the flags; cargo xtask ci is green.
+  `files: apps/furnicraft/src/main.rs, apps/furnicraft/Cargo.toml` — `39ae4c3`
 
 - `[x]` **K2** the order package writer: one manifest and ten flat tables other programs read
   Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
