@@ -117,6 +117,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0109](0109-a-niche-is-bounded-by-the-faces-the-pointer-sees.md) | A niche is bounded by the faces the pointer sees | Accepted; supersedes the coverage clause of 0106 |
 | [0110](0110-one-fill-cell-and-its-build-method.md) | One fill cell, and its build method in the cell's own list | Accepted; refines 0106 and the ribbon list of U74 |
 | [0111](0111-a-guide-is-one-amber-in-screen-space.md) | A guide is one amber, drawn in screen space | Accepted; derives the ink of 0089 and the frame inks of 0087 |
+| [0117](0117-the-interface-is-one-inventory-of-capabilities.md) | The interface is one inventory of capabilities: every command has a place | Accepted |
+| [0118](0118-a-mechanism-used-twice-is-a-tool.md) | A mechanism used twice is a tool, and a measurement is not a dimension | Accepted |
+| [0119](0119-the-armed-tool-shows-its-parameters-at-the-pointer.md) | The armed tool shows its parameters at the pointer, and the inspector shows the same fields | Accepted |
 
 ## Format
 

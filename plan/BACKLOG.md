@@ -243,15 +243,17 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    tree, and the tree's own list is built inside an 850-line file. The owner asked for context
    menus that carry the actions of the object under the pointer.
   Shape: One module builds the action list for a node kind — a panel, an object, a product
-   container, a group, a camera or a light, the root and empty space — from the command
-   registry and the editor's flags, each entry a command id, its label message, its enabled
-   check and the reason it cannot run. The row menu and a new popup in the viewport draw that
-   list, so an entry cannot exist in one and not the other; the popup is anchored at the
-   pointer, closes on Escape and on an outside click, and is declared to `Chrome::covers`, so a
-   press on it is chrome and never a pick. The viewport reads a right *click* (press and
-   release within a few points) and leaves the right *drag* to the camera pan it already owns.
-   The new module is one row of `HOST_OWNERS` in `xtask/src/ui_rules.rs`. ADR 0115 records the
-   click-versus-drag split and the one-list rule.
+  container, a group, a camera or a light, the root and empty space — from the command
+  registry and the editor's flags, each entry a command id, its label message, its enabled
+  check and the reason it cannot run. The list is the capability inventory (U94) filtered
+  by the node kind and the `Context` flag, not a list this module writes, so U94 is taken
+  before this task and the three orphans are placed there. The row menu and a new popup in the
+  viewport draw that list, so an entry cannot exist in one and not the other; the popup is
+  anchored at the pointer, closes on Escape and on an outside click, and is declared to
+  `Chrome::covers`, so a press on it is chrome and never a pick. The viewport reads a right
+  *click* (press and release within a few points) and leaves the right *drag* to the camera
+  pan it already owns. The new module is one row of `HOST_OWNERS` in
+  `xtask/src/ui_rules.rs`. ADR 0115 records the click-versus-drag split and the one-list rule.
   Done: Right-clicking a panel, a group, a camera and empty space each opens the list that
    object owns, with the same entries the tree shows for it; right-dragging still pans and
    opens nothing; a headless frame test right-clicks a panel and asserts the menu's rectangle
@@ -280,6 +282,121 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
    `cargo xtask ci` is green.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
+- `[ ]` **U94** the capability inventory is one table of places, and a gate refuses an orphan command
+  Why: Measured 2026-11-14: 56 command ids (the count the registry test asserts), three of which
+  (`CONTOUR_CREATE_ID`, `NODE_ORIGIN_REBASE_ID`, `NODE_PROPERTY_SET_MANY_ID`) are named only
+  inside `crates/engine`; the ribbon map holds 29 live methods and 62 planned rows; the palette
+  builds parameters for twelve ids and refuses the rest. Nothing checks that a command has a
+  home, so every new surface decides its own list and the owner rule — every feature has a
+  representation, the next tool is under the hand — is kept by memory alone (ADR 0117).
+  Shape: A new `crates/ui/src/inventory.rs` holds one const table keyed by id: the places
+   (`Ribbon`, `Context`, `ToolCard`, `Palette`, `Card`, `Api`), `Context` or `Always`, the
+   default key, the icon and the label `Message`. The ribbon, the palette and the planned
+   context menu (U92) read it instead of declaring their own lists; `params_for` stays the
+   parameter builder, but each id it can run gets a row. `cargo xtask ui-rules` gains the
+   coverage check: a registered command with no row, a row naming an unknown id, message, icon
+   or surface, a live row without art and one id with two labels or keys all fail, while one
+   icon file shared by two unrelated actions is printed for review. The three orphans are
+   placed or declared `Api` with the reason. The audit that seeds the table — where each of the
+   56 commands lives today — goes to `plan/notes/U94.md`. U92 and U91 are taken after this
+   task, so both filter the table instead of writing a fourth list.
+  Done: `cargo xtask ui-rules` fails on a command with no row and passes on the tree; every
+   live ribbon row names an icon file and a message; the three orphans have a place or an `Api`
+   reason; a test adds a fake command and asserts the check names it; `plan/map.md` gains the
+   module row; `cargo xtask ci` is green.
+  `files: crates/ui/src, xtask/src/ui_rules.rs, crates/engine/src/commands.rs`
+- `[ ]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
+  Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
+   is touched — after the decision that matters most, where a capability lives (ADR 0117), is
+   already made. Nothing owns the operation lifecycle (arm, preview, typed number, commit,
+   cancel, undo), which is where the feel of a professional editor lives, and nothing in the
+   checklist asks whether a mechanism is private (ADR 0118).
+  Shape: `.pi/skills/place-capability/SKILL.md` activates when a command id or a place is
+   added, renamed or removed: it writes the inventory row, the places, the context, the key and
+   the icon, names the atoms it consumes, and ends with the gate command.
+   `.pi/skills/design-operation/SKILL.md` activates when a gesture or a mode appears: it
+   produces the state machine, the feedback budget, the typed input, the cancel, the one undo
+   entry, the awkward cases and the cursor, in the five-line decomposition the ui-design skill
+   already uses. `ui-design` keeps the rubric and points at both; `references/checklist.md`
+   gains the inventory question, the atom question and the icon question;
+   `references/surfaces.md` stops being the only knowledge of places and points at the
+   inventory. `AGENTS.md` §1.3 names the new skills, and `cargo xtask skills` checks their
+   paths, frontmatter and line budgets.
+  Done: Both skills load, each names its trigger and its output, and neither is over 200 lines;
+   `AGENTS.md` §1.3 names them; the checklist carries the three new questions with an evidence
+   form; `cargo xtask skills` and `cargo xtask ci` are green.
+  `files: .pi/skills, AGENTS.md`
+- `[ ]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
+  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
+   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
+   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
+   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
+   0117 makes the key a column of the inventory.
+  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
+   instead of matching key codes, and the ribbon label is derived from the same row. A test
+   asserts the two agree for every live method and that no key is bound twice; the guard that
+   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
+   table is the data a later Settings section writes.
+  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
+   label; no key is bound twice; a headless test presses each default key and asserts the same
+   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
+   xtask ci` is green.
+  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs`
+- `[ ]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
+  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
+   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
+   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
+   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
+   for a tool parameters.
+  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
+   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
+   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
+   inspector shows the same values from the same draft, and both commit through the one
+   command. The exact-distance fields become the card first instance: one layout, one commit
+   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
+   clearing the field returns it to the pointer.
+  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
+   and a headless frame test finds the two never disagree; a press inside the card is chrome
+   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
+   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/command_bar.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
+- `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
+  Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
+   measure: the value on screen and in the status bar, several measurements in a row, each
+   starting fresh. The program has no measuring atom, and a niche is measured only by the fill
+   tool. ADR 0118 makes the ruler an atom — no command, no undo — and forbids a second point
+   resolver or probe.
+  Shape: A `measure` atom in `crates/ui/src/measure.rs` holding the first point and the current
+   value; it consumes the shared snap resolver (0051) and the probe (0103) and formats lengths
+   through `furnicraft-units`. The state machine: idle, first point, measured; a third click
+   starts a new measurement rather than extending the last; Escape leaves and writes nothing.
+   The length is painted at the pointer and written to the centre zone of the status bar, while
+   the left zone says what to do. The ribbon gains a `sketch.measure.length` row with its icon
+   in `assets/icons/contour`, a `Context` and `Always` place and a key. No command id, no
+   document field, no undo entry.
+  Done: A headless test clicks two snapped points and reads the value, clicks a third and
+   asserts a new measurement, and presses Escape and asserts nothing was written and no
+   revision moved; the status bar shows the value and the next step; the icon file, its README
+   row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
+   row; `cargo xtask ci` is green.
+  `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour`
+- `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
+  Why: The owner example: the geometry of the empty space was written for one tool, and a
+   mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
+   niche inside the fill arm, so no other tool can ask for one and a report or the assistant
+   has no way to name the space.
+  Shape: One niche atom (`probe.void`) in `crates/ui/src` with its own arm, cursor, ghost and
+   cancel, returning the cell from the model probe (0103, 0106, 0109); a ribbon row in the
+   Furniture tab with a `Context` place and a key. Fill becomes its first consumer and reads
+   the identical value, so the ghost and the entry stay one code path. A second consumer proves
+   the atom: the inspector or a report row names the niche the pointer holds. No document write
+   and no second probe.
+  Done: The niche tool arms from the ribbon and from the fill own affordance, and both return
+   the same cell for the same pointer; a test calls the atom once and asserts fill and the
+   inspector see the same value; cancelling either leaves no document change; `plan/map.md`
+   gains the atom row; `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
 
 ## Done
 
