@@ -42,28 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U88** the viewport draws its own work cursor, sized in settings, with an optional full crosshair
-  Why: The OS arrow hides the point a click lands on and reads as a pointer to buttons rather
-   than to geometry; a small square with a centre dot says this is the point, and a full
-   crosshair lets a person line up two boards across a view. The owner asked for the square, a
-   size that is a setting with limits, and the crosshair as an option. A custom bitmap cursor
-   is not available through eframe 0.37 (`egui::CustomCursorImage` is web-only in the native
-   backend), so the shell draws the cursor itself.
-  Shape: A `PointerSettings { cursor_size: u32, crosshair: bool }` section in
-   `crates/ui/src/settings.rs` (limits 6..=32 pt) with a scrub field and a switch in Settings ›
-   View. While the pointer is over the active scene the shell sets `CursorIcon::None` and
-   paints, on `Order::Middle` over the image and under the chrome, a square of `cursor_size`
-   points centred on the pointer with a 1 pt outline and a 2 pt centre dot in the helper ink
-   (U83), plus, when `crosshair` is on, one 1 pt hairline across the whole viewport width and
-   height. A gesture that owns its own cursor (grab, resize, divider, scrub) keeps the OS icon
-   and the square is not painted; the paint is chrome, so it takes no click, and it never
-   enters the document.
-  Done: Headless tests assert the OS cursor is `None` exactly while the pointer is over the
-   scene and `Default` over a panel, that the square is centred on the pointer at the minimum
-   and the maximum size, and that the crosshair spans the viewport; settings round-trip clamps
-   2 to 6 and 64 to 32; an offscreen shot in both themes shows the square and the crosshair
-   (the eye check this task names); `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/document.rs, crates/ui/src/settings.rs, apps/furnicraft/src/main.rs`
 - `[ ]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
   Why: An open container and a closed one look identical over the scene: only the tree says
    which level is open, and once a click inside an open frame selects a part (X38) that
@@ -310,6 +288,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U88** the viewport draws its own work cursor, sized in settings, with an optional full crosshair
+  Why: The OS arrow hides the point a click lands on and reads as a pointer to buttons rather
+   than to geometry; a small square with a centre dot says this is the point, and a full
+   crosshair lets a person line up two boards across a view. The owner asked for the square, a
+   size that is a setting with limits, and the crosshair as an option. A custom bitmap cursor
+   is not available through eframe 0.37 (`egui::CustomCursorImage` is web-only in the native
+   backend), so the shell draws the cursor itself.
+  Shape: A `PointerSettings { cursor_size: u32, crosshair: bool }` section in
+   `crates/ui/src/settings.rs` (limits 6..=32 pt) with a scrub field and a switch in Settings ›
+   View. While the pointer is over the active scene the shell sets `CursorIcon::None` and
+   paints, on `Order::Middle` over the image and under the chrome, a square of `cursor_size`
+   points centred on the pointer with a 1 pt outline and a 2 pt centre dot in the helper ink
+   (U83), plus, when `crosshair` is on, one 1 pt hairline across the whole viewport width and
+   height. A gesture that owns its own cursor (grab, resize, divider, scrub) keeps the OS icon
+   and the square is not painted; the paint is chrome, so it takes no click, and it never
+   enters the document.
+  Done: Headless tests assert the OS cursor is `None` exactly while the pointer is over the
+   scene and `Default` over a panel, that the square is centred on the pointer at the minimum
+   and the maximum size, and that the crosshair spans the viewport; settings round-trip clamps
+   2 to 6 and 64 to 32; an offscreen shot in both themes shows the square and the crosshair
+   (the eye check this task names); `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/document.rs, crates/ui/src/settings.rs, apps/furnicraft/src/main.rs` — `b3a6d40`
 
 - `[x]` **U87** the transform mode can be off, and Select is the state a window opens in
   Why: One of the two gizmos is always up, so a person who only wants to look, pick and read

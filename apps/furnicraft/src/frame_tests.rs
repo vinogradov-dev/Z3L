@@ -1320,3 +1320,65 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     document.session.undo().expect("one undo step");
     assert!(document.session.project().panel(created).is_none(), "one undo removes the pinned part");
 }
+
+#[test]
+fn the_pointer_over_the_scene_is_the_shells_own_work_cursor() {
+    // The system arrow hides the point a click lands on and reads as a pointer to buttons, so the
+    // shell takes the pointer away from the window and draws its own square where a click will
+    // land; a panel, and a tool with a cursor of its own, keep what they had (U88).
+    let mut harness = Harness::new("frame-work-cursor");
+    let chrome = harness.settle();
+    let centre = harness.scene().center();
+    harness.hover(centre);
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the scene hides the system arrow");
+    let cursor = harness.app.tabs.active().work_cursor().expect("the shell drew its own cursor");
+    assert_eq!(cursor.square.center(), centre, "the square sits on the point the click lands on");
+    assert_eq!(cursor.dot.center(), centre, "and so does its centre dot");
+    assert!(cursor.crosshair.is_none(), "a fresh workspace draws the square alone");
+
+    // A panel is chrome: the pointer there points at a control, so the arrow comes back and no
+    // square is painted over it.
+    let tree = chrome.panels.left.expect("the scene tree is up");
+    let on_panel = egui::pos2(tree.center().x, tree.bottom() - 12.0);
+    harness.hover(on_panel);
+    assert_eq!(harness.cursor, egui::CursorIcon::Default, "a panel keeps the system arrow");
+    assert!(harness.app.tabs.active().work_cursor().is_none(), "and draws no square");
+
+    // An armed tool owns the pointer: a crosshair says where a point will be placed, and the square
+    // would sit under it saying the same thing twice.
+    harness.press(egui::Key::C, egui::Modifiers::NONE);
+    harness.hover(centre);
+    assert_eq!(harness.cursor, egui::CursorIcon::Crosshair, "the armed tool keeps its cursor");
+    assert!(harness.app.tabs.active().work_cursor().is_none(), "a gesture that owns a cursor draws no square");
+}
+
+#[test]
+fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
+    // The size is a hand's preference with two ends that must both work (U88): the smallest square
+    // a hand can still grab, and the largest that does not hide the part under the pointer.
+    let mut harness = Harness::new("frame-work-cursor-size");
+    harness.settle();
+    let centre = harness.scene().center();
+    harness.app.settings.pointer.cursor_size = furnicraft_ui::settings::MIN_CURSOR_POINTS;
+    harness.hover(centre);
+    let small = harness.app.tabs.active().work_cursor().expect("the scene draws its cursor");
+    let smallest = f32::from(u16::try_from(furnicraft_ui::settings::MIN_CURSOR_POINTS).expect("a small constant"));
+    assert_eq!(small.square.width(), smallest, "the setting is the square's side, in points");
+    assert_eq!(small.square.center(), centre, "the smallest square is still centred");
+
+    harness.app.settings.pointer.cursor_size = furnicraft_ui::settings::MAX_CURSOR_POINTS;
+    harness.app.settings.pointer.crosshair = true;
+    let view = harness.scene();
+    harness.hover(view.center());
+    let large = harness.app.tabs.active().work_cursor().expect("the scene draws its cursor");
+    let largest = f32::from(u16::try_from(furnicraft_ui::settings::MAX_CURSOR_POINTS).expect("a small constant"));
+    assert_eq!(large.square.width(), largest, "the largest square is the setting, not a multiple of it");
+    assert_eq!(large.square.center(), view.center(), "and it is centred on the pointer");
+    let [horizontal, vertical] = large.crosshair.expect("the switch draws both arms");
+    assert_eq!((horizontal.left(), horizontal.right()), (view.left(), view.right()), "one hairline spans the width");
+    assert_eq!(horizontal.center().y, view.center().y, "and it passes through the pointer");
+    assert!(horizontal.height() > 0.0, "an arm is a stroke wide, or the view would carry no line at all");
+    assert_eq!((vertical.top(), vertical.bottom()), (view.top(), view.bottom()), "the other spans the height");
+    assert_eq!(vertical.center().x, view.center().x, "and passes through the pointer too");
+    assert!(vertical.width() > 0.0, "and both arms are painted, not only the horizontal one");
+}
