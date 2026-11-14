@@ -42,26 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
-  Why: An open container and a closed one look identical over the scene: only the tree says
-   which level is open, and once a click inside an open frame selects a part (X38) that
-   difference decides what the next click does. The owner asked for small brackets at the
-   corners — an orientation cue and a statement that the level is open — not a wireframe, which
-   would fight the form edges the renderer already draws.
-  Shape: `scene_build` already computes a `SubtreeBounds` per container in
-   `Evaluation::collect`; the shell collects the bounds of `editor.open` plus
-   `session.active_product()`, projects the eight corners with the view camera and paints, per
-   corner, three short arms along the box's own edges, each arm a fraction (about a fifth,
-   clamped to 6..=18 pt) of the shortest projected edge, in `theme::helper()` at the bracket
-   width (U83). The paint is screen space on `Order::Middle` with the viewport's clip rect,
-   after the image and before the gizmos, so no render pass changes. A closed container, a
-   hidden one and a product that is not open draw nothing; the brackets are view state and no
-   revision moves.
-  Done: Headless geometry tests on a fixed camera pin the eight corner points and the arm
-   length at two zoom levels; a frame test opens a group and counts exactly eight brackets,
-   closes it and counts none, and the same for an open product; the ink is `theme::helper()`;
-   `plan/map.md` gains the row; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/scene_gizmo.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
   Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any
    product — the pre-frame way of making a board; the product's post and shelf cells make a
@@ -288,6 +268,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
+  Why: An open container and a closed one look identical over the scene: only the tree says
+   which level is open, and once a click inside an open frame selects a part (X38) that
+   difference decides what the next click does. The owner asked for small brackets at the
+   corners — an orientation cue and a statement that the level is open — not a wireframe, which
+   would fight the form edges the renderer already draws.
+  Shape: `scene_build` already computes a `SubtreeBounds` per container in
+   `Evaluation::collect`; the shell collects the bounds of `editor.open` plus
+   `session.active_product()`, projects the eight corners with the view camera and paints, per
+   corner, three short arms along the box's own edges, each arm a fraction (about a fifth,
+   clamped to 6..=18 pt) of the shortest projected edge, in `theme::helper()` at the bracket
+   width (U83). The paint is screen space on `Order::Middle` with the viewport's clip rect,
+   after the image and before the gizmos, so no render pass changes. A closed container, a
+   hidden one and a product that is not open draw nothing; the brackets are view state and no
+   revision moves.
+  Done: Headless geometry tests on a fixed camera pin the eight corner points and the arm
+   length at two zoom levels; a frame test opens a group and counts exactly eight brackets,
+   closes it and counts none, and the same for an open product; the ink is `theme::helper()`;
+   `plan/map.md` gains the row; `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/open_frame.rs, apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/frame_tests.rs` — `d231f22`
 
 - `[x]` **X42** the work-area guide and pointer sit under the chrome, and expertise challenges a brief before code
   Why: The square and the crosshair are work-area paint, but they still sit on Order::Tooltip,

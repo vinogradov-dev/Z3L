@@ -35,6 +35,7 @@ mod gizmo;
 mod gizmo_math;
 mod header;
 mod mesh_pick;
+mod open_frame;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;

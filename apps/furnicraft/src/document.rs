@@ -55,8 +55,9 @@ use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
 use crate::mesh_pick;
+use crate::open_frame;
 use crate::rotate_gizmo::RotateGizmo;
-use crate::scene_build::{Bounds, evaluate, home_camera};
+use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
 use crate::scene_gizmo;
 use crate::shortcuts::{DraftKey, Shortcuts, drawing_key, take_drawing_shortcut};
 use crate::side_panels::Chrome;
@@ -313,6 +314,11 @@ pub(crate) struct Document {
     /// The selected line chains of the frame last uploaded, already carrying any drag preview, so
     /// the screen-space outline follows a moved path without a frame of lag.
     selected_chains: Vec<Polyline>,
+    /// The world box of every container from the last rebuild. Which of them are open is read from
+    /// the editor when the brackets are painted, so opening a level evaluates no node (U89).
+    level_bounds: Vec<LevelBounds>,
+    /// The brackets the last frame painted, so a frame test counts what the viewport really draws.
+    pub(crate) brackets: Vec<open_frame::Bracket>,
     uploaded_preview: Option<PreviewKey>,
     /// The failure this tab last reported, drawn by the status bar of the window.
     pub(crate) last_error: Option<String>,
@@ -340,6 +346,7 @@ impl Document {
         let mut cache = EvaluationCache::new();
         let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), session.active_product())?;
         let scene_bounds = evaluated.bounds;
+        let level_bounds = evaluated.levels;
         let fit = home_camera(scene_bounds)?;
         let layout = Layout::new(fit, settings.viewport.opening_view, settings.viewport.style);
         let display = Display::of(&settings.viewport, &shell.cluster, shell.colors);
@@ -392,6 +399,8 @@ impl Document {
             highlighted: Vec::new(),
             selected_chains: Vec::new(),
             uploaded_preview: None,
+            level_bounds,
+            brackets: Vec::new(),
             last_error: None,
             display,
         })
@@ -753,6 +762,7 @@ impl Document {
         let started = Instant::now();
         let evaluated = evaluate(&mut self.cache, &mut self.kernel, &self.session, self.editor.flags(), product)?;
         self.scene_bounds = evaluated.bounds;
+        self.level_bounds = evaluated.levels;
         let mut scene = evaluated.frame;
         self.layout.apply_frame_style(&mut scene);
         self.display.apply(&mut scene);
@@ -2158,6 +2168,12 @@ impl Document {
         }
         // The overlaid feedback is drawn per view, with that view's camera and rectangle, so a
         // camera glyph or a selection outline lands where its own pass drew the model.
+        let open_boxes = open_frame::OpenBoxes::collect(
+            &self.level_bounds,
+            self.editor.open_containers(),
+            self.scene.product_envelopes(),
+        );
+        self.brackets.clear();
         for (leaf, view_rect) in &regions {
             let active = *leaf == self.layout.active();
             let camera = self
@@ -2165,6 +2181,9 @@ impl Document {
                 .leaf(*leaf)
                 .map(|leaf| crate::scene_build::scene_camera(self.session.project(), leaf.camera()))
                 .unwrap_or(self.scene.camera);
+            // The brackets come first: they mark the level the next click works in, and a gizmo over
+            // them is a handle of the object that level holds (U89).
+            self.brackets.extend(open_frame::show(ui, *view_rect, camera, &open_boxes));
             scene_gizmo::paint(
                 ui,
                 *view_rect,
