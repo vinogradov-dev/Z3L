@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=45e3830 updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=5d08a7d updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: 14 open tasks wait in `## Next`.
+Nothing is scheduled: 14 open tasks wait in `## Next`, led by U88, the viewport work cursor
 
 ## Index
 
