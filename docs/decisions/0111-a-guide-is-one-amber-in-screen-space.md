@@ -1,6 +1,6 @@
 # 0111. A guide is one amber, drawn in screen space
 
-- Status: Accepted
+- Status: Accepted; the work cursor is carved out by 0121
 - Date: 2026-11-14
 
 ## Context

@@ -126,15 +126,16 @@ pub const RIBBON_RULE: f32 = 1.0;
 
 /// The rest width of a guide the program draws for the person, in points.
 ///
-/// A guide is screen paint over the model — the square of a work cursor, the bracket of a group or a
-/// product that is open — so its widths are a rule in points and never a world size: a guide that
-/// grew with the zoom would read as geometry (ADR 0111).
+/// A guide is screen paint over the model — the bracket of a group or a product that is open, the
+/// outline of a work plane — so its widths are a rule in points and never a world size: a guide that
+/// grew with the zoom would read as geometry (ADR 0111). The work cursor is not a guide: it is the
+/// pointer, and it draws its own fixed pair (ADR 0121).
 pub const HELPER_STROKE: f32 = 1.5;
 
-/// The width of a guide that crosses the whole viewport: the optional work crosshair.
+/// The width of a guide that crosses the whole viewport, in points.
 ///
 /// A point, the weight of a hairline, because a line that spans the view is long enough to read at
-/// the quietest weight; a heavier crosshair covers the form it is there to help measure.
+/// the quietest weight; a heavier line covers the form it is there to help measure.
 pub const HELPER_CROSSHAIR_STROKE: f32 = 1.0;
 
 /// The width of the bracket of the level that is open, in points.
@@ -142,6 +143,24 @@ pub const HELPER_CROSSHAIR_STROKE: f32 = 1.0;
 /// Half a point over [`HELPER_STROKE`]: opening a level is what decides what the next click does, so
 /// the container that owns the viewport says so at a glance instead of at a squint.
 pub const HELPER_OPEN_STROKE: f32 = 2.0;
+
+/// The dark half of the work cursor's double outline.
+///
+/// The pointer is not a guide over the model: it must be found on a white board, a dark board and
+/// the translucent chrome alike, so it cannot take the theme's guide ink (ADR 0121). The pair is
+/// fixed rather than themed, because the surface under it is the scene, not the window.
+pub const CURSOR_DARK: Color32 = Color32::from_rgb(0x0c, 0x0d, 0x10);
+
+/// The light half of the work cursor's double outline.
+///
+/// Exactly one of the two strokes reads on any background: the dark one on a light board, the light
+/// one on a dark board, and both on a midtone or a shaded face.
+pub const CURSOR_LIGHT: Color32 = Color32::WHITE;
+
+/// The two inks of the work cursor, dark first (ADR 0121).
+pub const fn cursor_inks() -> (Color32, Color32) {
+    (CURSOR_DARK, CURSOR_LIGHT)
+}
 
 /// The height of the viewport bar at the bottom of the window, in points.
 pub const STATUS_HEIGHT: f32 = 28.0;
@@ -235,7 +254,7 @@ impl Palette {
             .unwrap_or(away)
     }
 
-    /// The ink of a guide: a bracket, a work cursor, a crosshair the program draws.
+    /// The ink of a guide: a bracket, a work plane, a crosshair the program draws.
     ///
     /// The guide is derived, not chosen, so one rule serves every preset and the scene can carry the
     /// same value as a constant (ADR 0111).
@@ -575,10 +594,12 @@ pub fn warn(ui: &egui::Ui) -> Color32 {
     ui.visuals().warn_fg_color
 }
 
-/// The ink of a guide the active theme draws: a bracket, a work cursor, a crosshair.
+/// The ink of a guide the active theme draws: a bracket, a work plane, a crosshair.
 ///
 /// A guide is the program's own help over the model, so it is one warm amber that never takes the
-/// accent of an action, the danger of a refusal or the cyan of a selection (ADR 0111, U83).
+/// accent of an action, the danger of a refusal or the cyan of a selection (ADR 0111, U83). The
+/// work cursor is the exception: it is a pointer, not a guide, and draws the fixed pair of
+/// [`cursor_inks`] (ADR 0121).
 pub fn helper(ui: &egui::Ui) -> Color32 {
     helper_ink(warn(ui), ui.visuals().dark_mode)
 }

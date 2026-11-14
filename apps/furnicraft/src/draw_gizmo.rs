@@ -181,11 +181,6 @@ impl DrawGizmo {
         self.hover = None;
     }
 
-    /// The cursor the viewport shows while a tool is live.
-    pub(crate) const fn cursor(&self) -> egui::CursorIcon {
-        egui::CursorIcon::Crosshair
-    }
-
     /// Applies the pointer to the live draft.
     ///
     /// A click appends the snapped point, or asks for a polyline to close when the point is its
@@ -704,7 +699,6 @@ mod tests {
         assert!(!gizmo.grid());
         gizmo.toggle_grid();
         assert!(gizmo.grid());
-        assert_eq!(gizmo.cursor(), egui::CursorIcon::Crosshair);
         assert_eq!(size_label(&draft, [millimetres(0), millimetres(0)]), None);
     }
 }

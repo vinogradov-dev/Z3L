@@ -279,15 +279,10 @@ pub(crate) struct Document {
     /// The rectangle the command bar drew last frame, so a press on it is chrome and never a pick.
     command_bar_rect: Option<egui::Rect>,
     /// The rectangle the last drawn frame gave the split views: the scene under the chrome. The
-    /// floating panels never narrow it (U72). A test-only snapshot: nothing in the product reads it,
-    /// and a frame drawn without a window reports the same rectangle through it, so the shell's
-    /// frame is asserted without a GPU (U78).
-    #[cfg(test)]
+    /// floating panels never narrow it (U72). The shell reads it to clip the work crosshair, and a
+    /// frame drawn without a window reports the same rectangle, so the frame tests assert the
+    /// geometry the window really uses (U78).
     scene_rect: Option<egui::Rect>,
-    /// The work cursor the last drawn frame painted, or `None` while a gesture owns the pointer or
-    /// the pointer is off the scene. A test-only snapshot of the geometry the frame drew (U88).
-    #[cfg(test)]
-    work_cursor: Option<WorkCursor>,
     /// The window's GPU handles and this tab's render target; `None` in a headless run (U77).
     target: Option<Target>,
     file: FileMenu,
@@ -370,10 +365,7 @@ impl Document {
             scene_product: session.active_product(),
             rebuild: Rebuild::default(),
             command_bar_rect: None,
-            #[cfg(test)]
             scene_rect: None,
-            #[cfg(test)]
-            work_cursor: None,
             session,
             editor,
             kernel,
@@ -676,9 +668,9 @@ impl Document {
     /// frame.
     ///
     /// It is the part of the viewport below the floating ribbon band; the side panels float over it
-    /// and never narrow it (U72). A frame drawn with no window reports the same rectangle, so the
-    /// frame tests assert the geometry the window really uses (U78).
-    #[cfg(test)]
+    /// and never narrow it (U72). The shell reads it to clip the work crosshair, and a frame drawn
+    /// with no window reports the same rectangle, so the frame tests assert the geometry the window
+    /// really uses (U78).
     pub(crate) fn scene_rect(&self) -> Option<egui::Rect> {
         self.scene_rect
     }
@@ -687,13 +679,6 @@ impl Document {
     #[cfg(test)]
     pub(crate) fn layout(&self) -> &Layout {
         &self.layout
-    }
-
-    /// The work cursor the last frame painted, or `None` while a gesture owned the pointer or the
-    /// pointer was off the scene (U88).
-    #[cfg(test)]
-    pub(crate) fn work_cursor(&self) -> Option<WorkCursor> {
-        self.work_cursor
     }
 
     /// Whether the status bar should say «Перестроение…» on this frame.
@@ -1569,10 +1554,7 @@ impl Document {
             chrome.covers(pointer) || self.command_bar_rect.is_some_and(|bar| bar.contains(pointer))
         });
         let content = chrome.content(area);
-        #[cfg(test)]
-        {
-            self.scene_rect = Some(content);
-        }
+        self.scene_rect = Some(content);
 
         // The viewport is the whole central area; the layout divides the scene rectangle into
         // views. Every view has its own camera and every border is draggable. A press on a border
@@ -1592,11 +1574,9 @@ impl Document {
                 shell.divider_dragging = true;
             }
         }
-        // One cursor decision is taken at the end of this function: a gesture that has a cursor of
-        // its own keeps the system one, and the plain pointer over the scene becomes the work
-        // cursor the shell draws (U88). The divider asks first, because a border drag owns the
-        // pointer whatever the tools would draw.
-        let mut owned_cursor: Option<egui::CursorIcon> = None;
+        // A view border is the one thing inside the window that keeps an icon of its own: the
+        // resize arrows say the edge can be dragged, so the shell leaves them and paints no square
+        // (X40). Every tool gesture keeps the square, and the frame's cursor starts at `Default`.
         if shell.divider_dragging {
             let delta = response.drag_delta();
             self.layout.drag_by(content, delta);
@@ -1605,14 +1585,14 @@ impl Document {
                 shell.divider_dragging = false;
             }
             if let Some(axis) = self.layout.dragging_axis() {
-                owned_cursor = Some(axis.cursor());
+                ui.ctx().set_cursor_icon(axis.cursor());
             }
             ui.ctx().request_repaint();
         } else if !pointer_on_chrome
             && let Some(pointer) = pointer
             && let Some(axis) = self.layout.border_at(content, pointer)
         {
-            owned_cursor = Some(axis.cursor());
+            ui.ctx().set_cursor_icon(axis.cursor());
         }
 
         // The active view is the only target: orbit, pan, zoom, the presets, selection, the gizmos
@@ -2032,43 +2012,6 @@ impl Document {
         let target_camera = self.layout.leaf(target_leaf).map(|leaf| leaf.camera()).unwrap_or(target_camera);
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), target_camera);
 
-        if contour_editing {
-            owned_cursor = owned_cursor.or(Some(self.contour_gizmo.cursor()));
-        } else if drawing {
-            owned_cursor = owned_cursor.or(Some(self.draw_gizmo.cursor()));
-        } else if pulling {
-            owned_cursor = owned_cursor.or(Some(self.extrude_gizmo.cursor()));
-        } else if placing || boxing || filling {
-            owned_cursor = owned_cursor.or(Some(egui::CursorIcon::Crosshair));
-        } else if navigating {
-            owned_cursor = owned_cursor.or(Some(egui::CursorIcon::Grab));
-        } else if dragging || response.dragged() {
-            owned_cursor = owned_cursor.or(Some(egui::CursorIcon::Grabbing));
-        }
-        // The scene is the one surface where the system arrow says the wrong thing: it points at a
-        // place a click lands on, not at a button, so the shell hides it and draws its own square.
-        // A widget in the corner and the chrome keep the arrow, and a gesture that owns a cursor
-        // keeps that one, which is why the decision is a single place (U88).
-        let work_cursor = match owned_cursor {
-            Some(icon) => {
-                ui.ctx().set_cursor_icon(icon);
-                None
-            }
-            None if pointer.is_some_and(|pointer| {
-                !pointer_on_chrome
-                    && content.contains(pointer)
-                    && !gizmo_rect.is_some_and(|widget| widget.contains(pointer))
-            }) =>
-            {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::None);
-                pointer
-            }
-            None => {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
-                None
-            }
-        };
-
         let pointer_over_gizmo = response
             .interact_pointer_pos()
             .is_some_and(|pointer| gizmo_rect.is_some_and(|widget| widget.contains(pointer)));
@@ -2292,18 +2235,6 @@ impl Document {
                 Some(Transform::Move) => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
                 Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
             }
-        }
-        // The work cursor is the last thing inside the viewport, so it lies over the image and the
-        // gizmos and under the chrome that follows it: the square marks the point a click lands on,
-        // and it takes no click of its own (U88).
-        if let Some(pointer) = work_cursor {
-            paint_work_cursor(ui, content, pointer, settings.pointer.size_points(), settings.pointer.crosshair);
-        }
-        #[cfg(test)]
-        {
-            self.work_cursor = work_cursor.map(|pointer| {
-                WorkCursor::new(pointer, settings.pointer.size_points(), settings.pointer.crosshair, content)
-            });
         }
         // The widget belongs to the view under the pointer, so clicking an axis snaps that view and
         // the readout names the camera it draws with.
@@ -2831,77 +2762,6 @@ fn locked_command_refusal(editor: &Editor, project: &Project, id: &str, lang: La
 /// pins both navigation and the projection toggle; a command is the only way to change either.
 fn viewport_owns_view(project: &Project) -> bool {
     project.active_camera().is_none()
-}
-
-/// The stroke of the work cursor's square and crosshair, in points.
-const WORK_CURSOR_STROKE: f32 = 1.0;
-
-/// The side of the work cursor's centre dot, in points.
-const WORK_CURSOR_DOT: f32 = 2.0;
-
-/// The screen geometry the work cursor draws at the pointer (U88).
-///
-/// The shell hides the system arrow over the scene because the arrow points at a place a click
-/// lands on, not at a button. A square centred there says so, and the centre dot says exactly
-/// where; the optional crosshair is one hairline each way across the view, for lining a part up
-/// with a neighbour out of sight. Coordinates are screen points, and the paint takes no click.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct WorkCursor {
-    /// The square, centred on the pointer.
-    pub square: egui::Rect,
-    /// The filled dot in the square's centre.
-    pub dot: egui::Rect,
-    /// The crosshair arms, or `None` while the switch is off.
-    pub crosshair: Option<[egui::Rect; 2]>,
-}
-
-impl WorkCursor {
-    /// The cursor centred on `pointer`, `size` points across, inside the view `clip`.
-    ///
-    /// The size is clamped here as well as in the workspace file, so a caller that has not read
-    /// the settings through [`furnicraft_ui::settings::PointerSettings::size_points`] still draws
-    /// a square a hand can see and grab.
-    pub(crate) fn new(pointer: egui::Pos2, size: f32, crosshair: bool, clip: egui::Rect) -> Self {
-        let side = size.clamp(
-            furnicraft_ui::settings::MIN_CURSOR_POINTS as f32,
-            furnicraft_ui::settings::MAX_CURSOR_POINTS as f32,
-        );
-        Self {
-            square: egui::Rect::from_center_size(pointer, egui::vec2(side, side)),
-            dot: egui::Rect::from_center_size(pointer, egui::vec2(WORK_CURSOR_DOT, WORK_CURSOR_DOT)),
-            crosshair: crosshair.then(|| {
-                // An arm is a filled rectangle a stroke wide: a zero-height line draws nothing, and
-                // the pair must read as one guide through the pointer.
-                let half = WORK_CURSOR_STROKE / 2.0;
-                [
-                    egui::Rect::from_min_max(
-                        egui::pos2(clip.left(), pointer.y - half),
-                        egui::pos2(clip.right(), pointer.y + half),
-                    ),
-                    egui::Rect::from_min_max(
-                        egui::pos2(pointer.x - half, clip.top()),
-                        egui::pos2(pointer.x + half, clip.bottom()),
-                    ),
-                ]
-            }),
-        }
-    }
-}
-
-/// Draws the work cursor in the guide ink, on the layer the scene and its gizmos share.
-///
-/// It is chrome, not a tool: the square is painted after the image and the gizmos and before the
-/// floating chrome that follows, and it never responds to a press (U88).
-fn paint_work_cursor(ui: &egui::Ui, view: egui::Rect, pointer: egui::Pos2, size: f32, crosshair: bool) {
-    let cursor = WorkCursor::new(pointer, size, crosshair, view);
-    let ink = furnicraft_ui::theme::helper(ui);
-    let painter = ui.painter().with_clip_rect(view);
-    if let Some([horizontal, vertical]) = cursor.crosshair {
-        painter.rect_filled(horizontal, 0.0, ink);
-        painter.rect_filled(vertical, 0.0, ink);
-    }
-    painter.rect_stroke(cursor.square, 0.0, egui::Stroke::new(WORK_CURSOR_STROKE, ink), egui::StrokeKind::Middle);
-    painter.rect_filled(cursor.dot, 0.0, ink);
 }
 
 /// Where the corner orientation widget draws this frame, or `None` while it is hidden.
