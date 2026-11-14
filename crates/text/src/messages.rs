@@ -159,6 +159,7 @@ messages! {
     ProjectionPerspShort = ["Persp", "Персп"],
     OrientationReadout = ["Pitch {} · Yaw {} · Roll {} · {}", "Тангаж {} · Рыскание {} · Крен {} · {}"],
     Move = ["Move", "Перемещение"],
+    Select = ["Select", "Выбор"],
     Rotate = ["Rotate", "Вращение"],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],
     MeshEditStatusFew = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершины"],

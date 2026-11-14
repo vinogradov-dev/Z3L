@@ -67,7 +67,7 @@ use crate::vertex_gizmo::{MeshVertexCommit, VertexGizmo, VertexPreview};
 use crate::view_cluster;
 use crate::view_cluster::{ClusterAction, ClusterView, NavigationMode, ViewCluster};
 use crate::view_layout::{Layout, LayoutKind};
-use crate::{Shell, TransformMode, theme};
+use crate::{Shell, Transform, theme};
 
 /// Orbit sensitivity in radians per point dragged.
 const ORBIT_RADIANS_PER_POINT: f64 = 0.008;
@@ -1886,12 +1886,14 @@ impl Document {
         {
             Ok(None)
         } else {
-            match shell.mode {
-                TransformMode::Move => {
+            match shell.mode.transform() {
+                // No mode owns a handle, so no gizmo runs: a press where one would be is a pick.
+                None => Ok(None),
+                Some(Transform::Move) => {
                     let pinned = self.move_pinned();
                     self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
-                TransformMode::Rotate => {
+                Some(Transform::Rotate) => {
                     self.rotate_gizmo.update(ui, &response, rect, target, pointer_over_widget, ring_factor)
                 }
             }
@@ -1905,7 +1907,7 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
-        if shell.mode == TransformMode::Move && self.translate_gizmo.is_dragging() {
+        if matches!(shell.mode.transform(), Some(Transform::Move)) && self.translate_gizmo.is_dragging() {
             self.show_move_distances(ui, rect, opacity);
         } else {
             self.clear_move_distances(ui.ctx());
@@ -1931,9 +1933,11 @@ impl Document {
             } else if mesh_object.is_some() {
                 self.vertex_gizmo.consumed_click()
             } else {
-                match shell.mode {
-                    TransformMode::Move => self.translate_gizmo.consumed_click(),
-                    TransformMode::Rotate => self.rotate_gizmo.consumed_click(),
+                match shell.mode.transform() {
+                    // The mode offers no handle, so nothing consumed the press: the click picks.
+                    None => false,
+                    Some(Transform::Move) => self.translate_gizmo.consumed_click(),
+                    Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
                 }
             };
 
@@ -2245,9 +2249,10 @@ impl Document {
             // A box shows its grips instead of nothing: the faces and the base corners are the
             // three-side editor, and the placement handles still act beside them.
             self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
-            match shell.mode {
-                TransformMode::Move => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
-                TransformMode::Rotate => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
+            match shell.mode.transform() {
+                None => {}
+                Some(Transform::Move) => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
+                Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
             }
         }
         // The widget belongs to the view under the pointer, so clicking an axis snaps that view and
