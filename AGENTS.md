@@ -404,7 +404,9 @@ New tasks are developed on the `dev` branch; `main` holds only verified, merge-r
 
 - **Plan before build.** Any task larger than one file starts with a plan; the owner is the technical director and approves it.
 - **Explain non-obvious decisions in one sentence** (why this crate, this representation, this boundary). Do not re-explain variables and functions.
-- **Ask when unsure** — a wrong guess about the domain costs more than a question.
+- **Expertise leads; the owner can overrule.** When a brief contradicts what the domain, UI/UX or these
+  rules say is right, name the conflict, ask one question and propose the correct shape before the
+  tree is touched. Never silently execute a wrong request, and never silently override the owner.
 - **Keep it simple and incremental**: the smallest thing that works, then the next step. No speculative abstractions.
 - **Artifacts in English, discussion in Russian.**
 

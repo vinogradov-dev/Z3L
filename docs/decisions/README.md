@@ -123,8 +123,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0118](0118-a-mechanism-used-twice-is-a-tool.md) | A mechanism used twice is a tool, and a measurement is not a dimension | Accepted |
 | [0119](0119-the-armed-tool-shows-its-parameters-at-the-pointer.md) | The armed tool shows its parameters at the pointer, and the inspector shows the same fields | Accepted |
 | [0120](0120-sheets-and-money-are-additive-in-the-package.md) | Sheet stock and money join the package as additive columns, and the rules are declared | Accepted |
-| [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) | The pointer is a two-tone square, painted above the chrome | Accepted; scope superseded by 0122 |
-| [0122](0122-the-custom-pointer-belongs-to-the-work-area.md) | The custom pointer belongs to the work area | Accepted |
+| [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) | The pointer is a two-tone square, painted above the chrome | Accepted; scope superseded by 0122, layer by 0123 |
+| [0122](0122-the-custom-pointer-belongs-to-the-work-area.md) | The custom pointer belongs to the work area | Accepted; layer clarified by 0123 |
+| [0123](0123-work-area-paint-sits-under-the-chrome.md) | Work-area paint sits under the chrome | Accepted |
 
 ## Format
 
