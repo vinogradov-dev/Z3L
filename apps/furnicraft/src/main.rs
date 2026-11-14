@@ -895,28 +895,19 @@ impl eframe::App for FurniCraftApp {
 /// surface, so the same binary writes a package with no window, no GPU and no person (K3).
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match cli::parse(&args) {
-        Ok(cli::Command::Window) => {}
-        Ok(cli::Command::Help(text)) => {
-            print!("{text}");
-            return Ok(());
-        }
-        Ok(cli::Command::Export(export)) => {
-            match cli::export(&export) {
-                Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
-                Err(error) => {
-                    eprintln!("furnicraft: {error}");
-                    std::process::exit(1);
-                }
-            }
-            return Ok(());
-        }
-        Err(error) => {
-            eprintln!("furnicraft: {error}");
-            std::process::exit(2);
-        }
+    let command = match cli::parse(&args) {
+        Ok(command) => command,
+        Err(error) => exit_with(cli::fail(&error, cli::EXIT_USAGE)),
+    };
+    match cli::run(&command) {
+        Some(code) => exit_with(code),
+        None => run_window(),
     }
-    run_window()
+}
+
+/// Ends the process with `code`, so the tail of `main` — the window — never runs after a command.
+fn exit_with(code: i32) -> ! {
+    std::process::exit(code)
 }
 
 /// Opens the window and runs the editor.

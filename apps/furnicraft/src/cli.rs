@@ -7,12 +7,23 @@
 //! The parsing, the export and the error are one value each, so the test drives the whole job and
 //! no window is ever constructed: [`parse`] turns the argument list into one [`Command`], [`export`]
 //! writes the package and returns what to print, and [`CliError`] carries a sentence the user can
-//! read. Nothing here panics and nothing here calls `std::process::exit`.
+//! read. [`run`] writes the report and returns the exit code. Nothing here panics: a closed pipe is
+//! a failed write like any other, and the only exit is the caller's `std::process::exit`.
 
+use std::io::Write as _;
 use std::path::PathBuf;
 
 use furnicraft_export::{DocumentMeta, ExportError, ExportOptions, OrderPackage, now_timestamp};
 use furnicraft_project::{SceneFile, SceneFileError};
+
+/// The exit code of a command that did its job.
+pub const EXIT_OK: i32 = 0;
+
+/// The exit code of a command that could not do its job.
+pub const EXIT_FAILED: i32 = 1;
+
+/// The exit code of an argument list that names no command.
+pub const EXIT_USAGE: i32 = 2;
 
 /// The help text, printed by `furnicraft --help` and `furnicraft export --help`.
 pub const USAGE: &str = "\
@@ -187,6 +198,37 @@ pub fn export(args: &ExportArgs) -> Result<Vec<String>, CliError> {
     Ok(lines)
 }
 
+/// Performs a parsed command, writes its report and returns the exit code the process leaves with.
+///
+/// `None` means the command asks for the editor: the caller opens the window. A write that fails —
+/// a closed pipe under `| head` — is a failed run, never a panic.
+pub fn run(command: &Command) -> Option<i32> {
+    match command {
+        Command::Window => None,
+        Command::Help(text) => Some(print_stdout(text)),
+        Command::Export(args) => Some(match export(args) {
+            Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+    }
+}
+
+/// Prints one sentence about a failed run and returns the code to leave with.
+pub fn fail(error: &CliError, code: i32) -> i32 {
+    let mut stream = std::io::stderr().lock();
+    let _ = writeln!(stream, "furnicraft: {error}");
+    code
+}
+
+/// Writes a report and returns the exit code the write earned.
+fn print_stdout(text: &str) -> i32 {
+    let mut stream = std::io::stdout().lock();
+    match stream.write_all(text.as_bytes()).and_then(|()| stream.flush()) {
+        Ok(()) => EXIT_OK,
+        Err(_) => EXIT_FAILED,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -351,6 +393,7 @@ mod tests {
         for flag in ["--out", "--format", "--no-timestamp", "bundle|single"] {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
         }
+        assert_eq!(run(&Command::Window), None, "only the window command asks the caller to open one");
     }
 
     fn read_text(path: &Path) -> String {
