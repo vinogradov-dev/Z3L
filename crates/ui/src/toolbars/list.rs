@@ -3,8 +3,8 @@
 //! A tool with more than one way to be built draws a caret face in its cell, and a click on it opens
 //! this list; the main face of the cell runs the pinned method and draws its glyph. The list is the
 //! approved F1 anatomy: 298 points wide, a 34-point header with the tool's glyph, its name and the
-//! key that runs the pinned method, 30-point rows carrying the glyph, the method's name, its own key
-//! and a pin, optional 9.5-point section captions, and no footer.
+//! key that runs the pinned method, 30-point rows carrying the glyph, the method's name, its own
+//! key and a pin, and no footer.
 //!
 //! A row's columns are fixed for the whole list — glyph, name, key, pin, at least 6 points apart — so
 //! a row without a key and a row with a long one keep the same name column, and the pin never sits on
@@ -47,8 +47,14 @@ pub const HEADER_HEIGHT: f32 = 34.0;
 /// One method row.
 pub const ROW_HEIGHT: f32 = 30.0;
 
-/// The caption above a section of methods.
-pub const CAPTION_HEIGHT: f32 = 16.0;
+/// The one-point hairline the list's frame draws on each of its sides.
+pub const FRAME_STROKE: f32 = 1.0;
+
+/// The height of a list of `rows` methods: the header and one row per method, with no band
+/// between them (U84).
+pub const fn height(rows: usize) -> f32 {
+    HEADER_HEIGHT + rows as f32 * ROW_HEIGHT
+}
 
 /// The glyph of one row, in points.
 const ROW_ICON: f32 = 17.0;
@@ -236,12 +242,12 @@ fn claim_cursor(ui: &Ui, rect: Option<egui::Rect>) {
 fn frame(ui: &Ui) -> egui::Frame {
     egui::Frame::new()
         .fill(theme::band(ui))
-        .stroke(Stroke::new(1.0, theme::line(ui)))
+        .stroke(Stroke::new(FRAME_STROKE, theme::line(ui)))
         .corner_radius(egui::CornerRadius::same(theme::RADIUS))
         .inner_margin(egui::Margin::ZERO)
 }
 
-/// The header, the rows, the captions and the keyboard of one open list.
+/// The header, the rows and the keyboard of one open list.
 fn body(
     ui: &mut Ui,
     list: &mut VariantList,
@@ -254,14 +260,7 @@ fn body(
     header(ui, tool, lang);
     let shortcut_width = shortcut_column(ui, rows);
     let mut chosen = None;
-    let mut section = None;
     for (index, row) in rows.iter().enumerate() {
-        if row.method.section != section {
-            section = row.method.section;
-            if let Some(text) = section {
-                caption(ui, text, lang);
-            }
-        }
         chosen = method_row(ui, index, row, pinned, index == list.highlighted, shortcut_width, lang).or(chosen);
     }
     keyboard(ui, list, rows).or(chosen)
@@ -385,16 +384,6 @@ fn label_galley(ui: &Ui, text: &str, width: f32, color: Color32) -> std::sync::A
     ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
-/// A section caption in the list's small capitals, above the first row of its section.
-fn caption(ui: &mut Ui, caption: Message, lang: Lang) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(WIDTH, CAPTION_HEIGHT), Sense::hover());
-    let text = caption.text(lang).to_uppercase();
-    let galley =
-        ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, egui::FontId::proportional(9.5), egui::Color32::PLACEHOLDER));
-    let pos = egui::pos2(rect.left() + ROW_INSET, rect.center().y - galley.size().y / 2.0);
-    ui.painter().galley(pos, galley, theme::text_dim(ui));
-}
-
 /// The arrow keys and Enter, read only while no text field owns the keyboard.
 ///
 /// The inspector can hold the focus while the list is open, so the list never steals a key the user
@@ -470,6 +459,12 @@ mod tests {
         assert_eq!(WIDTH, 298.0);
         assert_eq!(ROW_HEIGHT, 30.0);
         assert_eq!(HEADER_HEIGHT, 34.0);
-        assert_eq!(CAPTION_HEIGHT, 16.0);
+    }
+
+    #[test]
+    fn a_list_is_its_header_plus_one_row_per_method() {
+        assert_eq!(height(0), HEADER_HEIGHT, "an empty list is its header");
+        assert_eq!(height(4), HEADER_HEIGHT + 4.0 * ROW_HEIGHT);
+        assert_eq!(height(4), 154.0, "the circle's four rows are the header and four 30-point rows");
     }
 }

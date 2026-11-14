@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=2a634da updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=7d378bd updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: U84 leads `## Next` — the method list loses its section captions
+Nothing is scheduled: U85 leads `## Next` — the Delete key removes the selection as one question
 
 ## Index
 

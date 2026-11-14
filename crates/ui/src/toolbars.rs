@@ -1487,9 +1487,6 @@ mod tests {
             Message::ToolCircleCentreRadius,
             "the first row names the method, not the tool"
         );
-        assert_eq!(rows[0].method.section, Some(Message::SectionBuild), "the tool's row joins the first section");
-        assert_eq!(rows[2].method.section, Some(Message::SectionBuild));
-        assert_eq!(rows[3].method.section, Some(Message::SectionTangents));
         assert!(rows[1].action.is_none(), "a planned method runs nothing");
     }
 
@@ -1600,25 +1597,22 @@ mod tests {
     #[test]
     fn the_fill_methods_read_as_two_builds_of_one_panel() {
         // The Shape row used to be a blank line named like a second panel. It now carries its own
-        // glyph and sits under a caption that says both rows are builds of the same cell (ADR 0110).
+        // glyph beside the fit row, and the list is one flat list of the two builds (ADR 0110, U84).
         for id in ["furniture.panels.post", "furniture.panels.shelf"] {
             let tool = tool(id);
             let methods = tool.methods().collect::<Vec<_>>();
             assert_eq!(methods.len(), 2, "{id} has one cell with two builds");
             assert!(methods[1].icon.is_some_and(Icon::is_drawn), "{id}'s shape row has artwork");
-            assert_eq!(methods[0].section, Some(Message::SectionFillMethod), "{id} captions its build");
-            assert_eq!(methods[1].section, Some(Message::SectionFillMethod));
         }
     }
 
     #[test]
-    fn the_open_fill_list_draws_the_build_caption_and_both_rows() {
+    fn the_open_fill_list_draws_both_rows() {
         let post = tool("furniture.panels.post");
         let mut state = Toolbars::new();
         state.set_tab(tab("furniture"));
         assert!(state.open_list(post));
         let (texts, _, _) = draw_frames(&mut state, full_context(), 3);
-        assert!(texts.iter().any(|text| text == "BUILD METHOD"), "the caption says what the rows are: {texts:?}");
         assert!(texts.iter().any(|text| text == "Largest rectangle"), "the fit row is drawn: {texts:?}");
         assert!(texts.iter().any(|text| text == "Niche shape"), "the shape row is drawn: {texts:?}");
     }
@@ -1720,7 +1714,6 @@ mod tests {
                 label: Message::ToolCircleThreePoints,
                 icon: None,
                 run: Some(ToolKind::Draw(DrawTool::CircleThreePoints)),
-                section: None,
             }],
         };
         let rows = method_rows(&ARTWORKLESS, &Toolbars::new(), full_context(), Lang::En);
@@ -1796,13 +1789,53 @@ mod tests {
         assert!(texts.iter().any(|text| text == "C"), "the header carries the shortcut");
         assert!(texts.iter().any(|text| text == "Centre and radius"), "the tool's own method is a row: {texts:?}");
         assert!(texts.iter().any(|text| text == "Circle through 3 points"), "a live method is a row: {texts:?}");
-        assert!(texts.iter().any(|text| text == "BUILD"), "the section caption is drawn: {texts:?}");
+        assert!(!texts.iter().any(|text| text == "BUILD"), "no caption band is drawn: {texts:?}");
         assert!(
             !texts.iter().any(|text| text.contains("Enter") || text.contains("Esc")),
             "the list has no footer: {texts:?}"
         );
         assert!(labels.iter().any(|label| label.contains("Circle")), "the rows are announced: {labels:?}");
         assert!(actions.is_empty(), "opening and drawing the list runs nothing");
+    }
+
+    #[test]
+    fn the_list_draws_the_rows_in_the_order_the_map_declares() {
+        // One flat list of names (U84): the map's order is the drawn order, at one row pitch, with
+        // no band between two rows to read over.
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, Lang::En);
+        let circle = tool("sketch.create.circle");
+        let rows = method_rows(circle, &Toolbars::new(), full_context(), Lang::En);
+        let mut slot = Some(list::VariantList::new(circle));
+        let (_, output) = warm_list(&ctx, screen, &mut slot);
+        let tops = rows
+            .iter()
+            .map(|row| {
+                let label = row.method.label.text(Lang::En);
+                text_rect(&output.shapes, label).unwrap_or_else(|| panic!("the frame does not draw {label:?}")).top()
+            })
+            .collect::<Vec<_>>();
+        assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "the drawn order is the declared order: {tops:?}");
+        for pair in tops.windows(2) {
+            assert!((pair[1] - pair[0] - list::ROW_HEIGHT).abs() < 0.5, "two rows are one row pitch apart: {tops:?}");
+        }
+    }
+
+    #[test]
+    fn a_list_is_its_header_plus_one_row_per_method() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, Lang::En);
+        let circle = tool("sketch.create.circle");
+        let rows = method_rows(circle, &Toolbars::new(), full_context(), Lang::En);
+        let mut slot = Some(list::VariantList::new(circle));
+        let rect = list_rect(&ctx, screen, &mut slot).expect("the popup reported its rectangle");
+        assert_eq!(
+            rect.height(),
+            list::height(rows.len()) + 2.0 * list::FRAME_STROKE,
+            "the drawn list is its header and one row per method, plus the frame's hairline"
+        );
     }
 
     #[test]
@@ -1864,8 +1897,8 @@ mod tests {
 
     #[test]
     fn a_click_inside_the_list_keeps_it_open() {
-        // The pin is inside the list: only a click elsewhere closes it, so a pin does not dismiss
-        // the list the user is still choosing from.
+        // The header is inside the frame and runs nothing: only a click elsewhere closes the list,
+        // so a pointer that lands on the list does not dismiss it.
         let circle = tool("sketch.create.circle");
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
@@ -1874,7 +1907,7 @@ mod tests {
         for _ in 0..3 {
             list_frame(&ctx, screen, 8.0, &mut slot, Vec::new());
         }
-        let inside = egui::pos2(150.0, 110.0);
+        let inside = egui::pos2(150.0, 80.0);
         list_frame(&ctx, screen, 8.0, &mut slot, vec![pointer_button(inside, true)]);
         list_frame(&ctx, screen, 8.0, &mut slot, vec![pointer_button(inside, false)]);
         assert!(slot.is_some(), "a click inside the list leaves it open");
@@ -1981,8 +2014,8 @@ mod tests {
 
     /// The rect of the row whose name is `label`, read from where the frame painted that name.
     ///
-    /// The list's rows are not on a fixed pitch — a section caption takes its own band — so a test
-    /// asks the paint where a row is instead of recomputing the layout a second time.
+    /// The bands above the rows are drawn by the caller, so a test asks the paint where a row is
+    /// instead of recomputing the layout a second time.
     fn row_of(shapes: &[egui::epaint::ClippedShape], label: &str) -> egui::Rect {
         let name = text_rect(shapes, label).unwrap_or_else(|| panic!("the frame does not draw {label:?}"));
         egui::Rect::from_center_size(name.center(), egui::vec2(list::WIDTH, list::ROW_HEIGHT))
@@ -2164,6 +2197,30 @@ mod tests {
             );
         });
         (anchor, output)
+    }
+
+    /// The rectangle the open circle list reports over three frames, once the popup has settled.
+    fn list_rect(ctx: &egui::Context, screen: egui::Rect, slot: &mut Option<list::VariantList>) -> Option<egui::Rect> {
+        let circle = tool("sketch.create.circle");
+        let mut shown = None;
+        for _ in 0..3 {
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| {
+                egui::Area::new(egui::Id::unique("ribbon.list.rect.test")).fixed_pos(egui::pos2(8.0, 32.0)).show(
+                    ui.ctx(),
+                    |ui| {
+                        let (_, response) = ui.allocate_exact_size(
+                            egui::vec2(RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT),
+                            egui::Sense::click(),
+                        );
+                        let rows = method_rows(circle, &Toolbars::new(), full_context(), Lang::En);
+                        shown = list::show(ui, slot, circle, &rows, &response, 0, Lang::En).rect;
+                    },
+                );
+            });
+            output.drop_without_applying_deltas();
+        }
+        shown
     }
 
     /// One key press, as the platform hands it to `egui`.

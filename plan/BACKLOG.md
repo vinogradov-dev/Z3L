@@ -42,22 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U84** the method list is one flat list of names: the section captions go
-  Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
-   rows is a second line to read, it makes a small menu look like a form, and the row's own
-   name already says how the figure is built. They exist only inside the ribbon's variant list
-   (U67, U74) and are the only place a method is grouped.
-  Shape: Delete `Method::section` and `VariantSpec::section` from `toolbars/spec.rs` and the
-   section inheritance in `ToolSpec::default_method`, the `CAPTION_HEIGHT` constant and the
-   caption drawing from `toolbars/list.rs`, and the three `Section*` messages from
-   `crates/text`. The rows keep the order the map declares, so the list is the header plus one
-   row per method; a test asserts the drawn order equals the declared order and that a list's
-   height is `HEADER_HEIGHT` plus rows times `ROW_HEIGHT`. `plan/map.md`'s ribbon row stops
-   naming captions.
-  Done: No caption is drawn for any tool; the circle's list is four rows of names; no
-   `Section*` message remains in `crates/text`; the list-height test passes; `cargo xtask ci`
-   is green.
-  `files: crates/ui/src/toolbars/spec.rs, crates/ui/src/toolbars/list.rs, crates/text/src/messages.rs`
 - `[ ]` **U85** the Delete key removes the whole selection behind one question
   Why: Shift-click builds a multi-selection but nothing deletes it: the tree's row menu removes
    one node at a time, so a keyboard user cannot remove what they selected, and looping
@@ -382,6 +366,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U84** the method list is one flat list of names: the section captions go
+  Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
+   rows is a second line to read, it makes a small menu look like a form, and the row's own
+   name already says how the figure is built. They exist only inside the ribbon's variant list
+   (U67, U74) and are the only place a method is grouped.
+  Shape: Delete `Method::section` and `VariantSpec::section` from `toolbars/spec.rs` and the
+   section inheritance in `ToolSpec::default_method`, the `CAPTION_HEIGHT` constant and the
+   caption drawing from `toolbars/list.rs`, and the three `Section*` messages from
+   `crates/text`. The rows keep the order the map declares, so the list is the header plus one
+   row per method; a test asserts the drawn order equals the declared order and that a list's
+   height is `HEADER_HEIGHT` plus rows times `ROW_HEIGHT`. `plan/map.md`'s ribbon row stops
+   naming captions.
+  Done: No caption is drawn for any tool; the circle's list is four rows of names; no
+   `Section*` message remains in `crates/text`; the list-height test passes; `cargo xtask ci`
+   is green.
+  `files: crates/ui/src/toolbars/spec.rs, crates/ui/src/toolbars/list.rs, crates/text/src/messages.rs` — `7d378bd`
 
 - `[x]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
   Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no

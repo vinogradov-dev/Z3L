@@ -1,6 +1,7 @@
 # 0110. One fill cell, and its build method in the cell's own list
 
-- Status: Accepted; refines 0106 and the ribbon's method list (U74)
+- Status: Accepted; refines 0106 and the ribbon's method list (U74); drops the caption in its
+  amendment
 - Date: 2026-11-14
 
 ## Context
@@ -44,6 +45,15 @@ because two cells would otherwise read the same.
   questions and the picture answers both.
 - `docs/domain/products.md` §7 names the two modes by their new words. No new surface, gesture or
   shortcut is added, so the UI skill's surface inventory does not change.
+
+## Amendment: the method list carries no captions (2026-11-14)
+
+U84 removes the caption from every method list. A «Build» or «Tangents» heading over one or two rows
+is a second line to read, it makes a small menu look like a form, and the row's own name already says
+how the figure or the panel is built. The rows keep the order the map declares, so a list is its
+header plus one row per method: `Method::section`, `VariantSpec::section`, the caption band and the
+three messages it drew are gone. The two fill builds still read as one panel because they remain one
+cell with one header and two named rows, which is the part of this decision that stays.
 
 ## Related
 
