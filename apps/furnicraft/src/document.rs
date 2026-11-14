@@ -2083,7 +2083,7 @@ impl Document {
                         self.last_error = Some(error);
                     }
                 } else {
-                    self.editor.select_viewport_hit(self.session.project(), hit);
+                    self.editor.select_viewport_hit(self.session.project(), self.session.active_product(), hit);
                     if let Err(error) = self.upload_scene() {
                         self.last_error = Some(error);
                     }
@@ -2631,8 +2631,13 @@ impl Document {
                 self.editor.clear_creation_parent();
             } else {
                 let before = self.editor.selected_nodes().to_vec();
-                self.editor.exit_level(self.session.project());
-                if self.editor.selected_nodes() != before.as_slice()
+                if self.editor.exit_level(&mut self.session) {
+                    // Leaving the product repaints its envelope without a document revision, so the
+                    // scene is rebuilt here instead of waiting a frame for the next sync.
+                    if let Err(error) = self.refresh() {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.selected_nodes() != before.as_slice()
                     && let Err(error) = self.upload_scene()
                 {
                     self.last_error = Some(error);
