@@ -30,6 +30,7 @@ mod draw;
 mod editor;
 pub mod home;
 pub mod icons;
+pub mod inventory;
 mod light_card;
 mod machining;
 mod mesh_edit;
@@ -58,6 +59,7 @@ pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, 
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use editor::{Editor, FillArm};
 pub use furnicraft_text::{Counted, Lang, Message};
+pub use inventory::{Applies, Place, Row};
 pub use mesh_edit::{MeshEdit, MeshElement};
 pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use toolbars::{RibbonView, RibbonViewAction};

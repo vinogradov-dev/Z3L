@@ -22,6 +22,7 @@ use std::process::{Command, Stdio};
 
 use state_contract::{Command as PlanCommand, Config, Global};
 
+mod inventory;
 mod skills;
 mod ui_rules;
 
@@ -289,7 +290,7 @@ fn run_layers(_global: &Global) -> Result<(), String> {
     }
 }
 
-/// `ui-rules`: the colour and host ownership rules, read from the interface's own sources.
+/// `ui-rules`: the colour, host and capability-inventory rules, read from the tree's own sources.
 fn run_ui_rules(global: &Global) -> Result<(), String> {
     match ui_rules::check(&global.root) {
         Ok(count) => {

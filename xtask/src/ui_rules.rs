@@ -1,4 +1,4 @@
-//! The interface's two ownership rules, read as Rust instead of as text.
+//! The interface's ownership rules, read as Rust instead of as text.
 //!
 //! A colour literal in a feature module is a defect: it looks right in the dark palette and breaks
 //! the light one, and the next palette change never finds it (ADR 0063). A raw `egui` host outside
@@ -6,6 +6,12 @@
 //! one overlay order, and then swallows a click that should have been a pick (ADR 0080). Both are
 //! parse checks, not greps: `syn` resolves `use egui::Color32 as C` and `eframe::egui::Area`, so an
 //! alias cannot slip past.
+//!
+//! The capability inventory is the third rule (ADR 0117): every command the engine registers has one
+//! row in `crates/ui/src/inventory.rs`, every row names a command or a declared atom, and an id
+//! carries one label and one key. The check reads the registry's own static list and resolves each
+//! `module::CONST` to the `CommandSpec::new(<ID>_ID, <ID>_LABEL, …)` it names, so a command added to
+//! the engine without a row fails the gate instead of shipping with no way to reach it.
 //!
 //! The owner tables are the allow-list. Adding a surface is one row, and the row says what that
 //! module owns; a feature module carries no allowance comment. Test code is not shipped code and is
@@ -95,6 +101,10 @@ pub fn check(root: &Path) -> Result<usize, Vec<String>> {
             checked = checked.saturating_add(1);
             check_file(&shown, &file, &mut violations);
         }
+    }
+
+    if let Some(count) = crate::inventory::check(root, &mut violations) {
+        checked = checked.saturating_add(count);
     }
 
     if violations.is_empty() { Ok(checked) } else { Err(violations) }

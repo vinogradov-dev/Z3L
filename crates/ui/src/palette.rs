@@ -23,7 +23,7 @@ use furnicraft_text::{Counted, Lang, Message};
 use serde_json::Value;
 
 use crate::command::{dispatch, json};
-use crate::{icons, theme};
+use crate::{icons, inventory, theme};
 
 /// How many dispatched command ids the palette remembers.
 pub const MAX_HISTORY: usize = 8;
@@ -181,11 +181,16 @@ impl Palette {
     /// Every command that matches the query, most relevant first.
     ///
     /// A prefix of the label or id ranks above a substring, and with an empty query the
-    /// last-used commands come first; the registry order breaks every remaining tie.
+    /// last-used commands come first; the registry order breaks every remaining tie. A command the
+    /// inventory places nowhere ([`crate::inventory::Place::Api`]) is not listed: it is reached by
+    /// an id, and a search field that offers it would be a fourth surface (ADR 0117).
     pub fn entries(&self, session: &Session, context: &PaletteContext) -> Vec<Entry> {
         let query = self.query.trim().to_ascii_lowercase();
         let mut ranked = Vec::new();
         for spec in CommandRegistry::new().specs() {
+            if inventory::row(spec.id()).is_some_and(|row| !row.on_a_surface()) {
+                continue;
+            }
             let Some(rank) = rank(*spec, &query, &self.history, self.lang) else {
                 continue;
             };

@@ -247,3 +247,8 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   so while a part inside the open group is dragged the bracket stays on the committed box and snaps
   when the move commits. Feeding the previewed placements into `LevelBounds` would make the guide
   follow the ghost the way the frame does (U89).
+
+- `[engine]` `panel.contour.create` is registered, labelled and parameterised, and no surface runs it:
+  the free-outline cell of U90 builds a `panel.create` with an outline, so the command duplicates a
+  path that exists. It is declared `Api` in `crates/ui/src/inventory.rs` today; either a surface takes
+  it or the command goes, and deleting it is the smaller change (U94).
