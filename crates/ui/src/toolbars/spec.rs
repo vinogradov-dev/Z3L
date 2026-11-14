@@ -815,7 +815,7 @@ const SCENE: [GroupSpec; 3] = [
     },
 ];
 
-const VIEW: [GroupSpec; 4] = [
+const VIEW: [GroupSpec; 5] = [
     GroupSpec {
         id: "view.projection",
         label: Message::GroupProjection,
@@ -845,15 +845,6 @@ const VIEW: [GroupSpec; 4] = [
         label: Message::GroupDisplay,
         tools: &[
             planned("view.display.style", Message::ToolStyle),
-            ToolSpec {
-                id: "view.display.grid",
-                label: Message::ToolGridSnap,
-                icon: Some(icons::view::GRID_SNAP),
-                shortcut: Some("G"),
-                run: Some(ToolKind::GridSnap),
-                method: None,
-                variants: &[],
-            },
             planned("view.display.contours", Message::ToolContours),
             planned("view.display.shadows", Message::ToolShadows),
             planned("view.display.section", Message::ToolSection),
@@ -877,6 +868,19 @@ const VIEW: [GroupSpec; 4] = [
             planned("view.navigation.pan", Message::ToolPan),
             planned("view.navigation.zoom", Message::ToolZoom),
         ],
+    },
+    GroupSpec {
+        id: "view.snaps",
+        label: Message::GroupSnaps,
+        tools: &[ToolSpec {
+            id: "view.snaps.grid",
+            label: Message::ToolGridSnap,
+            icon: Some(icons::view::GRID_SNAP),
+            shortcut: Some("G"),
+            run: Some(ToolKind::GridSnap),
+            method: None,
+            variants: &[],
+        }],
     },
 ];
 
@@ -1010,7 +1014,27 @@ mod tests {
             ["furniture.panels.contour", "furniture.panels.post", "furniture.panels.shelf", "furniture.product.frame"]
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
-        assert_eq!(live("view"), ["view.display.grid", "view.projection.frame-all", "view.projection.toggle"]);
+        assert_eq!(live("view"), ["view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]);
+    }
+
+    #[test]
+    fn the_grid_snap_is_filed_under_its_own_snaps_caption() {
+        // The snap changes where a click lands, not how the scene looks, so it left *View › Display*
+        // for a group the endpoint, the axis and the object snaps can join (U91).
+        let view = tab("view").expect("the view tab");
+        let snaps = view.groups.iter().find(|group| group.id == "view.snaps").expect("the snaps group");
+        assert_eq!(snaps.label.text(furnicraft_text::Lang::En), "Snaps");
+        assert_eq!(snaps.label.text(furnicraft_text::Lang::Ru), "Привязки");
+        let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.shortcut)).collect::<Vec<_>>();
+        assert_eq!(tools, vec![("view.snaps.grid", Some(ToolKind::GridSnap), Some("G"))], "the G key and the cell");
+        let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
+        assert!(
+            display.tools.iter().all(|tool| tool.run != Some(ToolKind::GridSnap)),
+            "the snap is still filed under Display"
+        );
+        // Display holds no live tool yet, so the ribbon captions no Display group; the first live
+        // display tool re-opens the body of this test.
+        assert_eq!(display.columns(), 0);
     }
 
     #[test]

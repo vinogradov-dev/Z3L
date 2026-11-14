@@ -42,21 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
-  Why: The grid-snap toggle sits under View › Display among style, contours, shadows and
-   section switches, so the one control that changes how a click behaves is filed with the ones
-   that change how the scene looks. The owner asked for the caption «Привязки»; a group of its
-   own is the smallest change that says where a snap lives, and it gives the endpoint, axis and
-   object snaps a home.
-  Shape: The map gains a `view.snaps` group (label `GroupSnaps`, «Привязки») holding the grid
-   snap as `view.snaps.grid` with its `G` key and hint unchanged; `view.display` keeps its
-   style, contour, shadow and section tools. The message table gains `GroupSnaps` in both
-   languages, the ids stay namespaced by their group, and the spec's uniqueness and live-group
-   tests cover the new row. No new dependency and no document change.
-  Done: The View tab shows a group captioned «Привязки» with the grid-snap cell and a Display
-   group without it; every id is unique and namespaced; the `G` key still toggles the snap;
-   `cargo xtask ci` is green.
-  `files: crates/ui/src/toolbars/spec.rs, crates/text/src/messages.rs`
 - `[ ]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
   Why: The tree row menu is the only context menu in the program: a right click in the viewport
    draws nothing, so the actions a selected object has are two or three clicks away in the
@@ -224,6 +209,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
+  Why: The grid-snap toggle sits under View › Display among style, contours, shadows and
+   section switches, so the one control that changes how a click behaves is filed with the ones
+   that change how the scene looks. The owner asked for the caption «Привязки»; a group of its
+   own is the smallest change that says where a snap lives, and it gives the endpoint, axis and
+   object snaps a home.
+  Shape: The map gains a `view.snaps` group (label `GroupSnaps`, «Привязки») holding the grid
+   snap as `view.snaps.grid` with its `G` key and hint unchanged; `view.display` keeps its
+   style, contour, shadow and section tools. The message table gains `GroupSnaps` in both
+   languages, the ids stay namespaced by their group, and the spec's uniqueness and live-group
+   tests cover the new row. No new dependency and no document change.
+  Done: The View tab shows a group captioned «Привязки» with the grid-snap cell and a Display
+   group without it; every id is unique and namespaced; the `G` key still toggles the snap;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/toolbars/spec.rs, crates/text/src/messages.rs` — `d73bb1d`
 
 - `[x]` **P15** the plan tool teaches its grammar instead of refusing it
   Why: Measured over the six tasks that carry a log: the plan tool cost ~16 of ~119 minutes, in

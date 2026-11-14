@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=355c353 updated=2026-11-15
+STATE: milestone=M7 phase=T task=- state=idle base=d73bb1d updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,7 +55,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: 9 open tasks wait in `## Next`.
+Nothing is scheduled: U92 gives a right click on a node one list of actions the tree and the
+viewport share
 
 ## Index
 
