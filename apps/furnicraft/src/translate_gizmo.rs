@@ -22,7 +22,7 @@ use furnicraft_model::{Id, MoveRule};
 use furnicraft_scene::MAX_DISTANCE_MM;
 
 use crate::gizmo_math::{
-    ALL_AXES, Axis, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
+    ALL_AXES, Axis, HandleSpec, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
     paint_axis_handles, ray_to,
 };
 
@@ -115,6 +115,10 @@ impl TranslateGizmo {
     /// `pinned` is a distance the exact-distance fields fixed in world millimetres. It replaces the
     /// pointer for the frame, so typing a number takes the mouse out of the drag without ending it,
     /// and the release still commits the pinned distance as the one undo entry (ADR 0103).
+    ///
+    /// `handle_length` is the screen length of one handle, in points, from the workspace settings
+    /// (U86); the drawing and the hit test are handed the same value.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         ui: &Ui,
@@ -123,6 +127,7 @@ impl TranslateGizmo {
         target: Target<'_>,
         pointer_over_widget: bool,
         pinned: Option<f64>,
+        handle_length: f32,
     ) -> Result<Option<PlacementCommit>, String> {
         self.consumed_click = false;
         if let Some(mut drag) = self.drag.take() {
@@ -173,7 +178,8 @@ impl TranslateGizmo {
         let Some(pointer) = response.hover_pos() else {
             return Ok(None);
         };
-        let Some(axis) = hit_axis(target.camera, viewport, origin_world, pointer, ALL_AXES) else {
+        let spec = HandleSpec { axes: ALL_AXES, length: handle_length };
+        let Some(axis) = hit_axis(target.camera, viewport, origin_world, pointer, spec) else {
             return Ok(None);
         };
         self.hover = Some(axis);
@@ -207,7 +213,7 @@ impl TranslateGizmo {
     }
 
     /// Draws the handles over the viewport.
-    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>) {
+    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>, handle_length: f32) {
         let origin_world = if let Some(drag) = &self.drag {
             drag.start_origin + drag.delta
         } else {
@@ -223,7 +229,7 @@ impl TranslateGizmo {
             origin_world,
             self.hover,
             self.drag.as_ref().map(|drag| drag.axis),
-            ALL_AXES,
+            HandleSpec { axes: ALL_AXES, length: handle_length },
         );
     }
 }

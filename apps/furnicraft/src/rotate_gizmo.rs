@@ -23,9 +23,6 @@ use crate::gizmo_math::{
     ray_plane, ray_to, screen_point,
 };
 
-/// Radius of a ring relative to the camera distance.
-const RING_RADIUS_FACTOR: f64 = 0.09;
-
 /// Number of line segments in a ring.
 const RING_SEGMENTS: usize = 64;
 
@@ -93,6 +90,9 @@ impl RotateGizmo {
     /// `pointer_over_widget` is true when the pointer is over the orientation widget, which owns
     /// its own clicks. The caller must run this before camera orbit and discard the pointer's click
     /// when [`Self::consumed_click`] is true.
+    ///
+    /// `radius_factor` is the ring radius as a fraction of the camera distance, from the workspace
+    /// settings (U86); the drawing and the hit test are handed the same value.
     pub(crate) fn update(
         &mut self,
         ui: &Ui,
@@ -100,6 +100,7 @@ impl RotateGizmo {
         viewport: egui::Rect,
         target: Target<'_>,
         pointer_over_widget: bool,
+        radius_factor: f64,
     ) -> Result<Option<PlacementCommit>, String> {
         self.consumed_click = false;
         if let Some(mut drag) = self.drag.take() {
@@ -139,7 +140,7 @@ impl RotateGizmo {
         let Some(pointer) = response.hover_pos() else {
             return Ok(None);
         };
-        let Some(axis) = hit_ring(target.camera, viewport, pivot, pointer) else {
+        let Some(axis) = hit_ring(target.camera, viewport, pivot, pointer, radius_factor) else {
             return Ok(None);
         };
         self.hover = Some(axis);
@@ -173,7 +174,7 @@ impl RotateGizmo {
     }
 
     /// Draws the rings over the viewport.
-    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>) {
+    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>, radius_factor: f64) {
         let Some(pivot) = target.anchor_pivot() else {
             return;
         };
@@ -183,7 +184,7 @@ impl RotateGizmo {
         if !viewport.expand(64.0).contains(origin) {
             return;
         }
-        let radius = world_radius(target.camera);
+        let radius = world_radius(target.camera, radius_factor);
         let painter = ui.painter().with_clip_rect(viewport);
         let center_tone = if self.drag.is_some() { Color32::from_gray(140) } else { Color32::from_gray(220) };
         painter.circle_filled(origin, 3.0, center_tone);
@@ -226,9 +227,9 @@ fn ring_basis(normal: DVec3) -> Option<(DVec3, DVec3)> {
     Some((u, normal.cross(u)))
 }
 
-/// World radius that keeps a ring roughly [`RING_RADIUS_FACTOR`] of the camera distance.
-fn world_radius(camera: Camera) -> f64 {
-    (camera.distance() * RING_RADIUS_FACTOR).max(1.0)
+/// World radius that keeps a ring `factor` of the camera distance, never below one millimetre.
+fn world_radius(camera: Camera, factor: f64) -> f64 {
+    (camera.distance() * factor.max(0.0)).max(1.0)
 }
 
 /// The projected ring, closed by repeating its first point.
@@ -250,8 +251,8 @@ fn ring_screen_points(
 }
 
 /// The ring whose projected outline is nearest to `pointer`.
-fn hit_ring(camera: Camera, viewport: egui::Rect, pivot: DVec3, pointer: Pos2) -> Option<Axis> {
-    let radius = world_radius(camera);
+fn hit_ring(camera: Camera, viewport: egui::Rect, pivot: DVec3, pointer: Pos2, radius_factor: f64) -> Option<Axis> {
+    let radius = world_radius(camera, radius_factor);
     let mut best: Option<(f32, Axis)> = None;
     for axis in Axis::ALL {
         let axis_world = axis.direction();
@@ -298,6 +299,9 @@ mod tests {
     use furnicraft_model::Placement;
 
     use super::*;
+
+    /// The ring radius factor the tests draw and hit with, relative to the camera distance.
+    const TEST_RING_FACTOR: f64 = 0.06;
 
     fn viewport() -> egui::Rect {
         egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(800.0, 600.0))
@@ -444,7 +448,7 @@ mod tests {
 
         let axis_world = DVec3::Z;
         let (u, _) = ring_basis(axis_world).expect("basis");
-        let point = pivot + u * world_radius(camera);
+        let point = pivot + u * world_radius(camera, TEST_RING_FACTOR);
         let pointer = screen_point(camera, viewport(), point).expect("ring point in front");
         let angle = pointer_angle(pointer, viewport(), camera, pivot, axis_world).expect("angle");
         assert!(angle.abs() < 1.0e-5, "angle was {angle}");
@@ -466,7 +470,10 @@ mod tests {
             let axis_world = axis.direction();
             if axis_world.dot(camera.forward()).abs() >= EDGE_ON_LIMIT {
                 visible += 1;
-                assert!(ring_screen_points(camera, viewport(), pivot, axis_world, world_radius(camera)).is_some());
+                assert!(
+                    ring_screen_points(camera, viewport(), pivot, axis_world, world_radius(camera, TEST_RING_FACTOR))
+                        .is_some()
+                );
             }
         }
         assert_eq!(visible, 3, "the default isometric view should show all rings");
@@ -483,11 +490,26 @@ mod tests {
     fn a_pointer_on_a_projected_ring_hits_that_world_axis() {
         let camera = Camera::default();
         let pivot = camera.target();
-        let radius = world_radius(camera);
+        let radius = world_radius(camera, TEST_RING_FACTOR);
         let axis_world = Axis::Z.direction();
         let points = ring_screen_points(camera, viewport(), pivot, axis_world, radius).expect("ring");
         let pointer = points[1];
-        assert_eq!(hit_ring(camera, viewport(), pivot, pointer), Some(Axis::Z));
-        assert_eq!(hit_ring(camera, viewport(), pivot, Pos2::new(790.0, 590.0)), None);
+        assert_eq!(hit_ring(camera, viewport(), pivot, pointer, TEST_RING_FACTOR), Some(Axis::Z));
+        assert_eq!(hit_ring(camera, viewport(), pivot, Pos2::new(790.0, 590.0), TEST_RING_FACTOR), None);
+    }
+
+    #[test]
+    fn the_ring_radius_follows_the_camera_distance_and_its_factor() {
+        let camera = Camera::default();
+        let small = world_radius(camera, 0.02);
+        let large = world_radius(camera, 0.2);
+        assert!(large > small, "a larger factor draws a larger ring: {small} vs {large}");
+
+        let mut closer = camera;
+        closer.zoom(0.5);
+        assert!(
+            world_radius(closer, TEST_RING_FACTOR) < world_radius(camera, TEST_RING_FACTOR),
+            "the ring keeps its share of the camera distance"
+        );
     }
 }

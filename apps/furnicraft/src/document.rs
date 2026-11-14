@@ -37,7 +37,7 @@ use furnicraft_scene::{
     Camera, ContactShadows, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame,
 };
 use furnicraft_text::Lang;
-use furnicraft_ui::settings::{Settings, ViewportSettings};
+use furnicraft_ui::settings::{GizmoSettings, Settings, ViewportSettings};
 use furnicraft_ui::{
     BoxDraft, CommandBar, CommandBarAction, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor,
     FieldPlacement, GripValue, MeshElement, Message, PaletteContext, Side, ViewFlags, command_bar,
@@ -1524,9 +1524,14 @@ impl Document {
         ui: &mut egui::Ui,
         shell: &mut Shell,
         viewport: &ViewportSettings,
+        gizmo: &GizmoSettings,
         chrome: &Chrome,
         opacity: u32,
     ) {
+        // The transform gizmos ask this workspace for their size once per frame, so the drawing and
+        // the hit test of a drag read one number and a settings change costs no rebuild (U86).
+        let handle_length = gizmo.handle_length();
+        let ring_factor = gizmo.ring_factor();
         // The toolbar can be wider than the panel in a narrow window; egui then reports the
         // overflowing width as available. Intersecting with the clip rect keeps the viewport and
         // its orientation widget inside the central panel.
@@ -1690,7 +1695,7 @@ impl Document {
                 object,
                 vertices: &mesh_vertices,
             };
-            self.vertex_gizmo.update(ui, &response, rect, target, pointer_over_widget)
+            self.vertex_gizmo.update(ui, &response, rect, target, pointer_over_widget, handle_length)
         } else {
             self.vertex_gizmo.reset();
             Ok(None)
@@ -1884,9 +1889,11 @@ impl Document {
             match shell.mode {
                 TransformMode::Move => {
                     let pinned = self.move_pinned();
-                    self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned)
+                    self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
-                TransformMode::Rotate => self.rotate_gizmo.update(ui, &response, rect, target, pointer_over_widget),
+                TransformMode::Rotate => {
+                    self.rotate_gizmo.update(ui, &response, rect, target, pointer_over_widget, ring_factor)
+                }
             }
         };
         match update {
@@ -2225,7 +2232,7 @@ impl Document {
                 object,
                 vertices: &mesh_vertices,
             };
-            self.vertex_gizmo.paint(ui, rect, target);
+            self.vertex_gizmo.paint(ui, rect, target, handle_length);
         } else if pulling {
             self.extrude_gizmo.paint(ui, rect, self.scene.camera, self.session.project());
         } else if filling {
@@ -2239,8 +2246,8 @@ impl Document {
             // three-side editor, and the placement handles still act beside them.
             self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
             match shell.mode {
-                TransformMode::Move => self.translate_gizmo.paint(ui, rect, paint_target),
-                TransformMode::Rotate => self.rotate_gizmo.paint(ui, rect, paint_target),
+                TransformMode::Move => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
+                TransformMode::Rotate => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
             }
         }
         // The widget belongs to the view under the pointer, so clicking an axis snaps that view and

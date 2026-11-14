@@ -14,7 +14,7 @@ use furnicraft_model::{Id, Project};
 use furnicraft_scene::{Camera, MAX_DISTANCE_MM};
 use furnicraft_units::Length;
 
-use crate::gizmo_math::{Axis, PreviewKey, editable_axes, hit_axis, paint_axis_handles, ray_to};
+use crate::gizmo_math::{Axis, HandleSpec, PreviewKey, editable_axes, hit_axis, paint_axis_handles, ray_to};
 use crate::mesh_pick;
 
 /// One continuous vertex drag.
@@ -124,6 +124,8 @@ impl VertexGizmo {
     ///
     /// The caller runs this only while the editor is in mesh mode on `object`; `vertices` is the
     /// current vertex selection. If a drag is active it owns the pointer until release or Escape.
+    /// `handle_length` is the screen length of one handle, in points, from the workspace settings
+    /// (U86); the drawing and the hit test are handed the same value.
     pub(crate) fn update(
         &mut self,
         ui: &Ui,
@@ -131,6 +133,7 @@ impl VertexGizmo {
         viewport: egui::Rect,
         target: MeshTarget<'_>,
         pointer_over_widget: bool,
+        handle_length: f32,
     ) -> Result<Option<MeshVertexCommit>, String> {
         let MeshTarget { camera, project, object, vertices } = target;
         self.consumed_click = false;
@@ -171,8 +174,8 @@ impl VertexGizmo {
         let Some(pointer) = response.hover_pos() else {
             return Ok(None);
         };
-        let axes = editable_axes(project, object);
-        let Some(axis) = hit_axis(camera, viewport, origin_world, pointer, axes) else {
+        let spec = HandleSpec { axes: editable_axes(project, object), length: handle_length };
+        let Some(axis) = hit_axis(camera, viewport, origin_world, pointer, spec) else {
             return Ok(None);
         };
         self.hover = Some(axis);
@@ -206,7 +209,7 @@ impl VertexGizmo {
     }
 
     /// Draws the handles over the viewport.
-    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: MeshTarget<'_>) {
+    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: MeshTarget<'_>, handle_length: f32) {
         let MeshTarget { camera, project, object, vertices } = target;
         let origin_world = if let Some(drag) = &self.drag {
             drag.start_origin + drag.offset_world
@@ -223,7 +226,7 @@ impl VertexGizmo {
             origin_world,
             self.hover,
             self.drag.as_ref().map(|drag| drag.axis),
-            editable_axes(project, object),
+            HandleSpec { axes: editable_axes(project, object), length: handle_length },
         );
     }
 }

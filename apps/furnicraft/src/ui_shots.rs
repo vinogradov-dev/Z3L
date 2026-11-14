@@ -20,7 +20,8 @@ use eframe::egui;
 use eframe::egui_wgpu;
 use eframe::wgpu;
 use furnicraft_ui::settings::{
-    DEFAULT_PANEL_OPACITY, MAX_PANEL_OPACITY, MIN_PANEL_OPACITY, PanelState, Settings, ThemeChoice,
+    DEFAULT_PANEL_OPACITY, MAX_HANDLE_POINTS, MAX_PANEL_OPACITY, MAX_RING_PERCENT, MIN_HANDLE_POINTS,
+    MIN_PANEL_OPACITY, MIN_RING_PERCENT, PanelState, Settings, ThemeChoice,
 };
 use furnicraft_ui::theme::ThemePreset;
 use furnicraft_ui::ui_scale;
@@ -675,6 +676,107 @@ fn the_frame_grips_are_painted_offscreen() {
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the frame grips are in {}", path.display());
+}
+
+/// Draws one selected sample panel with its transform gizmo and returns the picture.
+///
+/// The two sizes are drawn through the real shell, so the shot answers what the setting does to the
+/// handles and to the rings, not only what `GizmoSettings` holds (U86).
+fn gizmo_picture(
+    render_state: &egui_wgpu::RenderState,
+    mode: crate::TransformMode,
+    handle_points: u32,
+    ring_percent: u32,
+    path: &Path,
+) -> Result<Picture, String> {
+    let ctx = egui::Context::default();
+    let workspace = furnicraft_testkit::scratch_dir("ui-shots").join("gizmo-workspace.json");
+    let session = furnicraft_engine::Session::with_catalog(
+        furnicraft_testkit::sample_project(),
+        furnicraft_testkit::sample_catalog(),
+    );
+    let mut settings = Settings::default();
+    settings.gizmo.handle_points = handle_points;
+    settings.gizmo.ring_percent = ring_percent;
+    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+        .expect("the application builds");
+    app.shell.mode = mode;
+    // The sample shelf is the one node the picture selects; its pivot is where the gizmo stands.
+    let node = furnicraft_model::Id::new(2).ok_or_else(|| "the sample shelf has no id".to_owned())?;
+    app.tabs.active_mut().editor.select_node(Some(node));
+
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let jobs = settle(&mut app, &ctx, render_state, screen);
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(render_state, &jobs, size, pixels_per_point)?;
+    app.tabs.active_mut().release_target();
+    furnicraft_testkit::write_png(path, size[0], size[1], &rgba)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Picture { width: size[0], height: size[1], rgba })
+}
+
+/// Draws the smallest and the largest transform gizmo into four pictures.
+///
+/// The handles are shot in Move mode and the rings in Rotate mode, at both ends of each range, so a
+/// session can compare the gizmo the default draws with the one the sliders can reach (U86).
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/gizmo-*.png"]
+fn the_gizmo_sizes_are_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = furnicraft_testkit::ui_shots_dir().expect("the shots directory is created");
+    let small = gizmo_picture(
+        &render_state,
+        crate::TransformMode::Move,
+        MIN_HANDLE_POINTS,
+        MIN_RING_PERCENT,
+        &directory.join("gizmo-handles-small.png"),
+    )
+    .expect("the small handles render");
+    let large = gizmo_picture(
+        &render_state,
+        crate::TransformMode::Move,
+        MAX_HANDLE_POINTS,
+        MIN_RING_PERCENT,
+        &directory.join("gizmo-handles-large.png"),
+    )
+    .expect("the large handles render");
+    assert!(!small.is_flat() && !large.is_flat(), "both pictures draw more than one colour");
+    assert!(
+        large.differing_pixels(&small) > 500,
+        "the handle length reaches the pixels: {} differ",
+        large.differing_pixels(&small)
+    );
+
+    let small_ring = gizmo_picture(
+        &render_state,
+        crate::TransformMode::Rotate,
+        furnicraft_ui::settings::DEFAULT_HANDLE_POINTS,
+        MIN_RING_PERCENT,
+        &directory.join("gizmo-rings-small.png"),
+    )
+    .expect("the small rings render");
+    let large_ring = gizmo_picture(
+        &render_state,
+        crate::TransformMode::Rotate,
+        furnicraft_ui::settings::DEFAULT_HANDLE_POINTS,
+        MAX_RING_PERCENT,
+        &directory.join("gizmo-rings-large.png"),
+    )
+    .expect("the large rings render");
+    assert!(
+        large_ring.differing_pixels(&small_ring) > 500,
+        "the ring radius reaches the pixels: {} differ",
+        large_ring.differing_pixels(&small_ring)
+    );
+    println!("the small and the large gizmo are in {}", directory.display());
 }
 
 /// A root and one empty product of `600 x 560 x 720` millimetres, the void a fill needs.

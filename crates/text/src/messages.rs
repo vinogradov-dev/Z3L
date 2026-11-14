@@ -1019,6 +1019,16 @@ messages! {
         "Degrees per step when the ring under the corner widget is turned by hand.",
         "Градусов за шаг при ручном повороте кольца под виджетом ориентации."
     ],
+    GizmoHandleLength = ["Handle length", "Длина ручек"],
+    GizmoHandleLengthHint = [
+        "The screen length of the translate handles, in points; a small part stays readable.",
+        "Длина ручек перемещения на экране в пунктах; маленькая деталь остаётся видна."
+    ],
+    GizmoRingRadius = ["Ring radius", "Радиус колец"],
+    GizmoRingRadiusHint = [
+        "The rotate ring radius as a percentage of the camera distance.",
+        "Радиус колец поворота в процентах от расстояния до камеры."
+    ],
     ShowFloorGrid = ["Show the floor grid", "Показывать сетку пола"],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
