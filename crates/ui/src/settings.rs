@@ -38,6 +38,27 @@ pub const MIN_ROLL_STEP_DEGREES: u32 = 1;
 /// The largest hand-turn step of the roll ring, in degrees.
 pub const MAX_ROLL_STEP_DEGREES: u32 = 15;
 
+/// The smallest translate handle the settings offer, in points.
+pub const MIN_HANDLE_POINTS: u32 = 8;
+
+/// The largest translate handle the settings offer, in points.
+pub const MAX_HANDLE_POINTS: u32 = 400;
+
+/// The smallest rotate ring the settings offer, in percent of the camera distance.
+pub const MIN_RING_PERCENT: u32 = 1;
+
+/// The largest rotate ring the settings offer, in percent of the camera distance.
+pub const MAX_RING_PERCENT: u32 = 30;
+
+/// The length of a translate handle a fresh workspace opens with, in points.
+///
+/// Below the 84 pt the shell drew before U86, because a gizmo larger than a small part covers the
+/// face the person is judging.
+pub const DEFAULT_HANDLE_POINTS: u32 = 56;
+
+/// The radius of a rotate ring a fresh workspace opens with, in percent of the camera distance.
+pub const DEFAULT_RING_PERCENT: u32 = 6;
+
 /// The largest display strength the settings offer, in percent.
 pub const MAX_DISPLAY_STRENGTH: u32 = 100;
 
@@ -274,6 +295,39 @@ impl Default for ViewportSettings {
     }
 }
 
+/// The *Gizmo* section: how large the transform gizmos draw under the pointer.
+///
+/// The sizes are screen terms — points for the translate handles, a percentage of the camera
+/// distance for the rotate rings — so a hand that works at 4K and a hand that works at 1080p can
+/// pick the size that suits it. Nothing here reaches the document: changing a size moves no
+/// revision and leaves no undo entry (U86).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GizmoSettings {
+    /// The length of a translate handle, in points.
+    pub handle_points: u32,
+    /// The radius of a rotate ring, in percent of the camera distance.
+    pub ring_percent: u32,
+}
+
+impl Default for GizmoSettings {
+    fn default() -> Self {
+        Self { handle_points: DEFAULT_HANDLE_POINTS, ring_percent: DEFAULT_RING_PERCENT }
+    }
+}
+
+impl GizmoSettings {
+    /// The handle length a drag draws and hits with, in points.
+    pub fn handle_length(&self) -> f32 {
+        self.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS) as f32
+    }
+
+    /// The ring radius as a fraction of the camera distance.
+    pub fn ring_factor(&self) -> f64 {
+        f64::from(self.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT)) / 100.0
+    }
+}
+
 /// The ribbon's own state, remembered between runs.
 ///
 /// The fold and the pinned method of each tool are the two ribbon values that outlive a run; which
@@ -343,6 +397,8 @@ pub struct Settings {
     pub appearance: Appearance,
     /// Default display style, grid, edges and opening view.
     pub viewport: ViewportSettings,
+    /// The size of the two transform gizmos.
+    pub gizmo: GizmoSettings,
     /// Recently opened scenes, newest first.
     pub recent: Vec<PathBuf>,
     /// The fold of the ribbon and the pinned method of each tool.
@@ -357,6 +413,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             appearance: Appearance::default(),
             viewport: ViewportSettings::default(),
+            gizmo: GizmoSettings::default(),
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
             panels: PanelsSettings::default(),
@@ -444,6 +501,8 @@ impl Settings {
         self.viewport.shadow_strength = self.viewport.shadow_strength.min(MAX_DISPLAY_STRENGTH);
         self.viewport.roll_step_degrees =
             self.viewport.roll_step_degrees.clamp(MIN_ROLL_STEP_DEGREES, MAX_ROLL_STEP_DEGREES);
+        self.gizmo.handle_points = self.gizmo.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS);
+        self.gizmo.ring_percent = self.gizmo.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT);
         let mut seen = Vec::new();
         self.recent.retain(|path| {
             let fresh = !seen.contains(path);
@@ -770,6 +829,34 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
             .on_hover_text(Message::RollRingStepHint.text(lang))
             .changed();
     });
+    // The transform gizmos are sized by hand and apply at once, so they get their own heading
+    // inside the view page instead of widening the viewport defaults above (U86).
+    ui.add_space(theme::STEP);
+    ui.label(egui::RichText::new(Message::Gizmo.text(lang)).strong());
+    ui.horizontal(|ui| {
+        ui.label(Message::GizmoHandleLength.text(lang));
+        changed |= ui
+            .add(
+                Scrub::new(&mut settings.gizmo.handle_points)
+                    .range(MIN_HANDLE_POINTS..=MAX_HANDLE_POINTS)
+                    .unit("pt")
+                    .speed(2.0),
+            )
+            .on_hover_text(Message::GizmoHandleLengthHint.text(lang))
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label(Message::GizmoRingRadius.text(lang));
+        changed |= ui
+            .add(
+                Scrub::new(&mut settings.gizmo.ring_percent)
+                    .range(MIN_RING_PERCENT..=MAX_RING_PERCENT)
+                    .unit("%")
+                    .speed(0.2),
+            )
+            .on_hover_text(Message::GizmoRingRadiusHint.text(lang))
+            .changed();
+    });
     changed |= ui.checkbox(&mut settings.viewport.grid, Message::ShowFloorGrid.text(lang)).changed();
     changed |= ui
         .add(
@@ -898,6 +985,7 @@ mod tests {
                 opening_view: OpeningView::Top,
                 roll_step_degrees: 5,
             },
+            gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
             recent: vec![PathBuf::from("/tmp/cabinet.fcs"), PathBuf::from("/tmp/shelf.fcs")],
             ribbon: RibbonSettings {
                 open: false,
@@ -925,6 +1013,39 @@ mod tests {
         assert_eq!(restored.panels.scene, PanelState { visible: false, expanded: true });
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
+        assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
+    }
+
+    #[test]
+    fn the_gizmo_sizes_default_below_the_old_constants_and_are_clamped_on_read() {
+        let defaults = GizmoSettings::default();
+        assert!(defaults.handle_points < 84, "the handle is smaller than the old 84 pt constant");
+        assert!(defaults.ring_percent < 9, "the ring is smaller than the old 9 % constant");
+
+        // A hand-edited file cannot push a size past what the scrub field offers, and a broken
+        // value costs one number, not the recent list or the rest of the workspace.
+        let json = r#"{"version":1,"gizmo":{"handle_points":0,"ring_percent":900},"recent":["/tmp/cabinet.fcs"]}"#;
+        let settings = Settings::from_json(json).expect("parse and repair");
+        assert_eq!(settings.gizmo.handle_points, MIN_HANDLE_POINTS);
+        assert_eq!(settings.gizmo.ring_percent, MAX_RING_PERCENT);
+        assert_eq!(settings.recent, vec![PathBuf::from("/tmp/cabinet.fcs")], "the rest of the file survives");
+
+        let json = r#"{"version":1,"gizmo":{"handle_points":900,"ring_percent":0}}"#;
+        let settings = Settings::from_json(json).expect("parse and repair");
+        assert_eq!(settings.gizmo.handle_points, MAX_HANDLE_POINTS);
+        assert_eq!(settings.gizmo.ring_percent, MIN_RING_PERCENT);
+    }
+
+    #[test]
+    fn the_gizmo_sizes_round_trip_through_json() {
+        let mut settings = Settings::default();
+        settings.gizmo.handle_points = 120;
+        settings.gizmo.ring_percent = 12;
+        let json = settings.to_json().expect("serialise");
+        let restored = Settings::from_json(&json).expect("parse");
+        assert_eq!(restored, settings);
+        assert_eq!(restored.gizmo.handle_length(), 120.0);
+        assert!((restored.gizmo.ring_factor() - 0.12).abs() < 1.0e-12);
     }
 
     #[test]

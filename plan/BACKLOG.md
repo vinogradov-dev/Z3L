@@ -42,26 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U86** the transform gizmos are smaller and their size is a setting
-  Why: The translate handles are 84 pt (`gizmo_math::HANDLE_LENGTH`) and the rotate rings are 9
-   % of the camera distance (`rotate_gizmo::RING_RADIUS_FACTOR`), so on a small part the gizmo
-   is larger than the part and covers the face the person is judging and the distances the drag
-   measures. A hand that works at 4K and a hand at 1080p want different sizes, so the number
-   belongs in Settings › View rather than in a constant.
-  Shape: A `GizmoSettings { handle_points: u32, ring_percent: u32 }` section in
-   `crates/ui/src/settings.rs` with limits (`MIN`/`MAX_HANDLE_POINTS`,
-   `MIN`/`MAX_RING_PERCENT`), a default well below today's 84 pt and 9 %, and a scrub field for
-   each, clamped on read and repaired like `roll_step_degrees`. `paint_axis_handles` and
-   `hit_axis` take the handle length from the caller so one value serves drawing and picking,
-   `rotate_gizmo` takes its radius factor the same way, and the exact-distance fields follow
-   the anchor. The shell hands the resolved settings to every tab the way it hands
-   `ViewportSettings`; nothing enters the document.
-  Done: Both gizmos are visibly smaller at the default and scale with the two fields;
-   `settings.json` round-trips, clamps 8 and 400, and repairs a broken value instead of costing
-   the file; a headless test drags an axis at the minimum and at the maximum handle length and
-   the hit radius follows; no document revision moves when the size changes; an offscreen shot
-   shows the small and the large gizmo; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/gizmo_math.rs, apps/furnicraft/src/rotate_gizmo.rs, crates/ui/src/settings.rs`
 - `[ ]` **U87** the transform mode can be off, and Select is the state a window opens in
   Why: One of the two gizmos is always up, so a person who only wants to look, pick and read
    works with handles they did not ask for, and a stray press on an axis moves the cabinet. The
@@ -347,6 +327,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U86** the transform gizmos are smaller and their size is a setting
+  Why: The translate handles are 84 pt (`gizmo_math::HANDLE_LENGTH`) and the rotate rings are 9
+   % of the camera distance (`rotate_gizmo::RING_RADIUS_FACTOR`), so on a small part the gizmo
+   is larger than the part and covers the face the person is judging and the distances the drag
+   measures. A hand that works at 4K and a hand at 1080p want different sizes, so the number
+   belongs in Settings › View rather than in a constant.
+  Shape: A `GizmoSettings { handle_points: u32, ring_percent: u32 }` section in
+   `crates/ui/src/settings.rs` with limits (`MIN`/`MAX_HANDLE_POINTS`,
+   `MIN`/`MAX_RING_PERCENT`), a default well below today's 84 pt and 9 %, and a scrub field for
+   each, clamped on read and repaired like `roll_step_degrees`. `paint_axis_handles` and
+   `hit_axis` take the handle length from the caller so one value serves drawing and picking,
+   `rotate_gizmo` takes its radius factor the same way, and the exact-distance fields follow
+   the anchor. The shell hands the resolved settings to every tab the way it hands
+   `ViewportSettings`; nothing enters the document.
+  Done: Both gizmos are visibly smaller at the default and scale with the two fields;
+   `settings.json` round-trips, clamps 8 and 400, and repairs a broken value instead of costing
+   the file; a headless test drags an axis at the minimum and at the maximum handle length and
+   the hit radius follows; no document revision moves when the size changes; an offscreen shot
+   shows the small and the large gizmo; `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/gizmo_math.rs, apps/furnicraft/src/rotate_gizmo.rs, crates/ui/src/settings.rs` — `115d4f2`
 
 - `[x]` **U85** the Delete key removes the whole selection behind one question
   Why: Shift-click builds a multi-selection but nothing deletes it: the tree's row menu removes

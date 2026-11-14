@@ -17,6 +17,7 @@ use eframe::egui;
 use furnicraft_model::{ClassCode, Envelope, Id};
 use furnicraft_scene::Camera;
 use furnicraft_text::{Lang, Message};
+use furnicraft_ui::settings::{MAX_HANDLE_POINTS, MAX_RING_PERCENT, MIN_HANDLE_POINTS, MIN_RING_PERCENT};
 
 use super::*;
 
@@ -643,6 +644,26 @@ fn no_chrome_gesture_writes_a_revision() {
     assert_eq!(harness.revision(), revision, "no chrome gesture writes the document");
     assert!(!harness.app.tabs.active().is_dirty(), "and none of them marks the scene unsaved");
     assert!(!harness.app.tabs.active().can_undo(), "and none of them adds an undo entry");
+}
+
+#[test]
+fn the_gizmo_size_is_view_state_and_writes_no_revision() {
+    // A handle length and a ring radius are workspace settings: moving them between the two ends
+    // of the range redraws the gizmos but adds no undo entry and marks no scene unsaved (U86).
+    let mut harness = Harness::new("frame-gizmo-size");
+    harness.settle();
+    let revision = harness.revision();
+
+    harness.app.settings.gizmo.handle_points = MIN_HANDLE_POINTS;
+    harness.app.settings.gizmo.ring_percent = MIN_RING_PERCENT;
+    harness.settle();
+    harness.app.settings.gizmo.handle_points = MAX_HANDLE_POINTS;
+    harness.app.settings.gizmo.ring_percent = MAX_RING_PERCENT;
+    harness.settle();
+
+    assert_eq!(harness.revision(), revision, "a gizmo size is view state, never an edit");
+    assert!(!harness.app.tabs.active().is_dirty(), "and it does not mark the scene unsaved");
+    assert!(!harness.app.tabs.active().can_undo(), "and it adds no undo entry");
 }
 
 #[test]

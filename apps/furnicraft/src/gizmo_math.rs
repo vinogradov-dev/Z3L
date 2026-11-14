@@ -17,14 +17,27 @@ use furnicraft_model::{Id, MoveAxis, Placement, Project};
 use furnicraft_scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use furnicraft_units::Length;
 
-/// Length of an axis handle, in points.
-pub(crate) const HANDLE_LENGTH: f32 = 84.0;
-
-/// Radius inside which a pointer hits a handle, in points.
+/// Radius inside which a pointer hits a handle, in points: the largest a handle may have.
+///
+/// The translate and vertex gizmos scale it with their own handle length (U86); the pull arrow of
+/// the extrude tool uses it as it stands.
 pub(crate) const HIT_RADIUS: f32 = 8.0;
 
-/// Part of a handle next to the origin that never starts a drag, in points.
-const ORIGIN_DEAD_ZONE: f32 = 10.0;
+/// The share of a handle's length a pointer may miss by and still hit it.
+const HIT_RADIUS_FRACTION: f32 = 0.1;
+
+/// The smallest hit zone a short handle keeps, in points.
+const MIN_HIT_RADIUS: f32 = 2.5;
+
+/// The share of a handle next to its origin that never starts a drag, capped so a long handle
+/// still answers a pointer close to the pivot.
+const ORIGIN_DEAD_ZONE_FRACTION: f32 = 0.15;
+const MAX_ORIGIN_DEAD_ZONE: f32 = 10.0;
+
+/// The arrowhead's length as a share of a handle, bounded by these two values in points.
+const ARROW_LENGTH_FRACTION: f32 = 0.14;
+const MIN_ARROW_LENGTH: f32 = 3.0;
+const MAX_ARROW_LENGTH: f32 = 9.0;
 
 /// Axes closer than this to the view direction are not drawn.
 const VIEW_ALIGNMENT_LIMIT: f64 = 0.985;
@@ -717,6 +730,18 @@ pub(crate) fn screen_direction(delta: Vec2) -> Option<Vec2> {
     (delta.length() >= 0.5).then(|| delta.normalized())
 }
 
+/// The handles one gizmo offers in a frame: which axes its class allows and how long each draws.
+///
+/// The length is screen points, resolved from the workspace settings once per frame; the drawing
+/// and the hit test read the same value, so the arrow a user sees is the arrow a drag grabs (U86).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HandleSpec {
+    /// Which local axes are drawn and hit, in [`Axis::index`] order.
+    pub(crate) axes: [bool; 3],
+    /// The screen length of one handle, in points.
+    pub(crate) length: f32,
+}
+
 /// One projected axis handle: the axis, its screen-space tip and its unit screen direction.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AxisHandle {
@@ -751,17 +776,19 @@ fn axis_allowed(axes: [bool; 3], axis: Axis) -> bool {
 
 /// The projected handles of a gizmo at `origin_world`, skipping axes that point at the camera and
 /// the axes the class does not let change.
+///
+/// `spec` names the axes to draw and the screen length each one takes, in points.
 pub(crate) fn axis_handles(
     camera: Camera,
     viewport: egui::Rect,
     origin_world: DVec3,
     origin: Pos2,
-    axes: [bool; 3],
+    spec: HandleSpec,
 ) -> Vec<AxisHandle> {
     let step = (camera.distance() * 0.01).max(1.0);
     let mut handles = Vec::with_capacity(Axis::ALL.len());
     for axis in Axis::ALL {
-        if !axis_allowed(axes, axis) || axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
+        if !axis_allowed(spec.axes, axis) || axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
             continue;
         }
         let Some(end) = screen_point(camera, viewport, origin_world + axis.direction() * step) else {
@@ -770,7 +797,7 @@ pub(crate) fn axis_handles(
         let Some(direction) = screen_direction(end - origin) else {
             continue;
         };
-        handles.push(AxisHandle { axis, tip: origin + direction * HANDLE_LENGTH, direction });
+        handles.push(AxisHandle { axis, tip: origin + direction * spec.length.max(0.0), direction });
     }
     handles
 }
@@ -781,27 +808,39 @@ pub(crate) fn hit_axis(
     viewport: egui::Rect,
     origin_world: DVec3,
     pointer: Pos2,
-    axes: [bool; 3],
+    spec: HandleSpec,
 ) -> Option<Axis> {
     let origin = screen_point(camera, viewport, origin_world)?;
     if !viewport.expand(64.0).contains(origin) {
         return None;
     }
+    let radius = hit_radius(spec.length);
+    let dead_zone = origin_dead_zone(spec.length);
     let mut best: Option<(f32, Axis)> = None;
-    for handle in axis_handles(camera, viewport, origin_world, origin, axes) {
-        let distance = distance_to_handle(pointer, origin, handle.tip);
+    for handle in axis_handles(camera, viewport, origin_world, origin, spec) {
+        let distance = distance_to_handle(pointer, origin, handle.tip, dead_zone);
         let Some(distance) = distance else {
             continue;
         };
-        if distance <= HIT_RADIUS && best.is_none_or(|(nearest, _)| distance < nearest) {
+        if distance <= radius && best.is_none_or(|(nearest, _)| distance < nearest) {
             best = Some((distance, handle.axis));
         }
     }
     best.map(|(_, axis)| axis)
 }
 
+/// The hit radius of a handle of `length` points.
+fn hit_radius(length: f32) -> f32 {
+    (length.max(0.0) * HIT_RADIUS_FRACTION).clamp(MIN_HIT_RADIUS, HIT_RADIUS)
+}
+
+/// The stretch next to the origin of a handle of `length` points that starts no drag.
+fn origin_dead_zone(length: f32) -> f32 {
+    (length.max(0.0) * ORIGIN_DEAD_ZONE_FRACTION).min(MAX_ORIGIN_DEAD_ZONE)
+}
+
 /// Distance from `point` to the segment, or `None` inside the dead zone next to the origin.
-fn distance_to_handle(point: Pos2, start: Pos2, end: Pos2) -> Option<f32> {
+fn distance_to_handle(point: Pos2, start: Pos2, end: Pos2, dead_zone: f32) -> Option<f32> {
     let segment = end - start;
     let length_squared = segment.length_sq();
     if length_squared <= f32::EPSILON {
@@ -809,7 +848,7 @@ fn distance_to_handle(point: Pos2, start: Pos2, end: Pos2) -> Option<f32> {
     }
     let length = length_squared.sqrt();
     let along = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
-    if along * length < ORIGIN_DEAD_ZONE {
+    if along * length < dead_zone {
         return None;
     }
     Some((point - (start + segment * along)).length())
@@ -826,9 +865,9 @@ pub(crate) fn paint_axis_handles(
     origin_world: DVec3,
     hover: Option<Axis>,
     active: Option<Axis>,
-    axes: [bool; 3],
+    spec: HandleSpec,
 ) {
-    if !axes.iter().any(|allowed| *allowed) {
+    if !spec.axes.iter().any(|allowed| *allowed) {
         return;
     }
     let Some(origin) = screen_point(camera, viewport, origin_world) else {
@@ -837,7 +876,7 @@ pub(crate) fn paint_axis_handles(
     if !viewport.expand(64.0).contains(origin) {
         return;
     }
-    let handles = axis_handles(camera, viewport, origin_world, origin, axes);
+    let handles = axis_handles(camera, viewport, origin_world, origin, spec);
     let painter = ui.painter().with_clip_rect(viewport);
     let center_tone = if active.is_some() { Color32::from_gray(140) } else { Color32::from_gray(220) };
     painter.circle_filled(origin, 3.0, center_tone);
@@ -852,14 +891,17 @@ pub(crate) fn paint_axis_handles(
         let width = if is_active || hovered { 3.5 } else { 2.2 };
         painter.line_segment([origin, handle.tip], Stroke::new(width, color));
 
+        // The head and the label shrink with the handle, so a small gizmo is a small gizmo and not
+        // a short line under an arrow that swallowed it (U86).
+        let arrow = (spec.length.max(0.0) * ARROW_LENGTH_FRACTION).clamp(MIN_ARROW_LENGTH, MAX_ARROW_LENGTH);
         let perpendicular = Vec2::new(-handle.direction.y, handle.direction.x);
-        let base = handle.tip - handle.direction * 9.0;
+        let base = handle.tip - handle.direction * arrow;
         painter.add(Shape::convex_polygon(
-            vec![handle.tip, base + perpendicular * 4.0, base - perpendicular * 4.0],
+            vec![handle.tip, base + perpendicular * (arrow * 0.45), base - perpendicular * (arrow * 0.45)],
             color,
             Stroke::NONE,
         ));
-        let label = handle.tip + handle.direction * 12.0;
+        let label = handle.tip + handle.direction * (arrow + 3.0);
         painter.text(
             label,
             Align2::CENTER_CENTER,
@@ -924,6 +966,14 @@ mod tests {
         Target { camera: Camera::default(), project, selection }
     }
 
+    /// The handle length the tests draw and grab with, in points.
+    const TEST_HANDLE_LENGTH: f32 = 56.0;
+
+    /// A handle spec with the test length and the given axes.
+    fn spec(axes: [bool; 3]) -> HandleSpec {
+        HandleSpec { axes, length: TEST_HANDLE_LENGTH }
+    }
+
     fn viewport() -> egui::Rect {
         egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))
     }
@@ -935,12 +985,12 @@ mod tests {
     #[test]
     fn the_default_view_draws_three_distinct_handles() {
         let camera = Camera::default();
-        let handles = axis_handles(camera, viewport(), camera.target(), origin_screen(camera), ALL_AXES);
+        let handles = axis_handles(camera, viewport(), camera.target(), origin_screen(camera), spec(ALL_AXES));
         assert_eq!(handles.len(), 3);
         for handle in &handles {
             assert!(handle.tip.is_finite());
             assert!((handle.direction.length() - 1.0).abs() < 1.0e-5);
-            assert!((handle.tip - origin_screen(camera)).length() > 80.0);
+            assert!(((handle.tip - origin_screen(camera)).length() - TEST_HANDLE_LENGTH).abs() < 0.5);
         }
         let z = handles.iter().find(|handle| handle.axis == Axis::Z).expect("Z handle");
         assert!(z.direction.y < -0.5, "Z should point up, direction was {:?}", z.direction);
@@ -950,7 +1000,7 @@ mod tests {
     fn a_view_aligned_axis_has_no_handle() {
         let mut camera = Camera::default();
         camera.look_from(DVec3::Z);
-        let handles = axis_handles(camera, viewport(), camera.target(), origin_screen(camera), ALL_AXES);
+        let handles = axis_handles(camera, viewport(), camera.target(), origin_screen(camera), spec(ALL_AXES));
         assert!(handles.iter().all(|handle| handle.axis != Axis::Z), "handles were {handles:?}");
         assert_eq!(handles.len(), 2);
     }
@@ -960,12 +1010,39 @@ mod tests {
         let camera = Camera::default();
         let origin_world = camera.target();
         let origin = origin_screen(camera);
-        let handles = axis_handles(camera, viewport(), origin_world, origin, ALL_AXES);
+        let handles = axis_handles(camera, viewport(), origin_world, origin, spec(ALL_AXES));
         let x = handles.iter().find(|handle| handle.axis == Axis::X).expect("X handle");
         let pointer = origin + (x.tip - origin) * 0.6;
-        assert_eq!(hit_axis(camera, viewport(), origin_world, pointer, ALL_AXES), Some(Axis::X));
-        assert_eq!(hit_axis(camera, viewport(), origin_world, origin, ALL_AXES), None);
-        assert_eq!(hit_axis(camera, viewport(), origin_world, origin + Vec2::new(300.0, 300.0), ALL_AXES), None);
+        assert_eq!(hit_axis(camera, viewport(), origin_world, pointer, spec(ALL_AXES)), Some(Axis::X));
+        assert_eq!(hit_axis(camera, viewport(), origin_world, origin, spec(ALL_AXES)), None);
+        assert_eq!(hit_axis(camera, viewport(), origin_world, origin + Vec2::new(300.0, 300.0), spec(ALL_AXES)), None);
+    }
+
+    #[test]
+    fn the_handle_length_sets_both_the_tip_and_the_hit_radius() {
+        let camera = Camera::default();
+        let origin_world = camera.target();
+        let origin = origin_screen(camera);
+        let short = axis_handles(camera, viewport(), origin_world, origin, HandleSpec { axes: ALL_AXES, length: 8.0 });
+        let x = short.iter().find(|handle| handle.axis == Axis::X).expect("X handle");
+        let near = origin + (x.tip - origin) * 0.6;
+        assert_eq!(
+            hit_axis(camera, viewport(), origin_world, near, HandleSpec { axes: ALL_AXES, length: 8.0 }),
+            Some(Axis::X),
+            "a pointer on the short handle still grabs it"
+        );
+
+        let beyond = origin + x.direction * 40.0;
+        assert_eq!(
+            hit_axis(camera, viewport(), origin_world, beyond, HandleSpec { axes: ALL_AXES, length: 8.0 }),
+            None,
+            "the short handle ends at its tip, and its hit radius is a share of it"
+        );
+        assert_eq!(
+            hit_axis(camera, viewport(), origin_world, beyond, HandleSpec { axes: ALL_AXES, length: 400.0 }),
+            Some(Axis::X),
+            "the long handle reaches the same pointer, so drawing and picking share one length"
+        );
     }
 
     #[test]
@@ -1443,18 +1520,20 @@ mod tests {
         assert_eq!(editable_axes(&project, cube), ALL_AXES, "an unclassified mesh is free");
         let camera = Camera::default();
         let origin = origin_screen(camera);
-        assert_eq!(axis_handles(camera, viewport(), camera.target(), origin, ALL_AXES).len(), 3);
+        assert_eq!(axis_handles(camera, viewport(), camera.target(), origin, spec(ALL_AXES)).len(), 3);
 
         let (project, worktop) = classed_cube("70.01");
         let axes = editable_axes(&project, worktop);
         assert_eq!(axes, [true, false, false], "a worktop changes its length only");
-        let handles = axis_handles(camera, viewport(), camera.target(), origin, axes);
+        let handles = axis_handles(camera, viewport(), camera.target(), origin, spec(axes));
         assert_eq!(handles.len(), 1);
         assert_eq!(handles.first().map(|handle| handle.axis), Some(Axis::X));
 
         let (project, hinge) = classed_cube("50.02.01");
         assert_eq!(editable_axes(&project, hinge), [false; 3], "a hinge is never resized");
-        assert!(axis_handles(camera, viewport(), camera.target(), origin, editable_axes(&project, hinge)).is_empty());
+        assert!(
+            axis_handles(camera, viewport(), camera.target(), origin, spec(editable_axes(&project, hinge))).is_empty()
+        );
     }
 
     #[test]
@@ -1463,12 +1542,12 @@ mod tests {
         let camera = Camera::default();
         let origin_world = camera.target();
         let origin = origin_screen(camera);
-        let free = axis_handles(camera, viewport(), origin_world, origin, ALL_AXES);
+        let free = axis_handles(camera, viewport(), origin_world, origin, spec(ALL_AXES));
         let x = free.iter().find(|handle| handle.axis == Axis::X).expect("X handle");
         let pointer = origin + (x.tip - origin) * 0.6;
-        assert_eq!(hit_axis(camera, viewport(), origin_world, pointer, ALL_AXES), Some(Axis::X));
+        assert_eq!(hit_axis(camera, viewport(), origin_world, pointer, spec(ALL_AXES)), Some(Axis::X));
         assert_eq!(
-            hit_axis(camera, viewport(), origin_world, pointer, editable_axes(&project, hinge)),
+            hit_axis(camera, viewport(), origin_world, pointer, spec(editable_axes(&project, hinge))),
             None,
             "a class with no extent offers no handle to grab"
         );
