@@ -40,34 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **P15** the plan tool teaches its grammar instead of refusing it
-  Why: Measured over the six tasks that carry a log: the plan tool cost ~16 of ~119 minutes, in
-   four of the six tasks, and every minute was a refusal that did not say what it wanted. U88
-   spent 7 minutes and four attempts on ## Where we are, because the refusal prints the result
-   (94 lines, over the 70-line budget) and not the cause (the body re-wraps at PROSE_WIDTH, so
-   every submit grows); derive dry-run prints a diff and no line count. Four close refusals in
-   four tasks were the same Nothing is scheduled rule, which the tool can write itself when ##
-   Now is empty. Three sessions typed take then start because take leaves state=idle and start
-   refuses a task outside the order. Two accepted gaps in plan/debt.md take minutes from every
-   session: no verb updates a running session's own now:/resume:, and --field accepts a label
-   the entry does not have.
-  Shape: One decision, one commit: the plan tool teaches its grammar instead of refusing it.
-   validate: the budget refusal names the wrap width beside the count, and state set prints
-   candidate lines, budget and width under --dry-run. write: task start <ID> takes a head of ##
-   Next as well as the current task, so take and start collapse into one verb for the common
-   case and take stays for the top of a running order; task close writes the Nothing is
-   scheduled paragraph itself when ## Now is empty and --next is absent. A verb that writes a
-   running session's now: and resume: beside step, and --field refusing a label outside
-   ENTRY_LABELS instead of appending it. What is not in scope: no change to any rule the gate
-   enforces, only to what it says and to which verbs make a refused sequence unnecessary; no
-   new plan file.
-  Done: A test per sentence: the budget refusal names the width, --dry-run prints the three
-   numbers, task start takes a ## Next head, task close without --next is legal when ## Now is
-   empty, a running session updates now: with the new verb, and --field on an unknown label is
-   refused; the two matching plan/debt.md entries are deleted in the same change; cargo xtask
-   ci is green.
-  `files: state-contract/src/cli/write.rs, state-contract/src/cli/mod.rs, state-contract/src/edit.rs, state-contract/src/validate.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
@@ -252,6 +224,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **P15** the plan tool teaches its grammar instead of refusing it
+  Why: Measured over the six tasks that carry a log: the plan tool cost ~16 of ~119 minutes, in
+   four of the six tasks, and every minute was a refusal that did not say what it wanted. U88
+   spent 7 minutes and four attempts on ## Where we are, because the refusal prints the result
+   (94 lines, over the 70-line budget) and not the cause (the body re-wraps at PROSE_WIDTH, so
+   every submit grows); derive dry-run prints a diff and no line count. Four close refusals in
+   four tasks were the same Nothing is scheduled rule, which the tool can write itself when ##
+   Now is empty. Three sessions typed take then start because take leaves state=idle and start
+   refuses a task outside the order. Two accepted gaps in plan/debt.md take minutes from every
+   session: no verb updates a running session's own now:/resume:, and --field accepts a label
+   the entry does not have.
+  Shape: One decision, one commit: the plan tool teaches its grammar instead of refusing it.
+   validate: the budget refusal names the wrap width beside the count, and state set prints
+   candidate lines, budget and width under --dry-run. write: task start <ID> takes a head of ##
+   Next as well as the current task, so take and start collapse into one verb for the common
+   case and take stays for the top of a running order; task close writes the Nothing is
+   scheduled paragraph itself when ## Now is empty and --next is absent. A verb that writes a
+   running session's now: and resume: beside step, and --field refusing a label outside
+   ENTRY_LABELS instead of appending it. What is not in scope: no change to any rule the gate
+   enforces, only to what it says and to which verbs make a refused sequence unnecessary; no
+   new plan file.
+  Done: A test per sentence: the budget refusal names the width, --dry-run prints the three
+   numbers, task start takes a ## Next head, task close without --next is legal when ## Now is
+   empty, a running session updates now: with the new verb, and --field on an unknown label is
+   refused; the two matching plan/debt.md entries are deleted in the same change; cargo xtask
+   ci is green.
+  `files: state-contract/src/cli/write.rs, state-contract/src/cli/mod.rs, state-contract/src/edit.rs, state-contract/src/validate.rs` — `355c353`
 
 - `[x]` **P14** an entry's Done names the rule and the session reads the skill the route names
   Why: Measured over the six tasks that carry a log (U88, U89, U90, U94, X41, X42; ~119 min):
