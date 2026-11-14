@@ -845,6 +845,7 @@ messages! {
     GroupDisplay = ["Display", "Отображение"],
     GroupLayout = ["Layout", "Раскладка"],
     GroupNavigation = ["Navigation", "Навигация"],
+    GroupSnaps = ["Snaps", "Привязки"],
 
     // The ribbon's tools (U68); a planned row is named here before its command exists.
     ToolProductFrame = ["Product frame", "Каркас изделия"],

@@ -943,6 +943,21 @@ mod tests {
     }
 
     #[test]
+    fn the_view_tab_captions_the_snap_group_and_no_display_group() {
+        // U91: the grid snap changes where a click lands, so it left *View › Display* for a caption
+        // of its own and a person reads where a snap lives. Display holds only planned tools now,
+        // so the ribbon captions no Display group (ADR 0066).
+        for (lang, snaps, display) in [(Lang::En, "SNAPS", "DISPLAY"), (Lang::Ru, "ПРИВЯЗКИ", "ОТОБРАЖЕНИЕ")]
+        {
+            let mut state = Toolbars::new();
+            state.set_tab(tab("view"));
+            let (texts, _, _) = draw_in(&mut state, full_context(), lang);
+            assert!(texts.iter().any(|text| text == snaps), "{snaps} captions the snaps group: {texts:?}");
+            assert!(!texts.iter().any(|text| text == display), "{display} is still captioned: {texts:?}");
+        }
+    }
+
+    #[test]
     fn a_tab_with_nothing_live_is_not_drawn_and_is_never_active() {
         assert!(!PLANNED_ONLY.is_drawn());
         assert_eq!(PLANNED_ONLY.columns(), 0);
