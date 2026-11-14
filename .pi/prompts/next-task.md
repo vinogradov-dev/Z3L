@@ -25,7 +25,9 @@ when the hint is wrong, the fix is the hint, in the same change.
 
 `## Log` is the **first** section of the note `plan/notes/<ID>.md` (start it from
 `state-contract/templates/NOTE.md` when it does not exist), and it is written as you go — one line
-per stop:
+per stop. A note that already exists keeps every section it has: `## What went wrong upstream` and
+`## The sentence that would have caught it` are a repair's record of the tasks that failed before
+it, and a feature session never edits them.
 
 ```text
 HH:MM · phase · what · why · cost
