@@ -277,15 +277,31 @@ pub(crate) struct PanelSlot<'a> {
     pub(crate) head: PanelHead,
 }
 
-/// Draws one panel body in a scroller that never widens the panel.
+/// Draws one panel body in a scroller that never widens the panel and never hides its last row.
 ///
 /// A panel's rectangle is a contract the shell reads twice — [`Chrome::covers`] turns a press on it
 /// into chrome, and the orientation widget is placed clear of it. A body wider than the panel would
 /// therefore paint over the scene the widget was told is free, and a press on it would reach the
 /// scene instead of the panel. The scroller bounds the body to the panel's inner width and gives a
 /// row too wide for it a horizontal scrollbar instead of growing the panel (U73).
+///
+/// The bar itself floats over the content, so the body reserves one step plus the bar's own height
+/// at the bottom: the last row can always be scrolled clear of it, and the panel ends with the same
+/// air as its sides instead of cutting the row off (X39). Both panels scroll through this one
+/// helper, so their bodies keep one inset and one route.
 pub(crate) fn scroll_body(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
-    egui::ScrollArea::both().show(ui, body);
+    let bottom = theme::STEP + scroll_bar_height(ui);
+    let margin = egui::Margin { left: 0, right: 0, top: 0, bottom: bottom.round() as i8 };
+    egui::ScrollArea::both().auto_shrink([false, false]).content_margin(margin).show(ui, body);
+}
+
+/// The height a floating scroll bar reaches once the pointer expands it, in points.
+///
+/// `egui` draws the default bar over the content instead of allocating space for it, so the body it
+/// covers is the body that must reserve it; the resting bar is thinner, but a reserved strip has to
+/// hold the widest one or a hover would clip the row again (X39).
+pub(crate) fn scroll_bar_height(ui: &egui::Ui) -> f32 {
+    ui.spacing().scroll.bar_width
 }
 
 /// Draws one floating panel into `rect` and returns the gesture its chrome asked for.
@@ -433,7 +449,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::test_support::drawn_text;
+    use crate::test_support::{drawn_text, drawn_text_rects};
 
     /// The window every test draws into.
     const SCREEN: egui::Vec2 = egui::vec2(1000.0, 600.0);
@@ -533,6 +549,135 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         assert!(width <= EXPANDED_WIDTH + 1.0, "the panel keeps its width: {width}");
+    }
+
+    /// The panel's rectangle and the body viewport the scroller hands it, measured on a real frame.
+    ///
+    /// Both panels draw through [`show`], so one measurement answers for the tree and the inspector:
+    /// the reader compares the air a panel keeps at its sides with the air under its last row.
+    fn body_viewport(ctx: &egui::Context, side: PanelSide) -> (egui::Rect, egui::Rect) {
+        let state = PanelState::default();
+        let panel = panel_rect(viewport(), side, panel_top(76.0), state, EXPANDED_WIDTH).expect("shown");
+        let mut body = egui::Rect::NOTHING;
+        // Two frames: `egui` runs a sizing pass for a new area, so the first one measures the panel
+        // before it draws the body the second one hands in (U78).
+        for _ in 0..2 {
+            let output = ctx.run_ui(input(), |_ui| {
+                let event =
+                    show(ctx, PanelSlot { side, id: "body_viewport", rect: panel, state, head: head() }, 92, |ui| {
+                        scroll_body(ui, |ui| {
+                            body = ui.max_rect();
+                            ui.label("BODY");
+                        });
+                    });
+                assert_eq!(event, PanelEvent::None, "a frame with no click asks for nothing");
+            });
+            output.drop_without_applying_deltas();
+        }
+        (panel, body)
+    }
+
+    /// The height of the bar the theme's scroll style draws, read from a real style.
+    fn bar_height(ctx: &egui::Context) -> f32 {
+        let mut height = 0.0;
+        let output = ctx.run_ui(input(), |ui| height = scroll_bar_height(ui));
+        output.drop_without_applying_deltas();
+        height
+    }
+
+    #[test]
+    fn both_panels_keep_one_body_inset_and_clear_the_bar() {
+        // The regression X39: the inspector's last row sat under the horizontal bar, the tree scrolled
+        // by its own route with its own margins, so the two panels did not agree. Both bodies now
+        // come from `scroll_body`, which reserves the bar's own height under the last row.
+        let mut measured = Vec::new();
+        for preference in [egui::ThemePreference::Dark, egui::ThemePreference::Light] {
+            let ctx = context();
+            ctx.set_theme(preference);
+            let bar = bar_height(&ctx);
+            for side in [PanelSide::Left, PanelSide::Right] {
+                let (panel, body) = body_viewport(&ctx, side);
+                let inset = body.left() - panel.left();
+                let bottom = panel.bottom() - body.bottom();
+                assert!((inset - theme::STEP).abs() < 0.5, "{preference:?}/{side:?}: one step at the side: {inset}");
+                assert!(
+                    (panel.right() - body.right() - inset).abs() < 0.5,
+                    "{preference:?}/{side:?}: the same on the right"
+                );
+                assert!(
+                    bottom >= inset + bar - 0.5,
+                    "{preference:?}/{side:?}: {bottom} pt reserved under the last row, {inset} at the side, a {bar} pt bar"
+                );
+                assert!(body.bottom() <= panel.bottom(), "{preference:?}/{side:?}: the body stays inside the panel");
+                measured.push((preference, side, inset, bottom));
+            }
+        }
+        // One helper draws both bodies, so the two panels of one theme keep exactly the same air.
+        for preference in [egui::ThemePreference::Dark, egui::ThemePreference::Light] {
+            let left = measured.iter().find(|(theme, side, ..)| *theme == preference && *side == PanelSide::Left);
+            let right = measured.iter().find(|(theme, side, ..)| *theme == preference && *side == PanelSide::Right);
+            let (Some(left), Some(right)) = (left, right) else { panic!("both panels are measured") };
+            assert_eq!((left.2, left.3), (right.2, right.3), "{preference:?}: one helper, one inset");
+        }
+    }
+
+    #[test]
+    fn the_last_row_of_a_wide_body_scrolls_clear_of_the_bar() {
+        // A body wider than the panel needs the horizontal bar, and a body taller than the panel needs
+        // the vertical one. Scrolled to the end, the last row must end above the bar's strip instead
+        // of under it, which is the row a user reads last.
+        let ctx = context();
+        let side = PanelSide::Right;
+        let bar = bar_height(&ctx);
+        let state = PanelState::default();
+        let panel = panel_rect(viewport(), side, panel_top(76.0), state, EXPANDED_WIDTH).expect("shown");
+        let rows = 60;
+        let mut at_rest = egui::Rect::NOTHING;
+        let mut drawn = Vec::new();
+        for frame in 0..12 {
+            let mut raw = input();
+            if frame >= 2 {
+                // The pointer rests on the panel and the wheel turns towards the end of the body.
+                raw.events.push(egui::Event::PointerMoved(panel.center()));
+                raw.events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -400.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let next = ctx.run_ui(raw, |_ui| {
+                show(&ctx, PanelSlot { side, id: "body_row", rect: panel, state, head: head() }, 92, |ui| {
+                    scroll_body(ui, |ui| {
+                        if frame == 0 {
+                            at_rest = ui.max_rect();
+                        }
+                        for row in 0..rows {
+                            ui.add_sized(
+                                egui::vec2(EXPANDED_WIDTH * 2.0, 18.0),
+                                egui::Label::new(format!("ROW-{row:02}")),
+                            );
+                        }
+                    });
+                });
+            });
+            drawn = drawn_text_rects(&next.shapes);
+            next.drop_without_applying_deltas();
+        }
+        let body: Vec<(egui::Rect, String)> = drawn.into_iter().filter(|(_, text)| text.starts_with("ROW-")).collect();
+        let last_text = format!("ROW-{:02}", rows - 1);
+        let (last_row, _) =
+            body.iter().find(|(_, text)| text == &last_text).expect("the wheel reaches the last row of the body");
+        for (rect, text) in &body {
+            assert!(rect.bottom() <= at_rest.bottom() + 0.5, "{text} stays inside the body viewport: {rect:?}");
+            assert!(
+                panel.bottom() - rect.bottom() >= bar + theme::STEP - 0.5,
+                "{text} clears the bar: {} pt of air above a {bar} pt bar",
+                panel.bottom() - rect.bottom()
+            );
+        }
+        assert!(last_row.bottom() < at_rest.bottom(), "the last row ended above the viewport edge, not on it");
     }
 
     #[test]

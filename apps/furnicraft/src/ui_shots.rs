@@ -787,3 +787,122 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the fill ghost is in {}", path.display());
 }
+
+/// A scene whose tree is taller than a panel and whose inspector card is the longest one.
+///
+/// Forty components make the tree scroll to a last row (the demo scene holds six), and the last
+/// component holds a panel, so the inspector draws its placement, pivot, panel and property cards —
+/// the body whose last row the horizontal bar used to cross (X39).
+fn deep_session() -> Result<(furnicraft_engine::Session, furnicraft_model::Id), String> {
+    use furnicraft_model::{Container, Id, PanelNominalSize, Placement, Project};
+
+    let root_id = Id::new(1).ok_or("id 1 is the root")?;
+    let root = Container::new(root_id, "Scene", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).map_err(|error| error.to_string())?;
+    let mut last = root_id;
+    for index in 0..40 {
+        last = project
+            .add_component(root_id, format!("Cabinet {index:02}"), Placement::IDENTITY)
+            .map_err(|error| error.to_string())?;
+    }
+    let millimetres = |value: i64| furnicraft_units::Length::from_millimetres(value).ok_or("a length");
+    let size = PanelNominalSize::new(millimetres(600)?, millimetres(400)?).map_err(|error| error.to_string())?;
+    let panel = project
+        .add_panel(last, "Shelf", size, None, millimetres(18)?, Placement::IDENTITY)
+        .map_err(|error| error.to_string())?;
+    project.validate().map_err(|error| error.to_string())?;
+    let session = furnicraft_engine::Session::with_catalog(project, crate::scene_build::default_catalog()?);
+    Ok((session, panel))
+}
+
+/// Draws both side panels scrolled to their last row in both themes, the way X39 hid a row.
+///
+/// The regression was pixels, not rectangles: the floating bar was drawn over the last row of the
+/// inspector and the tree scrolled by its own route. The shot turns the wheel over each panel until
+/// its body reaches the end, so the picture shows the row the bar would cover in either theme.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/side-panels-{dark,light}.png"]
+fn the_panels_last_row_is_painted_clear_of_the_bar() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = furnicraft_testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    for variant in VARIANTS {
+        let ctx = egui::Context::default();
+        let workspace = furnicraft_testkit::scratch_dir("ui-shots").join("side-panels-workspace.json");
+        let (session, panel) = deep_session().expect("the deep scene builds");
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        app.tabs.active_mut().editor.select_node(Some(panel));
+        let mut jobs = settle(&mut app, &ctx, &render_state, screen);
+
+        // Every frame turns the wheel over one panel, alternating, so both bodies reach their end
+        // before the picture is taken.
+        let mut chrome = None;
+        for step in 0..24 {
+            let target = chrome.as_ref().and_then(
+                |chrome: &crate::side_panels::Chrome| {
+                    if step % 2 == 0 { chrome.panels.left } else { chrome.panels.right }
+                },
+            );
+            let events = target.map(|rect| {
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -600.0),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Wheel,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            });
+            let mut output = ctx.run_ui(
+                egui::RawInput { screen_rect: Some(screen), events: events.unwrap_or_default(), ..Default::default() },
+                |ui| {
+                    chrome = Some(app.frame(ui));
+                },
+            );
+            let mut delta = std::mem::take(&mut output.textures_delta);
+            {
+                let mut renderer = render_state.renderer.write();
+                for (id, images) in &delta.set {
+                    for image in images {
+                        renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                    }
+                }
+                for id in &delta.free {
+                    renderer.free_texture(id);
+                }
+            }
+            delta.clear();
+            jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+        }
+        assert!(chrome.is_some(), "the frame drew both panels");
+
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let theme = match variant {
+            ThemeChoice::Dark => "dark",
+            ThemeChoice::Light => "light",
+            ThemeChoice::System => "system",
+        };
+        let path = directory.join(format!("side-panels-{theme}.png"));
+        furnicraft_testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        let picture = Picture { width: size[0], height: size[1], rgba };
+        assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+        println!("the scrolled panels are in {}", path.display());
+    }
+}

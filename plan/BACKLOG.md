@@ -41,24 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X39** the inspector's last row hides under the horizontal scroller, and the tree scrolls by a different route
-  Why: Observation: the right panel's content ends flush with the panel's rounded bottom edge
-   and the horizontal scrollbar the inspector needs crosses the last card, so the bottom reads
-   as cut off; the left tree uses its own vertical `ScrollArea` and its own margins, so the two
-   panels do not agree. Expected: both panels keep the same air at the bottom as at the sides,
-   the last row clears the scrollbar, and one helper draws both bodies. Suspected cause:
-   `scroll_body` bounds the body to the panel's inner width but reserves nothing at the bottom,
-   and `main.rs` gives the tree a plain `ScrollArea::vertical` instead of that helper.
-  Shape: `scroll_body` becomes the one scroller of both panels (the tree's private `ScrollArea`
-   goes), with shrinking off, the panel's side inset and a bottom inset of one step plus the
-   scrollbar's own height reserved, so the last row can always be scrolled clear of it.
-   `panel_rect` keeps its geometry; a golden pins the inner content rectangle.
-  Done: A headless test measures the inner content rectangle of both panels and asserts the
-   bottom inset is at least the side inset plus the scrollbar height; an offscreen shot of the
-   longest card and the deepest tree shows no clipped row in either theme; `cargo xtask ci` is
-   green.
-  `files: apps/furnicraft/src/side_panels.rs, apps/furnicraft/src/main.rs`
-
 ## Next
 - `[ ]` **K2** the order package writer: one manifest and ten flat tables other programs read
   Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
@@ -322,6 +304,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X39** the inspector's last row hides under the horizontal scroller, and the tree scrolls by a different route
+  Why: Observation: the right panel's content ends flush with the panel's rounded bottom edge
+   and the horizontal scrollbar the inspector needs crosses the last card, so the bottom reads
+   as cut off; the left tree uses its own vertical `ScrollArea` and its own margins, so the two
+   panels do not agree. Expected: both panels keep the same air at the bottom as at the sides,
+   the last row clears the scrollbar, and one helper draws both bodies. Suspected cause:
+   `scroll_body` bounds the body to the panel's inner width but reserves nothing at the bottom,
+   and `main.rs` gives the tree a plain `ScrollArea::vertical` instead of that helper.
+  Shape: `scroll_body` becomes the one scroller of both panels (the tree's private `ScrollArea`
+   goes), with shrinking off, the panel's side inset and a bottom inset of one step plus the
+   scrollbar's own height reserved, so the last row can always be scrolled clear of it.
+   `panel_rect` keeps its geometry; a golden pins the inner content rectangle.
+  Done: A headless test measures the inner content rectangle of both panels and asserts the
+   bottom inset is at least the side inset plus the scrollbar height; an offscreen shot of the
+   longest card and the deepest tree shows no clipped row in either theme; `cargo xtask ci` is
+   green.
+  `files: apps/furnicraft/src/side_panels.rs, apps/furnicraft/src/main.rs` — `09f4c02`
 
 - `[x]` **X38** inside an open product a click selects the whole product instead of the part under the pointer
   Why: Observation: with a product opened by a double click, every click in the viewport
