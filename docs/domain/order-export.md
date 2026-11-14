@@ -48,6 +48,18 @@ cabinet-2026-11-12.fcpkg/
 `--format single` writes the same content as one JSON file with the tables embedded, for sending by
 mail. Both forms carry the same manifest.
 
+The program writes a package from a saved scene, with no window and no GPU:
+
+```sh
+furnicraft export cabinet.fcs --out cabinet-2026-11-12.fcpkg                       # the directory
+furnicraft export cabinet.fcs --out cabinet-2026-11-12.json --format single         # one file
+```
+
+`--no-timestamp` leaves `exported_at` out, so two exports of one revision are byte-identical and a
+package can be compared in a test. The manifest records the scene's file name and the document
+revision; `order` and `document.hash` are filled by a caller that knows them, not by the command
+line, which has neither an order number nor a hash.
+
 A table is **JSON Lines**: one record per line, one JSON object per record, UTF-8, LF, no BOM. That
 choice removes every dialect question a CSV has — quoting, separators, decimal comma, encoding — and
 any language reads it in a few lines. Every table also has a CSV copy for people and spreadsheets. A

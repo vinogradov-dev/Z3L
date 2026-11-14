@@ -1292,6 +1292,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "furnicraft-engine",
+ "furnicraft-export",
  "furnicraft-geom",
  "furnicraft-kernel",
  "furnicraft-kernel-truck",

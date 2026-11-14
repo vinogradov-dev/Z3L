@@ -20,6 +20,8 @@
 )]
 
 mod box_gizmo;
+/// The command line: `furnicraft export` runs before the window exists (K3).
+mod cli;
 mod contour_gizmo;
 mod document;
 mod draw_gizmo;
@@ -889,7 +891,36 @@ impl eframe::App for FurniCraftApp {
     }
 }
 
+/// Reads the command line first: an export or a help request finishes here, before eframe creates a
+/// surface, so the same binary writes a package with no window, no GPU and no person (K3).
 fn main() -> eframe::Result {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match cli::parse(&args) {
+        Ok(cli::Command::Window) => {}
+        Ok(cli::Command::Help(text)) => {
+            print!("{text}");
+            return Ok(());
+        }
+        Ok(cli::Command::Export(export)) => {
+            match cli::export(&export) {
+                Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+                Err(error) => {
+                    eprintln!("furnicraft: {error}");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        Err(error) => {
+            eprintln!("furnicraft: {error}");
+            std::process::exit(2);
+        }
+    }
+    run_window()
+}
+
+/// Opens the window and runs the editor.
+fn run_window() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("FurniCraft")
