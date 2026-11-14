@@ -85,8 +85,6 @@ pub struct VariantSpec {
     pub icon: Option<Icon>,
     /// What picking the method runs, or `None` while its command does not exist.
     pub run: Option<ToolKind>,
-    /// The caption of the section this method belongs to, drawn above the first row that carries it.
-    pub section: Option<Message>,
 }
 
 /// One row of a tool's method list, the tool's own method first.
@@ -105,8 +103,6 @@ pub struct Method {
     pub shortcut: Option<&'static str>,
     /// What picking the method runs, or `None` while it is planned.
     pub run: Option<ToolKind>,
-    /// The caption of the section it belongs to, if the list captions its rows.
-    pub section: Option<Message>,
 }
 
 impl Method {
@@ -120,14 +116,13 @@ impl Method {
 ///
 /// A fill cell draws as one split cell rather than two cells a maker has to tell apart: the method
 /// list is the choice between fitting and taking the shape, and the pinned method is the one the
-/// cell runs (U74, ADR 0110). The section caption says the rows are two builds of one panel, not
-/// two panels, and each row carries its own glyph so the shape is not a blank line.
+/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and each row
+/// carries its own glyph so the shape is not a blank line (U84).
 const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.post.shape",
     label: Message::FillMethodShape,
     icon: Some(icons::contour::POLYGON),
     run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
-    section: Some(Message::SectionFillMethod),
 }];
 
 /// The shelf's second method: take the whole section instead of the largest fit.
@@ -136,7 +131,6 @@ const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
     label: Message::FillMethodShape,
     icon: Some(icons::contour::POLYGON),
     run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape }),
-    section: Some(Message::SectionFillMethod),
 }];
 
 /// One tool: one cell of a group's row.
@@ -171,10 +165,6 @@ impl ToolSpec {
     }
 
     /// The tool's own method, the first row of its list.
-    ///
-    /// Its section is the first section the list declares: the row a tool is named after belongs to
-    /// the same caption as the first method it adds (a circle's *centre and radius* is a build), and
-    /// a later row may open a new one (*tangents*).
     pub fn default_method(&'static self) -> Method {
         Method {
             id: self.id,
@@ -182,7 +172,6 @@ impl ToolSpec {
             icon: self.icon,
             shortcut: self.shortcut,
             run: self.run,
-            section: self.variants.iter().find_map(|variant| variant.section),
         }
     }
 
@@ -194,7 +183,6 @@ impl ToolSpec {
             icon: variant.icon,
             shortcut: variant.run.and_then(shortcut_of),
             run: variant.run,
-            section: variant.section,
         }))
     }
 
@@ -349,7 +337,6 @@ const SKETCH: [GroupSpec; 6] = [
                     label: Message::ToolLineAngle,
                     icon: None,
                     run: None,
-                    section: None,
                 }],
             },
             ToolSpec {
@@ -374,14 +361,12 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolRectangleFromCentre,
                         icon: Some(icons::contour::RECTANGLE_CENTRE),
                         run: Some(ToolKind::Draw(DrawTool::RectangleFromCenter)),
-                        section: None,
                     },
                     VariantSpec {
                         id: "sketch.create.rectangle.centre-directed",
                         label: Message::ToolRectangleFromCentreDirected,
                         icon: Some(icons::contour::RECTANGLE_CENTRE_DIRECTED),
                         run: Some(ToolKind::Draw(DrawTool::RectangleFromCenterDirected)),
-                        section: None,
                     },
                 ],
             },
@@ -398,21 +383,18 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolCircleTwoPoints,
                         icon: None,
                         run: None,
-                        section: Some(Message::SectionBuild),
                     },
                     VariantSpec {
                         id: "sketch.create.circle.three-points",
                         label: Message::ToolCircleThreePoints,
                         icon: Some(icons::contour::CIRCLE_THREE_POINTS),
                         run: Some(ToolKind::Draw(DrawTool::CircleThreePoints)),
-                        section: Some(Message::SectionBuild),
                     },
                     VariantSpec {
                         id: "sketch.create.circle.tangent",
                         label: Message::ToolCircleTangent,
                         icon: None,
                         run: None,
-                        section: Some(Message::SectionTangents),
                     },
                 ],
             },
@@ -429,14 +411,12 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolArcFromCentre,
                         icon: Some(icons::contour::ARC_CENTRE),
                         run: Some(ToolKind::Draw(DrawTool::ArcFromCenter)),
-                        section: Some(Message::SectionBuild),
                     },
                     VariantSpec {
                         id: "sketch.create.arc.three-points",
                         label: Message::ToolArcThreePoints,
                         icon: None,
                         run: None,
-                        section: Some(Message::SectionBuild),
                     },
                 ],
             },
@@ -452,7 +432,6 @@ const SKETCH: [GroupSpec; 6] = [
                     label: Message::ToolPolygonEdge,
                     icon: None,
                     run: None,
-                    section: None,
                 }],
             },
         ],
@@ -476,14 +455,12 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolOffsetDistance,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                     VariantSpec {
                         id: "sketch.modify.offset.through",
                         label: Message::ToolOffsetThrough,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                 ],
             },
@@ -500,14 +477,12 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolFilletRadius,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                     VariantSpec {
                         id: "sketch.modify.fillet.two-lines",
                         label: Message::ToolFilletTwoLines,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                 ],
             },
@@ -524,14 +499,12 @@ const SKETCH: [GroupSpec; 6] = [
                         label: Message::ToolChamferDistance,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                     VariantSpec {
                         id: "sketch.modify.chamfer.two-lines",
                         label: Message::ToolChamferTwoLines,
                         icon: None,
                         run: None,
-                        section: None,
                     },
                 ],
             },
@@ -566,7 +539,6 @@ const SKETCH: [GroupSpec; 6] = [
                     label: Message::ToolDiameter,
                     icon: None,
                     run: None,
-                    section: None,
                 }],
             },
         ],
@@ -710,7 +682,6 @@ const FURNITURE: [GroupSpec; 6] = [
                 label: Message::ToolProductFrameDraw,
                 icon: Some(icons::scene::PRODUCT),
                 run: Some(ToolKind::ProductDraw),
-                section: None,
             }],
         }],
     },
