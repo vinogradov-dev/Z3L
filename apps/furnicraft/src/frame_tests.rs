@@ -889,6 +889,60 @@ fn a_click_inside_an_open_product_selects_the_part_under_the_pointer() {
 }
 
 #[test]
+fn an_open_level_brackets_its_eight_corners_and_a_closed_one_draws_none() {
+    // U89: over the scene an open level and a closed one look identical, so the level the next
+    // click works in draws a bracket on each corner of its box, and only while it is open.
+    use furnicraft_model::{NodeQuery, StructuralKind};
+
+    let mut harness = Harness::new("frame-open-brackets");
+    harness.settle();
+    assert!(harness.app.tabs.active().brackets.is_empty(), "nothing is open, so nothing is bracketed");
+
+    let group = {
+        let project = harness.app.tabs.active().session.project();
+        project
+            .query(&NodeQuery::any().with_kind(StructuralKind::Container))
+            .into_iter()
+            .find(|id| project.container(*id).is_some_and(|container| container.name() == "Loose parts"))
+            .expect("the sample has a group")
+    };
+    let revision = harness.revision();
+    let document = harness.app.tabs.active_mut();
+    document.editor.enter_viewport_level(&mut document.session, Some(group));
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    assert_eq!(document.session.project().revision(), revision, "opening a level writes no document");
+    assert_eq!(document.brackets.len(), 8, "one bracket per corner of the open level");
+    let scene = harness.scene();
+    for bracket in &document.brackets {
+        assert!(scene.contains(bracket.corner), "the bracket of an open level is in the picture: {:?}", bracket.corner);
+        assert!((6.0..=18.0).contains(&bracket.length), "an arm stays between 6 and 18 points");
+    }
+
+    // Closing the same level takes the brackets with it, on the next frame, still without a write.
+    let document = harness.app.tabs.active_mut();
+    document.editor.exit_level(&mut document.session);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.brackets.is_empty(), "a closed level draws no bracket");
+    assert_eq!(document.session.project().revision(), revision, "and closing writes no document either");
+
+    // A product is opened by the session rather than by the open set, and brackets its envelope.
+    let (project, product, _panel) = product_with_a_side_panel();
+    let mut session = furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-open-product-brackets", session);
+    harness.settle();
+    assert_eq!(harness.app.tabs.active().brackets.len(), 8, "the open product brackets its authored box");
+
+    let document = harness.app.tabs.active_mut();
+    document.editor.close_product(&mut document.session);
+    harness.settle();
+    assert!(harness.app.tabs.active().brackets.is_empty(), "a closed product draws no bracket");
+}
+
+#[test]
 fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
     // The frame is created and edited like a box (ADR 0101): the same base rectangle and height
     // pull, and the ✓ dispatches `product.create` instead of `object.primitive.create`.

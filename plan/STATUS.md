@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=063ad6a updated=2026-11-14
+STATE: milestone=M7 phase=T task=U89 state=doing base=063ad6a updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,7 +55,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: U89 heads `## Next` with the rest of the work.
+U89 is next: an open group or product draws its corner brackets, so the open level reads in the
+viewport
 
 ## Index
 

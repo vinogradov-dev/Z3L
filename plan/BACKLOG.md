@@ -40,9 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-## Next
-- `[ ]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
+- `[~]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
   Why: An open container and a closed one look identical over the scene: only the tree says
    which level is open, and once a click inside an open frame selects a part (X38) that
    difference decides what the next click does. The owner asked for small brackets at the
@@ -61,7 +59,10 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    length at two zoom levels; a frame test opens a group and counts exactly eight brackets,
    closes it and counts none, and the same for an open product; the ink is `theme::helper()`;
    `plan/map.md` gains the row; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/scene_gizmo.rs, apps/furnicraft/src/document.rs`
+  `files: apps/furnicraft/src/open_frame.rs, apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/frame_tests.rs`
+
+## Bugs
+## Next
 - `[ ]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
   Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any
    product — the pre-frame way of making a board; the product's post and shelf cells make a

@@ -107,6 +107,41 @@ impl Bounds {
     pub fn radius(self) -> Option<f64> {
         self.valid.then(|| ((self.max - self.min) * 0.5).length())
     }
+
+    /// The eight corners of the box in world space, or `None` when it holds no finite vertex.
+    ///
+    /// Bit 0 of the index picks the `x` maximum, bit 1 the `y` and bit 2 the `z`, so the two
+    /// corners that differ in one bit share one edge of the box — which is what a bracket needs to
+    /// draw its three arms along.
+    pub fn corners(self) -> Option<[DVec3; 8]> {
+        if !self.valid {
+            return None;
+        }
+        let mut corners = [DVec3::ZERO; 8];
+        for (index, corner) in corners.iter_mut().enumerate() {
+            let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+            *corner = DVec3::new(
+                pick(1, self.min.x, self.max.x),
+                pick(2, self.min.y, self.max.y),
+                pick(4, self.min.z, self.max.z),
+            );
+        }
+        Some(corners)
+    }
+}
+
+/// The world box around one container's whole subtree, as its eight corners.
+///
+/// The shell keeps one per container from the last rebuild and paints the brackets of the levels
+/// that are open now, so opening or closing a level costs no evaluation at all: openness is view
+/// state, never a document revision (ADR 0098).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LevelBounds {
+    /// The container whose subtree the box surrounds.
+    pub id: Id,
+    /// Everything the subtree draws — a hidden child excluded, as the frame excludes it — or `None`
+    /// when it draws nothing at all.
+    pub corners: Option<[DVec3; 8]>,
 }
 
 /// The evaluated frame plus the bounds used to frame the initial camera.
@@ -115,6 +150,8 @@ pub struct EvaluatedScene {
     pub frame: SceneFrame,
     /// Bounds of the evaluated meshes.
     pub bounds: Bounds,
+    /// One box per container, in tree order: what the shell draws the bracket of an open level on.
+    pub levels: Vec<LevelBounds>,
 }
 
 /// Builds the demonstration project the interface tests draw.
@@ -265,13 +302,13 @@ pub fn evaluate(
             evaluation.frame.push_contact_shadow(shadow);
         }
     }
-    let Evaluation { cache, frame, .. } = evaluation;
+    let Evaluation { cache, frame, levels, .. } = evaluation;
     cache.finish();
     let mut frame = frame;
     if let Some(lighting) = authored_lighting_with(project, &[], flags) {
         frame.lighting = lighting;
     }
-    Ok(EvaluatedScene { frame, bounds: scene_bounds })
+    Ok(EvaluatedScene { frame, bounds: scene_bounds, levels })
 }
 
 /// The frame lighting from the authored lights.
@@ -375,6 +412,9 @@ struct Evaluation<'a> {
     open_product: Option<Id>,
     options: TessOptions,
     frame: SceneFrame,
+    /// The world box of every container met, so the shell can bracket the open ones without a
+    /// second walk of the tree.
+    levels: Vec<LevelBounds>,
     palette_index: usize,
 }
 
@@ -394,6 +434,7 @@ impl<'a> Evaluation<'a> {
             open_product,
             options: TessOptions::default(),
             frame: SceneFrame::default(),
+            levels: Vec::new(),
             palette_index: 0,
         }
     }
@@ -410,10 +451,14 @@ impl<'a> Evaluation<'a> {
                 Node::Container(container) => {
                     let world = Placement::compose(parent, container.placement()).map_err(describe)?;
                     let subtree = self.collect(container.children(), world)?;
-                    match container.envelope() {
+                    let subtree = match container.envelope() {
                         Some(envelope) => self.collect_product(container.id(), envelope, world, subtree),
                         None => subtree,
-                    }
+                    };
+                    // Recorded for every container, open or not: which of them are open is view
+                    // state that moves without a rebuild, so the filtering happens at paint time.
+                    self.levels.push(LevelBounds { id: container.id(), corners: subtree.all.corners() });
+                    subtree
                 }
                 Node::Panel(panel) => self.collect_panel(panel, parent)?,
                 Node::Object(object) => self.collect_object(object, parent)?,

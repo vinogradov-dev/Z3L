@@ -9,6 +9,8 @@
 //!
 //! Changes when: a gesture selects, adds to the selection, or opens and closes a container.
 
+use std::collections::HashSet;
+
 use furnicraft_engine::Session;
 use furnicraft_model::{Container, Id, Project};
 
@@ -48,6 +50,14 @@ impl Editor {
     pub fn select_nodes(&mut self, nodes: Vec<Id>) {
         self.initialized = true;
         self.selection.replace_all(nodes);
+    }
+
+    /// The containers whose contents the pointer reaches directly: the open levels of the viewport.
+    ///
+    /// The picker resolves a click through this set and the shell draws the bracket of every level in
+    /// it (U89), so both read one field instead of each keeping a copy of the open state (ADR 0098).
+    pub fn open_containers(&self) -> &HashSet<Id> {
+        &self.open
     }
 
     /// Selects the result of a viewport click on `hit`.

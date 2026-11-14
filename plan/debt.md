@@ -243,3 +243,7 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   cuts in, but it does not follow the curve. An exact curved section needs a surface query that can
   meet a curved face and a section that can hold arcs; the cell, the fill and the bevel are planes
   only (N9, N12).
+- `[gizmo]` The corner brackets of an open level draw from the bounds the last evaluation measured,
+  so while a part inside the open group is dragged the bracket stays on the committed box and snaps
+  when the move commits. Feeding the previewed placements into `LevelBounds` would make the guide
+  follow the ghost the way the frame does (U89).
