@@ -686,14 +686,8 @@ impl FurniCraftApp {
     fn workspace(&mut self, ui: &mut egui::Ui, chrome: &Chrome) {
         egui::CentralPanel::default().show(ui, |ui| {
             let Self { tabs, shell, settings, .. } = self;
-            tabs.active_mut().viewport(
-                ui,
-                shell,
-                &settings.viewport,
-                &settings.gizmo,
-                chrome,
-                settings.appearance.panel_opacity,
-            );
+            let opacity = settings.appearance.panel_opacity;
+            tabs.active_mut().viewport(ui, shell, settings, chrome, opacity);
         });
     }
 

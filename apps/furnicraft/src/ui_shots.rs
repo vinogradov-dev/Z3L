@@ -20,8 +20,8 @@ use eframe::egui;
 use eframe::egui_wgpu;
 use eframe::wgpu;
 use furnicraft_ui::settings::{
-    DEFAULT_PANEL_OPACITY, MAX_HANDLE_POINTS, MAX_PANEL_OPACITY, MAX_RING_PERCENT, MIN_HANDLE_POINTS,
-    MIN_PANEL_OPACITY, MIN_RING_PERCENT, PanelState, Settings, ThemeChoice,
+    DEFAULT_CURSOR_POINTS, DEFAULT_PANEL_OPACITY, MAX_HANDLE_POINTS, MAX_PANEL_OPACITY, MAX_RING_PERCENT,
+    MIN_HANDLE_POINTS, MIN_PANEL_OPACITY, MIN_RING_PERCENT, PanelState, Settings, ThemeChoice,
 };
 use furnicraft_ui::theme::ThemePreset;
 use furnicraft_ui::ui_scale;
@@ -1006,5 +1006,77 @@ fn the_panels_last_row_is_painted_clear_of_the_bar() {
         let picture = Picture { width: size[0], height: size[1], rgba };
         assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
         println!("the scrolled panels are in {}", path.display());
+    }
+}
+
+/// Draws the work cursor and its crosshair into one picture per theme variant.
+///
+/// The square is the shell's own pointer (U88): whether its outline carries on a shaded board and
+/// whether the crosshair is a guide rather than a form edge cannot be read from a rectangle, so this
+/// is the eye check the task names. The files are `work-cursor-dark.png` and `work-cursor-light.png`.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/work-cursor-*.png"]
+fn the_work_cursor_is_painted_offscreen_in_both_themes() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = furnicraft_testkit::ui_shots_dir().expect("the shots directory is created");
+    for (name, variant) in [("dark", ThemeChoice::Dark), ("light", ThemeChoice::Light)] {
+        let ctx = egui::Context::default();
+        let workspace = furnicraft_testkit::scratch_dir("ui-shots").join(format!("cursor-{name}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        settings.pointer.cursor_size = DEFAULT_CURSOR_POINTS;
+        settings.pointer.crosshair = true;
+        let session = crate::scene_build::demo_session().expect("the sample session builds");
+        let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        app.tabs.active_mut().zoom_active_view(1.0 / MODEL_ZOOM);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let pointer = app.tabs.active().scene_rect().expect("the settled frame gives the scene a rectangle").center();
+        // The square is chrome over the scene, so the picture is taken once the pointer has been
+        // reported and the frame that reads it has drawn.
+        let mut jobs = Vec::new();
+        for _ in 0..2 {
+            let events = vec![egui::Event::PointerMoved(pointer)];
+            let mut output =
+                ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+                    app.frame(ui);
+                });
+            let mut delta = std::mem::take(&mut output.textures_delta);
+            {
+                let mut renderer = render_state.renderer.write();
+                for (id, images) in &delta.set {
+                    for image in images {
+                        renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                    }
+                }
+                for id in &delta.free {
+                    renderer.free_texture(id);
+                }
+            }
+            delta.clear();
+            jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+        }
+        let drawn = app.tabs.active().work_cursor().expect("the pointer over the scene draws the cursor");
+        assert_eq!(drawn.square.center(), pointer, "the {name} frame draws the square on the pointer");
+        assert!(drawn.crosshair.is_some(), "the {name} frame draws the crosshair the setting turned on");
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("work-cursor-{name}.png"));
+        furnicraft_testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        let picture = Picture { width: size[0], height: size[1], rgba };
+        assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+        println!("the {name} work cursor is in {}", path.display());
     }
 }
