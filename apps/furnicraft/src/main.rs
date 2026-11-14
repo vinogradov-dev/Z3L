@@ -58,14 +58,15 @@ use std::path::Path;
 
 use eframe::egui;
 use eframe::egui_wgpu;
+use furnicraft_model::Id;
 use furnicraft_scene::SceneColors;
 use furnicraft_ui::product_card::ProductCard;
 use furnicraft_ui::settings::{Settings, SettingsSection};
 use furnicraft_ui::ui_scale;
 use furnicraft_ui::{Palette, icons, theme};
 
-use crate::document::Document;
-use crate::file_menu::{CloseAnswer, ConfirmClose, FileAction, PreservedSections};
+use crate::document::{DeleteRequest, Document, delete_request};
+use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::header::{HeaderAction, HeaderState, TabView};
 use crate::scene_build::{empty_session, initial_session};
 use crate::settings_store::SettingsStore;
@@ -160,23 +161,32 @@ impl Shell {
     }
 }
 
-/// A close that is waiting for the user to confirm discarding unsaved changes.
+/// A destructive gesture waiting for the user to confirm it.
 ///
 /// The question belongs to the window, not to the document it names: it stays up while the scene it
-/// would drop is still open, and an answer drops exactly that tab.
-struct CloseQuestion {
-    /// What the answer does: drop one tab, or leave the application.
-    request: CloseRequest,
-    title: ConfirmClose,
+/// would act on is still open, and an answer performs exactly the gesture it names. It owns the keys
+/// for the frame it is up, like every other modal, so a second Delete cannot stack a second question
+/// and Escape is the way out (ADR 0112).
+struct PendingQuestion {
+    /// What the answer does: drop one tab, leave the application, or remove a selection.
+    gesture: Gesture,
+    question: Confirm,
 }
 
 /// What a confirmed question performs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CloseRequest {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Gesture {
     /// Drop this tab, even if another scene was activated while the question was up.
     Tab(TabId),
     /// Close the window; every open scene goes with it.
     Quit,
+    /// Remove these nodes from the scene the question was asked over.
+    Delete {
+        /// The scene the question was asked in.
+        tab: TabId,
+        /// The nodes the question counted.
+        nodes: Vec<Id>,
+    },
 }
 
 struct FurniCraftApp {
@@ -203,8 +213,8 @@ struct FurniCraftApp {
     product_card: ProductCard,
     /// Why the defaults were used instead of the saved workspace, shown in the status bar.
     settings_notice: Option<crate::settings_store::Notice>,
-    /// The tab or the window whose unsaved changes are waiting for the close question.
-    pending_close: Option<CloseQuestion>,
+    /// The close or the deletion that is waiting for the user's answer.
+    pending_question: Option<PendingQuestion>,
     /// Whether the frame should close the window: the context that sends the command is only at
     /// hand there, and quitting is a window operation, not a document one.
     quit_requested: bool,
@@ -287,7 +297,7 @@ impl FurniCraftApp {
             palette: Palette::new(),
             product_card: ProductCard::new(),
             settings_notice: loaded.notice,
-            pending_close: None,
+            pending_question: None,
             quit_requested: false,
         })
     }
@@ -409,8 +419,8 @@ impl FurniCraftApp {
         match self.tabs.close(id, unsaved) {
             CloseOutcome::NeedsConfirmation(id) => {
                 let title = self.tabs.document(id).map(|document| document.file_name(lang)).unwrap_or_default();
-                self.pending_close =
-                    Some(CloseQuestion { request: CloseRequest::Tab(id), title: ConfirmClose::tab(title, lang) });
+                self.pending_question =
+                    Some(PendingQuestion { gesture: Gesture::Tab(id), question: Confirm::tab(title, lang) });
             }
             CloseOutcome::Closed(document) => self.forget(document),
             CloseOutcome::LastTab(id) => self.empty_tab(id),
@@ -427,36 +437,65 @@ impl FurniCraftApp {
         match unsaved {
             0 => self.quit_requested = true,
             count => {
-                self.pending_close =
-                    Some(CloseQuestion { request: CloseRequest::Quit, title: ConfirmClose::quit(count, lang) });
+                self.pending_question =
+                    Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(count, lang) });
             }
         }
     }
 
-    /// Draws the unsaved-changes question and acts on the answer.
+    /// Answers the Delete key over the active document's selection.
     ///
-    /// A discard drops exactly the tab the question named, even if the user activated another scene
-    /// while it was up: the answer is about that document, not about what is in front of them.
-    fn close_question(&mut self, ctx: &egui::Context) {
-        let Some(question) = self.pending_close.as_ref() else {
+    /// One node goes at once, because undo covers it; two or more ask first, because a batch is
+    /// removed in one step and the question says how many rows it takes. A locked node refuses the
+    /// whole gesture before either happens, with the sentence the tree shows for a locked row
+    /// (ADR 0065, ADR 0112).
+    fn delete_selection(&mut self, lang: furnicraft_text::Lang) {
+        let request = {
+            let document = self.tabs.active();
+            delete_request(&document.editor, document.session.project(), lang)
+        };
+        match request {
+            DeleteRequest::Nothing => {}
+            DeleteRequest::Refused(sentence) => self.tabs.active_mut().last_error = Some(sentence),
+            DeleteRequest::Remove(nodes) => self.tabs.active_mut().delete_nodes(&nodes),
+            DeleteRequest::Ask(nodes) => {
+                let tab = self.tabs.active_id();
+                let question = Confirm::delete(nodes.len(), lang);
+                self.pending_question = Some(PendingQuestion { gesture: Gesture::Delete { tab, nodes }, question });
+            }
+        }
+    }
+
+    /// Draws the pending question and performs the gesture the answer names.
+    ///
+    /// An answer is about the gesture the question was asked over, not about what is in front of the
+    /// user: a discard drops exactly the tab it named, and a deletion removes exactly the nodes it
+    /// counted, in the tab it was asked in.
+    fn answer_question(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_question.as_ref() else {
             return;
         };
-        let Some(answer) = question.title.show(ctx) else {
+        let Some(answer) = pending.question.show(ctx) else {
             return;
         };
-        let Some(question) = self.pending_close.take() else {
+        let Some(pending) = self.pending_question.take() else {
             return;
         };
-        if answer == CloseAnswer::Cancel {
+        if answer == Answer::Cancel {
             return;
         }
-        match question.request {
-            CloseRequest::Quit => self.quit_requested = true,
-            CloseRequest::Tab(tab) => match self.tabs.discard(tab) {
+        match pending.gesture {
+            Gesture::Quit => self.quit_requested = true,
+            Gesture::Tab(tab) => match self.tabs.discard(tab) {
                 CloseOutcome::Closed(document) => self.forget(document),
                 CloseOutcome::LastTab(id) => self.empty_tab(id),
                 CloseOutcome::NeedsConfirmation(_) | CloseOutcome::Missing(_) => {}
             },
+            Gesture::Delete { tab, nodes } => {
+                if let Some(document) = self.tabs.document_mut(tab) {
+                    document.delete_nodes(&nodes);
+                }
+            }
         }
     }
 
@@ -750,9 +789,14 @@ impl FurniCraftApp {
                 tabs.active_mut().last_error = Some(error);
             }
         }
-        // A modal — the Settings window, the Home surface, the palette — owns the keys for the frame
-        // it is up, so typing a path or a name never saves, undoes, reframes or leaves a tool.
-        let modals = self.settings_open || self.home_open || self.palette.is_open() || self.product_card.is_open();
+        // A modal — the Settings window, the Home surface, the palette, a destructive question —
+        // owns the keys for the frame it is up, so typing a path or a name never saves, undoes,
+        // reframes or leaves a tool, and a question never answers itself with a second Delete.
+        let modals = self.settings_open
+            || self.home_open
+            || self.palette.is_open()
+            || self.product_card.is_open()
+            || self.pending_question.is_some();
         {
             let Self { tabs, shell, .. } = self;
             tabs.active_mut().handle_keys(ui, modals, shell);
@@ -775,6 +819,9 @@ impl FurniCraftApp {
             if shortcuts.close_tab {
                 let active = self.tabs.active_id();
                 self.close_tab(active, furnicraft_ui::language(ui.ctx()));
+            }
+            if shortcuts.delete {
+                self.delete_selection(furnicraft_ui::language(ui.ctx()));
             }
             if shortcuts.hide_panels {
                 self.shell.panels.toggle_hide_all();
@@ -823,7 +870,7 @@ impl FurniCraftApp {
         if let Some(action) = header_action {
             self.handle_header_action(action, furnicraft_ui::language(ui.ctx()));
         }
-        self.close_question(ui.ctx());
+        self.answer_question(ui.ctx());
 
         let design = ui.available_rect_before_wrap();
         self.ribbon(ui, design);

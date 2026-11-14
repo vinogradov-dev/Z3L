@@ -24,6 +24,8 @@ pub(crate) struct Shortcuts {
     pub(crate) close_tab: bool,
     pub(crate) undo: bool,
     pub(crate) redo: bool,
+    /// Remove the selection: one node at once, a multi-selection behind one question (ADR 0112).
+    pub(crate) delete: bool,
     pub(crate) frame: bool,
     pub(crate) projection: bool,
     pub(crate) maximize: bool,
@@ -71,6 +73,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
             close_tab: input.consume_key(egui::Modifiers::CTRL, egui::Key::W),
             undo: input.consume_key(egui::Modifiers::CTRL, egui::Key::Z),
             redo: input.consume_key(egui::Modifiers::CTRL, egui::Key::Y),
+            delete: input.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
             frame: input.consume_key(egui::Modifiers::NONE, egui::Key::F),
             projection: input.consume_key(egui::Modifiers::NONE, egui::Key::O),
             maximize: input.consume_key(egui::Modifiers::ALT, egui::Key::W),
@@ -212,6 +215,25 @@ mod tests {
         });
         output.drop_without_applying_deltas();
         assert_eq!(read, Shortcuts { palette: true, ..Shortcuts::default() });
+    }
+
+    #[test]
+    fn the_delete_key_is_a_plain_key() {
+        // `Delete` removes the selection and belongs to the shell like the modified pair: a
+        // `Ctrl+Delete` is another shortcut and must not delete a selection by accident.
+        let ctx = egui::Context::default();
+        let mut read = Shortcuts::default();
+        let output = ctx.run_ui(key_input(egui::Key::Delete, egui::Modifiers::NONE), |ui| {
+            read = take_shortcuts(ui.ctx());
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(read, Shortcuts { delete: true, ..Shortcuts::default() });
+
+        let output = ctx.run_ui(key_input(egui::Key::Delete, egui::Modifiers::CTRL), |ui| {
+            read = take_shortcuts(ui.ctx());
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(read, Shortcuts::default());
     }
 
     #[test]

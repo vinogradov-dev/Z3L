@@ -179,6 +179,7 @@ static COMMANDS: &[CommandSpec] = &[
     panel_cmds::MACHINING_REMOVE,
     panel_cmds::MACHINING_MOVE,
     node_cmds::NODE_DELETE,
+    node_cmds::NODE_DELETE_MANY,
     node_cmds::NODE_DUPLICATE,
     node_cmds::NODE_GROUP,
     node_cmds::NODE_UNGROUP,
@@ -384,6 +385,9 @@ mod tests {
         let delete = registry.get("node.delete").expect("node.delete is registered");
         assert_eq!(delete.id(), "node.delete");
         assert_eq!(delete.label().text(Lang::En), "Delete");
+        let delete_many = registry.get("node.delete.many").expect("node.delete.many is registered");
+        assert_eq!(delete_many.id(), "node.delete.many");
+        assert_eq!(delete_many.label().text(Lang::En), "Delete selection");
         let duplicate = registry.get("node.duplicate").expect("node.duplicate is registered");
         assert_eq!(duplicate.id(), "node.duplicate");
         assert_eq!(duplicate.label().text(Lang::En), "Duplicate");
@@ -442,7 +446,7 @@ mod tests {
         assert_eq!(move_vertices.id(), "mesh.vertices.move");
         assert_eq!(move_vertices.label().text(Lang::En), "Move vertices");
         assert!(registry.get("missing.command").is_none());
-        assert_eq!(registry.specs().len(), 56);
+        assert_eq!(registry.specs().len(), 57);
     }
 
     #[test]

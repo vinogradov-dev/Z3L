@@ -62,7 +62,6 @@ impl Selection {
     }
 
     /// Replaces the selection with several nodes, in the given order.
-    #[cfg(test)]
     pub(crate) fn replace_all(&mut self, ids: Vec<Id>) {
         self.ids = ids;
     }

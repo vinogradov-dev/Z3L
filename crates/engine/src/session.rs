@@ -360,9 +360,10 @@ mod tests {
 
     use crate::class_rules::{ClassRefusal, CreationRefusal, Dimension};
     use crate::node_cmds::{
-        AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDuplicate, NodeGroup, NodeOriginRebase,
-        NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero,
-        NodeProperty, NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
+        AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup,
+        NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany,
+        NodePlacementWorldZero, NodeProperty, NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename,
+        NodeUngroup,
     };
     use crate::panel_cmds::{
         PanelBowClear, PanelBowSet, PanelContourCreate, PanelCornerBandingClear, PanelCornerBandingSet,
@@ -2167,6 +2168,64 @@ mod tests {
         assert!(session.project().container(assembly).is_none());
         session.undo().expect("undo delete");
         assert_eq!(session.project().container(assembly).expect("assembly").name(), "Drawer box");
+    }
+
+    #[test]
+    fn deleting_a_selection_is_one_command_and_one_undo_step() {
+        // U85: the Delete key over a multi-selection is one document change, so looping the single
+        // node command is not an option — undo must bring the whole selection back in one step.
+        let mut session = sample_session();
+        let shelf = Id::new(2).expect("panel id");
+        let drawer = Id::new(3).expect("assembly id");
+        let front = Id::new(4).expect("panel id");
+        let revision = session.project().revision();
+
+        let delete = NodeDeleteMany { nodes: vec![shelf, drawer, front] };
+        let outcome = session.dispatch("node.delete.many", &json_params(&delete)).expect("delete the selection");
+        assert_eq!(outcome, CommandOutcome::changed());
+        let project = session.project();
+        assert!(project.panel(shelf).is_none(), "the loose panel goes");
+        assert!(project.container(drawer).is_none(), "the container goes");
+        assert!(project.panel(front).is_none(), "and the child listed beside its container goes with it");
+        assert!(project.root().children().is_empty());
+        assert_eq!(project.revision().get(), revision.get() + 1, "the batch is one revision");
+
+        session.undo().expect("undo the batch");
+        let project = session.project();
+        assert!(project.panel(front).is_some(), "one undo brings the child back");
+        assert_eq!(project.panel(shelf).expect("shelf").name(), "Shelf");
+        assert_eq!(project.container(drawer).expect("drawer").name(), "Drawer");
+    }
+
+    #[test]
+    fn deleting_one_node_is_the_same_command() {
+        let mut session = sample_session();
+        let shelf = Id::new(2).expect("panel id");
+        let request = NodeDeleteMany { nodes: vec![shelf] };
+        session.dispatch("node.delete.many", &json_params(&request)).expect("delete one node");
+        assert!(session.project().panel(shelf).is_none());
+        session.undo().expect("undo it");
+        assert!(session.project().panel(shelf).is_some());
+    }
+
+    #[test]
+    fn node_delete_many_enabled_needs_one_removable_node() {
+        let mut session = sample_session();
+        let root = session.project().root().id();
+        let shelf = Id::new(2).expect("panel id");
+        let missing = Id::new(999).expect("id");
+        let delete = CommandRegistry::new().get("node.delete.many").expect("registered");
+
+        assert!(delete.enabled(&session, &json_params(&NodeDeleteMany { nodes: vec![shelf] })));
+        assert!(delete.enabled(&session, &json_params(&NodeDeleteMany { nodes: vec![root, shelf] })));
+        assert!(!delete.enabled(&session, &json_params(&NodeDeleteMany { nodes: Vec::new() })));
+        assert!(!delete.enabled(&session, &json_params(&NodeDeleteMany { nodes: vec![root] })));
+        assert!(!delete.enabled(&session, &json_params(&NodeDeleteMany { nodes: vec![missing] })));
+        assert!(!delete.enabled(&session, &Value::Null));
+        assert!(
+            session.dispatch("node.delete.many", &json_params(&NodeDeleteMany { nodes: vec![missing] })).is_err(),
+            "a list that names nothing the tree holds is refused, not silently accepted"
+        );
     }
 
     #[test]

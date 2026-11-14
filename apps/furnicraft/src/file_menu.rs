@@ -1,4 +1,4 @@
-//! The File menu, the open/save path dialog and the unsaved-changes question a close asks.
+//! The File menu, the open/save path dialog and the destructive question a close or a delete asks.
 //!
 //! The menu is a view over one piece of the document's shell state — the path the scene came from —
 //! plus its pending dialog. It never touches the document or the filesystem itself; it returns a
@@ -7,8 +7,9 @@
 //! dependency.
 //!
 //! Opening and *New* both mean "a new tab" (U45), so the menu never discards a scene and never has
-//! to ask: the one question left is a tab close with unsaved changes, which [`ConfirmClose`] draws
-//! for the shell because a tab belongs to the window, not to one document.
+//! to ask: the questions left are a tab close with unsaved changes, a quit with them, and a Delete
+//! over more than one node, which [`Confirm`] draws for the shell because all three belong to the
+//! window and not to one document (ADR 0112).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -59,36 +60,38 @@ struct PathDialog {
     error: Option<String>,
 }
 
-/// What the unsaved-changes question was answered.
+/// What a destructive question was answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CloseAnswer {
-    /// Drop the tab and everything it holds.
-    Discard,
-    /// Leave the tab open.
+pub(crate) enum Answer {
+    /// Perform the gesture the question names.
+    Proceed,
+    /// Leave everything as it is.
     Cancel,
 }
 
-/// The question a close asks when the scene it would drop has unsaved changes.
+/// A destructive gesture waiting for the user to confirm it.
 ///
-/// The shell owns one of these while the question is up: it is about a tab, so it outlives the
-/// document it names, and switching tabs must not lose it.
+/// The shell owns one of these while the question is up: it names a tab, the window or a selection,
+/// so it outlives the document it names, and switching tabs must not lose it. The three gestures
+/// that lose work ask through it — closing a tab, quitting the window and deleting more than one
+/// node (ADR 0112) — so the window draws one question and not three.
 #[derive(Clone, Debug)]
-pub(crate) struct ConfirmClose {
+pub(crate) struct Confirm {
     /// The question, already built from what it is about.
     title: String,
     /// One sentence naming what is lost.
     body: String,
-    /// The label of the button that discards.
-    discard: String,
+    /// The label of the button that performs the gesture.
+    proceed: String,
 }
 
-impl ConfirmClose {
+impl Confirm {
     /// Asks about the scene `title` names, the way the tab row shows it.
     pub(crate) fn tab(title: impl Into<String>, lang: Lang) -> Self {
         Self {
             title: Message::CloseTitle.with(lang, [title.into()]),
             body: Message::CloseBody.text(lang).to_owned(),
-            discard: Message::DiscardAndClose.text(lang).to_owned(),
+            proceed: Message::DiscardAndClose.text(lang).to_owned(),
         }
     }
 
@@ -102,28 +105,52 @@ impl ConfirmClose {
         Self {
             title: Message::QuitTitle.with(lang, [crate::theme::PRODUCT_NAME]),
             body,
-            discard: Message::DiscardAndQuit.text(lang).to_owned(),
+            proceed: Message::DiscardAndQuit.text(lang).to_owned(),
+        }
+    }
+
+    /// Asks before removing `count` selected nodes in one step.
+    ///
+    /// The count is the question's subject, so the answer cannot be mistaken for a single row: the
+    /// body says that undo is one step too (ADR 0112).
+    pub(crate) fn delete(count: usize, lang: Lang) -> Self {
+        Self {
+            title: Message::counted(
+                count,
+                Message::DeleteNodesTitleOne,
+                Message::DeleteNodesTitleFew,
+                Message::DeleteNodesTitleMany,
+            )
+            .text(lang),
+            body: Message::DeleteNodesBody.text(lang).to_owned(),
+            proceed: Message::CmdDelete.text(lang).to_owned(),
         }
     }
 
     /// Draws the question and returns the answer the user picked, if any.
-    pub(crate) fn show(&self, ctx: &egui::Context) -> Option<CloseAnswer> {
+    ///
+    /// Escape is the second *Cancel*: a question that owns the keys for the frame it is up has to
+    /// answer the way out, or a person who pressed a destructive key feels trapped (ADR 0112).
+    pub(crate) fn show(&self, ctx: &egui::Context) -> Option<Answer> {
         let lang = furnicraft_ui::language(ctx);
         let mut answer = None;
-        Modal::new(Id::unique("scene-confirm-close")).show(ctx, |ui| {
+        Modal::new(Id::unique("scene-confirm")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(&self.title);
             ui.label(&self.body);
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button(&self.discard).clicked() {
-                    answer = Some(CloseAnswer::Discard);
+                if ui.button(&self.proceed).clicked() {
+                    answer = Some(Answer::Proceed);
                 }
                 if ui.button(Message::Cancel.text(lang)).clicked() {
-                    answer = Some(CloseAnswer::Cancel);
+                    answer = Some(Answer::Cancel);
                 }
             });
         });
+        if answer.is_none() && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            answer = Some(Answer::Cancel);
+        }
         answer
     }
 }
@@ -415,20 +442,32 @@ mod tests {
     fn the_close_question_names_the_tab_and_offers_both_answers() {
         // The question belongs to the shell, so this test only proves it is the document's name it
         // asks about and that both answers exist; the modal itself needs an egui pass.
-        let question = ConfirmClose::tab("cabinet.fcs", Lang::En);
+        let question = Confirm::tab("cabinet.fcs", Lang::En);
         assert_eq!(question.title, "Close \u{201c}cabinet.fcs\u{201d}?");
         assert!(question.body.contains("unsaved changes"));
-        assert_ne!(CloseAnswer::Discard, CloseAnswer::Cancel, "cancel and discard are different answers");
+        assert_ne!(Answer::Proceed, Answer::Cancel, "cancel and confirm are different answers");
+    }
+
+    #[test]
+    fn the_delete_question_counts_the_selection_and_names_undo() {
+        // ADR 0112: the question is about the whole selection at once, so it says how many nodes go
+        // and that one undo brings them back.
+        let two = Confirm::delete(2, Lang::En);
+        assert_eq!(two.title, "Delete 2 objects?");
+        assert!(two.body.contains("Undo (Ctrl+Z)"), "the body says undo is one step: {}", two.body);
+        assert_eq!(two.proceed, Message::CmdDelete.text(Lang::En), "the answer is the command's own word");
+        assert_eq!(Confirm::delete(5, Lang::Ru).title, "Удалить 5 объектов?", "the Russian plural applies");
+        assert_eq!(Confirm::delete(3, Lang::Ru).title, "Удалить 3 объекта?");
     }
 
     #[test]
     fn the_quit_question_counts_the_unsaved_scenes() {
-        let one = ConfirmClose::quit(1, Lang::En);
+        let one = Confirm::quit(1, Lang::En);
         assert_eq!(one.title, format!("Quit {}?", crate::theme::PRODUCT_NAME));
         assert!(one.body.contains("One open scene"), "one scene reads as a sentence, not as `1 scenes`: {}", one.body);
-        let many = ConfirmClose::quit(3, Lang::En);
+        let many = Confirm::quit(3, Lang::En);
         assert!(many.body.contains("3 open scenes"), "and a count reads as one: {}", many.body);
-        assert_eq!(many.discard, "Discard and quit");
+        assert_eq!(many.proceed, "Discard and quit");
     }
 
     #[test]

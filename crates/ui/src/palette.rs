@@ -8,15 +8,15 @@
 
 use egui::{Align, Context, Id, Key, Layout, Modifiers, RichText, Sense, TextEdit, Ui, Vec2};
 use furnicraft_engine::node_cmds::{
-    NODE_COMPONENT_CONVERT_TO_GROUP_ID, NODE_DELETE_ID, NODE_DUPLICATE_ID, NODE_GROUP_ID, NODE_PIVOT_CENTER_ID,
-    NODE_RENAME_ID, NODE_UNGROUP_ID,
+    NODE_COMPONENT_CONVERT_TO_GROUP_ID, NODE_DELETE_ID, NODE_DELETE_MANY_ID, NODE_DUPLICATE_ID, NODE_GROUP_ID,
+    NODE_PIVOT_CENTER_ID, NODE_RENAME_ID, NODE_UNGROUP_ID,
 };
 use furnicraft_engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
 use furnicraft_engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID, SCENE_ACTIVE_CAMERA_SET_ID};
 use furnicraft_engine::{
     AssemblyCreate, CameraCreate, CommandOutcome, CommandRegistry, CommandSpec, LightCreate,
-    NodeComponentConvertToGroup, NodeDelete, NodeDuplicate, NodeGroup, NodePivotCenter, NodeUngroup, PanelCreate,
-    SceneActiveCameraSet, Session,
+    NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter, NodeUngroup,
+    PanelCreate, SceneActiveCameraSet, Session,
 };
 use furnicraft_model::{CameraProjection, Id as NodeId, LightKind, Placement};
 use furnicraft_text::{Counted, Lang, Message};
@@ -424,6 +424,11 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
             let node = context.primary(lang)?;
             json(&NodeDelete { node })
         }
+        NODE_DELETE_MANY_ID => {
+            // The whole selection, which is what the Delete key removes: one command, one undo entry.
+            context.primary(lang)?;
+            json(&NodeDeleteMany { nodes: context.selection.clone() })
+        }
         NODE_DUPLICATE_ID => {
             let node = context.primary(lang)?;
             json(&NodeDuplicate { node })
@@ -634,6 +639,30 @@ mod tests {
         session.undo().expect("one undo reverses the whole command");
         assert!(before.same_content(session.project()));
         assert!(!session.can_undo(), "the dispatch left exactly one undo entry");
+    }
+
+    #[test]
+    fn the_delete_selection_entry_takes_every_selected_node() {
+        // The palette's second delete row is the command the Delete key dispatches (U85): it builds
+        // its parameters from the whole selection, so one entry removes what a batch gesture would.
+        let (mut session, _, shelf) = fixture();
+        let drawer = NodeId::new(3).expect("the sample drawer id");
+        let context = PaletteContext::new(vec![shelf, drawer], session.project().root().id());
+        let mut palette = Palette::new();
+        palette.open();
+
+        let entries = palette.entries(&session, &context);
+        let entry = entries.iter().find(|entry| entry.id() == NODE_DELETE_MANY_ID).expect("listed");
+        assert!(entry.is_ready(), "two selected nodes are a batch the command can take");
+
+        let outcome = palette.activate(&mut session, &context, NODE_DELETE_MANY_ID).expect("delete the batch");
+        assert_eq!(outcome, CommandOutcome::changed());
+        assert!(session.project().panel(shelf).is_none());
+        assert!(session.project().container(drawer).is_none(), "the second selected row goes too");
+
+        session.undo().expect("one undo");
+        assert!(session.project().panel(shelf).is_some(), "and one undo brings both rows back");
+        assert!(session.project().container(drawer).is_some());
     }
 
     #[test]

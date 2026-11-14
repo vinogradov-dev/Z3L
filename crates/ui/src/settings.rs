@@ -842,6 +842,7 @@ pub fn shortcut_table(lang: Lang) -> Vec<(String, String)> {
         ("Ctrl+S", Message::ShortcutSave),
         ("Ctrl+Z", Message::ShortcutUndo),
         ("Ctrl+Y", Message::ShortcutRedo),
+        ("Del", Message::ShortcutDelete),
         ("Ctrl+K", Message::ShortcutPalette),
         ("Ctrl+0", Message::ShortcutHidePanels),
         ("Ctrl+Shift+0", Message::ShortcutCollapsePanels),

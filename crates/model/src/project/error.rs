@@ -169,6 +169,9 @@ pub enum ProjectError {
     /// A placement batch contained no entries.
     #[error("no node placements were given")]
     NoPlacements,
+    /// A removal batch named nothing the tree holds below the root.
+    #[error("no nodes were given to remove")]
+    NoNodes,
     /// A vertex batch contained no entries.
     #[error("no mesh vertex moves were given")]
     NoVertexMoves,
