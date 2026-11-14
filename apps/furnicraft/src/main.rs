@@ -579,15 +579,14 @@ impl FurniCraftApp {
     /// The scene tree, as a floating panel over the left edge of the scene.
     ///
     /// The panel owns no heading and no tools of its own: the header row names it and folds it, and
-    /// the body is only the tree. Grouping survives in the row context menu.
+    /// the body is only the tree. Grouping survives in the row context menu. The body scrolls through
+    /// the same [`scroll_body`] the inspector uses, so both panels keep one inset and one route (X39).
     fn scene_tree(&mut self, ctx: &egui::Context, rect: egui::Rect) {
         let Self { shell, tabs, settings, .. } = self;
         let head = PanelHead { title: furnicraft_text::Message::PanelScene, icon: icons::scene::ASSEMBLY };
         let slot = PanelSlot { side: PanelSide::Left, id: "scene_tree", rect, state: shell.panels.scene, head };
         match show_panel(ctx, slot, settings.appearance.panel_opacity, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                tabs.active_mut().show_scene_tree(ui);
-            });
+            scroll_body(ui, |ui| tabs.active_mut().show_scene_tree(ui));
         }) {
             PanelEvent::Fold => shell.panels.scene.expanded = false,
             PanelEvent::Restore => shell.panels.scene.expanded = true,
