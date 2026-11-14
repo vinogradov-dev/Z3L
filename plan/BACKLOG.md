@@ -42,25 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U85** the Delete key removes the whole selection behind one question
-  Why: Shift-click builds a multi-selection but nothing deletes it: the tree's row menu removes
-   one node at a time, so a keyboard user cannot remove what they selected, and looping
-   `node.delete` leaves one undo entry per node. The owner asked for the whole set at once,
-   with a confirmation when the key does it.
-  Shape: A new `node.delete.many` in `crates/engine/src/node_cmds.rs` takes `{ nodes: Vec<Id>
-   }`, is enabled when at least one node exists, skips a node whose ancestor is also in the
-   list, removes the rest and returns one changed outcome, so the session records one undo
-   entry; the registry and its tests gain it. `Del` is read in `shortcuts.rs` only with no text
-   field focused and no modal up, and dispatches it for `editor.selected_nodes()`: one node
-   deletes at once because undo covers it, two or more open the question host `file_menu.rs`
-   already owns (`ConfirmClose`) with the count and *Delete*/*Cancel*, Escape cancelling. A
-   locked node refuses the whole operation with the existing `locked_command_refusal` sentence.
-   ADR 0112 records when a destructive key asks and when undo is enough.
-  Done: Tests cover one node, three nodes where one contains another, a locked node and undo
-   restoring all of them in one step; a headless frame test presses Del over two selected nodes
-   and asserts one question with no document change until *Delete*; the label and the question
-   are message ids; ADR 0112 is written; `cargo xtask ci` is green.
-  `files: crates/engine/src/node_cmds.rs, crates/engine/src/commands.rs, apps/furnicraft/src/shortcuts.rs, apps/furnicraft/src/file_menu.rs`
 - `[ ]` **U86** the transform gizmos are smaller and their size is a setting
   Why: The translate handles are 84 pt (`gizmo_math::HANDLE_LENGTH`) and the rotate rings are 9
    % of the camera distance (`rotate_gizmo::RING_RADIUS_FACTOR`), so on a small part the gizmo
@@ -366,6 +347,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U85** the Delete key removes the whole selection behind one question
+  Why: Shift-click builds a multi-selection but nothing deletes it: the tree's row menu removes
+   one node at a time, so a keyboard user cannot remove what they selected, and looping
+   `node.delete` leaves one undo entry per node. The owner asked for the whole set at once,
+   with a confirmation when the key does it.
+  Shape: A new `node.delete.many` in `crates/engine/src/node_cmds.rs` takes `{ nodes: Vec<Id>
+   }`, is enabled when at least one node exists, skips a node whose ancestor is also in the
+   list, removes the rest and returns one changed outcome, so the session records one undo
+   entry; the registry and its tests gain it. `Del` is read in `shortcuts.rs` only with no text
+   field focused and no modal up, and dispatches it for `editor.selected_nodes()`: one node
+   deletes at once because undo covers it, two or more open the question host `file_menu.rs`
+   already owns (`ConfirmClose`) with the count and *Delete*/*Cancel*, Escape cancelling. A
+   locked node refuses the whole operation with the existing `locked_command_refusal` sentence.
+   ADR 0112 records when a destructive key asks and when undo is enough.
+  Done: Tests cover one node, three nodes where one contains another, a locked node and undo
+   restoring all of them in one step; a headless frame test presses Del over two selected nodes
+   and asserts one question with no document change until *Delete*; the label and the question
+   are message ids; ADR 0112 is written; `cargo xtask ci` is green.
+  `files: crates/engine/src/node_cmds.rs, crates/engine/src/commands.rs, crates/model/src/project/node_cmds.rs, apps/furnicraft/src/shortcuts.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/file_menu.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/frame_tests.rs, crates/ui/src/palette.rs, crates/text/src/messages.rs` — `4586041`
 
 - `[x]` **U84** the method list is one flat list of names: the section captions go
   Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
