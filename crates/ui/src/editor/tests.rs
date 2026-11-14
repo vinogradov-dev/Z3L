@@ -7,7 +7,7 @@ use crate::toolbars::RibbonView;
 
 use crate::contour_edit::ContourTarget;
 use crate::contour_grips::ContourGrip;
-use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawTool};
+use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
 use crate::scene_tree::TreeAction;
 use crate::toolbars::{ToolAction, spec};
@@ -59,6 +59,23 @@ fn open_path_project() -> (Project, Id) {
     ]);
     let id = project.add_object(root, "Sketch", Placement::IDENTITY, Geometry::Path(path)).expect("path object");
     (project, id)
+}
+
+/// Adds the plain panel the ribbon's removed cell used to make: the default size, no outline.
+///
+/// A test that only needs a part in the tree asks for it here instead of repeating the
+/// eight-argument command wrapper; the cell that draws a ring is covered on its own (U90).
+fn plain_panel(editor: &mut Editor, session: &mut Session, parent: Id) -> Result<Id, String> {
+    editor.create_panel_sized(
+        session,
+        parent,
+        "Panel".to_owned(),
+        PanelCreate::default_nominal_size().map_err(|error| error.to_string())?,
+        None,
+        Vec::new(),
+        Placement::IDENTITY,
+        None,
+    )
 }
 
 #[test]
@@ -493,6 +510,45 @@ fn closing_through_a_pending_arc_commits_a_closed_path() {
     assert!(!session.can_undo(), "the drawing was one undo entry");
 }
 
+#[test]
+fn a_panel_draft_refuses_an_open_ring_and_cuts_the_board_on_close() {
+    // One draft, two outcomes: the sketch tools commit the figure as a path, and the contour cell
+    // cuts a board to the same ring and leaves nothing beside it (ADR 0114).
+    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut editor = Editor::new();
+    editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
+    let product = session.active_product().expect("the frame is open");
+    let opened = session.project().revision();
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+
+    editor.start_panel_drawing();
+    assert_eq!(editor.drawing_intent(), DrawIntent::Panel, "the cell arms a board, not a path");
+    editor.drawing_point([mm(0), mm(0)]).expect("first corner");
+    editor.drawing_point([mm(700), mm(0)]).expect("second corner");
+    editor.drawing_point([mm(700), mm(500)]).expect("third corner");
+    let refusal = editor
+        .commit_drawing(&mut session, Placement::IDENTITY, crate::Lang::En)
+        .expect_err("an open chain encloses no outline");
+    assert!(refusal.contains(furnicraft_text::Message::PanelContourOpen.text(crate::Lang::En)), "got {refusal}");
+    assert!(editor.drawing().is_some(), "the refusal keeps the draft editable");
+    let revision = session.project().revision();
+    assert_eq!(revision, opened, "the refusal writes nothing");
+    let drawn = editor
+        .close_and_commit_drawing(&mut session, Placement::IDENTITY, crate::Lang::En)
+        .expect("the close cuts the panel");
+    assert_eq!(drawn.intent, DrawIntent::Panel);
+    assert!(editor.drawing().is_none(), "the close ends the tool");
+    assert_eq!(session.project().revision(), revision.checked_next().expect("revision"));
+    assert_eq!(session.project().parent_of(drawn.object), Some(product), "the board lands in the open product");
+    let panel = session.project().panel(drawn.object).expect("the node the ring cut is a panel");
+    assert!(panel.is_contour(), "the outline is the drawn ring, not the rectangle around it");
+    assert_eq!(panel.outline_contour().expect("ring").segments().count(), 3, "three corners enclose a triangle");
+    assert!(session.project().object_path(drawn.object).is_err(), "no path is left beside the board");
+    session.undo().expect("one undo removes the board");
+    assert!(session.project().panel(drawn.object).is_none());
+    assert!(session.project().container(product).is_some(), "the one undo entry took the board alone");
+}
+
 /// The project with its revision counter at the end of its range, so the next command is refused.
 fn exhausted_revision(project: Project) -> Project {
     let mut wire = serde_json::to_value(&project).expect("the project serialises");
@@ -644,7 +700,7 @@ fn a_panel_at_the_root_is_refused_because_no_product_is_open() {
     let root = session.project().root().id();
     let mut editor = Editor::new();
 
-    let refusal = editor.create_panel(&mut session, root).expect_err("a panel needs an open product");
+    let refusal = plain_panel(&mut editor, &mut session, root).expect_err("a panel needs an open product");
     assert!(
         refusal.contains(furnicraft_text::Message::CreationNeedsProduct.text(crate::Lang::En)),
         "the refusal names the missing product: {refusal}"
@@ -674,7 +730,7 @@ fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
     assert_eq!(session.project().parent_of(drawn.object), Some(assembly), "the path lands in the arm");
 
     let target = editor.creation_target(session.project());
-    editor.create_panel(&mut session, target).expect("create the panel");
+    plain_panel(&mut editor, &mut session, target).expect("create the panel");
     let created_panel = editor.selected_node().expect("the new panel");
     assert_eq!(session.project().parent_of(created_panel), Some(assembly), "the panel lands in the arm");
 
@@ -1301,7 +1357,7 @@ fn creating_a_frame_opens_it_and_the_next_panel_lands_inside() {
     assert_eq!(editor.creation_target(session.project()), product, "the frame is armed for parts");
 
     let target = editor.creation_target(session.project());
-    editor.create_panel(&mut session, target).expect("create the next panel");
+    plain_panel(&mut editor, &mut session, target).expect("create the next panel");
     let panel = editor.selected_node().expect("the new panel is selected");
     assert_eq!(session.project().parent_of(panel), Some(product), "the part is born inside the open product");
 }

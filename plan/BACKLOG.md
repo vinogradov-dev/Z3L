@@ -40,9 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-## Next
-- `[ ]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
+- `[~]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
   Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any
    product — the pre-frame way of making a board; the product's post and shelf cells make a
    board where a niche has measured one, and the approved map already holds
@@ -63,6 +61,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    draws a ring with the contour cell into an open product and finds one panel whose outline is
    that ring; ADR 0114 is written; `cargo xtask ci` is green.
   `files: crates/ui/src/toolbars/spec.rs, crates/ui/src/editor/creation.rs, crates/ui/src/toolbars/ready.rs`
+
+## Bugs
+## Next
 - `[ ]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
   Why: The grid-snap toggle sits under View › Display among style, contours, shadows and
    section switches, so the one control that changes how a click behaves is filed with the ones

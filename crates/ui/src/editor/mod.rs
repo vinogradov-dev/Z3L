@@ -21,7 +21,7 @@ use crate::box_tool::BoxDraft;
 use crate::camera_card::CameraCard;
 use crate::container_card::ContainerCard;
 use crate::contour_edit::ContourEdit;
-use crate::draw::DrawDraft;
+use crate::draw::{DrawDraft, DrawIntent};
 use crate::light_card::LightCard;
 use crate::mesh_edit::MeshEdit;
 use crate::object_card::ObjectCard;
@@ -63,6 +63,8 @@ pub struct Editor {
     mesh_edit: Option<MeshEdit>,
     contour_edit: Option<ContourEdit>,
     drawing: Option<DrawDraft>,
+    /// What the running draft will become: a path of its own, or a board cut to its ring.
+    drawing_intent: DrawIntent,
     pending_primitive: Option<PendingPrimitive>,
     /// The base rectangle and the height of a box being drawn, before its one command.
     box_draft: Option<BoxDraft>,

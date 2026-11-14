@@ -47,8 +47,8 @@ pub enum ToolKind {
     Product,
     /// Draws the product frame's reserved box: base rectangle, then height, then `product.create`.
     ProductDraw,
-    /// Creates a panel at the scene root.
-    Panel,
+    /// Arms the free-outline tool whose closed ring becomes one panel cut to it.
+    PanelContour,
     /// Arms the empty-space tool with `class`; its `fill` trait picks the size pair, and `mode`
     /// says whether the part takes the largest rectangle that fits or the whole section.
     Fill {
@@ -690,15 +690,6 @@ const FURNITURE: [GroupSpec; 6] = [
         label: Message::GroupPanels,
         tools: &[
             ToolSpec {
-                id: "furniture.panels.panel",
-                label: Message::ToolPanel,
-                icon: Some(icons::scene::PANEL),
-                shortcut: None,
-                run: Some(ToolKind::Panel),
-                method: None,
-                variants: &[],
-            },
-            ToolSpec {
                 id: "furniture.panels.post",
                 label: Message::ToolPost,
                 icon: Some(icons::scene::POST),
@@ -716,7 +707,17 @@ const FURNITURE: [GroupSpec; 6] = [
                 method: Some(Message::FillMethodFit),
                 variants: FILL_SHELF_SHAPE,
             },
-            planned("furniture.panels.contour", Message::ToolContourPanel),
+            // The panel is drawn, not typed: a board outside a niche has no section to fill, so its
+            // outline comes from the pointer and the close cuts it (ADR 0114).
+            ToolSpec {
+                id: "furniture.panels.contour",
+                label: Message::ToolContourPanel,
+                icon: Some(icons::scene::PANEL),
+                shortcut: None,
+                run: Some(ToolKind::PanelContour),
+                method: None,
+                variants: &[],
+            },
         ],
     },
     GroupSpec {
@@ -1006,7 +1007,7 @@ mod tests {
         );
         assert_eq!(
             live("furniture"),
-            ["furniture.panels.panel", "furniture.panels.post", "furniture.panels.shelf", "furniture.product.frame"]
+            ["furniture.panels.contour", "furniture.panels.post", "furniture.panels.shelf", "furniture.product.frame"]
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
         assert_eq!(live("view"), ["view.display.grid", "view.projection.frame-all", "view.projection.toggle"]);
@@ -1062,7 +1063,7 @@ mod tests {
             ToolKind::Extrude,
             ToolKind::Product,
             ToolKind::ProductDraw,
-            ToolKind::Panel,
+            ToolKind::PanelContour,
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit },

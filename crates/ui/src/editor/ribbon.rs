@@ -46,7 +46,7 @@ impl Editor {
         let selected = self.selection.primary();
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let active = toolbars::tool_activity(
-            self.drawing.as_ref().map(|draft| draft.tool()),
+            self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
             self.pending_primitive.map(|pending| pending.kind),
             self.box_tool(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
@@ -91,7 +91,10 @@ impl Editor {
                 }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
                 ToolAction::DrawProductFrame => self.arm_box(BoxOwner::Product),
-                ToolAction::CreatePanel => self.create_panel(session, target)?,
+                ToolAction::DrawPanelContour => {
+                    self.start_panel_drawing();
+                    outcome.started_drawing = true;
+                }
                 ToolAction::Fill { class, mode } => {
                     // A second click on the same method drops the tool; the arm is a mode, not a
                     // one-shot, because a maker places several posts in one piece. Picking the other

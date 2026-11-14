@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=d231f22 updated=2026-11-14
+STATE: milestone=M7 phase=T task=U90 state=doing base=d231f22 updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,7 +55,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: U90 heads `## Next` with the rest of the work.
+U90 is next: the Furniture tab loses the loose Panel cell and offers a panel by contour instead
 
 ## Index
 

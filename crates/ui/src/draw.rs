@@ -33,6 +33,20 @@ use thiserror::Error;
 
 use crate::command::{dispatch, json};
 
+/// What a committed draft becomes.
+///
+/// One draft serves two cells: a sketch tool commits the figure as a path object of its own, and the
+/// *Panel from contour* cell cuts a board to the same ring and leaves no path behind. The intent is
+/// view state, like the tool, and never reaches the document.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DrawIntent {
+    /// One `object.path.create`: the figure the user drew, editable as a path.
+    #[default]
+    Path,
+    /// One `panel.create` carrying the closed ring as its outline (ADR 0042, 0114).
+    Panel,
+}
+
 /// The tool a drawing draft is building with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DrawTool {
@@ -697,11 +711,13 @@ pub enum DrawDraftError {
 
 /// A path committed to the document, with the tool that drew it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DrawnPath {
-    /// The created node.
+pub struct DrawnNode {
+    /// The created node: a path object, or the panel a contour cell cut to its ring.
     pub object: Id,
-    /// The tool that produced the path.
+    /// The tool that produced the draft.
     pub tool: DrawTool,
+    /// What the draft became: a path of its own, or a board cut to its ring.
+    pub intent: DrawIntent,
 }
 
 impl DrawDraft {
