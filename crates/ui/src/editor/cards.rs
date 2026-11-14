@@ -23,9 +23,10 @@ use super::Editor;
 use crate::command::{dispatch, json};
 use crate::container_card::ContainerAction;
 use crate::contour_edit::{ContourEdit, ContourTarget};
+use crate::node_actions::NodeAction;
 use crate::object_card::ObjectAction;
 use crate::panel_card::PanelAction;
-use crate::scene_tree::{self, TreeAction};
+use crate::scene_tree;
 use crate::theme;
 
 impl Editor {
@@ -49,7 +50,7 @@ impl Editor {
         }
         self.error = None;
         for action in actions {
-            if let Err(error) = self.run_action(session, action, crate::language(ui.ctx())) {
+            if let Err(error) = self.apply_node_action(session, action, crate::language(ui.ctx())) {
                 self.error = Some(error);
                 break;
             }
@@ -120,20 +121,25 @@ impl Editor {
         self.properties_card.show(ui, session, primary);
     }
 
-    pub(super) fn run_action(
+    /// Runs one entry of the node's action list, from the tree row or the viewport popup.
+    ///
+    /// A locked node refuses every edit that removes or restructures it here, before the dispatch,
+    /// and a document edit is one command with one undo entry while a view entry writes session
+    /// state only (ADR 0065, ADR 0115).
+    pub fn apply_node_action(
         &mut self,
         session: &mut Session,
-        action: TreeAction,
+        action: NodeAction,
         lang: crate::Lang,
     ) -> Result<(), String> {
         // A locked node refuses every edit that removes or restructures it. The guard is checked
         // before the dispatch, because it is a guard on a gesture and not a document rule
         // (ADR 0065).
         let targets: &[Id] = match &action {
-            TreeAction::Delete { node } | TreeAction::Ungroup { node } | TreeAction::ConvertToGroup { node } => {
+            NodeAction::Delete { node } | NodeAction::Ungroup { node } | NodeAction::ConvertToGroup { node } => {
                 std::slice::from_ref(node)
             }
-            TreeAction::Group { nodes } => nodes,
+            NodeAction::Group { nodes } => nodes,
             _ => &[],
         };
         for node in targets {
@@ -142,55 +148,55 @@ impl Editor {
             }
         }
         match action {
-            TreeAction::AddChild { parent } => {
+            NodeAction::AddChild { parent } => {
                 self.arm_creation(session.project(), parent);
             }
-            TreeAction::OpenProduct { node } => {
+            NodeAction::OpenProduct { node } => {
                 self.open_product(session, node);
             }
-            TreeAction::CloseProduct => self.close_product(session),
-            TreeAction::Duplicate { node } => {
+            NodeAction::CloseProduct => self.close_product(session),
+            NodeAction::Duplicate { node } => {
                 let params = json(&NodeDuplicate { node })?;
                 let outcome = dispatch(session, NODE_DUPLICATE_ID, &params)?;
                 if let Some(id) = outcome.created_id() {
                     self.selection.replace(id);
                 }
             }
-            TreeAction::Delete { node } => {
+            NodeAction::Delete { node } => {
                 let parent = session.project().parent_of(node);
                 let params = json(&NodeDelete { node })?;
                 dispatch(session, NODE_DELETE_ID, &params)?;
                 self.after_node_removed(session, parent);
             }
-            TreeAction::Group { nodes } => {
+            NodeAction::Group { nodes } => {
                 let params = json(&NodeGroup { nodes, name: Message::GeneratedGroup.text(lang).to_owned() })?;
                 let outcome = dispatch(session, NODE_GROUP_ID, &params)?;
                 if let Some(id) = outcome.created_id() {
                     self.selection.replace(id);
                 }
             }
-            TreeAction::Ungroup { node } => {
+            NodeAction::Ungroup { node } => {
                 let parent = session.project().parent_of(node);
                 let params = json(&NodeUngroup { node })?;
                 dispatch(session, NODE_UNGROUP_ID, &params)?;
                 self.after_node_removed(session, parent);
             }
-            TreeAction::ConvertToGroup { node } => {
+            NodeAction::ConvertToGroup { node } => {
                 let parent = session.project().parent_of(node);
                 let params = json(&NodeComponentConvertToGroup { node })?;
                 dispatch(session, NODE_COMPONENT_CONVERT_TO_GROUP_ID, &params)?;
                 self.after_node_removed(session, parent);
             }
-            TreeAction::SetHidden { node, hidden } => {
+            NodeAction::SetHidden { node, hidden } => {
                 self.flags.set_hidden(node, hidden);
             }
-            TreeAction::SetLocked { node, locked } => {
+            NodeAction::SetLocked { node, locked } => {
                 self.flags.set_locked(node, locked);
             }
-            TreeAction::Isolate { node } => {
+            NodeAction::Isolate { node } => {
                 self.flags.isolate(session.project(), node);
             }
-            TreeAction::ShowAll => self.flags.show_all(),
+            NodeAction::ShowAll => self.flags.show_all(),
         }
         Ok(())
     }

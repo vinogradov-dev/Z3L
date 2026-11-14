@@ -225,6 +225,38 @@ impl Harness {
         self.drawn.iter().any(|line| line.contains(text))
     }
 
+    /// The screen point at the middle of `node`'s own frame, so a test right-clicks that node.
+    ///
+    /// A panel is measured from its base corner — its nominal size and thickness — and any other
+    /// node from its origin, which is what the pick resolves on the model the test built.
+    fn node_point(&self, node: Id) -> egui::Pos2 {
+        let document = self.app.tabs.active();
+        let project = document.session.project();
+        let world = project.world_placement(node).expect("the node has a world frame");
+        let local = project.panel(node).map_or(furnicraft_geom::DVec3::ZERO, |panel| {
+            let size = panel.nominal_size();
+            furnicraft_geom::DVec3::new(
+                size.length().millimetres_f64() / 2.0,
+                size.width().millimetres_f64() / 2.0,
+                panel.last_known_thickness().millimetres_f64() / 2.0,
+            )
+        });
+        let rect = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+        gizmo_math::screen_point(document.camera(), rect, world.transform_point(local)).expect("the node is on screen")
+    }
+
+    /// The first text the last frame drew inside `rect`, read top to bottom.
+    ///
+    /// A menu is a list, so the first entry is the topmost label inside the surface it drew: the
+    /// test reads the order the person sees instead of the order the list was built in.
+    fn first_text_in(&self, rect: egui::Rect) -> Option<(egui::Pos2, String)> {
+        self.drawn_rects
+            .iter()
+            .filter(|(at, _)| rect.contains_rect(*at))
+            .min_by(|left, right| left.0.top().total_cmp(&right.0.top()))
+            .map(|(at, text)| (at.center(), text.clone()))
+    }
+
     /// The middle of the scene tree's row whose name the last frame drew.
     ///
     /// A tree row is not a button: it is an interact region with a painted name, so the press lands
@@ -876,6 +908,19 @@ fn the_contour_cell_cuts_a_panel_to_the_ring_the_pointer_drew() {
     assert_eq!(document.editor.selected_node(), Some(panel.id()), "the new board is selected");
 }
 
+/// Every panel in `children`, depth first, for a test that names one instead of an id.
+fn collect_panels<'a>(children: &'a [furnicraft_model::Node], panels: &mut Vec<&'a furnicraft_model::Panel>) {
+    for child in children {
+        match child {
+            furnicraft_model::Node::Panel(panel) => panels.push(panel),
+            furnicraft_model::Node::Container(container) => collect_panels(container.children(), panels),
+            furnicraft_model::Node::Object(_)
+            | furnicraft_model::Node::Camera(_)
+            | furnicraft_model::Node::Light(_) => {}
+        }
+    }
+}
+
 /// A product of 600 x 560 x 720 mm holding one 500 x 400 mm side panel, and both ids.
 fn product_with_a_side_panel() -> (furnicraft_model::Project, Id, Id) {
     let mm = furnicraft_testkit::millimetres;
@@ -939,6 +984,113 @@ fn a_click_inside_an_open_product_selects_the_part_under_the_pointer() {
         "the status bar names the part: {:?}",
         harness.drawn
     );
+}
+
+#[test]
+fn a_right_click_opens_the_actions_of_the_panel_under_the_pointer_and_writes_nothing() {
+    // U92: the tree row menu was the only context menu in the program, so the actions of the piece
+    // under the hand were three clicks away. A right click over the scene now opens the same list,
+    // and the right *drag* stays the camera pan it already was.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-context-menu", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    let at = harness.node_point(panel);
+    let revision = harness.revision();
+    let selected = harness.selected();
+    harness.click(at, egui::PointerButton::Secondary);
+
+    let scene = harness.scene();
+    let menu = harness.app.tabs.active().menu_rect().expect("a right click opens the actions under it");
+    assert!(menu.width() > 0.0 && menu.height() > 0.0, "the menu took a rectangle: {menu:?}");
+    assert!(scene.contains_rect(menu), "and it hangs over the scene it was opened on");
+    let (first, label) = harness.first_text_in(menu).expect("the menu drew its entries");
+    assert_eq!(label, Message::TreeHide.text(Lang::En), "the first entry of a panel is its eye");
+    assert_eq!(harness.revision(), revision, "opening a menu writes no document");
+    assert_eq!(harness.selected(), selected, "and the selection is untouched: the menu acts on what it names");
+
+    // The entry under the pointer runs: hiding is view state, so it closes the menu and moves no
+    // revision either. The press is chrome, so nothing behind the menu is picked.
+    harness.click(first, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().menu_rect().is_none(), "choosing an entry closes the menu");
+    assert!(harness.app.tabs.active().editor.flags().is_hidden(panel), "the eye hid the panel");
+    assert_eq!(harness.revision(), revision, "a view entry writes no document");
+
+    // A right drag is the pan the viewport already owned, so it opens nothing.
+    let camera = harness.camera();
+    let centre = harness.scene().center();
+    harness.drag(centre, egui::vec2(60.0, 30.0), egui::PointerButton::Secondary);
+    assert_ne!(harness.camera(), camera, "a right drag still pans the view");
+    assert!(harness.app.tabs.active().menu_rect().is_none(), "and opens no menu on the way");
+}
+
+#[test]
+fn a_group_and_empty_space_each_open_the_list_they_own() {
+    // The same right click answers with what the pointer names: a closed group offers the view
+    // entries and its structural edits, and a corner of the scene offers the one document action.
+    let mut harness = Harness::new("frame-context-menu-groups");
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    let (group, part) = {
+        let project = harness.app.tabs.active().session.project();
+        let mut panels = Vec::new();
+        collect_panels(project.root().children(), &mut panels);
+        let part = panels
+            .iter()
+            .find(|panel| panel.name() == "Loose shelf")
+            .map(|panel| panel.id())
+            .expect("the sample shelf");
+        let group = project.parent_of(part).expect("the shelf sits in the group");
+        (group, part)
+    };
+    let at = harness.node_point(part);
+    harness.click(at, egui::PointerButton::Secondary);
+    let menu = harness.app.tabs.active().menu_rect().expect("a closed group opens its own actions");
+    assert_eq!(
+        harness.first_text_in(menu).map(|(_, text)| text),
+        Some(Message::TreeHide.text(Lang::En).to_owned()),
+        "the group's menu is a node's menu too"
+    );
+    for label in [Message::TreeAddChild, Message::CmdUngroup, Message::CmdDelete] {
+        assert!(
+            harness.drawn_rects.iter().any(|(rect, text)| menu.contains_rect(*rect) && *text == label.text(Lang::En)),
+            "the group owns `{}`: {:?}",
+            label.text(Lang::En),
+            harness.drawn
+        );
+    }
+    assert!(harness.app.tabs.active().session.project().contains_node(group), "the menu only read the tree");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().menu_rect().is_none(), "Escape closes it");
+
+    // Nothing is drawn at the middle of the scene once the group is hidden, so the menu there is
+    // the document's: it offers *Show all* and nothing that would delete a node the pointer does
+    // not name. The entry then brings the model back, which is the reason the entry exists.
+    harness.app.tabs.active_mut().editor.set_hidden(group, true);
+    harness.settle();
+    let at = harness.scene().center();
+    let revision = harness.revision();
+    harness.click(at, egui::PointerButton::Secondary);
+    let menu = harness.app.tabs.active().menu_rect().expect("empty space opens the document action");
+    assert_eq!(
+        harness.first_text_in(menu).map(|(_, text)| text),
+        Some(Message::TreeShowAll.text(Lang::En).to_owned()),
+        "empty space owns one entry: {menu:?}"
+    );
+    assert!(
+        !harness
+            .drawn_rects
+            .iter()
+            .any(|(rect, text)| menu.contains_rect(*rect) && *text == Message::CmdDelete.text(Lang::En)),
+        "and nothing destructive"
+    );
+    assert_eq!(harness.revision(), revision, "no menu writes a document");
 }
 
 #[test]

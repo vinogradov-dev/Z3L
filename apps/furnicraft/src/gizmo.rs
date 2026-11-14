@@ -544,6 +544,7 @@ mod tests {
             panels: PanelRects::default(),
             ribbon: Rect::from_min_size(viewport.min, Vec2::new(viewport.width(), 0.0)),
             list: None,
+            menu: None,
         }
     }
 
@@ -561,6 +562,7 @@ mod tests {
             panels: PanelRects::of(viewport, top, panels, (width(panels.scene), width(panels.inspector))),
             ribbon,
             list: None,
+            menu: None,
         }
     }
 

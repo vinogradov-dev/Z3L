@@ -644,6 +644,10 @@ messages! {
         "{} заблокирован. Снимите блокировку в дереве сцены, чтобы изменить его."
     ],
     TheNode = ["The node", "Узел"],
+    MenuLocked = [
+        "The node is locked; unlock it before changing it",
+        "Узел заблокирован: снимите блокировку, чтобы изменить его"
+    ],
 
     // ── Scene tree ──────────────────────────────────────────────────────────
     TreeBadgeComponent = ["component", "компонент"],
@@ -655,7 +659,6 @@ messages! {
     TreeBadgeBox = ["box", "блок"],
     TreeBadgeCylinder = ["cylinder", "цилиндр"],
     TreeBadgeSphere = ["sphere", "сфера"],
-    TreeGroupSelection = ["Group selection", "Сгруппировать выделение"],
     TreeAddChild = ["Add child", "Добавить дочерний"],
     TreeAddChildHint = ["Create the next node inside this container", "Следующий созданный узел попадёт в этот контейнер"],
     TreeShow = ["Show", "Показать"],

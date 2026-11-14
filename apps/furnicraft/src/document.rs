@@ -279,6 +279,11 @@ pub(crate) struct Document {
     rebuild: Rebuild,
     /// The rectangle the command bar drew last frame, so a press on it is chrome and never a pick.
     command_bar_rect: Option<egui::Rect>,
+    /// The context menu a right click opened over the scene, and what it is about (U92).
+    ///
+    /// It is view state of this document: the menu closes when the pointer picks outside it, when
+    /// the tab changes, and on Escape, so no surface keeps a stale rectangle.
+    context_menu: furnicraft_ui::ViewportMenu,
     /// The rectangle the last drawn frame gave the split views: the scene under the chrome. The
     /// floating panels never narrow it (U72). The shell reads it to clip the work crosshair, and a
     /// frame drawn without a window reports the same rectangle, so the frame tests assert the
@@ -372,6 +377,7 @@ impl Document {
             scene_product: session.active_product(),
             rebuild: Rebuild::default(),
             command_bar_rect: None,
+            context_menu: furnicraft_ui::ViewportMenu::default(),
             scene_rect: None,
             session,
             editor,
@@ -1559,12 +1565,23 @@ impl Document {
         // is never a viewport hit.
         shell.pointer_position = ui.input(|input| input.pointer.hover_pos());
         let pointer = shell.pointer_position;
+        // A press outside the open context menu dismisses it and picks nothing, the way a question
+        // answers itself with no second click: the menu owns the press that closes it (U92). A
+        // press inside is chrome through `Chrome::covers`, so the entry under the pointer is what
+        // the press is for and the model behind it keeps its revision.
+        let dismiss_press = self.context_menu.is_open()
+            && ui.input(|input| input.pointer.primary_pressed())
+            && pointer.is_some_and(|pointer| !self.context_menu.rect().is_some_and(|menu| menu.contains(pointer)));
+        if dismiss_press {
+            self.context_menu.close();
+        }
         // A press on the command bar is chrome too: the bar floats over the scene, so a click on
         // its field or its buttons is never a pick. The rectangle is the one the bar drew last
         // frame, which is the one on screen while the bar stays open.
-        let pointer_on_chrome = pointer.is_some_and(|pointer| {
-            chrome.covers(pointer) || self.command_bar_rect.is_some_and(|bar| bar.contains(pointer))
-        });
+        let pointer_on_chrome = dismiss_press
+            || pointer.is_some_and(|pointer| {
+                chrome.covers(pointer) || self.command_bar_rect.is_some_and(|bar| bar.contains(pointer))
+            });
         let content = chrome.content(area);
         self.scene_rect = Some(content);
 
@@ -2039,6 +2056,33 @@ impl Document {
             } else {
                 response.clicked() || response.double_clicked()
             };
+        // A right click that never became a drag opens the actions of the node under the pointer:
+        // the same list the tree row draws (U92, ADR 0115). The right *drag* is the camera pan
+        // above, and egui's click distance is what tells the two apart, so a pan opens nothing.
+        if interactive
+            && !contour_editing
+            && !drawing
+            && !placing
+            && !boxing
+            && !pulling
+            && !consumed_click
+            && response.clicked_by(egui::PointerButton::Secondary)
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let hit = scene_gizmo::pick(
+                self.scene.camera,
+                rect,
+                self.session.project(),
+                pointer,
+                &previewed,
+                self.editor.flags(),
+            )
+            .or_else(|| mesh_pick::pick_scene(rect, &self.scene, pointer));
+            let subject = self.editor.context_menu_subject(self.session.project(), self.session.active_product(), hit);
+            self.context_menu.open(subject, pointer);
+            ui.ctx().request_repaint();
+        }
+
         if !contour_editing
             && !drawing
             && !placing
@@ -2328,6 +2372,35 @@ impl Document {
         }
         self.show_command_bar(ui, content, opacity);
         self.paint_view_frames(ui, content, &regions);
+        self.show_context_menu(ui, content, opacity);
+    }
+
+    /// Draws the context menu a right click opened and runs the one entry it chose.
+    ///
+    /// The list is `furnicraft_ui::node_actions`, the same one the tree row draws, so a capability
+    /// cannot reach one surface and miss the other (U92). The chosen entry goes to the editor: a
+    /// document edit is dispatched as its command and is one undo entry, while a view entry writes
+    /// session state and leaves no revision behind.
+    fn show_context_menu(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
+        let source = furnicraft_ui::MenuSource {
+            project: self.session.project(),
+            flags: self.editor.flags(),
+            selection: self.editor.selected_nodes(),
+            active_product: self.session.active_product(),
+        };
+        let Some(action) = self.context_menu.show(ui, viewport, &source, opacity) else {
+            return;
+        };
+        let lang = furnicraft_ui::language(ui.ctx());
+        if let Err(error) = self.editor.apply_node_action(&mut self.session, action, lang) {
+            self.last_error = Some(error);
+        }
+        ui.ctx().request_repaint();
+    }
+
+    /// The rectangle the open context menu drew last frame, which the shell hands to `Chrome`.
+    pub(crate) fn menu_rect(&self) -> Option<egui::Rect> {
+        self.context_menu.rect()
     }
 
     /// Divides the workspace into `kind`, keeping the cameras the views already have.
@@ -3133,6 +3206,7 @@ mod tests {
                 egui::vec2(view.width(), furnicraft_ui::toolbars::height(true)),
             ),
             list: None,
+            menu: None,
         };
         let mut cluster = ViewCluster::default();
         assert!(cluster.widget_visible(), "the corner widget is on until the switch turns it off");

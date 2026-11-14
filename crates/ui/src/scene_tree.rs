@@ -14,11 +14,11 @@ use egui::collapsing_header::CollapsingState;
 use egui::{Align2, Color32, CornerRadius, FontId, RichText, Sense, Ui, Vec2};
 use furnicraft_engine::Session;
 use furnicraft_model::{Container, Id, Node, Panel, Project};
-
-use crate::icons;
-use crate::theme;
 use furnicraft_text::Message;
 
+use crate::icons;
+use crate::node_actions::{self, MenuSource, NodeAction, Subject};
+use crate::theme;
 use crate::view_flags::ViewFlags;
 
 /// The glyph size of a row's visibility and lock toggles, in points.
@@ -93,54 +93,6 @@ impl Selection {
     }
 }
 
-/// One structural or view action the tree asks the editor to run.
-///
-/// The tree shows and restructures nodes; it never creates one. Creation is a `ToolAction` from the
-/// ribbon, so there is exactly one place a new node starts. `AddChild` only arms a container for the
-/// next creation, which is a view-state decision, not a second creation path (ADR 0056).
-///
-/// The view entries and the product open/close are session state, not document edits (ADR 0065,
-/// ADR 0098): the editor applies them without a command, and they leave no undo entry.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TreeAction {
-    AddChild {
-        parent: Id,
-    },
-    /// Makes this product the session's one open working product.
-    OpenProduct {
-        node: Id,
-    },
-    /// Leaves the open product, so no product receives new parts.
-    CloseProduct,
-    Duplicate {
-        node: Id,
-    },
-    Delete {
-        node: Id,
-    },
-    Group {
-        nodes: Vec<Id>,
-    },
-    Ungroup {
-        node: Id,
-    },
-    ConvertToGroup {
-        node: Id,
-    },
-    SetHidden {
-        node: Id,
-        hidden: bool,
-    },
-    SetLocked {
-        node: Id,
-        locked: bool,
-    },
-    Isolate {
-        node: Id,
-    },
-    ShowAll,
-}
-
 /// Draws the container tree, returning the actions the user requested.
 ///
 /// The tree owns no toolbar and no heading: the surface it sits on draws its own header, and every
@@ -151,14 +103,11 @@ pub(crate) fn show(
     session: &Session,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-) -> Vec<TreeAction> {
+) -> Vec<NodeAction> {
     let project = session.project();
     let active = session.active_product();
     let mut actions = Vec::new();
-    let group = (selection.ids().len() >= 2 && project.validate_group(selection.ids()).is_ok())
-        .then(|| selection.ids().to_vec());
-    let group = group.as_deref().unwrap_or(&[]);
-    show_container(ui, project, project.root(), active, selection, flags, &mut actions, group, 0);
+    show_container(ui, project, project.root(), active, selection, flags, &mut actions, 0);
     actions
 }
 
@@ -208,13 +157,11 @@ fn show_container(
     active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-    actions: &mut Vec<TreeAction>,
-    group: &[Id],
+    actions: &mut Vec<NodeAction>,
     depth: u32,
 ) {
     let id = container.id();
     let is_root = id == project.root().id();
-    let is_component = container.is_component();
     let is_product = container.is_product();
     let state_id = ui.make_persistent_id(("scene_container", id.get()));
     let state = CollapsingState::load_with_default_open(ui.ctx(), state_id, depth < 2);
@@ -222,7 +169,7 @@ fn show_container(
     let (_toggle, header, _) =
         state.show_header(ui, |ui| row(ui, id, label.0, selection.contains(id), flags, !is_root)).body(|ui| {
             for child in container.children() {
-                show_node(ui, project, child, active, selection, flags, actions, group, depth.saturating_add(1));
+                show_node(ui, project, child, active, selection, flags, actions, depth.saturating_add(1));
             }
         });
     let mut header = header.inner;
@@ -234,16 +181,13 @@ fn show_container(
         // A click on a product row opens that product: the tree is the second half of the
         // double-click rule, and it is a view operation, never a document command (ADR 0098).
         if is_product {
-            actions.push(TreeAction::OpenProduct { node: id });
+            actions.push(NodeAction::OpenProduct { node: id });
         }
     }
-    // The row drew its own toggles a moment ago, so the menu captions read the flags as they are
-    // now instead of a copy taken before the row.
-    let hidden = flags.is_hidden(id);
-    let locked = flags.is_locked(id);
-    header.context_menu(|ui| {
-        container_menu(ui, id, is_root, is_component, is_product, active == Some(id), hidden, locked, group, actions);
-    });
+    // The menu reads the flags after the row drew its own toggles, so its captions say what the
+    // eye and the padlock show now instead of a copy taken before the row.
+    let subject = if is_root { Subject::Root } else { Subject::Node(id) };
+    header.context_menu(|ui| node_menu(ui, subject, project, flags, selection, active, actions));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,21 +198,40 @@ fn show_node(
     active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-    actions: &mut Vec<TreeAction>,
-    group: &[Id],
+    actions: &mut Vec<NodeAction>,
     depth: u32,
 ) {
     match node {
         Node::Container(container) => {
-            show_container(ui, project, container, active, selection, flags, actions, group, depth);
+            show_container(ui, project, container, active, selection, flags, actions, depth);
         }
-        Node::Panel(panel) => show_panel(ui, panel, selection, flags, actions, group),
-        Node::Object(object) => show_object(ui, object, selection, flags, actions, group),
+        Node::Panel(panel) => show_panel(ui, panel, project, active, selection, flags, actions),
+        Node::Object(object) => show_object(ui, object, project, active, selection, flags, actions),
         Node::Camera(camera) => {
-            show_leaf(ui, camera.id(), camera.name(), Message::TreeBadgeCamera, selection, flags, actions, group);
+            show_leaf(
+                ui,
+                camera.id(),
+                camera.name(),
+                Message::TreeBadgeCamera,
+                project,
+                active,
+                selection,
+                flags,
+                actions,
+            );
         }
         Node::Light(light) => {
-            show_leaf(ui, light.id(), light.name(), Message::TreeBadgeLight, selection, flags, actions, group);
+            show_leaf(
+                ui,
+                light.id(),
+                light.name(),
+                Message::TreeBadgeLight,
+                project,
+                active,
+                selection,
+                flags,
+                actions,
+            );
         }
     }
 }
@@ -280,28 +243,28 @@ fn show_leaf(
     id: Id,
     name: &str,
     kind: Message,
+    project: &Project,
+    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-    actions: &mut Vec<TreeAction>,
-    group: &[Id],
+    actions: &mut Vec<NodeAction>,
 ) {
     let label = RichText::new(format!("{name}  [{}]", kind.text(crate::language(ui.ctx()))));
-    let hidden = flags.is_hidden(id);
-    let locked = flags.is_locked(id);
     let response = row(ui, id, label, selection.contains(id), flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| object_menu(ui, id, hidden, locked, group, actions));
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
 }
 
 fn show_object(
     ui: &mut Ui,
     object: &furnicraft_model::Object,
+    project: &Project,
+    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-    actions: &mut Vec<TreeAction>,
-    group: &[Id],
+    actions: &mut Vec<NodeAction>,
 ) {
     let id = object.id();
     let lang = crate::language(ui.ctx());
@@ -316,24 +279,30 @@ fn show_object(
         furnicraft_model::Geometry::Path(_) => Message::TreeBadgePath,
     };
     let label = RichText::new(format!("{}  [{}]", object.name(), kind.text(lang)));
-    let hidden = flags.is_hidden(id);
-    let locked = flags.is_locked(id);
     let response = row(ui, id, label, selection.contains(id), flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| object_menu(ui, id, hidden, locked, group, actions));
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
 }
 
-fn object_menu(ui: &mut Ui, id: Id, hidden: bool, locked: bool, group: &[Id], actions: &mut Vec<TreeAction>) {
-    group_entry(ui, group, actions);
-    view_menu(ui, id, hidden, locked, false, actions);
-    if ui.button(Message::CmdDuplicate.text(crate::language(ui.ctx()))).clicked() {
-        actions.push(TreeAction::Duplicate { node: id });
-        ui.close();
-    }
-    if ui.button(Message::CmdDelete.text(crate::language(ui.ctx()))).clicked() {
-        actions.push(TreeAction::Delete { node: id });
+/// One row's context menu: the shared list of the node's actions, drawn where egui anchors it.
+///
+/// The entries come from [`crate::node_actions`], the same list the viewport popup draws, so a
+/// command cannot reach one surface and miss the other. The tree closes its menu itself; the popup
+/// owns its own surface and closes the same way.
+fn node_menu(
+    ui: &mut Ui,
+    subject: Subject,
+    project: &Project,
+    flags: &ViewFlags,
+    selection: &Selection,
+    active: Option<Id>,
+    actions: &mut Vec<NodeAction>,
+) {
+    let source = MenuSource { project, flags, selection: selection.ids(), active_product: active };
+    if let Some(action) = node_actions::show(ui, &node_actions::entries(subject, &source)) {
+        actions.push(action);
         ui.close();
     }
 }
@@ -341,34 +310,18 @@ fn object_menu(ui: &mut Ui, id: Id, hidden: bool, locked: bool, group: &[Id], ac
 fn show_panel(
     ui: &mut Ui,
     panel: &Panel,
+    project: &Project,
+    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
-    actions: &mut Vec<TreeAction>,
-    group: &[Id],
+    actions: &mut Vec<NodeAction>,
 ) {
     let id = panel.id();
-    let hidden = flags.is_hidden(id);
-    let locked = flags.is_locked(id);
     let response = row(ui, id, RichText::new(panel.name()), selection.contains(id), flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| panel_menu(ui, id, hidden, locked, group, actions));
-}
-
-/// The one multi-node entry: grouping the current selection.
-///
-/// The tree toolbar that used to carry it is gone, so a group is created from any row's context
-/// menu while two or more nodes are selected. The menu only offers it when the selection is valid.
-fn group_entry(ui: &mut Ui, group: &[Id], actions: &mut Vec<TreeAction>) {
-    if group.is_empty() {
-        return;
-    }
-    if ui.button(Message::TreeGroupSelection.text(crate::language(ui.ctx()))).clicked() {
-        actions.push(TreeAction::Group { nodes: group.to_vec() });
-        ui.close();
-    }
-    ui.separator();
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
 }
 
 fn select(ui: &Ui, selection: &mut Selection, id: Id) {
@@ -378,111 +331,6 @@ fn select(ui: &Ui, selection: &mut Selection, id: Id) {
     } else {
         selection.replace(id);
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn container_menu(
-    ui: &mut Ui,
-    id: Id,
-    is_root: bool,
-    is_component: bool,
-    is_product: bool,
-    active: bool,
-    hidden: bool,
-    locked: bool,
-    group: &[Id],
-    actions: &mut Vec<TreeAction>,
-) {
-    group_entry(ui, group, actions);
-    view_menu(ui, id, hidden, locked, is_root, actions);
-    if is_product {
-        let (caption, action) = if active {
-            (Message::TreeCloseProduct, TreeAction::CloseProduct)
-        } else {
-            (Message::TreeOpenProduct, TreeAction::OpenProduct { node: id })
-        };
-        if ui.button(caption.text(crate::language(ui.ctx()))).clicked() {
-            actions.push(action);
-            ui.close();
-        }
-    }
-    if !is_root {
-        if ui
-            .button(Message::TreeAddChild.text(crate::language(ui.ctx())))
-            .on_hover_text(Message::TreeAddChildHint.text(crate::language(ui.ctx())))
-            .clicked()
-        {
-            actions.push(TreeAction::AddChild { parent: id });
-            ui.close();
-        }
-        ui.separator();
-        if ui.button(Message::CmdDuplicate.text(crate::language(ui.ctx()))).clicked() {
-            actions.push(TreeAction::Duplicate { node: id });
-            ui.close();
-        }
-        if is_component {
-            if ui.button(Message::CmdConvertToGroup.text(crate::language(ui.ctx()))).clicked() {
-                actions.push(TreeAction::ConvertToGroup { node: id });
-                ui.close();
-            }
-        } else if ui.button(Message::CmdUngroup.text(crate::language(ui.ctx()))).clicked() {
-            actions.push(TreeAction::Ungroup { node: id });
-            ui.close();
-        }
-        if ui.button(Message::CmdDelete.text(crate::language(ui.ctx()))).clicked() {
-            actions.push(TreeAction::Delete { node: id });
-            ui.close();
-        }
-    }
-}
-
-fn panel_menu(ui: &mut Ui, id: Id, hidden: bool, locked: bool, group: &[Id], actions: &mut Vec<TreeAction>) {
-    group_entry(ui, group, actions);
-    view_menu(ui, id, hidden, locked, false, actions);
-    if ui.button(Message::CmdDuplicate.text(crate::language(ui.ctx()))).clicked() {
-        actions.push(TreeAction::Duplicate { node: id });
-        ui.close();
-    }
-    if ui.button(Message::CmdDelete.text(crate::language(ui.ctx()))).clicked() {
-        actions.push(TreeAction::Delete { node: id });
-        ui.close();
-    }
-}
-
-/// The view entries every row menu carries: the eye, the padlock, *Isolate* and *Show all*.
-///
-/// The root is a frame rather than an object: hiding or locking it would hide or freeze the whole
-/// scene, so it only offers *Show all*.
-fn view_menu(ui: &mut Ui, id: Id, hidden: bool, locked: bool, is_root: bool, actions: &mut Vec<TreeAction>) {
-    if !is_root {
-        let lang = crate::language(ui.ctx());
-        if ui.button(if hidden { Message::TreeShow } else { Message::TreeHide }.text(lang)).clicked() {
-            actions.push(TreeAction::SetHidden { node: id, hidden: !hidden });
-            ui.close();
-        }
-        if ui.button(if locked { Message::TreeUnlock } else { Message::TreeLock }.text(lang)).clicked() {
-            actions.push(TreeAction::SetLocked { node: id, locked: !locked });
-            ui.close();
-        }
-        ui.separator();
-    }
-    if ui
-        .button(Message::TreeIsolate.text(crate::language(ui.ctx())))
-        .on_hover_text(Message::TreeIsolateHint.text(crate::language(ui.ctx())))
-        .clicked()
-    {
-        actions.push(TreeAction::Isolate { node: id });
-        ui.close();
-    }
-    if ui
-        .button(Message::TreeShowAll.text(crate::language(ui.ctx())))
-        .on_hover_text(Message::TreeShowAllHint.text(crate::language(ui.ctx())))
-        .clicked()
-    {
-        actions.push(TreeAction::ShowAll);
-        ui.close();
-    }
-    ui.separator();
 }
 
 /// One row: its label on the left and the eye and padlock on the right.
@@ -812,18 +660,18 @@ mod tests {
 
     /// The tree is a view and a set of structural edits only.
     ///
-    /// Creation is not a `TreeAction`: the toolbar strip owns every tool, so the tree cannot grow a
-    /// second creation path by adding a button back. Arming a container creates nothing, so
-    /// `AddChild` is allowed and is checked here alongside the rest.
+    /// Creation is not a `NodeAction`: the toolbar strip owns every tool, so neither context menu
+    /// can grow a second creation path by adding a button back. Arming a container creates nothing,
+    /// so `AddChild` is allowed and is checked here alongside the rest.
     #[test]
     fn the_tree_has_no_creation_action() {
         let kinds = [
-            TreeAction::AddChild { parent: Id::new(3).expect("id") },
-            TreeAction::Duplicate { node: Id::new(2).expect("id") },
-            TreeAction::Delete { node: Id::new(2).expect("id") },
-            TreeAction::Group { nodes: Vec::new() },
-            TreeAction::Ungroup { node: Id::new(2).expect("id") },
-            TreeAction::ConvertToGroup { node: Id::new(2).expect("id") },
+            NodeAction::AddChild { parent: Id::new(3).expect("id") },
+            NodeAction::Duplicate { node: Id::new(2).expect("id") },
+            NodeAction::Delete { node: Id::new(2).expect("id") },
+            NodeAction::Group { nodes: Vec::new() },
+            NodeAction::Ungroup { node: Id::new(2).expect("id") },
+            NodeAction::ConvertToGroup { node: Id::new(2).expect("id") },
         ];
         for action in kinds {
             let debug = format!("{action:?}");
