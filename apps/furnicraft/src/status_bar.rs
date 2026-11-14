@@ -334,9 +334,7 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         return (done.then_some(StatusAction::EndNavigation), None);
     }
     ui.label(egui::RichText::new(Message::Gizmo.text(lang)).color(theme::text_dim(ui)));
-    let mut mode = info.mode;
-    let moved = ui.selectable_value(&mut mode, TransformMode::Move, Message::Move.text(lang)).clicked()
-        | ui.selectable_value(&mut mode, TransformMode::Rotate, Message::Rotate.text(lang)).clicked();
+    let moved = transform_mode_ui(ui, info.mode);
     theme::divider(ui);
     if let Some((element, count)) = info.mesh {
         let counted = match element {
@@ -358,7 +356,38 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
     } else {
         hint(ui, Message::ViewportHint.text(lang));
     }
-    (None, moved.then_some(mode))
+    (None, moved)
+}
+
+/// The window's transform mode as one control: *Select*, *Move*, *Rotate*, side by side in one band.
+///
+/// Three states of one value are one control, not three switches: the filled cell is the mode the
+/// viewport is in, and the band behind them says the three belong together (ADR 0113). The mode is
+/// the window's view state, so the control reads it and returns the chosen one; the caller writes
+/// it, and no command and no undo entry is involved.
+fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<TransformMode> {
+    let lang = furnicraft_ui::language(ui.ctx());
+    let band = egui::Frame::new()
+        .fill(theme::control(ui))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
+        .inner_margin(egui::Margin::symmetric(1, 0));
+    let mut chosen = mode;
+    let changed = band
+        .show(ui, |ui| {
+            // Touching cells are what makes one band out of three states; the row's own gap stays.
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let mut clicked = false;
+            for (entry, label) in [
+                (TransformMode::Select, Message::Select),
+                (TransformMode::Move, Message::Move),
+                (TransformMode::Rotate, Message::Rotate),
+            ] {
+                clicked |= ui.selectable_value(&mut chosen, entry, label.text(lang)).clicked();
+            }
+            clicked
+        })
+        .inner;
+    changed.then_some(chosen)
 }
 
 impl FurniCraftApp {
@@ -571,7 +600,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::test_support::drawn_text;
+    use crate::test_support::{drawn_text, drawn_text_rects};
     use furnicraft_engine::panel_cmds::EDGE_BANDING_SET_ID;
     use furnicraft_engine::{PanelEdgeBandingSet, Session};
     use furnicraft_model::{Container, PanelNominalSize, Placement, RectEdge};
@@ -617,6 +646,54 @@ mod tests {
         output.drop_without_applying_deltas();
         assert_eq!(out.state, None, "drawing the idle bar asks for nothing");
         assert_eq!(out.mode, None);
+    }
+
+    #[test]
+    fn the_transform_mode_is_one_control_of_three_states() {
+        // U87: Select, Move and Rotate are one control rather than three switches, so the three
+        // captions sit side by side and one press returns the state it names. The mode is the
+        // window's view state: the control returns a value, it runs no command and no undo entry.
+        let ctx = egui::Context::default();
+        furnicraft_ui::theme::install(&ctx);
+        let info = StatusInfo { mode: TransformMode::Select, ..idle_status() };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, theme::STATUS_HEIGHT));
+        let row = |events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+            let mut chosen = None;
+            let output = ctx.run_ui(input, |ui| {
+                ui.set_height(theme::STATUS_HEIGHT);
+                ui.horizontal_centered(|ui| chosen = status_state_ui(ui, &info).1);
+            });
+            (output, chosen)
+        };
+        let (idle, chosen) = row(Vec::new());
+        let texts = drawn_text(&idle.shapes);
+        assert_eq!(chosen, None, "drawing the control changes nothing");
+        for caption in [Message::Select, Message::Move, Message::Rotate] {
+            let caption = caption.text(Lang::En);
+            assert!(texts.iter().any(|text| text == caption), "the control names {caption}: {texts:?}");
+        }
+        let at = drawn_text_rects(&idle.shapes)
+            .into_iter()
+            .find(|(_, text)| text == Message::Rotate.text(Lang::En))
+            .map(|(rect, _)| rect.center())
+            .expect("the control drew Rotate");
+        idle.drop_without_applying_deltas();
+
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (moved, _) = row(vec![egui::Event::PointerMoved(at)]);
+        moved.drop_without_applying_deltas();
+        let (pressed, chosen) = row(vec![button(true)]);
+        pressed.drop_without_applying_deltas();
+        assert_eq!(chosen, None, "the press alone is not a click");
+        let (released, chosen) = row(vec![button(false)]);
+        released.drop_without_applying_deltas();
+        assert_eq!(chosen, Some(TransformMode::Rotate), "a click on Rotate returns Rotate");
     }
 
     #[test]

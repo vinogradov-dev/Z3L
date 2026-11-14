@@ -79,13 +79,45 @@ use crate::strip::strip_rect;
 use crate::tabs::{CloseOutcome, TabId, Tabs};
 use crate::view_cluster::ViewCluster;
 
-/// Which transform gizmo the viewport shows.
+/// Which transform gesture the viewport offers, if any.
+///
+/// The mode is view state: it belongs to the window, it is never serialized into a scene and it
+/// adds no undo entry. `Select` is the third state and the one a window opens in, so a person who
+/// only wants to look, pick and read is never handed a handle they did not ask for (ADR 0113).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransformMode {
+    /// No transform: a click selects, shift adds, a double click enters a level.
+    Select,
     /// Three world-axis arrows move the selection.
     Move,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
+}
+
+/// The transform gesture a [`TransformMode`] offers.
+///
+/// The two gestures read the same pivot and commit through the same command, and `Select` offers
+/// neither, so a caller asks the mode for one of these instead of matching three states twice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Transform {
+    /// Three world-axis arrows move the selection.
+    Move,
+    /// Three local-axis rings turn the selection about its origin.
+    Rotate,
+}
+
+impl TransformMode {
+    /// The gesture this mode offers, or `None` when it offers no handle at all.
+    ///
+    /// The viewport draws and updates a gizmo only for a `Some`, so a press where a handle would be
+    /// cannot start a drag the mode does not offer.
+    pub(crate) fn transform(self) -> Option<Transform> {
+        match self {
+            Self::Select => None,
+            Self::Move => Some(Transform::Move),
+            Self::Rotate => Some(Transform::Rotate),
+        }
+    }
 }
 
 /// The window's own view state: what every tab shares and no document owns.
@@ -100,7 +132,7 @@ pub(crate) struct Shell {
     pub(crate) panels: Panels,
     /// The floating viewport cluster: navigation, display style and settings.
     pub(crate) cluster: ViewCluster,
-    /// Which transform gizmo the viewport shows.
+    /// Which transform gesture the viewport offers. Starts at [`TransformMode::Select`].
     pub(crate) mode: TransformMode,
     /// The pointer in viewport points from the previous frame, so a border hover can show its resize
     /// cursor and the wheel can tell whether it is over the active view.
@@ -132,7 +164,7 @@ impl Default for Shell {
         Self {
             panels: Panels::default(),
             cluster: ViewCluster::default(),
-            mode: TransformMode::Move,
+            mode: TransformMode::Select,
             pointer_position: None,
             ribbon_rect: None,
             list_rect: None,

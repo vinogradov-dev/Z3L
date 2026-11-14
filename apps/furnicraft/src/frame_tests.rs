@@ -238,6 +238,19 @@ impl Harness {
             .unwrap_or_else(|| panic!("the tree drew no row named {name}"))
     }
 
+    /// The middle of the status bar's cell whose caption the last frame drew.
+    ///
+    /// The status bar is the one strip under the scene rectangle, so the caption a test reads there
+    /// is the control it presses instead of a coordinate the bar's layout would have to repeat.
+    fn mode_cell(&self, caption: &str) -> egui::Pos2 {
+        let below_scene = self.scene().bottom();
+        self.drawn_rects
+            .iter()
+            .find(|(rect, text)| text == caption && rect.center().y > below_scene)
+            .map(|(rect, _)| rect.center())
+            .unwrap_or_else(|| panic!("the status bar drew no cell named {caption}"))
+    }
+
     /// The middle of the control the last frame published as `label`.
     ///
     /// A test presses the middle of a face, so the point is what it asks for and the rectangle stays
@@ -666,8 +679,89 @@ fn the_gizmo_size_is_view_state_and_writes_no_revision() {
     assert!(!harness.app.tabs.active().can_undo(), "and it adds no undo entry");
 }
 
+/// An empty scene holding one wide panel at the origin, and the panel's id.
+///
+/// The panel is wide enough that a point on a transform handle stays over its face, so one point can
+/// be a handle in `Move` and a pick of the same part in `Select` (U87).
+fn one_wide_panel() -> (furnicraft_engine::Session, Id) {
+    let mm = furnicraft_testkit::millimetres;
+    let root = furnicraft_model::Container::new(
+        Id::new(1).expect("an id"),
+        "Root",
+        furnicraft_model::Placement::IDENTITY,
+        Vec::new(),
+    );
+    let mut project = furnicraft_model::Project::new(root).expect("an empty project");
+    let size = furnicraft_model::PanelNominalSize::new(mm(2000), mm(1500)).expect("a panel size");
+    let panel = project
+        .add_panel(project.root().id(), "Board", size, None, mm(18), furnicraft_model::Placement::IDENTITY)
+        .expect("a panel at the origin");
+    (furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog()), panel)
+}
+
+/// A point on a translate handle of `node`, with the screen direction the handle points in.
+///
+/// The point sits past the dead zone around the origin and well inside the scene rectangle, so the
+/// same point can be a handle in `Move` and a press in `Select`; picking the axis by where it lands
+/// keeps the fixture's camera out of the test.
+fn handle_point(harness: &Harness, node: Id) -> (egui::Pos2, egui::Vec2) {
+    let pivot = harness.app.tabs.active().session.project().pivot_world(node).expect("the part has a pivot");
+    let rect = harness.scene();
+    let camera = harness.camera();
+    let length = harness.app.settings.gizmo.handle_length();
+    let origin = gizmo_math::screen_point(camera, rect, pivot).expect("the pivot is on screen");
+    let spec = gizmo_math::HandleSpec { axes: gizmo_math::ALL_AXES, length };
+    gizmo_math::axis_handles(camera, rect, pivot, origin, spec)
+        .into_iter()
+        .map(|handle| (origin + handle.direction * (length * 0.6), handle.direction))
+        .find(|(at, _)| rect.contains(*at))
+        .expect("a handle runs inside the scene rectangle")
+}
+
+#[test]
+fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_drawn() {
+    // U87: `Select` is the third state and the one a window opens in, so a person who only wants to
+    // look, pick and read is never handed a handle. The press is the same point throughout, which is
+    // what makes the assertion about the mode and not about the pointer: it picks in `Select` and it
+    // starts a drag in `Move`.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-select-mode", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    assert_eq!(harness.app.shell.mode, TransformMode::Select, "a fresh window opens in Select");
+    assert!(
+        harness.drew(Message::Select.text(Lang::En)) && harness.drew(Message::Rotate.text(Lang::En)),
+        "the bar offers Select beside the two gestures"
+    );
+
+    harness.app.tabs.active_mut().editor.select_node(Some(panel));
+    harness.settle();
+    let (at, direction) = handle_point(&harness, panel);
+
+    // Select: nothing is drawn, so nothing consumes the press and the click picks the part.
+    harness.app.tabs.active_mut().editor.select_node(None);
+    harness.settle();
+    harness.click(at, egui::PointerButton::Primary);
+    assert_eq!(harness.selected(), vec![panel], "in Select a press where a handle would be picks the part");
+
+    let revision = harness.revision();
+    harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
+    assert_eq!(harness.revision(), revision, "and a drag there moves nothing: no gizmo is armed");
+
+    // The bar's own cell changes the mode, and the same drag now moves the part.
+    let cell = harness.mode_cell(Message::Move.text(Lang::En));
+    harness.click(cell, egui::PointerButton::Primary);
+    assert_eq!(harness.app.shell.mode, TransformMode::Move, "the bar's cell changes the mode");
+    let revision = harness.revision();
+    harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
+    assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
+}
+
 #[test]
 fn each_tab_keeps_its_own_open_product() {
+    // Openness is session view state (ADR 0098), and a tab owns its session: a new tab starts with
+    // every product closed, and the first tab still works in the frame it opened.
     // Openness is session view state (ADR 0098), and a tab owns its session: a new tab starts with
     // every product closed, and the first tab still works in the frame it opened.
     let mut harness = Harness::new("frame-product-tabs");

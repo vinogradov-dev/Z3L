@@ -42,23 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U87** the transform mode can be off, and Select is the state a window opens in
-  Why: One of the two gizmos is always up, so a person who only wants to look, pick and read
-   works with handles they did not ask for, and a stray press on an axis moves the cabinet. The
-   owner asked for the third state and for Select as the default, which is what a professional
-   editor opens in.
-  Shape: `TransformMode` gains `Select`, the shell defaults to it, and the status bar draws the
-   three as one segmented control. `document.rs` draws and updates a gizmo only in `Move` and
-   `Rotate`; in `Select` a click selects, shift adds, a double click still enters a level, and
-   a press where a handle would be does nothing. The ribbon's two cells stay pressed only while
-   the matching mode is on. The mode stays view state, per run, with no undo entry and no
-   `.fcs` field. A default a user meets on launch is an owner-visible break, so ADR 0113
-   records it.
-  Done: A fresh window draws no handles and a click selects; `Move` and `Rotate` each draw
-   their own gizmo and nothing else; a headless frame test asserts no handle consumes the click
-   in `Select`; the status bar control changes the mode; ADR 0113 is written; `cargo xtask ci`
-   is green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/status_bar.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **U88** the viewport draws its own work cursor, sized in settings, with an optional full crosshair
   Why: The OS arrow hides the point a click lands on and reads as a pointer to buttons rather
    than to geometry; a small square with a centre dot says this is the point, and a full
@@ -327,6 +310,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U87** the transform mode can be off, and Select is the state a window opens in
+  Why: One of the two gizmos is always up, so a person who only wants to look, pick and read
+   works with handles they did not ask for, and a stray press on an axis moves the cabinet. The
+   owner asked for the third state and for Select as the default, which is what a professional
+   editor opens in.
+  Shape: `TransformMode` gains `Select`, the shell defaults to it, and the status bar draws the
+   three as one segmented control. `document.rs` draws and updates a gizmo only in `Move` and
+   `Rotate`; in `Select` a click selects, shift adds, a double click still enters a level, and
+   a press where a handle would be does nothing. The ribbon's two cells stay pressed only while
+   the matching mode is on. The mode stays view state, per run, with no undo entry and no
+   `.fcs` field. A default a user meets on launch is an owner-visible break, so ADR 0113
+   records it.
+  Done: A fresh window draws no handles and a click selects; `Move` and `Rotate` each draw
+   their own gizmo and nothing else; a headless frame test asserts no handle consumes the click
+   in `Select`; the status bar control changes the mode; ADR 0113 is written; `cargo xtask ci`
+   is green.
+  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/status_bar.rs, apps/furnicraft/src/document.rs` — `5d08a7d`
 
 - `[x]` **U86** the transform gizmos are smaller and their size is a setting
   Why: The translate handles are 84 pt (`gizmo_math::HANDLE_LENGTH`) and the rotate rings are 9
