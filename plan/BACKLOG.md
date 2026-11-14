@@ -40,6 +40,34 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **P15** the plan tool teaches its grammar instead of refusing it
+  Why: Measured over the six tasks that carry a log: the plan tool cost ~16 of ~119 minutes, in
+   four of the six tasks, and every minute was a refusal that did not say what it wanted. U88
+   spent 7 minutes and four attempts on ## Where we are, because the refusal prints the result
+   (94 lines, over the 70-line budget) and not the cause (the body re-wraps at PROSE_WIDTH, so
+   every submit grows); derive dry-run prints a diff and no line count. Four close refusals in
+   four tasks were the same Nothing is scheduled rule, which the tool can write itself when ##
+   Now is empty. Three sessions typed take then start because take leaves state=idle and start
+   refuses a task outside the order. Two accepted gaps in plan/debt.md take minutes from every
+   session: no verb updates a running session's own now:/resume:, and --field accepts a label
+   the entry does not have.
+  Shape: One decision, one commit: the plan tool teaches its grammar instead of refusing it.
+   validate: the budget refusal names the wrap width beside the count, and state set prints
+   candidate lines, budget and width under --dry-run. write: task start <ID> takes a head of ##
+   Next as well as the current task, so take and start collapse into one verb for the common
+   case and take stays for the top of a running order; task close writes the Nothing is
+   scheduled paragraph itself when ## Now is empty and --next is absent. A verb that writes a
+   running session's now: and resume: beside step, and --field refusing a label outside
+   ENTRY_LABELS instead of appending it. What is not in scope: no change to any rule the gate
+   enforces, only to what it says and to which verbs make a refused sequence unnecessary; no
+   new plan file.
+  Done: A test per sentence: the budget refusal names the width, --dry-run prints the three
+   numbers, task start takes a ## Next head, task close without --next is legal when ## Now is
+   empty, a running session updates now: with the new verb, and --field on an unknown label is
+   refused; the two matching plan/debt.md entries are deleted in the same change; cargo xtask
+   ci is green.
+  `files: state-contract/src/cli/write.rs, state-contract/src/cli/mod.rs, state-contract/src/edit.rs, state-contract/src/validate.rs`
+
 ## Bugs
 ## Next
 - `[ ]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
@@ -224,6 +252,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **P14** an entry's Done names the rule and the session reads the skill the route names
+  Why: Measured over the six tasks that carry a log (U88, U89, U90, U94, X41, X42; ~119 min):
+   62 of those minutes went into one feature built in three passes and 22 of them were repair.
+   Both repairs (X41, X42) blame the same two mechanisms — a Done clause that asserted the
+   implementation instead of the rule, and a session that read the entry and the code but never
+   the skill AGENTS.md 1.3 routes it to — and that route already held the answer in both cases.
+   The log itself is the third defect: dead-end is listed as a phase and is also inside
+   read/test/edit, so U88's shares sum to 103 percent and U89's to 128; U88 guessed four
+   timestamps and wrote them out of order; no log records the start of the session or which
+   turn came from the owner.
+  Shape: Three prompt files, no Rust. plan-task: Done becomes the tests that would fail if the
+   rule were broken, at the surface where a person meets it, replacing the tests that would
+   fail before the change; Shape may name a command id only with what its parameters accept,
+   otherwise it names the outcome. next-task: the Start step reads the routed skill before the
+   first edit (the design skill for anything under crates/ui or the app chrome), replacing the
+   sentence that names only the notes and the ADRs; and the log loses its HH:MM stamp, which
+   cost a date call per line and produced the format's only lie, keeping the +m cost that
+   cannot be guessed. The log gains an attribute form for dead-end, a first line +0 start, the
+   owner phase and test red-mine | red-tree. time-review says five parts where it lists five.
+   What is not in scope: no new phase vocabulary beyond these, no scraper or metrics tool (six
+   tasks are not a series), no rewrite of the 73 notes that predate the format.
+  Done: All four prompt files carry the new wording and cargo xtask skills is green; plan-task
+   turns a defect into an entry with a Done that could fail (checked against the X41
+   mechanism), and next-task names the design skill in its first section (checked against the
+   X42 mechanism); the log format names no clock command, so a session needs no date call to
+   keep it; time-review lists five parts under the word five; the plan gate is green.
+  `files: .pi/prompts/plan-task.md, .pi/prompts/next-task.md, .pi/prompts/time-review.md, .pi/prompts/fix.md` — `f43eb48`
 
 - `[x]` **U94** the capability inventory is one table of places, and a gate refuses an orphan command
   Why: Measured 2026-11-14: 56 command ids (the count the registry test asserts), three of which
