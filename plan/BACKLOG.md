@@ -42,73 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **K2** the order package writer: one manifest and ten flat tables other programs read
-  Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
-   process, possibly in Python, and neither the document JSON nor the internal database is a
-   contract they can rely on (ADR 0095). The package is that contract, and the class traits,
-   the product envelope and the exact contours only pay off when they travel with it. It
-   follows the product entity (N1) because its products table is the envelope plus product_id,
-   and the classes snapshot carries mount and fill.
-  Shape: A new crate crates/export at layer 3, registered in the layer map and PROJECT.md, with
-   one column table as the only source for the manifest, the JSONL writer and the CSV copies.
-   Tables: products, nodes, parts, banding, contours, facades, fittings, machining, materials,
-   classes, properties; integer micrometres, millidegrees, square millimetres and
-   scaled-integer rotation, no floats. Products carry the authored envelope plus the derived
-   content bounds; parts carry product_id, measured sizes, area, banding totals; contours hand
-   over the stored segments and arcs without recomputation; the manifest carries the optional
-   order number and version. The package embeds the catalogue rows the order uses and the class
-   rows it references, so it is self-contained. Ordering by key and no timestamp in the tables
-   make one revision produce byte-identical output.
-  Done: A golden package from the fixture scene; two exports of one revision are identical; the
-   manifest column list equals the writer table and each CSV copy carries exactly those
-   columns; an order with two cabinets groups correctly by product_id; cargo xtask layers and
-   cargo xtask ci are green.
-  `files: Cargo.toml, xtask/src/main.rs, crates/model/src/lib.rs, docs/domain/order-export.md`
-- `[ ]` **K3** the order package is written from a command line, without opening a window
-  Why: A package is useless if producing it needs a window and a person. The report pipeline
-   runs over saved files, and the assistant milestone already needs a headless job over a
-   project, so the exporter has to be reachable from a command line in the same binary.
-  Shape: furnicraft export <scene.fcs> --out <dir> [--format bundle|single] [--no-timestamp]:
-   the subcommand is handled before the window starts, prints one line per written table, and
-   exits non-zero with a readable message on a bad path, an unreadable scene or an unknown
-   format. No second binary, no new dependency.
-  Done: A CLI test writes a package from a fixture and checks its manifest and one table; no
-   window opens; the help text names the flags; cargo xtask ci is green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/Cargo.toml`
-- `[ ]` **R1** the pre-release rename: the product name leaves the code before the first release, so a
-  later choice of name is one constant and no refactor. The work is measured and scripted in
-  `plan/rename.md`; read that file, not the tree. Four parts, each its own commit: (1) give the
-  identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for the window class and the
-  settings directory set through `ViewportBuilder::with_app_id`, `project::FORMAT` +
-  `project::EXTENSION` for the file — and delete the hardcoded duplicates in `main.rs` (title, app
-  name, error), `scene_build.rs` (`"FurniCraft sample"`), `file_menu.rs` (the `scene.fcs` default and
-  the `"fcs"` filter) and `settings_store.rs` (three platform branches); (2) rename the 13 crates to
-  bare names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and `mv` in
-  `plan/rename.md` and `cargo fmt --all` after them; (3) the four registers that must agree in that
-  commit — the `CRATES` table and its tests in `xtask`, the crate map in `AGENTS.md` and `PROJECT.md`,
-  the layer list in `skills/enforce-architecture/SKILL.md`, and the 38 path hints in
-  `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan gate rejects once the path is
-  gone; (4) the envelope `format`
-  string and line 2 of the eight goldens, leaving the `generator` fixture alone. No compatibility
-  path: nothing is released, so the file format and the settings directory change outright. Measured
-  on a scratch copy of this tree: 1140 tests pass, clippy clean, `layers: ok`, 960 changed lines and
-  no behaviour change. Test: one asserting that the window title, `app_id`, settings directory and
-  open-dialog filter all read the constants, so a second rename cannot miss a copy.
-  Note: U82 removed the sample scene, so the `"FurniCraft sample"` copy named in the entry no
-   longer exists: `plan/rename.md` has been updated and the inventory starts at `main.rs`,
-   `file_menu.rs` and `settings_store.rs`. R1 waits here until the owner chooses a name.
-  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
-- `[ ]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
-  Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no
-   money, because the catalogue stores only nominal thickness and colour: sheet dimensions and
-   prices do not exist yet. A cutting list per sheet and a purchase price cannot be invented in
-   the writer.
-  Shape: The catalogue grows sheet sizes, a stock group and an optional price in integer minor
-   units; the exporter adds the additive columns and declares kerf and trim in the manifest
-   rules block. The package major version does not move.
-  Done: A package carries a per-sheet cutting plan for one material and a price per line; the
-   columns are additive; the golden file records them; cargo xtask ci is green.
-  `files: crates/model/src/catalog.rs`
 - `[ ]` **U84** the method list is one flat list of names: the section captions go
   Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
    rows is a second line to read, it makes a small menu look like a form, and the row's own
@@ -265,15 +198,17 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    tree, and the tree's own list is built inside an 850-line file. The owner asked for context
    menus that carry the actions of the object under the pointer.
   Shape: One module builds the action list for a node kind — a panel, an object, a product
-   container, a group, a camera or a light, the root and empty space — from the command
-   registry and the editor's flags, each entry a command id, its label message, its enabled
-   check and the reason it cannot run. The row menu and a new popup in the viewport draw that
-   list, so an entry cannot exist in one and not the other; the popup is anchored at the
-   pointer, closes on Escape and on an outside click, and is declared to `Chrome::covers`, so a
-   press on it is chrome and never a pick. The viewport reads a right *click* (press and
-   release within a few points) and leaves the right *drag* to the camera pan it already owns.
-   The new module is one row of `HOST_OWNERS` in `xtask/src/ui_rules.rs`. ADR 0115 records the
-   click-versus-drag split and the one-list rule.
+  container, a group, a camera or a light, the root and empty space — from the command
+  registry and the editor's flags, each entry a command id, its label message, its enabled
+  check and the reason it cannot run. The list is the capability inventory (U94) filtered
+  by the node kind and the `Context` flag, not a list this module writes, so U94 is taken
+  before this task and the three orphans are placed there. The row menu and a new popup in the
+  viewport draw that list, so an entry cannot exist in one and not the other; the popup is
+  anchored at the pointer, closes on Escape and on an outside click, and is declared to
+  `Chrome::covers`, so a press on it is chrome and never a pick. The viewport reads a right
+  *click* (press and release within a few points) and leaves the right *drag* to the camera
+  pan it already owns. The new module is one row of `HOST_OWNERS` in
+  `xtask/src/ui_rules.rs`. ADR 0115 records the click-versus-drag split and the one-list rule.
   Done: Right-clicking a panel, a group, a camera and empty space each opens the list that
    object owns, with the same entries the tree shows for it; right-dragging still pans and
    opens nothing; a headless frame test right-clicks a panel and asserts the menu's rectangle
@@ -302,8 +237,199 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
    `cargo xtask ci` is green.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
+- `[ ]` **U94** the capability inventory is one table of places, and a gate refuses an orphan command
+  Why: Measured 2026-11-14: 56 command ids (the count the registry test asserts), three of which
+  (`CONTOUR_CREATE_ID`, `NODE_ORIGIN_REBASE_ID`, `NODE_PROPERTY_SET_MANY_ID`) are named only
+  inside `crates/engine`; the ribbon map holds 29 live methods and 62 planned rows; the palette
+  builds parameters for twelve ids and refuses the rest. Nothing checks that a command has a
+  home, so every new surface decides its own list and the owner rule — every feature has a
+  representation, the next tool is under the hand — is kept by memory alone (ADR 0117).
+  Shape: A new `crates/ui/src/inventory.rs` holds one const table keyed by id: the places
+   (`Ribbon`, `Context`, `ToolCard`, `Palette`, `Card`, `Api`), `Context` or `Always`, the
+   default key, the icon and the label `Message`. The ribbon, the palette and the planned
+   context menu (U92) read it instead of declaring their own lists; `params_for` stays the
+   parameter builder, but each id it can run gets a row. `cargo xtask ui-rules` gains the
+   coverage check: a registered command with no row, a row naming an unknown id, message, icon
+   or surface, a live row without art and one id with two labels or keys all fail, while one
+   icon file shared by two unrelated actions is printed for review. The three orphans are
+   placed or declared `Api` with the reason. The audit that seeds the table — where each of the
+   56 commands lives today — goes to `plan/notes/U94.md`. U92 and U91 are taken after this
+   task, so both filter the table instead of writing a fourth list.
+  Done: `cargo xtask ui-rules` fails on a command with no row and passes on the tree; every
+   live ribbon row names an icon file and a message; the three orphans have a place or an `Api`
+   reason; a test adds a fake command and asserts the check names it; `plan/map.md` gains the
+   module row; `cargo xtask ci` is green.
+  `files: crates/ui/src, xtask/src/ui_rules.rs, crates/engine/src/commands.rs`
+- `[ ]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
+  Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
+   is touched — after the decision that matters most, where a capability lives (ADR 0117), is
+   already made. Nothing owns the operation lifecycle (arm, preview, typed number, commit,
+   cancel, undo), which is where the feel of a professional editor lives, and nothing in the
+   checklist asks whether a mechanism is private (ADR 0118).
+  Shape: `.pi/skills/place-capability/SKILL.md` activates when a command id or a place is
+   added, renamed or removed: it writes the inventory row, the places, the context, the key and
+   the icon, names the atoms it consumes, and ends with the gate command.
+   `.pi/skills/design-operation/SKILL.md` activates when a gesture or a mode appears: it
+   produces the state machine, the feedback budget, the typed input, the cancel, the one undo
+   entry, the awkward cases and the cursor, in the five-line decomposition the ui-design skill
+   already uses. `ui-design` keeps the rubric and points at both; `references/checklist.md`
+   gains the inventory question, the atom question and the icon question;
+   `references/surfaces.md` stops being the only knowledge of places and points at the
+   inventory. `AGENTS.md` §1.3 names the new skills, and `cargo xtask skills` checks their
+   paths, frontmatter and line budgets.
+  Done: Both skills load, each names its trigger and its output, and neither is over 200 lines;
+   `AGENTS.md` §1.3 names them; the checklist carries the three new questions with an evidence
+   form; `cargo xtask skills` and `cargo xtask ci` are green.
+  `files: .pi/skills, AGENTS.md`
+- `[ ]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
+  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
+   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
+   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
+   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
+   0117 makes the key a column of the inventory.
+  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
+   instead of matching key codes, and the ribbon label is derived from the same row. A test
+   asserts the two agree for every live method and that no key is bound twice; the guard that
+   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
+   table is the data a later Settings section writes.
+  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
+   label; no key is bound twice; a headless test presses each default key and asserts the same
+   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
+   xtask ci` is green.
+  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs`
+- `[ ]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
+  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
+   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
+   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
+   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
+   for a tool parameters.
+  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
+   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
+   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
+   inspector shows the same values from the same draft, and both commit through the one
+   command. The exact-distance fields become the card first instance: one layout, one commit
+   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
+   clearing the field returns it to the pointer.
+  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
+   and a headless frame test finds the two never disagree; a press inside the card is chrome
+   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
+   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/command_bar.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
+- `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
+  Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
+   measure: the value on screen and in the status bar, several measurements in a row, each
+   starting fresh. The program has no measuring atom, and a niche is measured only by the fill
+   tool. ADR 0118 makes the ruler an atom — no command, no undo — and forbids a second point
+   resolver or probe.
+  Shape: A `measure` atom in `crates/ui/src/measure.rs` holding the first point and the current
+   value; it consumes the shared snap resolver (0051) and the probe (0103) and formats lengths
+   through `furnicraft-units`. The state machine: idle, first point, measured; a third click
+   starts a new measurement rather than extending the last; Escape leaves and writes nothing.
+   The length is painted at the pointer and written to the centre zone of the status bar, while
+   the left zone says what to do. The ribbon gains a `sketch.measure.length` row with its icon
+   in `assets/icons/contour`, a `Context` and `Always` place and a key. No command id, no
+   document field, no undo entry.
+  Done: A headless test clicks two snapped points and reads the value, clicks a third and
+   asserts a new measurement, and presses Escape and asserts nothing was written and no
+   revision moved; the status bar shows the value and the next step; the icon file, its README
+   row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
+   row; `cargo xtask ci` is green.
+  `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour`
+- `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
+  Why: The owner example: the geometry of the empty space was written for one tool, and a
+   mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
+   niche inside the fill arm, so no other tool can ask for one and a report or the assistant
+   has no way to name the space.
+  Shape: One niche atom (`probe.void`) in `crates/ui/src` with its own arm, cursor, ghost and
+   cancel, returning the cell from the model probe (0103, 0106, 0109); a ribbon row in the
+   Furniture tab with a `Context` place and a key. Fill becomes its first consumer and reads
+   the identical value, so the ghost and the entry stay one code path. A second consumer proves
+   the atom: the inspector or a report row names the niche the pointer holds. No document write
+   and no second probe.
+  Done: The niche tool arms from the ribbon and from the fill own affordance, and both return
+   the same cell for the same pointer; a test calls the atom once and asserts fill and the
+   inspector see the same value; cancelling either leaves no document change; `plan/map.md`
+   gains the atom row; `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
+- `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
+  Why: This task is not in the queue and no session starts it. It runs only when the owner
+   commands a release, and that command also names the product, which is the one input the
+   entry cannot supply. Until then the entry keeps its place at the end of `## Next`, so the
+   measured procedure in `plan/rename.md` is not lost. The product name is hardcoded in the
+   window title, the app name, the error text, the `.fcs` default and its filter, the settings
+   directory and 38 path hints, so renaming after a release would be a refactor instead of a
+   constant.
+  Shape: (1) give the identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for
+   the window class and the settings directory set through `ViewportBuilder::with_app_id`,
+   `project::FORMAT` + `project::EXTENSION` for the file — and delete the hardcoded duplicates
+   in `main.rs` (title, app name, error), `file_menu.rs` (the `scene.fcs` default and the
+   `"fcs"` filter) and `settings_store.rs` (three platform branches); (2) rename the 13 crates
+   to bare names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and
+   `mv` in `plan/rename.md` and `cargo fmt --all` after them; (3) the four registers that must
+   agree in that commit — the `CRATES` table and its tests in `xtask`, the crate map in
+   `AGENTS.md` and `PROJECT.md`, the layer list in `skills/enforce-architecture/SKILL.md`, and
+   the 38 path hints in `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan
+   gate rejects once the path is gone; (4) the envelope `format` string and line 2 of the eight
+   goldens, leaving the `generator` fixture alone. No compatibility path: nothing is released,
+   so the file format and the settings directory change outright. U82 removed the sample scene,
+   so the `"FurniCraft sample"` copy the old inventory named is gone: the inventory starts at
+   `main.rs`, `file_menu.rs` and `settings_store.rs`.
+  Done: A single constant decides the product name, and a test asserts that the window title,
+   `app_id`, the settings directory and the open-dialog filter all read it, so a second rename
+   cannot miss a copy. Measured on a scratch copy of this tree: 1140 tests pass, clippy clean,
+   `layers: ok`, 960 changed lines and no behaviour change. `cargo xtask ci` is green.
+  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
+  Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no
+   money, because the catalogue stores only nominal thickness and colour: sheet dimensions and
+   prices do not exist yet. A cutting list per sheet and a purchase price cannot be invented in
+   the writer.
+  Shape: The catalogue grows sheet sizes, a stock group and an optional price in integer minor
+   units; the exporter adds the additive columns and declares kerf and trim in the manifest
+   rules block. The package major version does not move.
+  Done: A package carries a per-sheet cutting plan for one material and a price per line; the
+   columns are additive; the golden file records them; cargo xtask ci is green.
+  now: export: the parts price, the sheets table and the manifest rules and money blocks
+  `files: crates/model/src/catalog.rs` — `2a634da`
+
+- `[x]` **K3** the order package is written from a command line, without opening a window
+  Why: A package is useless if producing it needs a window and a person. The report pipeline
+   runs over saved files, and the assistant milestone already needs a headless job over a
+   project, so the exporter has to be reachable from a command line in the same binary.
+  Shape: furnicraft export <scene.fcs> --out <dir> [--format bundle|single] [--no-timestamp]:
+   the subcommand is handled before the window starts, prints one line per written table, and
+   exits non-zero with a readable message on a bad path, an unreadable scene or an unknown
+   format. No second binary, no new dependency.
+  Done: A CLI test writes a package from a fixture and checks its manifest and one table; no
+   window opens; the help text names the flags; cargo xtask ci is green.
+  `files: apps/furnicraft/src/main.rs, apps/furnicraft/Cargo.toml` — `39ae4c3`
+
+- `[x]` **K2** the order package writer: one manifest and ten flat tables other programs read
+  Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
+   process, possibly in Python, and neither the document JSON nor the internal database is a
+   contract they can rely on (ADR 0095). The package is that contract, and the class traits,
+   the product envelope and the exact contours only pay off when they travel with it. It
+   follows the product entity (N1) because its products table is the envelope plus product_id,
+   and the classes snapshot carries mount and fill.
+  Shape: A new crate crates/export at layer 3, registered in the layer map and PROJECT.md, with
+   one column table as the only source for the manifest, the JSONL writer and the CSV copies.
+   Tables: products, nodes, parts, banding, contours, facades, fittings, machining, materials,
+   classes, properties; integer micrometres, millidegrees, square millimetres and
+   scaled-integer rotation, no floats. Products carry the authored envelope plus the derived
+   content bounds; parts carry product_id, measured sizes, area, banding totals; contours hand
+   over the stored segments and arcs without recomputation; the manifest carries the optional
+   order number and version. The package embeds the catalogue rows the order uses and the class
+   rows it references, so it is self-contained. Ordering by key and no timestamp in the tables
+   make one revision produce byte-identical output.
+  Done: A golden package from the fixture scene; two exports of one revision are identical; the
+   manifest column list equals the writer table and each CSV copy carries exactly those
+   columns; an order with two cabinets groups correctly by product_id; cargo xtask layers and
+   cargo xtask ci are green.
+  `files: Cargo.toml, xtask/src/main.rs, PROJECT.md, AGENTS.md, crates/export, docs/domain/order-export.md, plan/map.md, plan/rename.md` — `b0d1d2f`
 
 - `[x]` **X39** the inspector's last row hides under the horizontal scroller, and the tree scrolls by a different route
   Why: Observation: the right panel's content ends flush with the panel's rounded bottom edge

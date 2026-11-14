@@ -1292,6 +1292,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "furnicraft-engine",
+ "furnicraft-export",
  "furnicraft-geom",
  "furnicraft-kernel",
  "furnicraft-kernel-truck",
@@ -1317,6 +1318,20 @@ dependencies = [
  "furnicraft-mesh",
  "furnicraft-model",
  "furnicraft-param",
+ "furnicraft-testkit",
+ "furnicraft-text",
+ "furnicraft-units",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "furnicraft-export"
+version = "0.1.0"
+dependencies = [
+ "furnicraft-geom",
+ "furnicraft-model",
  "furnicraft-testkit",
  "furnicraft-text",
  "furnicraft-units",

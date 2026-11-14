@@ -1,0 +1,2 @@
+machining_id,node_id,op,face,x_um,y_um,diameter_um,depth_um,params
+7,6,cutout,A,50000,50000,0,0,"{""depth"":""through"",""height_um"":60000,""shape"":""rectangle"",""width_um"":100000}"

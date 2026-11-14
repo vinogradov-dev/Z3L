@@ -1,0 +1,12 @@
+{"node_id":1,"parent_id":0,"name":"Root","class":"","level":"","path":"Root","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":2,"parent_id":1,"name":"Shelf","class":"","level":"","path":"Shelf","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":3,"parent_id":1,"name":"Drawer","class":"","level":"","path":"Drawer","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":4,"parent_id":3,"name":"Front","class":"","level":"","path":"Drawer/Front","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":5,"parent_id":1,"name":"Cabinet","class":"80.01","level":"Product","path":"Cabinet","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":6,"parent_id":5,"name":"Side","class":"30.10","level":"Part","path":"Cabinet/Side","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":8,"parent_id":5,"name":"Shelf","class":"30.11","level":"Part","path":"Cabinet/Shelf","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":9,"parent_id":5,"name":"Door","class":"30.20","level":"Component","path":"Cabinet/Door","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":10,"parent_id":5,"name":"Hinge","class":"50.02.01","level":"Fitting","path":"Cabinet/Hinge","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":11,"parent_id":1,"name":"Wardrobe","class":"80.01","level":"Product","path":"Wardrobe","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":12,"parent_id":11,"name":"Back","class":"30.12","level":"Part","path":"Wardrobe/Back","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}
+{"node_id":13,"parent_id":11,"name":"Round shelf","class":"30.11","level":"Part","path":"Wardrobe/Round shelf","x_um":0,"y_um":0,"z_um":0,"qw":1000000000,"qx":0,"qy":0,"qz":0}

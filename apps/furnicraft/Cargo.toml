@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 eframe = { workspace = true }
 furnicraft-engine = { workspace = true }
+furnicraft-export = { workspace = true }
 furnicraft-geom = { workspace = true }
 furnicraft-kernel = { workspace = true }
 furnicraft-kernel-truck = { workspace = true }

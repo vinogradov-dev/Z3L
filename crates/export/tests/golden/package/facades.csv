@@ -1,0 +1,2 @@
+node_id,product_id,class,material_id,length_um,width_um,thickness_um,supply,glass
+9,5,30.20,1,600000,700000,18000,sheet,false

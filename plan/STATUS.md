@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=09f4c02 updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=2a634da updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -13,16 +13,15 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   owns its path (0074) and a primitive stores its parameters (0054). Every figure shows its grips, a
   corner moves freely or along the picked segment (0075), a fresh extrusion pulls its height from an
   arrow previewing a wireframe prism (X19), and S5's frame rule reached a drawing, a group and a panel
-  (0082, 0083), proved once in `frame_contract.rs`; cameras and lights are scene objects (0036).
-  ADR 0105 makes the three stances one flat frame turned; X35 stands the fill post in it, and N11
-  gives a panel end a bevel angle about its outline edge (0107, schema 24).
+  (0082, 0083), proved once in `frame_contract.rs`; cameras and lights are scene objects (0036). ADR
+  0105 makes the three stances one flat frame turned; X35 stands the fill post in it, and N11 gives a
+  panel end a bevel angle about its outline edge (0107, schema 24).
 - S7 audited the design rules and filed S8–S22 under `plan/refactor.md`: S8–S13 split `geom` and gave
-  the tests one fixture definition (ADR 0084), S14–S17 `engine/panel_cmds`, `scene`'s camera and ray
-  and `render`'s pipelines, S18–S19 the document rules and the `Editor` out of `ui/lib.rs` (50 lines),
-  S20–S22 the drawing draft and the shell's chrome (2608 -> 2037), then U45 the scene itself —
-  `Document` per tab, `main.rs` 2037 -> 455 (ADR 0081); S21 predates its filing, F4 is in questions.
-- U45 opens several scenes at once: one tab per open file in the header, with its dirty marker and
-  its cross. *New* and *Open* open a tab (a path already open activates that tab), *Save*, *Undo* and
+  the tests one fixture (ADR 0084), S14–S17 `engine/panel_cmds`, `scene`'s camera and ray, `render`'s
+  pipelines, S18–S19 the document rules and the `Editor` (50 lines), S20–S22 the drawing draft and the
+  shell's chrome (2608 -> 2037), U45 the scene itself (ADR 0081); F4 is in questions.
+- U45 opens several scenes at once: one tab per open file in the header, with its dirty marker and its
+  cross. *New* and *Open* open a tab (a path already open activates that tab), *Save*, *Undo* and
   *Redo* act on the active tab only, a close with unsaved changes asks and the last close leaves an
   empty *Untitled* scene; history, selection, camera and split layout travel with the tab (ADR 0081).
 - S2, S3, G1, G2, D4–D7 and S4 are complete: `crates/param` compiles one domain-free solid plan and
@@ -33,8 +32,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 - The UI plan (U1–U26) is shipped: SVG icons, a work plane from the ortho view and draw/pick/snap for
   a `Path` (ADRs 0047–0052). X3–X6 and U30–U37 are fixed (ADRs 0056–0061), X20 gives a pole view a
   canonical up (0057) and U59 names the six views; X1, X2 and X7 are fixed too — a ring past the cap
-  follows the shape (0062), a ribbon tool is one measured cell (0067). U27 caches icons per `(uri,
-  px, colour)`; U46 drew every declared icon but `primitives/cone` (0055).
+  follows the shape (0062), a ribbon tool is one measured cell (0067). U27 caches icons per `(uri, px,
+  colour)`; U46 drew every declared icon but `primitives/cone` (0055).
 - U38–U42 and the X-fixes landed the visual pass: `theme.rs` owns two palettes and the type scale
   (ADRs 0063, 0069), `header.rs` returns a `HeaderAction` (0064), U39 the ribbon (0066), U40 the
   folded side panels and the bottom-centre cluster, U41 *Settings*, `settings.json` and *Home* (0068),
@@ -42,21 +41,22 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   cameras and active view per layout (0079), U61/U62/U51 framing, expand and the floating ribbon
   (0080). U43/U63 gave each view its display style (0070), X10 made the edges mean the form, U44 a
   shadow under every floor-standing object (0071), X11 a ring closed by an arc (0072), X12 a tool
-  switch replaces the draft and X23 makes every *Close* commit. U52 made the UI scale a scrubbing
-  field, and every numeric field reads the drag's delta and clamps what is typed. U68 drew the
-  ribbon from one const map (0091), U74 made a multi-method tool a split cell, and U75 put the group
-  caption in a 16 pt band a step off the control tone, every name on one baseline, so the ribbon is
-  76 pt. U65 gave every number one 76 x 22 field, right-aligned with its unit outside the string, one
-  commit policy and one undo entry per drag or typing run (0092).
+  switch replaces the draft and X23 makes every *Close* commit. U68 drew the ribbon from one const map
+  (0091), U74 made a multi-method tool a split cell, and U75 put the group caption in a 16 pt band a
+  step off the control tone, so the ribbon is 76 pt. U65 gave every number one 76 x 22 field,
+  right-aligned with its unit outside the string, and one undo entry per drag or typing run (0092).
+- `crates/export` writes the order package — the manifest and twelve flat tables — and the headless
+  `furnicraft export` runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
+- ADR 0117 makes one const table the inventory of capabilities that every surface filters and the gate
+  checks; 0118 names the atom, 0119 the tool card, U94–U99 file that work (`plan/notes/U94.md`).
 - Faber's architecture is recorded (ADRs 0028–0032) but not implemented. `state-contract` (L0) is the
-  whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init`, the command table
-  (P4–P7, P9, ADR 0085); `xtask` keeps the layering rules and `ci` (P8), and the gate follows every
-  `files:` hint, a closed entry's ADR, the `STATE:` keys, the reference files and a stale `base`.
-  Gate: `cargo xtask ci`, green; `dev` → `main` with `--no-ff`.
+  whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init` (P4–P7, P9, 0085);
+  `xtask` keeps the layering rules and `ci` (P8), and the gate follows every `files:` hint, a closed
+  entry's ADR, the `STATE:` keys, the reference files and a stale `base`; `ci` green, `dev` → `main`.
 
 ## Next
 
-Nothing is scheduled: K2 leads `## Next`, and U84 leads the rest of the UX pass.
+Nothing is scheduled: U84 leads `## Next` — the method list loses its section captions
 
 ## Index
 

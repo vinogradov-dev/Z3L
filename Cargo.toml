@@ -21,6 +21,7 @@ furnicraft-kernel-truck = { path = "crates/kernel-truck" }
 furnicraft-param = { path = "crates/param" }
 furnicraft-mesh = { path = "crates/mesh" }
 furnicraft-project = { path = "crates/project" }
+furnicraft-export = { path = "crates/export" }
 furnicraft-scene = { path = "crates/scene" }
 furnicraft-render = { path = "crates/render" }
 furnicraft-engine = { path = "crates/engine" }

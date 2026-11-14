@@ -19,7 +19,10 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use furnicraft_model::{Catalog, EdgeBandingMaterial, MaterialId, PanelMaterial, PanelNominalSize, PanelRect};
+use furnicraft_model::{
+    Catalog, Currency, EdgeBandingMaterial, MaterialId, Money, PanelMaterial, PanelNominalSize, PanelRect, PanelStock,
+    SheetSize,
+};
 use furnicraft_units::Length;
 
 /// The fixtures every crate's tests start from, defined once in `furnicraft_model::testing`
@@ -108,10 +111,22 @@ pub fn sample_narrow_panel_nominal_size() -> PanelNominalSize {
 }
 
 /// A catalogue with an 18 mm chipboard and a 2 x 22 mm PVC edge.
+///
+/// The board is stocked as a 2800 x 2070 mm sheet in the group `chipboard-18` and priced at 3200.00
+/// roubles a sheet, so every fixture that exports a package exercises the stock block and the money
+/// columns instead of an empty corner of the contract.
 #[allow(clippy::expect_used)]
 pub fn sample_catalog() -> Catalog {
+    let sheet = SheetSize::new(
+        Length::from_millimetres(2800).expect("2800 mm fits a length"),
+        Length::from_millimetres(2070).expect("2070 mm fits a length"),
+    )
+    .expect("the sample sheet is valid");
+    let stock = PanelStock::new(sheet, Some("chipboard-18".to_owned()), Some(Money::from_minor(320_000)))
+        .expect("the sample stock block is valid");
     let panel = PanelMaterial::new(sample_material_id(), "Chipboard", "chipboard", sample_panel_thickness(), "white")
-        .expect("sample panel material is valid");
+        .expect("sample panel material is valid")
+        .with_stock(stock);
     let edge = EdgeBandingMaterial::new(
         sample_edge_material_id(),
         "PVC edge",
@@ -121,7 +136,8 @@ pub fn sample_catalog() -> Catalog {
         "white",
     )
     .expect("sample edge material is valid");
-    Catalog::new(vec![panel], vec![edge]).expect("sample catalogue ids are unique")
+    Catalog::new(vec![panel], vec![edge], Some(Currency::new("RUB", 100).expect("a currency")))
+        .expect("sample catalogue ids are unique")
 }
 
 /// A 100 x 50 mm cutout rectangle at `(10, 10)` on the sample panel.
