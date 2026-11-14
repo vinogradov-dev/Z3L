@@ -421,9 +421,10 @@ fn an_open_method_list_owns_the_cursor_across_its_whole_rectangle() {
     // of its own was drawn over — while the name kept the list's cursor (X37).
     let mut harness = Harness::new("frame-list-cursor");
     harness.settle();
-    // The circle is armed by its key, so the viewport has a tool cursor to lose.
+    // The circle is armed by its key, so the viewport has a pointer to lose to the list.
     harness.press(egui::Key::C, egui::Modifiers::NONE);
-    assert_eq!(harness.cursor, egui::CursorIcon::Crosshair, "an armed tool owns the scene's pointer");
+    harness.hover(harness.scene().center());
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the armed tool keeps the shell's square");
 
     // The caret face publishes its name, so the frame says where it put the control to press.
     let caret = harness.face(Message::ToolMethods.text(Lang::En)).expect("the split cell publishes its caret face");
@@ -445,6 +446,7 @@ fn an_open_method_list_owns_the_cursor_across_its_whole_rectangle() {
     for (column, point) in probes {
         harness.hover(point);
         assert_eq!(harness.cursor, egui::CursorIcon::Default, "the list owns the pointer over {column}");
+        assert!(harness.app.shell.work_cursor.is_none(), "the list is a menu: no square covers {column}");
         assert!(chrome.covers(point), "{column} is inside the list's rectangle");
     }
 
@@ -454,7 +456,7 @@ fn an_open_method_list_owns_the_cursor_across_its_whole_rectangle() {
     assert!(chrome.list.is_none(), "the question the caret asked is answered and the list is gone");
     assert!(harness.face(Message::ToolMethods.text(Lang::En)).is_some(), "the caret is still there");
     harness.hover(harness.scene().center());
-    assert_eq!(harness.cursor, egui::CursorIcon::Crosshair, "the armed tool gets the scene's pointer back");
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the armed tool gets the shell's square back");
 }
 
 #[test]
@@ -1322,34 +1324,70 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
 }
 
 #[test]
-fn the_pointer_over_the_scene_is_the_shells_own_work_cursor() {
-    // The system arrow hides the point a click lands on and reads as a pointer to buttons, so the
-    // shell takes the pointer away from the window and draws its own square where a click will
-    // land; a panel, and a tool with a cursor of its own, keep what they had (U88).
+fn the_square_is_the_window_pointer_on_every_surface_but_a_menu() {
+    // The system arrow points at a button, so the shell hides it and draws its own square where a
+    // click lands — over the scene, the panels and the floating cluster alike. A menu, a popup and a
+    // modal are the one exception: there the arrow picks a row and the square would cover it (X40).
     let mut harness = Harness::new("frame-work-cursor");
     let chrome = harness.settle();
-    let centre = harness.scene().center();
+    let scene = harness.scene();
+    let centre = scene.center();
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "the scene hides the system arrow");
-    let cursor = harness.app.tabs.active().work_cursor().expect("the shell drew its own cursor");
+    let cursor = harness.app.shell.work_cursor.expect("the shell drew its own cursor");
     assert_eq!(cursor.square.center(), centre, "the square sits on the point the click lands on");
     assert_eq!(cursor.dot.center(), centre, "and so does its centre dot");
     assert!(cursor.crosshair.is_none(), "a fresh workspace draws the square alone");
 
-    // A panel is chrome: the pointer there points at a control, so the arrow comes back and no
-    // square is painted over it.
+    // A side panel is still the window's surface: the square stays, because the pointer must point
+    // at a place, not at a control.
     let tree = chrome.panels.left.expect("the scene tree is up");
     let on_panel = egui::pos2(tree.center().x, tree.bottom() - 12.0);
     harness.hover(on_panel);
-    assert_eq!(harness.cursor, egui::CursorIcon::Default, "a panel keeps the system arrow");
-    assert!(harness.app.tabs.active().work_cursor().is_none(), "and draws no square");
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "a panel keeps the shell's square");
+    let cursor = harness.app.shell.work_cursor.expect("the panel draws the shell's cursor");
+    assert_eq!(cursor.square.center(), on_panel, "and the square follows the pointer onto the chrome");
 
-    // An armed tool owns the pointer: a crosshair says where a point will be placed, and the square
-    // would sit under it saying the same thing twice.
+    // The floating cluster is an `Order::Middle` area, so the square is painted over it rather than
+    // under it: this is the bottom toolbar the owner found covering the pointer.
+    let on_cluster = egui::pos2(scene.center().x, scene.bottom() - furnicraft_ui::theme::FLOATING_OFFSET - 8.0);
+    assert_eq!(
+        harness.ctx.layer_id_at(on_cluster).map(|layer| layer.order),
+        Some(egui::Order::Middle),
+        "the point is on the floating cluster, not on the scene behind it"
+    );
+    harness.hover(on_cluster);
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the cluster does not hide the pointer");
+    let cursor = harness.app.shell.work_cursor.expect("the cluster draws the shell's cursor over itself");
+    assert_eq!(cursor.square.center(), on_cluster, "the square is above the floating toolbar");
+
+    // An armed drawing tool keeps the square: a contour is drawn at the point the square names, and
+    // a second crosshair would say the same thing in another language.
     harness.press(egui::Key::C, egui::Modifiers::NONE);
     harness.hover(centre);
-    assert_eq!(harness.cursor, egui::CursorIcon::Crosshair, "the armed tool keeps its cursor");
-    assert!(harness.app.tabs.active().work_cursor().is_none(), "a gesture that owns a cursor draws no square");
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "a contour tool keeps the shell's square");
+    assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
+
+    // An armed primitive and a box do the same: the old crosshair said "a point will be placed", but
+    // the square already marks that point.
+    harness.app.tabs.active_mut().editor.arm_box(furnicraft_ui::BoxOwner::Cuboid);
+    harness.hover(centre);
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "a primitive tool keeps the shell's square");
+    assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
+
+    // A modal is a `Foreground` layer: the arrow comes back and no square is painted over the card
+    // that asks for the three sides. This is the product card that used to leave no pointer at all.
+    harness.app.product_card.start();
+    harness.frame();
+    harness.hover(screen().center());
+    assert_eq!(harness.cursor, egui::CursorIcon::Default, "a modal keeps the system arrow");
+    assert!(harness.app.shell.work_cursor.is_none(), "and draws no square over its fields");
+
+    // Closing the card gives the square back to the scene.
+    harness.app.product_card.close();
+    harness.hover(centre);
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the scene gets the square back");
+    assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted again");
 }
 
 #[test]
@@ -1361,7 +1399,7 @@ fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
     let centre = harness.scene().center();
     harness.app.settings.pointer.cursor_size = furnicraft_ui::settings::MIN_CURSOR_POINTS;
     harness.hover(centre);
-    let small = harness.app.tabs.active().work_cursor().expect("the scene draws its cursor");
+    let small = harness.app.shell.work_cursor.expect("the scene draws its cursor");
     let smallest = f32::from(u16::try_from(furnicraft_ui::settings::MIN_CURSOR_POINTS).expect("a small constant"));
     assert_eq!(small.square.width(), smallest, "the setting is the square's side, in points");
     assert_eq!(small.square.center(), centre, "the smallest square is still centred");
@@ -1370,7 +1408,7 @@ fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
     harness.app.settings.pointer.crosshair = true;
     let view = harness.scene();
     harness.hover(view.center());
-    let large = harness.app.tabs.active().work_cursor().expect("the scene draws its cursor");
+    let large = harness.app.shell.work_cursor.expect("the scene draws its cursor");
     let largest = f32::from(u16::try_from(furnicraft_ui::settings::MAX_CURSOR_POINTS).expect("a small constant"));
     assert_eq!(large.square.width(), largest, "the largest square is the setting, not a multiple of it");
     assert_eq!(large.square.center(), view.center(), "and it is centred on the pointer");

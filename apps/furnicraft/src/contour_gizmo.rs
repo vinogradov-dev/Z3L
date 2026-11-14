@@ -119,14 +119,6 @@ impl ContourGizmo {
         self.along = !self.along;
     }
 
-    /// The cursor the viewport should show while the mode is active.
-    ///
-    /// Always the default arrow: the enlarged hovered grip and the active drag state carry the
-    /// feedback, and a hand or grab icon would fight the selection cursor and add noise.
-    pub(crate) fn cursor(&self) -> egui::CursorIcon {
-        egui::CursorIcon::Default
-    }
-
     /// Applies the pointer to the working copy; returns whether the draft changed.
     ///
     /// The gizmo owns the left button while the mode is live: a drag moves the grabbed grip and a
@@ -1282,20 +1274,6 @@ mod tests {
         // A quarter arc of radius 40 is 40·π/2 ≈ 62.83 mm.
         let expected = (40.0 * std::f64::consts::FRAC_PI_2 * 1_000.0).round() as i64;
         assert_eq!(entry.text, Length::from_micrometres(expected).to_string(), "the arc length is 62.83 mm");
-    }
-
-    #[test]
-    fn the_cursor_is_always_the_default_arrow() {
-        let mut gizmo = ContourGizmo::default();
-        assert_eq!(gizmo.cursor(), egui::CursorIcon::Default, "fresh gizmo shows the default arrow");
-        gizmo.hover = Some(ContourGrip::CircleCenter);
-        assert_eq!(gizmo.cursor(), egui::CursorIcon::Default, "hover over a grip is still the default arrow");
-        gizmo.drag = Some(GripDrag {
-            target: ContourTarget::Path(furnicraft_model::Id::new(1).expect("id")),
-            grip: ContourGrip::RectangleCenter,
-            motion: CornerMove::Free,
-        });
-        assert_eq!(gizmo.cursor(), egui::CursorIcon::Default, "a running drag is still the default arrow");
     }
 
     #[test]

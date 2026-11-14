@@ -1038,7 +1038,10 @@ fn the_work_cursor_is_painted_offscreen_in_both_themes() {
         app.tabs.active_mut().zoom_active_view(1.0 / MODEL_ZOOM);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
         let _ = settle(&mut app, &ctx, &render_state, screen);
-        let pointer = app.tabs.active().scene_rect().expect("the settled frame gives the scene a rectangle").center();
+        let scene = app.tabs.active().scene_rect().expect("the settled frame gives the scene a rectangle");
+        // The pointer is over the floating cluster, not the middle of the scene: the owner's report
+        // was that the bottom toolbar covered the square, so the picture has to show it on top (X40).
+        let pointer = egui::pos2(scene.center().x, scene.bottom() - furnicraft_ui::theme::FLOATING_OFFSET - 8.0);
         // The square is chrome over the scene, so the picture is taken once the pointer has been
         // reported and the frame that reads it has drawn.
         let mut jobs = Vec::new();
@@ -1063,7 +1066,7 @@ fn the_work_cursor_is_painted_offscreen_in_both_themes() {
             delta.clear();
             jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
         }
-        let drawn = app.tabs.active().work_cursor().expect("the pointer over the scene draws the cursor");
+        let drawn = app.shell.work_cursor.expect("the pointer over the cluster draws the cursor");
         assert_eq!(drawn.square.center(), pointer, "the {name} frame draws the square on the pointer");
         assert!(drawn.crosshair.is_some(), "the {name} frame draws the crosshair the setting turned on");
         let pixels_per_point = ctx.pixels_per_point();

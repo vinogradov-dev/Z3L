@@ -53,6 +53,7 @@ mod ui_shots;
 mod vertex_gizmo;
 mod view_cluster;
 mod view_layout;
+mod work_cursor;
 
 use std::path::Path;
 
@@ -152,6 +153,10 @@ pub(crate) struct Shell {
     pub(crate) rebuilding: bool,
     /// The cluster asked for Settings › View this frame; the shell opens it and clears this.
     pub(crate) open_settings: bool,
+    /// The work cursor the last frame drew, or `None` while a menu, a popup or a modal owns the
+    /// pointer. A test-only snapshot of the geometry the shell painted (X40).
+    #[cfg(test)]
+    pub(crate) work_cursor: Option<work_cursor::WorkCursor>,
     /// The background, grid and line ink of the theme variant the window draws with.
     ///
     /// The viewport is a `wgpu` surface, so it cannot read the `egui` palette at draw time; the
@@ -171,6 +176,8 @@ impl Default for Shell {
             divider_dragging: false,
             rebuilding: false,
             open_settings: false,
+            #[cfg(test)]
+            work_cursor: None,
             colors: SceneColors::DARK,
         }
     }
@@ -718,6 +725,22 @@ impl FurniCraftApp {
         }
     }
 
+    /// Draws the window's own pointer over every surface the frame has drawn.
+    ///
+    /// The square is painted last on the `Tooltip` layer, so the floating cluster and the status bar
+    /// can never cover it; a menu, a popup or a modal is a `Foreground` layer, where the system arrow
+    /// comes back and the square is not painted (X40).
+    fn draw_work_cursor(&mut self, ctx: &egui::Context) {
+        let view = self.tabs.active().scene_rect();
+        let cursor = work_cursor::show(ctx, &self.settings.pointer, view);
+        #[cfg(test)]
+        {
+            self.shell.work_cursor = cursor;
+        }
+        #[cfg(not(test))]
+        let _ = cursor;
+    }
+
     /// Draws the Settings window and applies what it changed.
     ///
     /// The window edits a copy-free `&mut Settings`; a change is applied to the running application
@@ -803,6 +826,9 @@ impl FurniCraftApp {
     /// back, so the presses it keeps and the rectangles it hands out are asserted without pixels
     /// (U78).
     fn frame(&mut self, ui: &mut egui::Ui) -> Chrome {
+        // The system cursor is the base the whole frame starts from: every surface may ask for an
+        // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.
@@ -951,6 +977,7 @@ impl FurniCraftApp {
         self.settings_window(ui.ctx());
         self.product_frame_card(ui.ctx());
         self.home_surface(ui.ctx());
+        self.draw_work_cursor(ui.ctx());
         // The close command needs the context, which only the frame has: everything else a quit
         // touches — the questions, the settings write — has already happened by now.
         if self.quit_requested {

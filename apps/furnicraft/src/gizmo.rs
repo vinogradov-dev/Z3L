@@ -299,12 +299,6 @@ impl Gizmo {
             }
         }
 
-        if self.drag.is_some() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        } else if pointer.is_some_and(|pointer| ring_hit(pointer, center)) {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-        }
-
         let ring_color = theme::text_dim(ui).gamma_multiply(0.55);
         painter.circle_stroke(center, RING_RADIUS, Stroke::new(RING_STROKE, ring_color));
         // The top node's tick makes "up" readable without a label.

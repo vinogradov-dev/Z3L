@@ -170,17 +170,6 @@ impl ExtrudeGizmo {
         std::mem::take(&mut self.focus)
     }
 
-    /// The cursor the viewport should show while a pull is open.
-    pub(crate) fn cursor(&self) -> egui::CursorIcon {
-        if self.drag.is_some() {
-            egui::CursorIcon::Grabbing
-        } else if self.hover {
-            egui::CursorIcon::Grab
-        } else {
-            egui::CursorIcon::Default
-        }
-    }
-
     /// Reads the pointer: a press on the arrow starts a drag, a move previews a height, a release
     /// keeps the preview open, and a click anywhere else finishes the pull.
     pub(crate) fn update(

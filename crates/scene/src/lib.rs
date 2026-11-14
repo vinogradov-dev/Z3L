@@ -184,7 +184,7 @@ pub struct SceneColors {
     pub product_envelope_inactive: [f32; 4],
     /// The ink of a guide the frame draws for the person rather than for the form, in gamma space.
     ///
-    /// A guide is the program's own geometry — the bracket of an open level, a work cursor — so it
+    /// A guide is the program's own geometry — the bracket of an open level, a work plane — so it
     /// is screen paint and never document data. The chrome side of the same ink is
     /// `furnicraft_ui::theme::helper`; the two are one colour, pinned together by a test in `ui`,
     /// because `scene` cannot reach the palette (ADR 0111, sheet U83). The values are written as

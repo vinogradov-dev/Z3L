@@ -289,6 +289,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X40** the work cursor is the shell's pointer everywhere but a menu, and its two-tone outline shows on any surface
+  Why: U88 made the square the scene's fallback and let each gesture keep an OS icon, so a
+   contour mode showed an arrow and an armed primitive a crosshair; it painted the square
+   inside the viewport on the scene layer, so the floating cluster covered it, and a modal
+   drawn above it left no pointer at all; one amber ink vanished on a light board. The owner
+   found this in a live session, while the headless geometry tests U88 passed asserted only the
+   square's rectangle and the icon in two states.
+  Shape: Move WorkCursor out of document.rs into a shell module. The frame resets
+   CursorIcon::Default, draws every surface, then paints the square on Order::Tooltip at the
+   pointer unless the top layer there is Foreground (a menu, a popup, a modal) or a widget
+   asked for its own icon (a text field, a divider, a scrub). The viewport keeps only the
+   divider's resize icon: the owned_cursor chain and the tools' cursor methods go. The square,
+   dot and crosshair are a 3 pt dark and 1 pt light pair from theme.rs; the square clips to the
+   window, the crosshair to the scene rectangle.
+  Done: Headless tests assert the icon is None and the square is centred over the scene with a
+   contour tool, an armed primitive and a box; over the bottom cluster and a panel; the arrow
+   returns and no square is drawn over an open menu, popup or modal (the product card); a text
+   field and a divider keep their own icons; the two outline inks differ and sit at opposite
+   ends of the brightness range; an offscreen shot in both themes with the pointer over the
+   bottom cluster shows the square above it; cargo xtask ci and cargo xtask docs are green with
+   the new ADR listed.
+  `files: apps/furnicraft/src, apps/furnicraft/src/document.rs, crates/ui/src/theme.rs, apps/furnicraft/src/frame_tests.rs, docs/decisions` — `6fe7481`
+
 - `[x]` **U88** the viewport draws its own work cursor, sized in settings, with an optional full crosshair
   Why: The OS arrow hides the point a click lands on and reads as a pointer to buttons rather
    than to geometry; a small square with a centre dot says this is the point, and a full
