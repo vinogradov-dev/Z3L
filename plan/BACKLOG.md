@@ -42,28 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **K2** the order package writer: one manifest and ten flat tables other programs read
-  Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
-   process, possibly in Python, and neither the document JSON nor the internal database is a
-   contract they can rely on (ADR 0095). The package is that contract, and the class traits,
-   the product envelope and the exact contours only pay off when they travel with it. It
-   follows the product entity (N1) because its products table is the envelope plus product_id,
-   and the classes snapshot carries mount and fill.
-  Shape: A new crate crates/export at layer 3, registered in the layer map and PROJECT.md, with
-   one column table as the only source for the manifest, the JSONL writer and the CSV copies.
-   Tables: products, nodes, parts, banding, contours, facades, fittings, machining, materials,
-   classes, properties; integer micrometres, millidegrees, square millimetres and
-   scaled-integer rotation, no floats. Products carry the authored envelope plus the derived
-   content bounds; parts carry product_id, measured sizes, area, banding totals; contours hand
-   over the stored segments and arcs without recomputation; the manifest carries the optional
-   order number and version. The package embeds the catalogue rows the order uses and the class
-   rows it references, so it is self-contained. Ordering by key and no timestamp in the tables
-   make one revision produce byte-identical output.
-  Done: A golden package from the fixture scene; two exports of one revision are identical; the
-   manifest column list equals the writer table and each CSV copy carries exactly those
-   columns; an order with two cabinets groups correctly by product_id; cargo xtask layers and
-   cargo xtask ci are green.
-  `files: Cargo.toml, xtask/src/main.rs, crates/model/src/lib.rs, docs/domain/order-export.md`
 - `[ ]` **K3** the order package is written from a command line, without opening a window
   Why: A package is useless if producing it needs a window and a person. The report pipeline
    runs over saved files, and the assistant milestone already needs a headless job over a
@@ -304,6 +282,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **K2** the order package writer: one manifest and ten flat tables other programs read
+  Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
+   process, possibly in Python, and neither the document JSON nor the internal database is a
+   contract they can rely on (ADR 0095). The package is that contract, and the class traits,
+   the product envelope and the exact contours only pay off when they travel with it. It
+   follows the product entity (N1) because its products table is the envelope plus product_id,
+   and the classes snapshot carries mount and fill.
+  Shape: A new crate crates/export at layer 3, registered in the layer map and PROJECT.md, with
+   one column table as the only source for the manifest, the JSONL writer and the CSV copies.
+   Tables: products, nodes, parts, banding, contours, facades, fittings, machining, materials,
+   classes, properties; integer micrometres, millidegrees, square millimetres and
+   scaled-integer rotation, no floats. Products carry the authored envelope plus the derived
+   content bounds; parts carry product_id, measured sizes, area, banding totals; contours hand
+   over the stored segments and arcs without recomputation; the manifest carries the optional
+   order number and version. The package embeds the catalogue rows the order uses and the class
+   rows it references, so it is self-contained. Ordering by key and no timestamp in the tables
+   make one revision produce byte-identical output.
+  Done: A golden package from the fixture scene; two exports of one revision are identical; the
+   manifest column list equals the writer table and each CSV copy carries exactly those
+   columns; an order with two cabinets groups correctly by product_id; cargo xtask layers and
+   cargo xtask ci are green.
+  `files: Cargo.toml, xtask/src/main.rs, PROJECT.md, AGENTS.md, crates/export, docs/domain/order-export.md, plan/map.md, plan/rename.md` — `b0d1d2f`
 
 - `[x]` **X39** the inspector's last row hides under the horizontal scroller, and the tree scrolls by a different route
   Why: Observation: the right panel's content ends flush with the panel's rounded bottom edge
