@@ -50,6 +50,15 @@ pub const MIN_RING_PERCENT: u32 = 1;
 /// The largest rotate ring the settings offer, in percent of the camera distance.
 pub const MAX_RING_PERCENT: u32 = 30;
 
+/// The smallest work cursor a hand can still see and grab, in points.
+pub const MIN_CURSOR_POINTS: u32 = 6;
+
+/// The largest work cursor, in points: past this the square hides the thing under the pointer.
+pub const MAX_CURSOR_POINTS: u32 = 32;
+
+/// The work cursor a fresh workspace draws, in points.
+pub const DEFAULT_CURSOR_POINTS: u32 = 12;
+
 /// The length of a translate handle a fresh workspace opens with, in points.
 ///
 /// Below the 84 pt the shell drew before U86, because a gizmo larger than a small part covers the
@@ -328,6 +337,32 @@ impl GizmoSettings {
     }
 }
 
+/// The *Work cursor* section: the square the shell draws at the pointer over the scene.
+///
+/// The size is a hand's preference, and a furniture maker lines two boards up across a view with
+/// the crosshair on: both are screen terms and neither reaches the document (U88).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PointerSettings {
+    /// The width of the square, in points; its centre dot keeps a fixed size.
+    pub cursor_size: u32,
+    /// Whether the cursor also draws a full crosshair across the view.
+    pub crosshair: bool,
+}
+
+impl Default for PointerSettings {
+    fn default() -> Self {
+        Self { cursor_size: DEFAULT_CURSOR_POINTS, crosshair: false }
+    }
+}
+
+impl PointerSettings {
+    /// The square's width a frame draws, in points, inside the setting's limits.
+    pub fn size_points(&self) -> f32 {
+        self.cursor_size.clamp(MIN_CURSOR_POINTS, MAX_CURSOR_POINTS) as f32
+    }
+}
+
 /// The ribbon's own state, remembered between runs.
 ///
 /// The fold and the pinned method of each tool are the two ribbon values that outlive a run; which
@@ -399,6 +434,8 @@ pub struct Settings {
     pub viewport: ViewportSettings,
     /// The size of the two transform gizmos.
     pub gizmo: GizmoSettings,
+    /// The size of the work cursor and whether it draws a crosshair.
+    pub pointer: PointerSettings,
     /// Recently opened scenes, newest first.
     pub recent: Vec<PathBuf>,
     /// The fold of the ribbon and the pinned method of each tool.
@@ -414,6 +451,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             viewport: ViewportSettings::default(),
             gizmo: GizmoSettings::default(),
+            pointer: PointerSettings::default(),
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
             panels: PanelsSettings::default(),
@@ -503,6 +541,7 @@ impl Settings {
             self.viewport.roll_step_degrees.clamp(MIN_ROLL_STEP_DEGREES, MAX_ROLL_STEP_DEGREES);
         self.gizmo.handle_points = self.gizmo.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS);
         self.gizmo.ring_percent = self.gizmo.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT);
+        self.pointer.cursor_size = self.pointer.cursor_size.clamp(MIN_CURSOR_POINTS, MAX_CURSOR_POINTS);
         let mut seen = Vec::new();
         self.recent.retain(|path| {
             let fresh = !seen.contains(path);
@@ -857,6 +896,27 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
             .on_hover_text(Message::GizmoRingRadiusHint.text(lang))
             .changed();
     });
+    // The pointer wears its own size and its own crosshair switch, beside the gizmos it shares a
+    // hand with (U88).
+    ui.add_space(theme::STEP);
+    ui.label(egui::RichText::new(Message::WorkCursor.text(lang)).strong());
+    ui.horizontal(|ui| {
+        ui.label(Message::CursorSize.text(lang));
+        changed |= ui
+            .add(
+                Scrub::new(&mut settings.pointer.cursor_size)
+                    .range(MIN_CURSOR_POINTS..=MAX_CURSOR_POINTS)
+                    .unit("pt")
+                    .speed(0.5),
+            )
+            .on_hover_text(Message::CursorSizeHint.text(lang))
+            .changed();
+    });
+    changed |= ui
+        .checkbox(&mut settings.pointer.crosshair, Message::CursorCrosshair.text(lang))
+        .on_hover_text(Message::CursorCrosshairHint.text(lang))
+        .changed();
+    ui.label(egui::RichText::new(Message::CursorHint.text(lang)).small().color(theme::text_dim(ui)));
     changed |= ui.checkbox(&mut settings.viewport.grid, Message::ShowFloorGrid.text(lang)).changed();
     changed |= ui
         .add(
@@ -986,6 +1046,7 @@ mod tests {
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
+            pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.fcs"), PathBuf::from("/tmp/shelf.fcs")],
             ribbon: RibbonSettings {
                 open: false,
@@ -1034,6 +1095,24 @@ mod tests {
         let settings = Settings::from_json(json).expect("parse and repair");
         assert_eq!(settings.gizmo.handle_points, MAX_HANDLE_POINTS);
         assert_eq!(settings.gizmo.ring_percent, MIN_RING_PERCENT);
+    }
+
+    #[test]
+    fn the_work_cursor_size_is_clamped_to_what_a_hand_can_see_and_grab() {
+        // A file written by hand or by a newer build holds a size this build cannot draw: the square
+        // shrinks to the smallest one a hand can grab, or stops growing before it hides the part.
+        for (written, expected) in [(2, MIN_CURSOR_POINTS), (64, MAX_CURSOR_POINTS), (0, MIN_CURSOR_POINTS)] {
+            let json = format!(r#"{{"version":1,"pointer":{{"cursor_size":{written},"crosshair":true}}}}"#);
+            let settings = Settings::from_json(&json).expect("parse and clamp");
+            assert_eq!(settings.pointer.cursor_size, expected, "{written} pt is clamped to {expected}");
+            assert_eq!(settings.pointer.size_points(), expected as f32);
+            assert!(settings.pointer.crosshair, "the switch beside it survives the clamp");
+        }
+        // A workspace without the section draws the default square and the plain pointer.
+        let settings = Settings::from_json(r#"{"version":1}"#).expect("parse");
+        assert_eq!(settings.pointer, PointerSettings::default());
+        assert_eq!(settings.pointer.size_points(), DEFAULT_CURSOR_POINTS as f32);
+        assert!(!settings.pointer.crosshair);
     }
 
     #[test]

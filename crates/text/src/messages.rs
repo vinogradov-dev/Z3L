@@ -1030,6 +1030,21 @@ messages! {
         "The rotate ring radius as a percentage of the camera distance.",
         "Радиус колец поворота в процентах от расстояния до камеры."
     ],
+    WorkCursor = ["Work cursor", "Рабочий курсор"],
+    CursorSize = ["Cursor size", "Размер курсора"],
+    CursorSizeHint = [
+        "The side of the square the shell draws at the pointer, in points.",
+        "Сторона квадрата, который оболочка рисует у указателя, в пунктах."
+    ],
+    CursorCrosshair = ["Draw a full crosshair", "Рисовать полное перекрестие"],
+    CursorCrosshairHint = [
+        "One hairline across the view in both directions, for lining up two boards.",
+        "Одна тонкая линия через весь вид в обе стороны, чтобы выравнивать две доски."
+    ],
+    CursorHint = [
+        "The scene hides the system arrow and draws this square; a gesture that has a cursor of its own keeps it.",
+        "Сцена скрывает системную стрелку и рисует этот квадрат; жест со своим курсором сохраняет его."
+    ],
     ShowFloorGrid = ["Show the floor grid", "Показывать сетку пола"],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
