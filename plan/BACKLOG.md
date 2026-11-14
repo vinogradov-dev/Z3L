@@ -289,6 +289,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X42** the work-area guide and pointer sit under the chrome, and expertise challenges a brief before code
+  Why: The square and the crosshair are work-area paint, but they still sit on Order::Tooltip,
+   so the crosshair crosses the side cards and the pointer can paint over their edge. The owner
+   chose A: move both under the chrome instead of clipping around it. The same exchange asked
+   for a standing instruction: the agent's domain and UI/UX expertise must challenge a brief
+   that contradicts it, with one question before the tree is touched.
+  Shape: Put the work cursor's layer on Order::Background, painted after the scene image and
+   its gizmos, so every Middle/Foreground surface covers it. Keep the scene clip and the
+   pointer-only-on-scene rule. Add ADR 0123 for the layer. Replace the 'Ask when unsure' bullet
+   of AGENTS.md 8 with 'Expertise leads, the owner decides', and add the same z-order clause to
+   the UI skill's floating-surface bullet without growing the instruction by a line.
+  Done: The layer test that says the square and crosshair are Background fails today and passes
+   after; the offscreen shots in both themes show the crosshair interrupted by the side cards
+   and the square over the scene; the AGENTS bullet names expertise before execution; cargo
+   xtask ci and cargo xtask docs are green with ADR 0123.
+  `files: apps/furnicraft/src/work_cursor.rs, apps/furnicraft/src/frame_tests.rs, AGENTS.md, .pi/skills/ui-design/SKILL.md, docs/decisions` — `063ad6a`
+
 - `[x]` **X41** the custom pointer belongs to the work area and every system element keeps the system cursor
   Why: The owner's rule is the one U88 started from and X40 lost: the custom square belongs to
    the work area only. Over a panel, a widget, a text field or a resizing border the system
