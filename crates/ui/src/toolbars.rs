@@ -45,7 +45,7 @@ use furnicraft_units::Length;
 
 use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
 use crate::box_tool::BoxOwner;
-use crate::draw::DrawTool;
+use crate::draw::{DrawIntent, DrawTool};
 use crate::icons::{self, Icon};
 use crate::theme::{RIBBON_CAPTION_HEIGHT, RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT, RIBBON_RULE, RIBBON_TAB_HEIGHT};
 
@@ -82,8 +82,8 @@ pub enum ToolAction {
     /// Arms the box tool with the frame as its owner: the next clicks draw the reserved box and the
     /// ✓ dispatches `product.create`.
     DrawProductFrame,
-    /// Creates a panel at the scene root.
-    CreatePanel,
+    /// Arms the free-outline tool, whose closed ring becomes one panel cut to it.
+    DrawPanelContour,
     /// Arms the empty-space tool with the class whose `fill` trait picks the axis pair.
     Fill {
         /// The class a post or a shelf fills the void with.
@@ -147,6 +147,11 @@ pub const CONTOUR_TOOLS: [DrawTool; 10] = [
 pub enum ToolActivity {
     /// A drawing tool is building a chain.
     Draw(DrawTool),
+    /// A drawing tool is building the outline of one panel.
+    ///
+    /// The draft is the same; only what its close becomes differs, so the pressed cell is the contour
+    /// cell and not the sketch tool whose glyph the draft borrows (ADR 0114).
+    PanelContour,
     /// A primitive is waiting for its work-plane click.
     Primitive(PrimitiveKind),
     /// The box tool is drawing a product frame's reserved box.
@@ -162,17 +167,19 @@ pub enum ToolActivity {
 
 /// The activity whose button is pressed, from what the editor holds.
 ///
-/// The arguments are the sources of an armed tool, not a decision: a running draft names its tool, a
-/// pending primitive names its kind, a box draft names the field it will write and a fill arm names
-/// its class. None outranks another because the editor never holds two at once.
+/// The arguments are the sources of an armed tool, not a decision: a running draft names its tool
+/// and what it will become, a pending primitive names its kind, a box draft names the field it will
+/// write and a fill arm names its class. None outranks another because the editor never holds two at
+/// once.
 pub fn tool_activity(
-    drawing: Option<DrawTool>,
+    drawing: Option<(DrawTool, DrawIntent)>,
     primitive: Option<PrimitiveKind>,
     box_owner: Option<BoxOwner>,
     fill: Option<(ClassCode, FillMode)>,
 ) -> Option<ToolActivity> {
     match (drawing, primitive, box_owner, fill) {
-        (Some(tool), _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((tool, DrawIntent::Path)), _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((_, DrawIntent::Panel)), _, _, _) => Some(ToolActivity::PanelContour),
         (None, Some(kind), _, _) => Some(ToolActivity::Primitive(kind)),
         (None, None, Some(BoxOwner::Cuboid), _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
         (None, None, Some(BoxOwner::Product), _) => Some(ToolActivity::ProductFrame),
@@ -188,6 +195,7 @@ pub fn tool_activity(
 fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
     match (activity, kind) {
         (Some(ToolActivity::Draw(armed)), ToolKind::Draw(tool)) => armed == tool,
+        (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
         (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive(kind)) => armed == kind,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
         // pressed state and the cell shows it through the list (U74).
@@ -896,7 +904,15 @@ mod tests {
                     "Sphere: click the work plane",
                 ],
             ),
-            ("furniture", &["Panel", "Post: Largest rectangle", "Product frame", "Shelf: Largest rectangle"]),
+            (
+                "furniture",
+                &[
+                    "Panel from contour: click the outline, then close the ring",
+                    "Post: Largest rectangle",
+                    "Product frame",
+                    "Shelf: Largest rectangle",
+                ],
+            ),
             ("scene", &["Assembly", "Camera", "Light"]),
             ("view", &["Frame all  (F)", "Grid snap  (G)", "Switch the projection  (O)"]),
         ];
@@ -1084,9 +1100,12 @@ mod tests {
     #[test]
     fn only_the_arming_tool_owns_the_next_click() {
         let post = ClassCode::VERTICAL_PANEL;
+        let path = DrawIntent::Path;
+        let panel = DrawIntent::Panel;
         let cases = [
             (None, None, None, None, None),
-            (Some(DrawTool::Line), None, None, None, Some(ToolActivity::Draw(DrawTool::Line))),
+            (Some((DrawTool::Line, path)), None, None, None, Some(ToolActivity::Draw(DrawTool::Line))),
+            (Some((DrawTool::Polyline, panel)), None, None, None, Some(ToolActivity::PanelContour)),
             (None, Some(PrimitiveKind::Sphere), None, None, Some(ToolActivity::Primitive(PrimitiveKind::Sphere))),
             (None, None, Some(BoxOwner::Cuboid), None, Some(ToolActivity::Primitive(PrimitiveKind::Cuboid))),
             (None, None, Some(BoxOwner::Product), None, Some(ToolActivity::ProductFrame)),
@@ -1097,7 +1116,13 @@ mod tests {
                 Some((post, FillMode::Fit)),
                 Some(ToolActivity::Fill { class: post, mode: FillMode::Fit }),
             ),
-            (Some(DrawTool::Arc), Some(PrimitiveKind::Sphere), None, None, Some(ToolActivity::Draw(DrawTool::Arc))),
+            (
+                Some((DrawTool::Arc, path)),
+                Some(PrimitiveKind::Sphere),
+                None,
+                None,
+                Some(ToolActivity::Draw(DrawTool::Arc)),
+            ),
         ];
         for (drawing, primitive, box_owner, fill, expected) in cases {
             assert_eq!(
@@ -1114,7 +1139,9 @@ mod tests {
             (None, ToolKind::Draw(DrawTool::Line), false),
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Draw(DrawTool::Line), true),
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Draw(DrawTool::Circle), false),
-            (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Panel, false),
+            (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::PanelContour, false),
+            (Some(ToolActivity::PanelContour), ToolKind::PanelContour, true),
+            (Some(ToolActivity::PanelContour), ToolKind::Draw(DrawTool::Polyline), false),
             (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Cuboid), true),
             (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Sphere), false),
             (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Light, false),

@@ -85,9 +85,9 @@ In `plan/notes/<ID>.md`, after the research sections, two sections:
 - The second section is not a wish. It names a file and a literal sentence. When no sentence could
   have caught it, write `no instruction — the cost is a fixture, not a rule` and name the fixture,
   its crate and the test it belongs in.
-- Keep the session log too, in the short form of `/next-task` (`HH:MM · phase · what · why · cost`,
-  with every `dead-end`): the minutes a repair burns land in the same table as the minutes a feature
-  burns, and a repair that took twenty minutes is itself a finding.
+- Keep the session log too, in the form of `/next-task` (`+m · phase · what · why [· dead-end]`): the
+  minutes a repair burns land in the same table as the minutes a feature burns, and a repair that took
+  twenty minutes is itself a finding.
 
 ## 5. Close
 

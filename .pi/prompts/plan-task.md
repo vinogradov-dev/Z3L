@@ -30,9 +30,16 @@ The idea: ${@:-nothing was given — say so in one line and stop}
    defect's reproduction. Two to five lines. No marketing.
 4. **Shape.** The decision and the files, without code: which module owns it, what the value or the
    flow is, what is explicitly not in scope. If there are two plausible designs, name both and the
-   cost of each; a planning session that hides a fork makes the writing session guess.
-5. **Done.** The tests that would fail before the change and pass after, the gate that must be
-   green, and the check by eye if pixels are involved.
+   cost of each; a planning session that hides a fork makes the writing session guess. A command id
+   may be named only with what its parameters accept — a Shape that prescribes an id it has not
+   looked up sends the session to re-decide it, which is how U90 spent six minutes on
+   `panel.contour.create` and shipped `panel.create` instead (ADR 0114). Otherwise the Shape names
+   the outcome and leaves the id to the writing session.
+5. **Done.** The tests that would fail if the rule were broken, at the surface where a person meets
+   it — not the tests that would fail before the change, which a test of the implementation also
+   satisfies: X40 asserted the square over the panel the owner now exempts, and U88 asserted
+   `Crosshair` where the rule asked for the square (0122). Then the gate that must be green, and the
+   eye check named with the surface that has to be looked at, which is where the defect would show.
 6. **The command**, ready to run:
 
 ```text
@@ -49,6 +56,9 @@ cargo xtask task add --phase <P> --at end --files "<existing, paths>" \
 - Every bold id, every section and every budget in `plan/BACKLOG.md` is the tool's business: never
   write a plan file by hand, and never suggest that the writing session do it.
 - A task is one coherent commit. If the idea needs two, propose two entries that each stand alone.
+- A `Done:` clause that could not fail is the trap the gate cannot see: it asserts a test exists, not
+  that the test holds the rule. Write each clause so that a reader can name the change that would
+  break it.
 - The entry cites `plan/map.md`, ADR numbers and paths; it does not copy a value, a colour or a
   sentence that will drift.
 - A decision the owner holds — the domain, the document schema, a default the user meets on first

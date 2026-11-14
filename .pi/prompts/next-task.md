@@ -18,8 +18,12 @@ cargo xtask task <ID>
 When the plan says `state=doing`, a previous session stopped mid-task: `plan/SESSION.md` names the
 live step in `now:`, and that is where you resume — not at the top of the entry. Then read the first
 path of the `files:` hint and its direct callers (the `rust-analyzer` tools for signatures and
-references, `rg` for strings), and the notes and ADRs the entry cites. Do not scan the workspace:
-when the hint is wrong, the fix is the hint, in the same change.
+references, `rg` for strings), the notes and ADRs the entry cites, and — before any edit — the skill
+`AGENTS.md` §1.3 routes you to: `.pi/skills/ui-design/SKILL.md` for anything under `crates/ui` or the
+app chrome. That route is not decoration: both repairs of the reviewed period (X41, X42) exist
+because the session read the entry and the code and never the skill, whose floating-surface bullet
+already answered the question. Do not scan the workspace: when the hint is wrong, the fix is the
+hint, in the same change.
 
 ## The log
 
@@ -30,25 +34,34 @@ per stop. A note that already exists keeps every section it has: `## What went w
 it, and a feature session never edits them.
 
 ```text
-HH:MM · phase · what · why · cost
++m · phase · what · why [· attribute]
 ```
 
-- `HH:MM` from `date +%H:%M`, taken **at the stop**. A log rebuilt at the end is fiction.
-- `phase` from this closed list, so the review can sum the column: `read`, `search`, `edit`, `build`,
-  `test`, `gate`, `decide`, `dead-end`, `wait`.
+- `+m` is the wall minutes **since the previous line**, written at the stop from a clock you can see;
+  a `~` in front marks a guess. The column adds up to the task's total, so there is no total to quote
+  and no separate cost field, and no stamp can be written out of order. The first line is always
+  `+0 · start`.
+- `phase` from this closed list, so the review can sum the column: `start`, `read`, `search`, `edit`,
+  `build`, `test`, `gate`, `decide`, `owner`, `close`, `wait`. `owner` is a turn that came from a
+  person; `close` is the map row, the commits and the plan write.
 - `what` is a path, a symbol, a command or a number — never "looked around".
 - `why` is the question that sent you there, in four words.
-- `cost` is the wall minutes since the previous line, or `-`; a leading `~` marks a guess.
+- `attribute` is optional and is never a phase, because a loss counted twice is a loss no column can
+  read — that is how the first version of this format summed to 128 %: `dead-end` for work that
+  produced nothing, `red-mine` or `red-tree` after a red test or `clippy`, `guessed` for a `~` delta
+  you could not reconstruct.
 
-Two lines are mandatory, because they are the ones a review can act on:
+Two things are mandatory, because they are what a review can act on:
 
-- **`dead-end`** — anything read, tried or built that produced nothing. The most valuable line in the
-  log: it is where the time went, and the next session would repeat it for free.
+- **`dead-end`** — anything read, tried or built that produced nothing. The most valuable attribute
+  in the log: it is where the time went, and the next session would repeat it for free.
 - **the first file the `files:` hint did not name** — with the reason you opened it. The count of
   these across tasks decides whether the hints or the map are the real problem.
 
-Log every `clippy`, `test` and `ci` run with its duration (`wait` covers a build you did not
-provoke), and every change of plan with the observation that forced it.
+Log every `clippy`, `test` and `ci` run as its own line with its duration in `what` (`wait` covers a
+build you did not provoke), and every change of plan with the observation that forced it. Never
+reconstruct the log at the end: a delta invented afterwards makes the whole column worthless, and the
+`guessed` attribute is the honest way out when a session has lost the thread.
 
 The note is at most 150 lines with the log inside it: compress to one line per loop rather than one
 per file, and never drop a `dead-end`.
@@ -57,8 +70,9 @@ per file, and never drop a `dead-end`.
 
 Three sections at the end of the note:
 
-1. `## Where the time went` — a tally `phase | minutes | share`, a verdict line each, then total wall
-   time, files read, commands run, dead ends, gate runs and how many were red at the first try.
+1. `## Where the time went` — a tally `phase | minutes | share` that adds up to 100 %, a verdict line
+   each; then `dead-end`, `red` and `guessed` as separate counts, never rows of that table; then files
+   read, commands run, gate runs and how many were red at the first try.
 2. `## The cheap path` — one to three lines: what would have made this task one edit. Name the
    missing line, symbol or doc sentence and where it should live, not "better docs".
 3. `## For the strategy` — three sentences at most, addressed to whoever writes the next agent

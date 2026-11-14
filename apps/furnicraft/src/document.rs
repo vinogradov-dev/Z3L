@@ -1328,16 +1328,18 @@ impl Document {
             .cloned()
             .ok_or_else(|| "Point at the empty space inside the open product.".to_owned())?;
         let name = arm.class.label().map_or_else(|| Message::ToolPanel.text(lang), |label| label.text(lang)).to_owned();
-        self.editor.create_panel_sized(
-            &mut self.session,
-            ghost.parent,
-            name,
-            ghost.nominal_size,
-            Some(ghost.outline.clone()),
-            ghost.bevels.clone(),
-            ghost.placement,
-            Some(arm.class),
-        )
+        self.editor
+            .create_panel_sized(
+                &mut self.session,
+                ghost.parent,
+                name,
+                ghost.nominal_size,
+                Some(ghost.outline.clone()),
+                ghost.bevels.clone(),
+                ghost.placement,
+                Some(arm.class),
+            )
+            .map(|_| ())
     }
 
     /// Draws the command bar of the previewing operation and applies what it asked for.

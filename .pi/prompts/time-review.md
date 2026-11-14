@@ -19,7 +19,9 @@ is text — a verdict and a small set of proposed instruction changes, which the
 
 ## Add the columns up
 
-- **Phase totals** across the reviewed tasks, and per task: total, and the worst single stretch.
+- **Phase totals** across the reviewed tasks, and per task: total, and the worst single stretch. The
+  deltas add up to the total by construction, so a table that does not reach the quoted wall time is a
+  session that dropped a line, not a rounding.
 - **Dead-end reasons**, grouped. A group is a mechanism, not an anecdote: the same wrong assumption
   in four tasks is one finding, not four.
 - **Hint quality**: how many files each task opened before its first edit that the `files:` hint did
@@ -49,7 +51,7 @@ words mean the same thing in both tables, and a mechanism that appears in both i
 row in the report: it costs minutes and quality at once. Add a token to one list and to the other in
 the same change, or the two vocabularies drift apart and the tables stop comparing.
 
-## Answer with these four parts
+## Answer with these five parts
 
 1. **The table**: mechanism | minutes | tasks (ids) | what it cost in one line. Ordered by minutes.
    A number without task ids behind it is a guess — say `~` or leave it out.
@@ -62,6 +64,10 @@ the same change, or the two vocabularies drift apart and the tables stop compari
    shipped is cheaper than a task that took ten and was repaired.
 4. **The one thing to stop doing** — a habit the log shows, with the ids.
 5. **What the log could not answer**, and the line to add to the format so the next review can.
+   The format is at its second version: `+m` deltas instead of clock stamps, `dead-end`, `red-mine`,
+   `red-tree` and `guessed` as attributes rather than phases, `start`, `owner` and `close` as phases.
+   A gap that the current format cannot close at all — a value only the harness could measure — is
+   named as such instead of being proposed as a third version.
 
 ## Rules
 

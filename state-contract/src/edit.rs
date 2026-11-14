@@ -15,7 +15,10 @@ const INDENT: &str = "  ";
 const FIELD_WIDTH: usize = 95;
 
 /// The width a section paragraph is wrapped at, so `## Next` stays as narrow as the rest of the plan.
-const PROSE_WIDTH: usize = 100;
+pub(crate) const PROSE_WIDTH: usize = 100;
+
+/// The session keys a verb may rewrite: the three fields a running session keeps true.
+pub const SESSION_FIELDS: &[&str] = &["now", "run", "resume"];
 
 /// The three status markers, as the file spells them.
 pub const OPEN: &str = "[ ]";
@@ -184,7 +187,17 @@ fn hint_tail(line: &str) -> &str {
 }
 
 /// Replaces, adds or removes one labelled field of `id`; an empty body removes the field.
+///
+/// The label is one the entry format knows, or `files`: a label the gate does not read would be
+/// written as a new line and no later `set` could remove it, so an invented one is refused here
+/// instead of landing in the plan (the `[plan]` debt entry that named this).
 pub fn set_field(backlog: &str, id: &str, label: &str, body: &str) -> Result<String, String> {
+    if !known_label(label) {
+        return Err(format!(
+            "`{label}` is not a field of an entry; the labels are {} and `files`",
+            crate::parse::ENTRY_LABELS.join(", ")
+        ));
+    }
     let mut layout = Layout::parse(backlog);
     let entry = layout.entry(id)?.clone();
     let body = body.trim();
@@ -200,6 +213,38 @@ pub fn set_field(backlog: &str, id: &str, label: &str, body: &str) -> Result<Str
     let at = layout.field_range(&entry, "files").map_or(entry.end, |range| range.0);
     layout.lines.splice(at..at, replacement);
     Ok(layout.render())
+}
+
+/// Whether a label is one the entry format or the gate reads.
+fn known_label(label: &str) -> bool {
+    crate::parse::ENTRY_LABELS.iter().any(|known| known.eq_ignore_ascii_case(label))
+        || label.eq_ignore_ascii_case("files")
+}
+
+/// Replaces one `key: value` line of a session note.
+///
+/// A running session cannot rewrite its own `now:`, `run:` and `resume:` through `task set` — that
+/// verb writes the backlog — and a note whose resume hint is a lie is worse than no note, because a
+/// dead session believes it. The value is one line: the note is a fence of `key: value` rows.
+pub fn set_session_field(session: &str, key: &str, value: &str) -> Result<String, String> {
+    if !SESSION_FIELDS.contains(&key) {
+        return Err(format!("`{key}` is not a session field; the keys are {}", SESSION_FIELDS.join(", ")));
+    }
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("`{key}` needs a value"));
+    }
+    if value.contains('\n') {
+        return Err(format!("`{key}` takes one line, and the body has {}", value.lines().count()));
+    }
+    let prefix = format!("{key}:");
+    let mut lines: Vec<String> = session.lines().map(str::to_owned).collect();
+    let Some(index) = lines.iter().position(|line| line.trim_start().starts_with(&prefix)) else {
+        return Err(format!("`plan/SESSION.md` has no `{key}:` line to rewrite"));
+    };
+    let indent = lines.get(index).map(|line| line.len().saturating_sub(line.trim_start().len())).unwrap_or(0);
+    lines[index] = format!("{}{key}: {value}", " ".repeat(indent));
+    Ok(join(lines, session))
 }
 
 /// Inserts a whole entry into `section`, at the top or after the entries already there.

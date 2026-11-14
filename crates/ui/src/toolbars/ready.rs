@@ -106,12 +106,26 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
             action: Some(ToolAction::DrawProductFrame),
         },
-        ToolKind::Panel => Ready {
-            enabled: has_panel_material,
-            armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
-            action: Some(ToolAction::CreatePanel),
-        },
+        ToolKind::PanelContour => {
+            // A contour panel is a part of the open product (ADR 0098) and takes its thickness from a
+            // catalogue material; the cell then arms the free-outline tool, whose close is the one
+            // command that cuts the board (ADR 0114).
+            let draw = Message::PanelContourDraw.with(lang, [tool.label.text(lang)]);
+            let hint = if !product_open {
+                Message::FillNeedsProduct.text(lang)
+            } else if !has_panel_material {
+                Message::FillNeedsMaterial.text(lang)
+            } else {
+                draw.as_str()
+            };
+            let enabled = product_open && has_panel_material;
+            Ready {
+                enabled,
+                armed: is_armed(active, kind),
+                hint: tool_hint(hint, tool.shortcut),
+                action: enabled.then_some(ToolAction::DrawPanelContour),
+            }
+        }
         ToolKind::Fill { class, mode } => {
             // A niche belongs to the open product (ADR 0098) and a part needs a material to take its
             // thickness from; the class must actually carry the `fill` trait, so a table row that

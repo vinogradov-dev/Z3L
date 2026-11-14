@@ -823,6 +823,59 @@ fn the_product_card_creates_a_frame_that_is_open_and_receives_the_next_part() {
     );
 }
 
+#[test]
+fn the_contour_cell_cuts_a_panel_to_the_ring_the_pointer_drew() {
+    // One cell, one gesture, one part: *Panel from contour* arms the free-outline tool and the close
+    // is the one command that cuts the board, so no path object is left beside it (ADR 0114).
+    let mut harness = Harness::new("frame-contour-panel");
+    harness.settle();
+    let draft = furnicraft_ui::product_card::ProductDraft {
+        envelope: Envelope::new(
+            furnicraft_testkit::millimetres(600),
+            furnicraft_testkit::millimetres(560),
+            furnicraft_testkit::millimetres(720),
+        )
+        .expect("a valid box"),
+        class: ClassCode::GENERAL_PRODUCT,
+    };
+    harness.app.tabs.active_mut().create_product(draft, Lang::En).expect("create the frame");
+    let product = harness.app.tabs.active().session.active_product().expect("the frame is open");
+    let before = harness.revision();
+
+    // The cell lives on the Furniture tab, and a fresh workspace opens another one.
+    if let Some(tab) = furnicraft_ui::toolbars::spec::tab("furniture") {
+        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    harness.settle();
+    let hint = Message::PanelContourDraw.with(Lang::En, [Message::ToolContourPanel.text(Lang::En)]);
+    let cell = harness.face(&hint).expect("the contour cell is on the strip");
+    harness.click(cell, egui::PointerButton::Primary);
+    assert_eq!(
+        harness.app.tabs.active().editor.drawing_intent(),
+        furnicraft_ui::DrawIntent::Panel,
+        "the cell arms a draft that becomes a board, not a path"
+    );
+
+    // Three clicks on the work plane, then the one *Close* every surface shares.
+    let centre = harness.scene().center();
+    for corner in [egui::vec2(-160.0, -90.0), egui::vec2(160.0, -90.0), egui::vec2(0.0, 140.0)] {
+        harness.click(centre + corner, egui::PointerButton::Primary);
+    }
+    harness.app.tabs.active_mut().close_draft(Lang::En).expect("the ring closes into a panel");
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the tool ends with the panel");
+
+    let document = harness.app.tabs.active();
+    let project = document.session.project();
+    let children = project.container(product).expect("the product is a container").children();
+    assert_eq!(children.len(), 1, "the gesture wrote one node and left no path beside it: {children:?}");
+    let panel = children.first().and_then(|node| node.as_panel()).expect("the node the ring cut is a panel");
+    assert!(panel.is_contour(), "the panel's outline is the drawn ring, not the rectangle around it");
+    let ring = panel.outline_contour().expect("a contour panel stores its ring");
+    assert_eq!(ring.segments().count(), 3, "three clicks enclose a triangle");
+    assert_eq!(harness.revision().get(), before.get() + 1, "the board is one command after the frame");
+    assert_eq!(document.editor.selected_node(), Some(panel.id()), "the new board is selected");
+}
+
 /// A product of 600 x 560 x 720 mm holding one 500 x 400 mm side panel, and both ids.
 fn product_with_a_side_panel() -> (furnicraft_model::Project, Id, Id) {
     let mm = furnicraft_testkit::millimetres;

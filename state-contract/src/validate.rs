@@ -338,6 +338,10 @@ fn milestone(text: &str) -> Option<&str> {
 }
 
 /// A plan file over its line budget is an error: an ignored warning is how the plan rots.
+///
+/// The message names the width as well as the count, because the count alone is what cost a session
+/// seven minutes: it printed the result (a candidate of 94 lines against a budget of 70) and not the
+/// cause (a section body re-wraps at [`crate::edit::PROSE_WIDTH`], so every attempt grew the file).
 fn budget_violations(status: &str, session: Option<&str>) -> Vec<String> {
     let mut violations = Vec::new();
     for (name, text, max) in
@@ -345,7 +349,11 @@ fn budget_violations(status: &str, session: Option<&str>) -> Vec<String> {
     {
         let lines = text.lines().count();
         if lines > max {
-            violations.push(format!("{name} has {lines} lines, over the {max}-line budget"));
+            violations.push(format!(
+                "{name} has {lines} lines, over the {max}-line budget: a section body re-wraps at {} \
+                 columns, so a paragraph longer than the one it replaces grows the file",
+                crate::edit::PROSE_WIDTH
+            ));
         }
     }
     violations
@@ -862,6 +870,13 @@ mod tests {
         let long_status = format!("{HEADER}{}", "filler\n".repeat(MAX_STATUS_LINES));
         let error = analyze(&long_status, backlog(), None).expect_err("the budget is an error, not a warning");
         assert!(error.iter().any(|violation| violation.contains("over the 70-line budget")), "{error:?}");
+        // The count alone is what cost a session seven minutes: the message names the width too.
+        assert!(
+            error
+                .iter()
+                .any(|violation| violation.contains(&format!("re-wraps at {} columns", crate::edit::PROSE_WIDTH))),
+            "the refusal names the cause, not only the result: {error:?}"
+        );
 
         let doing = HEADER.replace("state=idle", "state=doing");
         let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
