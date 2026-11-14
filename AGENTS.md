@@ -89,6 +89,29 @@ touch the tree. `/plan-task <idea>` there returns a duplicate check, a lead, Why
 questions for the owner. The writing session files the entry — one writer per repository, because
 `STATE:`, `plan/SESSION.md` and the work order hold exactly one live task.
 
+### 1.5 Before the first edit: order the work by the cost of being wrong
+
+The first step of any task is the one decision that, if it is wrong, throws away every line written
+after it: the shape of a shared signature, a type, the end points of a new number, the host that
+owns a surface. Verify that decision with the cheapest gate available **before** propagating it to
+call sites, tests and docs. A change that spreads from one file to a signature, a dozen callers and
+their tests is not started until the first link compiles. This is what prevents the cycle
+"edit → the compiler or clippy says no → reshape → edit again".
+
+- **A full signature is full.** A function that already takes seven arguments is at
+  `clippy::too_many_arguments`: the eighth value enters a struct (`HandleSpec`, `Target`), not the
+  parameter list. Decide the shape before touching a caller.
+- **Write both end points of every new number first.** The minimum, the maximum, and what the
+  gesture does at each. A minimum nobody can grab or see is a wrong minimum, not a user problem.
+- **One `Done:` clause, one test.** Two clauses that share an assertion share a test; an existing
+  harness is reused rather than copied; a clause that cannot be checked headlessly says so before
+  its harness is written, not after.
+- **Narrow gate before propagation.** After a structural decision, run
+  `cargo clippy -p <crate> --all-targets` and that crate's tests, then update the callers. The same
+  gate at the end is a confirmation, not the first look.
+- **`ci` once.** The full `cargo xtask ci` runs when the task is finished. After a green run, a
+  commit that touches only `plan/` needs `cargo xtask plan`, not a second full pass.
+
 ## 2. Non-negotiable constraints
 
 - **Rust only.** No JS/TS, no scripting runtime, no code generation into other languages.
