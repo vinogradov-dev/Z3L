@@ -40,28 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
-  Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any
-   product — the pre-frame way of making a board; the product's post and shelf cells make a
-   board where a niche has measured one, and the approved map already holds
-   `furniture.panels.contour` («Panel by contour») as planned. The owner asked for the old cell
-   and its path to go rather than stay as a second way to do the same thing, and the contour
-   cell is what fills the gap.
-  Shape: Delete the cell, `ToolKind::Panel`, `ToolAction::CreatePanel`, `Editor::create_panel`
-   and the ribbon fields only it read; `panel.create` stays, because fill, the palette and the
-   contour cell use it. Promote `furniture.panels.contour` to a live cell that arms a ring
-   drawn in the work plane and dispatches `panel.contour.create` when the draft closes, reusing
-   the drawing draft and the envelope the panel card already has; if the armed drawing cannot
-   land in the same change, the task keeps the cell planned and says so in `plan/notes/U90.md`
-   instead of shipping a second dead cell. The live-cell test, the palette entry and
-   `plan/map.md` follow. Removing an affordance is a break the owner approved, recorded in ADR
-   0114.
-  Done: The Furniture tab draws *Product frame*, *Post*, *Shelf* and *Panel by contour*; no
-   ribbon path reaches `ToolKind::Panel`; no test or spec mentions the removed id; a frame test
-   draws a ring with the contour cell into an open product and finds one panel whose outline is
-   that ring; ADR 0114 is written; `cargo xtask ci` is green.
-  `files: crates/ui/src/toolbars/spec.rs, crates/ui/src/editor/creation.rs, crates/ui/src/toolbars/ready.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
@@ -269,6 +247,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
+  Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any
+   product — the pre-frame way of making a board; the product's post and shelf cells make a
+   board where a niche has measured one, and the approved map already holds
+   `furniture.panels.contour` («Panel by contour») as planned. The owner asked for the old cell
+   and its path to go rather than stay as a second way to do the same thing, and the contour
+   cell is what fills the gap.
+  Shape: Delete the cell, `ToolKind::Panel`, `ToolAction::CreatePanel`, `Editor::create_panel`
+   and the ribbon fields only it read; `panel.create` stays, because fill, the palette and the
+   contour cell use it. Promote `furniture.panels.contour` to a live cell that arms a ring
+   drawn in the work plane and dispatches `panel.contour.create` when the draft closes, reusing
+   the drawing draft and the envelope the panel card already has; if the armed drawing cannot
+   land in the same change, the task keeps the cell planned and says so in `plan/notes/U90.md`
+   instead of shipping a second dead cell. The live-cell test, the palette entry and
+   `plan/map.md` follow. Removing an affordance is a break the owner approved, recorded in ADR
+   0114.
+  Done: The Furniture tab draws *Product frame*, *Post*, *Shelf* and *Panel by contour*; no
+   ribbon path reaches `ToolKind::Panel`; no test or spec mentions the removed id; a frame test
+   draws a ring with the contour cell into an open product and finds one panel whose outline is
+   that ring; ADR 0114 is written; `cargo xtask ci` is green.
+  `files: crates/ui/src/toolbars/spec.rs, crates/ui/src/editor/creation.rs, crates/ui/src/toolbars/ready.rs` — `4d83409`
 
 - `[x]` **U89** an open group or product draws its corner brackets, so the open level reads in the viewport
   Why: An open container and a closed one look identical over the scene: only the tree says
