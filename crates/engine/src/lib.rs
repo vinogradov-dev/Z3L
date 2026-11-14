@@ -34,9 +34,9 @@ pub use commands::{CommandError, CommandOutcome, CommandRegistry, CommandSpec, C
 pub use diagnostics::{PanelDiagnostic, diagnose_panel};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
 pub use node_cmds::{
-    AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDuplicate, NodeGroup, NodePivotCenter, NodePivotSet,
-    NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero, NodeProperty, NodePropertyClear,
-    NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
+    AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter,
+    NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero, NodeProperty,
+    NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
 };
 pub use object_cmds::{
     ObjectCollapse, ObjectContourReplace, ObjectExtrudeCreate, ObjectExtrudeHeightSet, ObjectPathCreate,

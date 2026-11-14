@@ -247,6 +247,37 @@ impl Project {
         Ok(next_revision)
     }
 
+    /// Removes several nodes with their children and bumps the revision once.
+    ///
+    /// The batch is how one gesture — the Delete key over a multi-selection — becomes one document
+    /// change and one undo entry. The ids are reduced to [`Project::top_most_nodes`], so a node
+    /// whose ancestor is listed too is taken with that ancestor and an id the tree does not hold is
+    /// stale view state rather than a reason to refuse the rest. The root is refused, because no
+    /// gesture removes the document frame.
+    pub fn remove_nodes(&mut self, nodes: &[Id]) -> Result<Revision, ProjectError> {
+        let root = self.root.id();
+        if nodes.contains(&root) {
+            return Err(ProjectError::RootImmutable { id: root });
+        }
+        let targets = self.top_most_nodes(nodes);
+        if targets.is_empty() {
+            return Err(ProjectError::NoNodes);
+        }
+        let next_revision = self.next_revision()?;
+        for id in &targets {
+            if !remove_child(&mut self.root, *id) {
+                return Err(ProjectError::NodeNotFound { id: *id });
+            }
+        }
+        // A deleted active camera, or a container that held it, returns the scene to the built-in
+        // camera instead of leaving a dangling reference in the document.
+        if self.active_camera.is_some_and(|camera| self.camera(camera).is_none()) {
+            self.active_camera = None;
+        }
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Deep-copies a panel or a container under the same parent and returns the copy's id.
     ///
     /// Every copied node receives a fresh id from the document allocator. The copy keeps its kind,
@@ -568,6 +599,31 @@ mod tests {
             Err(ProjectError::NodeNotFound { id: Id::new(999).expect("id") })
         );
         assert_eq!(project.revision().get(), 1);
+    }
+
+    #[test]
+    fn removing_a_batch_skips_covered_children_and_bumps_once() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let panel = Id::new(2).expect("panel id");
+        let drawer = Id::new(3).expect("assembly id");
+        let front = Id::new(4).expect("panel id");
+        let missing = Id::new(999).expect("id");
+        let revision = project.revision();
+
+        // The child is listed beside its parent and an unknown id sits in the list: the batch takes
+        // the parent, keeps the child with it and never fails on a stale id.
+        let next = project.remove_nodes(&[panel, front, drawer, missing]).expect("remove the batch");
+        assert_eq!(next.get(), revision.get() + 1, "one gesture is one revision");
+        assert!(project.panel(panel).is_none());
+        assert!(project.container(drawer).is_none());
+        assert!(project.panel(front).is_none());
+        assert!(project.root().children().is_empty());
+
+        assert_eq!(project.remove_nodes(&[]), Err(ProjectError::NoNodes));
+        assert_eq!(project.remove_nodes(&[missing]), Err(ProjectError::NoNodes));
+        assert_eq!(project.remove_nodes(&[root]), Err(ProjectError::RootImmutable { id: root }));
+        assert_eq!(project.revision(), next, "a refused batch writes nothing");
     }
 
     #[test]

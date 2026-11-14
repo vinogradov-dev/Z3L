@@ -27,7 +27,8 @@ This table is the skill's knowledge of the product — the ADR numbers are why, 
 | Gizmos: move, rotate, extrude arrow, vertex | `apps/furnicraft/src/{translate,rotate,extrude,vertex}_gizmo.rs`, `gizmo.rs`, `gizmo_math.rs` | ADR 0024, 0026, 0027, 0088 |
 | Scene icons (camera, light) and picking | `apps/furnicraft/src/scene_gizmo.rs`, `mesh_pick.rs` | ADR 0036 (cameras and lights are scene objects), 0018 (picking ray-casts) |
 | Viewport display styles, shadows, edges | `crates/ui/src/display.rs`, `crates/scene/src/lib.rs`, `crates/render/` | ADR 0059, 0070, 0071, 0087 |
-| Keymap | `apps/furnicraft/src/shortcuts.rs`, `crates/ui/src/editor/ribbon.rs` | keys are shell state; no shortcut may shadow a text field |
+| Keymap | `apps/furnicraft/src/shortcuts.rs`, `crates/ui/src/editor/ribbon.rs`, `crates/ui/src/settings.rs` (`shortcut_table`) | keys are shell state; no shortcut may shadow a text field; `Delete` removes one selected node at once and a multi-selection behind one question (ADR 0112) |
+| File menu, path dialog, destructive question | `apps/furnicraft/src/file_menu.rs` (`Confirm`, `Answer`) | U45 (a close asks about unsaved changes), ADR 0112 (one host for the three destructive questions, Escape cancels, a question owns the keys) |
 
 ## What the person is doing
 

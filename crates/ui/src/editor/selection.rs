@@ -41,6 +41,15 @@ impl Editor {
         }
     }
 
+    /// Replaces the selection with several nodes, in the given order; the last one is the primary.
+    ///
+    /// The tree's shift-click builds the list one row at a time; a surface that knows the set up
+    /// front — a test, and later a marquee or the assistant — sets it here.
+    pub fn select_nodes(&mut self, nodes: Vec<Id>) {
+        self.initialized = true;
+        self.selection.replace_all(nodes);
+    }
+
     /// Selects the result of a viewport click on `hit`.
     ///
     /// The viewport returns the panel under the pointer; a closed container above it is selected

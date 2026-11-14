@@ -133,6 +133,63 @@ fn node_delete_run(project: &mut Project, _catalog: &Catalog, params: &Value) ->
     Ok(CommandOutcome::changed())
 }
 
+/// Stable id of the multi-node deletion command.
+pub const NODE_DELETE_MANY_ID: &str = "node.delete.many";
+
+/// User-facing label of the multi-node deletion command.
+pub const NODE_DELETE_MANY_LABEL: Message = Message::CmdDeleteSelection;
+
+/// Parameters for `node.delete.many`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeDeleteMany {
+    /// Panels and containers to remove; a node whose ancestor is listed too goes with that
+    /// ancestor, and the root is never a target.
+    pub nodes: Vec<Id>,
+}
+
+/// The `node.delete.many` command.
+///
+/// The whole batch is one document change: one revision bump and one undo entry, so a selection
+/// removed with one gesture comes back with one undo. The shell dispatches it for the Delete key
+/// (ADR 0112).
+pub(crate) const NODE_DELETE_MANY: CommandSpec =
+    CommandSpec::new(NODE_DELETE_MANY_ID, NODE_DELETE_MANY_LABEL, node_delete_many_enabled, node_delete_many_run);
+
+fn node_delete_many_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<NodeDeleteMany>(params, NODE_DELETE_MANY_ID) else {
+        return false;
+    };
+    !delete_targets(session.project(), &params.nodes).is_empty()
+}
+
+fn node_delete_many_run(
+    project: &mut Project,
+    _catalog: &Catalog,
+    params: &Value,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<NodeDeleteMany>(params, NODE_DELETE_MANY_ID)?;
+    let targets = delete_targets(project, &params.nodes);
+    if targets.is_empty() {
+        return Err(CommandError::InvalidParams {
+            command: NODE_DELETE_MANY_ID,
+            message: "no node below the root was given".to_owned(),
+        });
+    }
+    project.remove_nodes(&targets)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// The nodes a batch removal can take: the ones the tree holds, the root aside.
+///
+/// The root owns the document frame, so a selection that holds it as well as real nodes still
+/// removes those nodes; a selection of only the root or of ids the tree no longer has is nothing to
+/// do, and [`Project::remove_nodes`] reduces the rest to the top-most nodes.
+fn delete_targets(project: &Project, nodes: &[Id]) -> Vec<Id> {
+    let root = project.root().id();
+    nodes.iter().copied().filter(|id| *id != root && project.contains_node(*id)).collect()
+}
+
 /// Stable id of the node duplication command.
 pub const NODE_DUPLICATE_ID: &str = "node.duplicate";
 

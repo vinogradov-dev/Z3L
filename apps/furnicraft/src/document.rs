@@ -24,8 +24,10 @@ use eframe::egui;
 use eframe::egui_wgpu;
 use eframe::wgpu;
 use furnicraft_engine::mesh_cmds::MESH_VERTICES_MOVE_ID;
-use furnicraft_engine::node_cmds::NODE_PLACEMENT_SET_MANY_ID;
-use furnicraft_engine::{MeshVertexMove, MeshVerticesMove, NodePlacement, NodePlacementSetMany, Session};
+use furnicraft_engine::node_cmds::{NODE_DELETE_MANY_ID, NODE_PLACEMENT_SET_MANY_ID};
+use furnicraft_engine::{
+    MeshVertexMove, MeshVerticesMove, NodeDeleteMany, NodePlacement, NodePlacementSetMany, Session,
+};
 use furnicraft_kernel_truck::TruckKernel;
 use furnicraft_mesh::{EvaluationCache, object_mesh};
 use furnicraft_model::{Catalog, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
@@ -623,6 +625,20 @@ impl Document {
             self.layout.toggle_maximized();
         }
         save
+    }
+
+    /// Removes nodes in one `node.delete.many`, so the whole batch is one undo entry.
+    ///
+    /// The refusal lands in the status bar like every other failure, and a valid batch leaves the
+    /// scene to the next frame's rebuild, exactly as the undo the key next to it runs (ADR 0112).
+    pub(crate) fn delete_nodes(&mut self, nodes: &[Id]) {
+        let request = NodeDeleteMany { nodes: nodes.to_vec() };
+        let dispatched = serde_json::to_value(request)
+            .map_err(|error| format!("could not encode the node batch: {error}"))
+            .and_then(|params| self.session.dispatch(NODE_DELETE_MANY_ID, &params).map_err(|error| error.to_string()));
+        if let Err(error) = dispatched {
+            self.last_error = Some(error);
+        }
     }
 
     /// The projection the active view is drawing with, for the status bar's readout.
@@ -2659,17 +2675,58 @@ impl Document {
     }
 }
 
+/// What the Delete key asks of the window.
+///
+/// One node goes at once, because undo covers it and a one-row removal is what the person just
+/// looked at; two or more ask first, because a batch is removed in one step and a row the person
+/// did not mean to take is easy to miss. A locked node holds the whole gesture back before either
+/// happens (ADR 0065, ADR 0112).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DeleteRequest {
+    /// Nothing was selected: the key did nothing.
+    Nothing,
+    /// Remove these nodes now; the document reports its own refusal in the status bar.
+    Remove(Vec<Id>),
+    /// Ask before removing these nodes.
+    Ask(Vec<Id>),
+    /// A locked node is part of the selection; the sentence names it.
+    Refused(String),
+}
+
+/// The rule the Delete key follows, read from the selection, the document and the lock flags.
+///
+/// The decision is a plain function, so the shell test reads it without a window or a GPU, and the
+/// removal it names is one `node.delete.many` whichever way it was reached.
+pub(crate) fn delete_request(editor: &Editor, project: &Project, lang: Lang) -> DeleteRequest {
+    let nodes = editor.selected_nodes().to_vec();
+    if nodes.is_empty() {
+        return DeleteRequest::Nothing;
+    }
+    if let Some(locked) = editor.locked_selection(project) {
+        return DeleteRequest::Refused(editor.locked_refusal(project, locked, lang).unwrap_or_default());
+    }
+    if nodes.len() > 1 { DeleteRequest::Ask(nodes) } else { DeleteRequest::Remove(nodes) }
+}
+
 /// The command ids that remove or restructure a node, and so refuse a locked one.
 ///
 /// The palette builds every parameter from the selection, so these are the commands whose target is
 /// a node the user may have locked. The guard runs in the shell, before the dispatch, because a lock
 /// is a guard on a gesture and not a document rule (ADR 0065).
-const DESTRUCTIVE_COMMANDS: [&str; 4] = [
+const DESTRUCTIVE_COMMANDS: [&str; 5] = [
     furnicraft_engine::node_cmds::NODE_DELETE_ID,
+    furnicraft_engine::node_cmds::NODE_DELETE_MANY_ID,
     furnicraft_engine::node_cmds::NODE_UNGROUP_ID,
     furnicraft_engine::node_cmds::NODE_COMPONENT_CONVERT_TO_GROUP_ID,
     furnicraft_engine::node_cmds::NODE_GROUP_ID,
 ];
+
+/// The destructive command ids whose target is the whole selection rather than the primary node.
+///
+/// A group and a batch removal take every selected node, so one locked member refuses the gesture
+/// the same way the tree's own guard does; the others name a single node.
+const SELECTION_COMMANDS: [&str; 2] =
+    [furnicraft_engine::node_cmds::NODE_GROUP_ID, furnicraft_engine::node_cmds::NODE_DELETE_MANY_ID];
 
 /// The name of a locked node a finished gizmo drag would move, if there is one.
 ///
@@ -2684,13 +2741,18 @@ fn locked_change<'a>(project: &'a Project, commit: &PlacementCommit, editor: &Ed
         .map(furnicraft_model::Node::name)
 }
 
-/// The refusal a destructive command gets while the primary selection is locked.
+/// The refusal a destructive command gets while a node it targets is locked.
 ///
 /// `id` is the stable command id the palette (or a future CLI) would dispatch; anything outside the
-/// destructive set runs untouched.
+/// destructive set runs untouched. A command that names a single node asks about the primary
+/// selection, and one that takes the whole selection refuses if any member is locked.
 fn locked_command_refusal(editor: &Editor, project: &Project, id: &str, lang: Lang) -> Option<String> {
     if !DESTRUCTIVE_COMMANDS.contains(&id) {
         return None;
+    }
+    if SELECTION_COMMANDS.contains(&id) {
+        let locked = editor.locked_selection(project)?;
+        return editor.locked_refusal(project, locked, lang);
     }
     let primary = editor.selected_node()?;
     editor.locked_refusal(project, primary, lang)
@@ -3302,5 +3364,66 @@ mod tests {
             None,
             "unlocking lets it through"
         );
+
+        // A command that takes the whole selection refuses when any member is locked, the way the
+        // tree's own guard does: a batch removal and a group are the two.
+        let drawer = Id::new(3).expect("drawer id");
+        editor.select_nodes(vec![shelf, drawer]);
+        editor.set_locked(drawer, true);
+        for id in [furnicraft_engine::node_cmds::NODE_DELETE_MANY_ID, furnicraft_engine::node_cmds::NODE_GROUP_ID] {
+            let refusal = locked_command_refusal(&editor, &project, id, furnicraft_text::Lang::En)
+                .unwrap_or_else(|| panic!("`{id}` must refuse a batch with a locked member"));
+            assert!(refusal.contains("Drawer"), "the sentence names the locked row: {refusal}");
+        }
+        editor.set_locked(drawer, false);
+        assert_eq!(
+            locked_command_refusal(
+                &editor,
+                &project,
+                furnicraft_engine::node_cmds::NODE_DELETE_MANY_ID,
+                furnicraft_text::Lang::En
+            ),
+            None,
+            "an unlocked batch runs"
+        );
+    }
+
+    #[test]
+    fn the_delete_key_removes_one_node_at_once_and_asks_before_a_batch() {
+        // ADR 0112: undo covers one row, so the key deletes it without a question; a batch is
+        // removed in one step and asks first.
+        let project = sample_project();
+        let shelf = Id::new(2).expect("shelf id");
+        let drawer = Id::new(3).expect("drawer id");
+        let mut editor = Editor::new();
+
+        assert_eq!(delete_request(&editor, &project, Lang::En), DeleteRequest::Nothing, "nothing is selected");
+        editor.select_node(Some(shelf));
+        assert_eq!(
+            delete_request(&editor, &project, Lang::En),
+            DeleteRequest::Remove(vec![shelf]),
+            "one unlocked node goes without a question"
+        );
+        editor.select_nodes(vec![shelf, drawer]);
+        assert_eq!(
+            delete_request(&editor, &project, Lang::En),
+            DeleteRequest::Ask(vec![shelf, drawer]),
+            "a batch is the window's question"
+        );
+    }
+
+    #[test]
+    fn a_locked_node_refuses_the_whole_delete_gesture() {
+        let project = sample_project();
+        let shelf = Id::new(2).expect("shelf id");
+        let mut editor = Editor::new();
+        editor.select_node(Some(shelf));
+        editor.set_locked(shelf, true);
+
+        let request = delete_request(&editor, &project, Lang::En);
+        let DeleteRequest::Refused(sentence) = request else {
+            panic!("a locked node must refuse the gesture, got {request:?}");
+        };
+        assert!(sentence.contains("Shelf") && sentence.contains("locked"), "the sentence names it: {sentence}");
     }
 }

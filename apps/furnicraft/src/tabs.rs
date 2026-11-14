@@ -103,6 +103,17 @@ impl<T> Tabs<T> {
         self.rest.iter().find(|tab| tab.id == id).map(|tab| &tab.document)
     }
 
+    /// The document `id` names, if that tab is open, mutably.
+    ///
+    /// A question names the tab it was asked in, so its answer arrives here: the gesture acts on
+    /// that document even when another scene is in front (ADR 0112).
+    pub(crate) fn document_mut(&mut self, id: TabId) -> Option<&mut T> {
+        if self.first.id == id {
+            return Some(&mut self.first.document);
+        }
+        self.rest.iter_mut().find(|tab| tab.id == id).map(|tab| &mut tab.document)
+    }
+
     /// Every open tab in drawing order, with its identity.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (TabId, &T)> {
         std::iter::once((self.first.id, &self.first.document))

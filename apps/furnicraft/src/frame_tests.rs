@@ -43,6 +43,8 @@ struct Harness {
     path: std::path::PathBuf,
     /// The text the last frame drew, so a test reads what the user would see.
     drawn: Vec<String>,
+    /// Where the last frame drew each text, so a test can press a row by the name on it.
+    drawn_rects: Vec<(egui::Rect, String)>,
     /// The cursor the last frame asked the window for: the one place a cursor is decided (X37).
     cursor: egui::CursorIcon,
     /// The named controls of the last frame with the rectangle each one took.
@@ -75,6 +77,7 @@ impl Harness {
             app,
             path,
             drawn: Vec::new(),
+            drawn_rects: Vec::new(),
             cursor: egui::CursorIcon::Default,
             faces: Vec::new(),
             last_scene: None,
@@ -86,12 +89,22 @@ impl Harness {
     /// A window hands the frame's texture deltas to the renderer; a test has none, and epaint asserts
     /// on drop that a delta was applied, so the frame is closed here.
     fn run(&mut self, events: Vec<egui::Event>) -> Chrome {
+        self.run_with(egui::Modifiers::NONE, events)
+    }
+
+    /// Runs one real frame with `modifiers` held, the way the window reports them.
+    ///
+    /// `egui` learns the held modifiers from a modifier event, not from the keys or the pointer
+    /// press that carries them, so a test that shifts a click reports the pair it holds.
+    fn run_with(&mut self, modifiers: egui::Modifiers, mut events: Vec<egui::Event>) -> Chrome {
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
         let mut chrome = None;
         let mut output =
             self.ctx.run_ui(egui::RawInput { screen_rect: Some(screen()), events, ..Default::default() }, |ui| {
                 chrome = Some(self.app.frame(ui));
             });
         self.drawn = crate::test_support::drawn_text(&output.shapes);
+        self.drawn_rects = crate::test_support::drawn_text_rects(&output.shapes);
         self.cursor = output.platform_output.cursor_icon;
         self.faces = accessible_faces(&output);
         self.last_scene = self.app.tabs.active().scene_rect();
@@ -150,6 +163,20 @@ impl Harness {
         self.settle()
     }
 
+    /// Clicks `pos` with the primary button while `modifiers` are held.
+    ///
+    /// The scene tree builds a multi-selection from a shifted click, so a test that needs two
+    /// selected nodes presses the way a person does.
+    fn click_with(&mut self, pos: egui::Pos2, modifiers: egui::Modifiers) -> Chrome {
+        self.run_with(modifiers, vec![egui::Event::PointerMoved(pos)]);
+        self.run_with(modifiers, vec![Self::button(pos, egui::PointerButton::Primary, true)]);
+        self.run_with(modifiers, vec![Self::button(pos, egui::PointerButton::Primary, false)]);
+        let chrome = self.settle();
+        // The window reports the release of the modifier too, so the next press is a plain one.
+        self.run_with(egui::Modifiers::NONE, Vec::new());
+        chrome
+    }
+
     /// Moves the pointer to `pos` and lets the frame settle, so the ghost is measured before a click.
     fn hover(&mut self, pos: egui::Pos2) {
         self.run(vec![egui::Event::PointerMoved(pos)]);
@@ -195,6 +222,19 @@ impl Harness {
     /// Whether the last frame drew `text`.
     fn drew(&self, text: &str) -> bool {
         self.drawn.iter().any(|line| line.contains(text))
+    }
+
+    /// The middle of the scene tree's row whose name the last frame drew.
+    ///
+    /// A tree row is not a button: it is an interact region with a painted name, so the press lands
+    /// on the name the test read, inside the left panel and nowhere else.
+    fn tree_row(&self, chrome: &Chrome, name: &str) -> egui::Pos2 {
+        let tree = chrome.panels.left.expect("the scene tree is up");
+        self.drawn_rects
+            .iter()
+            .find(|(rect, text)| tree.contains_rect(*rect) && text.contains(name))
+            .map(|(rect, _)| rect.center())
+            .unwrap_or_else(|| panic!("the tree drew no row named {name}"))
     }
 
     /// The middle of the control the last frame published as `label`.
@@ -496,6 +536,89 @@ fn a_modal_owns_the_keys() {
     harness.press(egui::Key::Z, egui::Modifiers::CTRL);
     assert!(!harness.app.tabs.active().can_undo(), "the undo ran once the modal was gone");
     assert!(harness.app.tabs.active().can_redo(), "and one edit was one undo entry");
+}
+
+#[test]
+fn the_delete_key_asks_before_it_removes_a_multi_selection() {
+    // U85: Shift-click builds a multi-selection but nothing removed it, and looping `node.delete`
+    // left one undo entry per node. The key takes the whole set in one command and asks first,
+    // because a batch of rows goes in one step and a row the person did not mean to take is easy to
+    // miss (ADR 0112).
+    let mut harness = Harness::new("frame-delete-many");
+    let chrome = harness.settle();
+    let before = harness.revision();
+
+    // Two nodes, picked the way a person picks them: a plain click, then a shifted one.
+    harness.click(harness.tree_row(&chrome, "Back panel"), egui::PointerButton::Primary);
+    harness.click_with(harness.tree_row(&chrome, "Loose shelf"), egui::Modifiers::SHIFT);
+    let selected = harness.selected();
+    assert_eq!(selected.len(), 2, "the shifted click adds a row to the selection: {selected:?}");
+
+    harness.press(egui::Key::Delete, egui::Modifiers::NONE);
+    assert_eq!(harness.revision(), before, "the key asks before the document changes");
+    assert_eq!(harness.selected(), selected, "and the selection is still there");
+    let question =
+        Message::counted(2, Message::DeleteNodesTitleOne, Message::DeleteNodesTitleFew, Message::DeleteNodesTitleMany)
+            .text(Lang::En);
+    assert!(harness.drew(&question), "one question names the whole selection: {:?}", harness.drawn);
+
+    // Escape is the way out: the question owns the keys, so it has to answer the key that cancels.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!harness.drew(&question), "Escape cancels the question: {:?}", harness.drawn);
+    assert_eq!(harness.revision(), before, "and nothing was removed");
+    assert_eq!(harness.selected(), selected, "the selection is still there to act on");
+
+    harness.press(egui::Key::Delete, egui::Modifiers::NONE);
+    assert!(harness.drew(&question), "the key asks again: {:?}", harness.drawn);
+    let proceed = harness.face(Message::CmdDelete.text(Lang::En)).expect("the question publishes its answer");
+    harness.click(proceed, egui::PointerButton::Primary);
+    let project = harness.app.tabs.active().session.project();
+    assert!(project.panel(selected[0]).is_none() && project.panel(selected[1]).is_none(), "both rows are gone");
+    assert!(harness.app.tabs.active().can_undo(), "the batch is one undo entry");
+
+    harness.press(egui::Key::Z, egui::Modifiers::CTRL);
+    let project = harness.app.tabs.active().session.project();
+    assert!(
+        project.panel(selected[0]).is_some() && project.panel(selected[1]).is_some(),
+        "one undo brings the whole selection back"
+    );
+}
+
+#[test]
+fn the_delete_key_removes_one_node_without_a_question() {
+    // Undo covers a single row, so the key takes it at once: only a batch is worth a question.
+    let mut harness = Harness::new("frame-delete-one");
+    let chrome = harness.settle();
+    let before = harness.revision();
+    harness.click(harness.tree_row(&chrome, "Loose shelf"), egui::PointerButton::Primary);
+    let [selected] = harness.selected()[..] else {
+        panic!("the click selects exactly one row: {:?}", harness.selected());
+    };
+
+    harness.press(egui::Key::Delete, egui::Modifiers::NONE);
+    let project = harness.app.tabs.active().session.project();
+    assert!(project.panel(selected).is_none(), "one row goes at once");
+    assert!(!harness.drew(Message::DeleteNodesBody.text(Lang::En)), "and it asks nothing: {:?}", harness.drawn);
+    assert_ne!(harness.revision(), before, "the removal is a document change");
+    assert!(harness.app.tabs.active().can_undo(), "that undo brings it back");
+}
+
+#[test]
+fn a_locked_node_refuses_the_delete_key_and_names_itself() {
+    // The lock is a guard on a gesture, not a document rule (ADR 0065): the key refuses the whole
+    // selection before anything is dispatched, and the status bar says which node is locked.
+    let mut harness = Harness::new("frame-delete-locked");
+    let chrome = harness.settle();
+    let before = harness.revision();
+    harness.click(harness.tree_row(&chrome, "Loose shelf"), egui::PointerButton::Primary);
+    let selected = harness.selected();
+    harness.app.tabs.active_mut().editor.set_locked(selected[0], true);
+
+    harness.press(egui::Key::Delete, egui::Modifiers::NONE);
+    let error = harness.app.tabs.active().last_error.clone().unwrap_or_default();
+    assert!(error.contains("Loose shelf") && error.contains("locked"), "the refusal names the row: {error}");
+    assert_eq!(harness.revision(), before, "and the document is untouched");
+    assert!(harness.app.tabs.active().session.project().panel(selected[0]).is_some());
 }
 
 #[test]
