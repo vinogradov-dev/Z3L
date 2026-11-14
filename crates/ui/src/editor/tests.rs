@@ -1223,7 +1223,7 @@ fn a_viewport_click_selects_the_outermost_closed_container() {
     let (project, group, _drawer, front) = grouped_project();
     let mut editor = Editor::new();
 
-    editor.select_viewport_hit(&project, Some(front));
+    editor.select_viewport_hit(&project, None, Some(front));
     assert_eq!(editor.selected_node(), Some(group));
     assert!(!editor.open.contains(&group));
 
@@ -1238,13 +1238,13 @@ fn a_viewport_click_selects_the_outermost_closed_container() {
             Placement::IDENTITY,
         )
         .expect("add top panel");
-    editor.select_viewport_hit(&project, Some(extra));
+    editor.select_viewport_hit(&project, None, Some(extra));
     assert_eq!(editor.selected_node(), Some(extra));
 
-    editor.select_viewport_hit(&project, None);
+    editor.select_viewport_hit(&project, None, None);
     assert_eq!(editor.selected_node(), None);
 
-    editor.select_viewport_hit(&project, Some(Id::new(999).expect("id")));
+    editor.select_viewport_hit(&project, None, Some(Id::new(999).expect("id")));
     assert_eq!(editor.selected_node(), None);
 }
 
@@ -1383,26 +1383,49 @@ fn escape_closes_one_level_and_returns_to_the_parent_container() {
     let (project, group, drawer, front) = grouped_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
-    let project = session.project();
 
-    editor.exit_level(project);
+    assert!(!editor.exit_level(&mut session), "nothing is open yet");
     assert_eq!(editor.selected_node(), None, "nothing is open yet");
 
     editor.enter_viewport_level(&mut session, Some(front));
     editor.enter_viewport_level(&mut session, Some(front));
     assert_eq!(editor.selected_node(), Some(front));
 
-    editor.exit_level(session.project());
+    assert!(!editor.exit_level(&mut session));
     assert_eq!(editor.selected_node(), Some(drawer));
     assert!(!editor.open.contains(&drawer));
     assert!(editor.open.contains(&group));
 
-    editor.exit_level(session.project());
+    assert!(!editor.exit_level(&mut session));
     assert_eq!(editor.selected_node(), Some(group));
     assert!(!editor.open.contains(&group));
 
-    editor.exit_level(session.project());
+    assert!(!editor.exit_level(&mut session));
     assert_eq!(editor.selected_node(), Some(group), "the top level stays selected");
+}
+
+#[test]
+fn escape_leaves_the_open_product_and_a_loose_node_never_closes_it() {
+    // X38: an open product exposes its parts like an open group, so the key that leaves a group has
+    // to leave the product too — and only when the selection is inside it.
+    let (project, product, shelf) = product_project();
+    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    assert!(editor.enter_viewport_level(&mut session, Some(shelf)), "a click in the product opens it");
+    editor.select_viewport_hit(session.project(), session.active_product(), Some(shelf));
+    assert_eq!(editor.selected_node(), Some(shelf), "an open product exposes its part to the click");
+
+    let loose = Id::new(2).expect("the sample shelf beside the product");
+    editor.select_node(Some(loose));
+    assert!(!editor.exit_level(&mut session), "a node outside the product closes nothing");
+    assert_eq!(session.active_product(), Some(product), "and the product stays open");
+
+    editor.select_node(Some(shelf));
+    assert!(editor.exit_level(&mut session), "the part closes the product it belongs to");
+    assert_eq!(session.active_product(), None);
+    assert_eq!(editor.selected_node(), Some(product), "the selection returns to the piece");
+    assert_eq!(editor.creation_target(session.project()), session.project().root().id(), "and its arm is gone");
 }
 
 #[test]

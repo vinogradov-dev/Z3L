@@ -574,6 +574,71 @@ fn the_product_card_creates_a_frame_that_is_open_and_receives_the_next_part() {
     );
 }
 
+/// A product of 600 x 560 x 720 mm holding one 500 x 400 mm side panel, and both ids.
+fn product_with_a_side_panel() -> (furnicraft_model::Project, Id, Id) {
+    let mm = furnicraft_testkit::millimetres;
+    let root = furnicraft_model::Container::new(
+        Id::new(1).expect("an id"),
+        "Root",
+        furnicraft_model::Placement::IDENTITY,
+        Vec::new(),
+    );
+    let mut project = furnicraft_model::Project::new(root).expect("an empty project");
+    let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("a box");
+    let product = project
+        .add_product(
+            project.root().id(),
+            "Cabinet",
+            ClassCode::GENERAL_PRODUCT,
+            envelope,
+            furnicraft_model::Placement::IDENTITY,
+        )
+        .expect("a product");
+    let size = furnicraft_model::PanelNominalSize::new(mm(500), mm(400)).expect("a panel size");
+    let panel = project
+        .add_panel(product, "Side", size, None, mm(18), furnicraft_model::Placement::IDENTITY)
+        .expect("a part inside the product");
+    (project, product, panel)
+}
+
+#[test]
+fn a_click_inside_an_open_product_selects_the_part_under_the_pointer() {
+    // X38: the tree selected the part and the viewport selected the whole product, because the
+    // product's openness is the session's view state and the pick rule read only the editor's open
+    // set. Once a level is open, a click has to reach the part the pointer is on.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-open-product-pick", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    let at = {
+        let document = harness.app.tabs.active_mut();
+        let world = document.session.project().world_placement(panel).expect("a part has a placement");
+        let thickness = document
+            .session
+            .project()
+            .panel(panel)
+            .map(|panel| panel.last_known_thickness().millimetres_f64())
+            .expect("the part is a panel");
+        let centre = world.transform_point(furnicraft_geom::DVec3::new(250.0, 200.0, thickness * 0.5));
+        let rect = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+        let at = gizmo_math::screen_point(document.camera(), rect, centre).expect("the part is on screen");
+        assert!(rect.contains(at), "the press lands on the scene: {at:?} in {rect:?}");
+        at
+    };
+    harness.click(at, egui::PointerButton::Primary);
+
+    assert_eq!(harness.selected(), vec![panel], "a click lands on the part, not on the product around it");
+    assert!(
+        harness.drawn.iter().any(|line| line.contains("Side") && line.contains("Panel")),
+        "the status bar names the part: {:?}",
+        harness.drawn
+    );
+}
+
 #[test]
 fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
     // The frame is created and edited like a box (ADR 0101): the same base rectangle and height

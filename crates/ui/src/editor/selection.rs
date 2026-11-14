@@ -4,8 +4,8 @@
 //! the open set remembers which containers show their children. The rules that turn a viewport hit
 //! into a selected node live in `crate::target`; this module only applies them.
 //!
-//! Refuses nothing: an empty click clears the selection and `exit_level` with no open ancestor
-//! does nothing, so a gesture the scene cannot honour leaves the state unchanged.
+//! Refuses nothing: an empty click clears the selection and `exit_level` with no open level
+//! above the selection does nothing, so a gesture the scene cannot honour leaves the state unchanged.
 //!
 //! Changes when: a gesture selects, adds to the selection, or opens and closes a container.
 
@@ -44,11 +44,12 @@ impl Editor {
     /// Selects the result of a viewport click on `hit`.
     ///
     /// The viewport returns the panel under the pointer; a closed container above it is selected
-    /// instead, so a click picks the cabinet rather than one of its boards. A click outside the
-    /// scene clears the selection.
-    pub fn select_viewport_hit(&mut self, project: &Project, hit: Option<Id>) {
+    /// instead, so a click picks the cabinet rather than one of its boards. `open_product` is the
+    /// product the session works in, which exposes its parts exactly as an open group does. A click
+    /// outside the scene clears the selection.
+    pub fn select_viewport_hit(&mut self, project: &Project, open_product: Option<Id>, hit: Option<Id>) {
         self.initialized = true;
-        match hit.and_then(|hit| resolve_viewport_pick(project, &self.open, hit)) {
+        match hit.and_then(|hit| resolve_viewport_pick(project, &self.open, open_product, hit)) {
             Some(node) => self.selection.replace(node),
             None => self.selection.clear(),
         }
@@ -69,8 +70,9 @@ impl Editor {
             return false;
         };
         self.initialized = true;
+        let open_product = session.active_product();
         let project = session.project();
-        let Some(selected) = resolve_viewport_pick(project, &self.open, hit) else {
+        let Some(selected) = resolve_viewport_pick(project, &self.open, open_product, hit) else {
             return false;
         };
         self.selection.replace(selected);
@@ -90,30 +92,44 @@ impl Editor {
     /// Closes one level and returns the selection to the container that owns it.
     ///
     /// The current node closes when it is an open container; otherwise the nearest open ancestor
-    /// closes. With no open ancestor this does nothing.
-    pub fn exit_level(&mut self, project: &Project) {
+    /// closes. With no open container above the selection inside the product the session works in,
+    /// that product closes instead, so the key leaves a piece the same way it leaves a group
+    /// (ADR 0098). With nothing open this does nothing, and a selection outside the open product
+    /// never closes it. Returns whether the open product closed, because that repaints its envelope
+    /// without a document revision (ADR 0100).
+    pub fn exit_level(&mut self, session: &mut Session) -> bool {
         let Some(selected) = self.selection.primary() else {
-            return;
+            return false;
         };
-        if project.is_container(selected) && self.open.remove(&selected) {
-            if let Some(parent) = project.parent_of(selected)
-                && parent != project.root().id()
+        let root = session.project().root().id();
+        if session.project().is_container(selected) && self.open.remove(&selected) {
+            if let Some(parent) = session.project().parent_of(selected)
+                && parent != root
             {
                 self.selection.replace(parent);
             }
-            return;
+            return false;
         }
         let mut node = selected;
-        while let Some(parent) = project.parent_of(node) {
-            if parent == project.root().id() {
+        while let Some(parent) = session.project().parent_of(node) {
+            if parent == root {
                 break;
             }
             if self.open.remove(&parent) {
                 self.selection.replace(parent);
-                return;
+                return false;
             }
             node = parent;
         }
+        let Some(product) = session.active_product() else {
+            return false;
+        };
+        if session.project().product_of(selected) != Some(product) {
+            return false;
+        }
+        self.close_product(session);
+        self.selection.replace(product);
+        true
     }
 
     /// Drops open flags for nodes that no longer exist or no longer own children.

@@ -151,7 +151,12 @@ moves it with the furniture move tool (§8).
 
 **Opening is a double click in the viewport**, or the tree. At most one product is open at a time, and
 opening another closes the previous one. Openness is session state per tab, never a document field
-(ADR 0029).
+(ADR 0029). An open piece exposes its parts the way an open group does, so a click inside it selects
+the part under the pointer and a double click enters one level further.
+
+**Leaving is Escape**, exactly as it leaves a group: with a part of the open piece selected and no
+open container above it, the key closes the product and selects the piece again. Escape first drops
+the creation arm and then the levels, so it never skips a step.
 
 **A closed product accepts no new parts.** Moving, renaming, deleting and re-parenting it stay
 allowed; the lock is about adding work, not about owning the object.
