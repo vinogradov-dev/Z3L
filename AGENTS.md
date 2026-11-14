@@ -346,9 +346,11 @@ The commit closes the operation; the plan files close it too, in the same change
 
 1. Mark the task `[x]` in `plan/BACKLOG.md` with the short hash of the commit that delivers it. When a
    task needs several commits, mark it on the last one. `cargo xtask task close <ID> --commit <hash>
-   --next <text>` does this, rewrites `plan/STATUS.md` and deletes `plan/SESSION.md` in one gated
-   write. The verbs cover every file of the plan (`task`, `state`, `file`), so a refusal is a bug to
-   report, not a licence to edit `plan/` by hand.
+   [--next <text>]` does this, rewrites `plan/STATUS.md` and deletes `plan/SESSION.md` in one gated
+   write; the `## Next` paragraph is the tool's, so `--next` only supplies words a person wants (a
+   close that leaves the order empty keeps the sentence the gate requires in front of them). The
+   verbs cover every file of the plan (`task`, `state`, `file`), so a refusal is a bug to report, not
+   a licence to edit `plan/` by hand.
 2. Rewrite `plan/STATUS.md`: a new `STATE:` line (`task` = the next task, `updated` = today, `base` =
    the commit whose tree the plan describes — `HEAD` when the plan edit is its own commit, the parent
    when the edit rides in the commit it describes) and a new `Next` paragraph. Never append to it.
@@ -359,7 +361,9 @@ The commit closes the operation; the plan files close it too, in the same change
    new, add a row. A stale row is a defect the reader fixes.
 
 Starting a task is the mirror image: `cargo xtask task start <ID>` sets `[~]`, `state=doing` and
-writes `plan/SESSION.md` from the entry in one validated step. A task that arrives out of the work
+writes `plan/SESSION.md` from the entry in one validated step; while `## Now` is empty it also takes
+the head of `## Next` into the order, which is where the old `take` then `start` pair came from. A
+task that arrives out of the work
 order — an owner-directed interjection — is filed with `cargo xtask task add --at top`, which puts it
 first in `## Now` and points `state` at it; an entry filed under `## Bugs` or `## Next` joins the
 order with `cargo xtask task take <ID> [--at top|end]`, which leaves `STATE:` alone when `## Now`
@@ -367,11 +371,11 @@ still has work and becomes the current task when it is empty; `cargo xtask task 
 open entry the other way, out of the order and back under `## Next`, and points `STATE:` at the next
 head because the order always has one; `cargo xtask task reopen <ID> --next <text>` and
 `cargo xtask state next --task <ID>` move the current task and the `## Next` paragraph together, and
-`cargo xtask state where` rewrites the prose that says what the tree is. Keep `now:`, `run:` and `resume:` current with `cargo xtask task step` and
-`cargo xtask task set` after every meaningful step and every green gate run — a session that dies
+`cargo xtask state where` rewrites the prose that says what the tree is. Keep `now:`, `run:` and `resume:` current with `cargo xtask task step
+--now <text> --resume <text>` and `cargo xtask task set` after every meaningful step and every green gate run — a session that dies
 must not lose more than the current sub-step — and close the task with
 `cargo xtask task close <ID> --commit <hash>`, which marks it `[x]`, records the hash, moves it to
-`## Done`, points `STATE:` at the next task, takes the new `## Next` paragraph (`--next`) and deletes
+`## Done`, points `STATE:` at the next task, writes the `## Next` paragraph and deletes
 `plan/SESSION.md`. The research note under `plan/notes/` stays: it says what a session measured and
 ruled out, and the next one reads it through `cargo xtask task <ID>`.
 

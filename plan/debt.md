@@ -186,15 +186,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   how they got there, so a consistent hand edit lands and `cargo xtask ci` stays green. `--repair`,
   `file` and the missing verbs closed every reason to type the plan by hand; the rule that a session
   does not stays a promise in `AGENTS.md` §6.1 (P10).
-- `[plan]` `cargo xtask task set <ID> --field <label>` accepts a label the entry does not have
-  (`now`, say) and writes it as a new line; `label_of` knows only the five entry labels, so no
-  later `set` can remove it and the line has to be deleted by hand. The verb should refuse a
-  label outside `ENTRY_LABELS`, or delete an unknown one on an empty body.
-- `[plan]` A running session cannot update its own `now:`/`resume:`: `task start` is the only verb
-  that writes those fields and it refuses to start a task that is already running, `task step` edits
-  the step list and `task set --field now` writes the label into the `plan/BACKLOG.md` entry instead
-  (`label_of` does not know it). Either `task start <ID> --reset` or a `task note --now` verb belongs
-  beside `step`, so the resume hint a dead session leaves behind can stay true (U45).
 - `[perf]` A hidden branch is released from the evaluation cache like a deleted node, because
   `EvaluationCache::finish` drops every entry the pass did not touch. Hiding a large assembly and
   showing it again rebuilds every mesh in it; keeping the entries while the flag is set means the

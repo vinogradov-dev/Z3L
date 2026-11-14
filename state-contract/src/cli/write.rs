@@ -246,13 +246,31 @@ fn one_letter(text: &str) -> Result<char, String> {
 }
 
 /// `task start <ID> [--goal <text>] [--now <text>] [--run <cmd>]`
+/// `task start <ID> [--goal|--now|--run|--resume <text>] [--force]`
+///
+/// A task at the head of `## Next` starts straight away while the order is empty: the verb takes it
+/// into `## Now` in the same write, because the two commands it replaces (`take` then `start`) leave
+/// a plan whose `STATE:` names nothing in between, and three sessions in the reviewed period paid for
+/// that sequence with a minute each. A task behind another open task, or in `## Bugs`, is still
+/// `take`'s business: starting it would jump a work order that has a head.
 fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["goal", "now", "run", "resume"])?;
     let id = options.words.first().ok_or("task start needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
     let task = find(&summary.tasks, &id)?;
-    if task.section != "Now" {
-        return Err(format!("task {id} sits in `## {}`; only a task in `## Now` can start", task.section));
+    let head_of_next = summary.tasks.iter().find(|task| task.section == "Next" && task.status != TaskStatus::Done);
+    let takes = task.section != "Now"
+        && task.section == "Next"
+        && head_of_next.is_some_and(|head| head.id == id)
+        && first_open(&summary.tasks).is_none();
+    if task.section != "Now" && !takes {
+        return Err(match task.section.as_str() {
+            "Next" => format!(
+                "task {id} sits in `## Next`; `cargo xtask task take {id} --at top` moves it into the order \
+                 first, and `start` takes the head of `## Next` only while `## Now` is empty"
+            ),
+            _ => format!("task {id} sits in `## {}`; only a task in `## Now` can start", task.section),
+        });
     }
     if let Some(other) = summary.tasks.iter().find(|task| task.status == TaskStatus::Doing && task.id != id) {
         return Err(format!(
@@ -267,10 +285,14 @@ fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         ));
     }
     let backlog = read(root, "plan/BACKLOG.md")?;
+    let backlog = if takes { edit::move_entry(&backlog, &id, "Now", edit::At::End)? } else { backlog };
     let backlog = edit::set_marker(&backlog, &id, edit::DOING)?;
     let status = read(root, "plan/STATUS.md")?;
     let status =
         edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "doing".to_owned())])?;
+    // Taking the head of `## Next` changes which task is current, and the paragraph has to name it.
+    let status =
+        if takes { edit::set_section(&status, "Next", &format!("{id} is next: {}", task.lead))? } else { status };
     let session = session_note(&id, task, &options);
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog).with("plan/STATUS.md", status);
     changes = changes.with("plan/SESSION.md", session);
@@ -316,16 +338,30 @@ fn set(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     Ok(())
 }
 
-/// `task step <ID> [--tick | --add <text>]`: the note's step list, one line at a time.
+/// `task step <ID> [--tick | --add <text> | --now|--run|--resume <text>]`: the session note.
+///
+/// `--now`, `--run` and `--resume` rewrite the field beside the step list. A running session could
+/// not keep its own resume hint true before this: `task set --field now` writes the backlog entry and
+/// `task start` refuses a task that is already running, so a dead session was left believing a step
+/// that was already taken (the `[plan]` debt entry that named this).
 fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
-    let options = Options::parse(args, &["add"])?;
+    let options = Options::parse(args, &["add", "now", "run", "resume"])?;
     let id = options.words.first().ok_or("task step needs a task id")?.clone();
+    let fields: Vec<(&str, String)> = edit::SESSION_FIELDS
+        .iter()
+        .filter_map(|key| options.value(key).map(|value| (*key, value.to_owned())))
+        .collect();
     let session = read(root, "plan/SESSION.md")?;
-    let session = if let Some(text) = options.value("add") {
+    let mut session = if let Some(text) = options.value("add") {
         edit::add_step(&session, text)?
-    } else {
+    } else if fields.is_empty() || options.flag("tick") {
         edit::tick_step(&session)?
+    } else {
+        session
     };
+    for (key, value) in fields {
+        session = edit::set_session_field(&session, key, &value)?;
+    }
     let changes = Changes::new(root).with("plan/SESSION.md", session);
     apply(root, changes, &options, git)?;
     if !options.dry_run {
@@ -393,13 +429,20 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         values.push(("updated".to_owned(), date));
     }
     let status = edit::set_state(&status, &values)?;
-    // The `## Next` paragraph names the task `STATE:` does, so a close that changes it must say what
-    // the next paragraph is; otherwise the gate refuses and nothing is written. An order that ends
-    // here has no task to name, so the close writes the sentence that says nothing is scheduled.
-    let status = match options.value("next") {
-        Some(paragraph) => edit::set_section(&status, "Next", paragraph)?,
-        None if next.is_none() => edit::set_section(&status, "Next", &nothing_scheduled(&tasks))?,
-        None => status,
+    // The `## Next` paragraph names the task `STATE:` does, so the close writes it in every case
+    // rather than refusing one: a next task without `--next` gets the sentence `task take` writes for
+    // an empty slot, an order that ends here gets the sentence that says so, and `--next` supplies
+    // the words a person wants. Four closes in the reviewed period were refused on this one rule.
+    let paragraph = match (options.value("next"), next) {
+        (Some(text), Some(_)) => Some(text.to_owned()),
+        (Some(text), None) if text.trim().starts_with(crate::NOTHING_SCHEDULED) => Some(text.to_owned()),
+        (Some(text), None) => Some(format!("{}: {text}", crate::NOTHING_SCHEDULED)),
+        (None, Some(task)) => Some(format!("{} is next: {}", task.id, task.lead)),
+        (None, None) => Some(nothing_scheduled(&tasks)),
+    };
+    let status = match paragraph {
+        Some(body) if edit::has_section(&status, "Next") => edit::set_section(&status, "Next", &body)?,
+        _ => status,
     };
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog).with("plan/STATUS.md", status);
     if root.join("plan/SESSION.md").exists() {
@@ -1671,6 +1714,106 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         run(&root, &["step", "P6", "--add", "the verbs"]).expect("a step is added");
         assert!(text(&root, "plan/SESSION.md").contains("  [ ] the verbs"));
         crate::check_with(&root, &FakeGit).expect("the plan is still valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_running_session_keeps_its_own_now_and_resume_true() {
+        // `task set --field now` writes the backlog and `task start` refuses a running task, so a
+        // session that stops mid-step could not leave a true resume hint (the `[plan]` debt entry).
+        let running = STATUS.replace("state=idle", "state=doing");
+        let backlog = BACKLOG.replace("- `[ ]` **P6**", "- `[~]` **P6**");
+        let root = project("step-fields", &running, &backlog, Some(NOTE));
+        run(&root, &["step", "P6", "--now", "the second verb", "--resume", "the first refusal"])
+            .expect("the fields are rewritten");
+        let session = text(&root, "plan/SESSION.md");
+        assert!(session.contains("now: the second verb"), "{session}");
+        assert!(session.contains("resume: the first refusal"), "{session}");
+        assert!(session.contains("  [ ] the writer"), "no step is ticked by a field write: {session}");
+        crate::check_with(&root, &FakeGit).expect("the plan is still valid");
+
+        let before = snapshot(&root);
+        let error = run(&root, &["step", "P6", "--now", "two\nlines"]).expect_err("a field is one line");
+        assert!(error.contains("takes one line"), "{error}");
+        assert_eq!(snapshot(&root), before, "a refused verb writes nothing");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A STATUS with the two prose sections a real plan has, so a verb that writes a paragraph finds
+    /// one to write into.
+    fn with_sections(status: &str, next: &str) -> String {
+        format!("{status}\n## Where we are\n\nThe tree.\n\n## Next\n\n{next}\n")
+    }
+
+    #[test]
+    fn a_start_takes_the_head_of_next_while_the_order_is_empty() {
+        // The reviewed period paid a minute per session for `take` then `start`: `take` alone left
+        // `state=idle`, and `start` refused a task outside `## Now`.
+        let parked = LEGEND
+            .replace("- `[ ]` **S14** the banding\n  `files: src/b.rs`\n\n## Bugs", "## Bugs")
+            .replace("## Next\n\n## Done", "## Next\n\n- `[ ]` **S14** the banding\n  `files: src/b.rs`\n\n## Done");
+        let empty_now = parked.replace("- `[ ]` **P6** the writer\n  `files: src/a.rs`\n\n", "");
+        let idle = with_sections(&STATUS.replace("task=P6", "task=-"), "Nothing is scheduled: the order is empty.");
+        let root = project("start-next", &idle, &empty_now, None);
+        run(&root, &["start", "S14"]).expect("the head of `## Next` starts");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        assert!(backlog.contains("- `[~]` **S14**"), "the marker moved with it: {backlog}");
+        let now = backlog.find("## Now").expect("Now is there");
+        let bugs = backlog.find("## Bugs").expect("Bugs is there");
+        assert!(backlog[now..bugs].contains("**S14**"), "the entry is in the order: {backlog}");
+        let status = text(&root, "plan/STATUS.md");
+        assert!(status.contains("task=S14 state=doing"), "{status}");
+        assert!(status.contains("S14 is next:"), "the paragraph names the current task: {status}");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_start_behind_an_open_task_names_the_verb_that_moves_it() {
+        let parked =
+            BACKLOG.replace("## Next\n\n## Done", "## Next\n\n- `[ ]` **S20** later\n  `files: src/b.rs`\n\n## Done");
+        let root = project("start-behind", STATUS, &parked, None);
+        let error = run(&root, &["start", "S20"]).expect_err("P6 is still open ahead of it");
+        assert!(error.contains("task take S20 --at top"), "the refusal names the verb: {error}");
+        assert_eq!(text(&root, "plan/BACKLOG.md"), parked, "a refusal writes nothing");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_close_writes_its_own_next_paragraph() {
+        // Two shapes, both refused in the reviewed period: a close that leaves a next task without
+        // `--next`, and a close that ends the order while `--next` still names one.
+        let running = with_sections(&STATUS.replace("state=idle", "state=doing"), "P6 is next: the writer");
+        let backlog = BACKLOG.replace("- `[ ]` **P6**", "- `[~]` **P6**");
+        let root = project("close-next", &running, &backlog, Some(NOTE));
+        run(&root, &["close", "P6"]).expect("the close writes the paragraph");
+        let status = text(&root, "plan/STATUS.md");
+        assert!(status.contains("## Next\n\nS14 is next:"), "{status}");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+
+        // The order ends here and the owner still says what he wanted to say: the paragraph keeps
+        // the sentence the gate requires in front of his words instead of refusing the write.
+        let solo = backlog.replace("- `[ ]` **S14** the banding\n  `files: src/b.rs`\n\n", "");
+        let root = project("close-last", &running, &solo, Some(NOTE));
+        run(&root, &["close", "P6", "--next", "U91 waits in the backlog"]).expect("the close lands");
+        let status = text(&root, "plan/STATUS.md");
+        assert!(
+            status.contains("Nothing is scheduled: U91 waits in the backlog"),
+            "the required opening is written in front of the owner's words: {status}"
+        );
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_field_the_entry_format_does_not_have_is_refused() {
+        let root = project("set-unknown", STATUS, BACKLOG, None);
+        let before = snapshot(&root);
+        let error = run(&root, &["set", "P6", "--field", "now", "--body", "x"]).expect_err("`now` is no entry field");
+        assert!(error.contains("`now` is not a field of an entry"), "{error}");
+        assert!(error.contains("Why"), "the refusal names the labels: {error}");
+        assert_eq!(snapshot(&root), before, "a refused verb writes nothing");
         let _ = std::fs::remove_dir_all(&root);
     }
 
