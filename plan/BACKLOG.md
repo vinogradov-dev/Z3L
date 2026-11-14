@@ -42,29 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **R1** the pre-release rename: the product name leaves the code before the first release, so a
-  later choice of name is one constant and no refactor. The work is measured and scripted in
-  `plan/rename.md`; read that file, not the tree. Four parts, each its own commit: (1) give the
-  identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for the window class and the
-  settings directory set through `ViewportBuilder::with_app_id`, `project::FORMAT` +
-  `project::EXTENSION` for the file — and delete the hardcoded duplicates in `main.rs` (title, app
-  name, error), `scene_build.rs` (`"FurniCraft sample"`), `file_menu.rs` (the `scene.fcs` default and
-  the `"fcs"` filter) and `settings_store.rs` (three platform branches); (2) rename the 13 crates to
-  bare names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and `mv` in
-  `plan/rename.md` and `cargo fmt --all` after them; (3) the four registers that must agree in that
-  commit — the `CRATES` table and its tests in `xtask`, the crate map in `AGENTS.md` and `PROJECT.md`,
-  the layer list in `skills/enforce-architecture/SKILL.md`, and the 38 path hints in
-  `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan gate rejects once the path is
-  gone; (4) the envelope `format`
-  string and line 2 of the eight goldens, leaving the `generator` fixture alone. No compatibility
-  path: nothing is released, so the file format and the settings directory change outright. Measured
-  on a scratch copy of this tree: 1140 tests pass, clippy clean, `layers: ok`, 960 changed lines and
-  no behaviour change. Test: one asserting that the window title, `app_id`, settings directory and
-  open-dialog filter all read the constants, so a second rename cannot miss a copy.
-  Note: U82 removed the sample scene, so the `"FurniCraft sample"` copy named in the entry no
-   longer exists: `plan/rename.md` has been updated and the inventory starts at `main.rs`,
-   `file_menu.rs` and `settings_store.rs`. R1 waits here until the owner chooses a name.
-  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 - `[ ]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
   Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no
    money, because the catalogue stores only nominal thickness and colour: sheet dimensions and
@@ -386,6 +363,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    inspector see the same value; cancelling either leaves no document change; `plan/map.md`
    gains the atom row; `cargo xtask ci` is green.
   `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
+- `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
+  Why: This task is not in the queue and no session starts it. It runs only when the owner
+   commands a release, and that command also names the product, which is the one input the
+   entry cannot supply. Until then the entry keeps its place at the end of `## Next`, so the
+   measured procedure in `plan/rename.md` is not lost. The product name is hardcoded in the
+   window title, the app name, the error text, the `.fcs` default and its filter, the settings
+   directory and 38 path hints, so renaming after a release would be a refactor instead of a
+   constant.
+  Shape: (1) give the identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for
+   the window class and the settings directory set through `ViewportBuilder::with_app_id`,
+   `project::FORMAT` + `project::EXTENSION` for the file — and delete the hardcoded duplicates
+   in `main.rs` (title, app name, error), `file_menu.rs` (the `scene.fcs` default and the
+   `"fcs"` filter) and `settings_store.rs` (three platform branches); (2) rename the 13 crates
+   to bare names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and
+   `mv` in `plan/rename.md` and `cargo fmt --all` after them; (3) the four registers that must
+   agree in that commit — the `CRATES` table and its tests in `xtask`, the crate map in
+   `AGENTS.md` and `PROJECT.md`, the layer list in `skills/enforce-architecture/SKILL.md`, and
+   the 38 path hints in `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan
+   gate rejects once the path is gone; (4) the envelope `format` string and line 2 of the eight
+   goldens, leaving the `generator` fixture alone. No compatibility path: nothing is released,
+   so the file format and the settings directory change outright. U82 removed the sample scene,
+   so the `"FurniCraft sample"` copy the old inventory named is gone: the inventory starts at
+   `main.rs`, `file_menu.rs` and `settings_store.rs`.
+  Done: A single constant decides the product name, and a test asserts that the window title,
+   `app_id`, the settings directory and the open-dialog filter all read it, so a second rename
+   cannot miss a copy. Measured on a scratch copy of this tree: 1140 tests pass, clippy clean,
+   `layers: ok`, 960 changed lines and no behaviour change. `cargo xtask ci` is green.
+  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
 

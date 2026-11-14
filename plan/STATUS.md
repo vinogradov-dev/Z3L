@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: R1 waits for the owner's name and K4 leads `## Next`.
+Nothing is scheduled: K4 leads `## Next`.
 
 ## Index
 
