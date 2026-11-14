@@ -41,23 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X38** inside an open product a click selects the whole product instead of the part under the pointer
-  Why: Observation: with a product opened by a double click, every click in the viewport
-   selects the product, while the tree selects and highlights the part under the pointer; an
-   open group already behaves correctly. Expected: an open level exposes its children to the
-   click, so a click lands on the part, a double click enters one level further and Escape
-   leaves. Suspected cause: the open product is `Session::active_product`, view state separate
-   from `Editor.open`, and `target::resolve_viewport_pick` reads only the open set, so the walk
-   up from the hit node stops at the product container.
-  Shape: The rule takes the open product too — one argument to `resolve_viewport_pick`, or the
-   editor folds it into the set it passes — so a closed product still picks as one object and
-   an open one exposes its parts. The rule keeps its shape: a document id in, a document id or
-   `None` out, no mutation.
-  Done: A unit test on `resolve_viewport_pick` with an open product returns the part and with a
-   closed one the product; a frame test opens the fixture product, clicks a panel and asserts
-   the selection and the status bar name the part; `plan/map.md`'s picking row stops claiming a
-   click inside a product picks the product; `cargo xtask ci` is green.
-  `files: crates/ui/src/target.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **X39** the inspector's last row hides under the horizontal scroller, and the tree scrolls by a different route
   Why: Observation: the right panel's content ends flush with the panel's rounded bottom edge
    and the horizontal scrollbar the inspector needs crosses the last card, so the bottom reads
@@ -339,6 +322,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X38** inside an open product a click selects the whole product instead of the part under the pointer
+  Why: Observation: with a product opened by a double click, every click in the viewport
+   selects the product, while the tree selects and highlights the part under the pointer; an
+   open group already behaves correctly. Expected: an open level exposes its children to the
+   click, so a click lands on the part, a double click enters one level further and Escape
+   leaves. Suspected cause: the open product is `Session::active_product`, view state separate
+   from `Editor.open`, and `target::resolve_viewport_pick` reads only the open set, so the walk
+   up from the hit node stops at the product container.
+  Shape: The rule takes the open product too — one argument to `resolve_viewport_pick`, or the
+   editor folds it into the set it passes — so a closed product still picks as one object and
+   an open one exposes its parts. The rule keeps its shape: a document id in, a document id or
+   `None` out, no mutation.
+  Done: A unit test on `resolve_viewport_pick` with an open product returns the part and with a
+   closed one the product; a frame test opens the fixture product, clicks a panel and asserts
+   the selection and the status bar name the part; `plan/map.md`'s picking row stops claiming a
+   click inside a product picks the product; `cargo xtask ci` is green.
+  `files: crates/ui/src/target.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/document.rs` — `cbb6a8b`
 
 - `[x]` **X37** an open method list owns the pointer only across part of its own rectangle
   Why: Observation: with a drawing tool armed, the pointer over an open method list keeps the
