@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=b0d1d2f updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=7818558 updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -17,10 +17,9 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   ADR 0105 makes the three stances one flat frame turned; X35 stands the fill post in it, and N11
   gives a panel end a bevel angle about its outline edge (0107, schema 24).
 - S7 audited the design rules and filed S8–S22 under `plan/refactor.md`: S8–S13 split `geom` and gave
-  the tests one fixture definition (ADR 0084), S14–S17 `engine/panel_cmds`, `scene`'s camera and ray
-  and `render`'s pipelines, S18–S19 the document rules and the `Editor` out of `ui/lib.rs` (50 lines),
-  S20–S22 the drawing draft and the shell's chrome (2608 -> 2037), then U45 the scene itself —
-  `Document` per tab, `main.rs` 2037 -> 455 (ADR 0081); S21 predates its filing, F4 is in questions.
+  the tests one fixture (ADR 0084), S14–S17 `engine/panel_cmds`, `scene`'s camera and ray,
+  `render`'s pipelines, S18–S19 the document rules and the `Editor` (50 lines), S20–S22 the drawing
+  draft and the shell's chrome (2608 -> 2037), U45 the scene itself (ADR 0081); F4 is in questions.
 - U45 opens several scenes at once: one tab per open file in the header, with its dirty marker and
   its cross. *New* and *Open* open a tab (a path already open activates that tab), *Save*, *Undo* and
   *Redo* act on the active tab only, a close with unsaved changes asks and the last close leaves an
@@ -48,11 +47,12 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   caption in a 16 pt band a step off the control tone, every name on one baseline, so the ribbon is
   76 pt. U65 gave every number one 76 x 22 field, right-aligned with its unit outside the string, one
   commit policy and one undo entry per drag or typing run (0092).
+- ADR 0117 makes one const table the inventory of capabilities that every surface filters and the
+  gate checks; 0118 names the atom, 0119 the tool card, U94–U99 file that work (`plan/notes/U94.md`).
 - Faber's architecture is recorded (ADRs 0028–0032) but not implemented. `state-contract` (L0) is the
-  whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init`, the command table
-  (P4–P7, P9, ADR 0085); `xtask` keeps the layering rules and `ci` (P8), and the gate follows every
-  `files:` hint, a closed entry's ADR, the `STATE:` keys, the reference files and a stale `base`.
-  Gate: `cargo xtask ci`, green; `dev` → `main` with `--no-ff`.
+  whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init` (P4–P7, P9, 0085);
+  `xtask` keeps the layering rules and `ci` (P8), and the gate follows every `files:` hint, a closed
+  entry's ADR, the `STATE:` keys, the reference files and a stale `base`; `ci` green, `dev` → `main`.
 
 ## Next
 
