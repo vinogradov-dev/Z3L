@@ -102,29 +102,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
    `cargo xtask ci` is green.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
-- `[ ]` **U94** the capability inventory is one table of places, and a gate refuses an orphan command
-  Why: Measured 2026-11-14: 56 command ids (the count the registry test asserts), three of which
-  (`CONTOUR_CREATE_ID`, `NODE_ORIGIN_REBASE_ID`, `NODE_PROPERTY_SET_MANY_ID`) are named only
-  inside `crates/engine`; the ribbon map holds 29 live methods and 62 planned rows; the palette
-  builds parameters for twelve ids and refuses the rest. Nothing checks that a command has a
-  home, so every new surface decides its own list and the owner rule — every feature has a
-  representation, the next tool is under the hand — is kept by memory alone (ADR 0117).
-  Shape: A new `crates/ui/src/inventory.rs` holds one const table keyed by id: the places
-   (`Ribbon`, `Context`, `ToolCard`, `Palette`, `Card`, `Api`), `Context` or `Always`, the
-   default key, the icon and the label `Message`. The ribbon, the palette and the planned
-   context menu (U92) read it instead of declaring their own lists; `params_for` stays the
-   parameter builder, but each id it can run gets a row. `cargo xtask ui-rules` gains the
-   coverage check: a registered command with no row, a row naming an unknown id, message, icon
-   or surface, a live row without art and one id with two labels or keys all fail, while one
-   icon file shared by two unrelated actions is printed for review. The three orphans are
-   placed or declared `Api` with the reason. The audit that seeds the table — where each of the
-   56 commands lives today — goes to `plan/notes/U94.md`. U92 and U91 are taken after this
-   task, so both filter the table instead of writing a fourth list.
-  Done: `cargo xtask ui-rules` fails on a command with no row and passes on the tree; every
-   live ribbon row names an icon file and a message; the three orphans have a place or an `Api`
-   reason; a test adds a fake command and asserts the check names it; `plan/map.md` gains the
-   module row; `cargo xtask ci` is green.
-  `files: crates/ui/src, xtask/src/ui_rules.rs, crates/engine/src/commands.rs`
 - `[ ]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
   Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
    is touched — after the decision that matters most, where a capability lives (ADR 0117), is
@@ -247,6 +224,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U94** the capability inventory is one table of places, and a gate refuses an orphan command
+  Why: Measured 2026-11-14: 56 command ids (the count the registry test asserts), three of which
+  (`CONTOUR_CREATE_ID`, `NODE_ORIGIN_REBASE_ID`, `NODE_PROPERTY_SET_MANY_ID`) are named only
+  inside `crates/engine`; the ribbon map holds 29 live methods and 62 planned rows; the palette
+  builds parameters for twelve ids and refuses the rest. Nothing checks that a command has a
+  home, so every new surface decides its own list and the owner rule — every feature has a
+  representation, the next tool is under the hand — is kept by memory alone (ADR 0117).
+  Shape: A new `crates/ui/src/inventory.rs` holds one const table keyed by id: the places
+   (`Ribbon`, `Context`, `ToolCard`, `Palette`, `Card`, `Api`), `Context` or `Always`, the
+   default key, the icon and the label `Message`. The ribbon, the palette and the planned
+   context menu (U92) read it instead of declaring their own lists; `params_for` stays the
+   parameter builder, but each id it can run gets a row. `cargo xtask ui-rules` gains the
+   coverage check: a registered command with no row, a row naming an unknown id, message, icon
+   or surface, a live row without art and one id with two labels or keys all fail, while one
+   icon file shared by two unrelated actions is printed for review. The three orphans are
+   placed or declared `Api` with the reason. The audit that seeds the table — where each of the
+   56 commands lives today — goes to `plan/notes/U94.md`. U92 and U91 are taken after this
+   task, so both filter the table instead of writing a fourth list.
+  Done: `cargo xtask ui-rules` fails on a command with no row and passes on the tree; every
+   live ribbon row names an icon file and a message; the three orphans have a place or an `Api`
+   reason; a test adds a fake command and asserts the check names it; `plan/map.md` gains the
+   module row; `cargo xtask ci` is green.
+  `files: crates/ui/src, xtask/src/ui_rules.rs, crates/engine/src/commands.rs` — `633442f`
 
 - `[x]` **U90** the Furniture tab loses the loose Panel cell and offers a panel by contour instead
   Why: `furniture.panels.panel` creates a panel from a fixed size in a card, outside any

@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=4d83409 updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=633442f updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,7 +55,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: 10 open tasks wait in `## Next`.
+Nothing is scheduled: U91 is the next task in `## Next` — the snap toggle leaves View › Display for
+a group of its own captioned Snaps, and the inventory now records where every command is reachable.
 
 ## Index
 
