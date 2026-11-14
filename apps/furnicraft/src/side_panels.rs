@@ -231,6 +231,11 @@ pub(crate) struct Chrome {
     /// The popup hangs under the band and over the scene, so it is a surface above the viewport,
     /// not a part of the band: a press or a tool cursor inside it belongs to the list (X37).
     pub(crate) list: Option<egui::Rect>,
+    /// The rectangle of the open context menu, when a right click opened one (U92).
+    ///
+    /// Like the method list it floats over the scene, so a press inside it is chrome: the entry
+    /// under the pointer is what the press is for, and the model behind it never sees the click.
+    pub(crate) menu: Option<egui::Rect>,
 }
 
 impl Chrome {
@@ -238,6 +243,7 @@ impl Chrome {
     pub(crate) fn covers(&self, point: egui::Pos2) -> bool {
         self.ribbon.contains(point)
             || self.list.is_some_and(|list| list.contains(point))
+            || self.menu.is_some_and(|menu| menu.contains(point))
             || self.panels.panels().any(|rect| rect.contains(point))
     }
 
@@ -506,6 +512,7 @@ mod tests {
             panels: PanelRects::of(viewport, top, panels, (width(panels.scene), width(panels.inspector))),
             ribbon,
             list: None,
+            menu: None,
         }
     }
 

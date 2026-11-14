@@ -120,6 +120,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0112](0112-a-destructive-key-asks-when-undo-is-not-enough.md) | A destructive key asks when undo is not enough | Accepted |
 | [0113](0113-select-is-the-state-a-window-opens-in.md) | Select is the state a window opens in | Accepted |
 | [0114](0114-a-panel-is-cut-from-a-ring.md) | A panel is cut from a ring, so the panel cell goes | Accepted; refines 0042 and 0083 |
+| [0115](0115-a-right-click-opens-the-nodes-actions.md) | A right click opens the node's actions, and a right drag pans the view | Accepted |
 | [0117](0117-the-interface-is-one-inventory-of-capabilities.md) | The interface is one inventory of capabilities: every command has a place | Accepted |
 | [0118](0118-a-mechanism-used-twice-is-a-tool.md) | A mechanism used twice is a tool, and a measurement is not a dimension | Accepted |
 | [0119](0119-the-armed-tool-shows-its-parameters-at-the-pointer.md) | The armed tool shows its parameters at the pointer, and the inspector shows the same fields | Accepted |

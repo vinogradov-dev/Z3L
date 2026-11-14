@@ -42,29 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
-  Why: The tree row menu is the only context menu in the program: a right click in the viewport
-   draws nothing, so the actions a selected object has are two or three clicks away in the
-   tree, and the tree's own list is built inside an 850-line file. The owner asked for context
-   menus that carry the actions of the object under the pointer.
-  Shape: One module builds the action list for a node kind — a panel, an object, a product
-  container, a group, a camera or a light, the root and empty space — from the command
-  registry and the editor's flags, each entry a command id, its label message, its enabled
-  check and the reason it cannot run. The list is the capability inventory (U94) filtered
-  by the node kind and the `Context` flag, not a list this module writes, so U94 is taken
-  before this task and the three orphans are placed there. The row menu and a new popup in the
-  viewport draw that list, so an entry cannot exist in one and not the other; the popup is
-  anchored at the pointer, closes on Escape and on an outside click, and is declared to
-  `Chrome::covers`, so a press on it is chrome and never a pick. The viewport reads a right
-  *click* (press and release within a few points) and leaves the right *drag* to the camera
-  pan it already owns. The new module is one row of `HOST_OWNERS` in
-  `xtask/src/ui_rules.rs`. ADR 0115 records the click-versus-drag split and the one-list rule.
-  Done: Right-clicking a panel, a group, a camera and empty space each opens the list that
-   object owns, with the same entries the tree shows for it; right-dragging still pans and
-   opens nothing; a headless frame test right-clicks a panel and asserts the menu's rectangle
-   and its first entry, and that the press changed no document revision; `plan/map.md` and the
-   ui-design skill's `references/surfaces.md` gain the surface; `cargo xtask ci` is green.
-  `files: crates/ui/src/scene_tree.rs, crates/ui/src/lib.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **U93** the object card is reviewed against the rubric and redesigned as one reading order
   Why: The card a person reads most is 1780 lines and up to seven collapsible sections stacked
    under two other cards, so the same fields appear in two places, the first screen is mostly
@@ -209,6 +186,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
+  Why: The tree row menu is the only context menu in the program: a right click in the viewport
+   draws nothing, so the actions a selected object has are two or three clicks away in the
+   tree, and the tree's own list is built inside an 850-line file. The owner asked for context
+   menus that carry the actions of the object under the pointer.
+  Shape: One module builds the action list for a node kind — a panel, an object, a product
+  container, a group, a camera or a light, the root and empty space — from the command
+  registry and the editor's flags, each entry a command id, its label message, its enabled
+  check and the reason it cannot run. The list is the capability inventory (U94) filtered
+  by the node kind and the `Context` flag, not a list this module writes, so U94 is taken
+  before this task and the three orphans are placed there. The row menu and a new popup in the
+  viewport draw that list, so an entry cannot exist in one and not the other; the popup is
+  anchored at the pointer, closes on Escape and on an outside click, and is declared to
+  `Chrome::covers`, so a press on it is chrome and never a pick. The viewport reads a right
+  *click* (press and release within a few points) and leaves the right *drag* to the camera
+  pan it already owns. The new module is one row of `HOST_OWNERS` in
+  `xtask/src/ui_rules.rs`. ADR 0115 records the click-versus-drag split and the one-list rule.
+  Done: Right-clicking a panel, a group, a camera and empty space each opens the list that
+   object owns, with the same entries the tree shows for it; right-dragging still pans and
+   opens nothing; a headless frame test right-clicks a panel and asserts the menu's rectangle
+   and its first entry, and that the press changed no document revision; `plan/map.md` and the
+   ui-design skill's `references/surfaces.md` gain the surface; `cargo xtask ci` is green.
+  `files: crates/ui/src/scene_tree.rs, crates/ui/src/lib.rs, apps/furnicraft/src/document.rs` — `32a39fb`
 
 - `[x]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
   Why: The grid-snap toggle sits under View › Display among style, contours, shadows and

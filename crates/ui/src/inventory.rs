@@ -7,10 +7,11 @@
 //! default key, its artwork and its words (ADR 0117).
 //!
 //! A surface filters this table instead of writing its own list: the palette shows every row that
-//! has a place, and the context menu (U92) will show the rows whose [`Applies`] matches the
-//! selection. The ribbon stays the curated lexicon — a cell names a *method* (`sketch.create.line`)
-//! and draws its own words, because two methods can share one command — so the ribbon reads this
-//! table for the rows that are one button and keeps its cells for the rest.
+//! has a place, and the context menu (`crate::node_actions`) shows the rows whose [`Applies`] matches
+//! the node under the pointer, on the tree row and in the viewport alike (U92). The ribbon stays the
+//! curated lexicon — a cell names a *method* (`sketch.create.line`) and draws its own words, because
+//! two methods can share one command — so the ribbon reads this table for the rows that are one
+//! button and keeps its cells for the rest.
 //!
 //! What the table does not carry is behaviour: a row names an id, a message, an icon and a key, and
 //! the command itself stays in `furnicraft-engine`. The gate in `cargo xtask ui-rules` fails when a
@@ -46,11 +47,34 @@ pub enum Place {
 /// Who a capability applies to, the column ADR 0117 calls the context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Applies {
-    /// It acts on the selection or on the thing under the pointer, so a surface offers it only
-    /// when that thing is there.
-    Context,
+    /// It acts on the node under the pointer or on the selection, so a surface offers it only when
+    /// a node of that kind is there.
+    Context(ActsOn),
     /// It is a general action: a creation, a view toggle or a document-wide operation.
     Always,
+}
+
+/// The node a capability acts on.
+///
+/// The column is declared for every contextual row, not only for the ones a context menu draws
+/// today, because the card (U93) and the tool card (U97) filter the same table by the node in front
+/// of the person, and a second list of "what this acts on" is the defect ADR 0117 ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActsOn {
+    /// Any node except the root frame, which is a frame rather than an object.
+    Node,
+    /// Two or more selected nodes: a batch the card and the palette offer once.
+    Selection,
+    /// A container: a group, a component or a product frame.
+    Container,
+    /// A panel, and only a panel.
+    Panel,
+    /// A mesh object: a primitive, a path, an extrusion or a collapsed body.
+    Object,
+    /// A camera the document owns.
+    Camera,
+    /// A light the document owns.
+    Light,
 }
 
 /// One capability: the id it is known by, and what every surface needs to draw and run it.
@@ -70,10 +94,52 @@ pub struct Row {
     pub icon: Option<Icon>,
 }
 
+/// What a node is, for the one question a surface asks the table: does this capability act on it?
+///
+/// It is the table's vocabulary rather than a module's, because the context menu, the card and the
+/// tool card all filter the inventory and must name the same kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeKind {
+    /// The world frame: a frame rather than an object, so only view entries act on it.
+    Root,
+    Panel,
+    Object,
+    /// A group, a component or a product frame; the three are told apart by the node's own flags.
+    Container,
+    Camera,
+    Light,
+    /// No node under the pointer.
+    Empty,
+}
+
+impl NodeKind {
+    /// Whether the kind is a node an edit command can act on.
+    pub fn is_node(self) -> bool {
+        !matches!(self, NodeKind::Root | NodeKind::Empty)
+    }
+}
+
 impl Row {
     /// Whether the capability appears in `place`.
     pub fn has(&self, place: Place) -> bool {
         self.places.contains(&place)
+    }
+
+    /// Whether a menu offers this capability for a node of `kind`.
+    ///
+    /// The selection and the container are separate columns rather than node kinds: a batch is
+    /// offered only while two or more nodes are selected, and only a menu knows that count.
+    pub fn offers(&self, kind: NodeKind, many_selected: bool) -> bool {
+        match self.applies {
+            Applies::Always => false,
+            Applies::Context(ActsOn::Node) => kind.is_node(),
+            Applies::Context(ActsOn::Selection) => kind.is_node() && many_selected,
+            Applies::Context(ActsOn::Container) => kind == NodeKind::Container,
+            Applies::Context(ActsOn::Panel) => kind == NodeKind::Panel,
+            Applies::Context(ActsOn::Object) => kind == NodeKind::Object,
+            Applies::Context(ActsOn::Camera) => kind == NodeKind::Camera,
+            Applies::Context(ActsOn::Light) => kind == NodeKind::Light,
+        }
     }
 
     /// Whether any surface draws it. An [`Place::Api`] row is reached by an id, never by a click.
@@ -113,7 +179,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.outline.set",
         label: Message::CmdSetPanelOutline,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -121,7 +187,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.outline.to_contour",
         label: Message::CmdBakePanelOutline,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -145,7 +211,7 @@ pub const ROWS: &[Row] = &[
         id: "product.envelope.set",
         label: Message::CmdSetProductEnvelope,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Container),
         key: None,
         icon: None,
     },
@@ -153,15 +219,15 @@ pub const ROWS: &[Row] = &[
         id: "panel.rename",
         label: Message::CmdRenamePanel,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
     Row {
         id: "node.rename",
         label: Message::CmdRename,
-        places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        places: &[Place::Palette, Place::Card],
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -169,7 +235,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.resize",
         label: Message::CmdResizePanel,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -177,7 +243,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.material.set",
         label: Message::CmdSetPanelMaterial,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -185,7 +251,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.edge_banding.set",
         label: Message::CmdSetEdgeBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -193,7 +259,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.edge_banding.clear",
         label: Message::CmdClearEdgeBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -201,7 +267,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.corner_banding.set",
         label: Message::CmdSetCornerBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -209,7 +275,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.corner_banding.clear",
         label: Message::CmdClearCornerBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -217,7 +283,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.ring_banding.set",
         label: Message::CmdSetContourBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -225,7 +291,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.ring_banding.clear",
         label: Message::CmdClearContourBanding,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -233,7 +299,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.corner.set",
         label: Message::CmdSetCornerFeature,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -241,7 +307,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.corner.clear",
         label: Message::CmdClearCornerFeature,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -249,7 +315,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.bow.set",
         label: Message::CmdSetEdgeBow,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -257,7 +323,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.bow.clear",
         label: Message::CmdClearEdgeBow,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -265,7 +331,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.bevel.set",
         label: Message::CmdSetBevel,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -273,7 +339,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.bevel.clear",
         label: Message::CmdClearBevel,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -281,7 +347,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.machining.add",
         label: Message::CmdAddMachining,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -289,7 +355,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.machining.update",
         label: Message::CmdUpdateMachining,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -297,7 +363,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.machining.remove",
         label: Message::CmdRemoveMachining,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -305,7 +371,7 @@ pub const ROWS: &[Row] = &[
         id: "panel.machining.move",
         label: Message::CmdMoveMachining,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Panel),
         key: None,
         icon: None,
     },
@@ -313,15 +379,15 @@ pub const ROWS: &[Row] = &[
         id: "node.delete",
         label: Message::CmdDelete,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: Some("Delete"),
         icon: None,
     },
     Row {
         id: "node.delete.many",
         label: Message::CmdDeleteSelection,
-        places: &[Place::ContextMenu, Place::Palette],
-        applies: Applies::Context,
+        places: &[Place::Palette],
+        applies: Applies::Context(ActsOn::Selection),
         key: None,
         icon: None,
     },
@@ -329,7 +395,7 @@ pub const ROWS: &[Row] = &[
         id: "node.duplicate",
         label: Message::CmdDuplicate,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -337,7 +403,7 @@ pub const ROWS: &[Row] = &[
         id: "node.group",
         label: Message::CmdGroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Selection),
         key: None,
         icon: None,
     },
@@ -345,7 +411,7 @@ pub const ROWS: &[Row] = &[
         id: "node.ungroup",
         label: Message::CmdUngroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Container),
         key: None,
         icon: None,
     },
@@ -353,7 +419,7 @@ pub const ROWS: &[Row] = &[
         id: "node.placement.set",
         label: Message::CmdPlace,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -361,7 +427,7 @@ pub const ROWS: &[Row] = &[
         id: "node.placement.world_zero",
         label: Message::CmdPlaceAtWorldZero,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -369,7 +435,7 @@ pub const ROWS: &[Row] = &[
         id: "node.placement.set_many",
         label: Message::CmdPlaceSelection,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Selection),
         key: None,
         icon: None,
     },
@@ -377,7 +443,7 @@ pub const ROWS: &[Row] = &[
         id: "node.pivot.set",
         label: Message::CmdSetPivot,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -385,7 +451,7 @@ pub const ROWS: &[Row] = &[
         id: "node.pivot.center",
         label: Message::CmdCenterPivot,
         places: &[Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -393,7 +459,7 @@ pub const ROWS: &[Row] = &[
         id: "node.origin.rebase",
         label: Message::CmdRebaseOrigin,
         places: &[Place::Api],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -401,7 +467,7 @@ pub const ROWS: &[Row] = &[
         id: "node.property.set",
         label: Message::CmdSetProperty,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -409,7 +475,7 @@ pub const ROWS: &[Row] = &[
         id: "node.property.set_many",
         label: Message::CmdSetProperties,
         places: &[Place::Api],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -417,7 +483,7 @@ pub const ROWS: &[Row] = &[
         id: "node.property.clear",
         label: Message::CmdClearProperty,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Node),
         key: None,
         icon: None,
     },
@@ -425,7 +491,7 @@ pub const ROWS: &[Row] = &[
         id: "node.component.convert_to_group",
         label: Message::CmdConvertToGroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Container),
         key: None,
         icon: None,
     },
@@ -441,7 +507,7 @@ pub const ROWS: &[Row] = &[
         id: "object.primitive.replace",
         label: Message::CmdReplacePrimitive,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -449,7 +515,7 @@ pub const ROWS: &[Row] = &[
         id: "object.extrude.create",
         label: Message::CmdCreateExtrusion,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -457,7 +523,7 @@ pub const ROWS: &[Row] = &[
         id: "object.extrude.height.set",
         label: Message::CmdSetExtrusionHeight,
         places: &[Place::Ribbon],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -465,7 +531,7 @@ pub const ROWS: &[Row] = &[
         id: "object.contour.replace",
         label: Message::CmdReplaceContour,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -481,7 +547,7 @@ pub const ROWS: &[Row] = &[
         id: "object.path.extrude",
         label: Message::CmdExtrudePath,
         places: &[Place::Ribbon],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
@@ -489,7 +555,7 @@ pub const ROWS: &[Row] = &[
         id: "object.path.replace",
         label: Message::CmdReplacePath,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -497,7 +563,7 @@ pub const ROWS: &[Row] = &[
         id: "object.collapse",
         label: Message::CmdCollapseToMesh,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -505,7 +571,7 @@ pub const ROWS: &[Row] = &[
         id: "mesh.vertices.move",
         label: Message::CmdMoveVertices,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Object),
         key: None,
         icon: None,
     },
@@ -529,7 +595,7 @@ pub const ROWS: &[Row] = &[
         id: "scene.active_camera.set",
         label: Message::CmdSetActiveCamera,
         places: &[Place::Palette, Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Camera),
         key: None,
         icon: None,
     },
@@ -537,7 +603,7 @@ pub const ROWS: &[Row] = &[
         id: "camera.projection.set",
         label: Message::CmdSetCameraProjection,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Camera),
         key: None,
         icon: None,
     },
@@ -545,7 +611,7 @@ pub const ROWS: &[Row] = &[
         id: "light.params.set",
         label: Message::CmdSetLightParameters,
         places: &[Place::Card],
-        applies: Applies::Context,
+        applies: Applies::Context(ActsOn::Light),
         key: None,
         icon: None,
     },

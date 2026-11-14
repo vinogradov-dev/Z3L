@@ -74,6 +74,25 @@ impl Editor {
         }
     }
 
+    /// The subject a context menu opened at a viewport hit is about.
+    ///
+    /// It resolves the hit the way a click resolves its selection — through the open levels and
+    /// the working product — so a right click on a board of a closed cabinet offers the cabinet's
+    /// actions, not the board's. Empty space is its own subject, because the menu it opens is the
+    /// document's rather than a node's.
+    pub fn context_menu_subject(
+        &self,
+        project: &Project,
+        open_product: Option<Id>,
+        hit: Option<Id>,
+    ) -> crate::node_actions::Subject {
+        match hit.and_then(|hit| resolve_viewport_pick(project, &self.open, open_product, hit)) {
+            Some(node) if node == project.root().id() => crate::node_actions::Subject::Root,
+            Some(node) => crate::node_actions::Subject::Node(node),
+            None => crate::node_actions::Subject::Empty,
+        }
+    }
+
     /// Acts on a double click in the viewport: opens a product, or enters one level below a group.
     ///
     /// A double click on a product opens it as the session's working product (ADR 0098, ADR 0100)

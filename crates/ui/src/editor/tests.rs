@@ -9,7 +9,7 @@ use crate::contour_edit::ContourTarget;
 use crate::contour_grips::ContourGrip;
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
-use crate::scene_tree::TreeAction;
+use crate::node_actions::NodeAction;
 use crate::toolbars::{ToolAction, spec};
 use furnicraft_engine::{PanelCreate, PrimitiveKind, Session};
 use furnicraft_model::Contour;
@@ -776,7 +776,7 @@ fn deleting_the_armed_container_clears_the_arm() {
 
     assert!(editor.arm_creation(session.project(), inner));
     editor
-        .run_action(&mut session, TreeAction::Delete { node: outer }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: outer }, furnicraft_text::Lang::En)
         .expect("delete the outer assembly");
     assert!(editor.creation_parent().is_none(), "deleting an ancestor of the arm clears it");
     assert_eq!(editor.creation_target(session.project()), root);
@@ -1407,11 +1407,11 @@ fn the_tree_click_opens_and_closes_the_working_product() {
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
 
-    editor.run_action(&mut session, TreeAction::OpenProduct { node: product }, crate::Lang::En).expect("open");
+    editor.apply_node_action(&mut session, NodeAction::OpenProduct { node: product }, crate::Lang::En).expect("open");
     assert_eq!(session.active_product(), Some(product));
     assert_eq!(editor.creation_target(session.project()), product);
 
-    editor.run_action(&mut session, TreeAction::CloseProduct, crate::Lang::En).expect("close");
+    editor.apply_node_action(&mut session, NodeAction::CloseProduct, crate::Lang::En).expect("close");
     assert_eq!(session.active_product(), None);
     assert_eq!(editor.creation_target(session.project()), session.project().root().id());
 }
@@ -1762,7 +1762,7 @@ fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
 
     let revision = session.project().revision();
     let refusal = editor
-        .run_action(&mut session, TreeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
         .expect_err("a locked node refuses the delete");
     assert!(refusal.contains("locked"), "the refusal says why: {refusal}");
     assert_eq!(session.project().revision(), revision, "a refusal dispatches nothing");
@@ -1771,7 +1771,7 @@ fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
     editor.set_locked(panel, false);
     assert_eq!(editor.locked_selection(session.project()), None, "unlocking ends the refusal");
     editor
-        .run_action(&mut session, TreeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
         .expect("the unlocked delete runs");
     assert!(!session.project().contains_node(panel));
 }
@@ -1789,7 +1789,11 @@ fn a_locked_container_refuses_a_group_and_an_ungroup() {
     let revision = session.project().revision();
     assert!(
         editor
-            .run_action(&mut session, TreeAction::Group { nodes: vec![first, second] }, furnicraft_text::Lang::En)
+            .apply_node_action(
+                &mut session,
+                NodeAction::Group { nodes: vec![first, second] },
+                furnicraft_text::Lang::En
+            )
             .is_err(),
         "grouping a locked node would restructure it"
     );
@@ -1799,7 +1803,11 @@ fn a_locked_container_refuses_a_group_and_an_ungroup() {
     editor.set_locked(second, true);
     assert!(
         editor
-            .run_action(&mut session, TreeAction::Group { nodes: vec![first, second] }, furnicraft_text::Lang::En)
+            .apply_node_action(
+                &mut session,
+                NodeAction::Group { nodes: vec![first, second] },
+                furnicraft_text::Lang::En
+            )
             .is_err(),
         "one locked node in the selection is enough"
     );
@@ -1819,7 +1827,7 @@ fn a_deleted_node_drops_its_flags_and_an_undo_starts_clean() {
     editor.set_locked(panel, false);
 
     editor
-        .run_action(&mut session, TreeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
         .expect("delete the panel");
     assert!(!editor.flags().is_hidden(panel), "the flag goes with the node");
     assert!(!editor.flags().is_locked(panel));

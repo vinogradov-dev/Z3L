@@ -34,6 +34,7 @@ pub mod inventory;
 mod light_card;
 mod machining;
 mod mesh_edit;
+mod node_actions;
 mod object_card;
 mod palette;
 mod panel_card;
@@ -59,8 +60,9 @@ pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, 
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use editor::{Editor, FillArm};
 pub use furnicraft_text::{Counted, Lang, Message};
-pub use inventory::{Applies, Place, Row};
+pub use inventory::{ActsOn, Applies, NodeKind, Place, Row};
 pub use mesh_edit::{MeshEdit, MeshElement};
+pub use node_actions::{MenuSource, NodeAction, Subject, ViewportMenu};
 pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use view_flags::ViewFlags;
