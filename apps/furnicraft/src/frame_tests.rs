@@ -489,6 +489,15 @@ fn two_columns_and_quad_tile_the_scene_rect_and_their_borders_stay_grabbable() {
         let handle = divider.hit_rect().center();
         assert!(scene.contains(handle), "{kind:?}: the border band is inside the scene");
         assert!(!chrome.covers(handle), "{kind:?}: and not under a panel");
+        // A border is not the work area: it keeps the system resize arrow and the square is not
+        // painted over it (X41).
+        harness.hover(handle);
+        assert!(
+            matches!(harness.cursor, egui::CursorIcon::ResizeHorizontal | egui::CursorIcon::ResizeVertical),
+            "{kind:?}: the border keeps the system resize cursor, not {:?}",
+            harness.cursor
+        );
+        assert!(harness.app.shell.work_cursor.is_none(), "{kind:?}: and draws no square over the border");
         let selected = harness.selected();
         harness.press_at(handle, egui::PointerButton::Primary);
         assert!(harness.app.shell.divider_dragging, "{kind:?}: a press there grabs the border");
@@ -1324,14 +1333,19 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
 }
 
 #[test]
-fn the_square_is_the_window_pointer_on_every_surface_but_a_menu() {
-    // The system arrow points at a button, so the shell hides it and draws its own square where a
-    // click lands — over the scene, the panels and the floating cluster alike. A menu, a popup and a
-    // modal are the one exception: there the arrow picks a row and the square would cover it (X40).
+fn the_square_marks_the_work_area_only() {
+    // The owner's rule: the custom square is the pointer of the scene rectangle, and the system
+    // cursor is the affordance of every panel, widget, field and resizing border. A menu keeps the
+    // arrow too, because the square would cover the row it is meant to pick (X41).
     let mut harness = Harness::new("frame-work-cursor");
     let chrome = harness.settle();
     let scene = harness.scene();
     let centre = scene.center();
+    assert_eq!(
+        harness.ctx.layer_id_at(centre).map(|layer| layer.order),
+        Some(egui::Order::Background),
+        "the scene is the background layer the square belongs to"
+    );
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "the scene hides the system arrow");
     let cursor = harness.app.shell.work_cursor.expect("the shell drew its own cursor");
@@ -1339,17 +1353,14 @@ fn the_square_is_the_window_pointer_on_every_surface_but_a_menu() {
     assert_eq!(cursor.dot.center(), centre, "and so does its centre dot");
     assert!(cursor.crosshair.is_none(), "a fresh workspace draws the square alone");
 
-    // A side panel is still the window's surface: the square stays, because the pointer must point
-    // at a place, not at a control.
+    // A side panel is a system surface: the arrow comes back and no square is painted on it.
     let tree = chrome.panels.left.expect("the scene tree is up");
     let on_panel = egui::pos2(tree.center().x, tree.bottom() - 12.0);
     harness.hover(on_panel);
-    assert_eq!(harness.cursor, egui::CursorIcon::None, "a panel keeps the shell's square");
-    let cursor = harness.app.shell.work_cursor.expect("the panel draws the shell's cursor");
-    assert_eq!(cursor.square.center(), on_panel, "and the square follows the pointer onto the chrome");
+    assert_eq!(harness.cursor, egui::CursorIcon::Default, "a panel keeps the system arrow");
+    assert!(harness.app.shell.work_cursor.is_none(), "and draws no square over its widgets");
 
-    // The floating cluster is an `Order::Middle` area, so the square is painted over it rather than
-    // under it: this is the bottom toolbar the owner found covering the pointer.
+    // The floating cluster is a toolbar, not the work area, even though it hangs over the scene.
     let on_cluster = egui::pos2(scene.center().x, scene.bottom() - furnicraft_ui::theme::FLOATING_OFFSET - 8.0);
     assert_eq!(
         harness.ctx.layer_id_at(on_cluster).map(|layer| layer.order),
@@ -1357,26 +1368,30 @@ fn the_square_is_the_window_pointer_on_every_surface_but_a_menu() {
         "the point is on the floating cluster, not on the scene behind it"
     );
     harness.hover(on_cluster);
-    assert_eq!(harness.cursor, egui::CursorIcon::None, "the cluster does not hide the pointer");
-    let cursor = harness.app.shell.work_cursor.expect("the cluster draws the shell's cursor over itself");
-    assert_eq!(cursor.square.center(), on_cluster, "the square is above the floating toolbar");
+    assert_eq!(harness.cursor, egui::CursorIcon::Default, "the cluster keeps the system arrow");
+    assert!(harness.app.shell.work_cursor.is_none(), "and draws no square over the toolbar");
 
-    // An armed drawing tool keeps the square: a contour is drawn at the point the square names, and
-    // a second crosshair would say the same thing in another language.
+    // The corner orientation widget is a widget drawn inside the work area: it keeps the arrow too.
+    let widget = crate::gizmo::widget_rect(scene, &chrome).expect("the corner widget has a free corner");
+    let on_widget = widget.center();
+    harness.hover(on_widget);
+    assert_eq!(harness.cursor, egui::CursorIcon::Default, "the corner widget keeps the system arrow");
+    assert!(harness.app.shell.work_cursor.is_none(), "and draws no square over the widget");
+
+    // An armed drawing tool keeps the square inside the work area; a contour is drawn at the point
+    // the square names.
     harness.press(egui::Key::C, egui::Modifiers::NONE);
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a contour tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
-    // An armed primitive and a box do the same: the old crosshair said "a point will be placed", but
-    // the square already marks that point.
+    // An armed primitive and a box do the same.
     harness.app.tabs.active_mut().editor.arm_box(furnicraft_ui::BoxOwner::Cuboid);
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a primitive tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
-    // A modal is a `Foreground` layer: the arrow comes back and no square is painted over the card
-    // that asks for the three sides. This is the product card that used to leave no pointer at all.
+    // A modal is a system surface: the arrow comes back and no square covers its fields.
     harness.app.product_card.start();
     harness.frame();
     harness.hover(screen().center());

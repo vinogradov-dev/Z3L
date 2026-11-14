@@ -1612,6 +1612,9 @@ impl Document {
         // (U73). The display-settings popover can turn it off, and a hidden widget draws nothing and
         // takes no click.
         let gizmo_rect = widget_placement(&shell.cluster, rect, chrome);
+        // The shell's cursor keeps the corner widget on the system arrow: it is drawn on the scene
+        // layer and is a widget, not the work area (X41).
+        shell.orientation_rect = gizmo_rect;
 
         let points_per_pixel = ui.ctx().pixels_per_point();
         let width = (area.width() * points_per_pixel).round().max(1.0) as u32;

@@ -153,8 +153,13 @@ pub(crate) struct Shell {
     pub(crate) rebuilding: bool,
     /// The cluster asked for Settings › View this frame; the shell opens it and clears this.
     pub(crate) open_settings: bool,
-    /// The work cursor the last frame drew, or `None` while a menu, a popup or a modal owns the
-    /// pointer. A test-only snapshot of the geometry the shell painted (X40).
+    /// The rectangle the corner orientation widget covered on the last drawn frame.
+    ///
+    /// It is a widget drawn on the scene layer, so the work cursor cannot find it by the layer test
+    /// and asks for it by name: the widget keeps the system cursor (X41).
+    pub(crate) orientation_rect: Option<egui::Rect>,
+    /// The work cursor the last frame drew, or `None` while a system surface owns the pointer. A
+    /// test-only snapshot of the geometry the shell painted (X40).
     #[cfg(test)]
     pub(crate) work_cursor: Option<work_cursor::WorkCursor>,
     /// The background, grid and line ink of the theme variant the window draws with.
@@ -176,6 +181,7 @@ impl Default for Shell {
             divider_dragging: false,
             rebuilding: false,
             open_settings: false,
+            orientation_rect: None,
             #[cfg(test)]
             work_cursor: None,
             colors: SceneColors::DARK,
@@ -725,14 +731,15 @@ impl FurniCraftApp {
         }
     }
 
-    /// Draws the window's own pointer over every surface the frame has drawn.
+    /// Draws the work area's own pointer over the scene, and only there.
     ///
-    /// The square is painted last on the `Tooltip` layer, so the floating cluster and the status bar
-    /// can never cover it; a menu, a popup or a modal is a `Foreground` layer, where the system arrow
-    /// comes back and the square is not painted (X40).
+    /// Every panel, floating toolbar, text field, resizing border and menu keeps the system cursor;
+    /// the corner orientation widget is handed in by name because it is drawn on the scene layer
+    /// (X41). The square is painted last, so no surface can cover it inside the work area.
     fn draw_work_cursor(&mut self, ctx: &egui::Context) {
-        let view = self.tabs.active().scene_rect();
-        let cursor = work_cursor::show(ctx, &self.settings.pointer, view);
+        let scene = self.tabs.active().scene_rect();
+        let widget = self.shell.orientation_rect;
+        let cursor = work_cursor::show(ctx, &self.settings.pointer, scene, widget);
         #[cfg(test)]
         {
             self.shell.work_cursor = cursor;

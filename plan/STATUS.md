@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=6fe7481 updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=d7c26d9 updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -42,7 +42,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   standing object (0071), X11 closed a ring by an arc (0072), X12 a tool switch replaces the draft,
   X23 every *Close* commits. U65 gave every number one 76 x 22 field, right-aligned with its unit
   outside the string and one undo entry per drag (0092); U88 draws the work cursor in the settings
-  size, and X40 makes it the window's pointer above every surface but a menu (0121).
+  size, X40 paints it above the chrome, and X41 confines it to the work area (0121, 0122).
 - `crates/export` writes the order package — the manifest and twelve flat tables — and `furnicraft
   export` runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
 - ADR 0117 makes one const table the capability inventory every surface filters and the gate checks;

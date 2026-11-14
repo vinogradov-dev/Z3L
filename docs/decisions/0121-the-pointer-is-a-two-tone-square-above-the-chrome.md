@@ -1,6 +1,6 @@
 # 0121. The pointer is a two-tone square, painted above the chrome
 
-- Status: Accepted
+- Status: Accepted; scope superseded by 0122
 - Date: 2026-11-14
 
 ## Context

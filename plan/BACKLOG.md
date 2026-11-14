@@ -289,6 +289,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X41** the custom pointer belongs to the work area and every system element keeps the system cursor
+  Why: The owner's rule is the one U88 started from and X40 lost: the custom square belongs to
+   the work area only. Over a panel, a widget, a text field or a resizing border the system
+   cursor is the affordance, and a menu keeps it too. X40 read the owner's 'everything but
+   menus' literally and moved the square onto the panels and the floating cluster; its Shape
+   said 'every top layer that is not Foreground' and its Done asserted the square over a panel
+   and the cluster, so the gate proved the wrong rule. The owner's instruction was wrong too,
+   but the session did not raise the conflict with U88's 'a panel keeps the arrow' or with the
+   system icons a panel needs.
+  Shape: The shell paints the square only when the pointer is inside the scene rectangle, the
+   top layer at the pointer is Background, the corner orientation widget is not under it and no
+   widget asked for an icon of its own. The square and crosshair are clipped to the scene
+   rectangle; every panel, floating surface, text field, resizing divider and menu keeps the
+   system cursor. The two-tone outline and the layer stay. ADR 0122 supersedes 0121's scope and
+   keeps its outline; the UI skill gains the surface rule in the floating-surface bullet.
+  Done: A test that fails today asserts that the pointer over the left panel is Default with no
+   square, and the same over the floating cluster, the corner orientation widget and a
+   split-view border; a text field keeps its I-beam; the scene and an armed contour/primitive
+   still hide the arrow and draw the square; the product card keeps the arrow; the offscreen
+   shot points into the scene and shows the two-tone square in both themes; cargo xtask ci and
+   cargo xtask docs are green with ADR 0122.
+  `files: apps/furnicraft/src/work_cursor.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/frame_tests.rs, docs/decisions, .pi/skills/ui-design/SKILL.md` — `d7c26d9`
+
 - `[x]` **X40** the work cursor is the shell's pointer everywhere but a menu, and its two-tone outline shows on any surface
   Why: U88 made the square the scene's fallback and let each gesture keep an OS icon, so a
    contour mode showed an arrow and an armed primitive a crosshair; it painted the square
