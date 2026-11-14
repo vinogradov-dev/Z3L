@@ -62,10 +62,10 @@ fix the document in the same change (AGENTS §1, "if the hint is wrong, fix the 
   unit outside the box; a bespoke drag arithmetic is a second field, and we have one.
 - Every user-facing string is a message with a stable id (`crates/text`), not a literal: a missing
   translation must be a compile error, not an English word in a Russian screen.
-- A floating surface is an `egui::Area` on `Order::Middle` over the scene, is declared to
-  `Chrome::covers`, so a click on it is chrome and never a pick, a border drag or a camera gesture
-  (ADR 0080), and its module is one row of `HOST_OWNERS` in `xtask/src/ui_rules.rs`. The scene
-  rectangle does not shrink when a panel folds.
+- A floating surface is an `egui::Area` on `Order::Middle` over the scene, declared to `Chrome::covers`,
+  so a click is chrome, not a pick, a border drag or a camera gesture (ADR 0080), and one row of
+  `HOST_OWNERS` in `xtask/src/ui_rules.rs`; a custom pointer stays in the scene rectangle, and every
+  panel, widget, field and border keeps the system icon (ADR 0122).
 - Long work previews; it does not block. A changeable value fills `Session::preview` and one
   confirmed action commits it (ADR 0093).
 - Nothing is available only by hovering, and nothing destructive is confirmed by a dialog when undo

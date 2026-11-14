@@ -1,17 +1,18 @@
-//! The window's own pointer: a two-tone square the shell paints over every surface but a menu.
+//! The work area's own pointer: a two-tone square the shell paints only over the scene.
 //!
-//! The system arrow points at a button, not at the place a click lands on, so the window hides it
-//! while the pointer is over the interface and draws its own square at the point instead (X40). The
-//! square is painted on the `Tooltip` layer after every panel, toolbar, popup and dialog has drawn,
-//! so the bottom cluster and the status bar cannot cover it; a menu, a popup or a modal is a
-//! `Foreground` layer, where the system arrow comes back and no square is painted.
+//! The system arrow points at a button, not at the place a click lands on, so the shell hides it
+//! while the pointer is inside the scene rectangle and draws its own square at the point instead
+//! (X41). Every panel, floating toolbar, text field, resizing border and menu keeps the system
+//! cursor: that icon is the affordance of a system element, and a custom square over it hides what
+//! the cursor is for. The square is painted on the `Tooltip` layer, so no later surface can cover
+//! it inside the work area.
 //!
 //! The outline is two strokes of different value, dark outside and light inside, so one of them reads
 //! on a white board, a dark board and a shaded face alike. The pointer is chrome, not a guide: it
 //! takes the fixed pair of [`furnicraft_ui::theme::cursor_inks`] rather than the amber of ADR 0111.
 //!
-//! Changes when: what a pointer must say on a surface changes, or a surface joins the two that may
-//! ask for the system arrow. The size and the crosshair switch belong to the workspace settings.
+//! Changes when: the boundary of the work area, or the rule for a system element, changes. The size
+//! and the crosshair switch belong to the workspace settings.
 
 use eframe::egui;
 use furnicraft_ui::settings::PointerSettings;
@@ -82,43 +83,50 @@ impl WorkCursor {
     }
 }
 
-/// Draws the shell's pointer for this frame and returns the geometry it used.
+/// Draws the work area's pointer for this frame and returns the geometry it used.
 ///
-/// The square is the window's default: it is drawn wherever the pointer is, except over a menu, a
-/// popup or a modal (a `Foreground` layer, where the system arrow picks a row) and over a widget
-/// that asked for a cursor of its own (a text field, a divider, a scrub). `view` is the scene
-/// rectangle the crosshair spans; the square itself is only clipped by the window.
-pub(crate) fn show(ctx: &egui::Context, settings: &PointerSettings, view: Option<egui::Rect>) -> Option<WorkCursor> {
+/// `scene` is the rectangle the work area owns: outside it, and over a `Middle`/`Foreground` surface
+/// (a panel, the floating cluster, a popup, a modal), a widget with its own icon, the corner
+/// orientation widget or a resizing border, the system cursor stays. `widget` is that corner
+/// widget's rectangle, which is drawn on the scene layer and so cannot be found by the layer test.
+pub(crate) fn show(
+    ctx: &egui::Context,
+    settings: &PointerSettings,
+    scene: Option<egui::Rect>,
+    widget: Option<egui::Rect>,
+) -> Option<WorkCursor> {
     let pointer = ctx.pointer_hover_pos()?;
-    if asked_for_system_cursor(ctx, pointer) {
+    let scene = scene?;
+    if !scene.contains(pointer) || over_system_surface(ctx, pointer, widget) {
         return None;
     }
-    let window = ctx.content_rect();
-    let view = view.unwrap_or(window);
-    let cursor = WorkCursor::new(pointer, settings.size_points(), settings.crosshair, view);
+    let cursor = WorkCursor::new(pointer, settings.size_points(), settings.crosshair, scene);
     ctx.set_cursor_icon(egui::CursorIcon::None);
-    paint(ctx, &cursor, view);
+    paint(ctx, &cursor, scene);
     Some(cursor)
 }
 
-/// Whether a surface above the scene owns the pointer this frame.
+/// Whether the pointer is over a system surface rather than the work area.
 ///
-/// A menu, a popup and a modal are `Foreground` layers: the square would cover the row it is meant
-/// to pick, so the system arrow comes back. A widget that set an icon of its own (a text field's
-/// I-beam, a divider's resize arrows, a scrub's hidden pointer) keeps it.
-fn asked_for_system_cursor(ctx: &egui::Context, pointer: egui::Pos2) -> bool {
-    let menu = ctx.layer_id_at(pointer).is_some_and(|layer| layer.order >= egui::Order::Foreground);
+/// The scene is the `Background` layer. A panel, the floating cluster, the command bar, a distance
+/// field and every menu or modal is a `Middle` or `Foreground` layer; the corner orientation widget
+/// is drawn on the scene layer, so its rectangle is checked by hand. A widget that set an icon of
+/// its own (a text field's I-beam, a divider's resize arrows, a scrub's hidden pointer) keeps it.
+fn over_system_surface(ctx: &egui::Context, pointer: egui::Pos2, widget: Option<egui::Rect>) -> bool {
+    if widget.is_some_and(|rect| rect.contains(pointer)) {
+        return true;
+    }
+    let work_area = ctx.layer_id_at(pointer).is_some_and(|layer| layer.order == egui::Order::Background);
     let owned = ctx.output(|output| output.cursor_icon) != egui::CursorIcon::Default;
-    menu || owned
+    !work_area || owned
 }
 
 /// Paints the square, the centre dot and the crosshair in the two fixed inks.
 ///
-/// The square and the dot are clipped by the window, because the pointer has to stay visible over
-/// the toolbars; the crosshair is clipped to the scene rectangle, because it is a guide across the
-/// view and not a line across the chrome.
+/// Everything is clipped to the work area: the pointer may sit a few points from a panel, and the
+/// square must not spill onto a system surface it does not own (X41).
 fn paint(ctx: &egui::Context, cursor: &WorkCursor, view: egui::Rect) {
-    let painter = ctx.layer_painter(layer());
+    let painter = ctx.layer_painter(layer()).with_clip_rect(view);
     let (dark, light) = theme::cursor_inks();
     painter.rect_stroke(cursor.square, 0.0, egui::Stroke::new(OUTER_STROKE, dark), egui::StrokeKind::Middle);
     painter.rect_stroke(cursor.square, 0.0, egui::Stroke::new(INNER_STROKE, light), egui::StrokeKind::Middle);
@@ -126,10 +134,9 @@ fn paint(ctx: &egui::Context, cursor: &WorkCursor, view: egui::Rect) {
     painter.rect_filled(cursor.dot.expand(halo), 0.0, dark);
     painter.rect_filled(cursor.dot, 0.0, light);
     if let Some([horizontal, vertical]) = cursor.crosshair {
-        let guide = painter.with_clip_rect(view);
         for arm in [horizontal, vertical] {
-            guide.rect_filled(arm.expand(halo), 0.0, dark);
-            guide.rect_filled(arm, 0.0, light);
+            painter.rect_filled(arm.expand(halo), 0.0, dark);
+            painter.rect_filled(arm, 0.0, light);
         }
     }
 }
@@ -189,7 +196,11 @@ mod tests {
 
     #[test]
     fn the_pointer_is_painted_above_every_foreground_surface() {
-        assert_eq!(layer().order, egui::Order::Tooltip, "the square must lie over menus and chrome");
+        assert_eq!(
+            layer().order,
+            egui::Order::Tooltip,
+            "the layer is above the chrome, though the square is scene-only"
+        );
     }
 
     #[test]
@@ -214,7 +225,7 @@ mod tests {
         let output = ctx.run_ui(input(), |ui| {
             let field = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(160.0, 24.0));
             ui.put(field, egui::TextEdit::singleline(&mut text));
-            shown = show(ui.ctx(), &settings, Some(screen));
+            shown = show(ui.ctx(), &settings, Some(screen), None);
         });
         assert_eq!(output.platform_output.cursor_icon, egui::CursorIcon::Text, "the field owns the pointer");
         assert!(shown.is_none(), "the square must not cover the I-beam it would replace");
