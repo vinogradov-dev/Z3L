@@ -42,17 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
-  Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no
-   money, because the catalogue stores only nominal thickness and colour: sheet dimensions and
-   prices do not exist yet. A cutting list per sheet and a purchase price cannot be invented in
-   the writer.
-  Shape: The catalogue grows sheet sizes, a stock group and an optional price in integer minor
-   units; the exporter adds the additive columns and declares kerf and trim in the manifest
-   rules block. The package major version does not move.
-  Done: A package carries a per-sheet cutting plan for one material and a price per line; the
-   columns are additive; the golden file records them; cargo xtask ci is green.
-  `files: crates/model/src/catalog.rs`
 - `[ ]` **U84** the method list is one flat list of names: the section captions go
   Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
    rows is a second line to read, it makes a small menu look like a form, and the row's own
@@ -393,6 +382,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **K4** the package learns sheets and money once the catalogue carries stock sizes and prices
+  Why: Version 1 of the package carries areas and stock groups but no per-sheet plan and no
+   money, because the catalogue stores only nominal thickness and colour: sheet dimensions and
+   prices do not exist yet. A cutting list per sheet and a purchase price cannot be invented in
+   the writer.
+  Shape: The catalogue grows sheet sizes, a stock group and an optional price in integer minor
+   units; the exporter adds the additive columns and declares kerf and trim in the manifest
+   rules block. The package major version does not move.
+  Done: A package carries a per-sheet cutting plan for one material and a price per line; the
+   columns are additive; the golden file records them; cargo xtask ci is green.
+  now: export: the parts price, the sheets table and the manifest rules and money blocks
+  `files: crates/model/src/catalog.rs` — `2a634da`
 
 - `[x]` **K3** the order package is written from a command line, without opening a window
   Why: A package is useless if producing it needs a window and a person. The report pipeline

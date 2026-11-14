@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=52d2c93 updated=2026-11-14
+STATE: milestone=M7 phase=T task=- state=idle base=2a634da updated=2026-11-14
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,8 +45,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   (0091), U74 made a multi-method tool a split cell, and U75 put the group caption in a 16 pt band a
   step off the control tone, so the ribbon is 76 pt. U65 gave every number one 76 x 22 field,
   right-aligned with its unit outside the string, and one undo entry per drag or typing run (0092).
-- `crates/export` writes the order package — the manifest and eleven flat tables (K2) — and
-  `furnicraft export <scene.fcs> --out <path>` produces it from a saved scene with no window (K3).
+- `crates/export` writes the order package — the manifest and twelve flat tables — and the headless
+  `furnicraft export` runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
 - ADR 0117 makes one const table the inventory of capabilities that every surface filters and the gate
   checks; 0118 names the atom, 0119 the tool card, U94–U99 file that work (`plan/notes/U94.md`).
 - Faber's architecture is recorded (ADRs 0028–0032) but not implemented. `state-contract` (L0) is the
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: K4 leads `## Next`.
+Nothing is scheduled: U84 leads `## Next` — the method list loses its section captions
 
 ## Index
 
