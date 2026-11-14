@@ -26,11 +26,13 @@ mod table;
 mod write;
 
 pub use error::ExportError;
-pub use manifest::{DocumentMeta, FORMAT, Manifest, OrderMeta, ROTATION_SCALE, UNITS, Units, VERSION};
+pub use manifest::{
+    DocumentMeta, FORMAT, Manifest, MoneyUnit, OrderMeta, ROTATION_SCALE, RULES, Rules, UNITS, Units, VERSION,
+};
 pub use table::{
     BANDING_COLUMNS, CLASS_COLUMNS, CONTOUR_COLUMNS, Cell, Column, ColumnType, FACADE_COLUMNS, FITTING_COLUMNS,
-    MACHINING_COLUMNS, MATERIAL_COLUMNS, NODE_COLUMNS, PART_COLUMNS, PRODUCT_COLUMNS, PROPERTY_COLUMNS, TABLES,
-    TableData, TableSpec, Tables, table,
+    MACHINING_COLUMNS, MATERIAL_COLUMNS, NODE_COLUMNS, PART_COLUMNS, PRODUCT_COLUMNS, PROPERTY_COLUMNS, SHEET_COLUMNS,
+    TABLES, TableData, TableSpec, Tables, table,
 };
 pub use write::{ExportOptions, OrderPackage, csv_name, now_timestamp, record_json, table_csv, timestamp_from_unix};
 

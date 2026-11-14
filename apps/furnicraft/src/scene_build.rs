@@ -13,7 +13,7 @@ use furnicraft_kernel_truck::TruckKernel;
 use furnicraft_mesh::EvaluationCache;
 use furnicraft_model::{
     CameraProjection, Catalog, Container, EdgeBandingMaterial, Envelope, Id, LightKind, MaterialId, Node, NodeQuery,
-    Panel, PanelMaterial, Placement, Project, StructuralKind,
+    Panel, PanelMaterial, PanelStock, Placement, Project, SheetSize, StructuralKind,
 };
 // The demonstration fixture is the only caller of these: a test build evaluates the same document
 // a maker builds, and nothing else in the shell creates cutouts, bands or a named panel size.
@@ -181,11 +181,18 @@ pub fn empty_session() -> Result<Session, String> {
 }
 
 /// Builds the catalogue a new session starts from: two panel materials and their edges.
+///
+/// Both boards are stocked as a 2800 x 2070 mm sheet under a stock group of their own, so an order
+/// exported from the default catalogue carries the sheet plan. No price and no currency is invented
+/// here: money is the workshop's data and the catalogue file the shop loads is where it appears.
 pub fn default_catalog() -> Result<Catalog, String> {
     let thickness = millimetres(18)?;
+    let sheet = SheetSize::new(millimetres(2800)?, millimetres(2070)?).map_err(describe)?;
+    let group = |name: &str| PanelStock::new(sheet, Some(name.to_owned()), None).map_err(describe);
     let oak =
         PanelMaterial::new(material_id(DEFAULT_OAK_MATERIAL)?, "Oak veneered chipboard", "chipboard", thickness, "oak")
-            .map_err(describe)?;
+            .map_err(describe)?
+            .with_stock(group("chipboard-18-oak")?);
     let white = PanelMaterial::new(
         material_id(DEFAULT_WHITE_MATERIAL)?,
         "White melamine chipboard",
@@ -193,7 +200,8 @@ pub fn default_catalog() -> Result<Catalog, String> {
         thickness,
         "white",
     )
-    .map_err(describe)?;
+    .map_err(describe)?
+    .with_stock(group("chipboard-18-white")?);
     let edge_thickness = millimetres(2)?;
     let edge_width = millimetres(22)?;
     let oak_edge = EdgeBandingMaterial::new(
@@ -214,7 +222,7 @@ pub fn default_catalog() -> Result<Catalog, String> {
         "white",
     )
     .map_err(describe)?;
-    Catalog::new(vec![oak, white], vec![oak_edge, white_edge]).map_err(describe)
+    Catalog::new(vec![oak, white], vec![oak_edge, white_edge], None).map_err(describe)
 }
 
 /// Evaluates a constructive object into world-space drawables and product envelopes.

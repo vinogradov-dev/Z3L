@@ -120,6 +120,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0117](0117-the-interface-is-one-inventory-of-capabilities.md) | The interface is one inventory of capabilities: every command has a place | Accepted |
 | [0118](0118-a-mechanism-used-twice-is-a-tool.md) | A mechanism used twice is a tool, and a measurement is not a dimension | Accepted |
 | [0119](0119-the-armed-tool-shows-its-parameters-at-the-pointer.md) | The armed tool shows its parameters at the pointer, and the inspector shows the same fields | Accepted |
+| [0120](0120-sheets-and-money-are-additive-in-the-package.md) | Sheet stock and money join the package as additive columns, and the rules are declared | Accepted |
 
 ## Format
 

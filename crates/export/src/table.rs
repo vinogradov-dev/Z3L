@@ -105,6 +105,7 @@ pub const PRODUCT_COLUMNS: &[Column] = &[
     Column::integer("sheet_area_mm2").in_unit("mm2"),
     Column::integer("banding_um").in_unit("um"),
     Column::integer("fitting_count"),
+    Column::integer("price_minor"),
 ];
 
 /// The columns of `nodes`.
@@ -139,6 +140,7 @@ pub const PART_COLUMNS: &[Column] = &[
     Column::text("grain"),
     Column::text("nesting"),
     Column::integer("banding_total_um").in_unit("um"),
+    Column::integer("price_minor"),
 ];
 
 /// The columns of `banding`.
@@ -211,6 +213,24 @@ pub const MATERIAL_COLUMNS: &[Column] = &[
     Column::integer("thickness_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
     Column::text("color"),
+    Column::integer("sheet_length_um").in_unit("um"),
+    Column::integer("sheet_width_um").in_unit("um"),
+    Column::text("stock_group"),
+    Column::integer("price_minor"),
+];
+
+/// The columns of `sheets`.
+pub const SHEET_COLUMNS: &[Column] = &[
+    Column::integer("material_id"),
+    Column::text("stock_group"),
+    Column::integer("sheet_length_um").in_unit("um"),
+    Column::integer("sheet_width_um").in_unit("um"),
+    Column::integer("usable_length_um").in_unit("um"),
+    Column::integer("usable_width_um").in_unit("um"),
+    Column::integer("price_minor"),
+    Column::integer("part_count"),
+    Column::integer("part_area_mm2").in_unit("mm2"),
+    Column::integer("sheet_area_mm2").in_unit("mm2"),
 ];
 
 /// The columns of `classes`.
@@ -246,6 +266,7 @@ pub const TABLES: &[TableSpec] = &[
     TableSpec { name: "fittings", file: "fittings.jsonl", key: "node_id", columns: FITTING_COLUMNS },
     TableSpec { name: "machining", file: "machining.jsonl", key: "machining_id", columns: MACHINING_COLUMNS },
     TableSpec { name: "materials", file: "materials.jsonl", key: "material_id", columns: MATERIAL_COLUMNS },
+    TableSpec { name: "sheets", file: "sheets.jsonl", key: "material_id", columns: SHEET_COLUMNS },
     TableSpec { name: "classes", file: "classes.jsonl", key: "code", columns: CLASS_COLUMNS },
     TableSpec { name: "properties", file: "properties.jsonl", key: "node_id+key", columns: PROPERTY_COLUMNS },
 ];

@@ -16,6 +16,14 @@
     "area": "mm2",
     "rotation_scale": 1000000000
   },
+  "rules": {
+    "kerf_um": 4000,
+    "trim_um": 10000
+  },
+  "money": {
+    "currency": "RUB",
+    "minor_scale": 100
+  },
   "counts": {
     "banding": 1,
     "classes": 10,
@@ -27,7 +35,8 @@
     "nodes": 12,
     "parts": 7,
     "products": 2,
-    "properties": 1
+    "properties": 1,
+    "sheets": 1
   },
   "tables": [
     {
@@ -101,6 +110,10 @@
         },
         {
           "name": "fitting_count",
+          "type": "integer"
+        },
+        {
+          "name": "price_minor",
           "type": "integer"
         }
       ]
@@ -230,6 +243,10 @@
           "name": "banding_total_um",
           "type": "integer",
           "unit": "um"
+        },
+        {
+          "name": "price_minor",
+          "type": "integer"
         }
       ]
     },
@@ -482,6 +499,77 @@
         {
           "name": "color",
           "type": "string"
+        },
+        {
+          "name": "sheet_length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "sheet_width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "stock_group",
+          "type": "string"
+        },
+        {
+          "name": "price_minor",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "name": "sheets",
+      "file": "sheets.jsonl",
+      "key": "material_id",
+      "columns": [
+        {
+          "name": "material_id",
+          "type": "integer"
+        },
+        {
+          "name": "stock_group",
+          "type": "string"
+        },
+        {
+          "name": "sheet_length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "sheet_width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "usable_length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "usable_width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "price_minor",
+          "type": "integer"
+        },
+        {
+          "name": "part_count",
+          "type": "integer"
+        },
+        {
+          "name": "part_area_mm2",
+          "type": "integer",
+          "unit": "mm2"
+        },
+        {
+          "name": "sheet_area_mm2",
+          "type": "integer",
+          "unit": "mm2"
         }
       ]
     },

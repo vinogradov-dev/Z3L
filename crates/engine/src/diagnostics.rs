@@ -303,7 +303,7 @@ mod tests {
         let thin =
             PanelMaterial::new(sample_material_id(), "Thin board", "mdf", sample_thin_panel_thickness(), "white")
                 .expect("thin material");
-        let catalog = Catalog::new(vec![thin], Vec::new()).expect("catalog");
+        let catalog = Catalog::new(vec![thin], Vec::new(), None).expect("catalog");
         let diagnostics = diagnose_panel(&project, &catalog, panel_id());
         assert!(diagnostics.iter().any(|diagnostic| matches!(
             diagnostic,

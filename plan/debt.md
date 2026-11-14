@@ -119,6 +119,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[panel]` A bent panel is not implemented. The agreed construction is a flat panel with all its
   machining, then a bend applied to the finished body; the operation pipeline needs a post/deform
   stage and the panel card a bend section. No geometry is stored until that stage exists.
+- `[panel]` The saw rules an order package declares — a 4 mm kerf and a 10 mm trim per side — are
+  constants in `crates/export/src/manifest.rs`, not workshop data. A shop with another blade gets the
+  default in its package until a workspace setting (or the catalogue) carries the rule; the contract
+  block is already there, so only the source of the numbers changes.
+- `[panel]` An edge-banding material has no stock block: a roll is bought by length and the package has
+  no unit for a roll price, so its `materials` row writes zero in the four stock columns. A roll price
+  needs its own unit and its own column, which is a later decision.
+- `[panel]` Nothing in the editor shows or edits a material's stock block or price: the catalogue is a
+  file the shell loads, and until a catalogue editor exists the workshop edits the JSON by hand.
 - `[vendor]` `vendor/truck-shapeops` is updated by hand when `truck` moves; see `vendor/AGENTS.md`.
 - `[ui]` A creation tool lands at the scene root since X4; a node inside a container needs the
   explicit *Add child* arm of U31. Until then the only way is to create at the root and move the row

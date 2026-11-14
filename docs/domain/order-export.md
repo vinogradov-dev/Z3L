@@ -40,6 +40,7 @@ cabinet-2026-11-12.fcpkg/
   fittings.jsonl
   machining.jsonl
   materials.jsonl
+  sheets.jsonl
   classes.jsonl
   properties.jsonl
   products.csv …     one convenience copy per table, for spreadsheets; not the contract
@@ -77,6 +78,8 @@ lists the tables in the order the directory uses.
   "document": { "file": "cabinet.fcs", "revision": 41, "hash": "3f9c…" },
   "order": { "number": "2026-114", "version": 3 },
   "units": { "length": "um", "angle": "mdeg", "area": "mm2", "rotation_scale": 1000000000 },
+  "rules": { "kerf_um": 4000, "trim_um": 10000 },
+  "money": { "currency": "RUB", "minor_scale": 100 },
   "counts": { "products": 3, "parts": 57, "…": 0 },
   "tables": [
     {
@@ -94,16 +97,28 @@ lists the tables in the order the directory uses.
 
 The manifest describes its own tables, so a reader needs no document of ours to identify a column. A
 column entry names its type (`integer`, `string`, `boolean` or `json`) and its unit where one
-applies. `document.revision` is always present; `document.file`, `document.hash`, `order` and
-`exported_at` are optional. The manifest and the tables are generated from one column table in the
-exporter, so a declaration and a record cannot disagree.
+applies. `document.revision` is always present; `document.file`, `document.hash`, `order`,
+`exported_at` and `money` are optional. The manifest and the tables are generated from one column
+table in the exporter, so a declaration and a record cannot disagree.
+
+The `rules` block declares the cutting rules the package applies to its own numbers and a reader
+applies to its own: `kerf_um` is the material a saw blade removes between two neighbouring parts and
+`trim_um` is the strip cut off **each** side of a sheet before the first part. Version 1 declares the
+programme's default; the numbers are data, and a workspace setting replaces them without a new major
+version.
+
+The `money` block gives the currency every `price_minor` is counted in — the ISO 4217 code and how
+many minor units make one unit (`100` means 12345 is 123.45). It is absent when the catalogue carries
+no prices, and then every `price_minor` is zero. There is no price without a currency: a bare number
+is not money.
 
 ## 4. Numbers
 
 - Lengths: integer **micrometres**.
 - Angles: integer **millidegrees**.
 - Areas: integer **square millimetres**.
-- Money (when a price exists): integer **minor units**, with the currency in the manifest.
+- Money: integer **minor units** of the currency the manifest's `money` block names. Zero means the
+  catalogue carries no price for that sheet.
 - Rotations: four integer quaternion components scaled by `rotation_scale` (1e9), because a float in
   the contract would let a reader and the program disagree in the last bits. `units.length` and the
   scale are declared once in the manifest.
@@ -130,6 +145,7 @@ byte-identical. The column lists below are the contract; the manifest repeats th
 | `sheet_area_mm2` | total core area of those panels |
 | `banding_um` | total banding length |
 | `fitting_count` | fittings inside it |
+| `price_minor` | the sum of its parts' prices |
 
 The envelope is the product frame's width, depth and height: `width_um` is X, `depth_um` is Y and
 `height_um` is Z. Content bounds are the union of the nominal boxes of the panels below the product;
@@ -151,8 +167,14 @@ makes a per-cabinet report a `GROUP BY`; zero outside every product), `class`, `
 `thickness_um`, `length_um`, `width_um` (nominal), `measured_length_um`, `measured_width_um` (with
 banding), `area_mm2` (the core region, which is what is cut from the sheet), `grain` (`none`,
 `length`, `width`), `nesting` (`member` or `never`, from the class; empty when the class says
-nothing), `banding_total_um`. Version 1 writes `grain = none` because the document does not store a
-grain direction yet; the column is present so a later document can fill it without a new table.
+nothing), `banding_total_um`, `price_minor` (the part's share of one sheet's price, rounded to the
+nearest minor unit; zero when the material has no price). Version 1 writes `grain = none` because the
+document does not store a grain direction yet; the column is present so a later document can fill it
+without a new table.
+
+The price share is the part's core area over the nominal sheet area, with no nesting efficiency
+applied: how many parts a sheet really holds is the reader's layout, and a guessed efficiency would
+be a rule the package never declared.
 
 ### `banding`
 
@@ -197,8 +219,27 @@ contour cutout carries its `segments` in the same shape as the `contours` table.
 
 The catalogue rows the order uses — this is what makes the package self-contained:
 `material_id`, `name`, `kind`, `thickness_um`, `width_um` (the banding profile width, zero for a
-panel material), `color`. Version 1 has no stock group because the catalogue does not carry one yet;
-it is an additive column when it arrives.
+panel material), `color`, `sheet_length_um`, `sheet_width_um` (the stock sheet the panel material is
+bought in, zero when it is not stocked), `stock_group` (the workshop's own grouping, empty when it has
+none) and `price_minor` (the price of one sheet, zero when the catalogue carries no price). The last
+four columns describe a panel material's stock; a banding material is not cut from a sheet and writes
+zeroes and an empty group.
+
+### `sheets`
+
+One row per stocked panel material the order cuts from — the per-sheet cutting plan:
+`material_id`, `stock_group`, `sheet_length_um`, `sheet_width_um` (the nominal sheet),
+`usable_length_um`, `usable_width_um` (the sheet after the declared `trim_um` on each side),
+`price_minor` (one sheet), `part_count` (the parts the order takes from this material),
+`part_area_mm2` (the sum of their core areas) and `sheet_area_mm2` (the nominal sheet's area).
+
+This is a plan, not a layout: the package hands over the sheet, its usable rectangle, the rules and
+the parts grouped by material, and the nesting program decides where each part lands and how many
+sheets that takes. A sheet count computed from an area ratio would be a nesting strategy — a hundred
+percent efficiency no saw reaches — and this contract states the inputs instead.
+
+A material the order does not cut from has no row, and a material the catalogue does not stock has no
+sheet row at all, so the table is empty for an order whose materials carry no stock sizes.
 
 ### `classes`
 
@@ -222,14 +263,13 @@ table instead of asking us for a column.
 
 **Resolved by us:** measured sizes with banding, areas, banding length per unit and in total, the
 owning product of every part, the nesting flag, the purchase channel and measure unit from the class,
-material names and thicknesses, machining records in panel-local coordinates, report grouping.
+material names and thicknesses, sheet sizes and stock groups, a part's share of a sheet's price and a
+product's total, machining records in panel-local coordinates, report grouping.
 
-**Left to the reader:** nesting layout, drawings and dimensioning, CNC toolpaths and post-processing.
-The package hands over the inputs and, when they exist, the declared rules (kerf, trim, sheet sizes)
-in the manifest — never a chosen strategy.
-
-**Not in version 1:** per-sheet cutting plans and prices, because the catalogue does not carry sheet
-sizes or prices yet. They are additive columns when it does.
+**Left to the reader:** the nesting layout and the sheet count, drawings and dimensioning, CNC
+toolpaths and post-processing. The package hands over the inputs — part sizes, grain, material,
+banding, machining records, sheet sizes, prices — and the declared rules (kerf, trim) in the manifest,
+never a chosen strategy.
 
 ## 7. Versioning
 

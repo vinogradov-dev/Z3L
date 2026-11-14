@@ -1555,7 +1555,7 @@ mod tests {
         let panel_material =
             PanelMaterial::new(sample_material_id(), "Thin board", "mdf", sample_thin_panel_thickness(), "white")
                 .expect("thin material");
-        let catalog = Catalog::new(vec![panel_material], Vec::new()).expect("catalog");
+        let catalog = Catalog::new(vec![panel_material], Vec::new(), None).expect("catalog");
         let mut session = Session::with_catalog(sample_project(), catalog);
         let panel_id = Id::new(4).expect("id");
         let blind = cutout_request(
@@ -1650,7 +1650,7 @@ mod tests {
             "white",
         )
         .expect("wide edge material");
-        let catalog = Catalog::new(Vec::new(), vec![edge_material]).expect("catalog");
+        let catalog = Catalog::new(Vec::new(), vec![edge_material], None).expect("catalog");
         let mut session = Session::with_catalog(sample_project(), catalog);
         let params = PanelEdgeBandingSet {
             panel: Id::new(2).expect("id"),

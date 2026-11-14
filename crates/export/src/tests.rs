@@ -65,19 +65,28 @@ fn a_record_is_checked_against_the_column_table() {
     let mut data = TableData::new(spec);
     assert!(matches!(
         data.push(vec![Cell::Integer(1)]),
-        Err(ExportError::ColumnCount { table: "materials", expected: 6, .. })
+        Err(ExportError::ColumnCount { table: "materials", expected: 10, .. })
     ));
     assert!(matches!(
-        data.push(vec![
-            Cell::Integer(1),
-            Cell::Text("Board".to_owned()),
-            Cell::Integer(18),
-            Cell::Integer(18_000),
-            Cell::Integer(0),
-            Cell::Text("white".to_owned()),
-        ]),
+        data.push(materials_row(Cell::Integer(18))),
         Err(ExportError::ColumnType { table: "materials", column: "kind", .. })
     ));
+}
+
+/// One valid `materials` row, with the `kind` cell replaced by whatever a test needs it to be.
+fn materials_row(kind: Cell) -> Vec<Cell> {
+    vec![
+        Cell::Integer(1),
+        Cell::Text("Board".to_owned()),
+        kind,
+        Cell::Integer(18_000),
+        Cell::Integer(0),
+        Cell::Text("white".to_owned()),
+        Cell::Integer(2_800_000),
+        Cell::Integer(2_070_000),
+        Cell::Text("chipboard-18".to_owned()),
+        Cell::Integer(320_000),
+    ]
 }
 
 #[test]
@@ -200,15 +209,9 @@ fn two_products_group_their_parts_by_product_id() {
 fn a_csv_copy_quotes_text_that_needs_it() {
     let spec = table("materials").expect("the materials table is declared");
     let mut data = TableData::new(spec);
-    data.push(vec![
-        Cell::Integer(1),
-        Cell::Text("Board, oak".to_owned()),
-        Cell::Text("chipboard".to_owned()),
-        Cell::Integer(18_000),
-        Cell::Integer(0),
-        Cell::Text("white".to_owned()),
-    ])
-    .expect("a valid row");
+    let mut row = materials_row(Cell::Text("chipboard".to_owned()));
+    row[1] = Cell::Text("Board, oak".to_owned());
+    data.push(row).expect("a valid row");
     let csv = table_csv(&data).expect("the csv copy");
     assert!(csv.contains("\"Board, oak\""), "a comma in a name is quoted");
 }
@@ -227,7 +230,7 @@ fn a_glass_material_makes_its_facade_read_as_glass() {
         "white",
     )
     .expect("an edge material");
-    let catalog = Catalog::new(vec![panel], vec![edge]).expect("a catalogue");
+    let catalog = Catalog::new(vec![panel], vec![edge], None).expect("a catalogue");
     let package = OrderPackage::build(&project, &catalog, golden_options(&project)).expect("the package");
     let facades = package.table("facades").expect("the facades table");
     assert_eq!(facades.rows().first().and_then(|row| row.get(8)), Some(&Cell::Boolean(true)));
@@ -253,6 +256,131 @@ fn a_part_carries_the_sum_of_its_banding_units() {
             .sum::<i64>();
         assert_eq!(row.get(12), Some(&Cell::Integer(total)), "node {node_id} totals its bands");
     }
+}
+
+#[test]
+fn a_stocked_material_carries_its_sheet_group_and_price() {
+    let package = built();
+    let materials = package.table("materials").expect("the materials table");
+    let board = materials
+        .rows()
+        .iter()
+        .find(|row| matches!(row.first(), Some(Cell::Integer(id)) if *id == i64::try_from(sample_material_id().get()).expect("a material id fits")))
+        .expect("the board row");
+    assert_eq!(board.get(6), Some(&Cell::Integer(2_800_000)), "the sheet length");
+    assert_eq!(board.get(7), Some(&Cell::Integer(2_070_000)), "the sheet width");
+    assert_eq!(board.get(8), Some(&Cell::Text("chipboard-18".to_owned())), "the stock group");
+    assert_eq!(board.get(9), Some(&Cell::Integer(320_000)), "the sheet price");
+    let edge = materials
+        .rows()
+        .iter()
+        .find(|row| matches!(row.first(), Some(Cell::Integer(id)) if *id == i64::try_from(sample_edge_material_id().get()).expect("a material id fits")))
+        .expect("the edge row");
+    assert_eq!(edge.get(6), Some(&Cell::Integer(0)), "banding is not cut from a sheet");
+    assert_eq!(edge.get(8), Some(&Cell::Text(String::new())));
+    assert_eq!(edge.get(9), Some(&Cell::Integer(0)));
+}
+
+#[test]
+fn every_part_costs_a_rounded_share_of_its_sheet() {
+    let package = built();
+    let parts = package.table("parts").expect("the parts table");
+    let sheet_area = 2800i128 * 2070;
+    let mut total = 0i64;
+    let board = i64::try_from(sample_material_id().get()).expect("a material id fits");
+    for row in parts.rows() {
+        let Some(Cell::Integer(area)) = row.get(9) else {
+            panic!("a part carries its area");
+        };
+        let expected = match row.get(3) {
+            Some(Cell::Integer(material)) if *material == board => {
+                (i128::from(320_000) * i128::from(*area) + sheet_area / 2) / sheet_area
+            }
+            _ => 0,
+        };
+        let expected = i64::try_from(expected).expect("a price fits");
+        assert_eq!(row.get(13), Some(&Cell::Integer(expected)), "a part costs its area of the sheet");
+        total = total.saturating_add(expected);
+    }
+    assert!(total > 0, "the fixture prices its parts");
+    let products = package.table("products").expect("the products table");
+    let priced: i64 = products
+        .rows()
+        .iter()
+        .filter_map(|row| match row.get(15) {
+            Some(Cell::Integer(price)) => Some(*price),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(priced, total, "a product totals the prices of its parts");
+}
+
+#[test]
+fn a_stocked_material_the_order_cuts_gets_one_sheet_row() {
+    let package = built();
+    let sheets = package.table("sheets").expect("the sheets table");
+    assert_eq!(sheets.rows().len(), 1, "the fixture cuts one stocked material");
+    let row = sheets.rows().first().expect("one sheet row");
+    assert_eq!(row[0], Cell::Integer(i64::try_from(sample_material_id().get()).expect("a material id fits")));
+    assert_eq!(row[1], Cell::Text("chipboard-18".to_owned()));
+    assert_eq!(row[2], Cell::Integer(2_800_000));
+    assert_eq!(row[3], Cell::Integer(2_070_000));
+    assert_eq!(row[4], Cell::Integer(RULES.usable_length(2_800_000)), "the trim is taken per side");
+    assert_eq!(row[5], Cell::Integer(RULES.usable_width(2_070_000)));
+    assert_eq!(row[6], Cell::Integer(320_000));
+    assert_eq!(row[9], Cell::Integer(5_796_000), "2.8 x 2.07 m in square millimetres");
+
+    let parts = package.table("parts").expect("the parts table");
+    let of_material: Vec<&Vec<Cell>> = parts
+        .rows()
+        .iter()
+        .filter(|part| matches!(part.get(3), Some(Cell::Integer(id)) if *id == i64::try_from(sample_material_id().get()).expect("a material id fits")))
+        .collect();
+    assert_eq!(row[7], Cell::Integer(i64::try_from(of_material.len()).expect("a count")));
+    let area: i64 = of_material
+        .iter()
+        .filter_map(|part| match part.get(9) {
+            Some(Cell::Integer(area)) => Some(*area),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(row[8], Cell::Integer(area), "the row sums the areas of its parts");
+}
+
+#[test]
+fn the_manifest_declares_the_rules_and_the_currency() {
+    let directory = scratch("manifest-money");
+    built().write_dir(&directory).expect("the package is written");
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("manifest.json")).expect("the manifest"))
+            .expect("the manifest is JSON");
+    assert_eq!(manifest["rules"]["kerf_um"], RULES.kerf_um);
+    assert_eq!(manifest["rules"]["trim_um"], RULES.trim_um);
+    assert_eq!(manifest["money"]["currency"], "RUB");
+    assert_eq!(manifest["money"]["minor_scale"], 100);
+    assert_eq!(manifest["version"], 1, "the additive columns keep the major version");
+}
+
+#[test]
+fn a_catalogue_without_stock_writes_no_sheet_row_and_no_currency() {
+    let (project, _) = fixture();
+    let panel = PanelMaterial::new(sample_material_id(), "Chipboard", "chipboard", millimetres(18), "white")
+        .expect("a plain board");
+    let catalog = Catalog::new(vec![panel], Vec::new(), None).expect("a catalogue with no stock");
+    let package = OrderPackage::build(&project, &catalog, golden_options(&project)).expect("the package");
+    assert!(package.table("sheets").expect("the sheets table").rows().is_empty());
+    assert!(package.manifest().money.is_none(), "no price, no currency block");
+    let parts = package.table("parts").expect("the parts table");
+    for part in parts.rows() {
+        assert_eq!(part.get(13), Some(&Cell::Integer(0)), "an unpriced part costs zero");
+    }
+}
+
+#[test]
+fn a_rule_takes_the_trim_from_both_sides() {
+    assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_length(2_800_000), 2_780_000);
+    assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_width(2_070_000), 2_050_000);
+    assert_eq!(Rules { kerf_um: 0, trim_um: 2_000 }.usable_length(1_000), 0, "a sheet narrower than its trim has none");
 }
 
 #[test]

@@ -46,13 +46,26 @@ Required properties:
 - name;
 - colour/decor.
 
+Optional stock block — what the workshop buys this material as:
+
+- `sheet` — the nominal stock sheet, `length` and `width` as `Length`; both sides positive and no
+  longer than a panel may be;
+- `group` — the workshop's own stock group, a short non-empty label such as `chipboard-18-white`. Two
+  materials in one group are interchangeable stock, so a cutting plan groups them by it;
+- `price` — the price of one whole sheet in the catalogue's currency, as whole minor units. A price
+  without a sheet has no meaning, so the block always carries one.
+
+A material with no stock block is known but not stocked: the inspector offers it and an order cannot
+say what to buy. A `stock` block whose sheet is zero, negative or too large, or whose group is blank,
+is a readable error.
+
 Possible future properties:
 
-- sheet/board size;
 - grain direction and availability;
 - grade, coating, manufacturer, article number;
 - machining and edge-banding restrictions;
-- price, stock and similar commercial data.
+- a price for edge-banding material, which is bought per roll and needs a unit of its own;
+- stock accounting: what is on hand.
 
 A panel stores an optional `MaterialId` and the last known thickness as a fallback. `None` means no material was assigned; `Some(id)` that the catalogue cannot resolve is a missing material. The user does not edit panel thickness: it comes from the material. When the material is found, the catalogue is the source of truth.
 
@@ -89,9 +102,7 @@ Banding thickness is not panel thickness. If `width` is greater than the panel t
 
 ### 5.1. Mock file format
 
-The format is serialisable `Catalog` data: a list of panel materials and a list of edge-banding materials. The exact field names are settled during implementation; what matters is that ids are stable and dimensions are explicit.
-
-Draft example:
+The format is serialisable `Catalog` data: a list of panel materials, a list of edge-banding materials and the optional currency the prices are in. Every length is a whole number of micrometres and every price a whole number of minor units, so no unit is left to a reader's guess:
 
 ```json
 {
@@ -100,8 +111,13 @@ Draft example:
       "id": 1,
       "name": "Chipboard 18 mm, oak",
       "kind": "chipboard",
-      "nominal_thickness": "18mm",
-      "color": "#b98a5a"
+      "nominal_thickness": 18000,
+      "color": "#b98a5a",
+      "stock": {
+        "sheet": { "length": 2800000, "width": 2070000 },
+        "group": "chipboard-18-oak",
+        "price": 320000
+      }
     }
   ],
   "edge_materials": [
@@ -109,13 +125,16 @@ Draft example:
       "id": 101,
       "name": "ABS 2 mm, oak",
       "kind": "abs",
-      "thickness": "2mm",
-      "width": "22mm",
+      "thickness": 2000,
+      "width": 22000,
       "color": "#7a4f2a"
     }
-  ]
+  ],
+  "currency": { "code": "RUB", "minor_scale": 100 }
 }
 ```
+
+The `stock` block and the `currency` are optional fields of the current layout: a catalogue without them describes materials that are not stocked and prices nothing, which is a complete catalogue. A price of `320000` with a scale of `100` is 3200.00 roubles for one 2800 x 2070 mm sheet.
 
 ### 5.2. Catalogue validation
 
@@ -123,6 +142,12 @@ Draft example:
 - names are not empty;
 - `nominal_thickness` is positive;
 - banding thickness and width are positive;
+- sheet sides are positive and no larger than a panel may be;
+- a stock group is not blank;
+- a price is a non-negative number of whole minor units;
+- a priced material needs a currency: the catalogue declares `currency` as a three-letter ISO 4217
+  code and how many minor units make one unit (`{ "code": "RUB", "minor_scale": 100 }`), and a
+  catalogue carrying a price with no currency is refused;
 - dimensions do not exceed the supported `Length` limits;
 - unknown required fields are a readable error, not a silent default.
 
@@ -151,6 +176,8 @@ At minimum:
 
 - `panel_material(id) -> Option<&PanelMaterial>`;
 - `edge_material(id) -> Option<&EdgeBandingMaterial>`;
+- `PanelMaterial::stock() -> Option<&PanelStock>` and `Catalog::currency() -> Option<&Currency>`, so a
+  report asks the catalogue rather than carrying a table of currencies;
 - a material list for the UI selector;
 - uniqueness validation on load.
 
@@ -167,6 +194,9 @@ At minimum:
 - changing a material thickness under the same id changes panel thickness on rebuild;
 - removing a material produces a diagnostic instead of a crash;
 - the catalogue never appears in a serialised scene.
+- a sheet side that is zero or larger than a board is refused, and so is a blank stock group;
+- a price with no currency is refused, and a currency code or minor scale that is not usable is
+  refused.
 
 ## 9. Open questions for the future database
 

@@ -67,7 +67,7 @@ mod tests {
             "white",
         )
         .expect("edge material");
-        let catalog = Catalog::new(vec![panel_material], vec![edge_material]).expect("catalog");
+        let catalog = Catalog::new(vec![panel_material], vec![edge_material], None).expect("catalog");
 
         let geometry = panel_geometry(&project, &catalog, panel_id).expect("resolved geometry");
         assert_eq!(geometry.thickness(), millimetres(25));

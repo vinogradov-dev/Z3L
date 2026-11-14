@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use furnicraft_model::{Catalog, Project};
 
 use crate::error::ExportError;
-use crate::manifest::{DocumentMeta, Manifest, OrderMeta};
+use crate::manifest::{DocumentMeta, Manifest, MoneyUnit, OrderMeta};
 use crate::rows;
 use crate::table::{Cell, TableData, Tables};
 
@@ -46,7 +46,10 @@ impl OrderPackage {
         let tables = rows::build(project, catalog)?;
         let counts: BTreeMap<&'static str, usize> =
             tables.iter().map(|table| (table.spec().name, table.rows().len())).collect();
-        let manifest = Manifest::build(options.timestamp, options.document, options.order, counts);
+        let money = catalog
+            .currency()
+            .map(|currency| MoneyUnit { currency: currency.code().to_owned(), minor_scale: currency.minor_scale() });
+        let manifest = Manifest::build(options.timestamp, options.document, options.order, money, counts);
         Ok(Self { manifest, tables })
     }
 

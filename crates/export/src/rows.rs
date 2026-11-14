@@ -10,16 +10,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use furnicraft_geom::DVec3;
 use furnicraft_model::{
     Catalog, ClassCode, Contour, ContourSegment, CutoutDepth, CutoutShape, Extent, FaceSide, Fill, Id, Level,
-    MachiningParams, MaterialId, Measure, Mount, Nesting, Node, Opening, Panel, PanelGeometry, PanelNominalSize,
-    Placement, Project, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID,
-    SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION, Supply,
+    MachiningParams, MaterialId, Measure, Mount, Nesting, Node, Opening, Panel, PanelGeometry, PanelMaterial,
+    PanelNominalSize, PanelStock, Placement, Project, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT,
+    SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION, Supply,
 };
 use furnicraft_text::Lang;
 use furnicraft_units::Length;
 use serde_json::{Value, json};
 
 use crate::error::ExportError;
-use crate::manifest::ROTATION_SCALE;
+use crate::manifest::{ROTATION_SCALE, RULES};
 use crate::table::{Cell, Tables};
 
 /// Builds every table of one package, ordered by its key.
@@ -45,6 +45,7 @@ pub fn build(project: &Project, catalog: &Catalog) -> Result<Tables, ExportError
     push(&mut tables, "fittings", &context.fittings)?;
     push(&mut tables, "machining", &context.machining)?;
     push(&mut tables, "properties", &context.properties)?;
+    push_sheets(&mut tables, &context.sheets)?;
     push_products(&mut tables, project, &context.products)?;
     push_materials(&mut tables, &context.materials)?;
     push_classes(&mut tables, &context.classes)?;
@@ -64,6 +65,7 @@ struct Context {
     properties: BTreeMap<(u64, String), Vec<Cell>>,
     products: BTreeMap<u64, ProductAgg>,
     materials: BTreeMap<u64, MaterialFacts>,
+    sheets: BTreeMap<u64, SheetAgg>,
     classes: BTreeSet<u32>,
 }
 
@@ -74,8 +76,27 @@ struct ProductAgg {
     area_mm2: i128,
     banding_um: i64,
     fitting_count: u64,
+    price_minor: i64,
     min: Option<[i64; 3]>,
     max: Option<[i64; 3]>,
+}
+
+/// What one stocked material's parts ask of it.
+#[derive(Default)]
+struct SheetAgg {
+    stock: Option<StockFacts>,
+    part_count: u64,
+    part_area_mm2: i128,
+}
+
+/// The stock block of one catalogue material, as the package repeats it.
+#[derive(Clone)]
+struct StockFacts {
+    stock_group: String,
+    sheet_length_um: i64,
+    sheet_width_um: i64,
+    price_minor: i64,
+    sheet_area_mm2: i64,
 }
 
 /// One catalogue row as the package embeds it.
@@ -85,6 +106,7 @@ struct MaterialFacts {
     thickness: Length,
     width: Length,
     color: String,
+    stock: Option<StockFacts>,
 }
 
 /// One banding strip with its resolved length and profile.
@@ -150,6 +172,9 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
     let material_id = panel.material().map_or(0, MaterialId::get);
     let class = facts.class;
     let size = panel.nominal_size();
+    let area_mm2 = rounded_i64(facts.geometry.core_region().area()).unwrap_or(0);
+    let stock = panel.material().and_then(|material| catalog.panel_material(material)).and_then(PanelMaterial::stock);
+    let price_minor = part_cost(stock, area_mm2);
 
     context.parts.insert(
         panel.id().get(),
@@ -163,12 +188,14 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
             Cell::Integer(size.width().micrometres()),
             Cell::Integer(facts.geometry.overall_length().micrometres()),
             Cell::Integer(facts.geometry.overall_width().micrometres()),
-            Cell::Integer(rounded_i64(facts.geometry.core_region().area()).unwrap_or(0)),
+            Cell::Integer(area_mm2),
             Cell::Text("none".to_owned()),
             Cell::Text(nesting_text(class).to_owned()),
             Cell::Integer(facts.banding_total_um),
+            Cell::Integer(price_minor),
         ],
     );
+    note_stock(context, panel.material(), stock, area_mm2);
 
     for band in &facts.bands {
         context.banding.insert(
@@ -219,7 +246,7 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
         context.facades.insert(panel.id().get(), facade_row(&facts, product_id, glass));
     }
 
-    add_to_product(project, context, panel, facts.thickness, facts.banding_total_um, &facts.geometry)
+    add_to_product(project, context, panel, facts.thickness, facts.banding_total_um, &facts.geometry, price_minor)
 }
 
 /// Resolves a panel once: thickness, geometry, nominal segments and every banding strip.
@@ -312,6 +339,7 @@ fn add_to_product(
     thickness: Length,
     banding_um: i64,
     geometry: &PanelGeometry,
+    price_minor: i64,
 ) -> Result<(), ExportError> {
     let Some(product) = project.product_of(panel.id()) else {
         return Ok(());
@@ -323,6 +351,7 @@ fn add_to_product(
     aggregate.area_mm2 =
         aggregate.area_mm2.saturating_add(i128::from(rounded_i64(geometry.core_region().area()).unwrap_or(0)));
     aggregate.banding_um = aggregate.banding_um.saturating_add(banding_um);
+    aggregate.price_minor = aggregate.price_minor.saturating_add(price_minor);
     let Some(product_world) = project.world_placement(product) else {
         return Ok(());
     };
@@ -407,6 +436,7 @@ fn push_products(
             Cell::Integer(i64::try_from(aggregate.area_mm2).unwrap_or(i64::MAX)),
             Cell::Integer(aggregate.banding_um),
             Cell::Integer(i64::try_from(aggregate.fitting_count).unwrap_or(i64::MAX)),
+            Cell::Integer(aggregate.price_minor),
         ])?;
     }
     Ok(())
@@ -630,6 +660,7 @@ fn note_material(
             thickness: panel.nominal_thickness(),
             width: Length::ZERO,
             color: panel.color().to_owned(),
+            stock: panel.stock().map(stock_facts),
         }
     } else if let Some(edge) = catalog.edge_material(material) {
         MaterialFacts {
@@ -638,6 +669,7 @@ fn note_material(
             thickness: edge.thickness(),
             width: edge.width(),
             color: edge.color().to_owned(),
+            stock: None,
         }
     } else {
         MaterialFacts {
@@ -646,15 +678,67 @@ fn note_material(
             thickness: fallback_thickness,
             width: fallback_width,
             color: String::new(),
+            stock: None,
         }
     };
     context.materials.insert(key, facts);
+}
+
+/// The stock block of one material as the package repeats it, with the sheet area resolved once.
+fn stock_facts(stock: &PanelStock) -> StockFacts {
+    let sheet = stock.sheet();
+    StockFacts {
+        stock_group: stock.group().unwrap_or("").to_owned(),
+        sheet_length_um: sheet.length().micrometres(),
+        sheet_width_um: sheet.width().micrometres(),
+        price_minor: stock.price().map_or(0, |price| i64::try_from(price.minor()).unwrap_or(i64::MAX)),
+        sheet_area_mm2: sheet_area_mm2(sheet.length(), sheet.width()),
+    }
+}
+
+/// Records that one part is cut from a stocked material's sheet, so the sheet table can group it.
+fn note_stock(context: &mut Context, material: Option<MaterialId>, stock: Option<&PanelStock>, area_mm2: i64) {
+    let (Some(material), Some(stock)) = (material, stock) else {
+        return;
+    };
+    let aggregate = context.sheets.entry(material.get()).or_default();
+    aggregate.part_count = aggregate.part_count.saturating_add(1);
+    aggregate.part_area_mm2 = aggregate.part_area_mm2.saturating_add(i128::from(area_mm2));
+    if aggregate.stock.is_none() {
+        aggregate.stock = Some(stock_facts(stock));
+    }
+}
+
+/// The share of one sheet's price a part consumes, rounded to the nearest minor unit.
+///
+/// A sheet price buys a whole nominal sheet, so a part costs what its core area is of that sheet. No
+/// nesting efficiency is applied: how many parts a sheet really holds is the reader's layout, and a
+/// guessed efficiency would be a rule the package never declared.
+fn part_cost(stock: Option<&PanelStock>, part_area_mm2: i64) -> i64 {
+    let (Some(stock), Some(price)) = (stock, stock.and_then(PanelStock::price)) else {
+        return 0;
+    };
+    let sheet = stock.sheet();
+    let sheet_area_mm2 = sheet_area_mm2(sheet.length(), sheet.width());
+    if part_area_mm2 <= 0 || sheet_area_mm2 <= 0 {
+        return 0;
+    }
+    let numerator = i128::from(price.minor()) * i128::from(part_area_mm2);
+    let denominator = i128::from(sheet_area_mm2);
+    i64::try_from((numerator + denominator / 2) / denominator).unwrap_or(i64::MAX)
+}
+
+/// A sheet's area in whole square millimetres.
+fn sheet_area_mm2(length: Length, width: Length) -> i64 {
+    let area = i128::from(length.micrometres()) * i128::from(width.micrometres()) / 1_000_000;
+    i64::try_from(area).unwrap_or(i64::MAX)
 }
 
 /// Writes the material rows in ascending id order.
 fn push_materials(tables: &mut Tables, materials: &BTreeMap<u64, MaterialFacts>) -> Result<(), ExportError> {
     let table = tables.table_mut("materials").ok_or(ExportError::MissingTable("materials"))?;
     for (id, material) in materials {
+        let stock = material.stock.as_ref();
         table.push(vec![
             Cell::Integer(i64::try_from(*id).unwrap_or(i64::MAX)),
             Cell::Text(material.name.clone()),
@@ -662,6 +746,42 @@ fn push_materials(tables: &mut Tables, materials: &BTreeMap<u64, MaterialFacts>)
             Cell::Integer(material.thickness.micrometres()),
             Cell::Integer(material.width.micrometres()),
             Cell::Text(material.color.clone()),
+            Cell::Integer(stock.map_or(0, |stock| stock.sheet_length_um)),
+            Cell::Integer(stock.map_or(0, |stock| stock.sheet_width_um)),
+            Cell::Text(stock.map(|stock| stock.stock_group.clone()).unwrap_or_default()),
+            Cell::Integer(stock.map_or(0, |stock| stock.price_minor)),
+        ])?;
+    }
+    Ok(())
+}
+
+/// Writes one sheet row per stocked material the order cuts from, in ascending material id order.
+///
+/// The row is the sheet geometry, the usable rectangle after the declared trim, the price and what the
+/// order asks of it. It carries no layout and no sheet count: where a part lands and how many sheets
+/// that needs is the nesting of the program that reads the package.
+fn push_sheets(tables: &mut Tables, sheets: &BTreeMap<u64, SheetAgg>) -> Result<(), ExportError> {
+    let table = tables.table_mut("sheets").ok_or(ExportError::MissingTable("sheets"))?;
+    for (id, aggregate) in sheets {
+        let Some(stock) = &aggregate.stock else {
+            continue;
+        };
+        let Ok(material_id) = i64::try_from(*id) else {
+            continue;
+        };
+        let part_count = i64::try_from(aggregate.part_count).unwrap_or(i64::MAX);
+        let part_area = i64::try_from(aggregate.part_area_mm2).unwrap_or(i64::MAX);
+        table.push(vec![
+            Cell::Integer(material_id),
+            Cell::Text(stock.stock_group.clone()),
+            Cell::Integer(stock.sheet_length_um),
+            Cell::Integer(stock.sheet_width_um),
+            Cell::Integer(RULES.usable_length(stock.sheet_length_um)),
+            Cell::Integer(RULES.usable_width(stock.sheet_width_um)),
+            Cell::Integer(stock.price_minor),
+            Cell::Integer(part_count),
+            Cell::Integer(part_area),
+            Cell::Integer(stock.sheet_area_mm2),
         ])?;
     }
     Ok(())
