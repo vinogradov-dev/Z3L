@@ -1,0 +1,575 @@
+{
+  "format": "furnicraft.order",
+  "version": 1,
+  "app": "0.1.0",
+  "document": {
+    "file": "cabinet.fcs",
+    "revision": 17
+  },
+  "order": {
+    "number": "2026-114",
+    "version": 1
+  },
+  "units": {
+    "length": "um",
+    "angle": "mdeg",
+    "area": "mm2",
+    "rotation_scale": 1000000000
+  },
+  "counts": {
+    "banding": 1,
+    "classes": 10,
+    "contours": 28,
+    "facades": 1,
+    "fittings": 1,
+    "machining": 1,
+    "materials": 2,
+    "nodes": 12,
+    "parts": 7,
+    "products": 2,
+    "properties": 1
+  },
+  "tables": [
+    {
+      "name": "products",
+      "file": "products.jsonl",
+      "key": "node_id",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "parent_id",
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "class",
+          "type": "string"
+        },
+        {
+          "name": "level",
+          "type": "string"
+        },
+        {
+          "name": "width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "height_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "depth_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "content_width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "content_height_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "content_depth_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "part_count",
+          "type": "integer"
+        },
+        {
+          "name": "sheet_area_mm2",
+          "type": "integer",
+          "unit": "mm2"
+        },
+        {
+          "name": "banding_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "fitting_count",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "name": "nodes",
+      "file": "nodes.jsonl",
+      "key": "node_id",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "parent_id",
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "class",
+          "type": "string"
+        },
+        {
+          "name": "level",
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "x_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "y_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "z_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "qw",
+          "type": "integer"
+        },
+        {
+          "name": "qx",
+          "type": "integer"
+        },
+        {
+          "name": "qy",
+          "type": "integer"
+        },
+        {
+          "name": "qz",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "name": "parts",
+      "file": "parts.jsonl",
+      "key": "node_id",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "product_id",
+          "type": "integer"
+        },
+        {
+          "name": "class",
+          "type": "string"
+        },
+        {
+          "name": "material_id",
+          "type": "integer"
+        },
+        {
+          "name": "thickness_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "measured_length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "measured_width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "area_mm2",
+          "type": "integer",
+          "unit": "mm2"
+        },
+        {
+          "name": "grain",
+          "type": "string"
+        },
+        {
+          "name": "nesting",
+          "type": "string"
+        },
+        {
+          "name": "banding_total_um",
+          "type": "integer",
+          "unit": "um"
+        }
+      ]
+    },
+    {
+      "name": "banding",
+      "file": "banding.jsonl",
+      "key": "node_id+unit",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "unit",
+          "type": "string"
+        },
+        {
+          "name": "material_id",
+          "type": "integer"
+        },
+        {
+          "name": "thickness_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "included_in_size",
+          "type": "boolean"
+        },
+        {
+          "name": "length_um",
+          "type": "integer",
+          "unit": "um"
+        }
+      ]
+    },
+    {
+      "name": "contours",
+      "file": "contours.jsonl",
+      "key": "node_id+ring+seq",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "ring",
+          "type": "string"
+        },
+        {
+          "name": "seq",
+          "type": "integer"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "x_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "y_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "x2_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "y2_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "cx_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "cy_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "clockwise",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "facades",
+      "file": "facades.jsonl",
+      "key": "node_id",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "product_id",
+          "type": "integer"
+        },
+        {
+          "name": "class",
+          "type": "string"
+        },
+        {
+          "name": "material_id",
+          "type": "integer"
+        },
+        {
+          "name": "length_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "thickness_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "supply",
+          "type": "string"
+        },
+        {
+          "name": "glass",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "fittings",
+      "file": "fittings.jsonl",
+      "key": "node_id",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "host_id",
+          "type": "integer"
+        },
+        {
+          "name": "product_id",
+          "type": "integer"
+        },
+        {
+          "name": "class",
+          "type": "string"
+        },
+        {
+          "name": "article",
+          "type": "string"
+        },
+        {
+          "name": "qty",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "name": "machining",
+      "file": "machining.jsonl",
+      "key": "machining_id",
+      "columns": [
+        {
+          "name": "machining_id",
+          "type": "integer"
+        },
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "op",
+          "type": "string"
+        },
+        {
+          "name": "face",
+          "type": "string"
+        },
+        {
+          "name": "x_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "y_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "diameter_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "depth_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "params",
+          "type": "json"
+        }
+      ]
+    },
+    {
+      "name": "materials",
+      "file": "materials.jsonl",
+      "key": "material_id",
+      "columns": [
+        {
+          "name": "material_id",
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "thickness_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "width_um",
+          "type": "integer",
+          "unit": "um"
+        },
+        {
+          "name": "color",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "classes",
+      "file": "classes.jsonl",
+      "key": "code",
+      "columns": [
+        {
+          "name": "code",
+          "type": "string"
+        },
+        {
+          "name": "parent",
+          "type": "string"
+        },
+        {
+          "name": "slug",
+          "type": "string"
+        },
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "supply",
+          "type": "string"
+        },
+        {
+          "name": "measure",
+          "type": "string"
+        },
+        {
+          "name": "nesting",
+          "type": "string"
+        },
+        {
+          "name": "extent",
+          "type": "string"
+        },
+        {
+          "name": "level",
+          "type": "string"
+        },
+        {
+          "name": "opening",
+          "type": "string"
+        },
+        {
+          "name": "mount",
+          "type": "string"
+        },
+        {
+          "name": "fill",
+          "type": "string"
+        },
+        {
+          "name": "operations",
+          "type": "json"
+        },
+        {
+          "name": "retired",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "properties",
+      "file": "properties.jsonl",
+      "key": "node_id+key",
+      "columns": [
+        {
+          "name": "node_id",
+          "type": "integer"
+        },
+        {
+          "name": "key",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "json"
+        }
+      ]
+    }
+  ]
+}

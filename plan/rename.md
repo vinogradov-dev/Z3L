@@ -43,7 +43,7 @@ carries it. A rename therefore cannot corrupt a document beyond the envelope's `
 | Does the settings directory need migration? | Not needed. Renaming it drops the saved theme, recent files and viewport defaults; acceptable before the first release. |
 | Is `.fcs` a good extension? | It is `FurniCraft Scene` in disguise, so it should change together with the name. It is **not a constant today**: two production literals in `app/src/file_menu.rs` (the `scene.fcs` default and the `"fcs"` filter) plus the fixtures around them (§5, step 1). |
 
-## 3. Inventory (measured 2026-11-07)
+## 3. Inventory (measured 2026-11-07; K2 added `furnicraft-export` on 2026-11-14 (four references in `Cargo.toml`, `xtask`, `PROJECT.md` and the lockfile) and `furnicraft-text`, added after the measurement, was already missing from the alternation; both are now included, so the counts below are a lower bound)
 
 ```sh
 git grep -o -i furnicraft | wc -l                     # 1042 occurrences
@@ -118,21 +118,21 @@ files by `EXTENSION`.
 Nothing here needs thought; run it in this order.
 
 ```sh
-# package names of the 13 library crates
+# package names of the 15 library crates
 for f in crates/*/Cargo.toml; do
-  sed -i -E 's/^name = "furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|scene|render|engine|ui|testkit)"$/name = "\1"/' "$f"
+  sed -i -E 's/^name = "furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|export|scene|render|engine|ui|testkit|text)"$/name = "\1"/' "$f"
 done
 
 # workspace dependency keys that carry a path
-sed -i -E 's/^furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|scene|render|engine|ui|testkit) = \{ path =/\1 = { path =/' Cargo.toml
+sed -i -E 's/^furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|export|scene|render|engine|ui|testkit|text) = \{ path =/\1 = { path =/' Cargo.toml
 
 # every member's dependency lines
-sed -i -E 's/^furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|scene|render|engine|ui|testkit) = \{ workspace = true \}/\1 = { workspace = true }/' \
+sed -i -E 's/^furnicraft-(units|geom|kernel|kernel-truck|model|param|mesh|project|export|scene|render|engine|ui|testkit|text) = \{ workspace = true \}/\1 = { workspace = true }/' \
   Cargo.toml crates/*/Cargo.toml app/Cargo.toml
 
 # Rust paths and doc references
 find crates app -name '*.rs' -print0 | xargs -0 \
-  sed -i -E 's/furnicraft_(units|geom|kernel|kernel_truck|model|param|mesh|project|scene|render|engine|ui|testkit)\b/\1/g'
+  sed -i -E 's/furnicraft_(units|geom|kernel|kernel_truck|model|param|mesh|project|export|scene|render|engine|ui|testkit|text)\b/\1/g'
 
 # the app package and its directory
 mv apps/furnicraft app && rmdir apps

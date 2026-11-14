@@ -1,0 +1,11 @@
+code,parent,slug,label,supply,measure,nesting,extent,level,opening,mount,fill,operations,retired
+30,,storage,Storage,,,,,,,,,[],false
+30.10,30,vertical-panel,Vertical panel,sheet,area,member,free,Part,,,height-and-depth,"[""contour"",""edge-band""]",false
+30.11,30,horizontal-panel,Horizontal panel,sheet,area,member,free,Part,,,width-and-depth,"[""contour"",""edge-band""]",false
+30.12,30,back-panel,Back panel,sheet,area,member,free,Part,,,,"[""contour""]",false
+30.20,30,hinged-door-made,"Hinged door, made",sheet,area,member,free,Component,closes,,,"[""contour"",""edge-band"",""cup-bore"",""mount-pattern""]",false
+50,,fittings,Fittings,,,,,,,,,[],false
+50.02,50,cup-hinge,Cup hinge,piece,count,never,none,Fitting,,,,[],false
+50.02.01,50.02,cup-hinge-overlay,"Cup hinge, overlay",piece,count,never,none,Fitting,,,,[],false
+80,,general,General,,,,,,,,,[],false
+80.01,80,general-product,General product,shop,count,never,free,Product,,floor,,[],false

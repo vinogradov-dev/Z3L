@@ -107,6 +107,7 @@ crates/ui              L7  egui panels and viewport, dispatches commands
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
+crates/export          L3  order package: one manifest and flat tables other programs read
 crates/mesh            L3  evaluation cache: revision -> solid and triangle mesh
 crates/param           L2  document features -> kernel calls
 crates/project         L2  scene file envelope: read, write, atomic save, preserved sections

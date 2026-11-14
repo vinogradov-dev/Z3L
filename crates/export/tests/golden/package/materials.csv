@@ -1,0 +1,3 @@
+material_id,name,kind,thickness_um,width_um,color
+1,Chipboard,chipboard,18000,0,white
+101,PVC edge,pvc,2000,22000,white
