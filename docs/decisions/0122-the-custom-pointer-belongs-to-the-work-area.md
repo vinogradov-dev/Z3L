@@ -1,6 +1,6 @@
 # 0122. The custom pointer belongs to the work area
 
-- Status: Accepted
+- Status: Accepted; layer clarified by 0123
 - Date: 2026-11-14
 
 ## Context

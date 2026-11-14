@@ -4,8 +4,8 @@
 //! while the pointer is inside the scene rectangle and draws its own square at the point instead
 //! (X41). Every panel, floating toolbar, text field, resizing border and menu keeps the system
 //! cursor: that icon is the affordance of a system element, and a custom square over it hides what
-//! the cursor is for. The square is painted on the `Tooltip` layer, so no later surface can cover
-//! it inside the work area.
+//! the cursor is for. The square and the crosshair are painted on the scene layer, under the
+//! floating chrome, so a card or a menu masks the guide instead of being crossed by it.
 //!
 //! The outline is two strokes of different value, dark outside and light inside, so one of them reads
 //! on a white board, a dark board and a shaded face alike. The pointer is chrome, not a guide: it
@@ -27,12 +27,14 @@ const INNER_STROKE: f32 = 1.0;
 /// The side of the filled centre dot, in points.
 const DOT: f32 = 2.0;
 
-/// The layer the square is painted on: above every panel, toolbar, popup and modal.
+/// The layer the square and the crosshair are painted on: the scene, under every chrome surface.
 ///
-/// A layer painter adds shapes and no interaction, so the pointer stays clickable under the square
-/// and [`egui::Context::layer_id_at`] never reports this layer.
+/// A painter on `Background` adds a non-area layer after the central panel, so the guide and the
+/// square lie over the image and its gizmos but under every `Middle` panel, toolbar and cluster and
+/// every `Foreground` menu or modal (ADR 0123). A layer painter adds shapes and no interaction, so
+/// [`egui::Context::layer_id_at`] never reports it.
 fn layer() -> egui::LayerId {
-    egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("furnicraft_work_cursor"))
+    egui::LayerId::new(egui::Order::Background, egui::Id::unique("furnicraft_work_cursor"))
 }
 
 /// The screen geometry the work cursor draws at the pointer.
@@ -195,11 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn the_pointer_is_painted_above_every_foreground_surface() {
+    fn the_work_area_paint_sits_under_every_chrome_surface() {
         assert_eq!(
             layer().order,
-            egui::Order::Tooltip,
-            "the layer is above the chrome, though the square is scene-only"
+            egui::Order::Background,
+            "the guide and the square are scene paint: every Middle panel and Foreground menu must cover them"
         );
     }
 
