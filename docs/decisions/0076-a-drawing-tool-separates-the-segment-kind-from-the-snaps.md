@@ -1,6 +1,6 @@
 # 0076. A drawing tool separates the segment kind from the snaps
 
-- Status: Accepted
+- Status: Accepted; the Tab key superseded by 0128
 - Date: 2026-11-08
 
 ## Context
