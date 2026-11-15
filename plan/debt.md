@@ -129,6 +129,12 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[panel]` Nothing in the editor shows or edits a material's stock block or price: the catalogue is a
   file the shell loads, and until a catalogue editor exists the workshop edits the JSON by hand.
 - `[vendor]` `vendor/truck-shapeops` is updated by hand when `truck` moves; see `vendor/AGENTS.md`.
+- `[ui]` The panel card is the last inspector surface that still stacks a header per group: thirteen
+  of them on one panel node (name, dimensions, nominal size, resolved, material, shape, outline,
+  bowed edges, bevels, banding, machining, diagnostics), every one open by default, so a 700 x 500
+  shelf's card is longer than the panel itself. U93 gave the object card one reading order (ADR 0116)
+  and left this surface alone; the same audit — what a node kind can use, what is derived, what is a
+  mode — is owed to it.
 - `[ui]` A creation tool lands at the scene root since X4; a node inside a container needs the
   explicit *Add child* arm of U31. Until then the only way is to create at the root and move the row
   in the tree.

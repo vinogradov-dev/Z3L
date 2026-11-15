@@ -214,3 +214,96 @@ impl Editor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use furnicraft_engine::Session;
+    use furnicraft_model::{Geometry, Placement};
+    use furnicraft_testkit::{cube_mesh, millimetres, sample_catalog, sample_product_project};
+
+    /// A session with one of each kind the inspector picks a card for, and their ids.
+    ///
+    /// The sample project already holds a panel and a component; the cube and the frame are added
+    /// beside them, so the three cards are drawn from one document.
+    fn three_kinds() -> (Session, Id, Id, Id) {
+        let (mut project, product) = sample_product_project();
+        let root = project.root().id();
+        let cube = project
+            .add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(cube_mesh(millimetres(100))))
+            .expect("the sample project takes a mesh object");
+        let panel = project.root().children()[0].id();
+        (Session::with_catalog(project, sample_catalog()), panel, cube, product)
+    }
+
+    /// Draws the inspector for one selection and answers the texts it painted.
+    fn inspector_texts(editor: &mut Editor, session: &mut Session, id: Id) -> Vec<String> {
+        editor.selection.replace(id);
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        crate::set_language(&ctx, crate::Lang::En);
+        let output = ctx.run_ui(Default::default(), |ui| {
+            editor.show_card(ui, session);
+        });
+        let texts = drawn_text(&output.shapes);
+        output.drop_without_applying_deltas();
+        texts
+    }
+
+    fn drew(texts: &[String], needle: &str) -> bool {
+        texts.iter().any(|text| text.contains(needle))
+    }
+
+    fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+        use egui::epaint::Shape;
+        fn walk(shape: &Shape, out: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn the_inspector_draws_the_card_of_the_selected_kind_and_no_other() {
+        let (mut session, panel, cube, product) = three_kinds();
+        assert!(session.project().panel(panel).is_some(), "the fixture holds a panel");
+        assert!(session.project().container(product).is_some_and(|c| c.is_product()), "and a product frame");
+        let mut editor = Editor::new();
+
+        let panel_card = inspector_texts(&mut editor, &mut session, panel);
+        assert!(drew(&panel_card, "Dimensions"), "a panel is measured by its dimensions: {panel_card:?}");
+        assert!(drew(&panel_card, "Material"), "and by its material: {panel_card:?}");
+        assert!(!drew(&panel_card, "Edit mesh"), "a panel has no mesh mode: {panel_card:?}");
+        assert!(!drew(&panel_card, "Collapse to mesh"), "and nothing to bake: {panel_card:?}");
+        assert!(!drew(&panel_card, "Vertices"), "the object card did not draw either: {panel_card:?}");
+
+        let object_card = inspector_texts(&mut editor, &mut session, cube);
+        assert!(drew(&object_card, "Edit mesh"), "a mesh object is edited element by element: {object_card:?}");
+        assert!(drew(&object_card, "Vertices"), "and its measures are drawn in the head: {object_card:?}");
+        assert!(!drew(&object_card, "Dimensions"), "the object card is not the panel card: {object_card:?}");
+        assert!(!drew(&object_card, "Create inside"), "nor is it the container card: {object_card:?}");
+
+        let product_card = inspector_texts(&mut editor, &mut session, product);
+        assert!(drew(&product_card, "Container"), "a product frame is a container: {product_card:?}");
+        assert!(drew(&product_card, "Create inside"), "and the card offers to fill it: {product_card:?}");
+        assert!(!drew(&product_card, "Edit mesh"), "a frame is not an object: {product_card:?}");
+        assert!(!drew(&product_card, "Dimensions"), "and it is not a panel: {product_card:?}");
+
+        // One inspector is drawn per frame, so the three selections never bleed into each other.
+        assert!(!drew(&object_card, "Container"), "the object card drew a container section: {object_card:?}");
+        assert!(!drew(&panel_card, "Edit mesh"), "{panel_card:?}");
+    }
+}

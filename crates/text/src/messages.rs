@@ -284,47 +284,37 @@ messages! {
 
     // ── Object card ─────────────────────────────────────────────────────────
     ObjectNameEmpty = ["Object name must not be empty.", "Имя объекта не должно быть пустым."],
-    SectionGeometry = ["Geometry", "Геометрия"],
-    VerticesCount = ["Vertices  {}", "Вершин: {}"],
-    FacesCount = ["Faces  {}", "Граней: {}"],
+    ObjectSelectSingle = [
+        "Select only this object to edit it or to collapse it.",
+        "Выберите только этот объект, чтобы его редактировать или свернуть."
+    ],
+    VerticesCount = ["Vertices {}", "Вершин: {}"],
+    FacesCount = ["Faces {}", "Граней: {}"],
     PrimitiveSourceTruth = [
         "The parameters are the source of truth; the mesh is derived.",
         "Параметры — источник истины; сетка выводится из них."
     ],
-    ContourSegmentsCount = ["Contour segments  {}", "Сегментов контура: {}"],
-    HeightRow = ["Height  {}", "Высота: {}"],
+    ContourSegmentsCount = ["Contour segments {}", "Сегментов контура: {}"],
+    HeightRow = ["Height {}", "Высота: {}"],
     ContourSourceTruth = [
         "The contour and height are the source of truth; the mesh is derived.",
         "Контур и высота — источник истины; сетка выводится из них."
     ],
-    PathSegmentsCount = ["Path segments  {}", "Сегментов пути: {}"],
+    PathSegmentsCount = ["Path segments {}", "Сегментов пути: {}"],
     ClosedChain = ["Closed chain", "Замкнутая цепь"],
     OpenChain = ["Open chain", "Разомкнутая цепь"],
     PathSourceTruth = ["The drawing is the source of truth; it has no mesh yet.", "Чертёж — источник истины; сетки пока нет."],
     MeshSourceTruth = ["Editable as a mesh; undo is its only history.", "Редактируется как сетка; история — только отмена."],
-    SectionFigure = ["Figure", "Фигура"],
     FieldRadius = ["Radius", "Радиус"],
     FieldWidth = ["Width", "Ширина"],
     FieldEndAngle = ["End angle", "Конечный угол"],
-    FigureEditingInViewport = [
-        "Editing the figure in the viewport; finish or cancel it first.",
-        "Фигура редактируется в области просмотра; сначала завершите или отмените."
-    ],
-    SectionParameters = ["Parameters", "Параметры"],
     PrimitiveRefused = ["The primitive was refused: {}", "Примитив отклонён: {}"],
     FigureRefused = ["The figure was refused: {}", "Фигура отклонена: {}"],
     FieldDepth = ["Depth", "Глубина"],
     FieldBands = ["Bands", "Полосы"],
-    SectionMeshEditing = ["Mesh editing", "Редактирование сетки"],
-    CollapseBeforeEditing = [
-        "Collapse the object to a mesh before editing its elements.",
-        "Сверните объект в сетку, прежде чем редактировать элементы."
-    ],
-    PathHasNoMesh = ["A path object has no mesh; its drawing is the source of truth.", "У объекта-пути нет сетки; источник истины — чертёж."],
     EditMesh = ["Edit mesh", "Редактировать сетку"],
     VerticesPlural = ["Vertices", "Вершины"],
     FacesPlural = ["Faces", "Грани"],
-    SelectSingleObjectMesh = ["Select only this object to edit its mesh.", "Выберите только этот объект, чтобы редактировать его сетку."],
     SelectedVerticesCount = ["Selected vertices  {}", "Выбрано вершин: {}"],
     MoreCountOne = ["… and {} more", "… и ещё {}"],
     MoreCountFew = ["… and {} more", "… и ещё {}"],
@@ -338,22 +328,17 @@ messages! {
         "Click a face in the viewport; Shift or Ctrl adds it to the selection.",
         "Щёлкните грань в области просмотра; Shift или Ctrl добавит её к выделению."
     ],
-    SectionContourEditing = ["Contour editing", "Редактирование контура"],
     ObjectContourEditingInViewport = [
         "Editing the contour in the viewport. Apply or cancel in the viewport toolbar.",
         "Контур редактируется в области просмотра. Примените или отмените на панели инструментов области просмотра."
     ],
-    SelectSingleObjectContour = ["Select only this object to edit its contour.", "Выберите только этот объект, чтобы редактировать его контур."],
     DragCornersHint = ["Drag corners in the viewport; double-click a side to split it.", "Перетаскивайте углы в области просмотра; двойной щелчок по стороне делит её."],
-    SectionContour = ["Contour", "Контур"],
     ContourHasArcs = [
         "This contour has arcs; corners cannot describe it, so the text editor is off.",
         "В этом контуре есть дуги; углы не описывают его, поэтому текстовый редактор отключён."
     ],
     ContourTextHint = ["{} points; one per line as `X, Y` in millimetres.", "{} точек; по одной в строке в виде `X, Y` в миллиметрах."],
     ApplyContour = ["Apply contour", "Применить контур"],
-    SectionCollapse = ["Collapse", "Свернуть"],
-    SelectSingleObjectCollapse = ["Select only this object to collapse it.", "Выберите только этот объект, чтобы свернуть его."],
     CollapseWarning = [
         "Baking the parameters into a mesh deletes them as parameters. Undo is the only way back.",
         "Превращение параметров в сетку удаляет их как параметры. Вернуть можно только отменой."
@@ -421,7 +406,7 @@ messages! {
     PanelContourRingOne = ["Contour ring · {} segment", "Контурное кольцо · {} сегмент"],
     PanelContourRingFew = ["Contour ring · {} segments", "Контурное кольцо · {} сегмента"],
     PanelContourRingMany = ["Contour ring · {} segments", "Контурное кольцо · {} сегментов"],
-    ArcsCount = ["Arcs  {}", "Дуги: {}"],
+    ArcsCount = ["Arcs {}", "Дуги: {}"],
     BakeOutlineHint = [
         "Bakes the outline into a ring. Corners, chamfers and bows become segments; undo restores them.",
         "Преобразует контур в кольцо. Углы, фаски и прогибы становятся сегментами; отмена вернёт их."

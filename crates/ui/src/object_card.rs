@@ -8,6 +8,11 @@
 //! ([ADR 0037]). A path object shows its flat drawing: it has no mesh and no feature height until
 //! it becomes a contour or is extruded.
 //!
+//! The card has one reading order and no headers ([ADR 0116]): a head that says which object this
+//! is and what it measures, the fields the selected kind can be edited by, one row of actions and
+//! the detail of a mode while it runs. A kind that cannot be edited as a mesh is not offered a mesh
+//! block, and a multi-selection is refused once rather than in every block.
+//!
 //! Every number in the card is the shared field ([ADR 0092]): a figure dimension, a primitive
 //! parameter or a typed property is the same 76 px box with its unit outside and no Apply button.
 //! A figure or primitive parameter re-cuts geometry and rebuilds a mesh, so its field hands the
@@ -17,6 +22,7 @@
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 //! [ADR 0092]: ../docs/decisions/0092-a-field-is-a-number-with-its-unit-outside.md
+//! [ADR 0116]: ../docs/decisions/0116-the-object-card-is-one-reading-order.md
 
 use core::ops::RangeInclusive;
 
@@ -39,13 +45,13 @@ use furnicraft_units::Length;
 use crate::command::{dispatch, json};
 use crate::mesh_edit::{MeshEdit, MeshElement};
 use crate::scrub::{self, CommitPolicy, Scrub};
-use crate::section::section;
 use crate::theme;
 
 /// What the object card asks the editor to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ObjectAction {
     /// Nothing was pressed.
+    #[default]
     None,
     /// Enter or leave sub-object editing.
     Toggle,
@@ -415,6 +421,56 @@ fn offers_contour_edit(summary: &ObjectSummary) -> bool {
     summary.contour.is_some() || summary.path.is_some()
 }
 
+/// What separates the measures on the head's one line.
+///
+/// A middle dot is punctuation between two numbers, not a word a translator would change.
+const MEASURE_SEPARATOR: &str = " · ";
+
+/// The measures of one object on one line: its shape, and what it is built from.
+///
+/// Nothing here is editable — every number the card can change is drawn as a field below — so the
+/// line never repeats a field.
+fn measure_line(summary: &ObjectSummary, lang: Lang) -> String {
+    let mut parts = Vec::new();
+    if let Some(primitive) = &summary.primitive {
+        parts.push(primitive_kind_label(primitive.kind()).text(lang).to_owned());
+    }
+    if let Some(contour) = &summary.contour {
+        parts.push(Message::ContourSegmentsCount.with(lang, [contour.segments().len()]));
+        let arcs = contour.segments().filter(|segment| segment.is_arc()).count();
+        if arcs > 0 {
+            parts.push(Message::ArcsCount.with(lang, [arcs]));
+        }
+        if let Some(height) = summary.height {
+            parts.push(Message::HeightRow.with(lang, [height]));
+        }
+    } else if let Some(path) = &summary.path {
+        parts.push(Message::PathSegmentsCount.with(lang, [path.segments().len()]));
+        let arcs = path.segments().filter(|segment| segment.is_arc()).count();
+        if arcs > 0 {
+            parts.push(Message::ArcsCount.with(lang, [arcs]));
+        }
+        parts.push(if path.is_closed() { Message::ClosedChain } else { Message::OpenChain }.text(lang).to_owned());
+    } else {
+        parts.push(Message::VerticesCount.with(lang, [summary.vertices]));
+        parts.push(Message::FacesCount.with(lang, [summary.faces]));
+    }
+    parts.join(MEASURE_SEPARATOR)
+}
+
+/// The sentence that says what the document keeps for this kind of object.
+fn source_truth(summary: &ObjectSummary) -> Message {
+    if summary.primitive.is_some() {
+        Message::PrimitiveSourceTruth
+    } else if summary.contour.is_some() {
+        Message::ContourSourceTruth
+    } else if summary.path.is_some() {
+        Message::PathSourceTruth
+    } else {
+        Message::MeshSourceTruth
+    }
+}
+
 impl ObjectCard {
     /// Draws the card for the selected object and dispatches accepted edits.
     ///
@@ -449,6 +505,10 @@ impl ObjectCard {
             self.figure_draft = None;
             self.draft = Some(Draft { object: object_id, name: summary.name.clone() });
         }
+        // A question about one object is void as soon as the selection is no longer that one.
+        if !single_selection {
+            self.confirm_collapse = false;
+        }
         let is_constructive = summary.contour.is_some();
         if !is_constructive {
             self.contour_draft = None;
@@ -468,23 +528,25 @@ impl ObjectCard {
         }
         self.sync_figure_draft(object_id, &summary);
 
-        let (rename, name_error) = self.name_section(ui, &summary);
-        self.geometry_section(ui, &summary);
-        let (figure_result, figure_report) = self.figure_section(ui, &summary, contour_editing, fresh);
-        let mut action = self.mesh_section(ui, session, object_id, &summary, mesh_edit, single_selection);
-        if self.contour_edit_section(ui, &summary, contour_editing, single_selection) {
-            action = ObjectAction::StartContour;
-        }
+        // One reading order, top to bottom: which object this is and what it measures, the numbers
+        // this kind of geometry can be edited by, one row of actions, and the detail of a mode that
+        // runs (ADR 0116). No block carries a header: the card is short enough that a fold only
+        // hides the fields a person came for.
+        let (rename, name_error) = self.head(ui, &summary, single_selection);
+        let (figure_result, figure_report) = self.figure_fields(ui, &summary, contour_editing, fresh);
         // The viewport owns the working copy while the mode is live; a number replacement or a
         // collapse would silently make that copy stale.
-        let (primitive_result, primitive_report) = self.primitive_section(ui, &summary, fresh);
+        let (primitive_result, primitive_report) = self.primitive_fields(ui, &summary, fresh);
         let contour_result =
-            if contour_editing || self.figure_draft.is_some() { None } else { self.contour_section(ui, &summary) };
-        let (collapse, cancel) = if (!is_constructive && summary.primitive.is_none()) || contour_editing {
-            (false, false)
-        } else {
-            self.collapse_section(ui, single_selection)
-        };
+            if contour_editing || self.figure_draft.is_some() { None } else { self.contour_text(ui, &summary) };
+        let row = self.action_row(ui, object_id, &summary, mesh_edit, contour_editing, single_selection);
+        let mut action = row.action;
+        if let Some(edit) = mesh_edit.filter(|edit| edit.object() == object_id)
+            && let Some(element) = self.mesh_detail(ui, session, object_id, edit)
+        {
+            action = ObjectAction::Element(element);
+        }
+        let (collapse, cancel) = (row.collapse, row.cancel);
 
         // A field that refused its typed text kept its number: the box is red, the card says why.
         if let Some(message) = figure_report.refused.or(primitive_report.refused) {
@@ -564,65 +626,51 @@ impl ObjectCard {
         action
     }
 
-    fn name_section(&mut self, ui: &mut Ui, summary: &ObjectSummary) -> (Option<String>, Option<String>) {
+    /// Draws the head of the card: what kind of object this is, its name and its measures.
+    ///
+    /// The badge, one measure line and one sentence say what the node is in three rows, which is
+    /// what a header over the same facts cost on its own (ADR 0116).
+    fn head(
+        &mut self,
+        ui: &mut Ui,
+        summary: &ObjectSummary,
+        single_selection: bool,
+    ) -> (Option<String>, Option<String>) {
+        let lang = crate::language(ui.ctx());
+        let (rename, name_error) = self.name_row(ui, summary);
+        ui.label(RichText::new(measure_line(summary, lang)).color(theme::text_dim(ui)));
+        ui.label(RichText::new(source_truth(summary).text(lang)).color(theme::text_dim(ui)));
+        if !single_selection {
+            ui.label(Message::ObjectSelectSingle.text(lang));
+        }
+        (rename, name_error)
+    }
+
+    /// Draws the kind badge and the name field; returns the name to commit and why one was refused.
+    ///
+    /// The box commits on leaving it, which is the policy every number in the card already has: one
+    /// value, one commit, and no second button to press for the same edit (ADR 0092).
+    fn name_row(&mut self, ui: &mut Ui, summary: &ObjectSummary) -> (Option<String>, Option<String>) {
         let lang = crate::language(ui.ctx());
         let Some(draft) = self.draft.as_mut() else {
             return (None, None);
         };
         let mut rename = None;
         let mut name_error = None;
-        ui.separator();
-        section(ui, "object.name", Message::SectionName.text(lang), true, |ui| {
-            ui.horizontal(|ui| {
-                let response = ui.add(TextEdit::singleline(&mut draft.name).desired_width(180.0));
-                let clicked = ui.button(Message::CmdRename.text(lang)).clicked();
-                if response.lost_focus() || clicked {
-                    let trimmed = draft.name.trim();
-                    if trimmed.is_empty() {
-                        name_error = Some(Message::ObjectNameEmpty.text(lang).to_owned());
-                    } else if trimmed != summary.name {
-                        rename = Some(trimmed.to_owned());
-                    }
-                }
-            });
-        });
-        (rename, name_error)
-    }
-
-    fn geometry_section(&self, ui: &mut Ui, summary: &ObjectSummary) {
-        let lang = crate::language(ui.ctx());
-        ui.separator();
-        section(ui, "object.geometry", Message::SectionGeometry.text(lang), true, |ui| {
+        ui.horizontal(|ui| {
             ui.label(RichText::new(summary.kind.text(lang)).strong());
-            if let Some(primitive) = &summary.primitive {
-                ui.label(primitive_kind_label(primitive.kind()).text(lang));
-                ui.label(Message::VerticesCount.with(lang, [summary.vertices]));
-                ui.label(Message::FacesCount.with(lang, [summary.faces]));
-                ui.label(Message::PrimitiveSourceTruth.text(lang));
-            } else if let Some(contour) = &summary.contour {
-                let arcs = contour.segments().filter(|segment| segment.is_arc()).count();
-                ui.label(Message::ContourSegmentsCount.with(lang, [contour.segments().len()]));
-                if arcs > 0 {
-                    ui.label(Message::ArcsCount.with(lang, [arcs]));
+            let width = (ui.available_width() - theme::STEP).max(64.0);
+            let response = ui.add(TextEdit::singleline(&mut draft.name).desired_width(width));
+            if response.lost_focus() {
+                let trimmed = draft.name.trim();
+                if trimmed.is_empty() {
+                    name_error = Some(Message::ObjectNameEmpty.text(lang).to_owned());
+                } else if trimmed != summary.name {
+                    rename = Some(trimmed.to_owned());
                 }
-                if let Some(height) = summary.height {
-                    ui.label(Message::HeightRow.with(lang, [height]));
-                }
-                ui.label(Message::ContourSourceTruth.text(lang));
-            } else if let Some(path) = &summary.path {
-                let arcs = path.segments().filter(|segment| segment.is_arc()).count();
-                ui.label(Message::PathSegmentsCount.with(lang, [path.segments().len()]));
-                if arcs > 0 {
-                    ui.label(Message::ArcsCount.with(lang, [arcs]));
-                }
-                ui.label(if path.is_closed() { Message::ClosedChain } else { Message::OpenChain }.text(lang));
-                ui.label(Message::PathSourceTruth.text(lang));
-            } else {
-                ui.label(Message::VerticesCount.with(lang, [summary.vertices]));
-                ui.label(Message::FacesCount.with(lang, [summary.faces]));
-                ui.label(Message::MeshSourceTruth.text(lang));
             }
         });
+        (rename, name_error)
     }
 
     /// Keeps the figure draft in step with the path the document holds.
@@ -649,8 +697,8 @@ impl ObjectCard {
     /// Only the fields the figure has are shown: a circle a radius, a rectangle its width and
     /// height, a polygon its sides and radius, one arc its radius and end angle. While the viewport
     /// owns the working copy the fields are drawn disabled, so a card edit cannot make that copy
-    /// stale and lose the drag the user is still making.
-    fn figure_section(
+    /// stale and lose the drag the user is still making; the action row says why they are dead.
+    fn figure_fields(
         &mut self,
         ui: &mut Ui,
         summary: &ObjectSummary,
@@ -666,32 +714,27 @@ impl ObjectCard {
             return (None, report);
         };
         ui.separator();
-        section(ui, "object.figure", Message::SectionFigure.text(lang), true, |ui| {
-            ui.add_enabled_ui(!contour_editing, |ui| match draft.kind {
-                FigureKind::Circle => {
-                    report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
-                }
-                FigureKind::Rectangle => {
-                    report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
-                    report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
-                }
-                FigureKind::Polygon => {
-                    report.absorb(count_row(
-                        ui,
-                        Message::FieldSides.text(lang),
-                        &mut draft.fields.sides,
-                        MIN_POLYGON_SIDES..=MAX_POLYGON_SIDES,
-                        fresh,
-                    ));
-                    report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
-                }
-                FigureKind::Arc(_) => {
-                    report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
-                    report.absorb(angle_row(ui, Message::FieldEndAngle.text(lang), &mut draft.fields.end_angle, fresh));
-                }
-            });
-            if contour_editing {
-                ui.label(Message::FigureEditingInViewport.text(lang));
+        ui.add_enabled_ui(!contour_editing, |ui| match draft.kind {
+            FigureKind::Circle => {
+                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
+            }
+            FigureKind::Rectangle => {
+                report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
+                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
+            }
+            FigureKind::Polygon => {
+                report.absorb(count_row(
+                    ui,
+                    Message::FieldSides.text(lang),
+                    &mut draft.fields.sides,
+                    MIN_POLYGON_SIDES..=MAX_POLYGON_SIDES,
+                    fresh,
+                ));
+                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
+            }
+            FigureKind::Arc(_) => {
+                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
+                report.absorb(angle_row(ui, Message::FieldEndAngle.text(lang), &mut draft.fields.end_angle, fresh));
             }
         });
         if !report.committed {
@@ -704,7 +747,7 @@ impl ObjectCard {
     ///
     /// Only the fields the shape has are shown: a box its width, depth and height, a cylinder a
     /// radius, a height and its sides, a sphere a radius, its sides and its bands.
-    fn primitive_section(
+    fn primitive_fields(
         &mut self,
         ui: &mut Ui,
         summary: &ObjectSummary,
@@ -719,7 +762,7 @@ impl ObjectCard {
             return (None, report);
         };
         ui.separator();
-        section(ui, "object.primitive", Message::SectionParameters.text(lang), true, |ui| match primitive {
+        match primitive {
             Primitive::Cuboid(_) => {
                 report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
                 report.absorb(length_row(ui, Message::FieldDepth.text(lang), &mut draft.fields.depth, fresh));
@@ -753,183 +796,171 @@ impl ObjectCard {
                     fresh,
                 ));
             }
-        });
+        }
         if !report.committed {
             return (None, report);
         }
         (Some(draft.parse(lang)), report)
     }
 
-    fn mesh_section(
-        &self,
+    /// Draws the one row of actions this object has, and the sentence that explains it.
+    ///
+    /// A mesh is edited element by element, a constructive object or a path is reshaped in the
+    /// viewport, and only a primitive or a constructive object can be collapsed into a mesh. The
+    /// row therefore draws at most one mode button and, apart from the row's right end, one
+    /// destructive entry. A multi-selection disables both and the head already says why, so the
+    /// refusal is said once instead of once per section (ADR 0116).
+    fn action_row(
+        &mut self,
         ui: &mut Ui,
-        session: &Session,
         object_id: Id,
         summary: &ObjectSummary,
         mesh_edit: Option<&MeshEdit>,
-        single_selection: bool,
-    ) -> ObjectAction {
-        let lang = crate::language(ui.ctx());
-        ui.separator();
-        let mut action = ObjectAction::None;
-        section(ui, "object.mesh_edit", Message::SectionMeshEditing.text(lang), true, |ui| {
-            if summary.contour.is_some() || summary.primitive.is_some() {
-                ui.label(Message::CollapseBeforeEditing.text(lang));
-            } else if !summary.is_mesh {
-                ui.label(Message::PathHasNoMesh.text(lang));
-            } else if single_selection {
-                let editing = mesh_edit.is_some_and(|edit| edit.object() == object_id);
-                let label = if editing { Message::Done } else { Message::EditMesh }.text(lang);
-                if ui.button(label).clicked() {
-                    action = ObjectAction::Toggle;
-                }
-                if let Some(edit) = mesh_edit.filter(|edit| edit.object() == object_id) {
-                    let current = edit.element();
-                    let mut choice = current;
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut choice, MeshElement::Vertex, Message::VerticesPlural.text(lang));
-                        ui.selectable_value(&mut choice, MeshElement::Face, Message::FacesPlural.text(lang));
-                    });
-                    if choice != current {
-                        action = ObjectAction::Element(choice);
-                    }
-                }
-            } else {
-                ui.label(Message::SelectSingleObjectMesh.text(lang));
-            }
-            if let Some(edit) = mesh_edit.filter(|edit| edit.object() == object_id) {
-                match edit.element() {
-                    MeshElement::Vertex => {
-                        ui.label(Message::SelectedVerticesCount.with(lang, [edit.vertices().len()]));
-                        let positions = selected_positions(session.project(), object_id, edit.vertices());
-                        for (vertex, position) in positions.iter().take(MAX_LISTED_VERTICES) {
-                            ui.label(format!("v{vertex}  {}", format_position(*position)));
-                        }
-                        if positions.len() > MAX_LISTED_VERTICES {
-                            let more = Message::counted(
-                                positions.len() - MAX_LISTED_VERTICES,
-                                Message::MoreCountOne,
-                                Message::MoreCountFew,
-                                Message::MoreCountMany,
-                            );
-                            ui.label(more.text(lang));
-                        }
-                        ui.label(Message::ClickVertexHint.text(lang));
-                    }
-                    MeshElement::Face => {
-                        ui.label(Message::SelectedFacesCount.with(lang, [edit.faces().len()]));
-                        let listed: Vec<String> =
-                            edit.faces().iter().take(MAX_LISTED_VERTICES).map(|face| format!("f{face}")).collect();
-                        if !listed.is_empty() {
-                            ui.label(listed.join("  "));
-                        }
-                        if edit.faces().len() > MAX_LISTED_VERTICES {
-                            let more = Message::counted(
-                                edit.faces().len() - MAX_LISTED_VERTICES,
-                                Message::MoreCountOne,
-                                Message::MoreCountFew,
-                                Message::MoreCountMany,
-                            );
-                            ui.label(more.text(lang));
-                        }
-                        ui.label(Message::ClickFaceHint.text(lang));
-                    }
-                }
-            }
-        });
-        action
-    }
-
-    /// Draws the entry point into the viewport contour edit mode.
-    ///
-    /// A constructive object and a path both have a contour or chain to reshape; a mesh or a
-    /// primitive object returns `false` and shows nothing. The editor owns the working copy and
-    /// validates the object again before it starts.
-    fn contour_edit_section(
-        &self,
-        ui: &mut Ui,
-        summary: &ObjectSummary,
         contour_editing: bool,
         single_selection: bool,
-    ) -> bool {
-        if !offers_contour_edit(summary) {
-            return false;
-        }
-        let mut requested = false;
+    ) -> ActionRow {
         let lang = crate::language(ui.ctx());
+        let mut row = ActionRow::default();
         ui.separator();
-        section(ui, "object.contour_edit", Message::SectionContourEditing.text(lang), true, |ui| {
-            if contour_editing {
-                ui.label(Message::ObjectContourEditingInViewport.text(lang));
-            } else if !single_selection {
-                ui.label(Message::SelectSingleObjectContour.text(lang));
-            } else {
-                ui.label(Message::DragCornersHint.text(lang));
-                requested = ui.button(Message::PanelEditContour.text(lang)).clicked();
+        // A collapse is the one destructive edit of the card: while it asks, the question takes
+        // the row's place and nothing else can be pressed.
+        if self.confirm_collapse {
+            ui.colored_label(theme::warn(ui), Message::CollapseWarning.text(lang));
+            ui.horizontal(|ui| {
+                if ui.button(Message::CollapseToMesh.text(lang)).clicked() {
+                    row.collapse = true;
+                }
+                if ui.button(Message::Cancel.text(lang)).clicked() {
+                    row.cancel = true;
+                }
+            });
+            return row;
+        }
+        // A collapse would make the viewport's working copy stale, so it is offered only when no
+        // contour edit is running (ADR 0116).
+        let collapsible = (summary.contour.is_some() || summary.primitive.is_some()) && !contour_editing;
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(single_selection, |ui| {
+                if summary.is_mesh {
+                    let editing = mesh_edit.is_some_and(|edit| edit.object() == object_id);
+                    let label = if editing { Message::Done } else { Message::EditMesh };
+                    if ui.button(label.text(lang)).clicked() {
+                        row.action = ObjectAction::Toggle;
+                    }
+                } else if offers_contour_edit(summary)
+                    && !contour_editing
+                    && ui.button(Message::PanelEditContour.text(lang)).clicked()
+                {
+                    row.action = ObjectAction::StartContour;
+                }
+            });
+            if collapsible {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(single_selection, |ui| {
+                        if ui.button(Message::CollapseToMeshEllipsis.text(lang)).clicked() {
+                            self.confirm_collapse = true;
+                        }
+                    });
+                });
             }
         });
-        requested
+        // The state of the mode says itself, in one sentence: the viewport owns the working copy
+        // and the card's fields are dead until that copy is applied or dropped.
+        if contour_editing {
+            ui.label(Message::ObjectContourEditingInViewport.text(lang));
+        } else if offers_contour_edit(summary) && single_selection {
+            ui.label(RichText::new(Message::DragCornersHint.text(lang)).color(theme::text_dim(ui)));
+        }
+        row
+    }
+
+    /// Draws the detail of the live mesh mode: the element choice and what is selected.
+    ///
+    /// Returns the element the user switched to, so the editor owns the mode and the card only
+    /// reports the press.
+    fn mesh_detail(&mut self, ui: &mut Ui, session: &Session, object_id: Id, edit: &MeshEdit) -> Option<MeshElement> {
+        let lang = crate::language(ui.ctx());
+        let current = edit.element();
+        let mut choice = current;
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut choice, MeshElement::Vertex, Message::VerticesPlural.text(lang));
+            ui.selectable_value(&mut choice, MeshElement::Face, Message::FacesPlural.text(lang));
+        });
+        match current {
+            MeshElement::Vertex => {
+                ui.label(Message::SelectedVerticesCount.with(lang, [edit.vertices().len()]));
+                let positions = selected_positions(session.project(), object_id, edit.vertices());
+                for (vertex, position) in positions.iter().take(MAX_LISTED_VERTICES) {
+                    ui.label(format!("v{vertex}  {}", format_position(*position)));
+                }
+                if positions.len() > MAX_LISTED_VERTICES {
+                    let more = Message::counted(
+                        positions.len() - MAX_LISTED_VERTICES,
+                        Message::MoreCountOne,
+                        Message::MoreCountFew,
+                        Message::MoreCountMany,
+                    );
+                    ui.label(more.text(lang));
+                }
+                ui.label(Message::ClickVertexHint.text(lang));
+            }
+            MeshElement::Face => {
+                ui.label(Message::SelectedFacesCount.with(lang, [edit.faces().len()]));
+                let listed: Vec<String> =
+                    edit.faces().iter().take(MAX_LISTED_VERTICES).map(|face| format!("f{face}")).collect();
+                if !listed.is_empty() {
+                    ui.label(listed.join("  "));
+                }
+                if edit.faces().len() > MAX_LISTED_VERTICES {
+                    let more = Message::counted(
+                        edit.faces().len() - MAX_LISTED_VERTICES,
+                        Message::MoreCountOne,
+                        Message::MoreCountFew,
+                        Message::MoreCountMany,
+                    );
+                    ui.label(more.text(lang));
+                }
+                ui.label(Message::ClickFaceHint.text(lang));
+            }
+        }
+        (choice != current).then_some(choice)
     }
 
     /// Draws the contour editor; returns the parsed replacement when Apply was pressed.
     ///
     /// The text editor writes corners, so it is only shown for a line-only ring; a ring with an arc
     /// cannot be described by corners and says so instead of silently dropping the arc.
-    fn contour_section(&mut self, ui: &mut Ui, summary: &ObjectSummary) -> Option<Result<Contour, String>> {
+    fn contour_text(&mut self, ui: &mut Ui, summary: &ObjectSummary) -> Option<Result<Contour, String>> {
         let contour = summary.contour.as_ref()?;
         let lang = crate::language(ui.ctx());
+        ui.separator();
         if !contour.is_line_only() {
-            ui.separator();
-            section(ui, "object.contour", Message::SectionContour.text(lang), true, |ui| {
-                ui.label(Message::ContourHasArcs.text(lang));
-            });
+            ui.label(RichText::new(Message::ContourHasArcs.text(lang)).color(theme::text_dim(ui)));
             return None;
         }
         let draft = self.contour_draft.as_mut()?;
         let mut apply = false;
-        ui.separator();
-        section(ui, "object.contour", Message::SectionContour.text(lang), true, |ui| {
-            ui.label(
-                Message::ContourTextHint.with(lang, [contour_corners(contour).map_or(0, |corners| corners.len())]),
-            );
-            ui.add(TextEdit::multiline(&mut draft.text).desired_rows(6).desired_width(220.0));
-            if ui.button(Message::ApplyContour.text(lang)).clicked() {
-                apply = true;
-            }
-        });
+        ui.label(Message::ContourTextHint.with(lang, [contour_corners(contour).map_or(0, |corners| corners.len())]));
+        ui.add(TextEdit::multiline(&mut draft.text).desired_rows(6).desired_width(220.0));
+        if ui.button(Message::ApplyContour.text(lang)).clicked() {
+            apply = true;
+        }
         if !apply {
             return None;
         }
         Some(contour_from_text(&draft.text, lang))
     }
+}
 
-    /// Draws the two-step collapse control; returns whether to collapse or to cancel.
-    fn collapse_section(&mut self, ui: &mut Ui, single_selection: bool) -> (bool, bool) {
-        let mut collapse = false;
-        let lang = crate::language(ui.ctx());
-        let mut cancel = false;
-        ui.separator();
-        section(ui, "object.collapse", Message::SectionCollapse.text(lang), true, |ui| {
-            if !single_selection {
-                ui.label(Message::SelectSingleObjectCollapse.text(lang));
-                return;
-            }
-            if self.confirm_collapse {
-                ui.colored_label(theme::warn(ui), Message::CollapseWarning.text(lang));
-                ui.horizontal(|ui| {
-                    if ui.button(Message::CollapseToMesh.text(lang)).clicked() {
-                        collapse = true;
-                    }
-                    if ui.button(Message::Cancel.text(lang)).clicked() {
-                        cancel = true;
-                    }
-                });
-            } else if ui.button(Message::CollapseToMeshEllipsis.text(lang)).clicked() {
-                self.confirm_collapse = true;
-            }
-        });
-        (collapse, cancel)
-    }
+/// What the one row of actions asked for this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ActionRow {
+    /// What the mode button asked the editor to do.
+    action: ObjectAction,
+    /// The collapse question was confirmed.
+    collapse: bool,
+    /// The collapse question was dropped.
+    cancel: bool,
 }
 
 /// What the number fields of one section reported this frame.
@@ -1158,7 +1189,7 @@ mod tests {
 
     use furnicraft_engine::ObjectExtrudeCreate;
     use furnicraft_engine::object_cmds::OBJECT_EXTRUDE_CREATE_ID;
-    use furnicraft_model::Placement;
+    use furnicraft_model::{Constructive, Placement};
     use furnicraft_testkit::{cube_mesh, millimetres, sample_catalog, sample_project};
     use furnicraft_units::{Degrees, Length};
 
@@ -1688,16 +1719,100 @@ mod tests {
 
     /// Draws the object card for one session and returns the texts it painted.
     fn drew_card(session: &mut Session, id: Id) -> Vec<String> {
+        drew_card_in_mode(session, id, false)
+    }
+
+    /// Draws the object card with the viewport either owning the working copy or not.
+    fn drew_card_in_mode(session: &mut Session, id: Id, contour_editing: bool) -> Vec<String> {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         crate::set_language(&ctx, Lang::En);
         let mut card = ObjectCard::default();
         let output = ctx.run_ui(Default::default(), |ui| {
-            card.show(ui, session, id, None, false, true);
+            card.show(ui, session, id, None, contour_editing, true);
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();
         texts
+    }
+
+    /// Whether the card drew a text that contains `needle`.
+    fn drew(texts: &[String], needle: &str) -> bool {
+        texts.iter().any(|text| text.contains(needle))
+    }
+
+    /// How many drawn texts say exactly `needle`, which a field label does once.
+    fn count_exactly(texts: &[String], needle: &str) -> usize {
+        texts.iter().filter(|text| *text == needle).count()
+    }
+
+    #[test]
+    fn a_live_contour_edit_states_itself_once_and_offers_no_collapse() {
+        let (mut session, id) = constructive_session();
+        let texts = drew_card_in_mode(&mut session, id, true);
+        assert!(texts.iter().any(|text| text.starts_with("Editing the contour in the viewport")), "{texts:?}");
+        assert_eq!(
+            texts.iter().filter(|text| text.contains("viewport")).count(),
+            1,
+            "one state, one sentence: {texts:?}"
+        );
+        assert!(!drew(&texts, "Collapse"), "a collapse would make the working copy stale: {texts:?}");
+        assert!(!drew(&texts, "Edit contour"), "the mode is already running: {texts:?}");
+    }
+
+    #[test]
+    fn the_card_draws_only_the_blocks_the_selected_kind_can_use() {
+        let (project, id) = object_project();
+        let mut mesh = Session::with_catalog(project, sample_catalog());
+        let mesh = drew_card(&mut mesh, id);
+        assert!(drew(&mesh, "Edit mesh"), "a mesh is edited element by element: {mesh:?}");
+        assert!(drew(&mesh, "Vertices"), "and its counts are its measure: {mesh:?}");
+        assert!(!drew(&mesh, "Edit contour"), "a baked mesh has no ring to reshape: {mesh:?}");
+        assert!(!drew(&mesh, "Collapse"), "a mesh is already a mesh: {mesh:?}");
+        assert!(!drew(&mesh, "Width"), "and it stores no parameter to type: {mesh:?}");
+
+        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box");
+        let (mut primitive, id) = primitive_session(cuboid);
+        let primitive = drew_card(&mut primitive, id);
+        for field in ["Width", "Depth", "Height"] {
+            assert_eq!(count_exactly(&primitive, field), 1, "a box has one `{field}` field: {primitive:?}");
+        }
+        assert!(drew(&primitive, "Collapse to mesh"), "a primitive can be baked into a mesh: {primitive:?}");
+        assert!(
+            !drew(&primitive, "Edit mesh"),
+            "its elements are derived, so it cannot be edited as one: {primitive:?}"
+        );
+        assert!(!drew(&primitive, "Edit contour"), "and it has no ring to reshape: {primitive:?}");
+
+        // A body grown from a tagged figure is edited by its fields, and one grown from a bare ring
+        // by its corners; neither offers the other's editor.
+        let figure = Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(50)]).expect("ring");
+        let body = Constructive::extrude(figure, millimetres(18)).expect("body");
+        let mut project = sample_project();
+        let root = project.root().id();
+        let id = project.add_object(root, "Top", Placement::IDENTITY, Geometry::Constructive(body)).expect("body");
+        let mut figure_session = Session::with_catalog(project, sample_catalog());
+        let figure = drew_card(&mut figure_session, id);
+        assert!(drew(&figure, "Edit contour"), "a body is reshaped in the viewport: {figure:?}");
+        assert!(drew(&figure, "Collapse to mesh"), "and can be baked: {figure:?}");
+        assert!(!drew(&figure, "Edit mesh"), "but not before it is baked: {figure:?}");
+        assert!(!drew(&figure, "Apply contour"), "a tagged figure is edited by its fields: {figure:?}");
+        for field in ["Width", "Height"] {
+            assert_eq!(count_exactly(&figure, field), 1, "a rectangle has one `{field}` field: {figure:?}");
+        }
+
+        let (mut ring, id) = constructive_session();
+        let ring = drew_card(&mut ring, id);
+        assert!(drew(&ring, "Apply contour"), "a ring with no figure tag is edited as corners: {ring:?}");
+        assert!(!drew(&ring, "Edit mesh"), "and still cannot be edited element by element: {ring:?}");
+
+        let path =
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(50)]).expect("rectangle");
+        let (mut path_session, id) = path_project(path);
+        let path = drew_card(&mut path_session, id);
+        assert!(drew(&path, "Edit contour"), "a drawing is reshaped in the viewport: {path:?}");
+        assert!(!drew(&path, "Collapse"), "a drawing has no parameters to bake: {path:?}");
+        assert!(!drew(&path, "Edit mesh"), "and no mesh to edit: {path:?}");
     }
 
     #[test]
@@ -1770,8 +1885,8 @@ mod tests {
     fn switching_the_language_redraws_a_card_without_touching_history() {
         let (english, english_revision, english_undo) = card_texts(Lang::En);
         let (russian, russian_revision, russian_undo) = card_texts(Lang::Ru);
-        assert!(english.iter().any(|text| text == "Geometry"), "{english:?}");
-        assert!(russian.iter().any(|text| text == "Геометрия"), "{russian:?}");
+        assert!(english.iter().any(|text| text.starts_with("Contour segments")), "{english:?}");
+        assert!(russian.iter().any(|text| text.starts_with("Сегментов контура")), "{russian:?}");
         assert_ne!(english, russian, "the same card draws different words");
         assert_eq!(english_revision, russian_revision, "a language switch moves no revision");
         assert_eq!(english_undo, russian_undo, "a language switch leaves the undo stack alone");
