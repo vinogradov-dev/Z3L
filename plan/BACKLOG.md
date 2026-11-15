@@ -42,28 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U93** the object card is reviewed against the rubric and redesigned as one reading order
-  Why: The card a person reads most is 1780 lines and up to seven collapsible sections stacked
-   under two other cards, so the same fields appear in two places, the first screen is mostly
-   headers, and a mesh object is offered contour, figure, primitive and mesh sections of which
-   at most two can apply. The owner asked for the card to be studied, the excess removed and
-   the design improved; this is the one task of the pass that starts from a measurement rather
-   than from a bug.
-  shape: First the audit the ui-design skill orders: a brief in five lines, the inventory of
-   every section and field with the node kinds that can show it, and three options with their
-   cost in code and in learned conventions. Then the chosen shape — most likely one summary
-   band (kind, size, material, one warning chip), only the fields the selected node can use,
-   the modes (mesh edit, contour edit) as one row of actions rather than four collapsible
-   sections, and a fold state remembered per node kind. Every number stays the shared scrub
-   field, every mutation stays a command, nothing new enters the document; a removed section or
-   a changed reading order is a break the owner approves and ADR 0116 records. The measurement
-   and the rejected options go to `plan/notes/U93.md`.
-  done: The audit and the options are in `plan/notes/U93.md`; the card draws no section that
-   cannot apply to the selected node and no field twice on one screen; a headless test opens a
-   panel, an object and a product frame and asserts the sections drawn for each; an offscreen
-   shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
-   `cargo xtask ci` is green.
-  `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/ui/src/theme.rs`
 - `[ ]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
   Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
    is touched — after the decision that matters most, where a capability lives (ADR 0117), is
@@ -186,6 +164,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U93** the object card is reviewed against the rubric and redesigned as one reading order
+  Why: The card a person reads most is 1780 lines and up to seven collapsible sections stacked
+   under two other cards, so the same fields appear in two places, the first screen is mostly
+   headers, and a mesh object is offered contour, figure, primitive and mesh sections of which
+   at most two can apply. The owner asked for the card to be studied, the excess removed and
+   the design improved; this is the one task of the pass that starts from a measurement rather
+   than from a bug.
+  shape: First the audit the ui-design skill orders: a brief in five lines, the inventory of
+   every section and field with the node kinds that can show it, and three options with their
+   cost in code and in learned conventions. Then the chosen shape — most likely one summary
+   band (kind, size, material, one warning chip), only the fields the selected node can use,
+   the modes (mesh edit, contour edit) as one row of actions rather than four collapsible
+   sections, and a fold state remembered per node kind. Every number stays the shared scrub
+   field, every mutation stays a command, nothing new enters the document; a removed section or
+   a changed reading order is a break the owner approves and ADR 0116 records. The measurement
+   and the rejected options go to `plan/notes/U93.md`.
+  done: The audit and the options are in `plan/notes/U93.md`; the card draws no section that
+   cannot apply to the selected node and no field twice on one screen; a headless test opens a
+   panel, an object and a product frame and asserts the sections drawn for each; an offscreen
+   shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/text/src/messages.rs, apps/furnicraft/src/ui_shots.rs` — `43ef744`
 
 - `[x]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
   Why: The tree row menu is the only context menu in the program: a right click in the viewport
