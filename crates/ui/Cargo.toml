@@ -12,6 +12,7 @@ workspace = true
 egui = { workspace = true }
 egui_extras = { workspace = true }
 furnicraft-engine = { workspace = true }
+furnicraft-geom = { workspace = true }
 furnicraft-model = { workspace = true }
 furnicraft-scene = { workspace = true }
 furnicraft-text = { workspace = true }

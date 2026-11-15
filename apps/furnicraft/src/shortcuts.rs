@@ -34,6 +34,8 @@ pub(crate) struct Shortcuts {
     pub(crate) grid_snap: bool,
     /// Arm the ruler, or leave it when it is already armed.
     pub(crate) measure: bool,
+    /// Arm the niche tool, or leave it when it is already armed.
+    pub(crate) niche: bool,
     pub(crate) maximize: bool,
     pub(crate) palette: bool,
     /// Hide both side panels, or show the pair the last press put away.
@@ -63,6 +65,7 @@ impl Shortcuts {
             "view.snaps.grid" => self.grid_snap,
             "view.layout.maximize" => self.maximize,
             "sketch.measure.length" => self.measure,
+            "furniture.panels.void" => self.niche,
             _ => false,
         }
     }
@@ -80,6 +83,7 @@ impl Shortcuts {
             self.projection,
             self.grid_snap,
             self.measure,
+            self.niche,
             self.maximize,
             self.palette,
             self.hide_panels,
@@ -131,6 +135,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         projection: consume(input, "view.projection.toggle"),
         grid_snap: consume(input, "view.snaps.grid"),
         measure: consume(input, "sketch.measure.length"),
+        niche: consume(input, "furniture.panels.void"),
         maximize: consume(input, "view.layout.maximize"),
         palette: consume(input, furnicraft_ui::inventory::PALETTE_OPEN),
     })

@@ -52,18 +52,17 @@ impl Editor {
             .traits()
             .and_then(|traits| traits.fill())
             .ok_or_else(|| Message::FillNeedsFillTrait.text(lang).to_owned())?;
-        self.mesh_edit = None;
-        self.contour_edit = None;
-        self.drawing = None;
-        self.pending_primitive = None;
-        self.box_draft = None;
-        self.measure = None;
+        self.leave_pointer_modes();
         self.fill = Some(FillArm { class, fill, mode });
         Ok(())
     }
 
     /// Drops the empty-space tool; the next click selects again.
+    ///
+    /// The niche the pointer measured belonged to this arm, so the value goes with it: a fill and the
+    /// report row read one atom, and neither keeps a space the tool left (ADR 0118).
     pub fn cancel_fill(&mut self) {
         self.fill = None;
+        self.void.clear();
     }
 }

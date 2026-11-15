@@ -166,6 +166,13 @@ impl Editor {
             NodeAction::OpenProduct { node } => {
                 self.open_product(session, node);
             }
+            NodeAction::ArmVoid { product } => {
+                // Opening first is what gives the tool a product to point into; the arm itself is
+                // view state and writes nothing (ADR 0098, 0118).
+                if self.open_product(session, product) {
+                    self.arm_void();
+                }
+            }
             NodeAction::CloseProduct => self.close_product(session),
             NodeAction::Duplicate { node } => {
                 let params = json(&NodeDuplicate { node })?;

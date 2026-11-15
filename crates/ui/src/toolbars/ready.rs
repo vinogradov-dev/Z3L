@@ -193,6 +193,17 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::Measure),
         },
+        ToolKind::Void => Ready {
+            // A niche belongs to the open product (ADR 0098), and naming it needs nothing else: no
+            // material, no selection and no document write (ADR 0118).
+            enabled: product_open,
+            armed: is_armed(active, kind),
+            hint: tool_hint(
+                if product_open { tool.label.text(lang) } else { Message::FillNeedsProduct.text(lang) },
+                tool.key(),
+            ),
+            action: product_open.then_some(ToolAction::Void),
+        },
         ToolKind::GridSnap => Ready {
             enabled: owns_view,
             armed: grid,

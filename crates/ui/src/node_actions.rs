@@ -57,6 +57,13 @@ pub enum NodeAction {
     OpenProduct {
         node: Id,
     },
+    /// Opens this product and arms the niche tool, so the next pointer names the empty space inside
+    /// it (ADR 0118).
+    ///
+    /// The arm is a read: it writes no field, no revision and no undo entry.
+    ArmVoid {
+        product: Id,
+    },
     /// Leaves the open product, so no product receives new parts.
     CloseProduct,
     Duplicate {
@@ -268,6 +275,9 @@ fn container_of(project: &Project, subject: Subject) -> Option<&Container> {
 /// draws and a row that has no action here would be a missing entry, not a refused one.
 fn action_of(id: &str, node: Id, container: Option<&Container>, source: &MenuSource<'_>) -> Option<NodeAction> {
     Some(match id {
+        // The niche is a read inside the open product, so the entry only appears on a product the
+        // menu can open; every other container is skipped rather than refused (ADR 0098, 0118).
+        "probe.void" if container.is_some_and(Container::is_product) => NodeAction::ArmVoid { product: node },
         "node.duplicate" => NodeAction::Duplicate { node },
         "node.delete" => NodeAction::Delete { node },
         "node.group" if source.selection.len() >= 2 && source.project.validate_group(source.selection).is_ok() => {
@@ -424,7 +434,7 @@ impl ViewportMenu {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::testing::sample_project;
+    use furnicraft_model::testing::{sample_product_project, sample_project};
     use furnicraft_model::{CameraProjection, Placement};
 
     use super::*;
@@ -565,10 +575,10 @@ mod tests {
     fn every_context_menu_row_is_reachable_from_some_node() {
         // The table and the menu agree in both directions: an id declared for a context menu that
         // this module cannot run would be an entry that exists nowhere.
-        let mut project = sample_project();
+        let (mut project, product) = sample_product_project();
         let group = project.group_nodes(&[id(2), id(3)], "Group").expect("the sample nodes group");
         let flags = ViewFlags::default();
-        let subjects = [Subject::Node(id(2)), Subject::Node(id(3)), Subject::Node(group)];
+        let subjects = [Subject::Node(id(2)), Subject::Node(id(3)), Subject::Node(group), Subject::Node(product)];
         for row in inventory::in_place(Place::ContextMenu) {
             assert!(
                 subjects.iter().any(|subject| {
@@ -578,6 +588,22 @@ mod tests {
                 row.id
             );
         }
+    }
+
+    #[test]
+    fn a_product_offers_the_niche_and_a_panel_does_not() {
+        // The niche is a read inside the open product: the entry arms the tool, so a product offers
+        // it and every other container kind — a panel, a group — never (ADR 0098, 0118).
+        let (project, product) = sample_product_project();
+        let flags = ViewFlags::default();
+        let product_menu = menu(&project, &flags, &[product], Subject::Node(product));
+        let entry =
+            product_menu.iter().find(|entry| entry.id == Some("probe.void")).expect("a product offers its niche");
+        assert_eq!(entry.label, Message::ToolVoid);
+        assert!(entry.enabled);
+        assert_eq!(entry.action, NodeAction::ArmVoid { product });
+        let panel_menu = menu(&project, &flags, &[id(2)], Subject::Node(id(2)));
+        assert!(panel_menu.iter().all(|entry| entry.id != Some("probe.void")), "a panel owns no void to name");
     }
 
     #[test]

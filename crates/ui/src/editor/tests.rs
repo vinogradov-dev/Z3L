@@ -2033,6 +2033,127 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
 }
 
 #[test]
+fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
+    // U99, ADR 0118: the niche is an atom with its own arm. Arming it leaves a running draft, the
+    // fill and its own measurement behind; dropping it writes nothing because it never wrote.
+    let (mut session, _product) = fill_session();
+    let mut editor = Editor::new();
+    editor.start_drawing(DrawTool::Line);
+    editor.arm_void();
+    assert!(editor.void_armed(), "the niche owns the pointer");
+    assert!(editor.drawing().is_none(), "arming it leaves the running draft");
+    editor.arm_fill(&session, ClassCode::HORIZONTAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the shelf");
+    assert!(!editor.void_armed(), "a fill replaces the niche tool");
+    assert!(editor.fill_arm().is_some());
+    editor.toggle_void();
+    assert!(editor.void_armed() && editor.fill_arm().is_none(), "the niche cell toggles the tool");
+    editor.toggle_void();
+    assert!(!editor.void_armed(), "a second press drops it");
+
+    // The key and the cell land in the same place: the editor's own toggle.
+    let mut editor = Editor::new();
+    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell arms");
+    assert!(editor.void_armed());
+    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell drops");
+    assert!(!editor.void_armed());
+}
+
+#[test]
+fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
+    // The atom is measured once and every consumer reads the same cell: the fill plan behind both
+    // builds and the values a surface prints come from one answer, never a second probe (ADR 0118).
+    // An empty product of 600 x 560 x 720 mm, so the cell's sides are the envelope's own numbers.
+    let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+    let product = project
+        .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+        .expect("a product");
+    let mut editor = Editor::new();
+    editor.arm_void();
+    let point = furnicraft_geom::DVec3::new(300.0, 280.0, 360.0);
+    assert!(editor.void_measure(&project, point), "the pointer measures the void");
+    let niche = editor.void().niche().expect("the point is inside the open product").clone();
+    assert_eq!(niche.product, product);
+    assert_eq!(
+        editor.void().size(),
+        Some([millimetres(600), millimetres(560), millimetres(720)]),
+        "the report row prints the cell's three sides"
+    );
+
+    // The fill plans its part from the cell the atom holds, and the plan names the same void.
+    for (fill, mode) in [
+        (furnicraft_model::Fill::WidthAndDepth, FillMode::Fit),
+        (furnicraft_model::Fill::HeightAndDepth, FillMode::Shape),
+    ] {
+        let plan = project
+            .fill_plan_in(&niche, product, furnicraft_model::FillRequest::new(point, fill, mode, millimetres(18), None))
+            .expect("a part fills the measured cell");
+        assert_eq!(plan.niche, niche, "the plan is built from the atom's cell, not a second measurement");
+    }
+
+    // The two entry points agree: the plan from the atom is the plan the direct query answers.
+    let direct = project
+        .fill_plan(
+            product,
+            furnicraft_model::FillRequest::new(
+                point,
+                furnicraft_model::Fill::WidthAndDepth,
+                FillMode::Fit,
+                millimetres(18),
+                None,
+            ),
+        )
+        .expect("the direct query plans the same part");
+    let from_atom = project
+        .fill_plan_in(
+            &niche,
+            product,
+            furnicraft_model::FillRequest::new(
+                point,
+                furnicraft_model::Fill::WidthAndDepth,
+                FillMode::Fit,
+                millimetres(18),
+                None,
+            ),
+        )
+        .expect("the atom plans the same part");
+    assert_eq!(direct, from_atom, "one cell, one plan");
+
+    // The fill's own arm feeds the same atom: the pointer names one cell whichever of the two
+    // tools owns it, which is what lets the ribbon's niche row and the fill cell disagree about
+    // nothing.
+    let (session, product) = fill_session();
+    let mut editor = Editor::new();
+    editor.arm_fill(&session, ClassCode::HORIZONTAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the shelf");
+    let project = session.project();
+    let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+    let half = furnicraft_geom::DVec3::new(
+        envelope.x().millimetres_f64() / 2.0,
+        envelope.y().millimetres_f64() / 2.0,
+        envelope.z().millimetres_f64() / 2.0,
+    );
+    let point = project.world_placement(product).expect("a frame").transform_point(half);
+    assert!(editor.void_measure(project, point), "the fill tool feeds the same atom");
+    let fill_niche = editor.void().niche().expect("the fill's pointer names the void").clone();
+    let plan = project
+        .fill_plan_in(
+            &fill_niche,
+            product,
+            furnicraft_model::FillRequest::new(
+                point,
+                furnicraft_model::Fill::WidthAndDepth,
+                FillMode::Fit,
+                millimetres(18),
+                None,
+            ),
+        )
+        .expect("the fill plans from the cell its own pointer measured");
+    assert_eq!(plan.niche, fill_niche, "the fill's ghost and the report row read one value");
+}
+
+#[test]
 fn a_second_click_on_the_armed_cell_drops_the_empty_space_tool() {
     let (mut session, _product) = fill_session();
     let mut editor = Editor::new();

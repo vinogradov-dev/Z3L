@@ -40,23 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
-  Why: The owner example: the geometry of the empty space was written for one tool, and a
-   mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
-   niche inside the fill arm, so no other tool can ask for one and a report or the assistant
-   has no way to name the space.
-  Shape: One niche atom (`probe.void`) in `crates/ui/src` with its own arm, cursor, ghost and
-   cancel, returning the cell from the model probe (0103, 0106, 0109); a ribbon row in the
-   Furniture tab with a `Context` place and a key. Fill becomes its first consumer and reads
-   the identical value, so the ghost and the entry stay one code path. A second consumer proves
-   the atom: the inspector or a report row names the niche the pointer holds. No document write
-   and no second probe.
-  Done: The niche tool arms from the ribbon and from the fill own affordance, and both return
-   the same cell for the same pointer; a test calls the atom once and asserts fill and the
-   inspector see the same value; cancelling either leaves no document change; `plan/map.md`
-   gains the atom row; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
@@ -89,6 +72,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
+  Why: The owner example: the geometry of the empty space was written for one tool, and a
+   mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
+   niche inside the fill arm, so no other tool can ask for one and a report or the assistant
+   has no way to name the space.
+  Shape: One niche atom (`probe.void`) in `crates/ui/src` with its own arm, cursor, ghost and
+   cancel, returning the cell from the model probe (0103, 0106, 0109); a ribbon row in the
+   Furniture tab with a `Context` place and a key. Fill becomes its first consumer and reads
+   the identical value, so the ghost and the entry stay one code path. A second consumer proves
+   the atom: the inspector or a report row names the niche the pointer holds. No document write
+   and no second probe.
+  Done: The niche tool arms from the ribbon and from the fill own affordance, and both return
+   the same cell for the same pointer; a test calls the atom once and asserts fill and the
+   inspector see the same value; cancelling either leaves no document change; `plan/map.md`
+   gains the atom row; `cargo xtask ci` is green.
+  `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs` — `ada0639`
 
 - `[x]` **T8** the P2 and P4 accents separate from the model and scene inks
   Why: The P2 azure accent is 7.2/8.6 Delta E from the model blue and the P4 mint accent is

@@ -22,25 +22,22 @@
 //! The ghost is shell paint, not the session preview overlay: an overlay entry is keyed by the id of
 //! a node the document holds (ADR 0093), and a part that does not exist yet has none.
 //!
-//! The point the niche is measured from is the one the maker points at: the ray through the pointer
-//! enters the product's own envelope, which is a turned box and never its world bounds, and the
-//! first surface it meets after that gives the face the niche belongs to (ADR 0109). A pointer that
-//! hits the back wall measures the void in front of it; one that hits nothing inside measures the
-//! whole product.
+//! The niche itself is not measured here: it comes from the one atom every tool that names a void
+//! reads ([`furnicraft_ui::Void`], ADR 0118), so a fill and a report row cannot describe two
+//! different spaces for one pointer. This module only turns the cell into the part a click would
+//! create, and the point it was measured at is the atom's own cursor rule
+//! ([`furnicraft_ui::pointer_point`]).
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use furnicraft_geom::DVec3;
 use furnicraft_model::{
     EdgeBevel, Fill, FillMode, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, Placement, Project,
 };
-use furnicraft_scene::{Camera, Ray};
+use furnicraft_scene::Camera;
 use furnicraft_ui::theme;
 use furnicraft_units::Length;
 
 use crate::gizmo_math::screen_point;
-
-/// How far the pointer may move, in millimetres, before the problem is measured again.
-const MEASURE_STEP_MM: f64 = 0.5;
 
 /// The panel the next click would create.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,16 +100,28 @@ fn midpoint(points: &[DVec3]) -> Option<DVec3> {
     middle.is_finite().then_some(middle)
 }
 
+/// What the ghost was planned from: the cell, the pointer and the tool's own numbers.
+///
+/// A plan is rebuilt only when one of these changed, so a still pointer over a still void re-plans
+/// nothing; the cell is compared as a value because the atom owns the measurement, not this module.
+#[derive(Clone, Debug, PartialEq)]
+struct PlanKey {
+    niche: Niche,
+    point: DVec3,
+    fill: Fill,
+    mode: FillMode,
+    thickness: Length,
+    free: Option<f64>,
+}
+
 /// The empty-space tool's live state: the ghost, or the reason there is none.
 #[derive(Debug, Default)]
 pub(crate) struct FillGizmo {
     ghost: Option<FillGhost>,
     refusal: Option<String>,
-    /// The point, the fill and the exact free coordinate the ghost was measured at, so a still
-    /// pointer re-measures nothing.
-    measured: Option<(Id, DVec3, Fill, Length, Option<f64>)>,
-    /// The mode the ghost was measured in; picking the other method measures again at once.
-    mode: FillMode,
+    /// The cell, the point and the numbers the ghost was planned from, so a still pointer over a
+    /// still void plans nothing.
+    measured: Option<PlanKey>,
 }
 
 impl FillGizmo {
@@ -128,43 +137,35 @@ impl FillGizmo {
         self.ghost.as_ref()
     }
 
-    /// The point the ghost was last measured at, or `None` when nothing was.
+    /// Plans the part a click would create in `niche` and records the ghost, unless nothing moved.
     ///
-    /// A distance field floats over the scene, and a pointer on it is chrome: the ghost keeps the
-    /// point it was measured at instead of jumping to the field's own position.
-    pub(crate) fn measured_point(&self) -> Option<DVec3> {
-        self.measured.map(|(_, point, ..)| point)
-    }
-
-    /// Measures the void around `point` and records the ghost, unless nothing moved.
-    ///
-    /// Returns whether the ghost or the refusal changed, so the caller can ask for a repaint.
+    /// The cell comes from the niche atom, so this call is the fill's reading of one measurement
+    /// rather than a second probe (ADR 0118). Returns whether the ghost or the refusal changed, so
+    /// the caller can ask for a repaint.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn hover(
         &mut self,
         project: &Project,
         product: Id,
         point: DVec3,
+        niche: &Niche,
         fill: Fill,
         mode: FillMode,
         thickness: Length,
         free: Option<f64>,
     ) -> bool {
-        if self.measured.is_some_and(
-            |(measured_product, measured_point, measured_fill, measured_thickness, measured_free)| {
-                measured_product == product
-                    && measured_fill == fill
-                    && measured_thickness == thickness
-                    && measured_free == free
-                    && (measured_point - point).length() < MEASURE_STEP_MM
-            },
-        ) && self.mode == mode
-        {
+        if self.measured.as_ref().is_some_and(|key| {
+            key.niche == *niche
+                && key.point == point
+                && key.fill == fill
+                && key.mode == mode
+                && key.thickness == thickness
+                && key.free == free
+        }) {
             return false;
         }
-        self.measured = Some((product, point, fill, thickness, free));
-        self.mode = mode;
-        match plan_at(project, product, point, fill, mode, thickness, free) {
+        self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, thickness, free });
+        match plan_at(project, product, point, niche, fill, mode, thickness, free) {
             Ok(ghost) => {
                 self.ghost = Some(ghost);
                 self.refusal = None;
@@ -175,6 +176,19 @@ impl FillGizmo {
             }
         }
         true
+    }
+
+    /// Records that the pointer names no void at all, and says why.
+    ///
+    /// The atom's own refusal is the sentence: the pointer left the open product, or the space it
+    /// points at is not one cell. A `None` sentence drops the ghost silently, which is what a frame
+    /// with no resolved point wants.
+    pub(crate) fn refuse(&mut self, reason: Option<String>) -> bool {
+        let changed = self.ghost.is_some() || self.refusal.is_some();
+        self.ghost = None;
+        self.refusal = reason;
+        self.measured = None;
+        changed
     }
 
     /// Paints the ghost's wireframe and the three sizes, in the theme's accent.
@@ -249,9 +263,11 @@ fn widest_edge(points: &[DVec3], axis: DVec3) -> Option<usize> {
     best.map(|(_, index)| index)
 }
 
-/// Measures the void at `point` and answers the part a click would create, fitted.
+/// Plans the void `niche` at `point` and answers the part a click would create, fitted.
 ///
-/// The test-only entry point: the shell always knows the mode its cell runs.
+/// The test-only entry point: the shell always knows the mode its cell runs. The cell comes from the
+/// niche atom in the shipped path; a test measures the same cell directly to keep the assertion about
+/// the plan and not about the pointer.
 #[cfg(test)]
 pub(crate) fn plan(
     project: &Project,
@@ -260,25 +276,32 @@ pub(crate) fn plan(
     fill: Fill,
     thickness: Length,
 ) -> Result<FillGhost, String> {
-    plan_at(project, product, point, fill, FillMode::Fit, thickness, None)
+    let niche = project.niche(point).map_err(|refusal| match refusal {
+        furnicraft_model::NicheRefusal::Outside => refusal_sentence(FillRefusal::Outside),
+        furnicraft_model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
+    })?;
+    plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None)
 }
 
-/// Measures the void at `point` in `mode` and answers the part a click would create.
+/// Plans the part a click would create in `niche` and answers the wireframe the maker sees.
 ///
-/// The measurement is the model's ([`furnicraft_model::Project::fill_plan`]); this function only
-/// turns the answer into the wireframe the maker sees: the plan's base polygon on both faces, in
-/// the world, and the two faces the distance fields measure. `free` pins the free-axis position —
-/// a typed distance fixes it, the pointer drives it otherwise (ADR 0103).
+/// The measurement is the atom's ([`furnicraft_ui::Void`]); this function only turns the answer into
+/// the plan's base polygon on both faces, in the world, and the two faces the distance fields
+/// measure. `free` pins the free-axis position — a typed distance fixes it, the pointer drives it
+/// otherwise (ADR 0103).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_at(
     project: &Project,
     product: Id,
     point: DVec3,
+    niche: &Niche,
     fill: Fill,
     mode: FillMode,
     thickness: Length,
     free: Option<f64>,
 ) -> Result<FillGhost, String> {
-    let plan = project.fill_plan(product, point, fill, mode, thickness, free).map_err(refusal_sentence)?;
+    let request = furnicraft_model::FillRequest::new(point, fill, mode, thickness, free);
+    let plan = project.fill_plan_in(niche, product, request).map_err(refusal_sentence)?;
     let parent_world = project.world_placement(product).ok_or_else(|| "The open product has no frame.".to_owned())?;
     let world_placement = Placement::compose(parent_world, plan.placement)
         .map_err(|_| "The part cannot be placed in the open product.".to_owned())?;
@@ -354,91 +377,6 @@ fn label(ui: &Ui, painter: &egui::Painter, position: Pos2, text: &str) {
     painter.galley(rect.center() - galley.size() * 0.5, galley, theme::text(ui));
 }
 
-/// How far inside the product the measured point is moved, in millimetres.
-///
-/// The envelope is a boundary, and a probe that starts exactly on it sees a zero-length face; one
-/// micrometre of the document's own resolution puts the point in the free space without moving the
-/// measurement a maker could see.
-const ENTRY_INSET_MM: f64 = 1.0e-3;
-
-/// How far off a surface the measured point rests, in millimetres.
-///
-/// A face is the wall of the void, so the point sits a micrometre on the free side of it. The same
-/// resolution keeps a probe from starting on the face it just measured (ADR 0109).
-const FACE_INSET_MM: f64 = 1.0e-3;
-
-/// The point in the open product the pointer points at, in world millimetres.
-///
-/// The ray enters the product's authored envelope — taken in the product's own frame, because a
-/// turned piece is not its world bounds — and then meets the first surface inside it. That face is
-/// what the maker sees under the cursor, so the void is measured a micrometre in front of it; a ray
-/// that meets nothing but the envelope answers the entry point, which is the whole reserved space.
-/// A pointer outside the product answers `None`.
-pub(crate) fn pointer_point(project: &Project, product: Id, ray: Ray) -> Option<DVec3> {
-    let envelope = project.container(product)?.envelope()?;
-    let size =
-        DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
-    if !size.is_finite() || size.min_element() <= 0.0 {
-        return None;
-    }
-    let placement = project.world_placement(product)?;
-    let inverse = placement.inverse().ok()?;
-    let origin = inverse.transform_point(ray.origin());
-    let direction = inverse.transform_vector(ray.direction());
-    let entry = box_entry(origin, direction, DVec3::ZERO, size)?;
-    let local_entry = if entry <= 0.0 { origin } else { origin + direction * entry };
-    let world_entry = placement.transform_point(local_entry);
-    if !world_entry.is_finite() {
-        return None;
-    }
-    let Some(step) = ray.direction().try_normalize() else {
-        return Some(world_entry);
-    };
-    let inside = world_entry + step * ENTRY_INSET_MM;
-    let Some(probe) = project.probe(inside, ray.direction()) else {
-        return Some(inside);
-    };
-    // The envelope's own far face means the ray crossed the whole void: the entry point is the
-    // measurement. Anything else is a surface the maker is looking at, and the free space is on
-    // the side the ray came from.
-    if probe.hit.kind == furnicraft_model::SurfaceKind::Envelope || probe.distance_mm <= ENTRY_INSET_MM {
-        return Some(inside);
-    }
-    let point = probe.face.point + probe.face.normal * FACE_INSET_MM;
-    point.is_finite().then_some(point)
-}
-
-/// The distance at which a ray enters a box, or the origin's own distance when it starts inside.
-///
-/// This is the cursor's resting place in the void: the face of the reserved space the maker is
-/// pointing at. A ray that misses the box answers `None`.
-fn box_entry(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<f64> {
-    if !origin.is_finite() || !direction.is_finite() {
-        return None;
-    }
-    let mut enter = f64::NEG_INFINITY;
-    let mut exit = f64::INFINITY;
-    for axis in 0..3 {
-        let step = direction[axis];
-        let low = min[axis];
-        let high = max[axis];
-        if step.abs() <= 1.0e-9 {
-            if origin[axis] < low || origin[axis] > high {
-                return None;
-            }
-            continue;
-        }
-        let first = (low - origin[axis]) / step;
-        let second = (high - origin[axis]) / step;
-        enter = enter.max(first.min(second));
-        exit = exit.min(first.max(second));
-    }
-    if exit < enter || exit < 0.0 {
-        return None;
-    }
-    Some(enter.max(0.0))
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -469,6 +407,11 @@ mod tests {
             .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
             .expect("a product");
         (project, id)
+    }
+
+    /// The cell the pointer at `point` names, as the atom would answer it.
+    fn niche_at(project: &Project, point: DVec3) -> Niche {
+        project.niche(point).expect("the point names a void")
     }
 
     /// Whether every corner of the ghost lies inside the void it was measured against.
@@ -602,10 +545,12 @@ mod tests {
     #[test]
     fn a_shelf_in_a_splayed_void_takes_the_trapezoid_outline() {
         let (project, product) = splayed_piece();
+        let point = DVec3::new(300.0, 280.0, 360.0);
         let ghost = plan_at(
             &project,
             product,
-            DVec3::new(300.0, 280.0, 360.0),
+            point,
+            &niche_at(&project, point),
             Fill::WidthAndDepth,
             FillMode::Shape,
             millimetres(18),
@@ -713,61 +658,15 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_enters_the_envelope_at_its_near_face() {
-        let (project, product) = piece();
-        let ray = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the ray enters the piece");
-        assert!((point.x - 300.0).abs() < 1e-9 && (point.z - 300.0).abs() < 1e-9, "was {point:?}");
-        assert!((0.0..0.01).contains(&point.y), "a micrometre inside the near face: {point:?}");
-        let inside = Ray::new(DVec3::new(300.0, 280.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, inside).expect("a camera inside starts where it is");
-        assert!((point.y - 280.0).abs() < 0.01, "was {point:?}");
-        let missing = Ray::new(DVec3::new(-50.0, -1000.0, 300.0), -DVec3::Y).expect("a ray");
-        assert_eq!(pointer_point(&project, product, missing), None);
-    }
-
-    #[test]
-    fn the_pointer_measures_from_the_face_it_points_at() {
-        let (mut project, product) = piece();
-        // The back wall's inner face is at y = 542; the ray crosses the open front and stops there.
-        leaned_wall(&mut project, product, 542.0, 0.0);
-        let ray = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the face is in the piece");
-        assert!((point.y - 541.999).abs() < 0.01, "the point rests in front of the wall: {point:?}");
-        let ghost = plan(&project, product, point, Fill::WidthAndDepth, millimetres(18)).expect("a shelf");
-        assert!(ghost.nominal_size.length().millimetres_f64() <= 600.0);
-        assert!(ghost.niche.local_max().y <= 542.0, "the niche ends at the wall: {:?}", ghost.niche);
-    }
-
-    #[test]
-    fn a_turned_product_is_entered_through_its_own_box() {
-        let (mut project, product) = piece();
-        let turn = Placement::IDENTITY
-            .with_rotation_euler(furnicraft_model::EulerAngles {
-                z: furnicraft_units::Degrees::from_millidegrees(90_000),
-                ..furnicraft_model::EulerAngles::default()
-            })
-            .expect("a turn");
-        project.set_node_placement(product, turn).expect("turn the piece");
-        let world = |x: f64, y: f64, z: f64| turn.transform_point(DVec3::new(x, y, z));
-        // The piece now spans x in [-560, 0] and y in [0, 600], so a ray at x = -500 points into it.
-        let ray = Ray::new(world(300.0, -500.0, 300.0), turn.transform_vector(DVec3::Y)).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the turned piece is entered");
-        let local = turn.inverse().expect("an inverse").transform_point(point);
-        assert!((0.0..0.01).contains(&local.y), "a micrometre inside the piece's own face: {local:?}");
-        // A ray aimed at the world bounds but outside the turned box has no point at all.
-        let outside = Ray::new(DVec3::new(10.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        assert_eq!(pointer_point(&project, product, outside), None);
-    }
-
-    #[test]
     fn the_ghost_paints_its_wireframe_and_three_sizes_offscreen() {
         let (project, product) = piece();
         let mut gizmo = FillGizmo::default();
+        let point = DVec3::new(300.0, 280.0, 360.0);
         assert!(gizmo.hover(
             &project,
             product,
-            DVec3::new(300.0, 280.0, 360.0),
+            point,
+            &niche_at(&project, point),
             Fill::WidthAndDepth,
             FillMode::Fit,
             millimetres(18),
@@ -785,10 +684,12 @@ mod tests {
         let (mut project, product) = piece();
         leaned_wall(&mut project, product, 560.0, 10.0);
         let mut gizmo = FillGizmo::default();
+        let point = DVec3::new(300.0, 280.0, 360.0);
         assert!(gizmo.hover(
             &project,
             product,
-            DVec3::new(300.0, 280.0, 360.0),
+            point,
+            &niche_at(&project, point),
             Fill::WidthAndDepth,
             FillMode::Shape,
             millimetres(18),
@@ -818,10 +719,12 @@ mod tests {
     fn a_shaped_ghost_paints_its_polygon_offscreen() {
         let (project, product) = splayed_piece();
         let mut gizmo = FillGizmo::default();
+        let point = DVec3::new(300.0, 280.0, 360.0);
         assert!(gizmo.hover(
             &project,
             product,
-            DVec3::new(300.0, 280.0, 360.0),
+            point,
+            &niche_at(&project, point),
             Fill::WidthAndDepth,
             FillMode::Shape,
             millimetres(18),

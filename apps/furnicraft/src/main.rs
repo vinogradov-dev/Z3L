@@ -55,6 +55,7 @@ mod ui_shots;
 mod vertex_gizmo;
 mod view_cluster;
 mod view_layout;
+mod void_gizmo;
 mod work_cursor;
 
 use std::path::Path;
@@ -896,6 +897,9 @@ impl FurniCraftApp {
             }
             if shortcuts.measure {
                 self.tabs.active_mut().toggle_measure(ui.ctx());
+            }
+            if shortcuts.niche {
+                self.tabs.active_mut().toggle_void(ui.ctx());
             }
             if shortcuts.hide_panels {
                 self.shell.panels.toggle_hide_all();

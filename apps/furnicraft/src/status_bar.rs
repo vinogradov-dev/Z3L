@@ -16,7 +16,7 @@ use eframe::egui;
 use furnicraft_model::{Catalog, Geometry, Id, Node, Project};
 use furnicraft_scene::Projection;
 use furnicraft_text::{Lang, Message};
-use furnicraft_ui::{DrawTool, MeasureStage, MeshElement, theme};
+use furnicraft_ui::{DrawTool, MeasureStage, MeshElement, VoidRefusal, theme};
 use furnicraft_units::Length;
 
 use crate::document::Document;
@@ -39,6 +39,8 @@ struct StatusInfo {
     primitive: Option<(furnicraft_engine::PrimitiveKind, Length)>,
     /// The armed ruler: the step it waits for and the length it shows, if it has one.
     measure: Option<(MeasureStage, Option<Length>)>,
+    /// The armed niche: the cell's three sides, or the reason the pointer names none.
+    void: Option<Result<[Length; 3], VoidRefusal>>,
     grid: bool,
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
@@ -341,6 +343,12 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         hint(ui, words.text(lang));
         return (None, None);
     }
+    if info.void.is_some() {
+        // The niche is a read with no step and no button: the left zone says what to point at and
+        // the centre zone names the space, so the two never compete for the row (ADR 0118).
+        hint(ui, Message::VoidHint.text(lang));
+        return (None, None);
+    }
     if let Some(mode) = info.navigation {
         ui.label(Message::NavigationStatus.with(lang, [mode.name().text(lang)]));
         let done = ui.button(Message::DoneEsc.text(lang)).clicked();
@@ -462,6 +470,9 @@ fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
                         theme::divider(ui);
                         status_measure_ui(ui, stage, length, lang);
                     }
+                } else if let Some(void) = &info.void {
+                    theme::divider(ui);
+                    status_void_ui(ui, void, lang);
                 } else if !info.summary.is_empty() {
                     theme::divider(ui);
                     status_center_ui(ui, &info.summary, lang);
@@ -487,6 +498,21 @@ fn status_measure_ui(ui: &mut egui::Ui, stage: MeasureStage, length: Length, lan
     if stage == MeasureStage::Measured {
         response.on_hover_text(Message::MeasureAgain.text(lang));
     }
+}
+
+/// The centre zone while the niche tool runs: the cell under the pointer, or why it has no name.
+///
+/// One label, like the ruler's: the three sides of the cell the fill tools, the ghost and this row
+/// all read from one value (ADR 0118), and a pointer that names no space says so instead of leaving
+/// the row empty.
+fn status_void_ui(ui: &mut egui::Ui, void: &Result<[Length; 3], VoidRefusal>, lang: Lang) {
+    let text = match void {
+        Ok([length, width, height]) => {
+            Message::VoidSize.with(lang, [Message::StatusSize.with(lang, [length, width, height])])
+        }
+        Err(refusal) => refusal.words().text(lang).to_owned(),
+    };
+    ui.label(egui::RichText::new(text).strong());
 }
 
 /// The centre zone: the selection's context, elided to the width it is given.
@@ -580,6 +606,11 @@ impl Document {
             preview_error: self.draw_gizmo.preview_error().map(str::to_owned),
             primitive: self.editor.pending_primitive(),
             measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
+            // The report row reads the same atom the fill ghost and the part are built from, never a
+            // second measurement of the space under the pointer (ADR 0118).
+            void: self.editor.void_armed().then(|| {
+                self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
+            }),
             grid: self.draw_gizmo.grid(),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
@@ -651,6 +682,7 @@ mod tests {
             preview_error: None,
             primitive: None,
             measure: None,
+            void: None,
             grid: true,
             mesh: None,
             navigation: None,

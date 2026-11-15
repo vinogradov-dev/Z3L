@@ -52,6 +52,7 @@ pub mod tool_card;
 pub mod toolbars;
 pub mod ui_scale;
 mod view_flags;
+mod void;
 
 pub use box_tool::{BoxBase, BoxDraft, BoxDraftError, BoxOwner, MIN_BOX_HEIGHT_MM};
 pub use contour_edit::{ContourDraft, ContourEdit, ContourTarget};
@@ -68,6 +69,7 @@ pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use tool_card::{ToolAction, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use view_flags::ViewFlags;
+pub use void::{Void, VoidRefusal, pointer_point};
 
 /// The `egui` memory key the shell publishes the workspace language under.
 ///
