@@ -40,26 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
-  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
-   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
-   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
-   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
-   for a tool parameters.
-  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
-   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
-   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
-   inspector shows the same values from the same draft, and both commit through the one
-   command. The exact-distance fields become the card first instance: one layout, one commit
-   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
-   clearing the field returns it to the pointer.
-  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
-   and a headless frame test finds the two never disagree; a press inside the card is chrome
-   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
-   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
-   `cargo xtask ci` is green.
-  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
@@ -128,6 +108,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
+  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
+   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
+   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
+   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
+   for a tool parameters.
+  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
+   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
+   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
+   inspector shows the same values from the same draft, and both commit through the one
+   command. The exact-distance fields become the card first instance: one layout, one commit
+   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
+   clearing the field returns it to the pointer.
+  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
+   and a headless frame test finds the two never disagree; a press inside the card is chrome
+   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
+   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs` — `01c7533`
 
 - `[x]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
   Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
