@@ -131,6 +131,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0123](0123-work-area-paint-sits-under-the-chrome.md) | Work-area paint sits under the chrome | Accepted |
 | [0124](0124-the-icon-language-is-v2.md) | The icon language is v2: a 24 grid, a 20 × 20 footprint and a seventh role | Accepted |
 | [0125](0125-an-accent-keeps-its-hue-distance-from-every-role-ink.md) | An accent keeps its hue distance from every role ink | Accepted |
+| [0126](0126-the-point-being-placed-shows-its-numbers-at-the-cursor.md) | The point being placed shows its numbers at the cursor, and one of them holds the keys | Accepted |
+| [0127](0127-a-sketch-has-two-guides.md) | A sketch has two guides: a construction line and a reference line | Accepted |
 
 ## Format
 
