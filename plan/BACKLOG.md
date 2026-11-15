@@ -89,6 +89,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T5** the drawing rules are a skill, and a dimension follows them
+  Why: Drawings and the tools that name them — dimensions, views, sections, exports — are being
+   designed from general CAD habit, so each session re-derives the GOST/ISO rules and the
+   dimension icons disagree about order, the radius angle and the arrow gaps. The knowledge
+   belongs in one place the next session reads.
+  Shape: A `drafting` skill under `.pi/skills/drafting`: the six dimension types and their
+   order, line weights, first-angle views, sections and furniture notes in two references; the
+   icon grammar (source `view`, result class, dimension `reference`, node gap, witness
+   extension) with the standards cited by number, not copied. `ui-design` and `draw-icon` route
+   to it.
+  Done: The skill and both references exist within the line budgets, `cargo xtask skills` names
+   no missing path, and the six dimension types plus the baseline and radius corrections are
+   written as rules a session can apply; `ui-design` and `draw-icon` name the skill; `cargo
+   xtask ci` is green.
+  `files: .pi/skills, .pi/skills/ui-design/SKILL.md, .pi/skills/draw-icon/SKILL.md` — `1ce501f`
+
 - `[x]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
   Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
    measure: the value on screen and in the status bar, several measurements in a row, each
