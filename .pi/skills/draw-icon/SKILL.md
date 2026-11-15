@@ -23,6 +23,9 @@ reviewing one; it does not apply to code that merely displays an icon.
 When they disagree, the guide wins on meaning and the README wins on format; fix the losing file in
 the same change. Read only the sections you need — the guide is long.
 
+A dimension, section or view icon also reads `.pi/skills/drafting/SKILL.md`: the drawing grammar
+decides the arrangement, the terminator and the order; the icon adds the air a 26 px glyph needs.
+
 `assets/icons/AUDIT.md` is evidence, not a rule: it records what the pipeline measures today and which
 alternatives were rejected, and is read when reconsidering the pipeline (ADR 0055), not before drawing
 an icon.

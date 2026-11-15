@@ -32,9 +32,9 @@ edge:        the awkward case — no selection, two objects, a locked node
 Four or five of these become our decision, written in our words, and recorded in an ADR when it is
 not reversible. "As in X" on its own is refused: it is a guess wearing a citation.
 
-## Two procedures this one calls
+## Procedures this one calls
 
-This skill owns the brief, the rubric and the invariants. Two parts of the work have their own
+This skill owns the brief, the rubric and the invariants. Three parts of the work have their own
 procedure, and the brief names which one it needs:
 
 - **Where the capability lives** — `place-capability` when an id or a place is added, renamed or
@@ -43,8 +43,11 @@ procedure, and the brief names which one it needs:
 - **How the operation behaves** — `design-operation` when a gesture or a mode appears: the state
   machine, the preview, the typed number, the cancel, the one undo entry, the feedback budget and the
   cursor. The five-line decomposition is the same one; that skill fills it in.
+- **What the drawing says** — `drafting` when a dimension, a view, a section, a drawing surface or an
+  icon that names one appears: the GOST/ISO grammar, the six dimension types and the icon rules that
+  follow them. A dimension icon that invents its own order is a drawing defect, not a style choice.
 
-Both end at a gate command; a change that needs neither is a layout or a wording change.
+Each ends at a gate command; a change that needs none of them is a layout or a wording change.
 
 ## Sources of truth
 
