@@ -739,6 +739,10 @@ messages! {
     ],
     DistanceLocked = ["Locked at {} mm", "Закреплено: {} мм"],
 
+    // ── The tool card ───────────────────────────────────────────────────────
+    ToolGapLow = ["Low gap", "Нижний зазор"],
+    ToolGapHigh = ["High gap", "Верхний зазор"],
+
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],
     HomeStartScene = ["Start a scene", "Начните сцену"],

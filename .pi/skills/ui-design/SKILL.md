@@ -1,6 +1,6 @@
 ---
 name: ui-design
-description: "Design and review FurniCraft's interface: a panel, dialog, toolbar cell, ribbon, popover, command bar, palette, icon, colour, spacing, wording, cursor, drag or keyboard behaviour. Use before changing anything under crates/ui or the app chrome in apps/furnicraft/src, and when judging whether a screen works for a furniture maker."
+description: "Design and review FurniCraft's interface: a panel, dialog, toolbar cell, ribbon, popover, tool card, palette, icon, colour, spacing, wording, cursor, drag or keyboard behaviour. Use before changing anything under crates/ui or the app chrome in apps/furnicraft/src, and when judging whether a screen works for a furniture maker."
 license: MIT
 compatibility: pi
 metadata:
@@ -95,7 +95,7 @@ fix the document in the same change (AGENTS §1, "if the hint is wrong, fix the 
 - Creation is armed, not modal: a tool arms, the next work-plane click creates, Esc disarms,
   a preview shows the result before the commit.
 - Surfaces: header and tabs, ribbon, scene tree and inspector panels (floating), view cluster,
-  command bar, status bar, command palette, Settings, Home. Their files and ADRs are listed in
+  tool card, status bar, command palette, Settings, Home. Their files and ADRs are listed in
   `references/surfaces.md`.
 - The person's work: overall size, panels and thickness, materials and grain, edge banding,
   hardware, holes and cutouts — millimetres, sheets, pieces.

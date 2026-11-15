@@ -1,6 +1,6 @@
 # 0093. A previewing operation fills a session overlay, not the document
 
-- Status: Accepted
+- Status: Accepted; the bar moved to the tool card beside the pointer (0119)
 - Date: 2026-11-12
 
 ## Context
@@ -51,10 +51,12 @@ rebuilds inside the budget never shows the message.
 
 - The extrusion pull previews the body itself at the pulled height instead of a wireframe stand-in:
   the user accepts the solid they saw, and the preview is the same evaluator the ✓ stores.
-- The command bar is a `crates/ui` widget because it reuses `Scrub`; the shell places it and hands it
-  the previewing operation's label, value, unit and range. The bar's rectangle is chrome: a press on
-  it is never a pick.
-- The view cluster moves up by the bar's height while a bar is up, so the two never overlap.
+- The check and the cross are a `crates/ui` widget because they reuse `Scrub`; the shell hands the
+  widget the previewing operation's label, value, unit and range, and its rectangle is chrome, so a
+  press on it is never a pick. ADR 0119 moved the surface from the viewport's bottom centre to a card
+  beside the pointer and gave the same rows to the inspector; the rule this record decides — a preview
+  fills the session overlay and one ✓ dispatches the one command — is unchanged, and the view cluster
+  keeps the bottom centre because the card no longer takes it.
 - A boolean, a fillet or any future feature operation plugs into the same overlay: it computes the
   geometry the node would have and sets one entry; the bar and the ✓ are already there. The ribbon's
   boolean tools stay `planned` until the operation itself exists.

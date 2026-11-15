@@ -39,8 +39,8 @@ use furnicraft_scene::{
 use furnicraft_text::Lang;
 use furnicraft_ui::settings::{Settings, ViewportSettings};
 use furnicraft_ui::{
-    BoxDraft, CommandBar, CommandBarAction, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor,
-    FieldPlacement, GripValue, MeshElement, Message, PaletteContext, Side, ViewFlags, command_bar,
+    BoxDraft, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue,
+    MeshElement, Message, PaletteContext, Side, ToolAction, ToolOutcome, ToolParam, ToolView, ViewFlags, tool_card,
 };
 use furnicraft_units::Length;
 
@@ -277,8 +277,16 @@ pub(crate) struct Document {
     scene_product: Option<Id>,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
-    /// The rectangle the command bar drew last frame, so a press on it is chrome and never a pick.
-    command_bar_rect: Option<egui::Rect>,
+    /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
+    tool_card_rect: Option<egui::Rect>,
+    /// The row of the tool card that takes the keyboard, consumed by the frame that draws it.
+    tool_focus: Option<ToolParam>,
+    /// The point the tool card hangs from, frozen while the pointer is on the card itself.
+    ///
+    /// A card that follows the pointer would move away from the hand reaching for its field: the
+    /// anchor is the last point in the scene, and it is kept while the pointer is over the card
+    /// (ADR 0119).
+    tool_card_anchor: Option<egui::Pos2>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
     /// It is view state of this document: the menu closes when the pointer picks outside it, when
@@ -309,8 +317,6 @@ pub(crate) struct Document {
     pub(crate) distance_fields: DistanceFields,
     /// The measurement the fields draw, rebuilt from the ghost every frame (ADR 0103).
     pub(crate) distances: Option<Distances>,
-    /// The plates the fields drew last frame, so a press on one is chrome and never a pick.
-    pub(crate) distance_rects: Vec<egui::Rect>,
     /// The exact distances of the translate drag in progress, measured once when it starts.
     move_distances: Option<MoveDistances>,
     /// The corner orientation widget, which owns the roll-ring drag across frames.
@@ -376,7 +382,9 @@ impl Document {
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
             rebuild: Rebuild::default(),
-            command_bar_rect: None,
+            tool_card_rect: None,
+            tool_focus: None,
+            tool_card_anchor: None,
             context_menu: furnicraft_ui::ViewportMenu::default(),
             scene_rect: None,
             session,
@@ -399,7 +407,6 @@ impl Document {
             box_grips: BoxGrips::default(),
             distance_fields: DistanceFields::default(),
             distances: None,
-            distance_rects: Vec::new(),
             move_distances: None,
             gizmo: gizmo::Gizmo::default(),
             highlighted: Vec::new(),
@@ -528,15 +535,25 @@ impl Document {
         }
     }
 
-    /// Draws the inspector's body.
+    /// Draws the inspector's body: the armed tool's parameters first, then the selection's card.
+    ///
+    /// The tool section draws the same rows the card at the pointer draws, from the same draft, and
+    /// the numbers it commits take the same path as the card's (ADR 0119).
     pub(crate) fn show_card(&mut self, ui: &mut egui::Ui) {
-        self.editor.show_card(ui, &mut self.session);
+        let mut tool = self.tool_view();
+        let reported = self.editor.show_card(ui, &mut self.session, tool.as_mut());
+        self.apply_tool_outcome(ui.ctx(), reported);
     }
 
-    /// Whether the command bar drew last frame, for the shot that looks at it.
+    /// Whether the tool card drew last frame, for the shot that looks at it.
     #[cfg(test)]
-    pub(crate) fn command_bar_is_up(&self) -> bool {
-        self.command_bar_rect.is_some()
+    pub(crate) fn tool_card_is_up(&self) -> bool {
+        self.tool_card_rect.is_some()
+    }
+
+    /// The rectangle of the armed tool's card, which the shell hands to `Chrome`.
+    pub(crate) const fn tool_card_rect(&self) -> Option<egui::Rect> {
+        self.tool_card_rect
     }
 
     /// Takes back one command and reports a refusal in the status bar.
@@ -1018,7 +1035,11 @@ impl Document {
         };
         let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
         if draft.is_pulling() {
-            if let (Some(pointer), Some(base)) = (pointer, draft.base())
+            // A focused field owns its number: while the maker types the height into the card, the
+            // pointer may not overwrite it, and leaving the field hands the height back to the
+            // hand (ADR 0119).
+            if !ui.ctx().text_edit_focused()
+                && let (Some(pointer), Some(base)) = (pointer, draft.base())
                 && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, base.corner, pointer)
                 && let Err(error) = self.editor.pull_box_height(height)
             {
@@ -1115,6 +1136,7 @@ impl Document {
         response: &egui::Response,
         rect: egui::Rect,
         arm: Option<furnicraft_ui::FillArm>,
+        card_before: Option<egui::Rect>,
         opacity: u32,
     ) {
         let Some(arm) = arm else {
@@ -1132,20 +1154,22 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
-        // A press or a hover on a field is chrome, so the viewport's own response calls it a miss;
-        // the field still belongs to this gesture, so the raw pointer measures through it.
-        let on_field = |pointer: egui::Pos2| self.distance_rects.iter().any(|rect| rect.contains(pointer));
+        // A press or a hover on the tool card is chrome, so the viewport's own response calls it a
+        // miss; the card still belongs to this gesture, so the raw pointer measures through it.
+        let on_field = |pointer: egui::Pos2| card_before.is_some_and(|card| card.contains(pointer));
         let pointer = response
             .hover_pos()
             .or_else(|| response.interact_pointer_pos())
             .or_else(|| ui.input(|input| input.pointer.hover_pos()).filter(|pointer| on_field(*pointer)));
+        let card_anchor = self.card_anchor(pointer, card_before);
         let point = pointer.and_then(|pointer| {
             let ray = gizmo_math::ray_to(pointer, rect, self.scene.camera);
             fill_gizmo::pointer_point(self.session.project(), product, ray)
         });
         let Some(point) = point.or_else(|| {
-            // The field sits outside the envelope's silhouette now and then; the gesture keeps the
-            // point it was measured at rather than dropping the ghost under the maker's cursor.
+            // The card sits beside the pointer now and then over the envelope's silhouette; the
+            // gesture keeps the point it was measured at rather than dropping the ghost under the
+            // maker's cursor.
             ui.input(|input| input.pointer.hover_pos())
                 .filter(|pointer| on_field(*pointer))
                 .and_then(|_| self.fill_gizmo.measured_point())
@@ -1160,12 +1184,12 @@ impl Document {
         }
         let Some(ghost) = self.fill_gizmo.ghost().cloned() else {
             self.distances = None;
-            self.distance_rects.clear();
+            self.tool_card_rect = None;
             return;
         };
         let Some(parent_world) = self.session.project().world_placement(product) else {
             self.distances = None;
-            self.distance_rects.clear();
+            self.tool_card_rect = None;
             return;
         };
         let axis = furnicraft_model::free_axis(arm.fill);
@@ -1181,7 +1205,7 @@ impl Document {
             }
             None => {
                 let Some(measured) = Distances::new(Some(low_wall), Some(high_wall), low_face, high_face) else {
-                    self.distance_rects.clear();
+                    self.tool_card_rect = None;
                     return;
                 };
                 measured
@@ -1189,7 +1213,7 @@ impl Document {
         };
         let (Some(low_point), Some(high_point)) = (ghost.low_face(), ghost.high_face()) else {
             self.distances = Some(distances);
-            self.distance_rects.clear();
+            self.tool_card_rect = None;
             return;
         };
         let axis_world = parent_world.transform_vector(unit);
@@ -1210,8 +1234,9 @@ impl Document {
                 .line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, furnicraft_ui::theme::text_dim(ui)));
             placements.push(FieldPlacement { side, position: middle_screen });
         }
-        let outcome: DistanceOutcome = self.distance_fields.show(ui, &mut distances, &placements, opacity);
-        self.distance_rects = outcome.rects;
+        let outcome: DistanceOutcome =
+            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity);
+        self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(furnicraft_ui::language(ui.ctx())).to_owned());
         }
@@ -1225,19 +1250,19 @@ impl Document {
         self.distances = Some(distances);
     }
 
-    /// Drops the empty-space ghost and the exact-distance fields that measured it.
+    /// Drops the empty-space ghost and the exact-distance card that measured it.
     fn reset_fill(&mut self, ctx: &egui::Context) {
         self.fill_gizmo.reset();
         self.distance_fields.dismiss(ctx);
         self.distances = None;
-        self.distance_rects.clear();
+        self.tool_card_rect = None;
     }
 
-    /// Whether this frame's press landed on a distance field rather than on the scene.
+    /// Whether this frame's press landed on the tool card rather than on the scene.
     fn distance_covers(&self, response: &egui::Response) -> bool {
         response
             .interact_pointer_pos()
-            .is_some_and(|pointer| self.distance_rects.iter().any(|rect| rect.contains(pointer)))
+            .is_some_and(|pointer| self.tool_card_rect.is_some_and(|card| card.contains(pointer)))
     }
 
     /// The world distance a typed move distance has fixed, relative to the drag's start.
@@ -1267,7 +1292,7 @@ impl Document {
             self.move_distances = self.measure_move(node, axis);
         }
         let Some(measure) = self.move_distances.as_mut() else {
-            self.distance_rects.clear();
+            self.tool_card_rect = None;
             return;
         };
         let direction = axis.direction();
@@ -1308,8 +1333,9 @@ impl Document {
             );
             placements.push(FieldPlacement { side, position });
         }
-        let outcome = self.distance_fields.show(ui, &mut measure.distances, &placements, opacity);
-        self.distance_rects = outcome.rects;
+        let anchor = ui.input(|input| input.pointer.hover_pos()).unwrap_or_else(|| rect.center());
+        let outcome = self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
+        self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(furnicraft_ui::language(ui.ctx())).to_owned());
         }
@@ -1322,7 +1348,7 @@ impl Document {
     fn clear_move_distances(&mut self, ctx: &egui::Context) {
         if self.move_distances.take().is_some() {
             self.distance_fields.dismiss(ctx);
-            self.distance_rects.clear();
+            self.tool_card_rect = None;
         }
     }
 
@@ -1358,109 +1384,149 @@ impl Document {
             .map(|_| ())
     }
 
-    /// Draws the command bar of the previewing operation and applies what it asked for.
+    /// Draws the armed tool's card at the pointer and applies what it asked for (ADR 0119).
     ///
-    /// The bar is the one surface a previewing operation talks to: its field drives the preview
-    /// live, the ✓ commits it with a single command and the ✕ drops it. A number that leaves the
-    /// field's range or cannot be parsed is refused by the field itself, so the preview keeps the
-    /// last height the document could hold.
-    fn show_command_bar(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
-        if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
-            self.show_box_bar(ui, viewport, opacity);
-            return;
-        }
-        let Some(object) = self.extrude_gizmo.object() else {
-            self.command_bar_rect = None;
+    /// A box's height and a pull's height are the two tools whose parameters sit at the hand: the
+    /// card's field drives the preview live, its ✓ commits it with a single command and its ✕ drops
+    /// it, and a number that leaves the field's range is refused by the field itself, so the preview
+    /// keeps the last height the document could hold. A niche's two gaps draw the same card from
+    /// `update_fill`, and the inspector draws the same rows from the same draft.
+    fn show_tool_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewport: egui::Rect,
+        pointer: Option<egui::Pos2>,
+        card_before: Option<egui::Rect>,
+        opacity: u32,
+    ) {
+        let Some(mut view) = self.height_view() else {
+            // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
+            // — and the rectangle is not this path's to clear.
             return;
         };
-        let Some(height) = self.extrude_gizmo.height() else {
-            self.command_bar_rect = None;
-            return;
-        };
-        let focus = self.extrude_gizmo.take_focus();
-        let mut millimetres = height.millimetres_f64();
-        let maximum = (furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres() / 1_000) as f64;
-        let outcome = command_bar::show(
-            ui,
-            viewport,
-            CommandBar {
-                label: Message::CmdSetExtrusionHeight,
-                value: &mut millimetres,
-                unit: "mm",
-                range: crate::extrude_gizmo::MIN_HEIGHT_MM..=maximum,
-                decimals: 3,
-                focus,
-            },
-            opacity,
-        );
-        // A press on the bar is chrome, exactly like a press on a panel: the bar floats over the
+        let anchor = self.card_anchor(pointer, card_before);
+        // A pull that just appeared takes the keyboard, so its height can be typed without a click;
+        // the flag is cleared by the read so the field never holds the focus against the next press.
+        let focus = self.tool_focus.take().or_else(|| self.extrude_gizmo.take_focus().then_some(ToolParam::Height));
+        let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity);
+        // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.
-        self.command_bar_rect = Some(outcome.rect);
-        // The field's number is the preview: a drag or a typed value shows the body at that height.
-        let whole = millimetres.round();
-        if let Some(next) = Length::from_millimetres(whole as i64)
-            && next != height
-            && let Err(error) = self.preview_extrude(object, next)
-        {
-            self.last_error = Some(error);
-        }
-        match outcome.action {
-            Some(CommandBarAction::Apply) => {
-                let height = self.extrude_gizmo.height().unwrap_or(height);
-                if let Err(error) = self.finish_extrude(object, height) {
-                    self.last_error = Some(error);
-                }
-            }
-            Some(CommandBarAction::Cancel) => self.cancel_extrude(),
-            None => {}
-        }
+        self.tool_card_rect = Some(rect);
+        self.apply_tool_outcome(ui.ctx(), reported);
     }
 
-    /// Draws the box height's command bar: its field pulls the ghost, ✓ commits the one command.
+    /// The point the card hangs from: the pointer, or the last scene point while the hand is on the
+    /// card.
     ///
-    /// The bar is the typed twin of the pointer pull (ADR 0101): a maker who knows the height types
-    /// it, and the ghost the field drives is the box the ✓ creates.
-    fn show_box_bar(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
-        let Some(height) = self.editor.box_draft().map(BoxDraft::height).filter(|height| height.is_positive()) else {
-            self.command_bar_rect = None;
-            return;
-        };
-        let mut millimetres = height.millimetres_f64();
-        let maximum = box_gizmo::MAX_SIDE_MM as f64;
-        // A frame's pull is the height it reserves, not a solid's edge: the bar says which box it
-        // is sizing (ADR 0101).
-        let label = match self.editor.box_tool() {
-            Some(furnicraft_ui::BoxOwner::Product) => Message::FrameHeight,
-            Some(furnicraft_ui::BoxOwner::Cuboid) | None => Message::BoxHeight,
-        };
-        let outcome = command_bar::show(
-            ui,
-            viewport,
-            CommandBar {
-                label,
-                value: &mut millimetres,
-                unit: "mm",
-                range: box_gizmo::MIN_SIDE_MM as f64..=maximum,
-                decimals: 3,
-                focus: false,
-            },
-            opacity,
-        );
-        self.command_bar_rect = Some(outcome.rect);
-        let whole = millimetres.round();
-        if let Some(next) = Length::from_millimetres(whole as i64)
-            && next != height
-            && let Err(error) = self.editor.pull_box_height(next)
+    /// A card that followed the pointer would slide out from under the hand reaching for its field,
+    /// so the anchor is frozen across the whole time the pointer is inside the card's rectangle. It
+    /// is the same rule `egui` applies to a tooltip and the one the context menu relies on: a
+    /// floating surface must not move while it is being used.
+    fn card_anchor(&mut self, pointer: Option<egui::Pos2>, card_before: Option<egui::Rect>) -> egui::Pos2 {
+        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
+        if card_before.is_some_and(|card| card.contains(pointer))
+            && let Some(anchor) = self.tool_card_anchor
         {
-            self.last_error = Some(error.to_string());
+            return anchor;
         }
-        match outcome.action {
-            Some(CommandBarAction::Apply) => {
-                if let Err(error) = self.finish_box(furnicraft_ui::language(ui.ctx())) {
+        self.tool_card_anchor = Some(pointer);
+        pointer
+    }
+
+    /// The view of the tool whose parameters are dragged at the hand, if one is running.
+    ///
+    /// The box's height and the pull's height are the two tools this surface draws; a niche's gaps
+    /// are drawn by `update_fill` from the same [`Distances`], and every tool reaches the inspector
+    /// through [`Self::tool_view`].
+    fn height_view(&self) -> Option<ToolView> {
+        if let Some(draft) = self.editor.box_draft().copied().filter(BoxDraft::is_pulling) {
+            let maximum = box_gizmo::MAX_SIDE_MM as f64;
+            // A frame's pull is the height it reserves, not a solid's edge: the card says which box
+            // it is sizing (ADR 0101).
+            let title = match self.editor.box_tool() {
+                Some(furnicraft_ui::BoxOwner::Product) => Message::FrameHeight,
+                Some(furnicraft_ui::BoxOwner::Cuboid) | None => Message::BoxHeight,
+            };
+            let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
+            return Some(ToolView::height(title, draft.height().millimetres_f64(), range, 3));
+        }
+        self.extrude_gizmo.object()?;
+        let height = self.extrude_gizmo.height()?;
+        let maximum = (furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres() / 1_000) as f64;
+        let range = crate::extrude_gizmo::MIN_HEIGHT_MM..=maximum;
+        Some(ToolView::height(Message::CmdSetExtrusionHeight, height.millimetres_f64(), range, 3))
+    }
+
+    /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
+    ///
+    /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
+    /// the two gaps of a niche. Two surfaces read one draft, so they cannot show two numbers for one
+    /// face.
+    fn tool_view(&self) -> Option<ToolView> {
+        if let Some(height) = self.height_view() {
+            return Some(height);
+        }
+        let arm = self.editor.fill_arm()?;
+        let distances = self.distances.as_ref()?;
+        Some(ToolView { title: arm.class.label(), rows: distances.rows(), actions: false })
+    }
+
+    /// Takes what a tool's fields committed into the document's armed state.
+    ///
+    /// The card at the pointer and the inspector's section both end here: a height re-pulls the box
+    /// or re-previews the body, and a gap goes through the distance card's own `apply`, so one number
+    /// has one refusal whichever surface the maker typed it into. The ✓ and the ✕ are the shell's
+    /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
+    fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
+        for edit in &reported.edits {
+            if edit.param != ToolParam::Height {
+                continue;
+            }
+            let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
+                continue;
+            };
+            if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                if let Err(error) = self.editor.pull_box_height(next) {
+                    self.last_error = Some(error.to_string());
+                }
+            } else if let Some(object) = self.extrude_gizmo.object()
+                && let Err(error) = self.preview_extrude(object, next)
+            {
+                self.last_error = Some(error);
+            }
+            ctx.request_repaint();
+        }
+        if (reported.edits.iter().any(|edit| edit.param != ToolParam::Height)
+            || reported.lock.is_some()
+            || reported.centre.is_some())
+            && let Some(distances) = self.distances.as_mut()
+        {
+            if self.distance_fields.apply(distances, &reported) {
+                ctx.request_repaint();
+            }
+            if let Some(message) = self.distance_fields.error() {
+                self.last_error = Some(message.text(furnicraft_ui::language(ctx)).to_owned());
+            }
+        }
+        match reported.action {
+            Some(ToolAction::Apply) => {
+                if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                    if let Err(error) = self.finish_box(furnicraft_ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
+                    && let Err(error) = self.finish_extrude(object, height)
+                {
                     self.last_error = Some(error);
                 }
             }
-            Some(CommandBarAction::Cancel) => self.cancel_box(),
+            Some(ToolAction::Cancel) => {
+                if self.editor.box_draft().is_some() {
+                    self.cancel_box();
+                } else {
+                    self.cancel_extrude();
+                }
+            }
             None => {}
         }
     }
@@ -1585,15 +1651,19 @@ impl Document {
         if dismiss_press {
             self.context_menu.close();
         }
-        // A press on the command bar is chrome too: the bar floats over the scene, so a click on
-        // its field or its buttons is never a pick. The rectangle is the one the bar drew last
-        // frame, which is the one on screen while the bar stays open.
+        // A press on the tool card is chrome too: the card floats over the scene, so a click on its
+        // field or its buttons is never a pick. The rectangle is the one the card drew last frame,
+        // which is the one on screen while the card stays open.
+        let card_before = self.tool_card_rect;
         let pointer_on_chrome = dismiss_press
             || pointer.is_some_and(|pointer| {
-                chrome.covers(pointer) || self.command_bar_rect.is_some_and(|bar| bar.contains(pointer))
+                chrome.covers(pointer) || card_before.is_some_and(|card| card.contains(pointer))
             });
         let content = chrome.content(area);
         self.scene_rect = Some(content);
+        // The frame's card is redrawn below, in whichever mode owns the gesture; a frame that draws
+        // no card leaves the rectangle empty, so `Chrome` never keeps a stale one.
+        self.tool_card_rect = None;
 
         // The viewport is the whole central area; the layout divides the scene rectangle into
         // views. Every view has its own camera and every border is draggable. A press on a border
@@ -1882,7 +1952,7 @@ impl Document {
         }
 
         if filling {
-            self.update_fill(ui, &response, rect, fill_arm, opacity);
+            self.update_fill(ui, &response, rect, fill_arm, card_before, opacity);
             if response.clicked_by(egui::PointerButton::Primary)
                 && !pointer_over_widget
                 && !pointer_on_chrome
@@ -1893,7 +1963,7 @@ impl Document {
                         // The next void is a fresh gesture: its fields may take the keyboard again.
                         self.distance_fields.dismiss(ui.ctx());
                         self.distances = None;
-                        self.distance_rects.clear();
+                        self.tool_card_rect = None;
                     }
                     Err(error) => self.last_error = Some(error),
                 }
@@ -2343,15 +2413,9 @@ impl Document {
             self.scene.camera = crate::scene_build::scene_camera(self.session.project(), target_camera);
         }
 
-        // The cluster floats over the drawn viewport, so it is the last thing painted inside it. A
-        // command bar takes the bottom-centre slot while a previewing operation runs, so the
-        // cluster moves up by the bar's height and the two never overlap.
-        let bar_offset = if self.extrude_gizmo.is_active() || self.editor.box_draft().is_some_and(BoxDraft::is_pulling)
-        {
-            command_bar::BAR_HEIGHT + 6.0
-        } else {
-            0.0
-        };
+        // The cluster floats over the drawn viewport, so it is the last thing painted inside it. The
+        // tool card follows the pointer rather than the bottom centre, so the cluster never moves for
+        // it (ADR 0119).
         let view = ClusterView {
             owns_view: viewport_owns_view(self.session.project()),
             projection: self.scene.camera.projection(),
@@ -2361,7 +2425,7 @@ impl Document {
             preset: self.layout.preset(target_leaf),
             style: self.layout.active_style(),
         };
-        match view_cluster::show(ui, content, &mut shell.cluster, view, opacity, bar_offset) {
+        match view_cluster::show(ui, content, &mut shell.cluster, view, opacity, 0.0) {
             Some(ClusterAction::FrameAll) => self.frame_all(),
             Some(ClusterAction::Home) => self.home_view(),
             Some(ClusterAction::ToggleProjection) => self.toggle_view_projection(),
@@ -2380,7 +2444,7 @@ impl Document {
             Some(ClusterAction::OpenSettings) => shell.open_settings = true,
             None => {}
         }
-        self.show_command_bar(ui, content, opacity);
+        self.show_tool_card(ui, content, pointer, card_before, opacity);
         self.paint_view_frames(ui, content, &regions);
         self.show_context_menu(ui, content, opacity);
     }
@@ -3214,6 +3278,7 @@ mod tests {
             ),
             list: None,
             menu: None,
+            tool: None,
         };
         let mut cluster = ViewCluster::default();
         assert!(cluster.widget_visible(), "the corner widget is on until the switch turns it off");

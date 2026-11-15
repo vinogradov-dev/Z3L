@@ -34,7 +34,7 @@ to trust a feeling. Values are the floor for a desktop tool at 100 % scale; they
 - **The hook must move first**: hover, press and armed state change on the press frame, before the
   geometry solves. A control that changes only after a rebuild feels broken.
 - **Never a dead frame**: a long operation shows progress where the eye already is (the status bar,
-  the command bar), not in a new dialog.
+  the tool card), not in a new dialog.
 - **Meaning never rides on colour alone** (WCAG 1.4.1): a selected row also has a bar, a shape or a
   weight change; an error also has text or an icon.
 - **Contrast** (WCAG 2.2, 1.4.3 and 1.4.11): 4.5:1 for body text, 3:1 for large text, icons and

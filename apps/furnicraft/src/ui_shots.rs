@@ -443,7 +443,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
         vec![egui::Event::PointerMoved(corners.1)],
         vec![click(corners.1, true), click(corners.1, false)],
         vec![egui::Event::PointerMoved(corners.2)],
-        // One more frame at the same pointer: the bar's area lays itself out on the frame it
+        // One more frame at the same pointer: the card's area lays itself out on the frame it
         // appears, so the picture is taken once it has.
         vec![egui::Event::PointerMoved(corners.2)],
     ];
@@ -471,7 +471,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
         let document = app.tabs.active_mut();
         let draft = document.editor.box_draft().copied().expect("the gesture is pulling its height");
         assert!(draft.is_pulling() && draft.height().is_positive(), "the height follows the pointer");
-        assert!(document.command_bar_is_up(), "the height pull draws its command bar: {draft:?}");
+        assert!(document.tool_card_is_up(), "the height pull draws its tool card: {draft:?}");
     }
     let pixels_per_point = ctx.pixels_per_point();
     let size =
@@ -1171,7 +1171,7 @@ fn draw_card_column(
     );
     ui.painter().rect_filled(column, corner, furnicraft_ui::theme::panel(ui));
     ui.scope_builder(egui::UiBuilder::new().max_rect(column.shrink(CARD_MARGIN)), |ui| {
-        editor.show_card(ui, session);
+        let _ = editor.show_card(ui, session, None);
     });
 }
 

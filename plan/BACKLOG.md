@@ -40,9 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-## Next
-- `[ ]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
+- `[~]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
   Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
    the inspector. Today a tool has no home for its own parameters — a fill distance lives in
    the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
@@ -60,7 +58,10 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
    scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
    `cargo xtask ci` is green.
-  `files: crates/ui/src/command_bar.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
+
+## Bugs
+## Next
 - `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
   Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
    measure: the value on screen and in the status bar, several measurements in a row, each

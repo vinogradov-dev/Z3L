@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=d1dacb1 updated=2026-11-15
+STATE: milestone=M7 phase=T task=U97 state=doing base=d1dacb1 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,8 +55,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: the armed tool shows its parameters at the pointer and the inspector the same
-fields (U97)
+U97 is next: an armed tool shows its parameters at the pointer, and the inspector shows the same
+fields
 
 ## Index
 
