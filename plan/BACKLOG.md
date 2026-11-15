@@ -40,24 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **C4** a circle by diameter and an arc from its start, end and radius
-  Why: The circle cell and the arc cell each declare a method that runs nothing
-   (sketch.create.circle.two-points, sketch.create.arc.three-points), and two constructions the
-   owner needs are missing: a circle whose field is the diameter, and an arc given by its chord
-   and radius, where the two possible centres are chosen by the side the pointer is on. The arc
-   through three points already exists and stays the arc main face.
-  Shape: DrawTool::CircleDiameter reads a diameter field at the second point;
-   DrawTool::ArcByRadius takes a start, an end and a radius, and Path gains one constructor
-   that picks the centre on the pointer side and refuses a radius under half the chord. The
-   ribbon circle.two-points becomes circle.diameter with its own label and icon,
-   arc.three-points is deleted because the main face is that method, and arc.start-end-radius
-   is added. Two icons with their README rows, the fallback test and the inventory rows.
-  Done: Both cells run and build the expected ring from typed values; the arc takes the centre
-   on the side the pointer chose and a radius under half the chord is a readable error the
-   draft keeps; a circle diameter field equals twice its radius; the two icons exist with rows
-   and the fallback test; no cell with run: None remains for these two tools; cargo xtask ci is
-   green.
-  `files: crates/model/src/contour.rs, crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs`
 - `[ ]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
   Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
    second that runs nothing (sketch.create.polygon.edge); the owner needs the circumscribed
@@ -110,6 +92,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C4** a circle by diameter and an arc from its start, end and radius
+  Why: The circle cell and the arc cell each declare a method that runs nothing
+   (sketch.create.circle.two-points, sketch.create.arc.three-points), and two constructions the
+   owner needs are missing: a circle whose field is the diameter, and an arc given by its chord
+   and radius, where the two possible centres are chosen by the side the pointer is on. The arc
+   through three points already exists and stays the arc main face.
+  Shape: DrawTool::CircleDiameter reads a diameter field at the second point;
+   DrawTool::ArcByRadius takes a start, an end and a radius, and Path gains one constructor
+   that picks the centre on the pointer side and refuses a radius under half the chord. The
+   ribbon circle.two-points becomes circle.diameter with its own label and icon,
+   arc.three-points is deleted because the main face is that method, and arc.start-end-radius
+   is added. Two icons with their README rows, the fallback test and the inventory rows.
+  Done: Both cells run and build the expected ring from typed values; the arc takes the centre
+   on the side the pointer chose and a radius under half the chord is a readable error the
+   draft keeps; a circle diameter field equals twice its radius; the two icons exist with rows
+   and the fallback test; no cell with run: None remains for these two tools; cargo xtask ci is
+   green.
+  `files: crates/model/src/contour.rs, crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs` — `a27016f`
 
 - `[x]` **C3** a contour node moves in a latched mode, with its distance and angle at the cursor
   Why: Moving a corner needs the button held for the whole gesture today, and the owner wants

@@ -956,7 +956,6 @@ messages! {
     ToolCutList = ["Cut list", "Раскрой"],
 
     // The ribbon's variants: the input methods of one tool (U67).
-    ToolCircleTwoPoints = ["Through 2 points", "По 2 точкам"],
     ToolCircleTangent = ["Tangent to two lines", "Касательно двух линий"],
     ToolArcThreePoints = ["Through 3 points", "По 3 точкам"],
     ToolLineAngle = ["By angle", "Под углом"],
@@ -969,7 +968,8 @@ messages! {
     ToolChamferTwoLines = ["Two lines", "Две линии"],
     ToolDiameter = ["Diameter", "Диаметр"],
     ToolCircleCentreRadius = ["Centre and radius", "Центр и радиус"],
-    ToolArcTwoPoints = ["Through 2 points", "По 2 точкам"],
+    ToolCircleCentreDiameter = ["Centre and diameter", "Центр и диаметр"],
+    ToolArcStartEndRadius = ["Start, end and radius", "Начало, конец и радиус"],
     ToolRectangleFromCorner = ["From corner", "От угла"],
     ToolLineTwoPoints = ["Two points", "По двум точкам"],
     ToolPolygonSides = ["By side count", "По числу сторон"],

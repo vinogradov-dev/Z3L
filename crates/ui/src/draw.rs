@@ -60,6 +60,9 @@ pub enum DrawTool {
     Arc,
     /// A centre, a start and an end point make one open arc of that radius and sweep.
     ArcFromCenter,
+    /// A start, an end and a radius make one open arc: the third point names the side the centre
+    /// sits on and stands a radius away from the start.
+    ArcByRadius,
     /// Two opposite corners make one closed rectangle.
     Rectangle,
     /// A centre and a corner make one closed rectangle of twice that offset.
@@ -68,6 +71,9 @@ pub enum DrawTool {
     RectangleFromCenterDirected,
     /// A centre and a rim point make one closed circle.
     Circle,
+    /// A centre and a rim point make one closed circle the same way, but the number the person types
+    /// is the diameter rather than the radius.
+    CircleDiameter,
     /// Three points on the rim make one closed circle.
     CircleThreePoints,
     /// A centre and a rim point make one closed regular polygon; the side count comes from the
@@ -82,8 +88,17 @@ impl DrawTool {
     /// two points and takes as many more as the ring cap allows.
     pub const fn points(self) -> Option<usize> {
         match self {
-            Self::Line | Self::Rectangle | Self::RectangleFromCenter | Self::Circle | Self::RegularPolygon => Some(2),
-            Self::Arc | Self::ArcFromCenter | Self::CircleThreePoints | Self::RectangleFromCenterDirected => Some(3),
+            Self::Line
+            | Self::Rectangle
+            | Self::RectangleFromCenter
+            | Self::Circle
+            | Self::CircleDiameter
+            | Self::RegularPolygon => Some(2),
+            Self::Arc
+            | Self::ArcFromCenter
+            | Self::ArcByRadius
+            | Self::CircleThreePoints
+            | Self::RectangleFromCenterDirected => Some(3),
             Self::Polyline => None,
         }
     }
@@ -101,22 +116,29 @@ impl DrawTool {
                 | Self::RectangleFromCenter
                 | Self::RectangleFromCenterDirected
                 | Self::Circle
+                | Self::CircleDiameter
                 | Self::CircleThreePoints
                 | Self::RegularPolygon
         )
     }
 
     /// A short user-visible name.
+    ///
+    /// The name is the figure, not the method: a circle drawn by its diameter is still a circle, and
+    /// an arc from its radius is still an arc, so the words a cell shows live in the ribbon's map and
+    /// the object the draft becomes carries the shape's own name.
     pub const fn label(self) -> Message {
         match self {
             Self::Line => Message::ToolLine,
             Self::Polyline => Message::ToolPolyline,
             Self::Arc => Message::ToolArc,
             Self::ArcFromCenter => Message::ToolArcFromCentre,
+            Self::ArcByRadius => Message::ToolArc,
             Self::Rectangle => Message::ToolRectangle,
             Self::RectangleFromCenter => Message::ToolRectangleFromCentre,
             Self::RectangleFromCenterDirected => Message::ToolRectangleFromCentreDirected,
             Self::Circle => Message::ToolCircle,
+            Self::CircleDiameter => Message::ToolCircle,
             Self::CircleThreePoints => Message::ToolCircleThreePoints,
             Self::RegularPolygon => Message::ToolRegularPolygon,
         }
@@ -298,7 +320,9 @@ impl DrawDraft {
     /// Appends a click, which becomes a straight segment on a polyline and one point on a fixed tool.
     ///
     /// A path may touch or cross itself — the ring rules run only when it becomes a contour — but two
-    /// equal neighbours would make a zero-length segment the document cannot store.
+    /// equal neighbours would make a zero-length segment the document cannot store. A click that
+    /// completes a fixed figure is judged against the figure before anything is stored, so a refused
+    /// last point leaves the draft editable.
     pub fn push(&mut self, point: [Length; 2]) -> Result<(), DrawDraftError> {
         if self.closed {
             return Err(DrawDraftError::AlreadyClosed);
@@ -320,6 +344,12 @@ impl DrawDraft {
         if !self.tool.closes() {
             if self.points.last() == Some(&point) {
                 return Err(DrawDraftError::DuplicatePoint);
+            }
+            // A click that completes a fixed figure is validated before it is stored, exactly as a
+            // close is: a figure the document refuses — three points on one line, an arc whose radius
+            // cannot reach both ends — leaves the points that can still be corrected in place.
+            if self.tool.points().is_some_and(|need| self.points.len() + 1 >= need) {
+                self.path_with(Some(point), false)?;
             }
             self.points.push(point);
             return Ok(());
@@ -534,6 +564,15 @@ impl DrawDraft {
                 };
                 Path::arc_from_center(center, start, end).map_err(DrawDraftError::from)
             }
+            // The third click stands one radius away from the start on the side the centre takes, so
+            // the draft reads the number the plate showed back out of the point it placed.
+            DrawTool::ArcByRadius => {
+                let (Some(&start), Some(&end), Some(&side)) = (points.first(), points.get(1), points.get(2)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
+                };
+                let radius = distance(start, side)?;
+                Path::arc_from_chord(start, end, radius, side).map_err(DrawDraftError::from)
+            }
             DrawTool::Rectangle => {
                 let (Some(&first), Some(&second)) = (points.first(), points.get(1)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
@@ -553,7 +592,9 @@ impl DrawDraft {
                 };
                 Path::rectangle_from_center_directed(center, direction, corner).map_err(DrawDraftError::from)
             }
-            DrawTool::Circle => {
+            // A diameter tool clicks the same centre and rim point; the two differ only in the number
+            // the plates let the person type, which the placed point already carries.
+            DrawTool::Circle | DrawTool::CircleDiameter => {
                 let (Some(&center), Some(&rim)) = (points.first(), points.get(1)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
                 };
@@ -641,6 +682,21 @@ fn point_in_range(point: [Length; 2]) -> bool {
         let value = coordinate.micrometres();
         (-max..=max).contains(&value)
     })
+}
+
+/// The whole-micrometre distance between two drawing points: the radius a plate measured.
+///
+/// Both points are already inside the document's range, so the difference fits a `f64` exactly
+/// enough to round; a value that does not round is a point outside the range, which every caller
+/// has already refused.
+fn distance(from: [Length; 2], to: [Length; 2]) -> Result<Length, DrawDraftError> {
+    let dx = (i128::from(to[0].micrometres()) - i128::from(from[0].micrometres())) as f64;
+    let dy = (i128::from(to[1].micrometres()) - i128::from(from[1].micrometres())) as f64;
+    let span = dx.hypot(dy);
+    if !span.is_finite() || span > i64::MAX as f64 {
+        return Err(DrawDraftError::PointOutOfRange);
+    }
+    Ok(Length::from_micrometres(span.round() as i64))
 }
 
 /// The segment that closes a chain from the end of `last` back to the start of `first`.

@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=C4 state=idle base=06c28a3 updated=2026-11-15
+STATE: milestone=M7 phase=T task=C5 state=idle base=a27016f updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -15,7 +15,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   prism (X19); S5's frame rule reached a drawing, a group and a panel (0082, 0083), proved once in
   `frame_contract.rs`; cameras and lights are scene objects (0036). ADR 0105 makes the three stances
   one flat frame turned, X35 stands the fill post in it, N11 gives a panel end a bevel angle about
-  its outline edge (0107, schema 24).
+  its outline edge (0107, schema 24); C4 adds a circle by diameter, an arc by radius (0130).
 - S7 audited the design rules and filed S8–S22 under `plan/refactor.md`: S8–S13 split `geom` (0084),
   S14–S17 `panel_cmds`, the camera and ray and the pipelines, S18–S19 the document rules and the
   `Editor` (50 lines), S20–S22 the drawing draft and the chrome (2608 -> 2037), U45 the scene
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-C4 starts the next contour cell: a circle by diameter and an arc from its start, end and radius
+C5 adds the polygon's remaining ways to be built and a rectangle on an angled base edge
 
 ## Index
 

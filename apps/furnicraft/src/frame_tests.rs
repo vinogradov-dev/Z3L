@@ -16,7 +16,7 @@
 use crate::gizmo_math::SnapTarget;
 use eframe::egui;
 use furnicraft_geom::DVec2;
-use furnicraft_model::{ClassCode, Envelope, Id};
+use furnicraft_model::{ClassCode, ContourSegment, Envelope, Id};
 use furnicraft_scene::Camera;
 use furnicraft_text::{Lang, Message};
 use furnicraft_ui::MeasureStage;
@@ -2249,6 +2249,153 @@ fn the_polyline_segment_kind_comes_from_the_right_click_menu() {
     );
     assert_eq!(draft_points(&harness).len(), points, "and still wrote no point");
     assert!(harness.app.tabs.active().draft_menu_rect().is_none(), "the choice closes the menu");
+}
+
+#[test]
+fn a_typed_diameter_builds_a_circle_of_half_its_number() {
+    // C4: the circle's second method is typed, not aimed. Two plates, X and Y, place the centre
+    // exactly; the third is the diameter, and the document stores half of it as the radius of the
+    // four quarter arcs.
+    let mut harness = Harness::new("frame-sketch-diameter");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::CircleDiameter);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness), vec![[mesh(100), mesh(100)]], "the centre the plates named");
+
+    // One plate is no choice to move to: Enter commits the typed number and places the point, which
+    // is the same key order the two-plate stage needed a Tab for.
+    harness.hover(scene.center() + egui::vec2(80.0, 0.0));
+    type_text(&mut harness, "200");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the last point and commits");
+
+    let object = harness.selected().first().copied().expect("the circle is selected");
+    let project = harness.app.tabs.active().session.project();
+    let ContourSegment::Arc { center, radius, .. } = project
+        .object_path(object)
+        .expect("the drawn figure is a path")
+        .entries()
+        .first()
+        .expect("a circle is four arcs")
+        .segment()
+    else {
+        panic!("a circle is four arcs");
+    };
+    assert_eq!(center, [Length::ZERO, Length::ZERO], "the command anchors a closed figure at its bounds centre");
+    assert_eq!(radius, mesh(100), "a 200 mm diameter is a 100 mm radius");
+    assert_eq!(
+        project.object_path(object).expect("the path").bounds_micrometres(),
+        ([-100_000, -100_000], [100_000, 100_000]),
+        "the circle is the 200 mm one that was asked for"
+    );
+    let world = project.world_placement(object).expect("the circle has a world frame");
+    let at = world.transform_point(furnicraft_geom::DVec3::ZERO);
+    assert!(
+        (at - furnicraft_geom::DVec3::new(100.0, 100.0, 0.0)).length() < 0.01,
+        "centred where the plates said: {at:?}"
+    );
+    assert_eq!(harness.revision().get(), before.get() + 1, "one circle, one undo entry");
+}
+
+#[test]
+fn an_arc_from_a_typed_radius_takes_the_side_the_pointer_chose() {
+    // C4: an arc from its start, end and radius. The two ends are typed, so the chord is exact; the
+    // radius is typed and the pointer only names the side the centre sits on.
+    let mut harness = Harness::new("frame-sketch-arc-radius");
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::ArcByRadius);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    type_text(&mut harness, "200");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "90");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness), vec![[mesh(100), mesh(100)], [mesh(100), mesh(300)]], "a 200 mm chord");
+
+    // The pointer names the side; the number it would place is the distance the typed radius
+    // replaces, and the direction both share is the one the third point keeps.
+    harness.hover(scene.center() + egui::vec2(0.0, -150.0));
+    let probe = placed_point(&harness);
+    type_text(&mut harness, "150");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the radius and commits");
+
+    let object = harness.selected().first().copied().expect("the arc is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the drawn figure is a path");
+    assert!(!path.is_closed(), "an arc is open");
+    let ContourSegment::Arc { center, radius, .. } = path.entries().first().expect("one arc").segment() else {
+        panic!("the figure is one arc");
+    };
+    assert_eq!(radius, mesh(150), "the typed radius is the stored one");
+    // The stored chain is local to the object, so the side is read in the world frame where the
+    // pointer named it.
+    let world = project.world_placement(object).expect("the arc has a world frame");
+    let to_world = |point: DVec2| {
+        let at = world.transform_point(furnicraft_geom::DVec3::new(point.x, point.y, 0.0));
+        DVec2::new(at.x, at.y)
+    };
+    let settled = path.entries().first().expect("one arc").segment();
+    let (start, end) = (settled.start().expect("a start"), settled.end().expect("an end"));
+    let (start, end) = (
+        to_world(DVec2::new(start[0].millimetres_f64(), start[1].millimetres_f64())),
+        to_world(DVec2::new(end[0].millimetres_f64(), end[1].millimetres_f64())),
+    );
+    let centre_at = to_world(DVec2::new(center[0].millimetres_f64(), center[1].millimetres_f64()));
+    let probe_at = DVec2::new(probe[0].millimetres_f64(), probe[1].millimetres_f64());
+    let middle = (start + end) / 2.0;
+    let chord = end - start;
+    let side = |point: DVec2| chord.x * (point.y - middle.y) - chord.y * (point.x - middle.x);
+    assert!(side(centre_at).abs() > 1.0, "the centre is off the chord");
+    assert!(side(centre_at) * side(probe_at) > 0.0, "the centre is on the side the pointer chose");
+}
+
+#[test]
+fn an_arc_radius_under_half_its_chord_is_refused_and_the_draft_keeps_its_points() {
+    // C4: the refusal is the model's own sentence, it reaches the status line, and the draft keeps
+    // the two clicks so the radius can be named again.
+    let mut harness = Harness::new("frame-sketch-arc-short");
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::ArcByRadius);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    type_text(&mut harness, "200");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "90");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    // The radius is the distance from the arc's start, so 100 mm is the smallest a 200 mm chord takes.
+    harness.hover(scene.center() + egui::vec2(0.0, -60.0));
+    type_text(&mut harness, "50");
+    let before = harness.revision();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_some(), "the draft keeps its points");
+    assert_eq!(draft_points(&harness).len(), 2, "the refused click wrote nothing");
+    let error = harness.app.tabs.active().last_error.clone().unwrap_or_default();
+    assert!(error.contains("half its chord"), "the status line names the refusal: {error}");
+    assert_eq!(harness.revision(), before, "and nothing was written");
+}
+
+/// `value` whole millimetres, as the drawing plates name a length.
+fn mesh(value: i64) -> Length {
+    Length::from_millimetres(value).expect("whole millimetres fit a length")
 }
 
 /// A session whose root holds one open chain: (0,0) → (120,0) → (120,80) mm.
