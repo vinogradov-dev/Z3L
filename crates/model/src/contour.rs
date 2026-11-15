@@ -1290,6 +1290,64 @@ mod tests {
     }
 
     #[test]
+    fn an_arc_from_a_chord_and_a_radius_sits_on_the_named_side() {
+        let start = [millimetres(0), millimetres(0)];
+        let end = [millimetres(100), millimetres(0)];
+        // A 100 mm chord with a 130 mm radius puts the centre 120 mm from the chord's midpoint, on the
+        // side the pointer named; the stored arc is the minor one, so its peak mirrors the centre.
+        let cases = [
+            ([millimetres(50), millimetres(10)], DVec2::new(50.0, 120.0), DVec2::new(50.0, -10.0)),
+            ([millimetres(50), millimetres(-10)], DVec2::new(50.0, -120.0), DVec2::new(50.0, 10.0)),
+        ];
+        for (side, center, peak) in cases {
+            let path = Path::arc_from_chord(start, end, millimetres(130), side).expect("an arc from its chord");
+            assert!(!path.is_closed(), "an arc is an open path");
+            assert_eq!(path.segments().count(), 1, "one arc is one segment");
+            let Segment::Arc(arc) = path.entries()[0].segment().to_geom().expect("geometry") else {
+                panic!("an arc from a chord and a radius is an arc");
+            };
+            assert!((arc.center() - center).length() < 1.0e-3, "{:?} is the centre on {side:?}", arc.center());
+            assert!((arc.radius() - 130.0).abs() < 1.0e-3, "the radius is the one that was asked for");
+            assert!((arc.midpoint() - peak).length() < 1.0e-3, "{:?} is the peak the arc bows to", arc.midpoint());
+            // The stored ends are the two clicks, up to the rounding of the stored centre and angle.
+            assert!((arc.start() - DVec2::ZERO).length() < 2.0e-3, "the arc starts where the chord does");
+            assert!((arc.end() - DVec2::new(100.0, 0.0)).length() < 2.0e-3, "the arc ends where the chord does");
+        }
+    }
+
+    #[test]
+    fn an_arc_radius_under_half_its_chord_is_refused() {
+        let start = [millimetres(0), millimetres(0)];
+        let end = [millimetres(100), millimetres(0)];
+        let side = [millimetres(50), millimetres(10)];
+        assert_eq!(
+            Path::arc_from_chord(start, end, millimetres(49), side),
+            Err(PathError::ArcRadiusUnderHalfChord { radius: millimetres(49), chord: millimetres(100) })
+        );
+        let error = Path::arc_from_chord(start, end, millimetres(49), side).expect_err("too small a radius");
+        assert_eq!(
+            error.to_string(),
+            "an arc needs a radius of at least half its chord: 49 mm is under half of 100 mm"
+        );
+        // Half the chord is the semicircle: one arc reaches both ends and half a turn sweeps it.
+        let semicircle = Path::arc_from_chord(start, end, millimetres(50), side).expect("the semicircle");
+        let Segment::Arc(arc) = semicircle.entries()[0].segment().to_geom().expect("geometry") else {
+            panic!("the semicircle is an arc");
+        };
+        assert!((arc.radius() - 50.0).abs() < 1.0e-3);
+        assert!((arc.midpoint() - DVec2::new(50.0, -50.0)).length() < 1.0e-3, "it bows away from {side:?}");
+    }
+
+    #[test]
+    fn an_arc_through_coincident_ends_is_degenerate() {
+        let start = [millimetres(100), millimetres(100)];
+        assert_eq!(
+            Path::arc_from_chord(start, start, millimetres(100), [millimetres(0), millimetres(0)]),
+            Err(PathError::DegenerateArc)
+        );
+    }
+
+    #[test]
     fn a_circle_through_three_points_is_the_circumcircle() {
         let path = Path::circle_three_points(
             [millimetres(0), millimetres(0)],
@@ -2455,6 +2513,67 @@ impl Path {
         Self::new(vec![segment], false)
     }
 
+    /// One open arc of a given radius between two points, its centre on `side`'s side of the chord.
+    ///
+    /// The chord fixes how far the centre stands from its midpoint; the two candidates sit on either
+    /// side of the chord, and `side` — the pointer that placed the radius — names one of them. The
+    /// stored arc is the minor one, so it bows away from its own centre: a click on either side of a
+    /// long chord never turns the same figure inside out. A radius shorter than half the chord joins
+    /// no two points and is refused with [`PathError::ArcRadiusUnderHalfChord`].
+    pub fn arc_from_chord(
+        start: [Length; 2],
+        end: [Length; 2],
+        radius: Length,
+        side: [Length; 2],
+    ) -> Result<Self, PathError> {
+        check_point(start)?;
+        check_point(end)?;
+        check_point(side)?;
+        let s = point_to_geometry(start)?;
+        let e = point_to_geometry(end)?;
+        let named = point_to_geometry(side)?;
+        let chord = (e - s).length();
+        if !chord.is_finite() || chord <= 0.0 {
+            return Err(PathError::DegenerateArc);
+        }
+        let half = chord / 2.0;
+        let radius_mm = radius.millimetres_f64();
+        if !radius_mm.is_finite() || radius_mm + LENGTH_TOLERANCE_MM < half {
+            let chord = length_to_document(chord)?;
+            return Err(PathError::ArcRadiusUnderHalfChord { radius, chord });
+        }
+        // A radius on the tolerance's edge is the semicircle: the centre is the chord's midpoint.
+        let radius_mm = radius_mm.max(half);
+        let height = (radius_mm * radius_mm - half * half).max(0.0).sqrt();
+        let middle = s + (e - s) / 2.0;
+        let normal = DVec2::new(-(e - s).y, (e - s).x) / chord;
+        let sign = if (named - middle).dot(normal) < 0.0 { -1.0 } else { 1.0 };
+        let center = middle + normal * (height * sign);
+        let start_angle = (s.y - center.y).atan2(s.x - center.x);
+        let end_angle = (e.y - center.y).atan2(e.x - center.x);
+        let counter_clockwise = (end_angle - start_angle).rem_euclid(TAU);
+        // Two arcs run from one end to the other; the one whose own middle sits away from the named
+        // side is the minor arc around this centre, and it is the only one that answers for both
+        // extremes — a semicircle has a centre at the midpoint but still has two of them.
+        let bows_away = |sweep: f64| {
+            let middle_angle = start_angle + sweep / 2.0;
+            let bow = center + DVec2::new(middle_angle.cos(), middle_angle.sin()) * radius_mm;
+            (bow - middle).dot(normal) * -sign > 0.0
+        };
+        let sweep = if bows_away(counter_clockwise) { counter_clockwise } else { counter_clockwise - TAU };
+        let segment = ContourSegment::arc(
+            point_to_document(center)?,
+            length_to_document(radius_mm)?,
+            degrees_to_document(start_angle)?,
+            degrees_to_document(sweep)?,
+        )
+        .map_err(|error| match error {
+            ContourSegmentError::DegenerateArc => PathError::DegenerateArc,
+            other => PathError::Segment(other),
+        })?;
+        Self::new(vec![segment], false)
+    }
+
     /// A closed rectangle centred on `center`, with `corner` as one of its corners.
     ///
     /// The opposite corner mirrors `corner` through the centre, so the rectangle has the axes of the
@@ -2873,6 +2992,14 @@ pub enum PathError {
     /// Two rectangle corners share an axis, so the shape encloses no area.
     #[error("a rectangle needs two corners that differ on both axes")]
     DegenerateRectangle,
+    /// An arc radius is shorter than half the distance between its ends, so no circle reaches both.
+    #[error("an arc needs a radius of at least half its chord: {radius} is under half of {chord}")]
+    ArcRadiusUnderHalfChord {
+        /// The requested radius.
+        radius: Length,
+        /// The distance between the arc's two ends.
+        chord: Length,
+    },
     /// The three points of an arc coincide or lie on one line.
     #[error("an arc through three points needs three distinct, non-collinear points")]
     DegenerateArc,
