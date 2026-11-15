@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=C1 state=doing base=ada0639 updated=2026-11-15
+STATE: milestone=M7 phase=T task=C2 state=idle base=bf165a1 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-C1 is next: the field at the cursor and the two guide kinds; C2-C5 are the sketch queue behind it.
+C2 is next: every sketch tool places its point from numbers at the cursor
 
 ## Index
 

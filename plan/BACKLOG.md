@@ -40,29 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **C1** the point being placed shows its numbers at the cursor, and a sketch has two guide kinds
-  Why: Every sketch tool needs the same two things: the number of the point under the cursor
-   and a guide that shows zero and the sweep. Both exist twice today — tool_card (ADR 0119)
-   plus the private NumericEntry in contour_gizmo.rs, and the paint_size label in draw_gizmo.rs
-   — so a third copy would be the defect ADR 0118 names. The reference (OpenCAD Studio) puts
-   the length on the segment, the angle outside an arc whose radius is the segment length, and
-   a dashed axis along +X from the anchor; a pale single colour cannot pass the guides 3:1 rule
-   on a light board.
-  Shape: One atom in crates/ui: PointField owns the rows, the always-on focus, the typed lock,
-   Tab, Enter, Escape and the 0 that returns a parameter to the pointer; it draws through the
-   tool_card layout and the shared scrub, so the plate at the pointer and the inspector rows
-   stay one surface. One painter owns the guides: Guide::Construction (the dashed amber of the
-   measured chord) and Guide::Reference (the +X axis from the anchor and the angle arc, radius
-   equal to the segment length), both in screen space, the reference drawn as the two-stroke
-   pair (light over dark) and thinner than every other guide, with the theme accessor and the
-   contrast test. contour_gizmo and draw_gizmo paint through the atom; no tool gains a field of
-   its own yet. Two ADRs: the field at the point extends 0119, the two guide kinds amend 0111.
-  Done: contour_gizmo and the drawing tool draw their number and their guide through the one
-   atom and neither keeps a private copy; a RawInput test drives focus, Tab, typing, Enter,
-   Escape and 0 and asserts the value and the rectangle each frame; a theme test asserts the
-   reference pair reads on the three surfaces and is thinner than the construction line; both
-   ADRs are in docs/decisions and the README lists them; cargo xtask ci is green.
-  `files: crates/ui/src/tool_card.rs, crates/ui/src/scrub.rs, crates/ui/src/theme.rs, apps/furnicraft/src/contour_gizmo.rs, apps/furnicraft/src/draw_gizmo.rs, docs/decisions`
 - `[ ]` **C2** every sketch tool places its point from numbers at the cursor
   Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
    the pointer, so a line cannot be drawn to 600 mm at 30 degrees except by eye, and the guide
@@ -175,6 +152,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C1** the point being placed shows its numbers at the cursor, and a sketch has two guide kinds
+  Why: Every sketch tool needs the same two things: the number of the point under the cursor
+   and a guide that shows zero and the sweep. Both exist twice today — tool_card (ADR 0119)
+   plus the private NumericEntry in contour_gizmo.rs, and the paint_size label in draw_gizmo.rs
+   — so a third copy would be the defect ADR 0118 names. The reference (OpenCAD Studio) puts
+   the length on the segment, the angle outside an arc whose radius is the segment length, and
+   a dashed axis along +X from the anchor; a pale single colour cannot pass the guides 3:1 rule
+   on a light board.
+  Shape: One atom in crates/ui: FieldSet owns the plates, the always-on focus, the typed locks,
+   Tab, Enter, Escape and the 0 that returns a parameter to the pointer; each plate is the
+   shared scrub (ADR 0092) in the tool card frame at its own anchor, so the plate at the point
+   and the inspector cannot drift. One painter owns the guides: Guide::Construction (the dashed
+   amber of the measured chord) and Guide::Reference (the +X axis from the anchor and the angle
+   arc, radius equal to the segment length), both in screen space, the reference drawn as the
+   two-stroke pair (light inside dark) and thinner than every other guide, with the theme
+   accessor and the contrast test. contour_gizmo private numeric entry is replaced by the atom;
+   the drawing tool keeps its label until C2 puts its plates there. Two ADRs: the field at the
+   point extends 0119, the two guide kinds amend 0111.
+  Done: contour_gizmo draws its number through the one atom and keeps no private copy; a
+   RawInput test drives focus, Tab, typing, Enter, Escape and 0 and asserts the value, the lock
+   and the plate rectangle each frame; a theme test asserts one stroke of the reference pair
+   reads on the header, a panel and the workspace of every preset and that its dot is thinner
+   than every guide; both ADRs are in docs/decisions and the README lists them; cargo xtask ci
+   is green.
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/scrub.rs, crates/ui/src/theme.rs, apps/furnicraft/src/contour_gizmo.rs, apps/furnicraft/src/draw_gizmo.rs, docs/decisions` — `bf165a1`
 
 - `[x]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
