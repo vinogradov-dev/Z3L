@@ -20,7 +20,9 @@ live step in `now:`, and that is where you resume — not at the top of the entr
 path of the `files:` hint and its direct callers (the `rust-analyzer` tools for signatures and
 references, `rg` for strings), the notes and ADRs the entry cites, and — before any edit — the skill
 `AGENTS.md` §1.3 routes you to: `.pi/skills/ui-design/SKILL.md` for anything under `crates/ui` or the
-app chrome. That route is not decoration: both repairs of the reviewed period (X41, X42) exist
+app chrome, `.pi/skills/place-capability/SKILL.md` when the change adds, renames or removes a
+command id or a place, and `.pi/skills/design-operation/SKILL.md` when it adds a gesture or a mode.
+That route is not decoration: both repairs of the reviewed period (X41, X42) exist
 because the session read the entry and the code and never the skill, whose floating-surface bullet
 already answered the question. Do not scan the workspace: when the hint is wrong, the fix is the
 hint, in the same change.

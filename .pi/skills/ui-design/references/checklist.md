@@ -48,6 +48,17 @@ the same change.
 20. A new default, mode, gesture or second way to do one thing has the owner's approval and an ADR.
 21. The change updates `references/surfaces.md` when it adds a surface, a gesture or a shortcut.
 
+## G. Placement
+
+22. The capability has one row in `crates/ui/src/inventory.rs` (`ROWS`): its places are true today,
+    its context matches every surface that filters it, and its key and icon are bound once. No
+    surface keeps its own list of ids (ADR 0117).
+23. Every mechanism the change uses had an owner before it: a shared one is a declared atom in
+    `ATOMS` with its id, key, cursor and cancel, not a second copy inside this tool (ADR 0118).
+24. A new drawing under `assets/icons/` follows `assets/icons/STYLE_GUIDE.md`, has its row in
+    `assets/README.md`, and means the action it draws; a live button without art is a finding
+    (AGENTS.md §4.12).
+
 ## Eyes only
 
 These cannot be decided from code, a rectangle or a test. Name the check that was used:

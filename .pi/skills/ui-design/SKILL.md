@@ -32,6 +32,20 @@ edge:        the awkward case — no selection, two objects, a locked node
 Four or five of these become our decision, written in our words, and recorded in an ADR when it is
 not reversible. "As in X" on its own is refused: it is a guess wearing a citation.
 
+## Two procedures this one calls
+
+This skill owns the brief, the rubric and the invariants. Two parts of the work have their own
+procedure, and the brief names which one it needs:
+
+- **Where the capability lives** — `place-capability` when an id or a place is added, renamed or
+  removed: the inventory row, the places, the context, the key, the icon and the atoms it consumes
+  (ADR 0117, 0118). A surface that offers an action without a row is not designed, it is improvised.
+- **How the operation behaves** — `design-operation` when a gesture or a mode appears: the state
+  machine, the preview, the typed number, the cancel, the one undo entry, the feedback budget and the
+  cursor. The five-line decomposition is the same one; that skill fills it in.
+
+Both end at a gate command; a change that needs neither is a layout or a wording change.
+
 ## Sources of truth
 
 Read the row and only the row you need; never re-derive a rule that is already written.
@@ -137,5 +151,8 @@ skill, or it will be wrong within a release and quietly outvote the code.
 ## References
 
 - `references/human-factors.md` — Fitts, Hick, feedback budgets, target sizes, contrast, motor rules.
-- `references/surfaces.md` — every surface, its file and its ADR.
+- `references/surfaces.md` — every surface, its file and its ADR; the place of a capability is the
+  inventory in `crates/ui/src/inventory.rs`.
 - `references/checklist.md` — the review form and the eyes-only list.
+- `place-capability` — the inventory row and the places a capability appears in.
+- `design-operation` — the state machine, preview, typed input, cancel and undo of one operation.

@@ -1,8 +1,8 @@
 //! The project skills stay honest about the tree and the commands they name.
 //!
 //! A skill that points at a path or a `cargo xtask` command that is gone sends the next session to
-//! nothing, and the router line in `AGENTS.md` §1.3 is the only thing that makes the design skill
-//! load reliably. `pi` also parses frontmatter as strict YAML, so an unquoted `:` in a description
+//! nothing, and the router line in `AGENTS.md` §1.3 is the only thing that makes the interface
+//! skills load reliably. `pi` also parses frontmatter as strict YAML, so an unquoted `:` in a description
 //! silently loads no skill at all. Both are the same rot the plan gate rejects for `plan/map.md` and
 //! the docs gate for `docs/decisions/`: read the tree, and fail with a sentence naming the file.
 //!
@@ -15,13 +15,14 @@ use std::path::{Path, PathBuf};
 
 use state_contract::cli::COMMANDS;
 
-/// The router document: its §1.3 is what makes the design skill load reliably.
+/// The router document: its §1.3 is what makes the interface skills load reliably.
 const AGENTS: &str = "AGENTS.md";
 /// Where the skills and the slash prompts live.
 const SKILLS: &str = ".pi/skills";
 const PROMPTS: &str = ".pi/prompts";
-/// The skill `AGENTS.md` §1.3 must name.
-const DESIGN_SKILL: &str = ".pi/skills/ui-design/SKILL.md";
+/// The skills `AGENTS.md` §1.3 routes to: the design procedure and the two procedures it calls.
+const ROUTED_SKILLS: &[&str] =
+    &[".pi/skills/ui-design/SKILL.md", ".pi/skills/place-capability/SKILL.md", ".pi/skills/design-operation/SKILL.md"];
 /// Line budgets: a skill is a procedure, not a document.
 const SKILL_BUDGET: usize = 200;
 const REFERENCE_BUDGET: usize = 150;
@@ -385,17 +386,17 @@ fn check_budget(shown: &str, text: &str, violations: &mut Vec<String>) {
     }
 }
 
-/// `AGENTS.md` §1.3 is the only thing that makes the design skill load reliably.
+/// `AGENTS.md` §1.3 is the only thing that makes the interface skills load reliably.
 fn check_router(root: &Path, violations: &mut Vec<String>) {
     let Ok(text) = std::fs::read_to_string(root.join(AGENTS)) else { return };
     let Some(section) = section(&text, "### 1.3") else {
         violations.push(format!("`{AGENTS}` has no §1.3 section"));
         return;
     };
-    if !section.contains(DESIGN_SKILL) {
-        violations.push(format!(
-            "`{AGENTS}` §1.3 does not name `{DESIGN_SKILL}`, so the design skill does not load reliably"
-        ));
+    for skill in ROUTED_SKILLS {
+        if !section.contains(skill) {
+            violations.push(format!("`{AGENTS}` §1.3 does not name `{skill}`, so that skill does not load reliably"));
+        }
     }
 }
 
@@ -417,7 +418,7 @@ fn section<'a>(text: &'a str, heading: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
-    const ROUTER: &str = "# Agents\n\n### 1.3 Designing the interface\n\nRead `.pi/skills/ui-design/SKILL.md`.\n\n### 1.4 Planning\n\nNothing here.\n";
+    const ROUTER: &str = "# Agents\n\n### 1.3 Designing the interface\n\nRead `.pi/skills/ui-design/SKILL.md`, `.pi/skills/place-capability/SKILL.md` and `.pi/skills/design-operation/SKILL.md`.\n\n### 1.4 Planning\n\nNothing here.\n";
 
     /// A scratch project with the given files, written as `(relative path, contents)`.
     fn project(name: &str, files: &[(&str, String)]) -> PathBuf {
@@ -443,6 +444,8 @@ mod tests {
             ("AGENTS.md", ROUTER.to_owned()),
             (".pi/skills/ui-design/SKILL.md", skill("ui-design", "Read `references/checklist.md`.")),
             (".pi/skills/ui-design/references/checklist.md", "- a rubric line\n".to_owned()),
+            (".pi/skills/place-capability/SKILL.md", skill("place-capability", "Read `references/checklist.md`.")),
+            (".pi/skills/design-operation/SKILL.md", skill("design-operation", "Read `references/checklist.md`.")),
             (".pi/prompts/review.md", "---\ndescription: \"review it\"\n---\n\nRun `cargo xtask layers`.\n".to_owned()),
         ]
     }
@@ -454,7 +457,7 @@ mod tests {
     #[test]
     fn a_healthy_tree_passes() {
         let root = project("ok", &healthy());
-        assert_eq!(check(&root, &["layers", "ci"]).expect("the tree is honest"), 4);
+        assert_eq!(check(&root, &["layers", "ci"]).expect("the tree is honest"), 6);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -488,7 +491,7 @@ mod tests {
     #[test]
     fn a_prompt_resolves_a_skill_reference_but_a_link_stays_relative() {
         let mut files = healthy();
-        files[3].1 = "---\ndescription: \"review it\"\n---\n\nLoad `references/checklist.md`.\n".to_owned();
+        files[5].1 = "---\ndescription: \"review it\"\n---\n\nLoad `references/checklist.md`.\n".to_owned();
         let root = project("prompt", &files);
         assert!(check(&root, &["layers", "ci"]).is_ok(), "a prompt may cite a skill's reference");
         let _ = std::fs::remove_dir_all(&root);
@@ -509,7 +512,7 @@ mod tests {
     #[test]
     fn a_command_that_does_not_exist_is_named() {
         let mut files = healthy();
-        files[3].1 = "---\ndescription: \"review it\"\n---\n\nRun `cargo xtask layerz`.\n".to_owned();
+        files[5].1 = "---\ndescription: \"review it\"\n---\n\nRun `cargo xtask layerz`.\n".to_owned();
         let root = project("command", &files);
         let violations = violations_of(&root);
         assert!(
@@ -561,12 +564,19 @@ mod tests {
     }
 
     #[test]
-    fn the_router_must_name_the_design_skill() {
+    fn the_router_must_name_every_interface_skill() {
         let mut files = healthy();
         files[0].1 = "# Agents\n\n### 1.3 Designing the interface\n\nRead the design skill.\n".to_owned();
         let root = project("router", &files);
         let violations = violations_of(&root);
-        assert!(violations.iter().any(|violation| violation.contains("§1.3 does not name")), "{violations:?}");
+        for skill in ROUTED_SKILLS {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("§1.3 does not name") && violation.contains(skill)),
+                "{skill} must be named: {violations:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
