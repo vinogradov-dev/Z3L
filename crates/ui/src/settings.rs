@@ -978,38 +978,28 @@ fn shortcuts_ui(ui: &mut Ui, lang: Lang) -> bool {
     false
 }
 
-/// The shortcut table, built from the one source that also labels the tools.
+/// The shortcut table, walked from the inventory's one key table (U96).
 ///
-/// A key shown here is a key the shell listens for; the drawing tools come from the same table the
-/// ribbon hints use, so a renamed shortcut cannot leave this page stale.
+/// A row is a binding: the label the table prints and the words the id already carries — a command's
+/// own label, a cell's or a method's name from the ribbon map, or a shell action's description. The
+/// gestures a mouse carries are not keys and stay here, after the bindings, because no table binds
+/// them and the page still has to say they exist.
 pub fn shortcut_table(lang: Lang) -> Vec<(String, String)> {
-    let mut rows: Vec<(&str, Message)> = vec![
-        ("Ctrl+N", Message::ShortcutNewScene),
-        ("Ctrl+W", Message::ShortcutCloseTab),
-        ("Ctrl+S", Message::ShortcutSave),
-        ("Ctrl+Z", Message::ShortcutUndo),
-        ("Ctrl+Y", Message::ShortcutRedo),
-        ("Del", Message::ShortcutDelete),
-        ("Ctrl+K", Message::ShortcutPalette),
-        ("Ctrl+0", Message::ShortcutHidePanels),
-        ("Ctrl+Shift+0", Message::ShortcutCollapsePanels),
-        ("F", Message::ShortcutFrameAll),
-        ("O", Message::ShortcutProjection),
-        ("Alt+W", Message::ShortcutExpand),
-        ("G", Message::ShortcutGrid),
+    let mut table: Vec<(String, String)> = crate::inventory::KEYS
+        .iter()
+        .filter_map(|binding| {
+            let words = crate::inventory::words(binding.id)?;
+            Some((binding.label.to_owned(), words.text(lang).to_owned()))
+        })
+        .collect();
+    let gestures: [(&str, Message); 4] = [
         ("Esc", Message::ShortcutCancel),
         ("MMB", Message::ShortcutOrbit),
         ("Shift+MMB", Message::ShortcutPan),
         ("Ctrl+MMB", Message::ShortcutZoom),
     ];
-    let mut table = Vec::with_capacity(rows.len() + crate::toolbars::CONTOUR_TOOLS.len());
-    for (key, action) in rows.drain(..) {
-        table.push((key.to_owned(), action.text(lang).to_owned()));
-    }
-    for tool in crate::toolbars::CONTOUR_TOOLS {
-        if let Some(key) = crate::toolbars::shortcut_label(tool) {
-            table.push((key.to_owned(), tool.label().text(lang).to_owned()));
-        }
+    for (gesture, message) in gestures {
+        table.push((gesture.to_owned(), message.text(lang).to_owned()));
     }
     table
 }

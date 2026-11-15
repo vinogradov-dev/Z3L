@@ -236,6 +236,11 @@ pub(crate) struct Chrome {
     /// Like the method list it floats over the scene, so a press inside it is chrome: the entry
     /// under the pointer is what the press is for, and the model behind it never sees the click.
     pub(crate) menu: Option<egui::Rect>,
+    /// The rectangle of the armed tool's card, when a tool that asks for a number is running (U97).
+    ///
+    /// The card follows the pointer, so a press on its field or its ✓ is never a pick and never a
+    /// camera gesture: the card owns the pointer across its whole rectangle (ADR 0080, ADR 0119).
+    pub(crate) tool: Option<egui::Rect>,
 }
 
 impl Chrome {
@@ -244,6 +249,7 @@ impl Chrome {
         self.ribbon.contains(point)
             || self.list.is_some_and(|list| list.contains(point))
             || self.menu.is_some_and(|menu| menu.contains(point))
+            || self.tool.is_some_and(|tool| tool.contains(point))
             || self.panels.panels().any(|rect| rect.contains(point))
     }
 
@@ -513,6 +519,7 @@ mod tests {
             ribbon,
             list: None,
             menu: None,
+            tool: None,
         }
     }
 

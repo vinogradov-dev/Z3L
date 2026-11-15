@@ -123,17 +123,26 @@ pub fn show(ui: &mut Ui, state: &HeaderState, file_menu: impl FnOnce(&mut Ui)) -
                 file_menu(ui);
                 theme::divider_of_height(ui, theme::HEADER_CONTROL_HEIGHT);
 
-                if icon_button(ui, icons::actions::FILE_SAVE, Message::HeaderSave.text(lang), true, false).clicked() {
+                let hint = keyed_hint(Message::HeaderSave, furnicraft_ui::inventory::FILE_SAVE, lang);
+                if icon_button(ui, icons::actions::FILE_SAVE, &hint, true, false).clicked() {
                     action = Some(HeaderAction::Save);
                 }
                 theme::divider_of_height(ui, theme::HEADER_CONTROL_HEIGHT);
 
-                let hint = if state.can_undo { Message::HeaderUndo } else { Message::HeaderNothingToUndo }.text(lang);
-                if icon_button(ui, icons::actions::UNDO, hint, state.can_undo, false).clicked() && state.can_undo {
+                let hint = if state.can_undo {
+                    keyed_hint(Message::HeaderUndo, furnicraft_ui::inventory::EDIT_UNDO, lang)
+                } else {
+                    Message::HeaderNothingToUndo.text(lang).to_owned()
+                };
+                if icon_button(ui, icons::actions::UNDO, &hint, state.can_undo, false).clicked() && state.can_undo {
                     action = Some(HeaderAction::Undo);
                 }
-                let hint = if state.can_redo { Message::HeaderRedo } else { Message::HeaderNothingToRedo }.text(lang);
-                if icon_button(ui, icons::actions::REDO, hint, state.can_redo, false).clicked() && state.can_redo {
+                let hint = if state.can_redo {
+                    keyed_hint(Message::HeaderRedo, furnicraft_ui::inventory::EDIT_REDO, lang)
+                } else {
+                    Message::HeaderNothingToRedo.text(lang).to_owned()
+                };
+                if icon_button(ui, icons::actions::REDO, &hint, state.can_redo, false).clicked() && state.can_redo {
                     action = Some(HeaderAction::Redo);
                 }
                 theme::divider_of_height(ui, theme::HEADER_CONTROL_HEIGHT);
@@ -162,7 +171,8 @@ pub fn show(ui: &mut Ui, state: &HeaderState, file_menu: impl FnOnce(&mut Ui)) -
                 } else {
                     (icons::actions::HIDDEN, Message::HideAllPanels)
                 };
-                if icon_button(ui, hide_icon, hide_hint.text(lang), true, state.panels_hidden).clicked() {
+                let hide_hint = keyed_hint(hide_hint, furnicraft_ui::inventory::PANELS_HIDE, lang);
+                if icon_button(ui, hide_icon, &hide_hint, true, state.panels_hidden).clicked() {
                     action = Some(HeaderAction::HidePanels);
                 }
                 let (collapse_hint, collapse_selected) = if state.panels_collapsed {
@@ -170,9 +180,8 @@ pub fn show(ui: &mut Ui, state: &HeaderState, file_menu: impl FnOnce(&mut Ui)) -
                 } else {
                     (Message::CollapseAllPanels, false)
                 };
-                if icon_button(ui, icons::actions::PANEL_LEFT, collapse_hint.text(lang), true, collapse_selected)
-                    .clicked()
-                {
+                let collapse_hint = keyed_hint(collapse_hint, furnicraft_ui::inventory::PANELS_COLLAPSE, lang);
+                if icon_button(ui, icons::actions::PANEL_LEFT, &collapse_hint, true, collapse_selected).clicked() {
                     action = Some(HeaderAction::CollapsePanels);
                 }
                 action
@@ -198,7 +207,8 @@ fn tab_row(ui: &mut Ui, state: &HeaderState) -> Option<HeaderAction> {
                 None => {}
             }
         }
-        if icon_button(ui, icons::actions::ADD, Message::HeaderNewScene.text(lang), true, false).clicked() {
+        let hint = keyed_hint(Message::HeaderNewScene, furnicraft_ui::inventory::FILE_NEW, lang);
+        if icon_button(ui, icons::actions::ADD, &hint, true, false).clicked() {
             action = Some(HeaderAction::NewTab);
         }
     });
@@ -300,6 +310,14 @@ fn active_tab_fill(ui: &Ui) -> egui::Color32 {
 /// The button is one header control — [`theme::HEADER_CONTROL_HEIGHT`] tall, square — so it lines up
 /// with the `File` text button beside it instead of standing a few points taller. The icon itself is
 /// 18 pt inside that cell, which is the optical size the header needs.
+/// A header button's hint: the action's words and the key the inventory binds to it.
+///
+/// The key is data, so the header never spells `Ctrl+S` itself: a remapped binding reads correctly
+/// here without a second edit (U96).
+fn keyed_hint(words: Message, id: &str, lang: furnicraft_text::Lang) -> String {
+    icons::tool_hint(words.text(lang), furnicraft_ui::inventory::key_label(id))
+}
+
 fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selected: bool) -> egui::Response {
     icons::icon_button_sized(ui, icon, theme::HEADER_CONTROL_HEIGHT, 18.0, label, enabled, selected)
 }

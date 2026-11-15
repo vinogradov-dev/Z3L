@@ -679,6 +679,24 @@ fn a_locked_node_refuses_the_delete_key_and_names_itself() {
 }
 
 #[test]
+fn the_grid_key_turns_the_running_drafts_grid_and_nothing_else() {
+    // The key is read with the shell's table and its effect belongs to the draft in front: outside a
+    // draft the shell asks for it and the document changes nothing (U96).
+    let mut harness = Harness::new("frame-grid-key");
+    harness.settle();
+    let idle = harness.app.tabs.active().draw_gizmo.grid();
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_eq!(harness.app.tabs.active().draw_gizmo.grid(), idle, "no draft, no snap to turn");
+
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::Line);
+    harness.settle();
+    let revision = harness.revision();
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_ne!(harness.app.tabs.active().draw_gizmo.grid(), idle, "the key turned the draft's grid");
+    assert_eq!(harness.revision(), revision, "the grid is view state");
+}
+
+#[test]
 fn no_chrome_gesture_writes_a_revision() {
     // A fold, a hide, a ribbon fold and a camera move are view state: the document must not gain an
     // undo entry, a dirty marker or a rebuild from any of them.
@@ -1550,14 +1568,12 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     };
     assert_eq!(product, harness.app.tabs.active().session.active_product().expect("the open frame"));
 
-    // The pointer measures the void and the low field takes the keyboard without a click.
+    // The pointer measures the void and the low row takes the keyboard without a click, so the
+    // maker types into the number the gesture is driving.
     harness.run(vec![egui::Event::PointerMoved(pointer)]);
     harness.settle();
-    let low = harness.app.tabs.active().distance_rects.first().copied().expect("the low distance field drew");
-    assert!(screen().contains_rect(low), "the field is on screen: {low:?}");
-    // Aiming at the low field makes it the nearest one, so it owns the keyboard without a click.
-    harness.run(vec![egui::Event::PointerMoved(low.center())]);
-    harness.settle();
+    let card = harness.app.tabs.active().tool_card_rect().expect("the fill's card drew beside the pointer");
+    assert!(screen().contains_rect(card), "the card is on screen: {card:?}");
     harness.run(vec![egui::Event::Text("120".to_owned())]);
     harness.press(egui::Key::Enter, egui::Modifiers::NONE);
 
@@ -1693,4 +1709,170 @@ fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
     assert_eq!((vertical.top(), vertical.bottom()), (view.top(), view.bottom()), "the other spans the height");
     assert_eq!(vertical.center().x, view.center().x, "and passes through the pointer too");
     assert!(vertical.width() > 0.0, "and both arms are painted, not only the horizontal one");
+}
+
+/// Every text the last frame drew inside `rect`.
+fn texts_inside(harness: &Harness, rect: egui::Rect) -> Vec<String> {
+    harness.drawn_rects.iter().filter(|(at, _)| rect.contains_rect(*at)).map(|(_, text)| text.clone()).collect()
+}
+
+/// The armed tool's card and the inspector show one draft (U97, ADR 0119).
+///
+/// Every word the card drew must appear in the inspector: both read the same values, so a number
+/// that disagreed would be a second source of truth rather than a copy.
+fn assert_the_card_and_the_inspector_agree(harness: &Harness, chrome: &Chrome) {
+    let document = harness.app.tabs.active();
+    let card = document.tool_card_rect().expect("the armed tool drew its card");
+    let inspector = chrome.panels.right.expect("the inspector is on");
+    assert!(screen().contains_rect(card), "the card is on screen: {card:?}");
+    let in_card = texts_inside(harness, card);
+    let in_inspector = texts_inside(harness, inspector);
+    assert!(!in_card.is_empty(), "the card drew its rows: {card:?}");
+    for text in &in_card {
+        assert!(
+            in_inspector.contains(text),
+            "the inspector mirrors {text:?}: card {in_card:?}, inspector {in_inspector:?}"
+        );
+    }
+}
+
+#[test]
+fn a_box_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree() {
+    let mut harness = Harness::with_session("frame-tool-card-box", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    let mm = furnicraft_testkit::millimetres;
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.arm_box(furnicraft_ui::BoxOwner::Cuboid);
+        assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
+        assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"), "the second fixes the base");
+        document.editor.pull_box_height(mm(120)).expect("the pull");
+    }
+    let chrome = harness.settle();
+    let document = harness.app.tabs.active();
+    let card = document.tool_card_rect().expect("the height pull draws its card");
+    let in_card = texts_inside(&harness, card);
+    assert!(in_card.iter().any(|text| text == "120"), "the card shows the pulled height: {in_card:?}");
+    assert!(in_card.iter().any(|text| text == "Box height"), "and names what it sizes: {in_card:?}");
+    assert_the_card_and_the_inspector_agree(&harness, &chrome);
+}
+
+#[test]
+fn a_fill_shows_its_two_gaps_in_the_card_and_the_inspector_and_they_never_disagree() {
+    let mut harness =
+        Harness::with_session("frame-tool-card-fill", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    let pointer = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = furnicraft_geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let centre = project.world_placement(product).expect("a frame").transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let pointer = gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen");
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, furnicraft_model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+        pointer
+    };
+    harness.hover(pointer);
+    let chrome = harness.settle();
+    let document = harness.app.tabs.active();
+    let card = document.tool_card_rect().expect("the fill's card drew beside the pointer");
+    let in_card = texts_inside(&harness, card);
+    assert!(in_card.iter().any(|text| text == "Low gap"), "the card names both gaps: {in_card:?}");
+    assert!(in_card.iter().any(|text| text == "High gap"), "the card names both gaps: {in_card:?}");
+    assert_the_card_and_the_inspector_agree(&harness, &chrome);
+}
+
+/// A scene holding one extruded body: a 600 x 400 mm rectangle pulled 18 mm, and its id.
+fn one_body() -> (furnicraft_engine::Session, Id) {
+    use furnicraft_model::{Constructive, Container, Geometry, Path, Placement, Project};
+    let mm = furnicraft_testkit::millimetres;
+    let root = Container::new(Id::new(1).expect("an id"), "Scene", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let ring = Path::rectangle([mm(0), mm(0)], [mm(600), mm(400)]).expect("a rectangle");
+    let body = Constructive::extrude(ring, mm(18)).expect("a body");
+    let id = project
+        .add_object(project.root().id(), "Body", Placement::IDENTITY, Geometry::Constructive(body))
+        .expect("the body is added");
+    (furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog()), id)
+}
+
+#[test]
+fn a_pull_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree() {
+    let (session, body) = one_body();
+    let mut harness = Harness::with_session("frame-tool-card-pull", session);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(body));
+        document.extrude_gizmo.start(body, furnicraft_testkit::millimetres(40));
+    }
+    harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);
+    let chrome = harness.settle();
+    let document = harness.app.tabs.active();
+    let card = document.tool_card_rect().expect("the pull draws its card");
+    let in_card = texts_inside(&harness, card);
+    assert!(in_card.iter().any(|text| text == "40"), "the card shows the pulled height: {in_card:?}");
+    assert_the_card_and_the_inspector_agree(&harness, &chrome);
+}
+
+#[test]
+fn a_press_inside_the_card_is_chrome_and_never_a_pick_or_a_finish() {
+    let (session, body) = one_body();
+    let mut harness = Harness::with_session("frame-tool-card-chrome", session);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(body));
+        document.extrude_gizmo.start(body, furnicraft_testkit::millimetres(40));
+    }
+    harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);
+    harness.settle();
+    let (card, revision) = {
+        let document = harness.app.tabs.active();
+        (document.tool_card_rect().expect("the pull draws its card"), harness.revision())
+    };
+    // The card floats over the scene, so the press belongs to its field: the pull stays open and
+    // the document keeps its revision (ADR 0080, ADR 0119).
+    harness.click(card.center(), egui::PointerButton::Primary);
+    let document = harness.app.tabs.active();
+    assert!(document.extrude_gizmo.is_active(), "a press on the card never finishes the pull");
+    assert_eq!(harness.revision(), revision, "and never writes a document");
+    assert!(document.tool_card_rect().is_some(), "the card is still there, holding the keyboard");
+}
+
+#[test]
+fn escape_closes_the_card_and_writes_nothing() {
+    let mut harness =
+        Harness::with_session("frame-tool-card-escape", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    let mm = furnicraft_testkit::millimetres;
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.arm_box(furnicraft_ui::BoxOwner::Cuboid);
+        assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
+        assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"));
+        document.editor.pull_box_height(mm(120)).expect("the pull");
+    }
+    harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);
+    harness.settle();
+    let before = harness.revision();
+    assert!(harness.app.tabs.active().tool_card_rect().is_some(), "the card is up before the key");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active();
+    assert!(document.editor.box_draft().is_none(), "Escape drops the draft");
+    assert!(document.tool_card_rect().is_none(), "and its card goes with it");
+    assert_eq!(harness.revision(), before, "a cancelled draft writes nothing");
 }

@@ -42,41 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
-  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
-   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
-   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
-   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
-   0117 makes the key a column of the inventory.
-  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
-   instead of matching key codes, and the ribbon label is derived from the same row. A test
-   asserts the two agree for every live method and that no key is bound twice; the guard that
-   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
-   table is the data a later Settings section writes.
-  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
-   label; no key is bound twice; a headless test presses each default key and asserts the same
-   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
-   xtask ci` is green.
-  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs`
-- `[ ]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
-  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
-   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
-   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
-   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
-   for a tool parameters.
-  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
-   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
-   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
-   inspector shows the same values from the same draft, and both commit through the one
-   command. The exact-distance fields become the card first instance: one layout, one commit
-   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
-   clearing the field returns it to the pointer.
-  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
-   and a headless frame test finds the two never disagree; a press inside the card is chrome
-   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
-   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
-   `cargo xtask ci` is green.
-  `files: crates/ui/src/command_bar.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
   Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
    measure: the value on screen and in the status bar, several measurements in a row, each
@@ -143,6 +108,43 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
+  Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
+   the inspector. Today a tool has no home for its own parameters — a fill distance lives in
+   the exact-distance fields, a side count in the ribbon typed defaults, a panel size in the
+   inspector — so a new tool invents a fourth place. ADR 0119 makes one small card the surface
+   for a tool parameters.
+  Shape: A `ToolCard` surface drawn near the pointer while a tool is armed and parameterised,
+   holding the shared scrub fields (0092): it appears with the arm, closes with the commit, the
+   cancel or Escape, is declared to `Chrome::covers` and is one row of `HOST_OWNERS`. The
+   inspector shows the same values from the same draft, and both commit through the one
+   command. The exact-distance fields become the card first instance: one layout, one commit
+   path, one edit scope. Typing pins the value the pointer drove and the preview follows;
+   clearing the field returns it to the pointer.
+  Done: A box, a fill and an extrusion show their parameters in the card and in the inspector,
+   and a headless frame test finds the two never disagree; a press inside the card is chrome
+   and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
+   scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
+   `cargo xtask ci` is green.
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs` — `01c7533`
+
+- `[x]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
+  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
+   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
+   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
+   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
+   0117 makes the key a column of the inventory.
+  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
+   instead of matching key codes, and the ribbon label is derived from the same row. A test
+   asserts the two agree for every live method and that no key is bound twice; the guard that
+   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
+   table is the data a later Settings section writes.
+  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
+   label; no key is bound twice; a headless test presses each default key and asserts the same
+   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
+   xtask ci` is green.
+  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs` — `d1dacb1`
 
 - `[x]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
   Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`

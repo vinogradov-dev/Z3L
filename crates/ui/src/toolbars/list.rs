@@ -274,7 +274,7 @@ fn header(ui: &mut Ui, tool: &'static ToolSpec, lang: Lang) {
     }
     let inner = rect.shrink2(Vec2::new(ROW_INSET, 0.0));
     ui.scope_builder(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)), |ui| {
-        if let Some(shortcut) = tool.shortcut {
+        if let Some(shortcut) = tool.key() {
             ui.label(small(shortcut, theme::text_dim(ui)));
         }
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {

@@ -28,6 +28,7 @@ use crate::object_card::ObjectAction;
 use crate::panel_card::PanelAction;
 use crate::scene_tree;
 use crate::theme;
+use crate::tool_card::{ToolOutcome, ToolView};
 
 impl Editor {
     /// Draws the scene tree and dispatches the tree actions.
@@ -58,13 +59,23 @@ impl Editor {
         ui.ctx().request_repaint();
     }
 
-    /// Draws the inspector card for the primary selection.
-    pub fn show_card(&mut self, ui: &mut Ui, session: &mut Session) {
+    /// Draws the inspector card for the primary selection, with the armed tool's parameters above it.
+    ///
+    /// A running tool that asks for a number draws the same rows as its card at the pointer (ADR
+    /// 0119), from the draft the shell built; the outcome goes back to the shell, which takes the
+    /// numbers through the tool's own path. Nothing here writes a document.
+    pub fn show_card(&mut self, ui: &mut Ui, session: &mut Session, tool: Option<&mut ToolView>) -> ToolOutcome {
+        let mut outcome = ToolOutcome::default();
+        if let Some(view) = tool
+            && !view.is_empty()
+        {
+            outcome = crate::tool_card::section(ui, view, None);
+        }
         self.retain_mesh_edit(session.project());
         self.retain_contour_edit(session.project());
         let Some(primary) = self.selection.primary() else {
             ui.label(Message::SelectNodeInTree.text(crate::language(ui.ctx())));
-            return;
+            return outcome;
         };
         if session.project().parent_of(primary).is_some() {
             self.placement_card.show(ui, session, primary);
@@ -119,6 +130,7 @@ impl Editor {
             ui.label(Message::SelectNodeInTree.text(crate::language(ui.ctx())));
         }
         self.properties_card.show(ui, session, primary);
+        outcome
     }
 
     /// Runs one entry of the node's action list, from the tree row or the viewport popup.
@@ -245,7 +257,7 @@ mod tests {
         theme::install(&ctx);
         crate::set_language(&ctx, crate::Lang::En);
         let output = ctx.run_ui(Default::default(), |ui| {
-            editor.show_card(ui, session);
+            let _ = editor.show_card(ui, session, None);
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();

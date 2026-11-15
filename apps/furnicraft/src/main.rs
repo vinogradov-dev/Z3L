@@ -890,6 +890,9 @@ impl FurniCraftApp {
             if shortcuts.delete {
                 self.delete_selection(furnicraft_ui::language(ui.ctx()));
             }
+            if shortcuts.grid_snap {
+                self.tabs.active_mut().toggle_draw_grid();
+            }
             if shortcuts.hide_panels {
                 self.shell.panels.toggle_hide_all();
             }
@@ -965,8 +968,13 @@ impl FurniCraftApp {
             panels,
             (width("scene_tree", panels.scene), width("panel_card", panels.inspector)),
         );
-        let chrome =
-            Chrome { panels: rects, ribbon: band, list: self.shell.list_rect, menu: self.tabs.active().menu_rect() };
+        let chrome = Chrome {
+            panels: rects,
+            ribbon: band,
+            list: self.shell.list_rect,
+            menu: self.tabs.active().menu_rect(),
+            tool: self.tabs.active().tool_card_rect(),
+        };
         self.workspace(ui, &chrome);
         if let Some(rect) = rects.left {
             self.scene_tree(&ctx, rect);

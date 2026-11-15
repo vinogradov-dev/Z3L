@@ -545,6 +545,7 @@ mod tests {
             ribbon: Rect::from_min_size(viewport.min, Vec2::new(viewport.width(), 0.0)),
             list: None,
             menu: None,
+            tool: None,
         }
     }
 
@@ -563,6 +564,7 @@ mod tests {
             ribbon,
             list: None,
             menu: None,
+            tool: None,
         }
     }
 

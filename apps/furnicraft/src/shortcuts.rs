@@ -1,20 +1,22 @@
 //! The shell's keyboard: the global shortcuts and the drawing tools' keys.
 //!
-//! [`take_shortcuts`] reads and consumes the modified pair and the view keys in one pass, so one key
-//! does one thing; [`drawing_key`] reads the two keys a running draft obeys and
-//! [`take_drawing_shortcut`] takes at most one tool key from the table the button hints print. Every
-//! reader here reports what was pressed and the shell performs it: no shortcut mutates the document.
+//! No key code lives here. Every reader asks `furnicraft_ui::inventory::KEYS` by id — [`take_shortcuts`]
+//! for the shell's actions and commands, [`take_drawing_shortcut`] for the drawing tools — so a key is
+//! data and a remapped binding is an edit to that table (U96). [`take_shortcuts`] reads and consumes
+//! them in one pass, so one key does one thing; [`drawing_key`] reads the two keys a running draft
+//! obeys. Every reader reports what was pressed and the shell performs it: no shortcut mutates the
+//! document.
 //!
-//! Changes when: a key the Settings window advertises, or the table of tool keys, changes.
+//! Changes when: a binding in the inventory's key table is added, moved or removed.
 
 use eframe::egui;
 use furnicraft_ui::Editor;
 
 /// The global shortcuts, read in one pass and consumed so one key does one thing.
 ///
-/// The list is the one the Settings window draws; a key added there has to be added here, and a key
-/// removed here must leave the table. The drawing tools read their own keys, so only the modified
-/// pair and the view keys live at this level.
+/// Each field is the id a binding runs, and the binding itself — the modifiers, the key and the words —
+/// comes from the inventory's key table. The drawing tools read their own keys, so only the shell's
+/// actions, the delete command and the view keys live at this level.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Shortcuts {
     pub(crate) save: bool,
@@ -28,12 +30,61 @@ pub(crate) struct Shortcuts {
     pub(crate) delete: bool,
     pub(crate) frame: bool,
     pub(crate) projection: bool,
+    /// Turn the drawing grid on or off; only a running draft reads it.
+    pub(crate) grid_snap: bool,
     pub(crate) maximize: bool,
     pub(crate) palette: bool,
     /// Hide both side panels, or show the pair the last press put away.
     pub(crate) hide_panels: bool,
     /// Fold both side panels to strips, or unfold the pair the last press folded.
     pub(crate) collapse_panels: bool,
+}
+
+#[cfg(test)]
+impl Shortcuts {
+    /// Whether the frame pressed the binding with `id`, for the test that walks the key table.
+    fn pressed(&self, id: &str) -> bool {
+        use furnicraft_ui::inventory::{EDIT_REDO, EDIT_UNDO, FILE_CLOSE, FILE_NEW, FILE_SAVE, PALETTE_OPEN};
+        use furnicraft_ui::inventory::{PANELS_COLLAPSE, PANELS_HIDE};
+        match id {
+            FILE_NEW => self.new_tab,
+            FILE_CLOSE => self.close_tab,
+            FILE_SAVE => self.save,
+            EDIT_UNDO => self.undo,
+            EDIT_REDO => self.redo,
+            PALETTE_OPEN => self.palette,
+            PANELS_HIDE => self.hide_panels,
+            PANELS_COLLAPSE => self.collapse_panels,
+            "node.delete" => self.delete,
+            "view.projection.frame-all" => self.frame,
+            "view.projection.toggle" => self.projection,
+            "view.snaps.grid" => self.grid_snap,
+            "view.layout.maximize" => self.maximize,
+            _ => false,
+        }
+    }
+
+    /// How many of the shell's actions the frame asked for.
+    fn pressed_count(&self) -> usize {
+        [
+            self.save,
+            self.new_tab,
+            self.close_tab,
+            self.undo,
+            self.redo,
+            self.delete,
+            self.frame,
+            self.projection,
+            self.grid_snap,
+            self.maximize,
+            self.palette,
+            self.hide_panels,
+            self.collapse_panels,
+        ]
+        .iter()
+        .filter(|pressed| **pressed)
+        .count()
+    }
 }
 
 /// What one frame's keys ask of a running drawing draft.
@@ -60,28 +111,34 @@ pub(crate) const fn drawing_key(escape: bool, enter: bool) -> Option<DraftKey> {
 }
 
 pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
-    ctx.input_mut(|input| {
+    ctx.input_mut(|input| Shortcuts {
         // The two panel pairs are read with the more specific one first: a pattern without `Shift`
         // matches a press that carries it, so reading the plain pair first would swallow
         // `Ctrl+Shift+0` and the fold would never run (U78).
-        let collapse_panels =
-            input.consume_key(egui::Modifiers { shift: true, ..egui::Modifiers::CTRL }, egui::Key::Num0);
-        let hide_panels = input.consume_key(egui::Modifiers::CTRL, egui::Key::Num0);
-        Shortcuts {
-            save: input.consume_key(egui::Modifiers::CTRL, egui::Key::S),
-            new_tab: input.consume_key(egui::Modifiers::CTRL, egui::Key::N),
-            close_tab: input.consume_key(egui::Modifiers::CTRL, egui::Key::W),
-            undo: input.consume_key(egui::Modifiers::CTRL, egui::Key::Z),
-            redo: input.consume_key(egui::Modifiers::CTRL, egui::Key::Y),
-            delete: input.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
-            frame: input.consume_key(egui::Modifiers::NONE, egui::Key::F),
-            projection: input.consume_key(egui::Modifiers::NONE, egui::Key::O),
-            maximize: input.consume_key(egui::Modifiers::ALT, egui::Key::W),
-            palette: input.consume_key(egui::Modifiers::COMMAND, egui::Key::K),
-            hide_panels,
-            collapse_panels,
-        }
+        collapse_panels: consume(input, furnicraft_ui::inventory::PANELS_COLLAPSE),
+        hide_panels: consume(input, furnicraft_ui::inventory::PANELS_HIDE),
+        save: consume(input, furnicraft_ui::inventory::FILE_SAVE),
+        new_tab: consume(input, furnicraft_ui::inventory::FILE_NEW),
+        close_tab: consume(input, furnicraft_ui::inventory::FILE_CLOSE),
+        undo: consume(input, furnicraft_ui::inventory::EDIT_UNDO),
+        redo: consume(input, furnicraft_ui::inventory::EDIT_REDO),
+        delete: consume(input, "node.delete"),
+        frame: consume(input, "view.projection.frame-all"),
+        projection: consume(input, "view.projection.toggle"),
+        grid_snap: consume(input, "view.snaps.grid"),
+        maximize: consume(input, "view.layout.maximize"),
+        palette: consume(input, furnicraft_ui::inventory::PALETTE_OPEN),
     })
+}
+
+/// Consumes the key the inventory binds to `id`, and says whether the frame carried it.
+///
+/// A key is data: this reads the modifier pair and the key from the one table, so moving a binding
+/// is an edit there and never here. An id the table does not know is not a key, and reading it is a
+/// silent `false` — the inventory's own tests are what refuse an id that names nothing.
+fn consume(input: &mut egui::InputState, id: &str) -> bool {
+    let Some(binding) = furnicraft_ui::inventory::binding(id) else { return false };
+    input.consume_key(binding.chord.modifiers(), binding.key)
 }
 
 /// Consumes at most one drawing-tool key and starts its tool.
@@ -286,6 +343,42 @@ mod tests {
         });
         output.drop_without_applying_deltas();
         assert!(editor.drawing().is_none());
+    }
+
+    #[test]
+    fn every_key_in_the_table_runs_the_id_it_names() {
+        // The key table is the one record of a binding, so a press of each row must reach the reader
+        // that row names: a drawing key starts the tool its method id belongs to, and every other
+        // key reaches exactly the shell action or command the row is filed under (U96).
+        for binding in furnicraft_ui::inventory::KEYS {
+            let modifiers = binding.chord.modifiers();
+            if let Some(tool) = furnicraft_ui::toolbars::spec::drawing_method(binding.id) {
+                let ctx = egui::Context::default();
+                let mut editor = Editor::new();
+                let mut started = false;
+                let output = ctx.run_ui(key_input(binding.key, modifiers), |ui| {
+                    started = take_drawing_shortcut(ui.ctx(), &mut editor, 6);
+                });
+                output.drop_without_applying_deltas();
+                assert!(started, "`{}` starts no tool", binding.label);
+                assert_eq!(
+                    editor.drawing().map(DrawDraft::tool),
+                    Some(tool),
+                    "`{}` does not start `{}`",
+                    binding.label,
+                    binding.id
+                );
+                continue;
+            }
+            let ctx = egui::Context::default();
+            let mut read = Shortcuts::default();
+            let output = ctx.run_ui(key_input(binding.key, modifiers), |ui| {
+                read = take_shortcuts(ui.ctx());
+            });
+            output.drop_without_applying_deltas();
+            assert!(read.pressed(binding.id), "`{}` does not run `{}`", binding.label, binding.id);
+            assert_eq!(read.pressed_count(), 1, "`{}` runs more than one action", binding.label);
+        }
     }
 
     #[test]

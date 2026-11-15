@@ -26,13 +26,11 @@
 
 use core::ops::RangeInclusive;
 
-use egui::{Align2, CornerRadius, Id, Key, Margin, Modifiers, Order, Pos2, Rect, RichText, Sense, Stroke, Ui};
+use egui::{Id, Key, Modifiers, Pos2, Rect, Ui};
 
 use furnicraft_text::Message;
 
-use crate::icons;
-use crate::scrub::Scrub;
-use crate::theme;
+use crate::tool_card::{ToolOutcome, ToolParam, ToolRow, ToolView};
 
 /// One of the two opposite directions of the free axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,6 +58,23 @@ impl Side {
         match self {
             Self::Low => 0,
             Self::High => 1,
+        }
+    }
+
+    /// The card row this direction draws, so one number has one identity on both surfaces.
+    pub const fn param(self) -> ToolParam {
+        match self {
+            Self::Low => ToolParam::LowGap,
+            Self::High => ToolParam::HighGap,
+        }
+    }
+
+    /// The direction a card row edits, or `None` when the row is not a gap.
+    pub const fn of_param(param: ToolParam) -> Option<Self> {
+        match param {
+            ToolParam::LowGap => Some(Self::Low),
+            ToolParam::HighGap => Some(Self::High),
+            ToolParam::Height => None,
         }
     }
 }
@@ -357,22 +372,53 @@ impl Distances {
     pub fn is_active(&self) -> bool {
         self.active.is_some()
     }
+
+    /// The two rows the card and the inspector draw, in the order the voids are read: low, then high.
+    ///
+    /// This is the one place a distance becomes a row, so the card at the pointer and the inspector's
+    /// section cannot show two different numbers for one face (ADR 0119).
+    pub fn rows(&self) -> Vec<ToolRow> {
+        Side::ALL
+            .into_iter()
+            .map(|side| {
+                let disabled = self.neighbour(side).is_none();
+                ToolRow {
+                    param: side.param(),
+                    label: Some(match side {
+                        Side::Low => Message::ToolGapLow,
+                        Side::High => Message::ToolGapHigh,
+                    }),
+                    value: self.value(side).unwrap_or(0.0),
+                    unit: "mm",
+                    range: self.range(),
+                    decimals: 0,
+                    locked: self.locked(side),
+                    disabled,
+                    centre: !disabled,
+                }
+            })
+            .collect()
+    }
 }
 
 /// Where one field draws this frame.
+///
+/// The card itself sits beside the pointer; the placement only says which gap is nearest the hand,
+/// so the field a fresh gesture opens is the one the maker is looking at. The leader line from the
+/// face to the wall is the shell's paint, drawn from the same two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FieldPlacement {
     /// Which direction the field measures.
     pub side: Side,
-    /// The centre of the field's plate, in screen points.
+    /// The centre of the gap the field measures, in screen points.
     pub position: Pos2,
 }
 
 /// What one frame of the overlay asked the shell to do.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DistanceOutcome {
-    /// The plates the fields drew, so a press on one is chrome and never a pick.
-    pub rects: Vec<Rect>,
+    /// The card the fields drew, so a press on it is chrome and never a pick.
+    pub rect: Option<Rect>,
     /// The measurement changed: the shell re-reads [`Distances::pinned_low`] and re-plans the ghost.
     pub changed: bool,
     /// Escape returned the direction to the pointer; the shell must not also end the tool.
@@ -422,18 +468,23 @@ impl DistanceFields {
         self.suspended = false;
     }
 
-    /// Draws the fields over the viewport and reads the keyboard for the active one.
+    /// Draws the card of the two gaps over the viewport and reads the keyboard for the active one.
     ///
-    /// `placements` lists the directions that have an on-screen position; a side with no placement
-    /// draws nothing. The values themselves come from `state`, so this never measures anything.
+    /// `placements` names the gap nearest the hand, so a fresh gesture opens the field the maker is
+    /// looking at; the numbers themselves come from `state`, so this never measures anything. The
+    /// card is the same [`crate::tool_card`] surface a box or a pull draws, so the two share one
+    /// layout, one commit path and one edit scope (ADR 0092, ADR 0119).
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut Ui,
         state: &mut Distances,
         placements: &[FieldPlacement],
+        viewport: Rect,
+        anchor: Pos2,
+        title: Option<Message>,
         opacity: u32,
     ) -> DistanceOutcome {
-        let lang = crate::language(ui.ctx());
         let mut outcome = DistanceOutcome::default();
         // Tab belongs to the gesture, not to egui's focus order: consume it before a text edit
         // sees it, so the field's own Tab cannot move the keyboard somewhere else.
@@ -446,7 +497,7 @@ impl DistanceFields {
             self.error = None;
         }
         // A fresh gesture gives the field nearest the pointer the keyboard, so a number can be
-        // typed without aiming at a plate first. Escape suspends that until the maker asks again.
+        // typed without aiming at a row first. Escape suspends that until the maker asks again.
         if state.active().is_none()
             && !self.suspended
             && let Some(side) = nearest(placements, ui)
@@ -460,96 +511,15 @@ impl DistanceFields {
         if request.is_none() && ui.memory(|memory| memory.focused()).is_none() {
             request = state.active();
         }
-        let mut focused: Option<Side> = None;
-        for placement in placements {
-            let side = placement.side;
-            let area = egui::Area::new(Id::unique(("furnicraft.distance", side.index())))
-                .order(Order::Middle)
-                .fixed_pos(placement.position)
-                .pivot(Align2::CENTER_CENTER)
-                .show(ui.ctx(), |ui| {
-                    let fill = theme::at_opacity(theme::floating(ui), opacity.clamp(80, 100));
-                    let frame = egui::Frame::new()
-                        .fill(fill)
-                        .stroke(Stroke::new(1.0, theme::line(ui)))
-                        .corner_radius(CornerRadius::same(theme::RADIUS))
-                        .inner_margin(Margin::symmetric(6, 3));
-                    frame.show(ui, |ui| match state.neighbour(side) {
-                        None => {
-                            ui.horizontal(|ui| {
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("—").monospace().color(theme::text_dim(ui)));
-                                ui.label(RichText::new("mm").small().color(theme::text_dim(ui)));
-                            });
-                            ui.label(
-                                RichText::new(Message::DistanceNoNeighbour.text(lang))
-                                    .small()
-                                    .color(theme::text_dim(ui)),
-                            );
-                        }
-                        Some(_) => {
-                            ui.horizontal(|ui| {
-                                if state.locked(side) {
-                                    let (rect, lock) = ui.allocate_exact_size(
-                                        egui::vec2(icons::ICON_POINT_SIZE, icons::ICON_POINT_SIZE),
-                                        Sense::hover(),
-                                    );
-                                    icons::draw_icon(
-                                        ui,
-                                        icons::actions::LOCK,
-                                        rect,
-                                        icons::ICON_POINT_SIZE,
-                                        theme::text_dim(ui),
-                                    );
-                                    if let Some(value) = state.value(side) {
-                                        lock.on_hover_text(Message::DistanceLocked.with(lang, [format!("{value:.0}")]));
-                                    }
-                                }
-                                let mut value = state.value(side).unwrap_or(0.0);
-                                let field = Scrub::new(&mut value)
-                                    .speed(0.5)
-                                    .range(state.range())
-                                    .decimals(0)
-                                    .unit("mm")
-                                    .focus(request == Some(side))
-                                    .show(ui);
-                                if field.response.has_focus() {
-                                    focused = Some(side);
-                                    self.focused_id = Some(field.response.id);
-                                }
-                                if field.commit {
-                                    match state.place(side, value) {
-                                        Ok(()) => {
-                                            self.error = None;
-                                            outcome.changed = true;
-                                        }
-                                        Err(refusal) => self.error = Some(refusal.message()),
-                                    }
-                                }
-                                if let Some(message) = field.error {
-                                    self.error = Some(message);
-                                }
-                                field.response.context_menu(|ui| {
-                                    if ui.button(Message::DistanceCentred.text(lang)).clicked() {
-                                        match state.centre() {
-                                            Ok(_) => {
-                                                self.error = None;
-                                                outcome.changed = true;
-                                            }
-                                            Err(refusal) => self.error = Some(refusal.message()),
-                                        }
-                                        ui.close();
-                                    }
-                                });
-                            });
-                        }
-                    });
-                });
-            outcome.rects.push(area.response.rect);
-        }
-        if let Some(side) = focused {
+        let mut view = ToolView { title, rows: state.rows(), actions: false };
+        let (reported, rect) =
+            crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
+        outcome.rect = Some(rect);
+        outcome.changed = self.apply(state, &reported);
+        if let Some(side) = reported.focused.and_then(Side::of_param) {
             state.activate(Some(side));
             self.suspended = false;
+            self.focused_id = ui.memory(|memory| memory.focused());
         }
         if escape && state.is_active() {
             // The field keeps egui's focus on Escape; surrender it here so the key reaches the
@@ -573,6 +543,48 @@ impl DistanceFields {
             }
         }
         outcome
+    }
+
+    /// Takes what the card reported into the measurement: a typed gap, a lock, the centre.
+    ///
+    /// The card at the pointer and the inspector's section both go through here, so one number has
+    /// one refusal, one pin and one write whichever surface the maker typed it into.
+    pub fn apply(&mut self, state: &mut Distances, reported: &ToolOutcome) -> bool {
+        let mut changed = false;
+        if let Some(message) = reported.error {
+            self.error = Some(message);
+        }
+        for edit in &reported.edits {
+            let Some(side) = Side::of_param(edit.param) else {
+                continue;
+            };
+            match state.place(side, edit.value) {
+                Ok(()) => {
+                    self.error = None;
+                    changed = true;
+                }
+                Err(refusal) => self.error = Some(refusal.message()),
+            }
+        }
+        if let Some(side) = reported.lock.and_then(Side::of_param) {
+            match state.lock(side) {
+                Ok(()) => {
+                    self.error = None;
+                    changed = true;
+                }
+                Err(refusal) => self.error = Some(refusal.message()),
+            }
+        }
+        if reported.centre.is_some() {
+            match state.centre() {
+                Ok(_) => {
+                    self.error = None;
+                    changed = true;
+                }
+                Err(refusal) => self.error = Some(refusal.message()),
+            }
+        }
+        changed
     }
 }
 
@@ -740,26 +752,21 @@ mod tests {
             FieldPlacement { side: Side::Low, position: Pos2::new(200.0, 300.0) },
             FieldPlacement { side: Side::High, position: Pos2::new(500.0, 300.0) },
         ];
+        let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
         let mut fields = DistanceFields::default();
         let mut last = None;
         let mut locked = false;
         for _ in 0..2 {
-            let output = context.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
-                    ..Default::default()
-                },
-                |ui| {
-                    last = Some(fields.show(ui, &mut state, &placements, 92));
-                },
-            );
+            let output = context.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |ui| {
+                last = Some(fields.show(ui, &mut state, &placements, viewport, Pos2::new(400.0, 300.0), None, 92));
+            });
             if let Some(outcome) = &last {
-                locked = contains_image(&output.shapes, outcome.rects.first().copied());
+                locked = contains_image(&output.shapes, outcome.rect);
             }
             output.drop_without_applying_deltas();
         }
-        let outcome = last.expect("two frames drew the fields");
-        assert_eq!(outcome.rects.len(), 2, "one plate per direction");
+        let outcome = last.expect("two frames drew the card");
+        assert!(outcome.rect.is_some(), "the card took one rectangle, not one per direction");
         assert_eq!(state.active(), Some(Side::Low), "exactly one field owns the keyboard");
         assert!(locked, "the locked field draws the lock glyph");
     }

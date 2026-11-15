@@ -57,8 +57,9 @@ idle --arm--> armed --pointer--> collecting --commit--> idle
 - A changeable value fills the session overlay (`Session::set_preview_geometry`, `clear_preview` in
   `crates/engine/src/session.rs`), never a document field (ADR 0093). The viewport draws the preview
   instead of the node's geometry, and an undo stack that never saw it stays honest.
-- A preview with a number shows the command bar (`crates/ui/src/command_bar.rs`) at the viewport's
-  bottom centre; it writes nothing and reports the button pressed this frame.
+- A preview with a number shows the tool card (`crates/ui/src/tool_card.rs`) beside the pointer, and
+  the same rows in the inspector; it writes nothing and reports the numbers and the button pressed
+  this frame (ADR 0119).
 - Feedback starts on the press frame. A rebuild that overruns `SLOW_REBUILD` (250 ms, measured in
   `apps/furnicraft/src/document.rs`) says so on the status bar before it finishes; it never blocks
   the frame and never runs on the UI thread once per pointer move.

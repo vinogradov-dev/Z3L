@@ -249,3 +249,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   the free-outline cell of U90 builds a `panel.create` with an outline, so the command duplicates a
   path that exists. It is declared `Api` in `crates/ui/src/inventory.rs` today; either a surface takes
   it or the command goes, and deleting it is the smaller change (U94).
+
+- `[ui]` A key is data (`KEYS` in `crates/ui/src/inventory.rs`) but a *person* cannot yet reassign
+  one: the table is a const, so the Settings page reads the defaults and draws no field. Remapping
+  needs the table to become a value the workspace settings carry — a per-id override merged over the
+  defaults, one write per edit and a "Restore defaults" button — with the same tests this task added
+  walking the merged table rather than the const. It waits for the owner's word and for a Settings
+  section that can hold it (U96).
