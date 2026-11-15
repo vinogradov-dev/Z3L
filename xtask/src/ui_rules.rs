@@ -52,6 +52,7 @@ const HOST_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/home.rs", owns: "the Home start view" },
     Owner { path: "crates/ui/src/node_actions.rs", owns: "the node context menu over the scene" },
     Owner { path: "crates/ui/src/palette.rs", owns: "the command palette" },
+    Owner { path: "crates/ui/src/point_fields.rs", owns: "the number of the point being placed" },
     Owner { path: "crates/ui/src/product_card.rs", owns: "the product-frame card" },
     Owner { path: "crates/ui/src/settings.rs", owns: "the Settings dialog" },
     Owner { path: "crates/ui/src/tool_card.rs", owns: "the armed tool's card at the pointer" },
