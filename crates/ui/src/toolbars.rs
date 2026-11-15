@@ -884,7 +884,7 @@ mod tests {
                     "From corner  (R)",
                     "Measure  (M)",
                     "No draft is running  (Esc)",
-                    "Polyline · Tab line/arc · Alt ignores snaps  (P)",
+                    "Polyline · RMB line/arc · Alt ignores snaps  (P)",
                     "Through 2 points  (A)",
                     "Two points  (L)",
                 ],

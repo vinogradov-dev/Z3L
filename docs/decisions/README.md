@@ -80,7 +80,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0073](0073-a-drawn-figure-remembers-its-shape.md) | A drawn figure remembers its shape | Accepted |
 | [0074](0074-an-extrusion-owns-the-path-it-grew-from.md) | An extrusion owns the path it grew from | Accepted |
 | [0075](0075-a-grip-names-what-its-number-means.md) | A grip names what its number means | Accepted |
-| [0076](0076-a-drawing-tool-separates-the-segment-kind-from-the-snaps.md) | A drawing tool separates the segment kind from the snaps | Accepted |
+| [0076](0076-a-drawing-tool-separates-the-segment-kind-from-the-snaps.md) | A drawing tool separates the segment kind from the snaps | Accepted; the Tab key superseded by 0128 |
 | [0077](0077-a-pending-arc-is-the-closing-segment.md) | A pending arc is the closing segment | Accepted |
 | [0078](0078-a-view-rolls-about-its-own-axis.md) | A view rolls about its own axis | Accepted |
 | [0079](0079-every-layout-remembers-its-own-views.md) | Every layout remembers its own views | Accepted; refit-on-open superseded by 0081 |
@@ -131,6 +131,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0123](0123-work-area-paint-sits-under-the-chrome.md) | Work-area paint sits under the chrome | Accepted |
 | [0124](0124-the-icon-language-is-v2.md) | The icon language is v2: a 24 grid, a 20 × 20 footprint and a seventh role | Accepted |
 | [0125](0125-an-accent-keeps-its-hue-distance-from-every-role-ink.md) | An accent keeps its hue distance from every role ink | Accepted |
+| [0126](0126-the-point-being-placed-shows-its-numbers-at-the-cursor.md) | The point being placed shows its numbers at the cursor, and one of them holds the keys | Accepted |
+| [0127](0127-a-sketch-has-two-guides.md) | A sketch has two guides: a construction line and a reference line | Accepted |
+| [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) | A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate | Accepted |
 
 ## Format
 

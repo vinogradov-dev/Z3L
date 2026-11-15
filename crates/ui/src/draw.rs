@@ -200,8 +200,16 @@ impl DrawDraft {
     ///
     /// Returns the mode after the call, so the status line can name it.
     pub fn toggle_arc_mode(&mut self) -> bool {
+        self.set_arc_mode(!self.arc_mode)
+    }
+
+    /// Chooses whether the next polyline segment is an arc; other tools have no second mode.
+    ///
+    /// The right-click menu names the kind it wants instead of flipping a switch, so a click on
+    /// "arc" is an arc even when the draft is already there. Returns the mode after the call.
+    pub fn set_arc_mode(&mut self, arc: bool) -> bool {
         if self.tool == DrawTool::Polyline {
-            self.arc_mode = !self.arc_mode;
+            self.arc_mode = arc;
         }
         self.arc_mode
     }

@@ -327,6 +327,8 @@ pub(crate) struct Document {
     move_distances: Option<MoveDistances>,
     /// The corner orientation widget, which owns the roll-ring drag across frames.
     gizmo: gizmo::Gizmo,
+    /// The right-click menu of a running polyline: the kind of the next segment and the way out.
+    draft_menu: furnicraft_ui::DraftMenu,
     highlighted: Vec<Id>,
     /// The selected line chains of the frame last uploaded, already carrying any drag preview, so
     /// the screen-space outline follows a moved path without a frame of lag.
@@ -417,6 +419,7 @@ impl Document {
             distances: None,
             move_distances: None,
             gizmo: gizmo::Gizmo::default(),
+            draft_menu: furnicraft_ui::DraftMenu::default(),
             highlighted: Vec::new(),
             selected_chains: Vec::new(),
             uploaded_preview: None,
@@ -562,6 +565,12 @@ impl Document {
     /// The rectangle of the armed tool's card, which the shell hands to `Chrome`.
     pub(crate) const fn tool_card_rect(&self) -> Option<egui::Rect> {
         self.tool_card_rect
+    }
+
+    /// The rectangle the running polyline's right-click menu drew last frame, when one is up.
+    #[cfg(test)]
+    pub(crate) fn draft_menu_rect(&self) -> Option<egui::Rect> {
+        self.draft_menu.rect()
     }
 
     /// Takes back one command and reports a refusal in the status bar.
@@ -890,6 +899,41 @@ impl Document {
     pub(crate) fn cancel_drawing(&mut self) {
         self.editor.cancel_drawing();
         self.draw_gizmo.reset();
+        self.draft_menu.close();
+    }
+
+    /// Runs what a drawing click, the keyboard or a plate asked for.
+    ///
+    /// A fixed tool is done on its last point and a polyline is closed through its first point: both
+    /// finish the drawing the way a CAD tool does, but only a close commits through the shared close
+    /// path (ADR 0052). A cancel has already dropped the draft in the editor, so only the shell's
+    /// pointer state is left. Returns whether the tool ended.
+    fn apply_draw_action(&mut self, ctx: &egui::Context, action: DrawAction) -> bool {
+        let lang = furnicraft_ui::language(ctx);
+        match action {
+            DrawAction::Point => {
+                ctx.request_repaint();
+                if !self.editor.drawing().is_some_and(DrawDraft::is_finished) {
+                    return false;
+                }
+                if let Err(error) = self.commit_drawing(lang) {
+                    self.last_error = Some(error);
+                }
+                true
+            }
+            DrawAction::Close => {
+                ctx.request_repaint();
+                if let Err(error) = self.close_draft(lang) {
+                    self.last_error = Some(error);
+                }
+                true
+            }
+            DrawAction::Cancel => {
+                self.cancel_drawing();
+                true
+            }
+            DrawAction::Nothing => false,
+        }
     }
 
     /// Commits the live drawing on the work plane and ends the tool.
@@ -1784,19 +1828,24 @@ impl Document {
         // answers itself with no second click: the menu owns the press that closes it (U92). A
         // press inside is chrome through `Chrome::covers`, so the entry under the pointer is what
         // the press is for and the model behind it keeps its revision.
-        let dismiss_press = self.context_menu.is_open()
-            && ui.input(|input| input.pointer.primary_pressed())
-            && pointer.is_some_and(|pointer| !self.context_menu.rect().is_some_and(|menu| menu.contains(pointer)));
+        let dismiss_press = [self.context_menu.rect(), self.draft_menu.rect()].into_iter().flatten().any(|menu| {
+            ui.input(|input| input.pointer.primary_pressed()) && pointer.is_some_and(|pointer| !menu.contains(pointer))
+        });
         if dismiss_press {
             self.context_menu.close();
+            self.draft_menu.close();
         }
         // A press on the tool card is chrome too: the card floats over the scene, so a click on its
         // field or its buttons is never a pick. The rectangle is the one the card drew last frame,
-        // which is the one on screen while the card stays open.
+        // which is the one on screen while the card stays open. The plates of the point being placed
+        // are the same kind of surface: a press on a number is the number's, never a point (ADR 0126).
         let card_before = self.tool_card_rect;
         let pointer_on_chrome = dismiss_press
             || pointer.is_some_and(|pointer| {
-                chrome.covers(pointer) || card_before.is_some_and(|card| card.contains(pointer))
+                chrome.covers(pointer)
+                    || card_before.is_some_and(|card| card.contains(pointer))
+                    || self.draw_gizmo.field_contains(pointer)
+                    || self.draft_menu.rect().is_some_and(|menu| menu.contains(pointer))
             });
         let content = chrome.content(area);
         self.scene_rect = Some(content);
@@ -2011,41 +2060,26 @@ impl Document {
                     DrawAction::Nothing
                 }
             };
-            // A fixed tool is done on its last point, and a polyline is closed through its first
-            // point: both finish the drawing the way a CAD tool does, but only a close commits
-            // through the shared close path.
-            let ended = match action {
-                DrawAction::Point => {
-                    ui.ctx().request_repaint();
-                    if self.editor.drawing().is_some_and(DrawDraft::is_finished) {
-                        if let Err(error) = self.commit_drawing(furnicraft_ui::language(ui.ctx())) {
-                            self.last_error = Some(error);
-                        }
-                        true
-                    } else {
-                        false
+            let ended = self.apply_draw_action(ui.ctx(), action);
+            // The right button commits a fixed figure, the CAD habit that keeps the left button
+            // free for placing points. A polyline keeps its chain, so the button opens the menu
+            // that chooses whether the next segment is straight or an arc instead (ADR 0128).
+            if !ended && !pointer_over_widget && response.clicked_by(egui::PointerButton::Secondary) {
+                if self.editor.drawing().is_some_and(|draft| draft.tool().closes()) {
+                    if let Some(position) = response.interact_pointer_pos() {
+                        self.context_menu.close();
+                        self.draft_menu.open(position);
                     }
+                } else if let Err(error) = self.commit_drawing(furnicraft_ui::language(ui.ctx())) {
+                    self.last_error = Some(error);
                 }
-                DrawAction::Close => {
-                    ui.ctx().request_repaint();
-                    if let Err(error) = self.close_draft(furnicraft_ui::language(ui.ctx())) {
-                        self.last_error = Some(error);
-                    }
-                    true
-                }
-                DrawAction::Nothing => false,
-            };
-            // The right button commits the figure like Enter; it is the CAD habit and keeps the
-            // left button free for placing points.
-            if !ended
-                && !pointer_over_widget
-                && response.clicked_by(egui::PointerButton::Secondary)
-                && let Err(error) = self.commit_drawing(furnicraft_ui::language(ui.ctx()))
-            {
-                self.last_error = Some(error);
             }
-        } else {
+        } else if self.editor.drawing().is_none() {
+            // The tool ended: its pointer state and its right-click menu go with it. A pointer that
+            // merely rests on chrome — a panel, a plate, the menu itself — keeps the frozen plane,
+            // the last hover and the plates, which is what lets the plates be clicked (ADR 0126).
             self.draw_gizmo.reset();
+            self.draft_menu.close();
         }
 
         if measuring {
@@ -2356,6 +2390,8 @@ impl Document {
             )
             .or_else(|| mesh_pick::pick_scene(rect, &self.scene, pointer));
             let subject = self.editor.context_menu_subject(self.session.project(), self.session.active_product(), hit);
+            // One popup at a time: the draft's menu names a segment kind, and this one names a node.
+            self.draft_menu.close();
             self.context_menu.open(subject, pointer);
             ui.ctx().request_repaint();
         }
@@ -2552,8 +2588,20 @@ impl Document {
                     Err(error) => self.last_error = Some(error.to_string()),
                 }
             }
-        } else if let Some(draft) = self.editor.drawing() {
-            self.draw_gizmo.paint(ui, rect, self.scene.camera, draft);
+        } else if self.editor.drawing().is_some() {
+            if let Some(draft) = self.editor.drawing() {
+                self.draw_gizmo.paint(ui, rect, self.scene.camera, draft);
+            }
+            // The plates are drawn whatever the pointer rests on, so the numbers stay beside the
+            // point they belong to and a typed value costs no second move of the hand (ADR 0126).
+            let action = self.draw_gizmo.show_fields(ui.ctx(), rect, &mut self.editor);
+            match action {
+                Ok(None) => {}
+                Ok(Some(action)) => {
+                    self.apply_draw_action(ui.ctx(), action);
+                }
+                Err(error) => self.last_error = Some(error),
+            }
         } else if let Some(draft) = self.editor.box_draft().copied() {
             let plane = WorkPlane::from_camera(self.scene.camera);
             box_gizmo::paint_box(ui, rect, self.scene.camera, plane, response.hover_pos(), &draft);
@@ -2652,8 +2700,46 @@ impl Document {
             None => {}
         }
         self.show_tool_card(ui, content, pointer, card_before, opacity);
+        self.show_draft_menu(ui, content, opacity);
         self.paint_view_frames(ui, content, &regions);
         self.show_context_menu(ui, content, opacity);
+    }
+
+    /// Draws the right-click menu of a running polyline and runs the kind it chose.
+    ///
+    /// A polyline keeps its chain, so the right button cannot finish it the way it finishes a fixed
+    /// figure: the menu chooses whether the next segment is straight or an arc — the switch that
+    /// used to sit on Tab — and offers the finish the status bar's *Finish* runs (ADR 0126, 0128).
+    fn show_draft_menu(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
+        let Some((arc, can_finish)) = self
+            .editor
+            .drawing()
+            .filter(|draft| draft.tool().closes())
+            .map(|draft| (draft.arc_mode(), draft.points().len() >= 2))
+        else {
+            self.draft_menu.close();
+            return;
+        };
+        let choice = self.draft_menu.show(ui, viewport, arc, can_finish, opacity);
+        let Some(choice) = choice else {
+            return;
+        };
+        match choice {
+            furnicraft_ui::DraftMenuChoice::Line => {
+                self.editor.set_drawing_arc_mode(false);
+            }
+            furnicraft_ui::DraftMenuChoice::Arc => {
+                self.editor.set_drawing_arc_mode(true);
+            }
+            // Finish is the status bar's own finish: the same commit path, so a chain committed
+            // from the menu and from the bar cannot differ.
+            furnicraft_ui::DraftMenuChoice::Finish => {
+                if let Err(error) = self.commit_drawing(furnicraft_ui::language(ui.ctx())) {
+                    self.last_error = Some(error);
+                }
+            }
+        }
+        ui.ctx().request_repaint();
     }
 
     /// Draws the context menu a right click opened and runs the one entry it chose.
@@ -2968,7 +3054,12 @@ impl Document {
             // Escape drops the draft and ends the tool; nothing reached the document and undo gains
             // no half figure. Enter and the right button commit a valid draft (ADR 0076), and a
             // refused commit keeps both the draft and the tool so the user can fix or cancel it.
-            if !ui.ctx().text_edit_focused() {
+            //
+            // While a plate holds the keyboard the atom reads these keys itself: Enter places the
+            // point with every plate and Escape drops the typed numbers before the tool, so one key
+            // never means two things (ADR 0126). Tab is the atom's focus key, and a polyline's
+            // segment kind is chosen from its right-click menu (ADR 0128).
+            if !ui.ctx().text_edit_focused() && !self.draw_gizmo.holds_keys() {
                 match drawing_key(escape, enter) {
                     Some(DraftKey::Cancel) => self.cancel_drawing(),
                     Some(DraftKey::Commit) => {
@@ -2977,11 +3068,6 @@ impl Document {
                         }
                     }
                     None => {}
-                }
-                // The grid key is read by the shell with the rest of the key table and reaches this
-                // draft as one action; outside a draft it changes nothing (U96).
-                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
-                    self.editor.toggle_drawing_arc_mode();
                 }
             }
         } else if self.editor.pending_primitive().is_some() {

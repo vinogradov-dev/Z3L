@@ -172,6 +172,33 @@ pub const fn cursor_inks() -> (Color32, Color32) {
     (CURSOR_DARK, CURSOR_LIGHT)
 }
 
+/// The radius of one dot of a reference line, in points.
+///
+/// The reference line is the quietest mark the scene draws, so its dot is under a point across:
+/// thinner than the viewport crosshair, which is already the weight of a hairline (ADR 0127).
+pub const REFERENCE_DOT: f32 = 0.4;
+
+/// The radius of the light half of a reference dot, in points.
+///
+/// The light dot sits inside the dark one, so the pair reads as one mark with a bright centre on a
+/// dark board and a dark rim on a light one.
+pub const REFERENCE_DOT_LIGHT: f32 = 0.22;
+
+/// The distance between two dots of a reference line, in points.
+///
+/// A small step: the line has to read as a dotted direction, not as a dashed border (ADR 0127).
+pub const REFERENCE_SPACING: f32 = 3.0;
+
+/// The two inks of a reference line, dark first.
+///
+/// The reference is painted over the scene rather than on the window, so it takes the pointer's
+/// fixed pair (ADR 0121) instead of the themed guide amber: one stroke reads on a white board and
+/// the other on a dark one, and no themed ink can promise that. It is the second, and last,
+/// exception to ADR 0111's one guide ink (ADR 0127).
+pub const fn reference_inks() -> (Color32, Color32) {
+    cursor_inks()
+}
+
 /// The height of the viewport bar at the bottom of the window, in points.
 pub const STATUS_HEIGHT: f32 = 28.0;
 
@@ -1014,6 +1041,33 @@ mod tests {
                 assert!(spread(ink) >= 90, "{name}: a guide has to read as a colour the program chose");
             }
         }
+    }
+
+    #[test]
+    fn a_reference_pair_reads_on_every_surface_and_is_the_thinnest_mark() {
+        let (dark, light) = reference_inks();
+        assert_ne!(dark, light, "the pair is two inks, not one");
+        for preset in ThemePreset::ALL {
+            for dark_variant in [true, false] {
+                let name = format!("{preset:?} {}", if dark_variant { "dark" } else { "light" });
+                let palette = preset.palette(dark_variant);
+                let colors = if dark_variant { SceneColors::DARK } else { SceneColors::LIGHT };
+                for (fill, what) in [
+                    (palette.surface, "the header"),
+                    (palette.panel, "a panel"),
+                    (ink_of(colors.background), "the workspace"),
+                ] {
+                    // Exactly one stroke has to read: the dark one on a light board, the light one
+                    // on a dark board, and either on a midtone (ADR 0121, 0127).
+                    let best = contrast_ratio(dark, fill).max(contrast_ratio(light, fill));
+                    assert!(best >= 3.0, "{name}: neither reference ink reads on {what}: {best:.2}:1");
+                }
+            }
+        }
+        // The light dot sits inside the dark one, and the dark dot is under half of the quietest
+        // guide stroke, so the reference is the thinnest mark the scene draws (ADR 0127).
+        const { assert!(REFERENCE_DOT_LIGHT < REFERENCE_DOT) };
+        const { assert!(REFERENCE_DOT * 2.0 < HELPER_CROSSHAIR_STROKE) };
     }
 
     #[test]

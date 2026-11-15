@@ -40,6 +40,63 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **C3** a contour node moves in a latched mode, with its distance and angle at the cursor
+  Why: Moving a corner needs the button held for the whole gesture today, and the owner wants
+   the select, latch, drop grammar a native editor has. The old position is the only fixed
+   reference of an edit, so the construction line and the reference axis must start there, and
+   the delta needs the same field atom C1 builds for creation: length from the old position and
+   angle from +X.
+  Shape: A click on an unselected node selects it; a click on a selected node latches the move;
+   a ghost and the reference axis and arc follow the pointer from the old position; the next
+   click drops the node with one command and one undo entry; Escape restores the stored
+   position. A press-and-drag on a node keeps the one-gesture move, so the latch adds a path
+   rather than replacing one. The fields are the delta: length from the old position and angle
+   from +X, 0 returns a parameter to the pointer. Only contour nodes: object placement and the
+   grips keep their grammar. One ADR records the latched move.
+  Done: select, latch and drop write one command and one revision, tested through RawInput;
+   Escape after a latch leaves the document untouched; a drop without motion writes nothing;
+   the construction line starts at the old position and the angle arc radius equals the
+   distance moved; the fields move the node by the typed distance and angle; a press-and-drag
+   still moves a node in one gesture; cargo xtask ci is green.
+  `files: apps/furnicraft/src/contour_gizmo.rs, crates/ui/src/contour_grips.rs, crates/ui/src/editor/contour.rs, apps/furnicraft/src/document.rs`
+- `[ ]` **C4** a circle by diameter and an arc from its start, end and radius
+  Why: The circle cell and the arc cell each declare a method that runs nothing
+   (sketch.create.circle.two-points, sketch.create.arc.three-points), and two constructions the
+   owner needs are missing: a circle whose field is the diameter, and an arc given by its chord
+   and radius, where the two possible centres are chosen by the side the pointer is on. The arc
+   through three points already exists and stays the arc main face.
+  Shape: DrawTool::CircleDiameter reads a diameter field at the second point;
+   DrawTool::ArcByRadius takes a start, an end and a radius, and Path gains one constructor
+   that picks the centre on the pointer side and refuses a radius under half the chord. The
+   ribbon circle.two-points becomes circle.diameter with its own label and icon,
+   arc.three-points is deleted because the main face is that method, and arc.start-end-radius
+   is added. Two icons with their README rows, the fallback test and the inventory rows.
+  Done: Both cells run and build the expected ring from typed values; the arc takes the centre
+   on the side the pointer chose and a radius under half the chord is a readable error the
+   draft keeps; a circle diameter field equals twice its radius; the two icons exist with rows
+   and the fallback test; no cell with run: None remains for these two tools; cargo xtask ci is
+   green.
+  `files: crates/model/src/contour.rs, crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs`
+- `[ ]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
+  Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
+   second that runs nothing (sketch.create.polygon.edge); the owner needs the circumscribed
+   polygon and the polygon by an edge, each a cell of its own with the parameters at the
+   cursor, and a rectangle grown from an angled base edge, which the tool set lacks.
+   RectangleFromCenterDirected exists but predates the field rules.
+  Shape: One draft builds all three: inscribed as today, circumscribed by the apothem (rim =
+   apothem / cos(pi/n)), by edge (rim = side / (2 sin(pi/n)), phase shifted by half a step,
+   built on the pointer side). The method is not stored: the result is the same regular polygon
+   and the angle is a construction parameter, so no schema bump. Fields at the cursor are the
+   radius or apothem, the second point angle and the side count. A new
+   DrawTool::RectangleTilted takes a corner, a base edge and a height;
+   RectangleFromCenterDirected is brought onto the same field rules. Three icons.
+  Done: Each of the three polygon methods and the tilted rectangle builds the expected ring
+   from typed values, tested against the model own vertices; the side count field is live and
+   clamped to the model range; the phantom follows the pointer on the chosen side; three icons
+   exist with README rows, the fallback test and inventory rows; no polygon or rectangle cell
+   with run: None remains; cargo xtask ci is green.
+  `files: crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs`
+
 ## Bugs
 ## Next
 - `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
@@ -72,6 +129,56 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C2** every sketch tool places its point from numbers at the cursor
+  Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
+   the pointer, so a line cannot be drawn to 600 mm at 30 degrees except by eye, and the guide
+   that would show the angle does not exist. The grammar is fixed: every field carries the live
+   value, one field is always focused, Tab hops, a typed number locks its parameter and
+   outranks a snap, typing is never snapped, 0 returns the parameter to the pointer, Enter
+   places the point with every field, and the angle is the smaller one from the nearer end of
+   the X axis (0..360 typed, at most 180 shown).
+  Shape: Per tool: the first point takes X and Y; a line, an arc chord and a polygon edge take
+   length and angle; a rectangle takes width and height, each at the outer midpoint of its own
+   side; a circle takes a radius; an arc draws its chord as a construction line and every
+   segment gets the reference axis and an arc whose radius is the segment length. A fixed tool
+   last point commits the figure as a click does; a polyline keeps its chain and its line/arc
+   switch moves to the right-click menu, because Tab now belongs to the fields. The plate never
+   covers the point being placed or the snap marker and flips at the edge of the workspace. One
+   ADR records the smaller-angle rule and the typed-field grammar.
+  Done: Every shipped sketch tool shows its fields; a typed length and angle place the point
+   exactly and the preview follows; the angle display and its typing obey the smaller-angle
+   rule, tested as a table across the four quadrants; a typed number survives a snap and a 0
+   gives the parameter back; Tab, Enter and Escape are tested through RawInput; the polyline
+   segment kind is switched from the context menu and Tab no longer toggles it; a fixed tool
+   commits once and one undo entry; cargo xtask ci is green.
+  `files: crates/ui/src/draw.rs, crates/ui/src/editor/drawing.rs, apps/furnicraft/src/draw_gizmo.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/ribbon.rs` — `dc33a92`
+
+- `[x]` **C1** the point being placed shows its numbers at the cursor, and a sketch has two guide kinds
+  Why: Every sketch tool needs the same two things: the number of the point under the cursor
+   and a guide that shows zero and the sweep. Both exist twice today — tool_card (ADR 0119)
+   plus the private NumericEntry in contour_gizmo.rs, and the paint_size label in draw_gizmo.rs
+   — so a third copy would be the defect ADR 0118 names. The reference (OpenCAD Studio) puts
+   the length on the segment, the angle outside an arc whose radius is the segment length, and
+   a dashed axis along +X from the anchor; a pale single colour cannot pass the guides 3:1 rule
+   on a light board.
+  Shape: One atom in crates/ui: FieldSet owns the plates, the always-on focus, the typed locks,
+   Tab, Enter, Escape and the 0 that returns a parameter to the pointer; each plate is the
+   shared scrub (ADR 0092) in the tool card frame at its own anchor, so the plate at the point
+   and the inspector cannot drift. One painter owns the guides: Guide::Construction (the dashed
+   amber of the measured chord) and Guide::Reference (the +X axis from the anchor and the angle
+   arc, radius equal to the segment length), both in screen space, the reference drawn as the
+   two-stroke pair (light inside dark) and thinner than every other guide, with the theme
+   accessor and the contrast test. contour_gizmo private numeric entry is replaced by the atom;
+   the drawing tool keeps its label until C2 puts its plates there. Two ADRs: the field at the
+   point extends 0119, the two guide kinds amend 0111.
+  Done: contour_gizmo draws its number through the one atom and keeps no private copy; a
+   RawInput test drives focus, Tab, typing, Enter, Escape and 0 and asserts the value, the lock
+   and the plate rectangle each frame; a theme test asserts one stroke of the reference pair
+   reads on the header, a panel and the workspace of every preset and that its dot is thinner
+   than every guide; both ADRs are in docs/decisions and the README lists them; cargo xtask ci
+   is green.
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/scrub.rs, crates/ui/src/theme.rs, apps/furnicraft/src/contour_gizmo.rs, apps/furnicraft/src/draw_gizmo.rs, docs/decisions` — `bf165a1`
 
 - `[x]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
