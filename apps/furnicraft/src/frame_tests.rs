@@ -15,6 +15,7 @@
 
 use crate::gizmo_math::SnapTarget;
 use eframe::egui;
+use furnicraft_geom::DVec2;
 use furnicraft_model::{ClassCode, Envelope, Id};
 use furnicraft_scene::Camera;
 use furnicraft_text::{Lang, Message};
@@ -2106,4 +2107,146 @@ fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
         faces.iter().any(|(value, low, high)| (*value - low).abs() < 0.01 || (*value - high).abs() < 0.01),
         "the point lies on a face of the board: {local:?}"
     );
+}
+
+/// Types `text` into the plate that holds the keyboard, one frame per character.
+fn type_text(harness: &mut Harness, text: &str) {
+    for character in text.chars() {
+        harness.run(vec![egui::Event::Text(character.to_string())]);
+    }
+}
+
+/// The points the running draft has placed so far.
+fn draft_points(harness: &Harness) -> Vec<[Length; 2]> {
+    harness.app.tabs.active().editor.drawing().map(|draft| draft.points().to_vec()).unwrap_or_default()
+}
+
+/// The point the running draft's plates would place under the pointer.
+fn placed_point(harness: &Harness) -> [Length; 2] {
+    harness.app.tabs.active().draw_gizmo.point_preview().expect("the plates name a point")
+}
+
+/// A work-plane point as the geometry boundary reads it.
+fn offset(from: [Length; 2], to: [Length; 2]) -> DVec2 {
+    DVec2::new(to[0].millimetres_f64() - from[0].millimetres_f64(), to[1].millimetres_f64() - from[1].millimetres_f64())
+}
+
+#[test]
+fn a_typed_length_and_angle_place_a_sketch_point_exactly() {
+    // The plates of the point being placed are the point's own numbers (ADR 0126): a line drawn to
+    // 600 mm at 30 degrees is typed, not aimed, and the preview follows the numbers rather than the
+    // pointer. A fixed tool commits on its last point, so the whole figure is one undo entry.
+    let mut harness = Harness::new("frame-sketch-numbers");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::Line);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 60.0), egui::PointerButton::Primary);
+    let anchor = draft_points(&harness).first().copied().expect("the click places the first point");
+    // The plates rebuild for the segment's numbers, and the pointer is somewhere else entirely.
+    harness.hover(scene.center() + egui::vec2(40.0, 160.0));
+    assert!(harness.app.tabs.active().draw_gizmo.field_rect().is_some(), "the point shows its plates");
+
+    type_text(&mut harness, "600");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "30");
+    // Tab handed the length over, so the plate locks it and the preview already follows it; the
+    // angle that is still being typed is the promise Enter makes.
+    let previewed = offset(anchor, placed_point(&harness));
+    assert!((previewed.length() - 600.0).abs() < 0.002, "the preview follows the typed length: {previewed:?}");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the last point and commits");
+    let document = harness.app.tabs.active();
+    let object = harness.selected().first().copied().expect("the line is selected");
+    let project = document.session.project();
+    let path = project.object_path(object).expect("the node is a path");
+    let segment = path.segments().next().expect("a line is one segment");
+    let (start, end) = (segment.start().expect("a start"), segment.end().expect("an end"));
+    let drawn = offset(start, end);
+    assert!((drawn.length() - 600.0).abs() < 0.002, "the typed length: {drawn:?}");
+    assert!((drawn.y.atan2(drawn.x).to_degrees() - 30.0).abs() < 0.01, "the typed angle: {drawn:?}");
+    // The command re-anchors the figure at its creation pivot, so the world start is the placement.
+    let world = project.world_placement(object).expect("the line has a world frame");
+    let at =
+        world.transform_point(furnicraft_geom::DVec3::new(start[0].millimetres_f64(), start[1].millimetres_f64(), 0.0));
+    let anchor_at = furnicraft_geom::DVec3::new(anchor[0].millimetres_f64(), anchor[1].millimetres_f64(), 0.0);
+    assert!((at - anchor_at).length() < 0.01, "the line starts where the first click placed it: {at:?}");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one click, one point, one path, one undo entry");
+    assert!(document.can_undo());
+}
+
+#[test]
+fn a_typed_number_outlives_the_pointer_and_escape_gives_the_keys_back() {
+    // A typed number is a promise: the pointer and its snap cannot move it. Escape drops the promise
+    // first and ends the tool second, so one key never means two things in one frame (ADR 0126).
+    let mut harness = Harness::new("frame-sketch-lock");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::Line);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(100.0, 80.0), egui::PointerButton::Primary);
+    let anchor = draft_points(&harness).first().copied().expect("the first point");
+    harness.hover(scene.center() + egui::vec2(120.0, 90.0));
+    type_text(&mut harness, "300");
+    // Tab hands the number over, which is what locks it; a field still being typed is not yet a
+    // promise and the pointer keeps driving it (ADR 0126).
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!((offset(anchor, placed_point(&harness)).length() - 300.0).abs() < 0.002, "the typed length holds");
+
+    // The pointer moves onto a different grid point; the promise still holds.
+    harness.hover(scene.center() + egui::vec2(-40.0, 200.0));
+    assert!((offset(anchor, placed_point(&harness)).length() - 300.0).abs() < 0.002, "a snap cannot move it");
+
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_some(), "the first Escape keeps the tool");
+    assert_eq!(draft_points(&harness).len(), 1, "and places no point");
+    assert!(
+        (offset(anchor, placed_point(&harness)).length() - 300.0).abs() > 1.0,
+        "the released length follows the pointer again"
+    );
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the second Escape ends the tool");
+    assert_eq!(harness.revision().get(), before.get(), "neither Escape wrote anything");
+}
+
+#[test]
+fn the_polyline_segment_kind_comes_from_the_right_click_menu() {
+    // Tab belongs to the plates now, so a polyline's line/arc switch moved to the right-click menu;
+    // the menu is a chrome surface, so choosing a row never places a point behind it (ADR 0126,
+    // 0128).
+    let mut harness = Harness::new("frame-sketch-menu");
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let points = draft_points(&harness).len();
+    assert_eq!(points, 2, "two clicks, two points");
+
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(
+        !harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.arc_mode()),
+        "Tab moves the keyboard between the plates instead of switching the segment kind"
+    );
+
+    harness.click(scene.center() + egui::vec2(0.0, 120.0), egui::PointerButton::Secondary);
+    assert!(harness.app.tabs.active().draft_menu_rect().is_some(), "the right button opens the draft menu");
+    assert_eq!(draft_points(&harness).len(), points, "and places no point");
+    let row = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text.contains(Message::DraftSegmentArc.text(Lang::En)))
+        .map(|(rect, _)| rect.center())
+        .expect("the menu drew its arc row");
+    harness.click(row, egui::PointerButton::Primary);
+    assert!(
+        harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.arc_mode()),
+        "the menu chose the arc segment"
+    );
+    assert_eq!(draft_points(&harness).len(), points, "and still wrote no point");
+    assert!(harness.app.tabs.active().draft_menu_rect().is_none(), "the choice closes the menu");
 }

@@ -50,14 +50,23 @@ pub fn construction(ui: &Ui, painter: &Painter, from: Pos2, to: Pos2) {
 /// zero and an angle of zero draw nothing: the reference has nothing to show until the pointer is
 /// off the axis.
 pub fn reference(painter: &Painter, anchor: Pos2, radius: f32, angle: f32) {
+    reference_between(painter, anchor, radius, 0.0, angle);
+}
+
+/// Paints the reference line from the X end at `from` to the direction at `to`, both in radians.
+///
+/// An angle is read from the nearer end of the X axis (ADR 0128), so the axis is not always `+X`:
+/// the caller says which end it chose, and the arc sweeps between the two directions the short way
+/// because the difference the caller passes is already the signed sweep.
+pub fn reference_between(painter: &Painter, anchor: Pos2, radius: f32, from: f32, to: f32) {
     if !anchor.x.is_finite() || !anchor.y.is_finite() || !radius.is_finite() || radius <= 0.0 {
         return;
     }
     let (dark, light) = theme::reference_inks();
-    let axis = [anchor, Pos2::new(anchor.x + radius, anchor.y)];
+    let axis = [anchor, Pos2::new(anchor.x + radius * from.cos(), anchor.y - radius * from.sin())];
     dots(painter, &axis, dark, light);
-    if angle.is_finite() && angle.abs() > f32::EPSILON {
-        let arc = arc_points(anchor, radius, 0.0, angle);
+    if to.is_finite() && (to - from).abs() > f32::EPSILON {
+        let arc = arc_points(anchor, radius, from, to);
         dots(painter, &arc, dark, light);
     }
 }
@@ -154,6 +163,27 @@ mod tests {
         assert!((first - pos2(150.0, 200.0)).length() < 1e-3, "the arc starts on +X: {first:?}");
         assert!((last - pos2(100.0, 150.0)).length() < 1e-3, "a counter-clockwise quarter turns up: {last:?}");
         assert!(points.len() >= ARC_MIN_STEPS, "a short arc is still sampled");
+    }
+
+    #[test]
+    fn the_reference_reads_from_the_end_the_angle_names() {
+        // The nearer end of the X axis is not always +X: the axis is dotted along −X and the arc
+        // still takes the short way, so a segment in the left half-plane is measured from there.
+        let ctx = egui::Context::default();
+        let anchor = pos2(400.0, 300.0);
+        let mut shapes = Vec::new();
+        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
+            reference_between(ui.painter(), anchor, 60.0, std::f32::consts::PI, 2.0 * std::f32::consts::FRAC_PI_3);
+        });
+        shapes.extend(output.shapes.clone());
+        output.drop_without_applying_deltas();
+        let dots = circles(&shapes);
+        let reach = dots.iter().map(|(centre, _, _)| centre.x).fold(anchor.x, f32::min);
+        assert!(reach <= anchor.x - 60.0 + theme::REFERENCE_SPACING, "the axis runs along minus X: {reach}");
+        assert!(
+            dots.iter().any(|(centre, _, _)| centre.y < anchor.y - 40.0),
+            "the arc turns down from −X to the segment below it: {dots:?}"
+        );
     }
 
     #[test]

@@ -139,8 +139,8 @@ messages! {
     ApplyEnter = ["Apply  (Enter)", "Применить  (Enter)"],
     CancelEsc = ["Cancel  (Esc)", "Отмена  (Esc)"],
     DrawHint = [
-        "LMB add point  ·  Tab line/arc  ·  Shift axis lock  ·  Alt ignores snaps  ·  Enter/RMB finish  ·  Esc cancel",
-        "ЛКМ добавить точку  ·  Tab линия/дуга  ·  Shift фиксация оси  ·  Alt игнорирует привязки  ·  Enter/ПКМ завершить  ·  Esc отмена"
+        "LMB add point  ·  Tab next field  ·  Enter places the point  ·  RMB line/arc  ·  Shift axis lock  ·  Alt ignores snaps  ·  Esc cancel",
+        "ЛКМ добавить точку  ·  Tab следующее поле  ·  Enter ставит точку  ·  ПКМ линия/дуга  ·  Shift фиксация оси  ·  Alt игнорирует привязки  ·  Esc отмена"
     ],
     PrimitiveStatus = ["Primitive · {} {}", "Примитив · {} {}"],
     PrimitivePlaceHint = ["LMB place on the work plane  ·  Esc cancel", "ЛКМ разместить на рабочей плоскости  ·  Esc отмена"],
@@ -819,9 +819,14 @@ messages! {
     ToolRegularPolygon = ["Polygon", "Многоугольник"],
     DrawingName = ["{} drawing", "{} — эскиз"],
     PolylineStripLabel = [
-        "Polyline · Tab line/arc · Alt ignores snaps",
-        "Полилиния · Tab линия/дуга · Alt игнорирует привязки"
+        "Polyline · RMB line/arc · Alt ignores snaps",
+        "Полилиния · ПКМ линия/дуга · Alt игнорирует привязки"
     ],
+    DraftSegmentLine = ["Straight segment", "Прямой сегмент"],
+    DraftSegmentArc = ["Arc segment", "Дуговой сегмент"],
+    DraftSegmentCurrent = ["The next segment is already this kind", "Следующий сегмент уже такой"],
+    DraftFinish = ["Finish the drawing", "Завершить эскиз"],
+    DraftNeedsTwo = ["A drawing needs two segments to finish", "Чтобы завершить эскиз, нужно два сегмента"],
 
     // ── Ribbon ──────────────────────────────────────────────────────────────
     RibbonFurniture = ["Furniture", "Мебель"],

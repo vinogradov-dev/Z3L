@@ -78,6 +78,14 @@ impl Editor {
         self.drawing.as_mut().map(DrawDraft::toggle_arc_mode)
     }
 
+    /// Chooses whether the running polyline's next segment is an arc.
+    ///
+    /// Returns the mode after the call, or `None` when no draft is running. Other tools have no
+    /// second mode, so the mode they report stays false.
+    pub fn set_drawing_arc_mode(&mut self, arc: bool) -> Option<bool> {
+        self.drawing.as_mut().map(|draft| draft.set_arc_mode(arc))
+    }
+
     /// Appends a work-plane point to the running draft as a straight segment.
     pub fn drawing_point(&mut self, point: [Length; 2]) -> Result<(), DrawDraftError> {
         self.drawing.as_mut().ok_or(DrawDraftError::NotStarted)?.push(point)

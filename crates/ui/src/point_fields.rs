@@ -23,6 +23,7 @@
 use core::ops::RangeInclusive;
 
 use egui::{Align2, Context, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke};
+use furnicraft_model::{MAX_CONTOUR_COORDINATE, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES};
 
 use crate::scrub::Scrub;
 use crate::theme;
@@ -36,6 +37,9 @@ const PLATE_OPACITY: u32 = 96;
 
 /// How many frames a plate asks for the keyboard before it leaves the keys alone.
 const FOCUS_REQUESTS: u8 = 2;
+
+/// The largest coordinate a drawing point may name, in millimetres.
+const MAX_COORDINATE_MM: f64 = MAX_CONTOUR_COORDINATE.micrometres() as f64 / 1_000.0;
 
 /// One number of the point being placed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -71,6 +75,52 @@ pub enum FieldLabel {
     Symbol(&'static str),
 }
 
+impl FieldParam {
+    /// The symbol a plate writes before its number: notation, so it is never translated.
+    pub const fn label(self) -> FieldLabel {
+        match self {
+            Self::X => FieldLabel::Symbol("X"),
+            Self::Y => FieldLabel::Symbol("Y"),
+            Self::Length => FieldLabel::Symbol("L"),
+            Self::Angle | Self::Rotation => FieldLabel::Symbol("∠"),
+            Self::Width => FieldLabel::Symbol("W"),
+            Self::Height => FieldLabel::Symbol("H"),
+            Self::Radius => FieldLabel::Symbol("R"),
+            Self::Diameter => FieldLabel::Symbol("Ø"),
+            Self::Sides => FieldLabel::Symbol("N"),
+        }
+    }
+
+    /// The unit drawn dim outside the box; a side count carries none.
+    pub const fn unit(self) -> &'static str {
+        match self {
+            Self::X | Self::Y | Self::Length | Self::Width | Self::Height | Self::Radius | Self::Diameter => "mm",
+            Self::Angle | Self::Rotation => "°",
+            Self::Sides => "",
+        }
+    }
+
+    /// The range the plate keeps its number inside, in the unit it shows.
+    pub fn range(self) -> RangeInclusive<f64> {
+        match self {
+            Self::X | Self::Y => -MAX_COORDINATE_MM..=MAX_COORDINATE_MM,
+            Self::Length | Self::Width | Self::Height | Self::Radius | Self::Diameter => 0.0..=MAX_COORDINATE_MM,
+            // An angle is typed as a direction from 0 to 360: a value above 180 flips the side of
+            // the reference, which is the smaller-angle rule the plate and the guide share.
+            Self::Angle | Self::Rotation => 0.0..=360.0,
+            Self::Sides => f64::from(MIN_POLYGON_SIDES)..=f64::from(MAX_POLYGON_SIDES),
+        }
+    }
+
+    /// The digits after the decimal point: a length to 0.1 mm, an angle to 0.1°, a count whole.
+    pub const fn decimals(self) -> usize {
+        match self {
+            Self::Sides => 0,
+            _ => 1,
+        }
+    }
+}
+
 /// One plate: what it edits, where it sits and what it shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldRow {
@@ -102,6 +152,14 @@ impl FieldRow {
         anchor: Pos2,
     ) -> Self {
         Self { param, label, value, unit, range, decimals, anchor }
+    }
+
+    /// The plate `param` draws, showing `value` at `anchor`.
+    ///
+    /// A parameter knows its own label, unit, range and digits, so a tool that declares its numbers
+    /// never repeats the presentation of one of them.
+    pub fn for_param(param: FieldParam, value: f64, anchor: Pos2) -> Self {
+        Self::new(param, Some(param.label()), value, param.unit(), param.range(), param.decimals(), anchor)
     }
 }
 
@@ -201,6 +259,11 @@ impl FieldSet {
         self.locked.iter().any(|locked| *locked)
     }
 
+    /// Whether a plate holds the keyboard, so the tool's own key reader stands aside (ADR 0126).
+    pub fn is_holding(&self) -> bool {
+        self.holding
+    }
+
     /// The parameter that holds the keyboard.
     pub fn focus(&self) -> Option<FieldParam> {
         self.rows.get(self.focus).map(|row| row.param)
@@ -214,6 +277,14 @@ impl FieldSet {
     /// The union of every plate's rectangle after the last draw.
     pub fn rect(&self) -> Rect {
         self.rect
+    }
+
+    /// Whether `point` lies on one of the plates, which are chrome and never the scene.
+    ///
+    /// The union of two plates is not one surface: a press between a length and its angle belongs
+    /// to the scene, so the hit test asks every plate and not the box around them.
+    pub fn contains(&self, point: Pos2) -> bool {
+        self.rects.iter().any(|rect| rect.contains(point))
     }
 
     /// Why the last typed number was refused, if it was.
@@ -305,9 +376,14 @@ impl FieldSet {
             if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
                 action.commit = true;
             } else if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
-                let lock = self.locked.get(index).copied().unwrap_or(false);
+                // Any lock is a promise to drop, whichever plate holds the keyboard: the first
+                // Escape gives the whole point back to the pointer, the second ends the tool.
+                let lock = self.locked.iter().any(|locked| *locked);
                 if lock {
                     self.reset();
+                    // The keyboard goes back to the tool until a plate is clicked again, so the
+                    // next Escape is the tool's and not a second release of locks that are gone.
+                    self.request = 0;
                     action.released = true;
                 } else {
                     action.cancel = true;
@@ -390,6 +466,25 @@ impl FieldSet {
     /// The position of `param`'s plate in `self.rows`.
     fn index(&self, param: FieldParam) -> Option<usize> {
         self.rows.iter().position(|row| row.param == param)
+    }
+}
+
+#[cfg(test)]
+impl FieldSet {
+    /// A set with `typed` already entered and locked, for the tests of the tools that read it.
+    ///
+    /// Typing arrives through a text field, which needs a whole frame and a pointer a unit test has
+    /// no reason to fake; what the consumers of a set need to prove is the rule, so the rule is
+    /// reachable without the widget.
+    pub(crate) fn with_typed(rows: Vec<FieldRow>, typed: &[(FieldParam, f64)]) -> Option<Self> {
+        let mut set = Self::new(rows)?;
+        for (param, value) in typed {
+            if let Some(index) = set.index(*param) {
+                set.rows[index].value = *value;
+                set.locked[index] = *value != 0.0;
+            }
+        }
+        Some(set)
     }
 }
 
@@ -519,8 +614,10 @@ mod tests {
     fn escape_drops_the_lock_first_and_cancels_the_tool_second() {
         let ctx = ctx();
         let mut set = set();
+        // The keyboard sits on the second plate and the promise is on the first: one Escape drops
+        // every lock, not only the focused one.
         set.locked[0] = true;
-        set.locked[1] = true;
+        set.focus_next();
         frame(&ctx, &mut set, Vec::new());
         frame(&ctx, &mut set, Vec::new());
         let first = frame(&ctx, &mut set, vec![key(Key::Escape)]);
@@ -528,9 +625,11 @@ mod tests {
         assert!(!first.cancel, "and does not also cancel the tool");
         assert!(!set.locked_any(), "every parameter follows the pointer again");
 
-        // The keyboard went back to the tool, so the next Escape is the tool's own.
+        // The keyboard went back to the tool and no plate asks for it again, so the second Escape
+        // reaches the tool instead of releasing locks that are already gone.
         let second = frame(&ctx, &mut set, vec![key(Key::Escape)]);
-        assert!(second.cancel || second.is_none(), "the second Escape is the tool's: {second:?}");
+        assert!(second.is_none(), "the second Escape is not the atom's: {second:?}");
+        assert!(!set.is_holding(), "the atom handed the keyboard back");
     }
 
     #[test]

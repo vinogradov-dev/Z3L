@@ -298,13 +298,20 @@ impl<'a, N: Numeric> Scrub<'a, N> {
                 ..Typed::default()
             }));
             // A number that moved underneath a finished edit — undo, a gizmo, the document itself —
-            // replaces the text; text the user is still editing is left alone.
-            {
+            // replaces the text; text the user is still editing is left alone. The selection moves
+            // with it: a cursor left over the old number would let the next keystroke overwrite one
+            // character of the new one instead of replacing the number the person is about to type.
+            let moved = {
                 let mut state = typed.borrow_mut();
-                if !state.pending && state.value != old {
+                let moved = !state.pending && state.value != old;
+                if moved {
                     state.text = shown.clone();
                     state.value = old;
                 }
+                moved
+            };
+            if moved {
+                select_all(ui, id, &shown);
             }
 
             let response = ui.put(

@@ -2,18 +2,24 @@
 //!
 //! While a drawing draft is live the gizmo owns the pointer: it maps the cursor onto the work
 //! plane, snaps it to a draft end, an axis or the 10 mm grid, appends a point on a click and closes
-//! a polyline through its first point. Tab chooses whether the next polyline segment is straight or
-//! an arc, so one chain carries both kinds; Alt drops every snap and takes the pointer as it is.
-//! Painting shows the placed chain, the shape the next click would make, the snap marker and a live
-//! size. A preview that cannot become a path keeps the last valid one, so a chain never blinks out;
-//! the reason is on [`DrawGizmo::preview_error`]. The dummy document is never touched here; the
-//! commit is a separate step, so Escape costs nothing.
+//! a polyline through its first point. The right-click menu chooses whether the next polyline
+//! segment is straight or an arc, so one chain carries both kinds; Alt drops every snap and takes
+//! the pointer as it is.
+//!
+//! The point under the pointer carries its numbers: one plate per parameter, placed beside the thing
+//! it measures, and the guides that read the angle from the nearer end of the X axis (ADR 0126,
+//! 0127, 0128). A typed number locks its parameter and outranks a snap, Enter places the point with
+//! every plate and Escape drops the typed numbers before it ends the tool. Painting shows the placed
+//! chain, the shape the next click would make, the snap marker and the two guides. A preview that
+//! cannot become a path keeps the last valid one, so a chain never blinks out; the reason is on
+//! [`DrawGizmo::preview_error`]. The dummy document is never touched here; the commit is a separate
+//! step, so Escape costs nothing.
 
-use eframe::egui::{self, Color32, FontId, Pos2, Shape, Stroke, Ui};
+use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
 use furnicraft_geom::DVec2;
-use furnicraft_model::{ContourSegment, Path};
+use furnicraft_model::Path;
 use furnicraft_scene::Camera;
-use furnicraft_ui::{DrawDraft, DrawTool, Editor};
+use furnicraft_ui::{DrawDraft, Editor, FieldSet, PointState, field_row, guides};
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{
@@ -31,10 +37,6 @@ const PREVIEW_TOLERANCE_MM: f64 = 0.25;
 const DRAFT_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
 /// Colour of the shape the next click would make.
 const PREVIEW_COLOR: Color32 = Color32::from_rgb(255, 220, 96);
-/// Colour of a live-size label.
-const SIZE_COLOR: Color32 = Color32::from_rgb(245, 245, 245);
-/// Fill behind a live-size label.
-const SIZE_BACKGROUND: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 190);
 /// Colour of a draft end that would close the chain.
 const CLOSE_COLOR: Color32 = Color32::from_rgb(120, 230, 140);
 
@@ -66,13 +68,15 @@ enum DrawClick {
 /// shell's (ADR 0052), so a close is reported and the caller runs the one close path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum DrawAction {
-    /// The click changed nothing.
+    /// Nothing was placed.
     #[default]
     Nothing,
-    /// The click added a point or armed an arc.
+    /// A point was placed, by the pointer or by Enter, or an arc was armed.
     Point,
     /// The click landed on the chain's first point and asks for the ring to be closed.
     Close,
+    /// Escape with nothing typed: the tool ends and the document is untouched.
+    Cancel,
 }
 
 /// How the live pointer is snapped to the work plane.
@@ -100,6 +104,16 @@ pub(crate) struct DrawGizmo {
     preview: Option<Path>,
     /// Why the current pointer cannot extend the draft, if it cannot.
     preview_error: Option<String>,
+    /// The plates that name the point being placed, one set per point.
+    fields: Option<FieldSet>,
+    /// The stage the plates were built for: the number of points the draft holds.
+    stage: Option<usize>,
+    /// The snapped pointer of the last frame, before any typed number moved it.
+    pointer: Option<DVec2>,
+    /// The point being placed, with the plates and guides that name it.
+    state: Option<PointState>,
+    /// The rectangle the plates drew last frame, so a press on one is chrome.
+    field_rect: Option<egui::Rect>,
 }
 
 /// The snapped cursor and where on screen it landed.
@@ -116,16 +130,54 @@ struct SnapOutcome {
 impl DrawGizmo {
     /// A drawing tool with the 10 mm grid on and no hover.
     pub(crate) fn new() -> Self {
-        Self { grid: true, hover: None, plane: None, preview: None, preview_error: None }
+        Self {
+            grid: true,
+            hover: None,
+            plane: None,
+            preview: None,
+            preview_error: None,
+            fields: None,
+            stage: None,
+            pointer: None,
+            state: None,
+            field_rect: None,
+        }
     }
 
-    /// Drops the hover state, the frozen plane and the cached preview, for example when the tool
-    /// ends.
+    /// Drops the hover state, the frozen plane, the cached preview and the plates, for example when
+    /// the tool ends.
     pub(crate) fn reset(&mut self) {
         self.hover = None;
         self.plane = None;
         self.preview = None;
         self.preview_error = None;
+        self.fields = None;
+        self.stage = None;
+        self.pointer = None;
+        self.state = None;
+        self.field_rect = None;
+    }
+
+    /// The rectangle the plates drew last frame, when a drawing tool asks for numbers.
+    #[cfg(test)]
+    pub(crate) const fn field_rect(&self) -> Option<egui::Rect> {
+        self.field_rect
+    }
+
+    /// Whether `point` lies on one of the plates, which are chrome and never the scene.
+    pub(crate) fn field_contains(&self, point: egui::Pos2) -> bool {
+        self.fields.as_ref().is_some_and(|fields| fields.contains(point))
+    }
+
+    /// The point the plates place under the pointer, whether or not a click has placed it yet.
+    #[cfg(test)]
+    pub(crate) fn point_preview(&self) -> Option<[Length; 2]> {
+        self.state.as_ref().map(|state| state.point)
+    }
+
+    /// Whether the plates hold the keyboard, so the tool's own key reader stands aside (ADR 0126).
+    pub(crate) fn holds_keys(&self) -> bool {
+        self.fields.as_ref().is_some_and(FieldSet::is_holding)
     }
 
     /// The last valid preview, for painting and for tests.
@@ -183,9 +235,10 @@ impl DrawGizmo {
 
     /// Applies the pointer to the live draft.
     ///
-    /// A click appends the snapped point, or asks for a polyline to close when the point is its
-    /// first one. The gizmo owns the left button while the tool is live: the transform gizmos are
-    /// hidden by the caller, and `pointer_over_widget` keeps the corner orientation widget usable.
+    /// A click appends the point the plates place — the snapped pointer with every typed number in
+    /// its place — or asks for a polyline to close when the point is its first one. The gizmo owns
+    /// the left button while the tool is live: the transform gizmos are hidden by the caller, and
+    /// `pointer_over_widget` keeps the corner orientation widget usable.
     ///
     /// The returned [`DrawAction`] says what happened, which lets the caller commit a finished fixed
     /// tool and run the one close path for a ring. Clicking a fixed tool's last point does nothing.
@@ -208,7 +261,7 @@ impl DrawGizmo {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
-        let Some(outcome) = snap_cursor(
+        let Some(snapped) = snap_cursor(
             &draft,
             plane,
             camera,
@@ -219,38 +272,107 @@ impl DrawGizmo {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
-        self.hover = Some(outcome);
-        self.refresh_preview(&draft, outcome.point);
+        // The plates show the numbers the pointer produces, and the point a click places is the
+        // pointer with every number the person typed in its place (ADR 0126, 0128).
+        let raw = plane_point(snapped.point);
+        self.sync_fields(&draft, raw, plane, camera, rect);
+        let placed = self.fields.as_ref().and_then(|fields| PointState::placed(&draft, raw, fields));
+        let (point, at) = placed.as_ref().map_or((snapped.point, raw), |state| (state.point, state.at));
+        let screen = project(plane, camera, rect, at).unwrap_or(snapped.screen);
+        self.pointer = Some(raw);
+        self.state = placed;
+        self.hover = Some(SnapOutcome { point, target: snapped.target, screen });
+        self.refresh_preview(&draft, point);
 
         // A click that the orientation widget owns must not also place a point.
         if pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
             return Ok(DrawAction::Nothing);
         }
-        let action = match click_action(&draft, outcome.point) {
-            DrawClick::Append(point) => {
-                editor.drawing_point(point).map_err(|error| error.to_string())?;
-                DrawAction::Point
-            }
-            DrawClick::StartArc(point) => {
-                editor.drawing_arc_through(point).map_err(|error| error.to_string())?;
-                DrawAction::Point
-            }
-            // The ring is closed by the caller: one close path serves the viewport, the ribbon and
-            // the status bar, and it commits in the same step (ADR 0052).
-            DrawClick::Close => DrawAction::Close,
-            DrawClick::Ignore => DrawAction::Nothing,
-        };
+        let action = apply_click(editor, &draft, point)?;
         if matches!(action, DrawAction::Point)
             && let Some(draft) = editor.drawing()
         {
             // The click moved the chain, so the preview belongs to the new state under the same
             // pointer rather than to the state before it.
-            self.refresh_preview(draft, outcome.point);
+            self.refresh_preview(draft, point);
         }
         Ok(action)
     }
 
-    /// Paints the placed chain, the preview, the points, the snap marker and the live size.
+    /// Keeps the plates of the point being placed current: one set per point, its numbers live.
+    ///
+    /// The set is rebuilt when the draft gains or loses a point, because that is what changes the
+    /// numbers a tool asks for and resets the locks: a typed number is a promise for one point.
+    /// Every other frame only moves the plates and refreshes the values the pointer produces.
+    fn sync_fields(&mut self, draft: &DrawDraft, pointer: DVec2, plane: WorkPlane, camera: Camera, rect: egui::Rect) {
+        let stage = draft.points().len();
+        let Some(state) = PointState::live(draft, pointer) else {
+            return;
+        };
+        let fallback = project(plane, camera, rect, pointer).unwrap_or(rect.center());
+        let plates = |state: &PointState| {
+            state
+                .rows
+                .iter()
+                .map(|row| field_row(*row, project(plane, camera, rect, row.anchor).unwrap_or(fallback)))
+                .collect::<Vec<_>>()
+        };
+        if self.stage != Some(stage) {
+            self.stage = Some(stage);
+            self.fields = FieldSet::new(plates(&state));
+        }
+        let Some(fields) = self.fields.as_mut() else {
+            return;
+        };
+        for row in &state.rows {
+            fields.set_live(row.param, row.value);
+            fields.set_anchor(row.param, project(plane, camera, rect, row.anchor).unwrap_or(fallback));
+        }
+    }
+
+    /// Draws the plates of the point being placed and runs the keys they own.
+    ///
+    /// The plates are drawn whatever the pointer rests on, so a number can be typed without moving
+    /// the hand and the point on screen keeps its own numbers. Enter places the point the way a
+    /// click does, with every plate; Escape drops the typed numbers first and ends the tool second,
+    /// which is the order a CAD field teaches (ADR 0126).
+    pub(crate) fn show_fields(
+        &mut self,
+        ctx: &egui::Context,
+        rect: egui::Rect,
+        editor: &mut Editor,
+    ) -> Result<Option<DrawAction>, String> {
+        let (action, drawn) = {
+            let Some(fields) = self.fields.as_mut() else {
+                self.field_rect = None;
+                return Ok(None);
+            };
+            let action = fields.show(ctx, rect);
+            (action, fields.rect())
+        };
+        self.field_rect = (drawn.width() > 0.0 && drawn.height() > 0.0).then_some(drawn);
+        if !action.is_none() {
+            ctx.request_repaint();
+        }
+        if action.cancel {
+            editor.cancel_drawing();
+            return Ok(Some(DrawAction::Cancel));
+        }
+        if !action.commit {
+            return Ok(None);
+        }
+        let (Some(draft), Some(pointer), Some(fields)) =
+            (editor.drawing().cloned(), self.pointer, self.fields.as_ref())
+        else {
+            return Ok(None);
+        };
+        let Some(state) = PointState::placed(&draft, pointer, fields) else {
+            return Ok(None);
+        };
+        apply_click(editor, &draft, state.point).map(Some)
+    }
+
+    /// Paints the placed chain, the preview, the points, the snap marker and the two guides.
     pub(crate) fn paint(&self, ui: &Ui, rect: egui::Rect, camera: Camera, draft: &DrawDraft) {
         let plane = self.plane(camera);
         let painter = ui.painter().with_clip_rect(rect);
@@ -278,15 +400,72 @@ impl DrawGizmo {
                 paint_point(&painter, camera, rect, plane, hover.point, CLOSE_COLOR, POINT_RADIUS + 2.0);
             }
             paint_marker(&painter, hover);
-            if let Some(label) = size_label(draft, hover.point) {
-                paint_size(&painter, hover.screen, &label);
-            }
         } else {
             for point in draft.points() {
                 paint_point(&painter, camera, rect, plane, *point, DRAFT_COLOR, POINT_RADIUS);
             }
         }
+        if let Some(state) = &self.state {
+            paint_guides(ui, &painter, camera, rect, plane, state);
+        }
     }
+}
+
+/// Applies a click at `point` to the draft, the way the pointer and Enter both place one.
+///
+/// The ring is closed by the caller: one close path serves the viewport, the ribbon and the status
+/// bar, and it commits in the same step (ADR 0052).
+fn apply_click(editor: &mut Editor, draft: &DrawDraft, point: [Length; 2]) -> Result<DrawAction, String> {
+    Ok(match click_action(draft, point) {
+        DrawClick::Append(point) => {
+            editor.drawing_point(point).map_err(|error| error.to_string())?;
+            DrawAction::Point
+        }
+        DrawClick::StartArc(point) => {
+            editor.drawing_arc_through(point).map_err(|error| error.to_string())?;
+            DrawAction::Point
+        }
+        DrawClick::Close => DrawAction::Close,
+        DrawClick::Ignore => DrawAction::Nothing,
+    })
+}
+
+/// A work-plane point in viewport points.
+fn project(plane: WorkPlane, camera: Camera, rect: egui::Rect, point: DVec2) -> Option<Pos2> {
+    screen_point(camera, rect, plane.world(point))
+}
+
+/// Paints the two guides of the point being placed: the chord and the reference with its arc.
+///
+/// The guides are screen paint, so their weight is a rule and not a world size (ADR 0111): the
+/// radius of the reference is measured on screen from the anchor to the segment's own length, and
+/// the arc sweeps the signed difference the point state gives.
+fn paint_guides(
+    ui: &Ui,
+    painter: &egui::Painter,
+    camera: Camera,
+    rect: egui::Rect,
+    plane: WorkPlane,
+    state: &PointState,
+) {
+    let project = |point: DVec2| screen_point(camera, rect, plane.world(point));
+    if let Some([from, to]) = state.construction
+        && let (Some(from), Some(to)) = (project(from), project(to))
+    {
+        guides::construction(ui, painter, from, to);
+    }
+    let Some(reference) = state.reference else {
+        return;
+    };
+    let Some(anchor) = project(reference.anchor) else {
+        return;
+    };
+    let edge = reference.anchor + DVec2::new(reference.from.cos(), reference.from.sin()) * reference.radius;
+    let Some(edge) = project(edge) else {
+        return;
+    };
+    let radius = (edge - anchor).length();
+    guides::reference_between(painter, anchor, radius, reference.from as f32, reference.to as f32);
 }
 
 /// The snapped cursor point, in document units and on screen.
@@ -368,36 +547,6 @@ fn click_action(draft: &DrawDraft, point: [Length; 2]) -> DrawClick {
     DrawClick::Append(point)
 }
 
-/// The live size next to the cursor, or `None` while the tool has nothing to measure.
-fn size_label(draft: &DrawDraft, next: [Length; 2]) -> Option<String> {
-    let last = draft.last_end()?;
-    let anchor = plane_point(last);
-    let point = plane_point(next);
-    match draft.tool() {
-        DrawTool::Rectangle if draft.points().len() == 1 => {
-            let width = length_from_millimetres((point.x - anchor.x).abs())?;
-            let height = length_from_millimetres((point.y - anchor.y).abs())?;
-            Some(format!("{width} × {height}"))
-        }
-        DrawTool::Circle if draft.points().len() == 1 => {
-            let radius = length_from_millimetres((point - anchor).length())?;
-            Some(format!("R {radius}"))
-        }
-        DrawTool::Arc if draft.points().len() == 2 => {
-            let path = draft.preview_path(next)?;
-            let radius = path.entries().first().and_then(|entry| match entry.segment() {
-                ContourSegment::Arc { radius, .. } => Some(radius),
-                ContourSegment::Line { .. } => None,
-            })?;
-            Some(format!("R {radius}"))
-        }
-        _ => {
-            let length = length_from_millimetres((point - anchor).length())?;
-            Some(length.to_string())
-        }
-    }
-}
-
 /// A document point in work-plane millimetres.
 fn plane_point(point: [Length; 2]) -> DVec2 {
     DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64())
@@ -475,20 +624,12 @@ fn paint_marker(painter: &egui::Painter, hover: SnapOutcome) {
     painter.add(Shape::closed_line(corners, Stroke::new(1.5, color)));
 }
 
-/// Paints the live size next to the cursor on a readable background.
-fn paint_size(painter: &egui::Painter, pointer: Pos2, label: &str) {
-    let galley = painter.layout_no_wrap(label.to_owned(), FontId::proportional(12.0), SIZE_COLOR);
-    let padding = egui::vec2(5.0, 3.0);
-    let rect = egui::Rect::from_min_size(pointer + egui::vec2(14.0, 10.0), galley.size() + padding * 2.0);
-    painter.rect_filled(rect, 3.0, SIZE_BACKGROUND);
-    painter.galley(rect.min + padding, galley, SIZE_COLOR);
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
 
     use furnicraft_testkit::millimetres;
+    use furnicraft_ui::DrawTool;
 
     use super::*;
 
@@ -596,26 +737,6 @@ mod tests {
     }
 
     #[test]
-    fn the_live_size_names_each_tools_measure() {
-        let polyline = draft(DrawTool::Polyline, &[(0, 0), (600, 0)]);
-        assert_eq!(size_label(&polyline, [millimetres(600), millimetres(400)]).as_deref(), Some("400 mm"));
-
-        let line = draft(DrawTool::Line, &[(0, 0)]);
-        assert_eq!(size_label(&line, [millimetres(600), millimetres(0)]).as_deref(), Some("600 mm"));
-
-        let rectangle = draft(DrawTool::Rectangle, &[(0, 0)]);
-        assert_eq!(size_label(&rectangle, [millimetres(600), millimetres(400)]).as_deref(), Some("600 mm × 400 mm"));
-
-        let circle = draft(DrawTool::Circle, &[(100, 50)]);
-        assert_eq!(size_label(&circle, [millimetres(130), millimetres(90)]).as_deref(), Some("R 50 mm"));
-
-        let arc = draft(DrawTool::Arc, &[(0, 0), (50, 50)]);
-        assert_eq!(size_label(&arc, [millimetres(100), millimetres(0)]).as_deref(), Some("R 50 mm"));
-
-        assert!(size_label(&DrawDraft::new(DrawTool::Line), [millimetres(10), millimetres(0)]).is_none());
-    }
-
-    #[test]
     fn a_rejected_preview_keeps_the_last_valid_one() {
         let mut draft = DrawDraft::new(DrawTool::Arc);
         draft.push([millimetres(0), millimetres(0)]).expect("start");
@@ -702,6 +823,6 @@ mod tests {
         assert!(!gizmo.grid());
         gizmo.toggle_grid();
         assert!(gizmo.grid());
-        assert_eq!(size_label(&draft, [millimetres(0), millimetres(0)]), None);
+        let _ = draft;
     }
 }

@@ -302,7 +302,8 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
                 egui::Button::new(Message::Close.text(lang)),
             )
             .clicked();
-        let finish = ui.add_enabled(points >= 2, egui::Button::new(Message::FinishEnter.text(lang))).clicked();
+        // Enter belongs to the plates now, so the button names the action and not a key (ADR 0126).
+        let finish = ui.add_enabled(points >= 2, egui::Button::new(Message::DraftFinish.text(lang))).clicked();
         let cancel = ui.button(Message::CancelEsc.text(lang)).clicked();
         hint(ui, Message::DrawHint.text(lang));
         if let Some(reason) = &info.preview_error {
