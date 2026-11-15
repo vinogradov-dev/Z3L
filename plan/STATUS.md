@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=T8 state=idle base=0a0f053 updated=2026-11-15
+STATE: milestone=M7 phase=T task=U99 state=idle base=a390583 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-T8 separates the P2 and P4 accents from the model and scene inks
+U99 makes the niche a tool of its own, and fill, a shelf and a report consume the same value
 
 ## Index
 

@@ -40,26 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **T8** the P2 and P4 accents separate from the model and scene inks
-  Why: The P2 azure accent is 7.2/8.6 Delta E from the model blue and the P4 mint accent is
-   7.0/1.9 Delta E from the scene green, so the accent stops reading as chrome beside those
-   glyphs, contrary to U70. The role inks are preset-independent, so the owner chose to move
-   the presets' accents and keep the inks (option A, 2026-11-15).
-  Shape: Option A, chosen by the owner: keep the seven role inks and move the P2 and P4 accents
-   so each is at least 20 Delta E from every role ink and keeps 3:1 contrast on panel, ribbon
-   and surface in both variants. Measure candidates against all seven inks including reference;
-   decide the preset label and stored-name consequence (a saved settings name must keep
-   loading); add the hue-distance test; update U71 and the ADR if the accent rule changes. No
-   icon redraw.
-  Done: The P2 and P4 accents are chosen and measured: each at least 20 Delta E from every role
-   ink and at least 3:1 on panel, ribbon and surface for every preset and variant; the preset
-   labels and stored names are consistent and a saved settings file still loads; the
-   hue-distance test sits beside the contrast test; U71 and the ADR/docs are updated; cargo
-   xtask ci is green.
-  `files: crates/ui/src/theme.rs, crates/ui/src/icons.rs, plan/notes/U70.md, docs/decisions`
-
-## Bugs
-## Next
 - `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
    mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
@@ -76,6 +56,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    inspector see the same value; cancelling either leaves no document change; `plan/map.md`
    gains the atom row; `cargo xtask ci` is green.
   `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs`
+
+## Bugs
+## Next
 - `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
   Why: This task is not in the queue and no session starts it. It runs only when the owner
    commands a release, and that command also names the product, which is the one input the
@@ -106,6 +89,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **T8** the P2 and P4 accents separate from the model and scene inks
+  Why: The P2 azure accent is 7.2/8.6 Delta E from the model blue and the P4 mint accent is
+   7.0/1.9 Delta E from the scene green, so the accent stops reading as chrome beside those
+   glyphs, contrary to U70. The role inks are preset-independent, so the owner chose to move
+   the presets' accents and keep the inks (option A, 2026-11-15).
+  Shape: Option A, chosen by the owner: keep the seven role inks and move the P2 and P4 accents
+   so each is at least 20 Delta E from every role ink and keeps 3:1 contrast on panel, ribbon
+   and surface in both variants. Measure candidates against all seven inks including reference;
+   decide the preset label and stored-name consequence (a saved settings name must keep
+   loading); add the hue-distance test; update U71 and the ADR if the accent rule changes. No
+   icon redraw.
+  Done: The P2 and P4 accents are chosen and measured: each at least 20 Delta E from every role
+   ink and at least 3:1 on panel, ribbon and surface for every preset and variant; the preset
+   labels and stored names are consistent and a saved settings file still loads; the
+   hue-distance test sits beside the contrast test; U71 and the ADR/docs are updated; cargo
+   xtask ci is green.
+  `files: crates/ui/src/theme.rs, crates/ui/src/icons.rs, plan/notes/U70.md, docs/decisions` — `a390583`
 
 - `[x]` **T7** the rest of the icon set follows the v2 language, one tab at a time
   Why: T6 migrates the Sketch tab only; the Model, Furniture, Scene, View, Actions and Window
