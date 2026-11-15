@@ -98,8 +98,10 @@ registers apart at a glance.
 | `danger` | `#E06A6A` | `#B33A3A` | Destructive commands only |
 
 The action accent is UI chrome and is never a role ink: an active tool is a background and a
-border, not a recoloured glyph. The measures behind the table — the threshold, the contrast floor
-and the rejected alternatives — are in `AUDIT.md` and `plan/notes/U70.md`.
+border, not a recoloured glyph. Each preset's accent is also held at least 20 ΔE (CIE76) from every
+ink of this table in both variants, because contrast alone cannot see a hue collision (ADR 0125).
+The measures behind the table — the threshold, the contrast and hue floors and the rejected
+alternatives — are in `AUDIT.md`, `plan/notes/U70.md` and `plan/notes/T8.md`.
 - geometry only: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g` and their
   `transform`, with the paint attributes `fill`, `fill-opacity`, `stroke`, `stroke-width`,
   `stroke-linecap`, `stroke-linejoin`, and nothing else. No `<text>` (a glyph that must be a character

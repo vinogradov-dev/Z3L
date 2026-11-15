@@ -513,7 +513,7 @@ impl Settings {
         }
         let mut value: serde_json::Value = serde_json::from_str(text)?;
         let mut repairs = Vec::new();
-        if let Some(repair) = repair_palette(&mut value) {
+        if let Some(repair) = canonical_palette(&mut value) {
             repairs.push(repair);
         }
         migrate_accent(&mut value);
@@ -566,22 +566,23 @@ impl Settings {
     }
 }
 
-/// Replaces a palette name this build does not know with the default and reports it.
+/// Rewrites the stored palette name to the one this build writes, and reports a name it does not
+/// know.
 ///
 /// The stored name is read out of the JSON tree before the typed read, so one unknown name costs
 /// one value and not the whole file. A value that is not a string at all is left for `serde` to
-/// reject: that is a corrupt file, not an older one.
-fn repair_palette(value: &mut serde_json::Value) -> Option<Repair> {
+/// reject: that is a corrupt file, not an older one. A name an earlier build wrote for a look this
+/// build has renamed resolves to the current name and is rewritten, so a saved workspace keeps its
+/// look and the next save carries the current word (T8, ADR 0125).
+fn canonical_palette(value: &mut serde_json::Value) -> Option<Repair> {
     let slot = value.get_mut("appearance")?.get_mut("palette")?;
     let serde_json::Value::String(name) = slot else {
         return None;
     };
-    if theme::ThemePreset::from_stored_name(name).is_some() {
-        return None;
-    }
-    let unknown = std::mem::take(name);
-    *slot = serde_json::Value::String(theme::ThemePreset::default().stored_name().to_owned());
-    Some(Repair::UnknownPalette(unknown))
+    let preset = theme::ThemePreset::from_stored_name(name);
+    let unknown = preset.is_none().then(|| name.clone());
+    *slot = serde_json::Value::String(preset.unwrap_or_default().stored_name().to_owned());
+    unknown.map(Repair::UnknownPalette)
 }
 
 /// Drops the accent a workspace written before U71 carried.
@@ -1018,7 +1019,7 @@ mod tests {
             appearance: Appearance {
                 theme: ThemeChoice::Light,
                 language: Language::Russian,
-                palette: theme::ThemePreset::InkAzure,
+                palette: theme::ThemePreset::InkMagenta,
                 accent: Some([0x11, 0x99, 0x44]),
                 panel_opacity: 70,
                 icon_color: IconColor::Never,
@@ -1058,7 +1059,7 @@ mod tests {
         let json = settings.to_json().expect("serialise");
         let restored = Settings::from_json(&json).expect("parse");
         assert_eq!(restored, settings);
-        assert_eq!(restored.appearance.palette, theme::ThemePreset::InkAzure);
+        assert_eq!(restored.appearance.palette, theme::ThemePreset::InkMagenta);
         assert_eq!(restored.appearance.accent, Some([0x11, 0x99, 0x44]));
         assert_eq!(restored.appearance.panel_opacity, 70);
         assert_eq!(restored.panels.scene, PanelState { visible: false, expanded: true });
@@ -1282,6 +1283,25 @@ mod tests {
             Settings::from_json(json).expect("the plain read").appearance.palette,
             theme::ThemePreset::GraphiteCopper
         );
+    }
+
+    #[test]
+    fn a_palette_an_earlier_build_named_still_opens_its_look() {
+        // T8 renamed the P2 and P4 looks after their accents, because a preset is named after the
+        // colour it draws. A workspace written before it keeps the look it chose, and the next save
+        // carries the current name (ADR 0125).
+        for (old, renamed) in
+            [("ink_azure", theme::ThemePreset::InkMagenta), ("slate_mint", theme::ThemePreset::SlateViolet)]
+        {
+            let json = format!(r#"{{"version":1,"appearance":{{"palette":"{old}"}},"recent":["/tmp/a.fcs"]}}"#);
+            let (settings, repairs) = Settings::read_json(&json).expect("an old name is not a corrupt file");
+            assert_eq!(settings.appearance.palette, renamed, "{old} still opens its look");
+            assert!(repairs.is_empty(), "{old} is a name this build knows, not a repair: {repairs:?}");
+            assert_eq!(settings.recent, vec![PathBuf::from("/tmp/a.fcs")], "the rest of the file survives");
+            let saved = settings.to_json().expect("the workspace is written back");
+            assert!(saved.contains(&format!("\"{}\"", renamed.stored_name())), "the save carries the current name");
+            assert!(!saved.contains(old), "the save does not keep the old name");
+        }
     }
 
     #[test]
