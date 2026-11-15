@@ -18,7 +18,10 @@ use furnicraft_model::{
     Contour, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, PathCorner, Placement, Project,
 };
 use furnicraft_scene::Camera;
-use furnicraft_ui::{ContourDraft, ContourEdit, ContourGrip, ContourTarget, Editor, GripNumber, GripValue};
+use furnicraft_ui::{
+    ContourDraft, ContourEdit, ContourGrip, ContourTarget, Editor, FieldLabel, FieldParam, FieldRow, FieldSet,
+    GripNumber, GripValue,
+};
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{ACTIVE_COLOR, distance_to_segment, length_from_millimetres, ray_plane, ray_to, screen_point};
@@ -35,9 +38,6 @@ const RING_TOLERANCE_MICROMETRES: f64 = 500.0;
 const SPLIT_MARGIN: f64 = 0.02;
 /// Maximum number of screen segments used to draw one arc.
 const MAX_ARC_STEPS: usize = 64;
-/// How far from the pointer the numeric field sits, in points.
-const NUMBER_OFFSET: egui::Vec2 = egui::vec2(18.0, 12.0);
-
 /// Colour of the ring the edit started from.
 const BASE_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(150, 150, 150, 160);
 /// Colour of the working copy.
@@ -54,23 +54,20 @@ struct GripDrag {
     motion: CornerMove,
 }
 
-/// The numeric field that follows the cursor while a grip is dragged.
+/// The number that follows the cursor while a grip is dragged.
+///
+/// One plate of the point-field atom (`furnicraft_ui::FieldSet`), anchored at the pointer: the drag
+/// keeps the number live, a typed value locks it, and `0` or Escape gives the grip its old value.
 #[derive(Clone, Debug)]
-struct NumericEntry {
+struct GripField {
     grip: ContourGrip,
     kind: GripNumber,
-    label: &'static str,
-    text: String,
-    /// The value the drag started from, which Escape restores.
-    start: Option<GripValue>,
     /// The motion segment for an along-contour drag, used to move the corner by a typed length.
     motion: Option<CornerMove>,
-    pointer: Pos2,
-    /// Whether the field still has to ask for keyboard focus.
-    focus: bool,
-    /// Whether the user typed into the field, so a drag must not overwrite the text.
-    edited: bool,
-    error: Option<String>,
+    param: FieldParam,
+    fields: FieldSet,
+    /// The value the drag started from, which Escape restores.
+    start: Option<GripValue>,
 }
 
 /// What the numeric field asked the shell to do.
@@ -90,7 +87,7 @@ pub(crate) struct ContourGizmo {
     drag: Option<GripDrag>,
     hover: Option<ContourGrip>,
     hover_segment: Option<ContourSegmentId>,
-    numeric: Option<NumericEntry>,
+    numeric: Option<GripField>,
     /// Whether a corner drag runs along the contour instead of freely.
     along: bool,
 }
@@ -166,7 +163,7 @@ impl ContourGizmo {
             if let Some(drag) = self.drag
                 && let Some(origin) = press_origin
             {
-                self.numeric = numeric_entry(&draft, drag.grip, origin, Some(drag.motion));
+                self.numeric = grip_field(&draft, drag.grip, origin, Some(drag.motion));
             }
         }
         if let Some(drag) = self.drag {
@@ -199,24 +196,23 @@ impl ContourGizmo {
                         }
                     }
                 }
-                if let Some(entry) = &mut self.numeric
+                if let Some(field) = &mut self.numeric
                     && let Some(pointer) = pointer
                 {
-                    entry.pointer = pointer;
-                    if !entry.edited {
-                        let value = if let Some(CornerMove::Along(segment)) = entry.motion
-                            && let ContourGrip::Corner(corner) = entry.grip
-                        {
-                            editor.contour_edit().and_then(|edit| {
-                                let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
-                                edit.draft().along_contour_length(segment, corner, start).map(GripValue::Length)
-                            })
-                        } else {
-                            editor.contour_edit().and_then(|edit| edit.grip_value(entry.grip))
-                        };
-                        if let Some(value) = value {
-                            entry.text = value.text();
-                        }
+                    let param = field.param;
+                    field.fields.set_anchor(param, pointer);
+                    let value = if let Some(CornerMove::Along(segment)) = field.motion
+                        && let ContourGrip::Corner(corner) = field.grip
+                    {
+                        editor.contour_edit().and_then(|edit| {
+                            let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
+                            edit.draft().along_contour_length(segment, corner, start).map(GripValue::Length)
+                        })
+                    } else {
+                        editor.contour_edit().and_then(|edit| edit.grip_value(field.grip))
+                    };
+                    if let Some(value) = value {
+                        field.fields.set_live(param, number_of(value));
                     }
                 }
                 if response.drag_stopped_by(egui::PointerButton::Primary) {
@@ -324,77 +320,48 @@ impl ContourGizmo {
         self.paint_numeric(ui, rect)
     }
 
-    /// Draws the editable number beside the cursor and reads Enter and Escape.
+    /// Draws the editable number beside the cursor and applies what it asked for.
+    ///
+    /// The plate is the point-field atom, so Tab, Enter, Escape and a typed zero behave exactly as
+    /// they do at a drawing point: the value is live until typed, a typed number locks it, and a
+    /// release hands the grip back its old value.
     fn paint_numeric(&mut self, ui: &Ui, rect: egui::Rect) -> Option<NumericAction> {
-        let entry = self.numeric.as_mut()?;
-        let dragging = self.drag.is_some();
-        let position = Pos2::new(
-            (entry.pointer.x + NUMBER_OFFSET.x).min(rect.max.x - 190.0),
-            (entry.pointer.y + NUMBER_OFFSET.y).min(rect.max.y - 48.0),
-        );
-        let mut action = None;
+        let field = self.numeric.as_mut()?;
+        let action = field.fields.show(ui.ctx(), rect);
+        let grip = field.grip;
+        let kind = field.kind;
+        let motion = field.motion;
+        let start = field.start;
+        let live = field.fields.value(field.param);
+        let mut asked = None;
         let mut close = false;
-        egui::Area::new(egui::Id::unique("contour-grip-number"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(position)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(entry.label);
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut entry.text)
-                                .desired_width(84.0)
-                                .hint_text(if matches!(entry.kind, GripNumber::Angle) { "°" } else { "mm" }),
-                        );
-                        if entry.focus {
-                            response.request_focus();
-                            entry.focus = false;
-                        }
-                        if response.changed() {
-                            entry.edited = true;
-                        }
-                        if let Some(error) = &entry.error {
-                            ui.colored_label(egui::Color32::LIGHT_RED, error);
-                        }
-                        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
-                        let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
-                        if escape {
-                            if let Some(start) = entry.start {
-                                action = Some(NumericAction::Restore(entry.grip, start));
-                            }
-                        } else if enter {
-                            match entry.kind.parse(&entry.text, furnicraft_ui::language(ui.ctx())) {
-                                Ok(value) => {
-                                    action = if let Some(motion) = entry.motion {
-                                        Some(NumericAction::ApplyAlong(entry.grip, value, motion))
-                                    } else {
-                                        Some(NumericAction::Apply(entry.grip, value))
-                                    };
-                                }
-                                Err(error) => entry.error = Some(error),
-                            }
-                        } else if response.lost_focus() && !dragging {
-                            // A click outside the field drops it without touching the draft.
-                            close = true;
-                        }
-                    });
+        if action.edit.is_some() || action.commit {
+            if let Some(number) = action.edit.map(|edit| edit.value).or(live)
+                && let Ok(value) = kind.parse(&number.to_string(), furnicraft_ui::language(ui.ctx()))
+            {
+                asked = Some(match motion {
+                    Some(motion) => NumericAction::ApplyAlong(grip, value, motion),
+                    None => NumericAction::Apply(grip, value),
                 });
-            });
-        if action.is_some() || close {
+            }
+            close = true;
+        }
+        if action.released || action.cancel {
+            if let Some(start) = start {
+                asked = Some(NumericAction::Restore(grip, start));
+            }
+            close = true;
+        }
+        if close {
             self.drag = None;
             self.numeric = None;
         }
-        action
+        asked
     }
 }
 
-/// The editable numeric field a grip opens, when it takes a number at all.
-fn numeric_entry(
-    draft: &ContourDraft,
-    grip: ContourGrip,
-    pointer: Pos2,
-    motion: Option<CornerMove>,
-) -> Option<NumericEntry> {
+/// The number a grip opens, when it takes a number at all.
+fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Option<CornerMove>) -> Option<GripField> {
     let (kind, value, label, motion) = if let Some(motion @ CornerMove::Along(segment)) = motion
         && let ContourGrip::Corner(corner) = grip
     {
@@ -409,18 +376,21 @@ fn numeric_entry(
         let label = draft.grip_label(grip)?;
         (kind, value, label, None)
     };
-    Some(NumericEntry {
-        grip,
-        kind,
-        label,
-        text: value.text(),
-        start: Some(value),
-        motion,
-        pointer,
-        focus: true,
-        edited: false,
-        error: None,
-    })
+    let (param, unit, range) = match value {
+        GripValue::Length(_) => (FieldParam::Length, "mm", 0.0..=1_000_000.0),
+        GripValue::Angle(_) => (FieldParam::Angle, "°", -360.0..=360.0),
+    };
+    let row = FieldRow::new(param, Some(FieldLabel::Symbol(label)), number_of(value), unit, range, 1, pointer);
+    let fields = FieldSet::new(vec![row])?;
+    Some(GripField { grip, kind, motion, param, fields, start: Some(value) })
+}
+
+/// One grip value as the number the field shows: millimetres or degrees.
+fn number_of(value: GripValue) -> f64 {
+    match value {
+        GripValue::Length(length) => length.millimetres_f64(),
+        GripValue::Angle(angle) => angle.degrees_f64(),
+    }
 }
 
 /// Paints one grip: a square for a centre, a circle for a point on the figure.
@@ -1229,51 +1199,59 @@ mod tests {
     }
 
     #[test]
-    fn a_numeric_entry_starts_from_the_grip_value_and_its_kind() {
+    fn a_numeric_field_starts_from_the_grip_value_and_its_kind() {
         let circle =
             ContourDraft::Chain(Path::circle([millimetres(0), millimetres(0)], millimetres(40)).expect("circle"));
-        let entry = numeric_entry(&circle, ContourGrip::CircleQuadrant(0), Pos2::ZERO, None).expect("a radius field");
-        assert_eq!(entry.kind, GripNumber::Length);
-        assert_eq!(entry.text, "40 mm");
-        assert_eq!(entry.start, Some(GripValue::Length(millimetres(40))));
+        let field = grip_field(&circle, ContourGrip::CircleQuadrant(0), Pos2::ZERO, None).expect("a radius field");
+        assert_eq!(field.kind, GripNumber::Length);
+        assert_eq!(field.fields.value(FieldParam::Length), Some(40.0));
+        assert_eq!(field.start, Some(GripValue::Length(millimetres(40))));
 
         let arc = ContourDraft::Chain(line_and_arc());
         let id = arc.entries().last().expect("arc").id();
-        let entry =
-            numeric_entry(&arc, ContourGrip::Corner(PathCorner::End(id)), Pos2::ZERO, None).expect("an angle field");
-        assert_eq!(entry.kind, GripNumber::Angle);
-        assert_eq!(entry.text, "0°");
-        assert!(entry.label.contains('∠') || entry.label.contains('R'), "the field is labelled: {entry:?}");
-
+        let field =
+            grip_field(&arc, ContourGrip::Corner(PathCorner::End(id)), Pos2::ZERO, None).expect("an angle field");
+        assert_eq!(field.kind, GripNumber::Angle);
+        assert_eq!(field.fields.value(FieldParam::Angle), Some(0.0));
+        let label = field.fields.rows().first().and_then(|row| row.label);
         assert!(
-            numeric_entry(&circle, ContourGrip::CircleCenter, Pos2::ZERO, None).is_none(),
-            "a centre has no number"
+            matches!(label, Some(FieldLabel::Symbol(symbol)) if symbol.contains('∠') || symbol == "R"),
+            "the field is labelled: {label:?}"
         );
+
+        assert!(grip_field(&circle, ContourGrip::CircleCenter, Pos2::ZERO, None).is_none(), "a centre has no number");
     }
 
     #[test]
-    fn an_along_contour_numeric_entry_shows_the_length_from_the_far_end() {
+    fn an_along_contour_numeric_field_shows_the_length_from_the_far_end() {
         let draft = ContourDraft::Chain(l_path());
         let first = draft.id_at(0).expect("first segment");
         let second = draft.id_at(1).expect("second segment");
         let corner = PathCorner::Start(second);
         let motion = Some(CornerMove::Along(first));
-        let entry = numeric_entry(&draft, ContourGrip::Corner(corner), Pos2::ZERO, motion).expect("a length field");
-        assert_eq!(entry.kind, GripNumber::Length);
-        assert_eq!(entry.label, "L", "the along-contour field is labelled L");
-        assert_eq!(entry.text, "100 mm", "the corner sits at the far end of a 100 mm segment");
-        assert_eq!(entry.motion, Some(CornerMove::Along(first)));
+        let field = grip_field(&draft, ContourGrip::Corner(corner), Pos2::ZERO, motion).expect("a length field");
+        assert_eq!(field.kind, GripNumber::Length);
+        assert_eq!(
+            field.fields.rows().first().and_then(|row| row.label),
+            Some(FieldLabel::Symbol("L")),
+            "the along-contour field is labelled L"
+        );
+        assert_eq!(field.fields.value(FieldParam::Length), Some(100.0), "the corner sits at the far end");
+        assert_eq!(field.motion, Some(CornerMove::Along(first)));
 
         // An arc's value is its arc length, not its chord.
         let arc_draft = ContourDraft::Chain(line_and_arc());
         let arc = arc_draft.id_at(1).expect("arc segment");
         let arc_corner = PathCorner::End(arc);
-        let entry =
-            numeric_entry(&arc_draft, ContourGrip::Corner(arc_corner), Pos2::ZERO, Some(CornerMove::Along(arc)))
-                .expect("an arc length field");
+        let field = grip_field(&arc_draft, ContourGrip::Corner(arc_corner), Pos2::ZERO, Some(CornerMove::Along(arc)))
+            .expect("an arc length field");
         // A quarter arc of radius 40 is 40·π/2 ≈ 62.83 mm.
         let expected = (40.0 * std::f64::consts::FRAC_PI_2 * 1_000.0).round() as i64;
-        assert_eq!(entry.text, Length::from_micrometres(expected).to_string(), "the arc length is 62.83 mm");
+        assert_eq!(
+            field.fields.value(FieldParam::Length),
+            Some(Length::from_micrometres(expected).millimetres_f64()),
+            "the arc length is 62.83 mm"
+        );
     }
 
     #[test]

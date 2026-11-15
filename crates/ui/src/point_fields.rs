@@ -22,7 +22,7 @@
 
 use core::ops::RangeInclusive;
 
-use egui::{Align2, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke, Ui};
+use egui::{Align2, Context, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke};
 
 use crate::scrub::Scrub;
 use crate::theme;
@@ -230,6 +230,13 @@ impl FieldSet {
         }
     }
 
+    /// Moves `param`'s plate to `anchor`, for a field that follows the pointer.
+    pub fn set_anchor(&mut self, param: FieldParam, anchor: Pos2) {
+        if let Some(index) = self.index(param) {
+            self.rows[index].anchor = anchor;
+        }
+    }
+
     /// Moves the keyboard to the next plate and back to the first.
     pub fn focus_next(&mut self) {
         if self.rows.is_empty() {
@@ -250,11 +257,11 @@ impl FieldSet {
     /// The plates float inside `viewport` and are placed beside their anchors, on the side that
     /// leaves the point itself uncovered. A press inside a plate is chrome: `rect` reports what the
     /// caller must keep from the pointer.
-    pub fn show(&mut self, ui: &mut Ui, viewport: Rect) -> FieldAction {
-        let lang = language(ui.ctx());
+    pub fn show(&mut self, ctx: &Context, viewport: Rect) -> FieldAction {
+        let lang = language(ctx);
         let mut action = FieldAction::default();
         // Tab moves the keyboard before the plates draw, so the next plate takes it this frame.
-        if self.holding && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab)) {
+        if self.holding && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab)) {
             self.focus_next();
         }
         self.error = None;
@@ -263,7 +270,7 @@ impl FieldSet {
         let mut union = Rect::NOTHING;
         for index in 0..self.rows.len() {
             let request = asking && index == self.focus;
-            let Some(result) = self.row_plate(ui, index, viewport, request, lang) else {
+            let Some(result) = self.row_plate(ctx, index, viewport, request, lang) else {
                 continue;
             };
             if let Some(rect) = self.rects.get(index).copied() {
@@ -295,9 +302,9 @@ impl FieldSet {
         let held = focused.or_else(|| self.holding.then_some(self.focus));
         self.holding = focused.is_some();
         if let Some(index) = held {
-            if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
+            if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
                 action.commit = true;
-            } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+            } else if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
                 let lock = self.locked.get(index).copied().unwrap_or(false);
                 if lock {
                     self.reset();
@@ -305,26 +312,26 @@ impl FieldSet {
                 } else {
                     action.cancel = true;
                 }
-                self.release_keyboard(ui, index);
+                self.release_keyboard(ctx, index);
             }
         }
         action
     }
 
     /// Hands the keyboard back to the tool, so the next Escape is not read twice.
-    fn release_keyboard(&mut self, ui: &mut Ui, index: usize) {
+    fn release_keyboard(&mut self, ctx: &Context, index: usize) {
         let Some(row) = self.rows.get(index) else {
             return;
         };
         let id = Id::unique(("point-field", row.param));
-        ui.memory_mut(|memory| memory.surrender_focus(id));
+        ctx.memory_mut(|memory| memory.surrender_focus(id));
         self.holding = false;
     }
 
     /// Draws one plate and reports what its field said this frame.
     fn row_plate(
         &mut self,
-        ui: &mut Ui,
+        ctx: &Context,
         index: usize,
         viewport: Rect,
         request: bool,
@@ -338,7 +345,7 @@ impl FieldSet {
             .pivot(align)
             .fixed_pos(position)
             .constrain_to(viewport)
-            .show(ui.ctx(), |ui| {
+            .show(ctx, |ui| {
                 let fill = theme::at_opacity(theme::floating(ui), PLATE_OPACITY);
                 egui::Frame::new()
                     .fill(fill)
@@ -444,7 +451,7 @@ mod tests {
         let input = RawInput { screen_rect: Some(VIEWPORT), events, ..Default::default() };
         let mut action = FieldAction::default();
         let output = ctx.run_ui(input, |ui| {
-            action = set.show(ui, VIEWPORT);
+            action = set.show(ui.ctx(), VIEWPORT);
         });
         output.drop_without_applying_deltas();
         action
