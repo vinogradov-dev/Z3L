@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=C3 state=idle base=dc33a92 updated=2026-11-15
+STATE: milestone=M7 phase=T task=C4 state=idle base=06c28a3 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-C3 is next: a contour node moves in a latched mode, with its distance and angle at the cursor
+C4 starts the next contour cell: a circle by diameter and an arc from its start, end and radius
 
 ## Index
 

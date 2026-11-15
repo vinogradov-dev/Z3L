@@ -889,6 +889,66 @@ impl Document {
         self.refresh()
     }
 
+    /// Runs what the contour gizmo asked for this frame.
+    ///
+    /// The gizmo owns the pointer but not the document, so a plate's number and a dropped move
+    /// come back here: a number is applied to the working copy, and a drop is the same one command
+    /// Enter runs (ADR 0129).
+    fn apply_contour_action(&mut self, ctx: &egui::Context, action: contour_gizmo::GizmoAction) {
+        use contour_gizmo::{GizmoAction, NumericAction};
+        match action {
+            GizmoAction::Idle => {}
+            GizmoAction::Changed => ctx.request_repaint(),
+            GizmoAction::Abandon => {
+                if self.contour_gizmo.abandon_latch(&mut self.editor) {
+                    ctx.request_repaint();
+                }
+            }
+            GizmoAction::Drop => {
+                // The plates may have locked a number on the frame the drop arrives, so the point
+                // they name is applied before the working copy is written.
+                if let Some((grip, point, motion)) = self.contour_gizmo.latched_move() {
+                    let _ = self.editor.contour_edit_drag_grip(grip, point, motion);
+                }
+                if let Err(error) = self.drop_contour_move() {
+                    self.last_error = Some(error);
+                }
+            }
+            GizmoAction::Numeric(NumericAction::Apply(grip, value) | NumericAction::Restore(grip, value)) => {
+                match self.editor.contour_edit_set_grip_value(grip, value) {
+                    Ok(()) => ctx.request_repaint(),
+                    Err(error) => self.last_error = Some(error.to_string()),
+                }
+            }
+            GizmoAction::Numeric(NumericAction::ApplyAlong(grip, value, motion)) => {
+                let result = if let (ContourGrip::Corner(_), CornerMove::Along(segment), GripValue::Length(length)) =
+                    (grip, motion, value)
+                {
+                    self.editor.contour_edit_along_length(grip, segment, length)
+                } else {
+                    self.editor.contour_edit_set_grip_value(grip, value)
+                };
+                match result {
+                    Ok(()) => ctx.request_repaint(),
+                    Err(error) => self.last_error = Some(error.to_string()),
+                }
+            }
+        }
+    }
+
+    /// Writes a latched corner move as one command and keeps reshaping the same contour.
+    ///
+    /// The drop is a command, so the mode restarts from what the document now stores: the next
+    /// corner is latched against the new shape, and the undo history holds one entry per drop.
+    fn drop_contour_move(&mut self) -> Result<(), String> {
+        let Some(target) = self.editor.contour_edit().map(furnicraft_ui::ContourEdit::target) else {
+            return Ok(());
+        };
+        self.apply_contour_edit()?;
+        self.editor.start_contour_edit(self.session.project(), target);
+        Ok(())
+    }
+
     /// Leaves contour editing and throws the working copy away.
     pub(crate) fn cancel_contour_edit(&mut self) {
         self.editor.end_contour_edit();
@@ -1845,6 +1905,7 @@ impl Document {
                 chrome.covers(pointer)
                     || card_before.is_some_and(|card| card.contains(pointer))
                     || self.draw_gizmo.field_contains(pointer)
+                    || self.contour_gizmo.field_contains(pointer)
                     || self.draft_menu.rect().is_some_and(|menu| menu.contains(pointer))
             });
         let content = chrome.content(area);
@@ -2023,17 +2084,26 @@ impl Document {
             Err(error) => self.last_error = Some(error),
         }
 
-        if contour_editing {
-            match self.contour_gizmo.update(
-                &response,
-                rect,
-                self.scene.camera,
-                self.session.project(),
-                &mut self.editor,
-            ) {
-                Ok(true) => ui.ctx().request_repaint(),
-                Ok(false) => {}
-                Err(error) => self.last_error = Some(error),
+        // The mode keeps its gizmo while a plate or a panel has the pointer: only a mode that ended
+        // drops the pointer state, or a press on a number would cancel the latch it belongs to.
+        if self.editor.contour_edit().is_some() {
+            // A latched move keeps following the pointer over its own plates, which are the one
+            // surface that belongs to the move rather than to the scene.
+            if contour_editing || self.contour_gizmo.is_latched() {
+                let action = match self.contour_gizmo.update(
+                    &response,
+                    rect,
+                    self.scene.camera,
+                    self.session.project(),
+                    &mut self.editor,
+                ) {
+                    Ok(action) => action,
+                    Err(error) => {
+                        self.last_error = Some(error);
+                        contour_gizmo::GizmoAction::Idle
+                    }
+                };
+                self.apply_contour_action(ui.ctx(), action);
             }
         } else {
             self.contour_gizmo.reset();
@@ -2568,25 +2638,7 @@ impl Document {
         if let Some(edit) = self.editor.contour_edit() {
             let action = self.contour_gizmo.paint(ui, rect, self.scene.camera, self.session.project(), edit);
             if let Some(action) = action {
-                let result = match action {
-                    contour_gizmo::NumericAction::Apply(grip, value)
-                    | contour_gizmo::NumericAction::Restore(grip, value) => {
-                        self.editor.contour_edit_set_grip_value(grip, value)
-                    }
-                    contour_gizmo::NumericAction::ApplyAlong(grip, value, motion) => {
-                        if let (ContourGrip::Corner(_), CornerMove::Along(segment), GripValue::Length(length)) =
-                            (grip, motion, value)
-                        {
-                            self.editor.contour_edit_along_length(grip, segment, length)
-                        } else {
-                            self.editor.contour_edit_set_grip_value(grip, value)
-                        }
-                    }
-                };
-                match result {
-                    Ok(()) => ui.ctx().request_repaint(),
-                    Err(error) => self.last_error = Some(error.to_string()),
-                }
+                self.apply_contour_action(ui.ctx(), action);
             }
         } else if self.editor.drawing().is_some() {
             if let Some(draft) = self.editor.drawing() {
@@ -3042,12 +3094,23 @@ impl Document {
         let enter = !list && ui.input(|input| input.key_pressed(egui::Key::Enter));
         if self.editor.contour_edit().is_some() {
             // The working copy is dropped by Escape and applied by Enter; typing in a field keeps
-            // both keys for the field, and a corner drag keeps them for the drag.
-            if !ui.ctx().text_edit_focused() && !self.contour_gizmo.is_dragging() {
+            // both keys for the field, and a corner drag keeps them for the drag. A latched move is
+            // the first thing Escape gives up, so the corner returns to where it was latched and
+            // the mode stays: the second Escape is the mode's own (ADR 0129).
+            if !ui.ctx().text_edit_focused() && !self.contour_gizmo.is_dragging() && !self.contour_gizmo.holds_keys() {
                 if escape {
-                    self.cancel_contour_edit();
-                } else if enter && let Err(error) = self.apply_contour_edit() {
-                    self.last_error = Some(error);
+                    if !self.contour_gizmo.abandon_latch(&mut self.editor) {
+                        self.cancel_contour_edit();
+                    }
+                } else if enter {
+                    let result = if self.contour_gizmo.is_latched() {
+                        self.drop_contour_move()
+                    } else {
+                        self.apply_contour_edit()
+                    };
+                    if let Err(error) = result {
+                        self.last_error = Some(error);
+                    }
                 }
             }
         } else if self.editor.drawing().is_some() {
