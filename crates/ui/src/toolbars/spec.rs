@@ -67,6 +67,8 @@ pub enum ToolKind {
     Projection,
     /// Turns the work-plane grid snap on or off.
     GridSnap,
+    /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
+    Measure,
 }
 
 /// One input method of a tool: what U67 draws as the tool's list.
@@ -364,7 +366,7 @@ pub fn tool(id: &str) -> Option<&'static ToolSpec> {
 
 // ── The map ─────────────────────────────────────────────────────────────────
 
-const SKETCH: [GroupSpec; 6] = [
+const SKETCH: [GroupSpec; 7] = [
     GroupSpec {
         id: "sketch.create",
         label: Message::GroupCreate,
@@ -576,6 +578,18 @@ const SKETCH: [GroupSpec; 6] = [
                 }],
             },
         ],
+    },
+    GroupSpec {
+        id: "sketch.measure",
+        label: Message::GroupMeasure,
+        tools: &[ToolSpec {
+            id: "sketch.measure.length",
+            label: Message::ToolMeasure,
+            icon: Some(icons::contour::MEASURE),
+            run: Some(ToolKind::Measure),
+            method: Some(Message::ToolMeasureLength),
+            variants: &[],
+        }],
     },
     GroupSpec {
         id: "sketch.booleans",
@@ -1021,6 +1035,7 @@ mod tests {
                 "sketch.create.rectangle",
                 "sketch.draft.cancel",
                 "sketch.draft.close",
+                "sketch.measure.length",
             ]
         );
         assert_eq!(
@@ -1133,6 +1148,7 @@ mod tests {
             ToolKind::FrameAll,
             ToolKind::Projection,
             ToolKind::GridSnap,
+            ToolKind::Measure,
             ToolKind::Primitive(PrimitiveKind::Cuboid),
             ToolKind::Primitive(PrimitiveKind::Cylinder),
             ToolKind::Primitive(PrimitiveKind::Sphere),
@@ -1168,15 +1184,15 @@ mod tests {
     #[test]
     fn the_row_is_counted_from_the_spec() {
         let sketch = tab("sketch").expect("sketch");
-        // Six creation tools and the draft pair.
-        assert_eq!(sketch.columns(), 8);
+        // Six creation tools, the ruler and the draft pair.
+        assert_eq!(sketch.columns(), 9);
         // The planned groups draw nothing, so the Model tab is the three primitives and the extrusion.
         assert_eq!(tab("model").expect("model").columns(), 4);
         assert_eq!(tab("furniture").expect("furniture").columns(), 4);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         assert_eq!(tab("view").expect("view").columns(), 3);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 8, "the sketch tab is the widest row of the map");
+        assert_eq!(widest, 9, "the sketch tab is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }

@@ -185,6 +185,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(Message::SwitchProjection.text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleProjection),
         },
+        ToolKind::Measure => Ready {
+            // A measurement needs no document, no selection and no material: it is information
+            // about what is already there, so the cell always runs (ADR 0118).
+            enabled: true,
+            armed: is_armed(active, kind),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
+            action: Some(ToolAction::Measure),
+        },
         ToolKind::GridSnap => Ready {
             enabled: owns_view,
             armed: grid,

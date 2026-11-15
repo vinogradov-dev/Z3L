@@ -328,6 +328,7 @@ icons!(Contour, "contour", Draw, contour {
     DIMENSION_LINEAR => "dimension-linear": Scene,
     DIMENSION_ANGULAR => "dimension-angular": Scene,
     DIMENSION_RADIUS => "dimension-radius": Scene,
+    MEASURE => "measure": Scene,
     BOOLEAN_UNION => "boolean-union": Model,
     BOOLEAN_SUBTRACT => "boolean-subtract": Model,
     BOOLEAN_INTERSECT => "boolean-intersect": Model,
@@ -1166,7 +1167,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 103);
+        assert_eq!(seen.len(), 104);
     }
 
     #[test]

@@ -233,6 +233,7 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "sketch.create.circle", key: egui::Key::C, chord: Chord::Plain, label: "C" },
     Binding { id: "sketch.create.circle.three-points", key: egui::Key::C, chord: Chord::Shift, label: "Shift+C" },
     Binding { id: "sketch.create.polygon", key: egui::Key::N, chord: Chord::Plain, label: "N" },
+    Binding { id: "sketch.measure.length", key: egui::Key::M, chord: Chord::Plain, label: "M" },
 ];
 
 /// The binding with `id`, if a key runs it.
@@ -736,6 +737,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Light),
         icon: None,
     },
+    // The atom: the last row is the one mechanism a surface draws without a command behind it.
+    // The ruler writes nothing, so it has no id in the engine registry and no undo entry (ADR 0118).
+    Row {
+        id: "sketch.measure.length",
+        label: Message::ToolMeasureLength,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::contour::MEASURE),
+    },
 ];
 
 /// The row a command id names, if the inventory knows it.
@@ -748,7 +758,7 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &[];
+pub const ATOMS: &[&str] = &["sketch.measure.length"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {
@@ -769,7 +779,17 @@ mod tests {
             let row = row(spec.id()).unwrap_or_else(|| panic!("`{}` has no inventory row", spec.id()));
             assert_eq!(row.label, spec.label(), "`{}` prints two different labels", spec.id());
         }
-        assert_eq!(ROWS.len(), registry.specs().len(), "the inventory has a row for something else");
+        // An atom row is the one exception to "a row is a command": it is declared in `ATOMS`
+        // and the registry has no entry for it (ADR 0118, U98).
+        assert_eq!(ROWS.len(), registry.specs().len() + ATOMS.len(), "the inventory has a row for something else");
+        for atom in ATOMS {
+            let row = row(atom).unwrap_or_else(|| panic!("the atom `{atom}` has no row"));
+            assert!(!row.places.is_empty(), "the atom `{atom}` appears nowhere");
+            assert!(
+                registry.specs().iter().all(|spec| spec.id() != *atom),
+                "`{atom}` is both an atom and a registered command"
+            );
+        }
     }
 
     #[test]

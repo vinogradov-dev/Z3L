@@ -39,6 +39,7 @@ impl Editor {
         };
         self.mesh_edit = None;
         self.drawing = None;
+        self.measure = None;
         self.contour_edit = Some(edit);
         true
     }

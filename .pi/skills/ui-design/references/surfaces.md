@@ -28,6 +28,7 @@ action; read this table to find the file that draws the surface.
 | Icons | `crates/ui/src/icons.rs`, `assets/README.md`, `assets/icons/STYLE_GUIDE.md`, `assets/icons/<theme>/` | ADR 0055 (the UI rasterises icons), 0090 (families carry the colour) |
 | Text and language | `crates/text/src/messages.rs`, `crates/ui/src/settings.rs` | ADR 0086 (one typed message per string) |
 | Numeric field (scrub) | `crates/ui/src/scrub.rs`, `ui_scale.rs` | ADR 0092 |
+| The ruler (a transient measurement) | `crates/ui/src/measure.rs` (`Measure`, `MeasureStage`), `crates/ui/src/editor/measure.rs`, `apps/furnicraft/src/measure_gizmo.rs` | ADR 0118 (an atom: no command, no document field, no undo entry), 0051 (the one snap resolver), 0103 (the one probe), 0029 (view state never enters the document) |
 | Drawing draft and its preview | `crates/ui/src/draw.rs`, `apps/furnicraft/src/draw_gizmo.rs` | ADR 0048, 0052, 0076, 0077 |
 | Grips on a contour | `crates/ui/src/contour_grips.rs`, `apps/furnicraft/src/contour_gizmo.rs` | ADR 0075 |
 | Gizmos: move, rotate, extrude arrow, vertex | `apps/furnicraft/src/{translate,rotate,extrude,vertex}_gizmo.rs`, `gizmo.rs`, `gizmo_math.rs` | ADR 0024, 0026, 0027, 0088 |

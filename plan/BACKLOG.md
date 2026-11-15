@@ -40,9 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-## Next
-- `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
+- `[~]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
   Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
    measure: the value on screen and in the status bar, several measurements in a row, each
    starting fresh. The program has no measuring atom, and a niche is measured only by the fill
@@ -62,6 +60,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
    row; `cargo xtask ci` is green.
   `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour`
+
+## Bugs
+## Next
 - `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
    mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the

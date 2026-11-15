@@ -30,8 +30,10 @@ pub(crate) struct Shortcuts {
     pub(crate) delete: bool,
     pub(crate) frame: bool,
     pub(crate) projection: bool,
-    /// Turn the drawing grid on or off; only a running draft reads it.
+    /// Turn the drawing grid on or off; only a running draft or the ruler reads it.
     pub(crate) grid_snap: bool,
+    /// Arm the ruler, or leave it when it is already armed.
+    pub(crate) measure: bool,
     pub(crate) maximize: bool,
     pub(crate) palette: bool,
     /// Hide both side panels, or show the pair the last press put away.
@@ -60,6 +62,7 @@ impl Shortcuts {
             "view.projection.toggle" => self.projection,
             "view.snaps.grid" => self.grid_snap,
             "view.layout.maximize" => self.maximize,
+            "sketch.measure.length" => self.measure,
             _ => false,
         }
     }
@@ -76,6 +79,7 @@ impl Shortcuts {
             self.frame,
             self.projection,
             self.grid_snap,
+            self.measure,
             self.maximize,
             self.palette,
             self.hide_panels,
@@ -126,6 +130,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         frame: consume(input, "view.projection.frame-all"),
         projection: consume(input, "view.projection.toggle"),
         grid_snap: consume(input, "view.snaps.grid"),
+        measure: consume(input, "sketch.measure.length"),
         maximize: consume(input, "view.layout.maximize"),
         palette: consume(input, furnicraft_ui::inventory::PALETTE_OPEN),
     })

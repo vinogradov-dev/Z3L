@@ -41,6 +41,7 @@ mod contour;
 mod creation;
 mod drawing;
 mod fill;
+mod measure;
 mod mesh;
 mod ribbon;
 mod selection;
@@ -70,6 +71,8 @@ pub struct Editor {
     box_draft: Option<BoxDraft>,
     /// The class the next click fills a niche with, when the empty-space tool is armed.
     fill: Option<FillArm>,
+    /// The ruler: the points of the live measurement while the tool is armed (ADR 0118).
+    measure: Option<crate::measure::Measure>,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
     toolbars: toolbars::Toolbars,

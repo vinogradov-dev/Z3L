@@ -584,6 +584,11 @@ pub(crate) enum SnapTarget {
     Grid,
     /// The u or v axis through the previous point.
     Axis,
+    /// A point on a furniture surface, resolved by the one probe (0103).
+    ///
+    /// The probe answers the first surface under the ray, so the ruler can measure between the
+    /// faces the person points at; the marker says the point is exact rather than a grid guess.
+    Surface,
 }
 
 /// A plane point and what it snapped to, in work-plane millimetres.

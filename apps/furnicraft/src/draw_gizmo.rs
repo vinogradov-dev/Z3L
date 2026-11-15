@@ -459,6 +459,9 @@ fn paint_marker(painter: &egui::Painter, hover: SnapOutcome) {
         SnapTarget::End => CLOSE_COLOR,
         SnapTarget::Grid => Color32::from_gray(210),
         SnapTarget::Axis => Color32::from_rgb(255, 220, 96),
+        // The drawing tools never resolve a surface point; the ruler does, and paints its own
+        // marker. The arm keeps the match total rather than inventing a colour here.
+        SnapTarget::Surface => Color32::from_rgb(120, 200, 255),
         SnapTarget::Free => Color32::from_gray(150),
     };
     let center = hover.screen;

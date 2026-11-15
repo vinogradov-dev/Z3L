@@ -13,11 +13,14 @@
 
 #![allow(clippy::expect_used)]
 
+use crate::gizmo_math::SnapTarget;
 use eframe::egui;
 use furnicraft_model::{ClassCode, Envelope, Id};
 use furnicraft_scene::Camera;
 use furnicraft_text::{Lang, Message};
+use furnicraft_ui::MeasureStage;
 use furnicraft_ui::settings::{MAX_HANDLE_POINTS, MAX_RING_PERCENT, MIN_HANDLE_POINTS, MIN_RING_PERCENT};
+use furnicraft_units::Length;
 
 use super::*;
 
@@ -1875,4 +1878,149 @@ fn escape_closes_the_card_and_writes_nothing() {
     assert!(document.editor.box_draft().is_none(), "Escape drops the draft");
     assert!(document.tool_card_rect().is_none(), "and its card goes with it");
     assert_eq!(harness.revision(), before, "a cancelled draft writes nothing");
+}
+
+#[test]
+fn the_ruler_measures_two_points_and_writes_nothing() {
+    // U98, ADR 0118: the ruler is an atom. Two clicks fix a length, a third starts a new
+    // measurement, and Escape leaves it — with no revision, no undo entry and no document field.
+    let session = crate::scene_build::empty_session().expect("an empty scene builds");
+    let mut harness = Harness::with_session("frame-measure", session);
+    harness.settle();
+    let revision = harness.revision();
+    assert!(!harness.app.tabs.active().can_undo(), "an empty scene has no history");
+
+    harness.press(egui::Key::M, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.measure().is_some(), "M arms the ruler");
+    assert!(
+        harness.drew(Message::MeasureFirstPoint.text(Lang::En)),
+        "the bar says what to click first: {:?}",
+        harness.drawn
+    );
+
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 40.0), egui::PointerButton::Primary);
+    let first = {
+        let measure = harness.app.tabs.active().editor.measure().expect("the ruler is armed");
+        assert_eq!(measure.stage(), MeasureStage::Second, "the first click places the first point");
+        measure.first().expect("the first click is stored")
+    };
+    assert_eq!(first[2], Length::ZERO, "an empty scene measures on the work plane");
+    for axis in first {
+        assert_eq!(axis.micrometres() % 10_000, 0, "the grid snapped the point: {axis}");
+    }
+    assert!(
+        matches!(harness.app.tabs.active().measure_gizmo.hover().map(|hover| hover.target), Some(SnapTarget::Grid)),
+        "the marker says the grid captured the pointer"
+    );
+
+    harness.click(scene.center() + egui::vec2(140.0, 40.0), egui::PointerButton::Primary);
+    let value = {
+        let measure = harness.app.tabs.active().editor.measure().expect("the ruler is armed");
+        assert_eq!(measure.stage(), MeasureStage::Measured, "the second click fixes the value");
+        measure.value().expect("two points make a length")
+    };
+    assert!(value.is_positive(), "the two clicks are a real distance: {value}");
+    assert!(harness.drew(&value.to_string()), "the status bar shows the length: {:?}", harness.drawn);
+    assert!(
+        harness.drew(Message::MeasureAgain.text(Lang::En)),
+        "and says the next click starts over: {:?}",
+        harness.drawn
+    );
+
+    // The third click starts a new measurement instead of extending the last one.
+    harness.click(scene.center() + egui::vec2(30.0, 100.0), egui::PointerButton::Primary);
+    let measure = harness.app.tabs.active().editor.measure().expect("the ruler is still armed");
+    assert_eq!(measure.stage(), MeasureStage::Second, "the third click starts a new measurement");
+    assert_eq!(measure.value(), Some(Length::ZERO), "and it begins at its own point");
+    assert_eq!(harness.revision(), revision, "the ruler writes no document");
+    assert!(!harness.app.tabs.active().can_undo(), "and no undo entry");
+
+    // Escape leaves the tool; nothing was written, so there is nothing to undo.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.measure().is_none(), "Escape leaves the ruler");
+    assert!(harness.app.tabs.active().measure_gizmo.hover().is_none(), "and drops its point");
+    assert_eq!(harness.revision(), revision, "Escape writes nothing");
+    assert!(!harness.app.tabs.active().can_undo(), "and the history stays empty");
+}
+
+#[test]
+fn the_ruler_snaps_to_the_board_under_the_pointer() {
+    // The probe is the ruler's point resolver (ADR 0103, 0118): a click lands on the face the
+    // person points at, not on the work plane behind it and not on the reserved box around a part.
+    let mut harness = Harness::new("frame-measure-surface");
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    let node = *harness.selected().first().expect("the demo selects its first panel");
+    let at = harness.node_point(node);
+    assert!(harness.scene().contains(at), "the pointer lands on the scene: {at:?}");
+
+    harness.press(egui::Key::M, egui::Modifiers::NONE);
+    harness.hover(at);
+    let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
+    assert_eq!(hover.target, SnapTarget::Surface, "the panel face captures the pointer");
+    let revision = harness.revision();
+    harness.click(at, egui::PointerButton::Primary);
+
+    let document = harness.app.tabs.active();
+    let measure = document.editor.measure().expect("the ruler is armed");
+    assert_eq!(measure.stage(), MeasureStage::Second, "the click places the first point");
+    let first = measure.first().expect("the first click is stored");
+    let project = document.session.project();
+    let panel = project.panel(node).expect("the selected node is a panel");
+    let world = project.world_placement(node).expect("the panel has a world frame");
+    let inverse = world.inverse().expect("a rigid placement inverts");
+    let local = inverse.transform_point(furnicraft_geom::DVec3::new(
+        first[0].millimetres_f64(),
+        first[1].millimetres_f64(),
+        first[2].millimetres_f64(),
+    ));
+    let thickness = panel.last_known_thickness().millimetres_f64();
+    assert!(
+        local.z.abs() < 0.01 || (local.z - thickness).abs() < 0.01,
+        "the point is on the panel's A or B face: {local:?} of thickness {thickness}"
+    );
+    assert_eq!(harness.revision(), revision, "measuring on a surface writes nothing");
+}
+
+#[test]
+fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
+    // The reserved box is a probe surface (ADR 0103) and the first thing the ray meets from
+    // outside, so the ruler steps past its near face: the person points at the board inside.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-measure-product", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    let at = harness.node_point(panel);
+    harness.press(egui::Key::M, egui::Modifiers::NONE);
+    harness.hover(at);
+    let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
+    assert_eq!(hover.target, SnapTarget::Surface, "the board captures the pointer, not the envelope");
+    harness.click(at, egui::PointerButton::Primary);
+
+    let document = harness.app.tabs.active();
+    let first = document.editor.measure().and_then(furnicraft_ui::Measure::first).expect("the point is stored");
+    let project = document.session.project();
+    let piece = project.panel(panel).expect("the node is a panel");
+    let world = project.world_placement(panel).expect("the panel has a world frame");
+    let local = world.inverse().expect("a rigid placement inverts").transform_point(furnicraft_geom::DVec3::new(
+        first[0].millimetres_f64(),
+        first[1].millimetres_f64(),
+        first[2].millimetres_f64(),
+    ));
+    let nominal = piece.nominal_size();
+    let faces = [
+        (local.x, 0.0, nominal.length().millimetres_f64()),
+        (local.y, 0.0, nominal.width().millimetres_f64()),
+        (local.z, 0.0, piece.last_known_thickness().millimetres_f64()),
+    ];
+    assert!(
+        faces.iter().any(|(value, low, high)| (*value - low).abs() < 0.01 || (*value - high).abs() < 0.01),
+        "the point lies on a face of the board: {local:?}"
+    );
 }

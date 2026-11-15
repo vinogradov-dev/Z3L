@@ -34,6 +34,7 @@ mod frame_tests;
 mod gizmo;
 mod gizmo_math;
 mod header;
+mod measure_gizmo;
 mod mesh_pick;
 mod open_frame;
 mod rotate_gizmo;
@@ -892,6 +893,9 @@ impl FurniCraftApp {
             }
             if shortcuts.grid_snap {
                 self.tabs.active_mut().toggle_draw_grid();
+            }
+            if shortcuts.measure {
+                self.tabs.active_mut().toggle_measure(ui.ctx());
             }
             if shortcuts.hide_panels {
                 self.shell.panels.toggle_hide_all();
