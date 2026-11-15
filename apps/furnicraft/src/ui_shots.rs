@@ -1082,3 +1082,115 @@ fn the_work_cursor_is_painted_offscreen_in_both_themes() {
         println!("the {name} work cursor is in {}", path.display());
     }
 }
+
+/// Draws the inspector card of a panel, an object and a product frame in both theme variants.
+///
+/// The three cards are the inspector's only reading surface, and U93 rebuilt the object card as one
+/// reading order (ADR 0116). Whether the head fits the panel's 226 pt column, whether the fields read
+/// as one group and whether the action row carries in the light theme cannot be decided from
+/// rectangles, so these six pictures are the eye check the task names: `card-<kind>-<variant>.png`.
+/// The scene is left out: the question is the card's own order, not how it sits over the model,
+/// which the full-window matrix already answers.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/card-*.png"]
+fn the_three_cards_are_painted_offscreen_in_both_themes() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = furnicraft_testkit::ui_shots_dir().expect("the shots directory is created");
+    let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, CARD_CANVAS);
+    for (preference, name) in [(egui::ThemePreference::Dark, "dark"), (egui::ThemePreference::Light, "light")] {
+        for (index, card) in ["panel", "object", "frame"].into_iter().enumerate() {
+            let (session, selections) = card_session().expect("the card document builds");
+            let mut session = session;
+            let mut editor = furnicraft_ui::Editor::new();
+            editor.select_node(Some(selections[index]));
+            let ctx = egui::Context::default();
+            furnicraft_ui::theme::install_with(&ctx, preference, ThemePreset::GraphiteCopper, None);
+            furnicraft_ui::set_language(&ctx, furnicraft_ui::Lang::En);
+            let mut jobs = Vec::new();
+            for _ in 0..SETTLE_FRAMES {
+                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(canvas), ..Default::default() }, |ui| {
+                    draw_card_column(ui, canvas, &mut editor, &mut session);
+                });
+                let mut delta = std::mem::take(&mut output.textures_delta);
+                {
+                    let mut renderer = render_state.renderer.write();
+                    for (id, images) in &delta.set {
+                        for image in images {
+                            renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                        }
+                    }
+                    for id in &delta.free {
+                        renderer.free_texture(id);
+                    }
+                }
+                delta.clear();
+                jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+            }
+            let pixels_per_point = ctx.pixels_per_point();
+            let size = [
+                (canvas.width() * pixels_per_point).round().max(1.0) as u32,
+                (canvas.height() * pixels_per_point).round().max(1.0) as u32,
+            ];
+            let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the card paints");
+            let path = directory.join(format!("card-{card}-{name}.png"));
+            furnicraft_testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+            let picture = Picture { width: size[0], height: size[1], rgba };
+            assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+            println!("the {card} card is in {}", path.display());
+        }
+    }
+}
+
+/// The canvas a card picture is drawn on, in points.
+const CARD_CANVAS: egui::Vec2 = egui::vec2(420.0, 1900.0);
+
+/// The width of the inspector panel's column, in points (mirrors `side_panels::EXPANDED_WIDTH`).
+const CARD_COLUMN: f32 = 226.0;
+
+/// The gap between the canvas edge and the panel column, in points.
+const CARD_MARGIN: f32 = 8.0;
+
+/// Draws one inspector column on the canvas: the chrome behind it, then the card the selection owns.
+fn draw_card_column(
+    ui: &mut egui::Ui,
+    canvas: egui::Rect,
+    editor: &mut furnicraft_ui::Editor,
+    session: &mut furnicraft_engine::Session,
+) {
+    let corner = egui::CornerRadius::same(furnicraft_ui::theme::RADIUS);
+    ui.painter().rect_filled(canvas, corner, furnicraft_ui::theme::chrome(ui));
+    let column = egui::Rect::from_min_size(
+        canvas.min + egui::vec2(CARD_MARGIN, CARD_MARGIN),
+        egui::vec2(CARD_COLUMN, canvas.height() - 2.0 * CARD_MARGIN),
+    );
+    ui.painter().rect_filled(column, corner, furnicraft_ui::theme::panel(ui));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(column.shrink(CARD_MARGIN)), |ui| {
+        editor.show_card(ui, session);
+    });
+}
+
+/// The document the three cards are shot from, and the node each of them is drawn for.
+///
+/// A panel, a primitive object and a product frame: the three kinds whose cards are different
+/// surfaces rather than different fields of one card.
+fn card_session() -> Result<(furnicraft_engine::Session, [furnicraft_model::Id; 3]), String> {
+    use furnicraft_model::{Geometry, Placement, Primitive};
+    let (mut project, frame) = furnicraft_testkit::sample_product_project();
+    let root = project.root().id();
+    let panel = project.root().children().first().map(furnicraft_model::Node::id).ok_or("no panel to select")?;
+    let mm = furnicraft_testkit::millimetres;
+    let cuboid = Primitive::cuboid(mm(600), mm(400), mm(720)).map_err(|error| error.to_string())?;
+    let object = project
+        .add_object(root, "Box", Placement::IDENTITY, Geometry::Primitive(cuboid))
+        .map_err(|error| error.to_string())?;
+    Ok((
+        furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog()),
+        [panel, object, frame],
+    ))
+}

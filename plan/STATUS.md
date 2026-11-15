@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=32a39fb updated=2026-11-15
+STATE: milestone=M7 phase=T task=- state=idle base=43ef744 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,8 +55,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-Nothing is scheduled: U93 is next — the object card is reviewed against the rubric and redesigned as
-one reading order.
+Nothing is scheduled: U95 is next — two skills carry the interface rules to where they are needed.
 
 ## Index
 
