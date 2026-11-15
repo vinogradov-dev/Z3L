@@ -27,6 +27,7 @@ pub mod display;
 mod distance;
 mod draw;
 mod editor;
+pub mod guides;
 pub mod home;
 pub mod icons;
 pub mod inventory;
