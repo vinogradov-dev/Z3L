@@ -229,11 +229,12 @@ impl Editor {
     }
 
     /// Drops every pointer mode a creation tool replaces.
-    fn leave_pointer_modes(&mut self) {
+    pub(super) fn leave_pointer_modes(&mut self) {
         self.mesh_edit = None;
         self.contour_edit = None;
         self.drawing = None;
         self.fill = None;
+        self.measure = None;
         self.pending_primitive = None;
         self.box_draft = None;
     }

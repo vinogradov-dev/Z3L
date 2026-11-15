@@ -57,6 +57,7 @@ impl Editor {
         self.drawing = None;
         self.pending_primitive = None;
         self.box_draft = None;
+        self.measure = None;
         self.fill = Some(FillArm { class, fill, mode });
         Ok(())
     }

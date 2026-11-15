@@ -54,6 +54,7 @@ use crate::fill_gizmo::{self, FillGizmo};
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
+use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
 use crate::rotate_gizmo::RotateGizmo;
@@ -311,6 +312,8 @@ pub(crate) struct Document {
     pub(crate) extrude_gizmo: ExtrudeGizmo,
     /// The empty-space tool's ghost; armed by the ribbon, it follows the pointer and creates a part.
     pub(crate) fill_gizmo: FillGizmo,
+    /// The ruler's snapped point; the measurement itself lives in the editor (ADR 0118).
+    pub(crate) measure_gizmo: MeasureGizmo,
     /// The grips of the selected box: four base corners and six faces, one drag each.
     pub(crate) box_grips: BoxGrips,
     /// The exact-distance fields of the running fill gesture: their pins, locks and keyboard.
@@ -404,6 +407,7 @@ impl Document {
             draw_gizmo: DrawGizmo::new(),
             extrude_gizmo: ExtrudeGizmo::default(),
             fill_gizmo: FillGizmo::default(),
+            measure_gizmo: MeasureGizmo::default(),
             box_grips: BoxGrips::default(),
             distance_fields: DistanceFields::default(),
             distances: None,
@@ -657,12 +661,13 @@ impl Document {
         save
     }
 
-    /// Turns the drawing grid on or off for the draft in front of the person.
+    /// Turns the work-plane grid on or off for the tool in front of the person.
     ///
     /// The key is the shell's, so it is read with the rest of the key table even when no tool runs;
-    /// outside a draft the action has nothing to snap and changes nothing.
+    /// outside a draft or the ruler the action has nothing to snap and changes nothing. The ruler
+    /// reads the same switch as the drawing tools, because both snap on the one work plane (0051).
     pub(crate) fn toggle_draw_grid(&mut self) {
-        if self.editor.drawing().is_some() {
+        if self.editor.drawing().is_some() || self.editor.measure().is_some() {
             self.draw_gizmo.toggle_grid();
         }
     }
@@ -1258,6 +1263,37 @@ impl Document {
         self.tool_card_rect = None;
     }
 
+    /// Arms the ruler, or leaves it when it already owns the pointer.
+    ///
+    /// The key and the ribbon cell land here, so both toggle the tool the same way; the editor
+    /// clears every other pointer mode and this clears the shell state that belonged to them.
+    pub(crate) fn toggle_measure(&mut self, ctx: &egui::Context) {
+        if self.editor.measure().is_some() {
+            self.cancel_measure();
+        } else {
+            self.start_measure(ctx);
+        }
+    }
+
+    /// Arms the ruler and leaves the shell state of the tool it replaced.
+    ///
+    /// The measurement is view state: nothing reaches the document, the undo stack or the session
+    /// preview. A running draft, a fill ghost and an untyped distance field are all left behind,
+    /// because two armed modes at once is a defect.
+    pub(crate) fn start_measure(&mut self, ctx: &egui::Context) {
+        self.editor.arm_measure();
+        self.draw_gizmo.reset();
+        self.cancel_extrude();
+        self.reset_fill(ctx);
+        self.measure_gizmo.reset();
+    }
+
+    /// Leaves the ruler and drops its points; nothing was written, so undo is untouched.
+    pub(crate) fn cancel_measure(&mut self) {
+        self.editor.cancel_measure();
+        self.measure_gizmo.reset();
+    }
+
     /// Whether this frame's press landed on the tool card rather than on the scene.
     fn distance_covers(&self, response: &egui::Response) -> bool {
         response
@@ -1781,12 +1817,22 @@ impl Document {
             None
         };
         let filling = fill_arm.is_some() && !pointer_on_chrome;
+        // The ruler owns the next click without creating anything: two clicks set a length and the
+        // document is never touched (ADR 0118). It yields to no other mode, because arming it left
+        // them all.
+        let measuring = interactive && !pointer_on_chrome && self.editor.measure().is_some();
         // An armed navigation gesture owns a primary-button drag, but not the other tools: while a
         // contour edit, a draft or a sub-object mode is live, that mode keeps the pointer.
         let navigation = shell.cluster.navigation;
-        let navigating =
-            navigation.is_some() && !contour_editing && !drawing && !placing && !boxing && !pulling && !filling;
-        let mesh_object = if !interactive || contour_editing || drawing || placing || pulling || filling {
+        let navigating = navigation.is_some()
+            && !contour_editing
+            && !drawing
+            && !placing
+            && !boxing
+            && !pulling
+            && !filling
+            && !measuring;
+        let mesh_object = if !interactive || contour_editing || drawing || placing || pulling || filling || measuring {
             None
         } else {
             self.editor.mesh_edit().map(|edit| edit.object())
@@ -1893,6 +1939,30 @@ impl Document {
             self.draw_gizmo.reset();
         }
 
+        if measuring {
+            // Shift locks the second point to the plane axis through the first; Alt measures on the
+            // work plane and takes the pointer as it is, without a surface and without the grid.
+            let modifiers = MeasureModifiers {
+                axis_lock: ui.input(|input| input.modifiers.shift),
+                ignore_snaps: ui.input(|input| input.modifiers.alt),
+            };
+            let changed = self.measure_gizmo.update(
+                &response,
+                rect,
+                self.scene.camera,
+                self.session.project(),
+                &mut self.editor,
+                self.draw_gizmo.grid(),
+                pointer_over_widget,
+                modifiers,
+            );
+            if changed {
+                ui.ctx().request_repaint();
+            }
+        } else {
+            self.measure_gizmo.reset();
+        }
+
         if pulling {
             // The pull reads the pointer itself: a press on the arrow starts a drag, the release
             // writes the height and keeps pulling, and a click anywhere else finishes. One drag is
@@ -1944,6 +2014,7 @@ impl Document {
             && !boxing
             && !pulling
             && !filling
+            && !measuring
             && self.grip_target().is_some();
         if gripping {
             self.update_box_grips(ui, &response, rect);
@@ -1988,6 +2059,7 @@ impl Document {
             || boxing
             || pulling
             || filling
+            || measuring
             || self.box_grips.is_dragging()
             || navigating
             || mesh_object.is_some()
@@ -2036,19 +2108,26 @@ impl Document {
         } else {
             self.translate_gizmo.is_dragging() || self.rotate_gizmo.is_dragging()
         };
-        let consumed_click =
-            if contour_editing || drawing || placing || boxing || pulling || filling || self.box_grips.is_dragging() {
-                true
-            } else if mesh_object.is_some() {
-                self.vertex_gizmo.consumed_click()
-            } else {
-                match shell.mode.transform() {
-                    // The mode offers no handle, so nothing consumed the press: the click picks.
-                    None => false,
-                    Some(Transform::Move) => self.translate_gizmo.consumed_click(),
-                    Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
-                }
-            };
+        let consumed_click = if contour_editing
+            || drawing
+            || placing
+            || boxing
+            || pulling
+            || filling
+            || measuring
+            || self.box_grips.is_dragging()
+        {
+            true
+        } else if mesh_object.is_some() {
+            self.vertex_gizmo.consumed_click()
+        } else {
+            match shell.mode.transform() {
+                // The mode offers no handle, so nothing consumed the press: the click picks.
+                None => false,
+                Some(Transform::Move) => self.translate_gizmo.consumed_click(),
+                Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
+            }
+        };
 
         // Looking through an authored camera pins the view: navigation would move a camera the
         // document owns, and a command is the only way to edit document data. The gesture acts on
@@ -2145,6 +2224,7 @@ impl Document {
             && !placing
             && !boxing
             && !pulling
+            && !measuring
             && !consumed_click
             && response.clicked_by(egui::PointerButton::Secondary)
             && let Some(pointer) = response.interact_pointer_pos()
@@ -2168,6 +2248,7 @@ impl Document {
             && !placing
             && !boxing
             && !pulling
+            && !measuring
             && clicked
             && !pointer_over_gizmo
             && !consumed_click
@@ -2370,6 +2451,8 @@ impl Document {
             self.extrude_gizmo.paint(ui, rect, self.scene.camera, self.session.project());
         } else if filling {
             self.fill_gizmo.paint(ui, rect, self.scene.camera);
+        } else if let Some(measure) = self.editor.measure() {
+            self.measure_gizmo.paint(ui, rect, self.scene.camera, measure);
         } else if navigating || locked_selection.is_some() {
             // The navigation gesture owns the viewport, and a locked selection owns nothing: an
             // axis under the pointer would compete with the camera drag, and a locked node draws no
@@ -2651,6 +2734,9 @@ impl Document {
             grid: self.draw_gizmo.grid(),
         };
         let mut outcome = None;
+        // Whether the ruler owned the pointer before this frame, so a cell that armed or dropped it
+        // also resets the shell's own gizmos (ADR 0118).
+        let was_measuring = self.editor.measure().is_some();
         // The ribbon is its own chrome surface — one step above the window's surface and distinct
         // from the panel fill the side panels use behind their content. The Appearance slider scales
         // that fill's alpha, letting the scene it covers show through without changing any other
@@ -2684,6 +2770,15 @@ impl Document {
                 // Starting a drawing tool is a deliberate change of gesture: an armed navigation
                 // mode must not take the primary button back when the draft ends.
                 shell.cluster.navigation = None;
+            }
+            if self.editor.measure().is_some() && !was_measuring {
+                // The ruler was armed from its cell: leave the shell state of the tool it replaced,
+                // and a navigation mode that would take the next press for an orbit.
+                self.start_measure(ui.ctx());
+                shell.cluster.navigation = None;
+            } else if was_measuring && self.editor.measure().is_none() {
+                // A drawing or creation cell replaced it; the ruler's pointer state goes with it.
+                self.cancel_measure();
             }
             if let Some((object, height)) = outcome.extruded {
                 // The body exists at the height the field named; the arrow lets the user pull it
@@ -2802,6 +2897,10 @@ impl Document {
                 shell.cluster.navigation = None;
             } else if self.editor.mesh_edit().is_some() {
                 self.editor.end_mesh_edit();
+            } else if self.editor.measure().is_some() {
+                // Escape leaves the ruler before it leaves a container level: the tool is the mode
+                // the next click uses, and the points it held are view state, so nothing is undone.
+                self.cancel_measure();
             } else if self.editor.fill_arm().is_some() {
                 // Escape leaves the empty-space tool before it leaves a container level: the tool is
                 // the mode the next click uses.
@@ -2834,6 +2933,7 @@ impl Document {
             let sides = self.editor.polygon_sides();
             if take_drawing_shortcut(ui.ctx(), &mut self.editor, sides) {
                 self.draw_gizmo.reset();
+                self.measure_gizmo.reset();
                 self.cancel_extrude();
                 shell.cluster.navigation = None;
             }

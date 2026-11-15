@@ -1,8 +1,9 @@
 //! The status bar: the armed tool, the selection's context and the window's display state.
 //!
 //! One thin row at the bottom of the window, in three zones: the command and step on the left, the
-//! resolved selection in the middle — kind, name, size, material, banding and the first warning —
-//! and the snap, projection, scale and idle/busy state on the right. It reads a [`StatusInfo`]
+//! resolved selection in the middle — kind, name, size, material, banding and the first warning, or
+//! the ruler's live length while it runs — and the snap, projection, scale and idle/busy state on
+//! the right. It reads a [`StatusInfo`]
 //! snapshot of the session, the editor and the view camera, draws one row and returns what the row
 //! asked for in a [`StatusOut`]; the shell applies that after the row has drawn, so the bar never
 //! changes the document while it draws. It offers no view control: those float over the viewport in
@@ -15,7 +16,7 @@ use eframe::egui;
 use furnicraft_model::{Catalog, Geometry, Id, Node, Project};
 use furnicraft_scene::Projection;
 use furnicraft_text::{Lang, Message};
-use furnicraft_ui::{DrawTool, MeshElement, theme};
+use furnicraft_ui::{DrawTool, MeasureStage, MeshElement, theme};
 use furnicraft_units::Length;
 
 use crate::document::Document;
@@ -36,6 +37,8 @@ struct StatusInfo {
     /// Why the pointer cannot extend the live draft, if it cannot.
     preview_error: Option<String>,
     primitive: Option<(furnicraft_engine::PrimitiveKind, Length)>,
+    /// The armed ruler: the step it waits for and the length it shows, if it has one.
+    measure: Option<(MeasureStage, Option<Length>)>,
     grid: bool,
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
@@ -327,6 +330,17 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         hint(ui, Message::PrimitivePlaceHint.text(lang));
         return (cancel.then_some(StatusAction::CancelPrimitive), None);
     }
+    if let Some((stage, _)) = info.measure {
+        // The left zone says the step and the centre zone the number: the person reads one line
+        // while the hand works, and the value never hides the instruction (ADR 0118).
+        let words = match stage {
+            MeasureStage::First => Message::MeasureFirstPoint,
+            MeasureStage::Second => Message::MeasureSecondPoint,
+            MeasureStage::Measured => Message::MeasureAgain,
+        };
+        hint(ui, words.text(lang));
+        return (None, None);
+    }
     if let Some(mode) = info.navigation {
         ui.label(Message::NavigationStatus.with(lang, [mode.name().text(lang)]));
         let done = ui.button(Message::DoneEsc.text(lang)).clicked();
@@ -443,7 +457,12 @@ fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 (out.state, out.mode) = status_state_ui(ui, info);
-                if !info.summary.is_empty() {
+                if let Some((stage, value)) = info.measure {
+                    if let Some(length) = value {
+                        theme::divider(ui);
+                        status_measure_ui(ui, stage, length, lang);
+                    }
+                } else if !info.summary.is_empty() {
                     theme::divider(ui);
                     status_center_ui(ui, &info.summary, lang);
                 }
@@ -455,6 +474,19 @@ fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
             }
         });
     });
+}
+
+/// The centre zone while the ruler runs: the live length the atom holds.
+///
+/// One label, so the number is the loudest thing on the row while the left zone keeps the
+/// instruction. A fixed value carries the "click for a new measurement" hint, so the two stages
+/// are told apart without a second style for a number.
+fn status_measure_ui(ui: &mut egui::Ui, stage: MeasureStage, length: Length, lang: Lang) {
+    let value = Message::MeasureValue.with(lang, [length]);
+    let response = ui.label(egui::RichText::new(&value).strong());
+    if stage == MeasureStage::Measured {
+        response.on_hover_text(Message::MeasureAgain.text(lang));
+    }
 }
 
 /// The centre zone: the selection's context, elided to the width it is given.
@@ -547,6 +579,7 @@ impl Document {
                 .map(|draft| (draft.tool(), draft.len(), draft.is_closed(), draft.arc_mode())),
             preview_error: self.draw_gizmo.preview_error().map(str::to_owned),
             primitive: self.editor.pending_primitive(),
+            measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
             grid: self.draw_gizmo.grid(),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
@@ -617,6 +650,7 @@ mod tests {
             drawing: None,
             preview_error: None,
             primitive: None,
+            measure: None,
             grid: true,
             mesh: None,
             navigation: None,

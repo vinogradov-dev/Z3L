@@ -144,6 +144,19 @@ messages! {
     ],
     PrimitiveStatus = ["Primitive · {} {}", "Примитив · {} {}"],
     PrimitivePlaceHint = ["LMB place on the work plane  ·  Esc cancel", "ЛКМ разместить на рабочей плоскости  ·  Esc отмена"],
+    MeasureFirstPoint = [
+        "Measure · click the first point  ·  Esc leaves",
+        "Измерение · щёлкните первую точку  ·  Esc выходит"
+    ],
+    MeasureSecondPoint = [
+        "Measure · click the second point  ·  Esc leaves",
+        "Измерение · щёлкните вторую точку  ·  Esc выходит"
+    ],
+    MeasureAgain = [
+        "Measure · click for a new measurement  ·  Esc leaves",
+        "Измерение · щёлкните для нового измерения  ·  Esc выходит"
+    ],
+    MeasureValue = ["Length {}", "Длина {}"],
     NavigationStatus = ["Navigation · {}", "Навигация · {}"],
     GestureOrbit = ["Drag in the viewport to orbit  ·  Esc done", "Перетаскивайте в области просмотра для облёта  ·  Esc готово"],
     GesturePan = ["Drag in the viewport to pan  ·  Esc done", "Перетаскивайте в области просмотра для панорамы  ·  Esc готово"],
@@ -810,6 +823,7 @@ messages! {
     GroupModify = ["Modify", "Изменить"],
     GroupConstruction = ["Construction", "Опорные"],
     GroupDimensions = ["Dimensions", "Размеры"],
+    GroupMeasure = ["Measure", "Измерение"],
     GroupBooleans = ["Booleans", "Булевы"],
     GroupDraft = ["Draft", "Черновик"],
     GroupPrimitives = ["Primitives", "Примитивы"],
@@ -903,6 +917,8 @@ messages! {
     ToolDimensionLinear = ["Linear dimension", "Линейный размер"],
     ToolDimensionAngular = ["Angular dimension", "Угловой размер"],
     ToolDimensionRadius = ["Radial dimension", "Радиальный размер"],
+    ToolMeasure = ["Measure", "Измерение"],
+    ToolMeasureLength = ["Length", "Длина"],
     ToolDrill = ["Drill", "Сверление"],
     ToolGroove = ["Groove", "Паз"],
     ToolEdgeband = ["Edge banding", "Кромка"],

@@ -121,6 +121,8 @@ pub enum ToolAction {
     ToggleProjection,
     /// Turns the work-plane grid snap on or off.
     ToggleGrid,
+    /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
+    Measure,
 }
 
 /// Every drawing tool, in shortcut order: the draw group then the shapes.
@@ -163,6 +165,8 @@ pub enum ToolActivity {
         /// How the armed cell reads the section.
         mode: FillMode,
     },
+    /// The ruler is armed and owns the next click.
+    Measure,
 }
 
 /// The activity whose button is pressed, from what the editor holds.
@@ -176,15 +180,17 @@ pub fn tool_activity(
     primitive: Option<PrimitiveKind>,
     box_owner: Option<BoxOwner>,
     fill: Option<(ClassCode, FillMode)>,
+    measure: bool,
 ) -> Option<ToolActivity> {
-    match (drawing, primitive, box_owner, fill) {
-        (Some((tool, DrawIntent::Path)), _, _, _) => Some(ToolActivity::Draw(tool)),
-        (Some((_, DrawIntent::Panel)), _, _, _) => Some(ToolActivity::PanelContour),
-        (None, Some(kind), _, _) => Some(ToolActivity::Primitive(kind)),
-        (None, None, Some(BoxOwner::Cuboid), _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
-        (None, None, Some(BoxOwner::Product), _) => Some(ToolActivity::ProductFrame),
-        (None, None, None, Some((class, mode))) => Some(ToolActivity::Fill { class, mode }),
-        (None, None, None, None) => None,
+    match (drawing, primitive, box_owner, fill, measure) {
+        (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
+        (None, Some(kind), _, _, _) => Some(ToolActivity::Primitive(kind)),
+        (None, None, Some(BoxOwner::Cuboid), _, _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
+        (None, None, Some(BoxOwner::Product), _, _) => Some(ToolActivity::ProductFrame),
+        (None, None, None, Some((class, mode)), _) => Some(ToolActivity::Fill { class, mode }),
+        (None, None, None, None, true) => Some(ToolActivity::Measure),
+        (None, None, None, None, false) => None,
     }
 }
 
@@ -203,6 +209,7 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         (Some(ToolActivity::Fill { class: armed, mode: armed_mode }), ToolKind::Fill { class, mode }) => {
             armed == class && armed_mode == mode
         }
+        (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         _ => false,
     }
 }
@@ -867,6 +874,7 @@ mod tests {
                     "By side count  (N)",
                     "Centre and radius  (C)",
                     "From corner  (R)",
+                    "Measure  (M)",
                     "No draft is running  (Esc)",
                     "Polyline · Tab line/arc · Alt ignores snaps  (P)",
                     "Through 2 points  (A)",
@@ -1096,32 +1104,42 @@ mod tests {
         let path = DrawIntent::Path;
         let panel = DrawIntent::Panel;
         let cases = [
-            (None, None, None, None, None),
-            (Some((DrawTool::Line, path)), None, None, None, Some(ToolActivity::Draw(DrawTool::Line))),
-            (Some((DrawTool::Polyline, panel)), None, None, None, Some(ToolActivity::PanelContour)),
-            (None, Some(PrimitiveKind::Sphere), None, None, Some(ToolActivity::Primitive(PrimitiveKind::Sphere))),
-            (None, None, Some(BoxOwner::Cuboid), None, Some(ToolActivity::Primitive(PrimitiveKind::Cuboid))),
-            (None, None, Some(BoxOwner::Product), None, Some(ToolActivity::ProductFrame)),
+            (None, None, None, None, false, None),
+            (Some((DrawTool::Line, path)), None, None, None, false, Some(ToolActivity::Draw(DrawTool::Line))),
+            (Some((DrawTool::Polyline, panel)), None, None, None, false, Some(ToolActivity::PanelContour)),
+            (
+                None,
+                Some(PrimitiveKind::Sphere),
+                None,
+                None,
+                false,
+                Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
+            ),
+            (None, None, Some(BoxOwner::Cuboid), None, false, Some(ToolActivity::Primitive(PrimitiveKind::Cuboid))),
+            (None, None, Some(BoxOwner::Product), None, false, Some(ToolActivity::ProductFrame)),
             (
                 None,
                 None,
                 None,
                 Some((post, FillMode::Fit)),
+                false,
                 Some(ToolActivity::Fill { class: post, mode: FillMode::Fit }),
             ),
+            (None, None, None, None, true, Some(ToolActivity::Measure)),
             (
                 Some((DrawTool::Arc, path)),
                 Some(PrimitiveKind::Sphere),
                 None,
                 None,
+                false,
                 Some(ToolActivity::Draw(DrawTool::Arc)),
             ),
         ];
-        for (drawing, primitive, box_owner, fill, expected) in cases {
+        for (drawing, primitive, box_owner, fill, measure, expected) in cases {
             assert_eq!(
-                tool_activity(drawing, primitive, box_owner, fill),
+                tool_activity(drawing, primitive, box_owner, fill, measure),
                 expected,
-                "drawing={drawing:?} primitive={primitive:?} box={box_owner:?} fill={fill:?}"
+                "drawing={drawing:?} primitive={primitive:?} box={box_owner:?} fill={fill:?} measure={measure}"
             );
         }
     }
@@ -1141,6 +1159,9 @@ mod tests {
             (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw, true),
             (Some(ToolActivity::ProductFrame), ToolKind::Product, false),
             (Some(ToolActivity::ProductFrame), ToolKind::Primitive(PrimitiveKind::Cuboid), false),
+            (Some(ToolActivity::Measure), ToolKind::Measure, true),
+            (Some(ToolActivity::Measure), ToolKind::FrameAll, false),
+            (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Measure, false),
         ];
         for (activity, kind, expected) in cases {
             assert_eq!(is_armed(activity, kind), expected, "activity={activity:?} kind={kind:?}");

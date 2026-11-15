@@ -42,26 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
-  Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
-   measure: the value on screen and in the status bar, several measurements in a row, each
-   starting fresh. The program has no measuring atom, and a niche is measured only by the fill
-   tool. ADR 0118 makes the ruler an atom — no command, no undo — and forbids a second point
-   resolver or probe.
-  Shape: A `measure` atom in `crates/ui/src/measure.rs` holding the first point and the current
-   value; it consumes the shared snap resolver (0051) and the probe (0103) and formats lengths
-   through `furnicraft-units`. The state machine: idle, first point, measured; a third click
-   starts a new measurement rather than extending the last; Escape leaves and writes nothing.
-   The length is painted at the pointer and written to the centre zone of the status bar, while
-   the left zone says what to do. The ribbon gains a `sketch.measure.length` row with its icon
-   in `assets/icons/contour`, a `Context` and `Always` place and a key. No command id, no
-   document field, no undo entry.
-  Done: A headless test clicks two snapped points and reads the value, clicks a third and
-   asserts a new measurement, and presses Escape and asserts nothing was written and no
-   revision moved; the status bar shows the value and the next step; the icon file, its README
-   row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
-   row; `cargo xtask ci` is green.
-  `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour`
 - `[ ]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
    mechanism two tools need must be a tool itself (ADR 0118). Today `fill_gizmo` computes the
@@ -108,6 +88,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U98** the ruler is a transient measuring tool: two clicks, the length at the pointer and in the status bar, nothing written
+  Why: The owner wants a measurement that is information, not geometry, after the SketchUp tape
+   measure: the value on screen and in the status bar, several measurements in a row, each
+   starting fresh. The program has no measuring atom, and a niche is measured only by the fill
+   tool. ADR 0118 makes the ruler an atom — no command, no undo — and forbids a second point
+   resolver or probe.
+  Shape: A `measure` atom in `crates/ui/src/measure.rs` holding the first point and the current
+   value; it consumes the shared snap resolver (0051) and the probe (0103) and formats lengths
+   through `furnicraft-units`. The state machine: idle, first point, measured; a third click
+   starts a new measurement rather than extending the last; Escape leaves and writes nothing.
+   The length is painted at the pointer and written to the centre zone of the status bar, while
+   the left zone says what to do. The ribbon gains a `sketch.measure.length` row with its icon
+   in `assets/icons/contour`, a `Context` and `Always` place and a key. No command id, no
+   document field, no undo entry.
+  Done: A headless test clicks two snapped points and reads the value, clicks a third and
+   asserts a new measurement, and presses Escape and asserts nothing was written and no
+   revision moved; the status bar shows the value and the next step; the icon file, its README
+   row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
+   row; `cargo xtask ci` is green.
+  `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour` — `08f51e4`
 
 - `[x]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
   Why: The owner asked for both ends of one rule: the number at the cursor and the full data in

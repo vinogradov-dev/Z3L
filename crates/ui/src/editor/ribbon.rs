@@ -50,6 +50,7 @@ impl Editor {
             self.pending_primitive.map(|pending| pending.kind),
             self.box_tool(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
+            self.measure().is_some(),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
         let context = toolbars::RibbonContext {
@@ -94,6 +95,15 @@ impl Editor {
                 ToolAction::DrawPanelContour => {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;
+                }
+                ToolAction::Measure => {
+                    // A second press drops the ruler, like the fill arm: the mode owns the next
+                    // clicks until the person leaves it, and Escape is not the only way out.
+                    if self.measure().is_some() {
+                        self.cancel_measure();
+                    } else {
+                        self.arm_measure();
+                    }
                 }
                 ToolAction::Fill { class, mode } => {
                     // A second click on the same method drops the tool; the arm is a mode, not a

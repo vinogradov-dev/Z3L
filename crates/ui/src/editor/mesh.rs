@@ -37,6 +37,7 @@ impl Editor {
         }
         self.contour_edit = None;
         self.drawing = None;
+        self.measure = None;
         self.mesh_edit = Some(MeshEdit::new(object));
         true
     }
