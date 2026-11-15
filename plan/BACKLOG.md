@@ -42,22 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
-  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
-   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
-   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
-   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
-   0117 makes the key a column of the inventory.
-  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
-   instead of matching key codes, and the ribbon label is derived from the same row. A test
-   asserts the two agree for every live method and that no key is bound twice; the guard that
-   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
-   table is the data a later Settings section writes.
-  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
-   label; no key is bound twice; a headless test presses each default key and asserts the same
-   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
-   xtask ci` is green.
-  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs`
 - `[ ]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
   Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
    the inspector. Today a tool has no home for its own parameters — a fill distance lives in
@@ -143,6 +127,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
+  Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
+   and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
+   method (`shortcut_label`). Two registers mean two places to change, and a user-assignable
+   key would have to replace both (owner answer: fixed defaults first, remapping later). ADR
+   0117 makes the key a column of the inventory.
+  Shape: Every inventory row (U94) carries its default key; `shortcuts.rs` asks the table by id
+   instead of matching key codes, and the ribbon label is derived from the same row. A test
+   asserts the two agree for every live method and that no key is bound twice; the guard that
+   keeps a key out of a focused text field stays as it is. Remapping is not in this task: the
+   table is the data a later Settings section writes.
+  Done: One default key per method, read from the table by `shortcuts.rs` and by the ribbon
+   label; no key is bound twice; a headless test presses each default key and asserts the same
+   command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
+   xtask ci` is green.
+  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs` — `d1dacb1`
 
 - `[x]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
   Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
