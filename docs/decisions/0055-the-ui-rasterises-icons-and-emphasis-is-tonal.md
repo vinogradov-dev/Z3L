@@ -71,3 +71,10 @@ alternatives.
 - [`assets/icons/AUDIT.md`](../../assets/icons/AUDIT.md) — measurements and the options that were rejected.
 - [ADR 0047](0047-icons-are-one-ink-on-a-24-grid.md) — the contract this record refines.
 - [`.opencode/skills/draw-icon/SKILL.md`](../../.opencode/skills/draw-icon/SKILL.md) — the working checklist.
+
+## Amendment: the sizes are the v2 ones (2026-11-15)
+
+ADR 0124 raised the toolbar glyph to 22 pt and the ribbon glyph to 26 pt, and moved the role table to
+seven families with a wider footprint and lighter strokes. The pipeline this record decides — rasterise
+the master in the UI, substitute the literals, cache by `(uri, px, variant, tone)` — is unchanged, and
+the sizes remain a parameter rather than a constant.

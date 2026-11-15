@@ -13,19 +13,21 @@ below are measurements of that project's public SVG sources, not extracted imple
 
 - `assets/icons/<theme>/<name>.svg` is embedded by `crates/ui/src/icons.rs` (`icons!` macro,
   `include_bytes!`), one module per theme, `ALL` per theme for audits. Every icon also carries its
-  semantic family (`draw`, `modify`, `model`, `scene`, `view`, `danger`).
+  semantic family (`draw`, `modify`, `model`, `scene`, `reference`, `view`, `danger`).
 - `icon_button` / `tool_button` rasterise the master with `egui_extras::image::load_svg_bytes_with_size`
   at `pt × pixels_per_point` and upload a `TextureHandle` cached per `(uri, px, variant, tone)` in
   the context's temporary data. `ui_scale.rs` therefore re-rasterises on a zoom change instead of
   stretching.
-- A master writes role literals (`#58C8DC`, `#A98BF0`, `#6E9EF7`, `#55C7A4`, `#B8C2CE`, `#E06A6A`).
+- A master writes role literals (`#58C8DC`, `#A98BF0`, `#6E9EF7`, `#55C7A4`, `#E8D44D`, `#B8C2CE`,
+  `#E06A6A`).
   Before the upload the rasteriser replaces each literal with the active variant's ink: on dark the
   literal is already the ink, on light it is folded to the paper column. One file therefore serves
   both variants and a preset change never touches an asset.
 - Below a 20 px raster, or when the workspace sets *Icon colour → Never*, the same master is
   rasterised and its alpha multiplied by the widget's foreground colour: the one-ink path U27
   shipped, kept as the fallback rather than replaced.
-- Sizes are points: 20 pt for a toolbar tool, 16 pt for inline and menu use, 22 pt in the ribbon.
+- Sizes are points: 22 pt for a toolbar tool, 16 pt for inline and menu use, 26 pt in the ribbon
+  (§10, v2).
 - A zero-byte file is a documented placeholder: the button draws its text label instead.
 
 The pipeline this replaced was measured, because both of its assumptions were wrong:
@@ -90,8 +92,9 @@ passive face. Detail did not make the difference at 16 px; tone did.
   change. Owners: `assets/README.md`, `STYLE_GUIDE.md` §5.4/§7.3, all 18 drawn SVGs.
 - **D3 — no canonical projection or footprint.** `primitives/cuboid`, `scene/panel`, `scene/assembly`
   and `bodies/extrude` each invented their own axonometry. **Fixed by U28**: one published basis
-  (`STYLE_GUIDE.md` §9.1) and one 3..21 footprint with a 20–45 % coverage band. Owners:
-  `STYLE_GUIDE.md` §9, the five volumetric SVGs, `crates/ui/src/icons.rs`.
+  (`STYLE_GUIDE.md` §9.1) and one footprint with a coverage band, `2.25..21.75` and 10–40 % of the
+  20 × 20 area since T6 (§10). Owners: `STYLE_GUIDE.md` §9, the volumetric SVGs,
+  `crates/ui/src/icons.rs`.
 
 ## 4. Approved work
 
@@ -181,8 +184,9 @@ Date: 2026-11-12. The owner approved colouring the set by semantic family, and U
 | `view` | `#B8C2CE` | `#5A6674` | navigation, projection, display, neutral chrome |
 | `danger` | `#E06A6A` | `#B33A3A` | destructive commands only |
 
-A master writes the dark column and nothing else; the rasteriser replaces the six literals with the
-active variant's inks (`RoleRamp::DARK` / `RoleRamp::LIGHT` in `crates/ui/src/icons.rs`) before
+The table is the six roles U70 measured; T6 added the seventh, `reference` (§10). A master writes
+the dark column and nothing else, and the rasteriser replaces each literal with the active variant's
+ink (`RoleRamp::DARK` / `RoleRamp::LIGHT` in `crates/ui/src/icons.rs`) before
 `load_svg_bytes_with_size`. The alpha silhouette is untouched by the mapping, so a variant change
 leaves the shape byte-identical and a photo of both variants overlays exactly.
 
@@ -217,9 +221,10 @@ three dimensions (`dimension-linear`, `dimension-angular`, `dimension-radius`) a
 (`boolean-union`, `boolean-subtract`, `boolean-intersect`). All sixteen live in the `contour` theme,
 which is now complete: 28 drawn files.
 
-- Families: the edit tools and the construction guides carry the `draw` ink; the dimensions override
-  to `scene` and the booleans to `model`, because a family is what an icon means and not which
-  toolbar shows it (§8).
+- Families: the edit tools and the construction guides carry the `draw` ink; the dimensions
+  overrode to `scene` and the booleans to `model`, because a family is what an icon means and not
+  which toolbar shows it (§8). T6 moved the construction guides, the ruler and the dimensions to the
+  new `reference` role and left the edit tools for T7 (§10).
 - Geometry: `stroke-dasharray` is not in the README's closed paint list, so a dash is a literal short
   path. The "before in dashes" grammar (`trim`, `offset`, `fillet`, `chamfer`) is one weight step
   (1.5) under the result (2.2–2.6); the booleans reuse the passive 0.12–0.15 and result 0.45–0.55
@@ -230,3 +235,31 @@ which is now complete: 28 drawn files.
 - Eye review: a throwaway contact sheet of all 28 contour icons at 22 px in both variants, through
   the same role substitution. U68's single-loop ribbon does not exist yet, so the ribbon review
   happens there (the task's Done clause names it); the sheet replaced it for this change.
+
+## 10. The v2 language (T6)
+
+Date: 2026-11-15. ADR [0124](../../docs/decisions/0124-the-icon-language-is-v2.md). The owner approved
+a second language from a rendered demo; T6 shipped its pipeline, its documents, the *Sketch* tab and
+the six dimension types.
+
+- **Grid and gate**: ink inside `2.25..21.75` and 10–40 % of the 20 × 20 working area. The band
+  widened instead of moving, so a v1 tab and a v2 tab pass the same test while T7 catches up: a v1
+  icon measures 16.2–36.4 % on the new denominator, a v2 one 11–29 %.
+- **Weights**: `1.5` for a contour, a result and a silhouette; `1.2–1.3` for an annotation, an inner
+  edge and a tick. Caps are butt and joins are miter, set once on the root; round caps only on a path
+  that is itself a dot.
+- **Control nodes**: a `view` circle of radius `2`, the contour shortened by `3.15` from its centre —
+  a real path break of `1.15`, never a mask or a background patch.
+- **The seventh role**: `reference` at `#E8D44D` on dark and `#7A6A00` on paper, preset independent.
+  Measured 9.67 : 1 on the dark surfaces and 4.8 : 1 on paper, ΔE 29.3 / 25.8 from the P1 copper
+  accent; the 3 : 1 test now walks seven families.
+- **Measured on the 24 grid** (64 px audit raster, alpha above 16): `contour/line` 11.3 %,
+  `rectangle` 24.8 %, `circle` 24.8 %, `measure` 21.0 %, `polyline` 23.8 %, `arc` 20.6 %,
+  `arc-centre` 19.6 %, `circle-three-points` 19.6 %, `polygon` 18.4 %, `rectangle-centre` 28.7 %,
+  `rectangle-centre-directed` 20.9 %, `close` 17.1 %, `cancel` 14.8 %; `dimension-linear` 13.7 %,
+  `-baseline` 19.0 %, `-chain` 15.6 %, `-angular` 15.0 %, `-radius` 21.9 %, `-diameter` 22.1 %. Every
+  bbox is inside `2.25..21.75`.
+- **Size**: 26 pt in a 38 × 34 pt ribbon cell, 22 pt on a toolbar. The open ribbon is 80 pt tall.
+- **Eye review**: the ribbon rendered offscreen at 100 % and 200 % (`target/ui-shots`) and a 64 px
+  contact sheet of the 32 contour icons answered the two questions the gate cannot — a node's gap and
+  an arrowhead's air.

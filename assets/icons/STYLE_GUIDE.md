@@ -35,9 +35,12 @@ Every icon belongs to exactly one family, and the family decides its grammar:
 
 | Family | Examples | Language | Weight |
 |---|---|---|---|
-| `geometry` | line, extrude, panel, hole, array | flat for 2D, volumetric for 3D (§8) | main 1.8, result 2.4 |
-| `view` | orbit, pan, frame all, ortho/perspective | flat, monochrome, navigation metaphor | heavy, 2.0–2.4 |
-| `service` | confirm, cancel, undo, save, warning | flat, monochrome chrome (§19) | heavy, 2.0–2.4 or solid |
+| `geometry` | line, extrude, panel, hole, array | flat for 2D, volumetric for 3D (§8) | result 1.5, annotation 1.2–1.3 |
+| `view` | orbit, pan, frame all, ortho/perspective | flat, monochrome, navigation metaphor | heavy, 1.5 or solid |
+| `service` | confirm, cancel, undo, save, warning | flat, monochrome chrome (§19) | heavy, 1.5–1.8 or solid |
+
+The weight column is the v2 language (§7.3): mass comes from tone and from the family ink, not from a
+heavy line, because 26 pt glyphs with twelve-unit contours turn a 2.6 stroke into a blob.
 
 A geometry command that happens to sit in a toolbar stays a geometry icon. A service action that
 appears next to tools stays a service icon. Do not blend the grammars.
@@ -45,8 +48,8 @@ appears next to tools stays a service icon. Do not blend the grammars.
 Grammar and role ink are two different facts. The grammar above says how the drawing is composed; the
 role ink (§5.1) says what the icon means: a `geometry` icon carries the ink of its operation —
 `draw` for a sketched entity, `model` for a solid, `scene` for a panel or a light — while a `view`
-icon carries `view` and a `service` icon carries `view`, `modify` or `danger` per §19. The six role
-families and their literals are in `README.md`.
+icon carries `view` and a `service` icon carries `view`, `modify` or `danger` per §19. The seven
+role families and their literals are in `README.md`.
 
 ---
 
@@ -125,8 +128,9 @@ real gap — never by a hue that exists only in the author's head. See §5.
 
 ### 5.1. One ink per family
 
-Every icon is drawn in the ink of its semantic family — `draw`, `modify`, `model`, `scene`, `view`
-`danger` — and that family comes from what the icon means, not from the surface that shows it. The
+Every icon is drawn in the ink of its semantic family — `draw`, `modify`, `model`, `scene`,
+`reference`, `view`, `danger` — and that family comes from what the icon means, not from the surface
+that shows it. The
 file carries the family's literal from the one table in `assets/README.md`; the UI replaces that
 literal with the active theme's ink before it rasterises, so the same master serves dark and light.
 A shape that genuinely means two things may use a second (or third) literal from the same table,
@@ -135,9 +139,12 @@ never a colour of its own.
 The emphasis ladder, strongest first:
 
 ```text
-solid shape  >  result fill (0.45–0.60) + heavy line  >  heavy line (2.2–2.6)
-             >  passive fill (0.12–0.18) + main line  >  main line (1.6–1.8)  >  thin guide (1.5)
+solid shape  >  result fill (0.45–0.60) + result line  >  result line (1.5)
+             >  passive fill (0.12–0.18) + contour  >  contour (1.5)  >  annotation (1.2–1.3)
 ```
+
+The v2 ladder has one big step and two small ones. A glyph that needs a fourth weight to be read is
+carrying too much: cut an element, or move it to the annotation register.
 
 A result can also be separated from its source by a real gap, by size, or by being the only filled
 form. Two elements that differ only in colour do not differ at all: the family ink says what an icon
@@ -177,8 +184,8 @@ Mass comes from one of exactly two fills, both the family ink at reduced opacity
 
 | Role | Fill | Outline |
 |---|---|---|
-| passive face | `fill-opacity` `0.12–0.18` | full-strength main line, `1.6–1.8` |
-| result or changed geometry | `fill-opacity` `0.45–0.60` | heavy line, `2.2–2.6` |
+| passive face | `fill-opacity` `0.12–0.18` | full-strength contour, `1.5` |
+| result or changed geometry | `fill-opacity` `0.45–0.60` | the result line, `1.5` |
 
 The tone is alpha on the role ink, so one master still serves every theme and the icon still reads
 with no colour at all. A fill never replaces an outline and never carries meaning alone: the shape
@@ -221,8 +228,10 @@ All icons are drawn in:
 viewBox="0 0 24 24"
 ```
 
-Working area: `3..21` on both axes — an 18 × 18 footprint. The icon must have breathing room; do not
-fill the canvas. The footprint and its 20–45 % coverage band are in §7.4.
+Working area: `2.25..21.75` on both axes — a 20 × 20 area the ink may enter and a 2.25 unit margin it
+may not. The quarter-unit inset is measured: at 64 px a curve drawn to `2.2` reports `1.88`, because
+its edge lands in the boundary pixel. The icon must have breathing room; do not fill the canvas. The
+footprint and its 10–40 % coverage band are in §7.4.
 
 The numbers that the loader needs (viewBox, width, height, allowed elements) are the README's. This
 section describes how to compose inside that grid.
@@ -239,26 +248,30 @@ Never rely on a detail smaller than one unit.
 
 | Role | Weight on the 24 grid |
 |---|---|
-| auxiliary line / dashed guide | `1.5` |
-| main object contour | `1.6–1.8` |
-| action result | `2.2–2.6` |
-| view or service icon | `2.0–2.4`, or a solid silhouette |
-| passive face | `fill-opacity` `0.12–0.18`, under a full-strength main outline |
-| result or changed geometry | `fill-opacity` `0.45–0.60`, under the heavy outline |
+| annotation: witness, dimension line, tick, construction line | `1.2–1.3` |
+| neutral inner edge, leader, radius line | `1.3` |
+| object contour, action result, silhouette | `1.5` |
+| service glyph | `1.5–1.8`, or a solid silhouette |
+| passive face | `fill-opacity` `0.12–0.18`, under the `1.5` contour |
+| result or changed geometry | `fill-opacity` `0.45–0.60`, under the `1.5` result line |
 
-All lines use round caps and round joins. Moderate rounding: not sharp as a razor, not a soft toy.
-Nothing thinner than `1.5` units, because the loader may draw the icon at 16 px.
+Caps are butt and joins are miter, set once on the root: a stroke ends where its path ends, because
+the gap in §7.6 is measured from the end of the ink. Round caps belong to a path that is itself a dot
+and to nothing else. Nothing thinner than `1.2` units is drawn, and a detail below one unit
+disappears at 16 px.
 
-A thin plate reads as a line if its thickness is under `1.5` units; give every panel a visible edge.
+A thin plate reads as a line if its thickness is under one unit; give every panel a visible edge.
 
 ### 7.4. Footprint and coverage
 
-Every drawn icon keeps its ink inside `3..21` on both axes, and covers **20–45 %** of that fixed
-18 × 18 footprint. Coverage is alpha-weighted ink — the sum of the rasterised alpha divided by 255,
-against the footprint's area — so a passive 15 % face counts as its tone, not as a solid block.
+Every drawn icon keeps its ink inside `2.25..21.75` on both axes, and covers **10–40 %** of the fixed
+20 × 20 working area. Coverage is alpha-weighted ink — the sum of the rasterised alpha divided by 255,
+against that area — so a passive 15 % face counts as its tone, not as a solid block.
 
-The band is what makes a set read as one family: below 20 % an icon is a sketch, above 45 % it is a
-blob. The optical size of the inked silhouette should sit near the footprint, roughly `15..18` units
+The band is what makes a set read as one family: below 10 % an icon is a sketch, above 40 % it is a
+blob. It is wider than v1's 20–45 % because the v2 line is thinner and because a dimension is mostly
+annotation: six of the seven registers are drawn at `1.2–1.5`, and a band that judged them at v1's
+weights would push every witness to a weight that is not a drawing. The optical size of the inked silhouette should sit near the footprint, roughly `15..18` units
 across, so sibling icons line up. The UI test in `crates/ui/src/icons.rs` measures both numbers from
 the raster and fails outside them.
 
@@ -277,6 +290,27 @@ The workspace can also ask for one ink at every size (*Settings → Appearance �
 or for the family ink at every size (*Always*). The fallback is the same drawing, so a file never
 needs to know which path drew it. A hover or a press moves the family ink one step away from the
 surface; a disabled icon keeps its ink at the style's disabled alpha. There is no per-state file.
+
+The sizes follow the language, not the other way round: 16 pt inline and in a menu, 22 pt on a
+toolbar tool, 26 pt in a ribbon cell of 38 × 34 pt. A 26 pt glyph is what keeps a 1.2-unit witness
+apart from the arrowhead beside it; shrinking the glyph is shrinking the reading, not the ink.
+
+### 7.6. Control nodes and gaps
+
+A construction point is a circle of radius `2` in the `view` ink — the neutral register, never the
+result's class ink — and it is separated from the contour it belongs to by a **real path break** of
+`1.15`. The contour is shortened by `3.15` from the node's centre along its own direction; an arc is
+shortened by `3.15 / r` radians.
+
+```text
+node radius 2  +  gap 1.15  =  the contour stops 3.15 from the centre
+```
+
+A mask, a clip, a dash pattern or a background-coloured patch is not a gap: the theme may change the
+background, the loader forbids those elements (§15), and a pale theme paints the patch a different
+colour from the paper. An arrowhead in a dimension is the one element that keeps `1.0–1.1` of air
+instead, because a drawing lets its tip touch the witness and a 26 px glyph does not
+(`.pi/skills/drafting/references/dimensions.md`).
 
 ---
 
@@ -574,7 +608,8 @@ A gap shows that elements are different:
 - hardware is not merged with the panel;
 - a new result is separated from its source.
 
-Minimum gap: `1.5–2` units on the 24 grid.
+Minimum gap: `1.15` units off a control node and `1.0–1.1` off a dimension arrow tip (§7.6); between
+two shapes that are not a node and its contour, `1.5–2` units on the 24 grid.
 
 Air must be real:
 
@@ -715,7 +750,8 @@ Drawing rules:
   the top of the emphasis ladder, not a face;
 - one to three inks, all from the table, and the family's ink is always one of them; never a colour
   outside it;
-- round caps and round joins;
+- butt caps and miter joins on the root; round only on a path that is itself a dot;
+- one `view` circle of radius `2` per control point, with the `1.15` path break of §7.6;
 - no `scale` transform to fake another size: the loader rasterises at the size it draws;
 - at most two decimal places;
 - one drawing per file, one file per id.
@@ -892,8 +928,8 @@ saving is useful.
 
 ### 19.5. Size
 
-Service icons share the 24 grid and are drawn heavier and simpler than geometry icons (2.0–2.4
-units, solid shapes). They are not shrunken toolbar drawings.
+Service icons share the 24 grid and are drawn heavier and simpler than geometry icons (1.5–1.8
+units and solid shapes, §7.3). They are not shrunken toolbar drawings.
 
 ### 19.6. Files
 

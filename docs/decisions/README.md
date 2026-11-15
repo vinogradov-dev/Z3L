@@ -59,7 +59,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0052](0052-a-drawing-commits-as-one-path-on-the-work-plane.md) | A drawing commits as one path on the work plane | Accepted; parent rule superseded by 0056 |
 | [0053](0053-the-evaluation-cache-keys-derivation-inputs.md) | The evaluation cache is keyed by derivation inputs | Accepted |
 | [0054](0054-a-primitive-keeps-the-parameters-that-built-it.md) | A primitive keeps the parameters that built it | Accepted |
-| [0055](0055-the-ui-rasterises-icons-and-emphasis-is-tonal.md) | The UI rasterises icons itself, and emphasis is tonal | Accepted; one-ink clause superseded by 0090 |
+| [0055](0055-the-ui-rasterises-icons-and-emphasis-is-tonal.md) | The UI rasterises icons itself, and emphasis is tonal | Accepted; one-ink clause superseded by 0090, the sizes and role table by 0124 |
 | [0056](0056-creation-tools-land-at-the-scene-root.md) | Creation tools land at the scene root | Accepted |
 | [0057](0057-the-camera-reaches-the-poles.md) | The camera reaches the poles | Accepted; roll added by 0078 |
 | [0058](0058-a-new-drawing-pivots-on-its-own-shape.md) | A new drawing pivots on its own shape | Accepted |
@@ -94,8 +94,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0087](0087-the-viewports-own-colours-follow-the-theme.md) | The viewport's own colours follow the theme variant; material colours never do | Accepted |
 | [0088](0088-origin-and-pivot-are-different-points.md) | Origin and pivot are different points | Accepted; refines 0026 and 0082, settles 0083 |
 | [0089](0089-three-palettes-are-data-and-derive-their-states.md) | Three palettes are data: one ramp per variant, derived states, one accent override | Accepted |
-| [0090](0090-icons-are-coloured-by-semantic-family.md) | An icon is coloured by its semantic family, and the theme maps the literal | Accepted; supersedes the one-ink clause of 0047 and 0055 |
-| [0091](0091-the-ribbon-is-one-const-map.md) | The ribbon is one const map, and one tool is one glyph in a 34 x 30 cell | Accepted; supersedes the cell metrics and the caption rule of 0067; fields removed by its first amendment, a split cell made a cell plus its caret by the second |
+| [0090](0090-icons-are-coloured-by-semantic-family.md) | An icon is coloured by its semantic family, and the theme maps the literal | Accepted; supersedes the one-ink clause of 0047 and 0055, extended to a seventh role by 0124 |
+| [0091](0091-the-ribbon-is-one-const-map.md) | The ribbon is one const map, and one tool is one glyph in a 34 x 30 cell | Accepted; supersedes the cell metrics and the caption rule of 0067; fields removed by its first amendment, a split cell made a cell plus its caret by the second, the cell grown to 38 x 34 by 0124 |
 | [0092](0092-a-field-is-a-number-with-its-unit-outside.md) | A numeric field is a number with its unit outside, and one edit is one undo entry | Accepted |
 | [0093](0093-a-preview-fills-a-session-overlay.md) | A previewing operation fills a session overlay, not the document, and one command bar applies it | Accepted |
 | [0094](0094-a-class-registry-gives-the-machine-its-semantics.md) | A class registry gives the machine its semantics; the code identifies, the traits decide | Accepted; supersedes the registry role and top-level grouping of 0035 |
@@ -129,6 +129,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) | The pointer is a two-tone square, painted above the chrome | Accepted; scope superseded by 0122, layer by 0123 |
 | [0122](0122-the-custom-pointer-belongs-to-the-work-area.md) | The custom pointer belongs to the work area | Accepted; layer clarified by 0123 |
 | [0123](0123-work-area-paint-sits-under-the-chrome.md) | Work-area paint sits under the chrome | Accepted |
+| [0124](0124-the-icon-language-is-v2.md) | The icon language is v2: a 24 grid, a 20 × 20 footprint and a seventh role | Accepted |
 
 ## Format
 

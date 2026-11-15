@@ -21,7 +21,7 @@
 //!
 //! A cell is one glyph in a [`RIBBON_CELL_WIDTH`] by [`RIBBON_ROW_HEIGHT`] cell, so a row is one pitch
 //! and no tool sizes itself from its name (ADR 0067, revised by ADR 0091). The group's caption sits in
-//! the quieter band under the row, which is what makes the whole body 76 points tall and the folded
+//! the quieter band under the row, which is what makes the whole body 80 points tall and the folded
 //! ribbon its 29-point tab row.
 //!
 //! Every button is the icon-only [`icons::ribbon_cell`]: the ribbon names a tool through its hint and
@@ -956,7 +956,7 @@ mod tests {
 
     #[test]
     fn the_body_is_one_tool_row_and_one_caption_band() {
-        // The approved body is the 30 pt tool row and the 16 pt caption band: a row that grows an
+        // The approved body is the 34 pt tool row and the 16 pt caption band: a row that grows an
         // extra field band is a regression (U68, revised by U75).
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
@@ -969,7 +969,7 @@ mod tests {
         });
         output.drop_without_applying_deltas();
         assert!((drawn - self::height(true)).abs() < 0.01, "the open ribbon draws {drawn} pt");
-        assert!((drawn - 76.0).abs() < 0.01, "the approved open ribbon is 76 pt, not {drawn}");
+        assert!((drawn - 80.0).abs() < 0.01, "the approved open ribbon is 80 pt, not {drawn}");
     }
 
     #[test]
@@ -1058,7 +1058,7 @@ mod tests {
             );
         }
         assert_eq!(height(false), 29.0, "the folded ribbon is its tab row and one hairline");
-        assert_eq!(height(true), 76.0, "the open ribbon is the tab row, the tool row and the band");
+        assert_eq!(height(true), 80.0, "the open ribbon is the tab row, the tool row and the band");
     }
 
     #[test]
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[test]
     fn a_cell_paints_one_icon_and_keeps_its_size() {
-        // A ribbon cell is a glyph in a fixed cell: one image, 22 pt of artwork, 34 x 30 of cell
+        // A ribbon cell is a glyph in a fixed cell: one image, 26 pt of artwork, 38 x 34 of cell
         // (ADR 0067 revised by ADR 0091).
         let icon = icons::contour::LINE;
         assert!(icon.is_drawn(), "the Line asset is drawn, so the test exercises the image path");

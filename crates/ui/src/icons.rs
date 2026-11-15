@@ -6,14 +6,15 @@
 //! loader at `pt × pixels_per_point` and uploaded as a `TextureHandle`, so one master serves every
 //! theme (`assets/README.md`, ADR 0055, ADR 0090).
 //!
-//! A master carries the literal role inks of a six-entry table (`plan/notes/U70.md`): `draw`,
-//! `modify`, `model`, `scene`, `view`, `danger`. Before the upload the rasteriser maps each literal
-//! to the active variant's ink through a [`RoleRamp`], so the file says what an element means and the
-//! theme decides how bright it is — dark and light need no second asset. Below a 20 px raster, or
+//! A master carries the literal role inks of a seven-entry table (`plan/notes/U70.md`, ADR 0124):
+//! `draw`, `modify`, `model`, `scene`, `reference`, `view`, `danger`. Before the upload the
+//! rasteriser maps each literal to the active variant's ink through a [`RoleRamp`], so the file says
+//! what an element means and the theme decides how bright it is — dark and light need no second
+//! asset. Below a 20 px raster, or
 //! when the workspace asks for one ink, the alpha silhouette is multiplied by the widget's colour
 //! instead: the same master, today's tint path, no colour at all in the drawing. The ink stays
-//! inside the fixed `3..21` footprint and covers 20–45 % of it; the tests below read both off the
-//! raster (`assets/icons/STYLE_GUIDE.md` §7.4).
+//! inside the fixed `2.25..21.75` footprint and covers 10–40 % of the 20 x 20 working area; the
+//! tests below read both off the raster (`assets/icons/STYLE_GUIDE.md` §7.4).
 
 use egui::{
     Button, Color32, CornerRadius, FontId, Response, Role, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions,
@@ -24,10 +25,13 @@ use egui::{
 pub const ICON_POINT_SIZE: f32 = 16.0;
 
 /// Point size of a toolbar tool icon, before the UI scale turns it into pixels.
-pub const TOOL_ICON_POINT_SIZE: f32 = 20.0;
+pub const TOOL_ICON_POINT_SIZE: f32 = 22.0;
 
 /// Point size of a ribbon button's icon, before the UI scale turns it into pixels.
-pub const RIBBON_ICON_POINT_SIZE: f32 = 22.0;
+///
+/// The v2 language draws on a 24 grid with an ink footprint of `2.25..21.75`, so the glyph needs 26
+/// points to keep its 1.2-unit annotation lines apart at 100 % (ADR 0124, `plan/notes/T6.md`).
+pub const RIBBON_ICON_POINT_SIZE: f32 = 26.0;
 
 /// Point size of a ribbon group's caption, before the UI scale turns it into pixels.
 pub const RIBBON_CAPTION_POINT_SIZE: f32 = 9.5;
@@ -56,6 +60,12 @@ pub enum Family {
     Model,
     /// Panels, hardware, cameras and lights.
     Scene,
+    /// Rulers, dimensions, construction geometry, snaps and guides: the measuring register.
+    ///
+    /// A dimension icon is two registers in one file — the measured object is the neutral `view`
+    /// ink and the annotation is this one — because a drawing separates the object from its
+    /// dimension and the tool must not look like the thing it measures (ADR 0124).
+    Reference,
     /// Navigation, projection and display, and the neutral chrome that names no edit.
     View,
     /// Destructive commands only.
@@ -64,7 +74,8 @@ pub enum Family {
 
 impl Family {
     /// Every family, in the order of the role table.
-    pub const ALL: [Self; 6] = [Self::Draw, Self::Modify, Self::Model, Self::Scene, Self::View, Self::Danger];
+    pub const ALL: [Self; 7] =
+        [Self::Draw, Self::Modify, Self::Model, Self::Scene, Self::Reference, Self::View, Self::Danger];
 
     /// The literal a master carries for this family: the dark-variant ink of the role table.
     ///
@@ -75,13 +86,14 @@ impl Family {
             Self::Modify => "#A98BF0",
             Self::Model => "#6E9EF7",
             Self::Scene => "#55C7A4",
+            Self::Reference => "#E8D44D",
             Self::View => "#B8C2CE",
             Self::Danger => "#E06A6A",
         }
     }
 }
 
-/// The six role inks of one theme variant.
+/// The seven role inks of one theme variant.
 ///
 /// The ramps are the role table of `plan/notes/U70.md`; a preset changes the neutrals and the
 /// accent, never the meaning of an icon, so both variants are preset-independent. The dark ramp is
@@ -97,6 +109,8 @@ pub struct RoleRamp {
     pub model: Color32,
     /// The ink of [`Family::Scene`].
     pub scene: Color32,
+    /// The ink of [`Family::Reference`].
+    pub reference: Color32,
     /// The ink of [`Family::View`].
     pub view: Color32,
     /// The ink of [`Family::Danger`].
@@ -110,6 +124,7 @@ impl RoleRamp {
         modify: Color32::from_rgb(0xA9, 0x8B, 0xF0),
         model: Color32::from_rgb(0x6E, 0x9E, 0xF7),
         scene: Color32::from_rgb(0x55, 0xC7, 0xA4),
+        reference: Color32::from_rgb(0xE8, 0xD4, 0x4D),
         view: Color32::from_rgb(0xB8, 0xC2, 0xCE),
         danger: Color32::from_rgb(0xE0, 0x6A, 0x6A),
     };
@@ -120,6 +135,7 @@ impl RoleRamp {
         modify: Color32::from_rgb(0x6B, 0x4B, 0xB0),
         model: Color32::from_rgb(0x2E, 0x5C, 0xB8),
         scene: Color32::from_rgb(0x23, 0x7A, 0x5E),
+        reference: Color32::from_rgb(0x7A, 0x6A, 0x00),
         view: Color32::from_rgb(0x5A, 0x66, 0x74),
         danger: Color32::from_rgb(0xB3, 0x3A, 0x3A),
     };
@@ -136,6 +152,7 @@ impl RoleRamp {
             Family::Modify => self.modify,
             Family::Model => self.model,
             Family::Scene => self.scene,
+            Family::Reference => self.reference,
             Family::View => self.view,
             Family::Danger => self.danger,
         }
@@ -321,19 +338,22 @@ icons!(Contour, "contour", Draw, contour {
     FILLET => "fillet",
     CHAMFER => "chamfer",
     BREAK => "break",
-    CONSTRUCTION_HORIZONTAL => "construction-horizontal",
-    CONSTRUCTION_VERTICAL => "construction-vertical",
-    CONSTRUCTION_PARALLEL => "construction-parallel",
-    CONSTRUCTION_ANGLE => "construction-angle",
-    DIMENSION_LINEAR => "dimension-linear": Scene,
-    DIMENSION_ANGULAR => "dimension-angular": Scene,
-    DIMENSION_RADIUS => "dimension-radius": Scene,
-    MEASURE => "measure": Scene,
+    CONSTRUCTION_HORIZONTAL => "construction-horizontal": Reference,
+    CONSTRUCTION_VERTICAL => "construction-vertical": Reference,
+    CONSTRUCTION_PARALLEL => "construction-parallel": Reference,
+    CONSTRUCTION_ANGLE => "construction-angle": Reference,
+    DIMENSION_LINEAR => "dimension-linear": Reference,
+    DIMENSION_BASELINE => "dimension-baseline": Reference,
+    DIMENSION_CHAIN => "dimension-chain": Reference,
+    DIMENSION_ANGULAR => "dimension-angular": Reference,
+    DIMENSION_RADIUS => "dimension-radius": Reference,
+    DIMENSION_DIAMETER => "dimension-diameter": Reference,
+    MEASURE => "measure": Reference,
     BOOLEAN_UNION => "boolean-union": Model,
     BOOLEAN_SUBTRACT => "boolean-subtract": Model,
     BOOLEAN_INTERSECT => "boolean-intersect": Model,
     CLOSE => "close",
-    CANCEL => "cancel",
+    CANCEL => "cancel": View,
 });
 
 icons!(Primitives, "primitives", Model, primitives {
@@ -366,7 +386,7 @@ icons!(View, "view", View, view {
     MAXIMIZE => "maximize",
     RESTORE => "restore",
     HOME => "home",
-    GRID_SNAP => "grid-snap",
+    GRID_SNAP => "grid-snap": Reference,
     ORBIT => "orbit",
     PAN => "pan",
     ZOOM => "zoom",
@@ -1057,9 +1077,15 @@ mod tests {
     /// The 24-unit design grid.
     const GRID: f32 = 24.0;
 
-    /// The fixed footprint of the style guide, in grid units: `3..21` on both axes.
-    const FOOTPRINT_MIN: f32 = 3.0;
-    const FOOTPRINT_MAX: f32 = 21.0;
+    /// The fixed footprint of the style guide's v2 language, in grid units: `2.25..21.75`.
+    ///
+    /// The quarter-unit inset is measured, not cosmetic: a circle at `2.2` reports `1.88`, because
+    /// its edge falls into the boundary pixel of the 64 px audit raster.
+    const FOOTPRINT_MIN: f32 = 2.25;
+    const FOOTPRINT_MAX: f32 = 21.75;
+
+    /// The working area the coverage is measured against: the 20 x 20 a glyph may ink.
+    const WORKING_AREA: f32 = 20.0;
 
     /// The raster size the footprint and coverage are measured at.
     const AUDIT_PX: usize = 64;
@@ -1070,7 +1096,7 @@ mod tests {
         max_x: f32,
         min_y: f32,
         max_y: f32,
-        /// Alpha-weighted ink as a fraction of the fixed 18 × 18 footprint.
+        /// Alpha-weighted ink as a fraction of the fixed 20 x 20 working area.
         coverage: f32,
     }
 
@@ -1108,7 +1134,7 @@ mod tests {
         if max_x < min_x {
             return Footprint { min_x: 0.0, max_x: 0.0, min_y: 0.0, max_y: 0.0, coverage: 0.0 };
         }
-        let footprint = f64::from(FOOTPRINT_MAX - FOOTPRINT_MIN).powi(2);
+        let footprint = f64::from(WORKING_AREA).powi(2);
         Footprint {
             min_x: min_x as f32 * unit,
             max_x: (max_x + 1) as f32 * unit,
@@ -1158,7 +1184,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 104);
+        assert_eq!(seen.len(), 107);
     }
 
     #[test]
@@ -1322,15 +1348,15 @@ mod tests {
                         && ink.max_x <= FOOTPRINT_MAX
                         && ink.min_y >= FOOTPRINT_MIN
                         && ink.max_y <= FOOTPRINT_MAX,
-                    "{name} leaves the 3..21 footprint: {:.2}..{:.2} x {:.2}..{:.2}",
+                    "{name} leaves the {FOOTPRINT_MIN}..{FOOTPRINT_MAX} footprint: {:.2}..{:.2} x {:.2}..{:.2}",
                     ink.min_x,
                     ink.max_x,
                     ink.min_y,
                     ink.max_y
                 );
                 assert!(
-                    (0.20..=0.45).contains(&ink.coverage),
-                    "{name} covers {:.1}% of the footprint, outside 20..45%",
+                    (0.10..=0.40).contains(&ink.coverage),
+                    "{name} covers {:.1}% of the 20 x 20 working area, outside 10..40%",
                     ink.coverage * 100.0
                 );
                 for px in [16, 20] {
@@ -1366,8 +1392,9 @@ mod tests {
 
     #[test]
     fn every_ribbon_cell_is_the_same_cell() {
-        // A cell is one pitch whatever it holds (ADR 0067, revised by ADR 0091): the widest cell of
-        // the ribbon is the 34 x 30 metric, and neither a drawing nor its absence moves it.
+        // A cell is one pitch whatever it holds (ADR 0067, revised by ADR 0091 and by the v2 metrics
+        // of ADR 0124): the widest cell of the ribbon is the 38 x 34 metric, and neither a drawing
+        // nor its absence moves it.
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         let cell = crate::theme::RIBBON_CELL_WIDTH;

@@ -18,7 +18,7 @@ assets/icons/<theme>/<name>.svg
 
 | Theme | Icons | Shown by |
 |---|---|---|
-| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `circle`, `circle-three-points`, `polygon`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-angular`, `dimension-radius`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
+| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `circle`, `circle-three-points`, `polygon`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
 | `primitives` | `cuboid`, `cylinder`, `sphere`, `cone` | The ribbon *Model* tab |
 | `bodies` | `extrude`, `revolve`, `sweep` | The ribbon *Model* tab |
 | `scene` | `product`, `panel`, `post`, `shelf`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |
@@ -46,14 +46,22 @@ at the pixel size it draws, so a second size would only drift from the first.
 ## Format
 
 - SVG 1.1, one root `<svg>` with `xmlns="http://www.w3.org/2000/svg"`, `viewBox="0 0 24 24"`,
-  `width="24"` and `height="24"`. The file is self-contained: no references to sibling files.
-- a 24 × 24 unit drawing grid. The ink stays inside `3..21` on both axes and covers 20–45 % of that
-  18 × 18 footprint, measured from the rasterised alpha (`STYLE_GUIDE.md` §7.4). The rasteriser
-  follows the UI scale (16 pt inline, 20 pt in a toolbar, times `pixels_per_point`), so a shape
-  thinner than 1.5 units disappears at a low scale.
-- stroke geometry: `stroke` is a role ink from the table below (`stroke-width` between `1.5` and
-  `2.6`), `stroke-linecap="round"`, `stroke-linejoin="round"`. The weights by role are in
-  `STYLE_GUIDE.md` §7.3. A stroke-only shape keeps `fill="none"`.
+  `width="24"`, `height="24"`, `stroke-linecap="butt"` and `stroke-linejoin="miter"`. The file is
+  self-contained: no references to sibling files.
+- a 24 × 24 unit drawing grid. The ink stays inside `2.25..21.75` on both axes and covers 10–40 % of
+  the 20 × 20 working area, measured from the rasterised alpha (`STYLE_GUIDE.md` §7.4). The quarter
+  unit inset is measured, not cosmetic: at 64 px a curve drawn to `2.2` reports `1.88`, because its
+  edge lands in the boundary pixel. The rasteriser follows the UI scale (16 pt inline, 22 pt in a
+  toolbar, 26 pt in the ribbon, times `pixels_per_point`), so a detail thinner than one unit
+  disappears at a low scale.
+- stroke geometry: `stroke` is a role ink from the table below. The v2 weights are `1.5` for a
+  result, a silhouette or a contour and `1.2–1.3` for an annotation, an inner edge or a tick
+  (`STYLE_GUIDE.md` §7.3). Caps are butt and joins are miter, set once on the root, so a stroke ends
+  where its path ends; `stroke-linecap="round"` is allowed on a path that is itself a dot. A
+  stroke-only shape keeps `fill="none"`, and a thinner than `1.2` stroke is not drawn at all.
+- a control point is a `<circle>` of radius `2`, filled with the `view` ink, separated from the
+  contour by a **real path break** of `1.15` (`STYLE_GUIDE.md` §7.6). The contour is shortened along
+  its own direction; a mask, a clip, a dash pattern or a background-coloured patch is not a gap.
 - tone: a face takes the same role ink with `fill-opacity` `0.12–0.18` (passive) or `0.45–0.60`
   (result or changed geometry) and keeps its full-strength outline. The tone is alpha on the role
   ink, so no theme needs a second file. `fill-opacity` is the only opacity attribute: `opacity`
@@ -71,8 +79,13 @@ at the pixel size it draws, so a second size would only drift from the first.
 ## Role inks
 
 A family is what an icon means, not which toolbar shows it: `contour/arc` is `draw`,
-`actions/delete` is `danger`. The literal a master writes is the dark ink; the UI maps it to the
-light ink on paper.
+`actions/delete` is `danger`, `view/grid-snap` is `reference`. The literal a master writes is the
+dark ink; the UI maps it to the light ink on paper.
+
+A file may carry two or three of these literals when it shows two or three things at once, and only
+then: the dimension icons are the case the table exists for (`STYLE_GUIDE.md` §5.1) — the measured
+object and the base are `view`, the annotation is `reference`, and the ink is what tells the two
+registers apart at a glance.
 
 | Family | Master (dark) | Light ink | Used by |
 |---|---|---|---|
@@ -80,6 +93,7 @@ light ink on paper.
 | `modify` | `#A98BF0` | `#6B4BB0` | Transform and edit commands: undo, copy, rename, visibility |
 | `model` | `#6E9EF7` | `#2E5CB8` | Solids, bodies and booleans |
 | `scene` | `#55C7A4` | `#237A5E` | Panels, hardware, cameras and lights |
+| `reference` | `#E8D44D` | `#7A6A00` | Rulers, dimensions, construction geometry, snaps, work planes and guides |
 | `view` | `#B8C2CE` | `#5A6674` | Navigation, projection, display and the neutral chrome |
 | `danger` | `#E06A6A` | `#B33A3A` | Destructive commands only |
 
