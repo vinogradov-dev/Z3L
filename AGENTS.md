@@ -73,7 +73,12 @@ where a feature lives.
 
 Before changing anything under `crates/ui/` or the app chrome in `apps/furnicraft/src`, read
 `.pi/skills/ui-design/SKILL.md`: it carries the procedure, the invariants and the review form. Its
-`references/checklist.md` is the rubric and `/ui-review` runs it over a diff. Naming another program
+`references/checklist.md` is the rubric and `/ui-review` runs it over a diff. Two parts of that work
+have their own procedure: read `.pi/skills/place-capability/SKILL.md` when a command id or a place is
+added, renamed or removed — the inventory row, the places, the context, the key, the icon and the
+atoms it consumes — and `.pi/skills/design-operation/SKILL.md` when a gesture or a mode appears —
+the state machine, the preview, the typed number, the cancel, the one undo entry, the feedback
+budget and the cursor. Naming another program
 — Blender included — states a quality bar, never a specification: decompose the borrowed behaviour
 into the button, the modifier, the feedback, the cancel and the awkward case, decide them in our
 words, and record an ADR when the decision is not reversible. A UI change is verified silently by
@@ -285,7 +290,8 @@ iterating (see below); run `cargo fmt --all` to fix formatting, the gate only ch
 sentence naming the file when a backticked path or a markdown link does not exist, when a
 `cargo xtask <name>` is not a command of the tool, when a `SKILL.md` frontmatter `name` is not its
 folder or its `description` is missing, empty or unquoted, when a skill is over 200 lines or a
-reference over 150, and when `AGENTS.md` §1.3 stops naming the design skill. A bare file name, a
+reference over 150, and when `AGENTS.md` §1.3 stops naming one of the interface skills. A bare file
+name, a
 command id and a `<placeholder>` are prose, not a claim, and are not checked.
 
 `cargo xtask ui-rules` reads every shipped file under `crates/ui/src` and `apps/furnicraft/src`

@@ -42,27 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
-  Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
-   is touched — after the decision that matters most, where a capability lives (ADR 0117), is
-   already made. Nothing owns the operation lifecycle (arm, preview, typed number, commit,
-   cancel, undo), which is where the feel of a professional editor lives, and nothing in the
-   checklist asks whether a mechanism is private (ADR 0118).
-  Shape: `.pi/skills/place-capability/SKILL.md` activates when a command id or a place is
-   added, renamed or removed: it writes the inventory row, the places, the context, the key and
-   the icon, names the atoms it consumes, and ends with the gate command.
-   `.pi/skills/design-operation/SKILL.md` activates when a gesture or a mode appears: it
-   produces the state machine, the feedback budget, the typed input, the cancel, the one undo
-   entry, the awkward cases and the cursor, in the five-line decomposition the ui-design skill
-   already uses. `ui-design` keeps the rubric and points at both; `references/checklist.md`
-   gains the inventory question, the atom question and the icon question;
-   `references/surfaces.md` stops being the only knowledge of places and points at the
-   inventory. `AGENTS.md` §1.3 names the new skills, and `cargo xtask skills` checks their
-   paths, frontmatter and line budgets.
-  Done: Both skills load, each names its trigger and its output, and neither is over 200 lines;
-   `AGENTS.md` §1.3 names them; the checklist carries the three new questions with an evidence
-   form; `cargo xtask skills` and `cargo xtask ci` are green.
-  `files: .pi/skills, AGENTS.md`
 - `[ ]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
   Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
    and `Ctrl+K` from a hand-written match, and the ribbon carries a second shortcut label per
@@ -164,6 +143,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
+  Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
+   is touched — after the decision that matters most, where a capability lives (ADR 0117), is
+   already made. Nothing owns the operation lifecycle (arm, preview, typed number, commit,
+   cancel, undo), which is where the feel of a professional editor lives, and nothing in the
+   checklist asks whether a mechanism is private (ADR 0118).
+  Shape: `.pi/skills/place-capability/SKILL.md` activates when a command id or a place is
+   added, renamed or removed: it writes the inventory row, the places, the context, the key and
+   the icon, names the atoms it consumes, and ends with the gate command.
+   `.pi/skills/design-operation/SKILL.md` activates when a gesture or a mode appears: it
+   produces the state machine, the feedback budget, the typed input, the cancel, the one undo
+   entry, the awkward cases and the cursor, in the five-line decomposition the ui-design skill
+   already uses. `ui-design` keeps the rubric and points at both; `references/checklist.md`
+   gains the inventory question, the atom question and the icon question;
+   `references/surfaces.md` stops being the only knowledge of places and points at the
+   inventory. `AGENTS.md` §1.3 names the new skills, and `cargo xtask skills` checks their
+   paths, frontmatter and line budgets.
+  Done: Both skills load, each names its trigger and its output, and neither is over 200 lines;
+   `AGENTS.md` §1.3 names them; the checklist carries the three new questions with an evidence
+   form; `cargo xtask skills` and `cargo xtask ci` are green.
+  `files: .pi/skills, AGENTS.md` — `eec5ad7`
 
 - `[x]` **U93** the object card is reviewed against the rubric and redesigned as one reading order
   Why: The card a person reads most is 1780 lines and up to seven collapsible sections stacked

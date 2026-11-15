@@ -4,6 +4,11 @@ One row per thing the person can see or touch. A new surface, gesture or shortcu
 the same change that adds it; a row naming a file that does not exist is a defect the reader fixes.
 This table is the skill's knowledge of the product — the ADR numbers are why, the paths are where.
 
+It answers *who owns a surface*, not *what appears on it*: the capability inventory
+(`crates/ui/src/inventory.rs`, ADR 0117) is the register of which actions a surface draws, and a
+surface filters it rather than keeping a list. Read the inventory, not this table, to place an
+action; read this table to find the file that draws the surface.
+
 | Surface | Owner | Decisions |
 |---|---|---|
 | Window, title, tabs, header | `apps/furnicraft/src/main.rs`, `header.rs`, `tabs.rs` | ADR 0081 (one document per tab), 0064 (the header returns one action) |
