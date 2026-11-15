@@ -229,10 +229,12 @@ pub const fn method_id(tool: DrawTool) -> &'static str {
         DrawTool::Polyline => "sketch.create.polyline",
         DrawTool::Arc => "sketch.create.arc",
         DrawTool::ArcFromCenter => "sketch.create.arc.centre",
+        DrawTool::ArcByRadius => "sketch.create.arc.start-end-radius",
         DrawTool::Rectangle => "sketch.create.rectangle",
         DrawTool::RectangleFromCenter => "sketch.create.rectangle.centre",
         DrawTool::RectangleFromCenterDirected => "sketch.create.rectangle.centre-directed",
         DrawTool::Circle => "sketch.create.circle",
+        DrawTool::CircleDiameter => "sketch.create.circle.diameter",
         DrawTool::CircleThreePoints => "sketch.create.circle.three-points",
         DrawTool::RegularPolygon => "sketch.create.polygon",
     }
@@ -424,10 +426,10 @@ const SKETCH: [GroupSpec; 7] = [
                 method: Some(Message::ToolCircleCentreRadius),
                 variants: &[
                     VariantSpec {
-                        id: "sketch.create.circle.two-points",
-                        label: Message::ToolCircleTwoPoints,
-                        icon: None,
-                        run: None,
+                        id: "sketch.create.circle.diameter",
+                        label: Message::ToolCircleCentreDiameter,
+                        icon: Some(icons::contour::CIRCLE_DIAMETER),
+                        run: Some(ToolKind::Draw(DrawTool::CircleDiameter)),
                     },
                     VariantSpec {
                         id: "sketch.create.circle.three-points",
@@ -448,7 +450,7 @@ const SKETCH: [GroupSpec; 7] = [
                 label: Message::ToolArc,
                 icon: Some(icons::contour::ARC),
                 run: Some(ToolKind::Draw(DrawTool::Arc)),
-                method: Some(Message::ToolArcTwoPoints),
+                method: Some(Message::ToolArcThreePoints),
                 variants: &[
                     VariantSpec {
                         id: "sketch.create.arc.centre",
@@ -457,10 +459,10 @@ const SKETCH: [GroupSpec; 7] = [
                         run: Some(ToolKind::Draw(DrawTool::ArcFromCenter)),
                     },
                     VariantSpec {
-                        id: "sketch.create.arc.three-points",
-                        label: Message::ToolArcThreePoints,
-                        icon: None,
-                        run: None,
+                        id: "sketch.create.arc.start-end-radius",
+                        label: Message::ToolArcStartEndRadius,
+                        icon: Some(icons::contour::ARC_RADIUS),
+                        run: Some(ToolKind::Draw(DrawTool::ArcByRadius)),
                     },
                 ],
             },
@@ -1176,10 +1178,12 @@ mod tests {
             ToolKind::Draw(DrawTool::Polyline),
             ToolKind::Draw(DrawTool::Arc),
             ToolKind::Draw(DrawTool::ArcFromCenter),
+            ToolKind::Draw(DrawTool::ArcByRadius),
             ToolKind::Draw(DrawTool::Rectangle),
             ToolKind::Draw(DrawTool::RectangleFromCenter),
             ToolKind::Draw(DrawTool::RectangleFromCenterDirected),
             ToolKind::Draw(DrawTool::Circle),
+            ToolKind::Draw(DrawTool::CircleDiameter),
             ToolKind::Draw(DrawTool::CircleThreePoints),
             ToolKind::Draw(DrawTool::RegularPolygon),
         ];

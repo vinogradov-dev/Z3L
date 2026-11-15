@@ -1,7 +1,8 @@
 //! The numbers of the point a drawing tool is placing, and the point they place.
 //!
 //! A sketch point is not one number: a line has a length and an angle, a rectangle a width and a
-//! height on their own sides, a circle a radius. This module answers one question per frame — *what
+//! height on their own sides, a circle a radius or a diameter, an arc drawn from its start, end and
+//! radius one radius measured from that start. This module answers one question per frame — *what
 //! would the next click place, and which plates name it?* — for every drawing tool, so the shell
 //! only maps work-plane points to the screen and hands the numbers to
 //! [`FieldSet`](crate::FieldSet).
@@ -146,6 +147,8 @@ enum Shape {
     Sides { centred: bool },
     /// A radius from the anchor, and the direction of the rim point when `turned`.
     Radius { turned: bool },
+    /// A diameter from the anchor: the rim point stands half of it away.
+    Diameter,
     /// A direction at a radius the earlier point fixed.
     Sweep { radius: f64 },
 }
@@ -277,6 +280,21 @@ impl PointState {
                 });
                 at
             }
+            Shape::Diameter => {
+                let offset = pointer - stage.anchor;
+                let direction = unit_or_x(offset);
+                let diameter = read(FieldParam::Diameter, offset.length() * 2.0);
+                let at = stage.anchor + direction * (diameter / 2.0);
+                // The plate sits on the radius line, halfway out, exactly where the radius plate of
+                // the same circle would sit: the number is the whole diameter, its place is the
+                // stretch the pointer is drawing.
+                rows.push(PointRow {
+                    param: FieldParam::Diameter,
+                    value: diameter,
+                    anchor: stage.anchor + direction * (diameter / 4.0),
+                });
+                at
+            }
             Shape::Radius { turned } => {
                 let offset = pointer - stage.anchor;
                 let radius = read(FieldParam::Radius, offset.length());
@@ -319,6 +337,15 @@ impl PointState {
 /// it will close: both are a second fixed point the person can see the number against (ADR 0127).
 fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
     let start = draft.points().first().map(|point| plane_point(*point))?;
+    let end = draft.points().get(1).map(|point| plane_point(*point));
+    if draft.tool() == DrawTool::ArcByRadius {
+        // The chord of an arc drawn from its radius is fixed by the two clicks, so the third stage
+        // measures the radius against the whole chord rather than against the pointer.
+        return match end {
+            Some(end) if draft.points().len() == 2 => Some([start, end]),
+            _ => None,
+        };
+    }
     let chord = match draft.tool() {
         DrawTool::Arc => draft.points().len() == 2,
         DrawTool::Polyline => draft.pending_arc().is_some(),
@@ -347,6 +374,15 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
                 (first, Shape::Segment, 0.0)
             }
         }
+        // The third click of an arc-by-radius names its radius, measured from the arc's start, and
+        // the side of the chord its centre sits on: the radius plate is the one a circle takes.
+        DrawTool::ArcByRadius => {
+            if points.len() >= 2 {
+                (first, Shape::Radius { turned: false }, 0.0)
+            } else {
+                (first, Shape::Segment, 0.0)
+            }
+        }
         DrawTool::Rectangle => (first, Shape::Sides { centred: false }, 0.0),
         DrawTool::RectangleFromCenter => (first, Shape::Sides { centred: true }, 0.0),
         DrawTool::RectangleFromCenterDirected => {
@@ -358,6 +394,7 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
             }
         }
         DrawTool::Circle => (first, Shape::Radius { turned: false }, 0.0),
+        DrawTool::CircleDiameter => (first, Shape::Diameter, 0.0),
         // Every point of a three-point circle rings the same way: each is a distance and an angle
         // from the one before it.
         DrawTool::CircleThreePoints => (last, Shape::Segment, 0.0),
@@ -445,6 +482,7 @@ mod tests {
     use egui::pos2;
 
     use super::*;
+    use furnicraft_model::ContourSegment;
 
     fn millimetres(x: i64, y: i64) -> DVec2 {
         DVec2::new(x as f64, y as f64)
@@ -501,10 +539,12 @@ mod tests {
             DrawTool::Polyline,
             DrawTool::Arc,
             DrawTool::ArcFromCenter,
+            DrawTool::ArcByRadius,
             DrawTool::Rectangle,
             DrawTool::RectangleFromCenter,
             DrawTool::RectangleFromCenterDirected,
             DrawTool::Circle,
+            DrawTool::CircleDiameter,
             DrawTool::CircleThreePoints,
             DrawTool::RegularPolygon,
         ] {
@@ -521,6 +561,8 @@ mod tests {
             (DrawTool::Arc, vec![(0, 0), (100, 50)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::ArcFromCenter, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::ArcFromCenter, vec![(0, 0), (100, 0)], vec![FieldParam::Angle]),
+            (DrawTool::ArcByRadius, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            (DrawTool::ArcByRadius, vec![(0, 0), (100, 0)], vec![FieldParam::Radius]),
             (DrawTool::Rectangle, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
             (DrawTool::RectangleFromCenter, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
             (DrawTool::RectangleFromCenterDirected, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
@@ -530,6 +572,7 @@ mod tests {
                 vec![FieldParam::Width, FieldParam::Height],
             ),
             (DrawTool::Circle, vec![(0, 0)], vec![FieldParam::Radius]),
+            (DrawTool::CircleDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
             (DrawTool::CircleThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::RegularPolygon, vec![(0, 0)], vec![FieldParam::Radius, FieldParam::Rotation]),
         ];
@@ -601,6 +644,45 @@ mod tests {
             FieldRow::for_param(FieldParam::Length, 0.0, pos2(0.0, 0.0)),
             FieldRow::for_param(FieldParam::Angle, 0.0, pos2(0.0, 0.0)),
         ]
+    }
+
+    #[test]
+    fn a_circle_by_diameter_shows_twice_the_radius_it_draws() {
+        let circle = draft(DrawTool::CircleDiameter, &[(100, 100)]);
+        let state = PointState::live(&circle, millimetres(130, 140)).expect("a point");
+        // The pointer stands 50 mm from the centre, so the plate reads 100.
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.rows[0].param, FieldParam::Diameter);
+        assert_eq!(state.rows[0].value, 100.0);
+        assert_eq!(state.point, [Length::from_micrometres(130_000), Length::from_micrometres(140_000)]);
+        assert_eq!(state.rows[0].anchor, millimetres(115, 120), "on the radius line, halfway out");
+        assert!(state.reference.is_none(), "a circle has no angle to read");
+
+        // A typed diameter places the rim point half of it from the centre, and the draft turns
+        // that point into the radius the document stores.
+        let rows = vec![FieldRow::for_param(FieldParam::Diameter, 0.0, pos2(0.0, 0.0))];
+        let fields = FieldSet::with_typed(rows, &[(FieldParam::Diameter, 200.0)]).expect("one plate");
+        let placed = PointState::placed(&circle, millimetres(300, 100), &fields).expect("a placed point");
+        assert_eq!(placed.point, [Length::from_micrometres(200_000), Length::from_micrometres(100_000)]);
+        let mut drawn = circle.clone();
+        drawn.push(placed.point).expect("the rim point");
+        let path = drawn.to_path().expect("a circle");
+        let ContourSegment::Arc { radius, .. } = path.entries()[0].segment() else {
+            panic!("a circle is four arcs");
+        };
+        assert_eq!(radius, Length::from_micrometres(100_000), "a 200 mm diameter is a 100 mm radius");
+    }
+
+    #[test]
+    fn an_arc_by_radius_measures_from_its_start_and_draws_the_chord() {
+        let arc = draft(DrawTool::ArcByRadius, &[(0, 0), (100, 0)]);
+        let state = PointState::live(&arc, millimetres(0, 100)).expect("a point");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.rows[0].param, FieldParam::Radius);
+        assert_eq!(state.rows[0].value, 100.0, "the radius is the distance from the arc's start");
+        assert_eq!(state.point, [Length::ZERO, Length::from_micrometres(100_000)]);
+        assert_eq!(state.construction, Some([DVec2::ZERO, millimetres(100, 0)]), "the chord is the guide");
+        assert!(state.reference.is_none(), "a radius has no angle to read");
     }
 
     #[test]

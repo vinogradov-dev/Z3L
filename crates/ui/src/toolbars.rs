@@ -128,7 +128,13 @@ pub enum ToolAction {
     Void,
 }
 
-/// Every drawing tool, in shortcut order: the draw group then the shapes.
+/// Every drawing tool a key starts, in shortcut order: the draw group then the shapes.
+///
+/// Only a tool whose own method carries a key is here, because this table is the shell's key path
+/// and the Settings page's shortcut list. A method reached through a cell's list instead — the
+/// circle by diameter, the arc by its radius, whose plain and shifted chords belong to the methods
+/// beside them — has no row of its own; the cell's key runs it once the workspace pins it (U67,
+/// U96).
 pub const CONTOUR_TOOLS: [DrawTool; 10] = [
     DrawTool::Line,
     DrawTool::Polyline,
@@ -885,7 +891,7 @@ mod tests {
                     "Measure  (M)",
                     "No draft is running  (Esc)",
                     "Polyline · RMB line/arc · Alt ignores snaps  (P)",
-                    "Through 2 points  (A)",
+                    "Through 3 points  (A)",
                     "Two points  (L)",
                 ],
             ),
@@ -1541,19 +1547,24 @@ mod tests {
             ids,
             [
                 "sketch.create.circle",
-                "sketch.create.circle.two-points",
+                "sketch.create.circle.diameter",
                 "sketch.create.circle.three-points",
                 "sketch.create.circle.tangent",
             ],
             "the list is the map, in order, without a duplicate row"
         );
-        assert_eq!(rows.iter().map(|row| row.enabled).collect::<Vec<_>>(), [true, false, true, false]);
+        assert_eq!(rows.iter().map(|row| row.enabled).collect::<Vec<_>>(), [true, true, true, false]);
         assert_eq!(
             rows[0].method.label,
             Message::ToolCircleCentreRadius,
             "the first row names the method, not the tool"
         );
-        assert!(rows[1].action.is_none(), "a planned method runs nothing");
+        assert_eq!(rows[1].method.label, Message::ToolCircleCentreDiameter, "the diameter is a method of its own");
+        assert_eq!(
+            rows[1].action,
+            Some(ToolAction::Draw { tool: DrawTool::CircleDiameter, sides: DEFAULT_POLYGON_SIDES })
+        );
+        assert!(rows[3].action.is_none(), "a planned method runs nothing");
     }
 
     #[test]
@@ -1669,6 +1680,37 @@ mod tests {
             let methods = tool.methods().collect::<Vec<_>>();
             assert_eq!(methods.len(), 2, "{id} has one cell with two builds");
             assert!(methods[1].icon.is_some_and(Icon::is_drawn), "{id}'s shape row has artwork");
+        }
+    }
+
+    #[test]
+    fn a_circle_by_diameter_and_an_arc_by_radius_are_live_methods_with_artwork() {
+        // C4: the two methods the person asked for are cells of their own, each with a drawn glyph,
+        // and the two rows that ran nothing before are gone.
+        for (id, drawn) in [
+            ("sketch.create.circle.diameter", DrawTool::CircleDiameter),
+            ("sketch.create.arc.start-end-radius", DrawTool::ArcByRadius),
+        ] {
+            let method = spec::tabs()
+                .iter()
+                .flat_map(|tab| tab.groups)
+                .flat_map(|group| group.tools)
+                .flat_map(ToolSpec::methods)
+                .find(|method| method.id == id)
+                .unwrap_or_else(|| panic!("`{id}` is no method of the map"));
+            assert_eq!(method.run, Some(ToolKind::Draw(drawn)), "`{id}` draws its own tool");
+            assert!(method.icon.is_some_and(Icon::is_drawn), "`{id}` carries its own artwork");
+        }
+        for gone in ["sketch.create.circle.two-points", "sketch.create.arc.three-points"] {
+            assert!(
+                spec::tabs()
+                    .iter()
+                    .flat_map(|tab| tab.groups)
+                    .flat_map(|group| group.tools)
+                    .flat_map(ToolSpec::methods)
+                    .all(|method| method.id != gone),
+                "`{gone}` is gone: the method it promised is now a cell"
+            );
         }
     }
 
@@ -1987,11 +2029,11 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         crate::set_language(&ctx, Lang::En);
-        // Row 1 is a planned method, so an idle list draws no pin at all.
-        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 1 });
+        // Row 3 is a planned method, so an idle list draws no pin at all.
+        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 3 });
         let (_, idle) = warm_list(&ctx, screen, &mut slot);
         let base = count_images(&idle.shapes);
-        assert_eq!(base, 3, "the header's glyph and the two drawn methods, and no pin at rest");
+        assert_eq!(base, 4, "the header's glyph and the three drawn methods, and no pin at rest");
         let idle_label = text_place(&idle.shapes, "Centre and radius");
         let idle_key = text_place(&idle.shapes, "Shift+C");
         // Hovering is resolved from the previous pass, so the pointer moves and the next frame paints.
@@ -2022,12 +2064,12 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         crate::set_language(&ctx, Lang::En);
-        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 1 });
+        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 3 });
         let (_, idle) = warm_list(&ctx, screen, &mut slot);
         let base = count_images(&idle.shapes);
         let row = row_of(&idle.shapes, "Circle through 3 points");
         idle.drop_without_applying_deltas();
-        assert_eq!(base, 3, "an idle list draws no pin");
+        assert_eq!(base, 4, "an idle list draws no pin");
 
         // One frame per step: the pointer reaches the row, then the pin at the row's right edge.
         let pin = egui::pos2(row.right() - list::ROW_INSET - list::PIN_COLUMN / 2.0, row.center().y);
@@ -2049,9 +2091,9 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         crate::set_language(&ctx, Lang::En);
-        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 1 });
+        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 3 });
         let (_, idle) = warm_list(&ctx, screen, &mut slot);
-        assert_eq!(count_images(&idle.shapes), 3, "an idle list draws no pin");
+        assert_eq!(count_images(&idle.shapes), 4, "an idle list draws no pin");
         let mut marked = fills_at(&idle.shapes, row_of(&idle.shapes, "Centre and radius"));
         assert_eq!(marked.len(), 2, "the pinned row keeps its fill and its accent bar");
         assert!(marked.iter().all(|fill| *fill != egui::Color32::TRANSPARENT), "the mark is painted");

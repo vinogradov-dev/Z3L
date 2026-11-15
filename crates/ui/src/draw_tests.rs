@@ -510,6 +510,83 @@ fn the_circle_tool_closes_a_centre_and_a_rim_point() {
 }
 
 #[test]
+fn the_circle_by_diameter_tool_draws_half_the_number_it_was_given() {
+    // The plate places the rim point half the typed diameter from the centre, so the two circle
+    // cells differ in what the person types and never in the ring they commit.
+    let mut draft = DrawDraft::new(DrawTool::CircleDiameter);
+    draft.push([millimetres(100), millimetres(100)]).expect("centre");
+    draft.push([millimetres(200), millimetres(100)]).expect("a rim point 100 mm out");
+    assert!(draft.is_finished());
+    let path = draft.to_path().expect("a circle");
+    assert!(path.is_closed());
+    let ContourSegment::Arc { center, radius, .. } = path.entries()[0].segment() else {
+        panic!("a circle is four arcs");
+    };
+    assert_eq!(center, [millimetres(100), millimetres(100)]);
+    assert_eq!(radius, millimetres(100), "a 200 mm diameter is a 100 mm radius");
+}
+
+#[test]
+fn the_arc_by_radius_tool_takes_the_centre_from_the_third_click() {
+    // A 100 mm chord and a centre 100 mm out: the radius is that distance, the centre sits on the
+    // side the third click is on, and the arc bows away from it.
+    let mut above = DrawDraft::new(DrawTool::ArcByRadius);
+    above.push([millimetres(0), millimetres(0)]).expect("start");
+    above.push([millimetres(100), millimetres(0)]).expect("end");
+    above.push([millimetres(0), millimetres(100)]).expect("the centre's side, one radius out");
+    assert!(above.is_finished());
+    let path = above.to_path().expect("an arc");
+    assert!(!path.is_closed());
+    let ContourSegment::Arc { center, radius, sweep, .. } = path.entries()[0].segment() else {
+        panic!("the figure is one arc");
+    };
+    assert_eq!(radius, millimetres(100));
+    assert!(center[1] > Length::ZERO, "the centre is on the side the third click chose");
+    assert!(sweep.millidegrees() > 0, "the arc bows away from it");
+
+    // The other side mirrors the figure.
+    let mut below = DrawDraft::new(DrawTool::ArcByRadius);
+    below.push([millimetres(0), millimetres(0)]).expect("start");
+    below.push([millimetres(100), millimetres(0)]).expect("end");
+    below.push([millimetres(0), millimetres(-100)]).expect("the other side");
+    let ContourSegment::Arc { center, sweep, .. } = below.to_path().expect("an arc").entries()[0].segment() else {
+        panic!("the figure is one arc");
+    };
+    assert!(center[1] < Length::ZERO);
+    assert!(sweep.millidegrees() < 0);
+}
+
+#[test]
+fn an_arc_radius_under_half_its_chord_is_a_reason_the_draft_keeps() {
+    let mut draft = DrawDraft::new(DrawTool::ArcByRadius);
+    draft.push([millimetres(0), millimetres(0)]).expect("start");
+    draft.push([millimetres(100), millimetres(0)]).expect("end");
+    // A third click 14 mm from the start cannot reach a 100 mm chord. The click is refused with the
+    // model's own sentence and the two ends stay, so the figure can be named again.
+    let error = draft.push([millimetres(10), millimetres(10)]).expect_err("a 100 mm chord needs a 50 mm radius");
+    assert_eq!(
+        error.to_string(),
+        "an arc needs a radius of at least half its chord: 14.142 mm is under half of 100 mm"
+    );
+    assert_eq!(draft.points().len(), 2, "the refused click wrote nothing");
+    assert!(!draft.is_complete(), "the draft still waits for its radius");
+    draft.push([millimetres(0), millimetres(-100)]).expect("a radius that reaches both ends");
+    assert!(draft.is_finished());
+    assert!(draft.to_path().is_ok());
+}
+
+#[test]
+fn a_last_point_that_cannot_build_the_figure_is_refused() {
+    // The same rule for every fixed tool: three points on one line make no circle, and the refused
+    // click leaves the draft with the points that can still be corrected.
+    let mut circle = DrawDraft::new(DrawTool::CircleThreePoints);
+    circle.push([millimetres(0), millimetres(0)]).expect("first");
+    circle.push([millimetres(100), millimetres(0)]).expect("second");
+    assert!(circle.push([millimetres(200), millimetres(0)]).is_err(), "three collinear points make no circle");
+    assert_eq!(circle.points().len(), 2, "the refused click wrote nothing");
+}
+
+#[test]
 fn the_polyline_tool_takes_points_until_it_is_closed() {
     let mut draft = DrawDraft::new(DrawTool::Polyline);
     assert!(!draft.is_complete(), "a polyline needs two points");
@@ -557,10 +634,12 @@ fn every_tool_states_its_point_count_and_name() {
         (DrawTool::Polyline, None, true, true, "Polyline"),
         (DrawTool::Arc, Some(3), false, false, "Arc"),
         (DrawTool::ArcFromCenter, Some(3), false, false, "Arc from centre"),
+        (DrawTool::ArcByRadius, Some(3), false, false, "Arc"),
         (DrawTool::Rectangle, Some(2), false, false, "Rectangle"),
         (DrawTool::RectangleFromCenter, Some(2), false, false, "Rectangle from centre"),
         (DrawTool::RectangleFromCenterDirected, Some(3), false, false, "Directed rectangle"),
         (DrawTool::Circle, Some(2), false, false, "Circle"),
+        (DrawTool::CircleDiameter, Some(2), false, false, "Circle"),
         (DrawTool::CircleThreePoints, Some(3), false, false, "Circle through 3 points"),
         (DrawTool::RegularPolygon, Some(2), false, false, "Polygon"),
     ];
