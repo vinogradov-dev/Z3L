@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=T6 state=idle base=1ce501f updated=2026-11-15
+STATE: milestone=M7 phase=T task=T7 state=idle base=58b80f6 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-T6 is next: the icon language v2 starts with the Sketch tab and six dimension types
+T7 redraws the rest of the icon set in the v2 language, one tab at a time
 
 ## Index
 

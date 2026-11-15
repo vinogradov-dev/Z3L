@@ -40,23 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **T6** the icon language v2 starts with the Sketch tab and six dimension types
-  Why: The owner approved the v2 language — 24-grid, 2.25..21.75 footprint, 1.5/1.2 strokes,
-   butt/miter, circle nodes r2 with a 1.15 gap, neutral view for source and control, class ink
-   for the result, reference for a dimension annotation — but it lives only in a /tmp demo. The
-   pipeline, the role table and the gate still describe v1, and the six dimension icons are the
-   first surface that needs it.
-  Shape: Add the reference role to Family and RoleRamp and to the two icon documents; move the
-   gate to 2.25..21.75 and 10-40% of 20x20; raise the ribbon icon to 26 pt in a 38 px cell
-   (toolbar 22 pt); redraw the Sketch tab and the six dimension images (overall, from base,
-   chain, angular, radius, diameter) with the approved order, angle and gap rules. The approved
-   measurements and the six arrangements are in plan/notes/T6.md. The rest of the set stays v1
-   until T7.
-  Done: ADR 0124 and the style guide/README record the language; the pipeline maps the seventh
-   role and the gate measures the new footprint/coverage; every Sketch cell and all six
-   dimension icons ship in v2; the role contrast and chosen-glyph tests pass; cargo xtask ci is
-   green; the live ribbon at 100% and 200% is checked.
-  `files: assets/icons, crates/ui/src/icons.rs, crates/ui/src/theme.rs, assets/README.md, assets/icons/STYLE_GUIDE.md, docs/decisions`
 - `[ ]` **T7** the rest of the icon set follows the v2 language, one tab at a time
   Why: T6 migrates the Sketch tab only; the Model, Furniture, Scene, View, Actions and Window
    icons still carry the v1 weight and footprint, so the set is half-migrated.
@@ -131,6 +114,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **T6** the icon language v2 starts with the Sketch tab and six dimension types
+  Why: The owner approved the v2 language — 24-grid, 2.25..21.75 footprint, 1.5/1.2 strokes,
+   butt/miter, circle nodes r2 with a 1.15 gap, neutral view for source and control, class ink
+   for the result, reference for a dimension annotation — but it lives only in a /tmp demo. The
+   pipeline, the role table and the gate still describe v1, and the six dimension icons are the
+   first surface that needs it.
+  Shape: Add the reference role to Family and RoleRamp and to the two icon documents; move the
+   gate to 2.25..21.75 and 10-40% of 20x20; raise the ribbon icon to 26 pt in a 38 px cell
+   (toolbar 22 pt); redraw the Sketch tab and the six dimension images (overall, from base,
+   chain, angular, radius, diameter) with the approved order, angle and gap rules. The approved
+   measurements and the six arrangements are in plan/notes/T6.md. The rest of the set stays v1
+   until T7.
+  Done: ADR 0124 and the style guide/README record the language; the pipeline maps the seventh
+   role and the gate measures the new footprint/coverage; every Sketch cell and all six
+   dimension icons ship in v2; the role contrast and chosen-glyph tests pass; cargo xtask ci is
+   green; the live ribbon at 100% and 200% is checked.
+  `files: assets/icons, crates/ui/src/icons.rs, crates/ui/src/theme.rs, assets/README.md, assets/icons/STYLE_GUIDE.md, docs/decisions` — `58b80f6`
 
 - `[x]` **T5** the drawing rules are a skill, and a dimension follows them
   Why: Drawings and the tools that name them — dimensions, views, sections, exports — are being
