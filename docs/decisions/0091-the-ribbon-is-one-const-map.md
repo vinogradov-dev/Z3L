@@ -100,3 +100,11 @@ air every other cell gives it. The caret is a column beside a cell, not a share 
 is wider than its cell count by one caret per tool that has a list, and the glyph is centred in the
 main face, which is the cell. No other metric moves — the row is still 30 pt, the caption band is
 still 16, and a group still widens to its caption when the caption is wider.
+
+## Amendment: the cell grew with the v2 glyph (2026-11-15)
+
+The v2 icon language (ADR 0124) draws on a `2.25..21.75` footprint with `1.2–1.5` lines, so the glyph
+needs 26 points to keep a witness apart from the arrowhead beside it. The cell grew with it: 38 points
+wide and 34 tall, six points of air either side and four above and below, and the open ribbon is 80
+points instead of 76. The caret column, the split-cell rule (one cell plus its caret, now 48 points),
+the caption band and the one loop are untouched; only the two numbers and the glyph size moved.

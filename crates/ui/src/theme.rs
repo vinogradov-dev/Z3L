@@ -92,17 +92,19 @@ pub const HEADER_TEXT_WIDTH: f32 = 52.0;
 /// One icon cell: a [`RIBBON_ICON_POINT_SIZE`] glyph with the air it needs around it. The row carries
 /// the glyph only — the tools are named by their hints and by U67's list, and the group's caption
 /// sits in the band under the row — so it is short enough for the ribbon to float over the scene
-/// without taking a usable strip of it (U68, `plan/notes/U71.md`).
-pub const RIBBON_ROW_HEIGHT: f32 = 30.0;
+/// without taking a usable strip of it (U68, `plan/notes/U71.md`). The v2 language draws finer
+/// annotation lines and a wider footprint than v1, so the row grew with the glyph: 34 points hold
+/// the 26-point glyph with four points of air above and below (ADR 0124).
+pub const RIBBON_ROW_HEIGHT: f32 = 34.0;
 
 /// The width of one ribbon cell, in points.
 ///
 /// Every tool of every group takes the same cell, so a row is one pitch and a tool never sizes itself
-/// from its name (ADR 0067, revised by ADR 0091): 34 points hold the 22-point glyph with six points of
-/// air on each side. A tool with more than one method keeps this cell as its main face and adds
+/// from its name (ADR 0067, revised by ADR 0091): 38 points hold the 26-point glyph with six points
+/// of air on each side. A tool with more than one method keeps this cell as its main face and adds
 /// [`crate::icons::RIBBON_CARET_WIDTH`] points beside it for its list, so the glyph is never squeezed
 /// (X36).
-pub const RIBBON_CELL_WIDTH: f32 = 34.0;
+pub const RIBBON_CELL_WIDTH: f32 = 38.0;
 
 /// The narrowest a ribbon tab may be, so a short name does not become a stamp.
 pub const RIBBON_TAB_MIN_WIDTH: f32 = 64.0;
@@ -121,7 +123,7 @@ pub const RIBBON_CAPTION_HEIGHT: f32 = 16.0;
 /// The thickness of the hairline that closes a chrome surface, in points.
 ///
 /// The ribbon draws one under its tab row and one under its caption band, which is what makes
-/// [`super::toolbars::height`] the 29 and 76 points of the approved metrics.
+/// [`super::toolbars::height`] the 29 and 80 points of the approved metrics.
 pub const RIBBON_RULE: f32 = 1.0;
 
 /// The rest width of a guide the program draws for the person, in points.
@@ -1171,17 +1173,21 @@ mod tests {
         const { assert!(HEADER_CONTROL_HEIGHT < HEADER_HEIGHT) };
         assert_eq!(STATUS_HEIGHT % STEP, 0.0, "the viewport bar sits on the grid");
         assert_eq!(RIBBON_CAPTION_HEIGHT, 16.0, "the caption band holds the capitals with air above and below");
-        // The ribbon's metrics are the owner's approved ones (`plan/notes/U71.md`, revised by U75): a
-        // 28 pt tab row, a 30 pt tool row, a 16 pt caption band, a 34 x 30 cell and a 22 pt glyph.
+        // The ribbon's metrics are the owner's approved ones (`plan/notes/U71.md`, revised by U75 and
+        // by the v2 icon language of ADR 0124): a 28 pt tab row, a 34 pt tool row, a 16 pt caption
+        // band, a 38 x 34 cell and a 26 pt glyph.
         assert_eq!(RIBBON_CELL_WIDTH % STEP, 2.0, "a cell is a step and a half wide, so the glyph breathes");
         const { assert!(RIBBON_CELL_WIDTH > crate::icons::RIBBON_ICON_POINT_SIZE) };
         const { assert!(RIBBON_CELL_WIDTH - crate::icons::RIBBON_ICON_POINT_SIZE >= 2.0 * STEP) };
         const { assert!(RIBBON_ROW_HEIGHT > crate::icons::RIBBON_ICON_POINT_SIZE) };
-        assert_eq!(RIBBON_ROW_HEIGHT, 30.0, "the tool row is one 30 pt glyph cell, and U75 left it alone");
+        const { assert!(RIBBON_ROW_HEIGHT - crate::icons::RIBBON_ICON_POINT_SIZE >= 2.0 * STEP) };
+        assert_eq!(RIBBON_ROW_HEIGHT, 34.0, "the tool row holds the 26 pt glyph with a step of air either side");
+        assert_eq!(crate::icons::RIBBON_ICON_POINT_SIZE, 26.0, "the v2 glyph is 26 points in the ribbon");
+        assert_eq!(crate::icons::TOOL_ICON_POINT_SIZE, 22.0, "a toolbar glyph is 22 points");
         // A tool with a method list keeps the whole cell and adds its caret beside it (X36), so the
         // split control is one cell wider than a cell and the glyph keeps its six points of air.
         let split = RIBBON_CELL_WIDTH + crate::icons::RIBBON_CARET_WIDTH;
-        assert_eq!(split, 44.0, "a split cell is one cell and the caret beside it");
+        assert_eq!(split, 48.0, "a split cell is one cell and the caret beside it");
         assert_eq!(split % STEP, 0.0, "the caret column sits on the same grid as the cell");
         // The chrome rows keep one order: the header is the tallest because it carries the window
         // buttons, the tool row follows because it carries a glyph, then the tab row, the status bar
@@ -1196,6 +1202,6 @@ mod tests {
         const FOLDED: f32 = RIBBON_TAB_HEIGHT + RIBBON_RULE;
         const OPEN: f32 = FOLDED + RIBBON_ROW_HEIGHT + RIBBON_CAPTION_HEIGHT + RIBBON_RULE;
         assert_eq!(FOLDED, 29.0, "the folded ribbon is its tab row and one hairline");
-        assert_eq!(OPEN, 76.0, "the open ribbon is 76 points tall");
+        assert_eq!(OPEN, 80.0, "the open ribbon is 80 points tall");
     }
 }
