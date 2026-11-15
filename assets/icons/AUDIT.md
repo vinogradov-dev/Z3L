@@ -253,6 +253,11 @@ the six dimension types.
 - **The seventh role**: `reference` at `#E8D44D` on dark and `#7A6A00` on paper, preset independent.
   Measured 9.67 : 1 on the dark surfaces and 4.8 : 1 on paper, ΔE 29.3 / 25.8 from the P1 copper
   accent; the 3 : 1 test now walks seven families.
+- **The accents, re-measured**: the P2 azure sat 7.2 / 8.6 ΔE from the `model` ink and the P4 mint
+  7.0 / 1.9 from the `scene` ink while both cleared 5 : 1, which is what a contrast test cannot see.
+  T8 moved the two accents (P2 `#ED45BA` / `#D11097`, P4 `#AD61EF` / `#870FF0`) and gated every
+  preset at 20 ΔE from every ink, so the nearest accent-to-ink pair is now 28.2. ADR
+  [0125](../../docs/decisions/0125-an-accent-keeps-its-hue-distance-from-every-role-ink.md).
 - **Measured on the 24 grid** (64 px audit raster, alpha above 16): `contour/line` 11.3 %,
   `rectangle` 24.8 %, `circle` 24.8 %, `measure` 21.0 %, `polyline` 23.8 %, `arc` 20.6 %,
   `arc-centre` 19.6 %, `circle-three-points` 19.6 %, `polygon` 18.4 %, `rectangle-centre` 28.7 %,

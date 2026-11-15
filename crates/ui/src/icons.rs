@@ -1309,7 +1309,46 @@ mod tests {
                     let ink = ramp.ink(family);
                     for (surface, fill) in [("panel", palette.panel), ("ribbon", palette.surface)] {
                         let ratio = crate::theme::contrast_ratio(ink, fill);
-                        assert!(ratio >= 3.0, "{family:?} on {preset:?} {surface} is {ratio:.2}:1, below 3:1");
+                        assert!(ratio >= 3.0, "{family:?} on {preset:?} {surface} is {ratio:.2} : 1, below 3 : 1");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The smallest ΔE two role inks may have from each other.
+    ///
+    /// The closest pair is `model`/`modify` at 23.5 dark and 20.1 light, so the floor is the ink
+    /// table's own (`plan/notes/U70.md`); the accent's floor is [`crate::theme::ACCENT_HUE_DISTANCE`].
+    const ROLE_HUE_DISTANCE: f32 = 20.0;
+
+    #[test]
+    fn the_accent_clears_every_role_ink_by_hue() {
+        // T8: contrast cannot see a hue collision — the P4 mint cleared 5 : 1 against the panel while
+        // sitting 1.9 ΔE from the scene ink — so the accent's distance from the meaning is measured.
+        // The accent is chrome and a role ink is what an icon means; the accent is never a role ink
+        // (U70, ADR 0125).
+        for preset in crate::theme::ThemePreset::ALL {
+            for dark in [true, false] {
+                let palette = preset.palette(dark);
+                let ramp = RoleRamp::for_variant(dark);
+                let variant = if dark { "dark" } else { "light" };
+                for family in Family::ALL {
+                    let distance = crate::theme::delta_e(palette.accent, ramp.ink(family));
+                    assert!(
+                        distance >= crate::theme::ACCENT_HUE_DISTANCE,
+                        "{preset:?} {variant}: the accent is {distance:.1} ΔE from {family:?}, under {}",
+                        crate::theme::ACCENT_HUE_DISTANCE
+                    );
+                }
+                // The accent is not the only pair that matters: two meanings must also stay apart.
+                for (index, first) in Family::ALL.iter().enumerate() {
+                    for second in &Family::ALL[index + 1..] {
+                        let distance = crate::theme::delta_e(ramp.ink(*first), ramp.ink(*second));
+                        assert!(
+                            distance >= ROLE_HUE_DISTANCE,
+                            "{variant}: {first:?} and {second:?} are {distance:.1} ΔE apart, under {ROLE_HUE_DISTANCE}"
+                        );
                     }
                 }
             }
@@ -1654,10 +1693,10 @@ mod tests {
     #[test]
     fn a_theme_change_keeps_the_silhouette() {
         let px = TOOL_ICON_POINT_SIZE as usize;
-        let dark = uploaded_with(crate::theme::ThemePreset::InkAzure, true, 1.0, |ui| {
+        let dark = uploaded_with(crate::theme::ThemePreset::InkMagenta, true, 1.0, |ui| {
             tool_button(ui, drawn(), "Confirm", None, true, false);
         });
-        let light = uploaded_with(crate::theme::ThemePreset::InkAzure, false, 1.0, |ui| {
+        let light = uploaded_with(crate::theme::ThemePreset::InkMagenta, false, 1.0, |ui| {
             tool_button(ui, drawn(), "Confirm", None, true, false);
         });
         let dark = icon_rasters(&dark, px);
@@ -1704,7 +1743,7 @@ mod tests {
         let px = ICON_POINT_SIZE as usize;
         for (mode, preset) in [
             (crate::settings::IconColor::Auto, crate::theme::ThemePreset::GraphiteCopper),
-            (crate::settings::IconColor::Never, crate::theme::ThemePreset::SlateMint),
+            (crate::settings::IconColor::Never, crate::theme::ThemePreset::SlateViolet),
         ] {
             let (images, ink) = mono_frame(preset, true, mode);
             let rasters = icon_rasters(&images, px);

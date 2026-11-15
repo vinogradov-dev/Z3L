@@ -1007,8 +1007,8 @@ messages! {
     ThemeSystem = ["System", "Системная"],
     Palette = ["Palette", "Палитра"],
     PaletteGraphiteCopper = ["Graphite · copper", "Графит · медь"],
-    PaletteInkAzure = ["Ink · azure", "Чернила · лазурь"],
-    PaletteSlateMint = ["Slate · mint", "Сланец · мята"],
+    PaletteInkMagenta = ["Ink · magenta", "Чернила · маджента"],
+    PaletteSlateViolet = ["Slate · violet", "Сланец · фиалка"],
     PaletteHint = [
         "A preset paints the whole window in both variants; the accent is the one colour you can replace.",
         "Палитра окрашивает всё окно в обоих вариантах; акцент — единственный цвет, который можно заменить."

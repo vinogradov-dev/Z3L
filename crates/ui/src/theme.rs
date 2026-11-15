@@ -59,6 +59,14 @@ pub const LINE: Color32 = mix(CONTROL, TEXT, 8);
 /// The smallest contrast the accent may have against the surface it is drawn on.
 pub const ACCENT_CONTRAST: f32 = 3.0;
 
+/// The smallest [`delta_e`] the accent may have from any role ink of an icon.
+///
+/// Contrast says two colours differ in brightness; a hue can collide at a perfect contrast, which is
+/// what happened to the P2 azure against the model blue and the P4 mint against the scene green.
+/// The accent is chrome and an icon ink is meaning, so they stay a visible distance apart in every
+/// preset and both variants (ADR 0125, `plan/notes/T8.md`).
+pub const ACCENT_HUE_DISTANCE: f32 = 20.0;
+
 /// The action accent: the armed tool, the active tab, the selection.
 pub const ACCENT: Color32 = Color32::from_rgb(0xe0, 0xa2, 0x4a);
 
@@ -365,8 +373,8 @@ const GRAPHITE_COPPER_LIGHT: Ramp = Ramp {
     warn: Color32::from_rgb(0x8a, 0x5a, 0x0f),
 };
 
-/// P2 ink·azure, dark.
-const INK_AZURE_DARK: Ramp = Ramp {
+/// P2 ink·magenta, dark.
+const INK_MAGENTA_DARK: Ramp = Ramp {
     chrome: Color32::from_rgb(0x10, 0x13, 0x19),
     surface: Color32::from_rgb(0x17, 0x1b, 0x22),
     panel: Color32::from_rgb(0x1e, 0x23, 0x2b),
@@ -374,14 +382,14 @@ const INK_AZURE_DARK: Ramp = Ramp {
     floating: Color32::from_rgba_premultiplied(0x1a, 0x1f, 0x27, 224),
     text: Color32::from_rgb(0xd7, 0xde, 0xe8),
     text_dim: Color32::from_rgb(0x87, 0x92, 0xa1),
-    accent: Color32::from_rgb(0x4a, 0x9e, 0xff),
-    accent_fill: Color32::from_rgb(0x21, 0x5f, 0x9e),
+    accent: Color32::from_rgb(0xed, 0x45, 0xba),
+    accent_fill: Color32::from_rgb(0xa6, 0x30, 0x82),
     danger: DANGER,
     warn: WARN,
 };
 
-/// P2 ink·azure, light.
-const INK_AZURE_LIGHT: Ramp = Ramp {
+/// P2 ink·magenta, light.
+const INK_MAGENTA_LIGHT: Ramp = Ramp {
     chrome: Color32::from_rgb(0xe7, 0xed, 0xf4),
     surface: Color32::from_rgb(0xf0, 0xf4, 0xf9),
     panel: Color32::from_rgb(0xf7, 0xf9, 0xfc),
@@ -389,14 +397,14 @@ const INK_AZURE_LIGHT: Ramp = Ramp {
     floating: Color32::from_rgba_premultiplied(0xd4, 0xd7, 0xda, 224),
     text: Color32::from_rgb(0x1d, 0x25, 0x30),
     text_dim: Color32::from_rgb(0x58, 0x65, 0x76),
-    accent: Color32::from_rgb(0x1f, 0x6f, 0xd0),
-    accent_fill: Color32::from_rgb(0xcf, 0xe0, 0xf7),
+    accent: Color32::from_rgb(0xd1, 0x10, 0x97),
+    accent_fill: Color32::from_rgb(0xef, 0xca, 0xe8),
     danger: Color32::from_rgb(0xb2, 0x3b, 0x3b),
     warn: Color32::from_rgb(0x8a, 0x5a, 0x0f),
 };
 
-/// P4 slate·mint, dark.
-const SLATE_MINT_DARK: Ramp = Ramp {
+/// P4 slate·violet, dark.
+const SLATE_VIOLET_DARK: Ramp = Ramp {
     chrome: Color32::from_rgb(0x11, 0x17, 0x15),
     surface: Color32::from_rgb(0x18, 0x20, 0x1d),
     panel: Color32::from_rgb(0x22, 0x2b, 0x27),
@@ -404,14 +412,14 @@ const SLATE_MINT_DARK: Ramp = Ramp {
     floating: Color32::from_rgba_premultiplied(0x1b, 0x24, 0x20, 224),
     text: Color32::from_rgb(0xd9, 0xe3, 0xdd),
     text_dim: Color32::from_rgb(0x8a, 0x9a, 0x92),
-    accent: Color32::from_rgb(0x4f, 0xd1, 0xa5),
-    accent_fill: Color32::from_rgb(0x1e, 0x6e, 0x55),
+    accent: Color32::from_rgb(0xad, 0x61, 0xef),
+    accent_fill: Color32::from_rgb(0x7d, 0x46, 0xac),
     danger: DANGER,
     warn: WARN,
 };
 
-/// P4 slate·mint, light.
-const SLATE_MINT_LIGHT: Ramp = Ramp {
+/// P4 slate·violet, light.
+const SLATE_VIOLET_LIGHT: Ramp = Ramp {
     chrome: Color32::from_rgb(0xe8, 0xee, 0xea),
     surface: Color32::from_rgb(0xf1, 0xf6, 0xf3),
     panel: Color32::from_rgb(0xf8, 0xfb, 0xf9),
@@ -419,8 +427,8 @@ const SLATE_MINT_LIGHT: Ramp = Ramp {
     floating: Color32::from_rgba_premultiplied(0xd5, 0xd9, 0xd7, 224),
     text: Color32::from_rgb(0x1e, 0x2a, 0x25),
     text_dim: Color32::from_rgb(0x57, 0x6b, 0x62),
-    accent: Color32::from_rgb(0x17, 0x79, 0x5c),
-    accent_fill: Color32::from_rgb(0xcd, 0xeb, 0xdd),
+    accent: Color32::from_rgb(0x87, 0x0f, 0xf0),
+    accent_fill: Color32::from_rgb(0xe1, 0xcc, 0xf7),
     danger: Color32::from_rgb(0xb2, 0x3b, 0x3b),
     warn: Color32::from_rgb(0x8a, 0x5a, 0x0f),
 };
@@ -442,22 +450,22 @@ pub enum ThemePreset {
     /// P1 graphite·copper: a warm action accent on neutral slate. The default.
     #[default]
     GraphiteCopper,
-    /// P2 ink·azure: a blue action accent on ink.
-    InkAzure,
-    /// P4 slate·mint: a mint action accent on a green-grey slate.
-    SlateMint,
+    /// P2 ink·magenta: a magenta action accent on ink.
+    InkMagenta,
+    /// P4 slate·violet: a violet action accent on a green-grey slate.
+    SlateViolet,
 }
 
 impl ThemePreset {
     /// Every preset, in the order the Appearance page draws them.
-    pub const ALL: [Self; 3] = [Self::GraphiteCopper, Self::InkAzure, Self::SlateMint];
+    pub const ALL: [Self; 3] = [Self::GraphiteCopper, Self::InkMagenta, Self::SlateViolet];
 
     /// The user-visible name.
     pub const fn label(self) -> Message {
         match self {
             Self::GraphiteCopper => Message::PaletteGraphiteCopper,
-            Self::InkAzure => Message::PaletteInkAzure,
-            Self::SlateMint => Message::PaletteSlateMint,
+            Self::InkMagenta => Message::PaletteInkMagenta,
+            Self::SlateViolet => Message::PaletteSlateViolet,
         }
     }
 
@@ -465,22 +473,33 @@ impl ThemePreset {
     pub const fn stored_name(self) -> &'static str {
         match self {
             Self::GraphiteCopper => "graphite_copper",
-            Self::InkAzure => "ink_azure",
-            Self::SlateMint => "slate_mint",
+            Self::InkMagenta => "ink_magenta",
+            Self::SlateViolet => "slate_violet",
         }
     }
 
+    /// A name an earlier build stored for one of the presets, and what it means now.
+    ///
+    /// T8 moved the P2 and P4 accents so they stop reading as the model and scene icon inks, and a
+    /// preset is named after its accent: `ink_azure` and `slate_mint` are the same two looks under
+    /// their old names. The settings file is the user's, not the document's, so a name it already
+    /// holds keeps loading and is rewritten to the current one on the next save (ADR 0125).
+    const RENAMED: [(&'static str, Self); 2] = [("ink_azure", Self::InkMagenta), ("slate_mint", Self::SlateViolet)];
+
     /// The preset a stored name means, or `None` for a name this build does not know.
     pub fn from_stored_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|preset| preset.stored_name() == name)
+        Self::ALL
+            .into_iter()
+            .find(|preset| preset.stored_name() == name)
+            .or_else(|| Self::RENAMED.iter().find(|(old, _)| *old == name).map(|(_, preset)| *preset))
     }
 
     /// This preset's dark palette.
     pub const fn dark(self) -> Palette {
         match self {
             Self::GraphiteCopper => GRAPHITE_COPPER_DARK.palette(true),
-            Self::InkAzure => INK_AZURE_DARK.palette(true),
-            Self::SlateMint => SLATE_MINT_DARK.palette(true),
+            Self::InkMagenta => INK_MAGENTA_DARK.palette(true),
+            Self::SlateViolet => SLATE_VIOLET_DARK.palette(true),
         }
     }
 
@@ -488,8 +507,8 @@ impl ThemePreset {
     pub const fn light(self) -> Palette {
         match self {
             Self::GraphiteCopper => GRAPHITE_COPPER_LIGHT.palette(false),
-            Self::InkAzure => INK_AZURE_LIGHT.palette(false),
-            Self::SlateMint => SLATE_MINT_LIGHT.palette(false),
+            Self::InkMagenta => INK_MAGENTA_LIGHT.palette(false),
+            Self::SlateViolet => SLATE_VIOLET_LIGHT.palette(false),
         }
     }
 
@@ -833,6 +852,29 @@ pub fn relative_luminance(color: Color32) -> f32 {
     0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
 }
 
+/// The CIE76 colour difference between two opaque colours: a distance in CIELAB from 0 to about 100.
+///
+/// Two colours with the same brightness can be far apart (a mint and a green at 1.9) or close (a
+/// cyan and a blue at 7), so [`contrast_ratio`] cannot answer whether a hue collision exists. The
+/// distance is the plain Euclidean one CIE76 defines, which is enough for a floor of 20 and does
+/// not pull a colour-appearance model into the tree (ADR 0125).
+pub fn delta_e(a: Color32, b: Color32) -> f32 {
+    let (first, second) = (lab(a), lab(b));
+    let (dl, da, db) = (first.0 - second.0, first.1 - second.1, first.2 - second.2);
+    (dl * dl + da * da + db * db).sqrt()
+}
+
+/// The CIELAB coordinates of an opaque colour under the D65 white point.
+fn lab(color: Color32) -> (f32, f32, f32) {
+    let (r, g, b) = (linear(color.r()), linear(color.g()), linear(color.b()));
+    let x = 0.4124 * r + 0.3576 * g + 0.1805 * b;
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z = 0.0193 * r + 0.1192 * g + 0.9505 * b;
+    let curve = |value: f32| if value > 0.008_856 { value.cbrt() } else { 7.787 * value + 16.0 / 116.0 };
+    let (fx, fy, fz) = (curve(x / 0.950_47), curve(y), curve(z / 1.088_83));
+    (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+}
+
 /// One sRGB channel, undoing the transfer curve.
 fn linear(channel: u8) -> f32 {
     let channel = f32::from(channel) / 255.0;
@@ -1115,13 +1157,13 @@ mod tests {
             }
         }
         // A switch repaints the installed styles; no restart and no second install step.
-        install_with(&ctx, egui::ThemePreference::Dark, ThemePreset::SlateMint, None);
-        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.panel_fill, ThemePreset::SlateMint.dark().panel);
+        install_with(&ctx, egui::ThemePreference::Dark, ThemePreset::SlateViolet, None);
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.panel_fill, ThemePreset::SlateViolet.dark().panel);
         // The accent override reaches both variants and survives the switch between them.
-        install_with(&ctx, egui::ThemePreference::System, ThemePreset::InkAzure, Some([0x11, 0x99, 0x44]));
+        install_with(&ctx, egui::ThemePreference::System, ThemePreset::InkMagenta, Some([0x11, 0x99, 0x44]));
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
             let accent = ctx.style_of(theme).visuals.hyperlink_color;
-            assert!(spread(accent) > 4 * spread(ThemePreset::InkAzure.palette(theme == egui::Theme::Dark).panel));
+            assert!(spread(accent) > 4 * spread(ThemePreset::InkMagenta.palette(theme == egui::Theme::Dark).panel));
         }
     }
 
@@ -1152,6 +1194,23 @@ mod tests {
         assert!(relative_luminance(mix(black, white, 25)) < relative_luminance(mix(black, white, 75)));
         assert!((contrast_ratio(white, black) - 21.0).abs() < 0.01, "the WCAG scale runs from 1 to 21");
         assert_eq!(contrast_ratio(white, white), 1.0);
+    }
+
+    #[test]
+    fn a_colour_distance_sees_the_hue_a_contrast_ratio_cannot() {
+        // The scale runs from one colour to white against black, and it is symmetric.
+        assert_eq!(delta_e(Color32::WHITE, Color32::WHITE), 0.0);
+        assert!((delta_e(Color32::WHITE, Color32::BLACK) - 100.0).abs() < 0.5, "white against black is 100");
+        assert!((delta_e(Color32::BLACK, Color32::WHITE) - delta_e(Color32::WHITE, Color32::BLACK)).abs() < 0.01);
+        // Grey differs from grey in lightness only, so the two measures agree on it.
+        let (dark, light, lighter) = (Color32::from_gray(0x40), Color32::from_gray(0x80), Color32::from_gray(0xC0));
+        assert!(delta_e(dark, light) < delta_e(dark, lighter), "a further lightness is a further colour");
+        // Two hues of nearly one brightness are one contrast ratio apart and 31 ΔE apart, which is
+        // the pair of measurements U70's role table needs (ADR 0125).
+        let (draw, scene) = (Color32::from_rgb(0x58, 0xC8, 0xDC), Color32::from_rgb(0x55, 0xC7, 0xA4));
+        assert!(contrast_ratio(draw, scene) < 1.2, "a cyan and a green carry almost the same light");
+        assert!(delta_e(draw, scene) > 20.0, "a cyan and a green are not one colour");
+        assert!(delta_e(Color32::from_rgb(0xED, 0x45, 0xBA), Color32::from_rgb(0xED, 0x45, 0xBA)) < f32::EPSILON);
     }
 
     #[test]

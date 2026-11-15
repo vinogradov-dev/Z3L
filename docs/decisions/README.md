@@ -93,8 +93,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0086](0086-the-interface-speaks-two-languages.md) | The interface speaks two languages, and a generated name keeps the one that made it | Accepted |
 | [0087](0087-the-viewports-own-colours-follow-the-theme.md) | The viewport's own colours follow the theme variant; material colours never do | Accepted |
 | [0088](0088-origin-and-pivot-are-different-points.md) | Origin and pivot are different points | Accepted; refines 0026 and 0082, settles 0083 |
-| [0089](0089-three-palettes-are-data-and-derive-their-states.md) | Three palettes are data: one ramp per variant, derived states, one accent override | Accepted |
-| [0090](0090-icons-are-coloured-by-semantic-family.md) | An icon is coloured by its semantic family, and the theme maps the literal | Accepted; supersedes the one-ink clause of 0047 and 0055, extended to a seventh role by 0124 |
+| [0089](0089-three-palettes-are-data-and-derive-their-states.md) | Three palettes are data: one ramp per variant, derived states, one accent override | Accepted; the P2 and P4 accents and their names moved by 0125 |
+| [0090](0090-icons-are-coloured-by-semantic-family.md) | An icon is coloured by its semantic family, and the theme maps the literal | Accepted; supersedes the one-ink clause of 0047 and 0055, extended to a seventh role by 0124, the accent separation by 0125 |
 | [0091](0091-the-ribbon-is-one-const-map.md) | The ribbon is one const map, and one tool is one glyph in a 34 x 30 cell | Accepted; supersedes the cell metrics and the caption rule of 0067; fields removed by its first amendment, a split cell made a cell plus its caret by the second, the cell grown to 38 x 34 by 0124 |
 | [0092](0092-a-field-is-a-number-with-its-unit-outside.md) | A numeric field is a number with its unit outside, and one edit is one undo entry | Accepted |
 | [0093](0093-a-preview-fills-a-session-overlay.md) | A previewing operation fills a session overlay, not the document, and one command bar applies it | Accepted |
@@ -130,6 +130,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0122](0122-the-custom-pointer-belongs-to-the-work-area.md) | The custom pointer belongs to the work area | Accepted; layer clarified by 0123 |
 | [0123](0123-work-area-paint-sits-under-the-chrome.md) | Work-area paint sits under the chrome | Accepted |
 | [0124](0124-the-icon-language-is-v2.md) | The icon language is v2: a 24 grid, a 20 × 20 footprint and a seventh role | Accepted |
+| [0125](0125-an-accent-keeps-its-hue-distance-from-every-role-ink.md) | An accent keeps its hue distance from every role ink | Accepted |
 
 ## Format
 
