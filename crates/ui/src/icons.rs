@@ -762,13 +762,10 @@ fn paint_split_cell(
         let corners = CornerRadius { nw: radius, ne: 0, sw: radius, se: 0 };
         ui.painter().rect_filled(main_rect, corners, fill);
     }
-    let color = if on {
-        Color32::WHITE
-    } else if enabled {
-        crate::theme::text(ui)
-    } else {
-        crate::theme::text_dim(ui)
-    };
+    // The chosen cell's fill is the accent fill: on paper that fill is pale, so a white glyph would
+    // disappear. The chosen ink is the theme's foreground, the same one the selection stroke uses
+    // (U70, and the contrast test beside the role table).
+    let color = if on || enabled { crate::theme::text(ui) } else { crate::theme::text_dim(ui) };
     // The glyph sits in the middle of the cell, which is the main face: the caret is added beside a
     // full cell, so a tool with methods holds its glyph with the same air as a tool without one and
     // a row of mixed cells reads as one pitch (X36).
@@ -788,13 +785,7 @@ fn paint_split_cell(
     }
     // The caret is the cell's own anatomy, like the accent underline of an open tab, not one of the
     // icon assets: it marks the corner of a control rather than naming an action of its own.
-    let ink = if on {
-        Color32::WHITE
-    } else if caret_hot {
-        crate::theme::text(ui)
-    } else {
-        crate::theme::text_dim(ui)
-    };
+    let ink = if on || caret_hot { crate::theme::text(ui) } else { crate::theme::text_dim(ui) };
     let center = pos2(caret_rect.center().x, caret_rect.bottom() - 5.0);
     let points = vec![
         pos2(center.x - 2.5, center.y - 1.25),
@@ -834,7 +825,7 @@ fn ribbon_face(ui: &Ui, response: &Response, on: bool, enabled: bool) -> (Color3
     }
     if on {
         let visuals = ui.visuals().selection;
-        return (visuals.bg_fill, visuals.stroke, Color32::WHITE, IconTone::Selected);
+        return (visuals.bg_fill, visuals.stroke, crate::theme::text(ui), IconTone::Selected);
     }
     if response.is_pointer_button_down_on() {
         return (crate::theme::control_active(ui), Stroke::NONE, crate::theme::text(ui), IconTone::Press);
@@ -1295,6 +1286,24 @@ mod tests {
                         assert!(ratio >= 3.0, "{family:?} on {preset:?} {surface} is {ratio:.2}:1, below 3:1");
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn the_chosen_icon_ink_clears_the_accent_fill() {
+        // The chosen cell draws the theme's foreground over the accent fill, not a role ink and not
+        // white: on paper the accent fill is pale and a white glyph would read at ~1.3:1. The
+        // foreground is the same ink the selection stroke uses and clears 3:1 on every preset.
+        for preset in crate::theme::ThemePreset::ALL {
+            for dark in [true, false] {
+                let palette = preset.palette(dark);
+                let ratio = crate::theme::contrast_ratio(palette.text, palette.accent_fill);
+                assert!(
+                    ratio >= 3.0,
+                    "the chosen glyph on {preset:?} {} is {ratio:.2}:1, below 3:1",
+                    if dark { "dark" } else { "light" }
+                );
             }
         }
     }
