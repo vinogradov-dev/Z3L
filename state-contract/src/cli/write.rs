@@ -1106,8 +1106,14 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
     }
 
     /// A scratch project: two plan files, two source files, a note only when the test needs one.
+    ///
+    /// Every call gets its own directory. Two tests may name the same fixture — `close-last` is
+    /// used twice — and a shared root is removed under the other test's feet, which lands as an
+    /// `ENOENT` from a `create_dir_all` that has nothing to do with the behaviour under test.
     fn project(name: &str, status: &str, backlog: &str, session: Option<&str>) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("xtask-write-{name}-{}", std::process::id()));
+        static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("xtask-write-{name}-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("plan/notes")).expect("the scratch plan is writable");
         std::fs::create_dir_all(root.join("src")).expect("the scratch sources are writable");
