@@ -40,25 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **C3** a contour node moves in a latched mode, with its distance and angle at the cursor
-  Why: Moving a corner needs the button held for the whole gesture today, and the owner wants
-   the select, latch, drop grammar a native editor has. The old position is the only fixed
-   reference of an edit, so the construction line and the reference axis must start there, and
-   the delta needs the same field atom C1 builds for creation: length from the old position and
-   angle from +X.
-  Shape: A click on an unselected node selects it; a click on a selected node latches the move;
-   a ghost and the reference axis and arc follow the pointer from the old position; the next
-   click drops the node with one command and one undo entry; Escape restores the stored
-   position. A press-and-drag on a node keeps the one-gesture move, so the latch adds a path
-   rather than replacing one. The fields are the delta: length from the old position and angle
-   from +X, 0 returns a parameter to the pointer. Only contour nodes: object placement and the
-   grips keep their grammar. One ADR records the latched move.
-  Done: select, latch and drop write one command and one revision, tested through RawInput;
-   Escape after a latch leaves the document untouched; a drop without motion writes nothing;
-   the construction line starts at the old position and the angle arc radius equals the
-   distance moved; the fields move the node by the typed distance and angle; a press-and-drag
-   still moves a node in one gesture; cargo xtask ci is green.
-  `files: apps/furnicraft/src/contour_gizmo.rs, crates/ui/src/contour_grips.rs, crates/ui/src/editor/contour.rs, apps/furnicraft/src/document.rs`
 - `[ ]` **C4** a circle by diameter and an arc from its start, end and radius
   Why: The circle cell and the arc cell each declare a method that runs nothing
    (sketch.create.circle.two-points, sketch.create.arc.three-points), and two constructions the
@@ -129,6 +110,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C3** a contour node moves in a latched mode, with its distance and angle at the cursor
+  Why: Moving a corner needs the button held for the whole gesture today, and the owner wants
+   the select, latch, drop grammar a native editor has. The old position is the only fixed
+   reference of an edit, so the construction line and the reference axis must start there, and
+   the delta needs the same field atom C1 builds for creation: length from the old position and
+   angle from +X.
+  Shape: A click on an unselected node selects it; a click on a selected node latches the move;
+   a ghost and the reference axis and arc follow the pointer from the old position; the next
+   click drops the node with one command and one undo entry; Escape restores the stored
+   position. A press-and-drag on a node keeps the one-gesture move, so the latch adds a path
+   rather than replacing one. The fields are the delta: length from the old position and angle
+   from +X, 0 returns a parameter to the pointer. Only contour nodes: object placement and the
+   grips keep their grammar. One ADR records the latched move.
+  Done: select, latch and drop write one command and one revision, tested through RawInput;
+   Escape after a latch leaves the document untouched; a drop without motion writes nothing;
+   the construction line starts at the old position and the angle arc radius equals the
+   distance moved; the fields move the node by the typed distance and angle; a press-and-drag
+   still moves a node in one gesture; cargo xtask ci is green.
+  `files: apps/furnicraft/src/contour_gizmo.rs, crates/ui/src/contour_grips.rs, crates/ui/src/editor/contour.rs, apps/furnicraft/src/document.rs` — `06c28a3`
 
 - `[x]` **C2** every sketch tool places its point from numbers at the cursor
   Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
