@@ -40,14 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **T7** the rest of the icon set follows the v2 language, one tab at a time
-  Why: T6 migrates the Sketch tab only; the Model, Furniture, Scene, View, Actions and Window
-   icons still carry the v1 weight and footprint, so the set is half-migrated.
-  Shape: Redraw one tab per commit using the T6 rules; update the README rows and the icon
-   tests; no family beyond reference; keep the role inks.
-  Done: Every declared icon is drawn in the v2 language; no v1 icon remains; the icon gate and
-   cargo xtask ci are green; the live ribbon reads as one set.
-  `files: assets/icons, crates/ui/src/icons.rs, assets/README.md`
 - `[ ]` **T8** the P2 and P4 accents separate from the model and scene inks
   Why: The P2 azure accent is 7.2/8.6 Delta E from the model blue and the P4 mint accent is
    7.0/1.9 Delta E from the scene green, so the accent stops reading as chrome beside those
@@ -114,6 +106,15 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **T7** the rest of the icon set follows the v2 language, one tab at a time
+  Why: T6 migrates the Sketch tab only; the Model, Furniture, Scene, View, Actions and Window
+   icons still carry the v1 weight and footprint, so the set is half-migrated.
+  Shape: Redraw one tab per commit using the T6 rules; update the README rows and the icon
+   tests; no family beyond reference; keep the role inks.
+  Done: Every declared icon is drawn in the v2 language; no v1 icon remains; the icon gate and
+   cargo xtask ci are green; the live ribbon reads as one set.
+  `files: assets/icons, crates/ui/src/icons.rs, assets/README.md` — `0a0f053`
 
 - `[x]` **T6** the icon language v2 starts with the Sketch tab and six dimension types
   Why: The owner approved the v2 language — 24-grid, 2.25..21.75 footprint, 1.5/1.2 strokes,
