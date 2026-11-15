@@ -95,7 +95,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         ToolKind::Product => Ready {
             enabled: true,
             armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateProductCard),
         },
         ToolKind::ProductDraw => Ready {
@@ -122,7 +122,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             Ready {
                 enabled,
                 armed: is_armed(active, kind),
-                hint: tool_hint(hint, tool.shortcut),
+                hint: tool_hint(hint, tool.key()),
                 action: enabled.then_some(ToolAction::DrawPanelContour),
             }
         }
@@ -151,44 +151,44 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             Ready {
                 enabled,
                 armed: is_armed(active, kind),
-                hint: tool_hint(hint, tool.shortcut),
+                hint: tool_hint(hint, tool.key()),
                 action: enabled.then_some(ToolAction::Fill { class, mode }),
             }
         }
         ToolKind::Assembly => Ready {
             enabled: true,
             armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateAssembly),
         },
         ToolKind::Camera => Ready {
             enabled: true,
             armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateCamera),
         },
         ToolKind::Light => Ready {
             enabled: true,
             armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateLight),
         },
         ToolKind::FrameAll => Ready {
             enabled: true,
             armed: false,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::FrameAll),
         },
         ToolKind::Projection => Ready {
             enabled: owns_view,
             armed: false,
-            hint: tool_hint(Message::SwitchProjection.text(lang), tool.shortcut),
+            hint: tool_hint(Message::SwitchProjection.text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleProjection),
         },
         ToolKind::GridSnap => Ready {
             enabled: owns_view,
             armed: grid,
-            hint: tool_hint(tool.label.text(lang), tool.shortcut),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleGrid),
         },
     }

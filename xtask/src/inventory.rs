@@ -38,8 +38,16 @@ struct Row {
     id: String,
     label: String,
     places: Vec<String>,
-    key: Option<String>,
     icon: Option<String>,
+    line: usize,
+}
+
+/// One key binding, as the gate reads it from the key table (U96).
+struct Binding {
+    id: String,
+    key: String,
+    chord: String,
+    label: String,
     line: usize,
 }
 
@@ -65,6 +73,14 @@ pub fn check(root: &Path, violations: &mut Vec<String>) -> Option<usize> {
         }
     };
     let atoms = atoms(&inventory_source).unwrap_or_default();
+    let keys = match bindings(&inventory_source) {
+        Ok(keys) => keys,
+        Err(error) => {
+            violations.push(error);
+            Vec::new()
+        }
+    };
+    let actions = actions(&inventory_source).unwrap_or_default();
 
     let commands = match registered(root) {
         Ok(commands) => {
@@ -81,12 +97,78 @@ pub fn check(root: &Path, violations: &mut Vec<String>) -> Option<usize> {
     coverage(&rows, &commands, violations);
     if let Ok(source) = std::fs::read_to_string(root.join(RIBBON_MAP)) {
         read = read.saturating_add(1);
-        check_ribbon(&source, violations);
+        let methods = check_ribbon(&source, violations);
+        check_keys(&keys, &actions, &commands, &atoms, &methods, violations);
     }
     Some(read)
 }
 
-/// The rules that read the inventory alone: known ids, one row per id, one label and one key each.
+/// The rules that read the key table: one key per id, one id per key, and an id the interface knows.
+///
+/// A binding names a command, an atom, a shell action or a ribbon method, and nothing else: a typo in
+/// an id would otherwise be a key the shell reads and nothing runs (U96).
+fn check_keys(
+    keys: &[Binding],
+    actions: &BTreeSet<String>,
+    commands: &BTreeMap<String, Command>,
+    atoms: &BTreeSet<String>,
+    methods: &BTreeSet<String>,
+    violations: &mut Vec<String>,
+) {
+    let mut pairs: BTreeMap<(&str, &str), &str> = BTreeMap::new();
+    let mut ids: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut labels: BTreeMap<&str, &str> = BTreeMap::new();
+    for binding in keys {
+        if let Some(first) = ids.insert(&binding.id, binding.line) {
+            violations.push(format!(
+                "`{INVENTORY}:{}` is the second key for `{}`, which already has one at line {first}; one \
+                 binding runs one id (ADR 0117)",
+                binding.line, binding.id
+            ));
+        }
+        if let Some(other) = pairs.insert((&binding.chord, &binding.key), &binding.id) {
+            violations.push(format!(
+                "`{INVENTORY}:{}` binds `{}` to `{}`, and `{other}` already carries it; one key runs one id \
+                 (ADR 0117)",
+                binding.line, binding.label, binding.id
+            ));
+        }
+        if let Some(other) = labels.insert(&binding.label, &binding.id) {
+            violations.push(format!(
+                "`{INVENTORY}:{}` prints `{}` for `{}`, and `{other}` already prints it; one key has one \
+                 spelling (ADR 0117)",
+                binding.line, binding.label, binding.id
+            ));
+        }
+        let known = commands.contains_key(&binding.id)
+            || atoms.contains(&binding.id)
+            || actions.contains(&binding.id)
+            || methods.contains(&binding.id);
+        if !known {
+            violations.push(format!(
+                "`{INVENTORY}:{}` binds `{}` to `{}`, which is no registered command, no atom, no shell \
+                 action and no method of `{RIBBON_MAP}`",
+                binding.line, binding.label, binding.id
+            ));
+        }
+    }
+    for action in actions {
+        if !ids.contains_key(action.as_str()) {
+            violations.push(format!(
+                "the shell action `{action}` of `{INVENTORY}` has no key; an action no key runs is a row no \
+                 surface reads (ADR 0117)"
+            ));
+        }
+        if commands.contains_key(action) {
+            violations.push(format!(
+                "`{action}` is declared both a shell action and a command of `crates/engine/src/commands.rs`; \
+                 a command's key hangs off its own id (ADR 0117)"
+            ));
+        }
+    }
+}
+
+/// The rules that read the inventory alone: known ids, one row per id, one label each.
 fn check_rows(
     rows: &[Row],
     atoms: &BTreeSet<String>,
@@ -94,7 +176,6 @@ fn check_rows(
     violations: &mut Vec<String>,
 ) {
     let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut keys: BTreeMap<&str, &str> = BTreeMap::new();
     let mut icons: BTreeMap<&str, &str> = BTreeMap::new();
 
     for row in rows {
@@ -116,15 +197,6 @@ fn check_rows(
             violations.push(format!(
                 "`{INVENTORY}:{}` puts `{}` in the API and on a surface; `Api` is the one place that \
                  means no surface draws it (ADR 0117)",
-                row.line, row.id
-            ));
-        }
-        if let Some(key) = row.key.as_deref()
-            && let Some(other) = keys.insert(key, &row.id)
-        {
-            violations.push(format!(
-                "`{INVENTORY}:{}` binds `{key}` to `{}`, and `{other}` already carries it; one key \
-                 runs one command (ADR 0117)",
                 row.line, row.id
             ));
         }
@@ -161,17 +233,20 @@ fn coverage(rows: &[Row], commands: &BTreeMap<String, Command>, violations: &mut
 }
 
 /// A live ribbon cell is drawn, so it names its artwork.
-fn check_ribbon(source: &str, violations: &mut Vec<String>) {
+fn check_ribbon(source: &str, violations: &mut Vec<String>) -> BTreeSet<String> {
     let Ok(file) = syn::parse_file(source) else {
         violations.push(format!("`{RIBBON_MAP}` does not parse as Rust"));
-        return;
+        return BTreeSet::new();
     };
-    let mut scan = Ribbon { violations };
+    let mut scan = Ribbon { violations, methods: BTreeSet::new() };
     scan.visit_file(&file);
+    scan.methods
 }
 
 struct Ribbon<'a> {
     violations: &'a mut Vec<String>,
+    /// Every method id the map declares: a drawing key is filed under one of these (U96).
+    methods: BTreeSet<String>,
 }
 
 impl<'ast> Visit<'ast> for Ribbon<'_> {
@@ -182,12 +257,25 @@ impl<'ast> Visit<'ast> for Ribbon<'_> {
         visit::visit_item(self, item);
     }
 
+    /// A planned cell is built by `planned(id, label)`, a call rather than a literal, and a key may
+    /// already be filed under it: the id counts as a method of the map all the same (U96).
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Some(path) = path_text(&call.func)
+            && last_segment(&path) == "planned"
+            && let Some(id) = call.args.first().and_then(string_literal)
+        {
+            self.methods.insert(id);
+        }
+        visit::visit_expr_call(self, call);
+    }
+
     fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
         let path = path_text_from(&expression.path);
         let tool = path.ends_with("ToolSpec");
         let variant = path.ends_with("VariantSpec");
         if tool || variant {
             let id = field(expression, "id").and_then(string_literal).unwrap_or_else(|| "unnamed".to_owned());
+            self.methods.insert(id.clone());
             let live = field(expression, "run").is_some_and(|run| matches!(run, Expr::Call(_)));
             let drawn = field(expression, "icon").is_some_and(|icon| matches!(icon, Expr::Call(_)));
             if live && !drawn {
@@ -311,12 +399,84 @@ fn rows(source: &str) -> Result<Vec<Row>, String> {
             id,
             label,
             places,
-            key: field(row, "key").and_then(some_value).and_then(string_literal),
             icon: field(row, "icon").and_then(some_value).and_then(path_text),
             line: row.brace_token.span.open().start().line,
         });
     }
     Ok(rows)
+}
+
+/// The string constants of the inventory, so a binding may name its id as `FILE_SAVE` (U96).
+fn string_consts(file: &syn::File) -> BTreeMap<String, String> {
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Const(item) => string_literal(&item.expr).map(|value| (item.ident.to_string(), value)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The id a binding or an action names: a literal, or the const the row points at.
+fn table_id(expression: &Expr, consts: &BTreeMap<String, String>) -> Option<String> {
+    if let Some(text) = string_literal(expression) {
+        return Some(text);
+    }
+    let path = path_text(expression)?;
+    consts.get(last_segment(&path)).cloned()
+}
+
+/// The key bindings of `const KEYS: &[Binding] = &[…];` (U96).
+fn bindings(source: &str) -> Result<Vec<Binding>, String> {
+    let file = syn::parse_file(source).map_err(|error| format!("`{INVENTORY}` does not parse as Rust: {error}"))?;
+    let consts = string_consts(&file);
+    let table = file.items.iter().find_map(|item| match item {
+        Item::Const(item) if item.ident == "KEYS" => Some(&*item.expr),
+        _ => None,
+    });
+    let Some(table) = table else {
+        return Err(format!("`{INVENTORY}` has no `const KEYS: &[Binding]`; the keymap rule reads nothing else"));
+    };
+    let Some(elements) = array(table) else {
+        return Err(format!("`{INVENTORY}`: `KEYS` is not an array of bindings"));
+    };
+    let mut keys = Vec::new();
+    for element in elements {
+        let Expr::Struct(binding) = element else { continue };
+        let Some(id) = field(binding, "id").and_then(|id| table_id(id, &consts)) else {
+            return Err(format!("`{INVENTORY}`: a key binding has no id"));
+        };
+        let key = field(binding, "key")
+            .and_then(path_text)
+            .map(|path| last_segment(&path).to_owned())
+            .ok_or_else(|| format!("`{INVENTORY}`: the binding of `{id}` names no key"))?;
+        let chord = field(binding, "chord")
+            .and_then(path_text)
+            .map(|path| last_segment(&path).to_owned())
+            .ok_or_else(|| format!("`{INVENTORY}`: the binding of `{id}` names no chord"))?;
+        let label = field(binding, "label").and_then(string_literal).unwrap_or_default();
+        keys.push(Binding { id, key, chord, label, line: binding.brace_token.span.open().start().line });
+    }
+    Ok(keys)
+}
+
+/// The shell action ids of `const ACTIONS: &[Action] = &[…];` (U96).
+fn actions(source: &str) -> Option<BTreeSet<String>> {
+    let file = syn::parse_file(source).ok()?;
+    let consts = string_consts(&file);
+    let table = file.items.iter().find_map(|item| match item {
+        Item::Const(item) if item.ident == "ACTIONS" => Some(&*item.expr),
+        _ => None,
+    })?;
+    Some(
+        array(table)?
+            .iter()
+            .filter_map(|element| match element {
+                Expr::Struct(action) => field(action, "id").and_then(|id| table_id(id, &consts)),
+                other => table_id(other, &consts),
+            })
+            .collect(),
+    )
 }
 
 /// The atom ids the inventory may key a row by, `const ATOMS: &[&str] = &[…];` (ADR 0118).
@@ -473,28 +633,45 @@ mod tests {
     const REGISTRY: &str = "static COMMANDS: &[CommandSpec] = &[\n    foo_cmds::BAR,\n];\n";
     const FOO: &str = "pub const BAR_ID: &str = \"foo.bar\";\npub const BAR_LABEL: Message = Message::FooBar;\npub(crate) const BAR: CommandSpec = CommandSpec::new(BAR_ID, BAR_LABEL, enabled, run);\n";
 
-    fn row(id: &str, places: &str, key: &str, icon: &str) -> String {
+    fn row(id: &str, places: &str, icon: &str) -> String {
         format!(
             "Row {{\n    id: \"{id}\",\n    label: Message::FooBar,\n    places: &[{places}],\n    \
-             applies: Applies::Always,\n    key: {key},\n    icon: {icon},\n}},\n"
+             applies: Applies::Always,\n    icon: {icon},\n}},\n"
         )
     }
 
-    fn inventory(rows: &[String]) -> String {
-        format!("const ROWS: &[Row] = &[\n{}];\n", rows.concat())
+    /// One binding: `id` is a Rust expression, so a test may name a literal or a const.
+    fn binding(id: &str, key: &str, chord: &str, label: &str) -> String {
+        format!("Binding {{ id: {id}, key: egui::Key::{key}, chord: Chord::{chord}, label: \"{label}\" }},\n")
     }
+
+    /// The inventory source a test writes: rows, the shell actions and the key table (U96).
+    fn inventory(rows: &[String], keys: &[String], actions: &str) -> String {
+        format!(
+            "pub const FILE_SAVE: &str = \"file.save\";\n\
+             pub const ACTIONS: &[Action] = &[{actions}];\n\
+             const ROWS: &[Row] = &[\n{}];\n\
+             const KEYS: &[Binding] = &[\n{}];\n",
+            rows.concat(),
+            keys.concat()
+        )
+    }
+
+    /// The one shell action every fixture declares, so the action rule has a healthy default.
+    const ONE_ACTION: &str = "Action { id: FILE_SAVE, words: Message::ShortcutSave },";
+    const ONE_KEY: &str = "Binding { id: FILE_SAVE, key: egui::Key::S, chord: Chord::Ctrl, label: \"Ctrl+S\" },\n";
 
     fn map(cell: &str) -> String {
         format!("const MAP: [GroupSpec; 1] = [GroupSpec {{ id: \"g\", label: Message::Group, tools: &[{cell}] }}];\n")
     }
 
-    fn spec_tree(name: &str, rows: &[String], cell: &str) -> PathBuf {
+    fn spec_tree(name: &str, inventory_source: &str, cell: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("xtask-inventory-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let files = [
             ("crates/engine/src/commands.rs", REGISTRY.to_owned()),
             ("crates/engine/src/foo_cmds.rs", FOO.to_owned()),
-            ("crates/ui/src/inventory.rs", inventory(rows)),
+            ("crates/ui/src/inventory.rs", inventory_source.to_owned()),
             ("crates/ui/src/toolbars/spec.rs", map(cell)),
         ];
         for (relative, contents) in files {
@@ -512,11 +689,12 @@ mod tests {
     }
 
     /// A registered command, a row for it and a drawn cell: the gate is quiet.
-    const DRAWN: &str = "ToolSpec { id: \"g.cell\", label: Message::FooBar, icon: Some(icons::contour::LINE), shortcut: None, run: Some(ToolKind::FrameAll), method: None, variants: &[] }";
+    const DRAWN: &str = "ToolSpec { id: \"g.cell\", label: Message::FooBar, icon: Some(icons::contour::LINE), run: Some(ToolKind::FrameAll), method: None, variants: &[] }";
 
     #[test]
     fn a_healthy_inventory_passes() {
-        let root = spec_tree("ok", &[row("foo.bar", "Place::Ribbon", "None", "None")], DRAWN);
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let root = spec_tree("ok", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         assert_eq!(problems(&root), Vec::<String>::new());
         let mut violations = Vec::new();
         assert_eq!(check(&root, &mut violations), Some(3), "the inventory, the registry and the map");
@@ -525,7 +703,8 @@ mod tests {
 
     #[test]
     fn a_command_without_a_row_is_named() {
-        let root = spec_tree("missing", &[row("foo.other", "Place::Card", "None", "None")], DRAWN);
+        let rows = [row("foo.other", "Place::Card", "None")];
+        let root = spec_tree("missing", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         let violations = problems(&root);
         assert!(
             violations.iter().any(|violation| violation.contains("the command `foo.bar`")
@@ -538,11 +717,8 @@ mod tests {
 
     #[test]
     fn a_row_for_an_unknown_id_is_named() {
-        let root = spec_tree(
-            "unknown",
-            &[row("foo.bar", "Place::Ribbon", "None", "None"), row("foo.qux", "Place::Card", "None", "None")],
-            DRAWN,
-        );
+        let rows = [row("foo.bar", "Place::Ribbon", "None"), row("foo.qux", "Place::Card", "None")];
+        let root = spec_tree("unknown", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         let violations = problems(&root);
         assert!(
             violations
@@ -555,7 +731,8 @@ mod tests {
 
     #[test]
     fn an_api_row_that_claims_a_surface_is_named() {
-        let root = spec_tree("api", &[row("foo.bar", "Place::Api, Place::Card", "None", "None")], DRAWN);
+        let rows = [row("foo.bar", "Place::Api, Place::Card", "None")];
+        let root = spec_tree("api", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         let violations = problems(&root);
         assert!(
             violations
@@ -567,28 +744,72 @@ mod tests {
     }
 
     #[test]
-    fn two_rows_for_one_id_and_two_keys_are_named() {
-        let root = spec_tree(
-            "duplicate",
-            &[
-                row("foo.bar", "Place::Ribbon", "Some(\"G\")", "None"),
-                row("foo.bar", "Place::Card", "Some(\"G\")", "None"),
-            ],
-            DRAWN,
-        );
+    fn two_rows_for_one_id_are_named() {
+        let rows = [row("foo.bar", "Place::Ribbon", "None"), row("foo.bar", "Place::Card", "None")];
+        let root = spec_tree("duplicate", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         let violations = problems(&root);
         assert!(violations.iter().any(|violation| violation.contains("second row for `foo.bar`")), "{violations:?}");
-        assert!(violations.iter().any(|violation| violation.contains("binds `G`")), "{violations:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_key_bound_twice_is_named() {
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let keys = [binding("\"foo.bar\"", "G", "Plain", "G"), binding("FILE_SAVE", "G", "Plain", "G")];
+        let root = spec_tree("two-keys", &inventory(&rows, &keys, ONE_ACTION), DRAWN);
+        let violations = problems(&root);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("binds `G` to `file.save`")
+                    && violation.contains("already carries it")),
+            "{violations:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_key_for_an_id_nothing_runs_is_named() {
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let keys = [ONE_KEY.to_owned(), binding("\"foo.nowhere\"", "Q", "Plain", "Q")];
+        let root = spec_tree("key-unknown", &inventory(&rows, &keys, ONE_ACTION), DRAWN);
+        let violations = problems(&root);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("`foo.nowhere`") && violation.contains("no method of")),
+            "{violations:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_key_under_a_method_id_is_accepted() {
+        // A drawing key is filed under the map's method id, not a command id (U96).
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let keys = [ONE_KEY.to_owned(), binding("\"g.cell\"", "L", "Plain", "L")];
+        let root = spec_tree("key-method", &inventory(&rows, &keys, ONE_ACTION), DRAWN);
+        assert_eq!(problems(&root), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_shell_action_without_a_key_is_named() {
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let actions = "Action { id: FILE_SAVE, words: Message::ShortcutSave }, Action { id: \"file.new\", words: Message::ShortcutNewScene },";
+        let root = spec_tree("action-no-key", &inventory(&rows, &[ONE_KEY.to_owned()], actions), DRAWN);
+        let violations = problems(&root);
+        assert!(
+            violations.iter().any(|violation| violation.contains("`file.new`") && violation.contains("has no key")),
+            "{violations:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_label_the_command_does_not_print_is_named() {
-        let root = spec_tree(
-            "label",
-            &[row("foo.bar", "Place::Card", "None", "None").replace("Message::FooBar", "Message::SomethingElse")],
-            DRAWN,
-        );
+        let rows = [row("foo.bar", "Place::Card", "None").replace("Message::FooBar", "Message::SomethingElse")];
+        let root = spec_tree("label", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), DRAWN);
         let violations = problems(&root);
         assert!(
             violations.iter().any(|violation| violation.contains("`foo.bar`")
@@ -601,8 +822,9 @@ mod tests {
 
     #[test]
     fn a_live_cell_without_art_is_named() {
-        let bare = "ToolSpec { id: \"g.cell\", label: Message::FooBar, icon: None, shortcut: None, run: Some(ToolKind::FrameAll), method: None, variants: &[] }";
-        let root = spec_tree("art", &[row("foo.bar", "Place::Ribbon", "None", "None")], bare);
+        let bare = "ToolSpec { id: \"g.cell\", label: Message::FooBar, icon: None, run: Some(ToolKind::FrameAll), method: None, variants: &[] }";
+        let rows = [row("foo.bar", "Place::Ribbon", "None")];
+        let root = spec_tree("art", &inventory(&rows, &[ONE_KEY.to_owned()], ONE_ACTION), bare);
         let violations = problems(&root);
         assert!(
             violations

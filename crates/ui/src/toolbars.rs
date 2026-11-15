@@ -220,40 +220,18 @@ pub struct Shortcut {
     pub shift: bool,
 }
 
-/// The shortcut that starts a drawing tool.
+/// The shortcut that starts a drawing tool, read from the inventory's key table (U96).
 ///
-/// The letters are free in the viewport (`F` frames, `O` toggles the projection, `G` the grid), so
-/// the tooltip and the key handler can share one table.
-pub const fn shortcut(tool: DrawTool) -> Option<Shortcut> {
-    let (key, shift) = match tool {
-        DrawTool::Line => (egui::Key::L, false),
-        DrawTool::Polyline => (egui::Key::P, false),
-        DrawTool::Arc => (egui::Key::A, false),
-        DrawTool::ArcFromCenter => (egui::Key::A, true),
-        DrawTool::Rectangle => (egui::Key::R, false),
-        DrawTool::RectangleFromCenter => (egui::Key::R, true),
-        DrawTool::RectangleFromCenterDirected => (egui::Key::D, true),
-        DrawTool::Circle => (egui::Key::C, false),
-        DrawTool::CircleThreePoints => (egui::Key::C, true),
-        DrawTool::RegularPolygon => (egui::Key::N, false),
-    };
-    Some(Shortcut { key, shift })
+/// The key is filed under the method the tool draws, so the button hint, the tool list and the
+/// shell's key reader all print and consume one row.
+pub fn shortcut(tool: DrawTool) -> Option<Shortcut> {
+    let binding = crate::inventory::binding(spec::method_id(tool))?;
+    Some(Shortcut { key: binding.key, shift: binding.chord == crate::inventory::Chord::Shift })
 }
 
 /// The label of a tool's shortcut, for the button hint.
-pub const fn shortcut_label(tool: DrawTool) -> Option<&'static str> {
-    match tool {
-        DrawTool::Line => Some("L"),
-        DrawTool::Polyline => Some("P"),
-        DrawTool::Arc => Some("A"),
-        DrawTool::ArcFromCenter => Some("Shift+A"),
-        DrawTool::Rectangle => Some("R"),
-        DrawTool::RectangleFromCenter => Some("Shift+R"),
-        DrawTool::RectangleFromCenterDirected => Some("Shift+D"),
-        DrawTool::Circle => Some("C"),
-        DrawTool::CircleThreePoints => Some("Shift+C"),
-        DrawTool::RegularPolygon => Some("N"),
-    }
+pub fn shortcut_label(tool: DrawTool) -> Option<&'static str> {
+    crate::inventory::key_label(spec::method_id(tool))
 }
 
 /// The strip's label for a drawing tool: its name plus the one gesture the tool does not show.
@@ -1744,15 +1722,15 @@ mod tests {
     fn a_pinned_method_without_artwork_keeps_the_tool_glyph() {
         // A method that shares its tool's shape has no drawing of its own; the face must fall back
         // to the tool rather than leave a blank cell.
+        // The ids are the map's own, because the key of a method is filed under its id (U96).
         static ARTWORKLESS: ToolSpec = ToolSpec {
-            id: "test.artworkless",
+            id: "sketch.create.circle",
             label: Message::ToolCircle,
             icon: Some(icons::contour::CIRCLE),
-            shortcut: Some("C"),
             run: Some(ToolKind::Draw(DrawTool::Circle)),
             method: Some(Message::ToolCircleCentreRadius),
             variants: &[VariantSpec {
-                id: "test.artworkless.three-points",
+                id: "sketch.create.circle.three-points",
                 label: Message::ToolCircleThreePoints,
                 icon: None,
                 run: Some(ToolKind::Draw(DrawTool::CircleThreePoints)),

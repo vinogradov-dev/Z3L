@@ -45,11 +45,15 @@ One `Row` per capability, keyed by the command's stable id: `id`, `label`, `plac
    operation; `Applies::Context(ActsOn::…)` for anything acting on the node under the pointer. The
    context menu, the card and the tool card all filter by it, so a wrong context is a capability
    offered where it cannot run.
-4. **Claim the key, once.** `key` is the row's column and the record of a binding (ADR 0117): one
-   key names one row, and the inventory's test refuses two rows that claim it. The reader is the
-   shell's table in `apps/furnicraft/src/shortcuts.rs`; read the row before adding or moving a
-   binding, so remapping stays a data edit instead of a hunt. A key that shadows a text field or a
-   running tool is a finding (ADR 0076).
+4. **Claim the key, once.** A binding is one row of `KEYS` in `crates/ui/src/inventory.rs`: the id it
+   runs, `Chord` (the modifiers), `egui::Key` and the label the interface prints, checked against the
+   pair by the inventory's test. One key runs one id and one id has one key. A command's key is filed
+   under its id; a drawing or view tool's under the *method* id of the ribbon map, because a command
+   reached by six methods has six keys; a shell action (`file.save`, `edit.undo`) is one row of
+   `ACTIONS` with its words. The readers ask the table by id — `consume` in
+   `apps/furnicraft/src/shortcuts.rs` for the shell, `inventory::key_label` for the ribbon hint and
+   the Settings page — so a remapped key is a data edit. A key that shadows a text field or a running
+   tool is a finding (ADR 0076).
 5. **Name the icon, or leave it empty.** `icon` is the *one* button that draws the capability, taken
    from `crates/ui/src/icons.rs`; it is `None` when no button draws it. A new drawing is authored as
    SVG under `assets/icons/`, follows `assets/icons/STYLE_GUIDE.md` and `assets/README.md`, and a
@@ -85,8 +89,9 @@ cargo xtask skills
 
 `cargo xtask ui-rules` runs the inventory check in `xtask/src/inventory.rs`: a registered command
 with no row, a row naming an id that is neither a command nor declared in `ATOMS`, an `Api` row that
-also claims a surface, a second row for one id, two rows sharing a key, and a live ribbon cell with
-no artwork all fail, each with a sentence naming the file. One icon file shared by two actions is
+also claims a surface, a second row for one id, a live ribbon cell with no artwork, a key bound
+twice, a binding or an action naming an id no command, atom, action or ribbon method holds, and a
+shell action with no key all fail, each with a sentence naming the file. One icon file shared by two actions is
 printed for review and passes. `cargo xtask ci` runs the same rule with the rest of the gate.
 
 ## Stop and ask the owner

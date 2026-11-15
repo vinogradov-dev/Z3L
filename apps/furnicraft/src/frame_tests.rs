@@ -679,6 +679,24 @@ fn a_locked_node_refuses_the_delete_key_and_names_itself() {
 }
 
 #[test]
+fn the_grid_key_turns_the_running_drafts_grid_and_nothing_else() {
+    // The key is read with the shell's table and its effect belongs to the draft in front: outside a
+    // draft the shell asks for it and the document changes nothing (U96).
+    let mut harness = Harness::new("frame-grid-key");
+    harness.settle();
+    let idle = harness.app.tabs.active().draw_gizmo.grid();
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_eq!(harness.app.tabs.active().draw_gizmo.grid(), idle, "no draft, no snap to turn");
+
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::Line);
+    harness.settle();
+    let revision = harness.revision();
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_ne!(harness.app.tabs.active().draw_gizmo.grid(), idle, "the key turned the draft's grid");
+    assert_eq!(harness.revision(), revision, "the grid is view state");
+}
+
+#[test]
 fn no_chrome_gesture_writes_a_revision() {
     // A fold, a hide, a ribbon fold and a camera move are view state: the document must not gain an
     // undo entry, a dirty marker or a rebuild from any of them.

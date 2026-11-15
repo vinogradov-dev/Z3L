@@ -67,6 +67,11 @@ is absent from all of them.
   needs a row.
 - The table is a register to keep current, and the gate is the only thing that makes it worth having;
   a row that no surface reads is a defect the gate reports.
+- The key column is its own const table (`KEYS` in the same module), keyed by the same ids: a key
+  runs a *method*, and one command can carry six, so four fields — id, chord, key, printed label —
+  say a binding once. The shell consumes it by id, the ribbon prints the label and the Settings page
+  walks the rows; an action the shell owns rather than the document (`file.save`, `edit.undo`) is one
+  row of `ACTIONS` with its words (U96).
 - `plan/map.md` keeps saying where a feature lives in code; the inventory says where it lives in the
   interface. They are different questions and each has one owner.
 

@@ -4,7 +4,7 @@
 //! ribbon map and the palette's parameter builders — so a capability could be added with no home,
 //! or with two homes that disagree. This module is the fourth register that ends that: a row is
 //! keyed by the command's stable id and says where the capability appears, who it applies to, its
-//! default key, its artwork and its words (ADR 0117).
+//! artwork and its words (ADR 0117), and [`KEYS`] beside it is the one table of keys.
 //!
 //! A surface filters this table instead of writing its own list: the palette shows every row that
 //! has a place, and the context menu (`crate::node_actions`) shows the rows whose [`Applies`] matches
@@ -18,6 +18,12 @@
 //! registered command has no row, when a row names an id no command registered, when an id carries
 //! two labels or two keys, when an `Api` row claims another place, and when a live ribbon cell has
 //! no artwork.
+//!
+//! A key is data, not a match arm. [`KEYS`] holds every binding once — the modifiers, the key, the
+//! spelling the interface prints and the id it runs — so the shell consumes a key by id
+//! (`apps/furnicraft/src/shortcuts.rs`), the ribbon prints the label of the method it belongs to, and
+//! the Settings page lists the same rows. A user-assignable key would rewrite this table and nothing
+//! else (U96); until then the defaults are what the table says.
 
 use furnicraft_text::Message;
 
@@ -88,10 +94,174 @@ pub struct Row {
     pub places: &'static [Place],
     /// Whether it acts on a selection.
     pub applies: Applies,
-    /// The default key, in the spelling the interface prints (`Ctrl+S`, `Delete`).
-    pub key: Option<&'static str>,
     /// The artwork of the one button that draws it, or `None` when it has no button of its own.
     pub icon: Option<Icon>,
+}
+
+/// The modifier pair a key is pressed with, named once so the printed label and the pair the shell
+/// consumes are the same row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chord {
+    /// The key alone.
+    Plain,
+    /// Shift and the key.
+    Shift,
+    /// Ctrl and the key.
+    Ctrl,
+    /// Ctrl, Shift and the key.
+    CtrlShift,
+    /// Alt and the key.
+    Alt,
+    /// The platform's command key: Ctrl on Windows and Linux, Command on macOS.
+    Command,
+}
+
+impl Chord {
+    /// The pair the shell hands to `egui` when it consumes the key.
+    pub fn modifiers(self) -> egui::Modifiers {
+        match self {
+            Chord::Plain => egui::Modifiers::NONE,
+            Chord::Shift => egui::Modifiers::SHIFT,
+            Chord::Ctrl => egui::Modifiers::CTRL,
+            Chord::CtrlShift => egui::Modifiers { shift: true, ..egui::Modifiers::CTRL },
+            Chord::Alt => egui::Modifiers::ALT,
+            Chord::Command => egui::Modifiers::COMMAND,
+        }
+    }
+
+    /// The word the interface prints in front of the key, in the spelling the label column uses.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Chord::Plain => "",
+            Chord::Shift => "Shift+",
+            Chord::Ctrl => "Ctrl+",
+            Chord::CtrlShift => "Ctrl+Shift+",
+            Chord::Alt => "Alt+",
+            // The label says Ctrl on every platform, which is what the interface printed before the
+            // table existed; a macOS spelling is a wording decision, not a binding one.
+            Chord::Command => "Ctrl+",
+        }
+    }
+}
+
+/// One key binding: the id it runs, the key itself and the words the interface prints for it.
+///
+/// The row is the one record of a binding: the shell consumes the key by [`Binding::id`], the ribbon
+/// prints [`Binding::label`] and the Settings page lists the pair, so a remapped key is a data edit
+/// rather than a hunt through three files (ADR 0117).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binding {
+    /// What the key runs: a command's id, a method's id from the ribbon map, or an [`ACTIONS`] id.
+    pub id: &'static str,
+    /// The key that runs it.
+    pub key: egui::Key,
+    /// The modifier pair the key is pressed with.
+    pub chord: Chord,
+    /// The spelling the interface prints, checked against the pair by the inventory's own test.
+    pub label: &'static str,
+}
+
+/// An interface action the shell runs from a key and no engine command answers for.
+///
+/// A file operation, an undo and a panel toggle belong to the shell rather than the document, so they
+/// have no row in [`ROWS`] and no registry entry; they still need an id for a key to name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Action {
+    /// The stable id, namespaced like a command's.
+    pub id: &'static str,
+    /// The words the Settings page prints, in both languages.
+    pub words: Message,
+}
+
+/// The id of the file operation that opens an empty scene in a new tab.
+pub const FILE_NEW: &str = "file.new";
+/// The id of the operation that closes the active tab.
+pub const FILE_CLOSE: &str = "file.close";
+/// The id of the operation that saves the active scene.
+pub const FILE_SAVE: &str = "file.save";
+/// The id of the document undo.
+pub const EDIT_UNDO: &str = "edit.undo";
+/// The id of the document redo.
+pub const EDIT_REDO: &str = "edit.redo";
+/// The id of the command palette.
+pub const PALETTE_OPEN: &str = "palette.open";
+/// The id that hides both side panels, or shows the pair the last press put away.
+pub const PANELS_HIDE: &str = "view.panels.hide";
+/// The id that folds both side panels to strips, or unfolds them again.
+pub const PANELS_COLLAPSE: &str = "view.panels.collapse";
+
+/// Every interface action the shell runs from a key, with no command behind it.
+pub const ACTIONS: &[Action] = &[
+    Action { id: FILE_NEW, words: Message::ShortcutNewScene },
+    Action { id: FILE_CLOSE, words: Message::ShortcutCloseTab },
+    Action { id: FILE_SAVE, words: Message::ShortcutSave },
+    Action { id: EDIT_UNDO, words: Message::ShortcutUndo },
+    Action { id: EDIT_REDO, words: Message::ShortcutRedo },
+    Action { id: PALETTE_OPEN, words: Message::ShortcutPalette },
+    Action { id: PANELS_HIDE, words: Message::ShortcutHidePanels },
+    Action { id: PANELS_COLLAPSE, words: Message::ShortcutCollapsePanels },
+];
+
+/// Every key the interface binds, in the order the Settings page lists them.
+///
+/// The table is the keymap: the shell consumes a key by looking its id up here, the ribbon prints the
+/// label of the method it belongs to, and the Settings page walks the rows. The drawing tools' keys
+/// are filed under the map's method ids, because a command reached by six methods has six keys and
+/// the method is what a key starts (ADR 0117, 0118).
+///
+pub const KEYS: &[Binding] = &[
+    Binding { id: FILE_NEW, key: egui::Key::N, chord: Chord::Ctrl, label: "Ctrl+N" },
+    Binding { id: FILE_CLOSE, key: egui::Key::W, chord: Chord::Ctrl, label: "Ctrl+W" },
+    Binding { id: FILE_SAVE, key: egui::Key::S, chord: Chord::Ctrl, label: "Ctrl+S" },
+    Binding { id: EDIT_UNDO, key: egui::Key::Z, chord: Chord::Ctrl, label: "Ctrl+Z" },
+    Binding { id: EDIT_REDO, key: egui::Key::Y, chord: Chord::Ctrl, label: "Ctrl+Y" },
+    Binding { id: PALETTE_OPEN, key: egui::Key::K, chord: Chord::Command, label: "Ctrl+K" },
+    Binding { id: PANELS_HIDE, key: egui::Key::Num0, chord: Chord::Ctrl, label: "Ctrl+0" },
+    Binding { id: PANELS_COLLAPSE, key: egui::Key::Num0, chord: Chord::CtrlShift, label: "Ctrl+Shift+0" },
+    Binding { id: "view.layout.maximize", key: egui::Key::W, chord: Chord::Alt, label: "Alt+W" },
+    Binding { id: "node.delete", key: egui::Key::Delete, chord: Chord::Plain, label: "Delete" },
+    Binding { id: "view.projection.toggle", key: egui::Key::O, chord: Chord::Plain, label: "O" },
+    Binding { id: "view.projection.frame-all", key: egui::Key::F, chord: Chord::Plain, label: "F" },
+    Binding { id: "view.snaps.grid", key: egui::Key::G, chord: Chord::Plain, label: "G" },
+    Binding { id: "sketch.create.line", key: egui::Key::L, chord: Chord::Plain, label: "L" },
+    Binding { id: "sketch.create.polyline", key: egui::Key::P, chord: Chord::Plain, label: "P" },
+    Binding { id: "sketch.create.arc", key: egui::Key::A, chord: Chord::Plain, label: "A" },
+    Binding { id: "sketch.create.arc.centre", key: egui::Key::A, chord: Chord::Shift, label: "Shift+A" },
+    Binding { id: "sketch.create.rectangle", key: egui::Key::R, chord: Chord::Plain, label: "R" },
+    Binding { id: "sketch.create.rectangle.centre", key: egui::Key::R, chord: Chord::Shift, label: "Shift+R" },
+    Binding { id: "sketch.create.rectangle.centre-directed", key: egui::Key::D, chord: Chord::Shift, label: "Shift+D" },
+    Binding { id: "sketch.create.circle", key: egui::Key::C, chord: Chord::Plain, label: "C" },
+    Binding { id: "sketch.create.circle.three-points", key: egui::Key::C, chord: Chord::Shift, label: "Shift+C" },
+    Binding { id: "sketch.create.polygon", key: egui::Key::N, chord: Chord::Plain, label: "N" },
+];
+
+/// The binding with `id`, if a key runs it.
+pub fn binding(id: &str) -> Option<&'static Binding> {
+    KEYS.iter().find(|binding| binding.id == id)
+}
+
+/// The printed spelling of the key that runs `id`, for a hint or a list column.
+pub fn key_label(id: &str) -> Option<&'static str> {
+    binding(id).map(|binding| binding.label)
+}
+
+/// The interface action `id` names, if it is a shell action rather than a command or a method.
+pub fn action(id: &str) -> Option<&'static Action> {
+    ACTIONS.iter().find(|action| action.id == id)
+}
+
+/// The words the interface prints for a binding that has no command and no method of its own.
+///
+/// A command's words are its row's, a method's are the map's, and a shell action carries its own; the
+/// Settings page walks [`KEYS`] and asks this function, so one id is never described twice.
+pub fn words(id: &str) -> Option<Message> {
+    if let Some(row) = row(id) {
+        return Some(row.label);
+    }
+    if let Some(action) = action(id) {
+        return Some(action.words);
+    }
+    crate::toolbars::spec::words(id)
 }
 
 /// What a node is, for the one question a surface asks the table: does this capability act on it?
@@ -123,6 +293,14 @@ impl Row {
     /// Whether the capability appears in `place`.
     pub fn has(&self, place: Place) -> bool {
         self.places.contains(&place)
+    }
+
+    /// The key that runs this row, if the interface binds one.
+    ///
+    /// The key is not a column of the row: a key runs a *method*, and one command can have six, so
+    /// the binding table is keyed by the same id and this is the row's reading of it.
+    pub fn key(&self) -> Option<&'static Binding> {
+        binding(self.id)
     }
 
     /// Whether a menu offers this capability for a node of `kind`.
@@ -164,7 +342,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreatePanel,
         places: &[Place::Ribbon, Place::Palette],
         applies: Applies::Always,
-        key: None,
         icon: None,
     },
     Row {
@@ -172,7 +349,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateContourPanel,
         places: &[Place::Api],
         applies: Applies::Always,
-        key: None,
         icon: None,
     },
     Row {
@@ -180,7 +356,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetPanelOutline,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -188,7 +363,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdBakePanelOutline,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -196,7 +370,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateAssembly,
         places: &[Place::Ribbon, Place::Palette],
         applies: Applies::Always,
-        key: None,
         icon: Some(crate::icons::scene::ASSEMBLY),
     },
     Row {
@@ -204,7 +377,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateProduct,
         places: &[Place::Ribbon],
         applies: Applies::Always,
-        key: None,
         icon: Some(crate::icons::scene::PRODUCT),
     },
     Row {
@@ -212,7 +384,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetProductEnvelope,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Container),
-        key: None,
         icon: None,
     },
     Row {
@@ -220,7 +391,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdRenamePanel,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -228,7 +398,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdRename,
         places: &[Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -236,7 +405,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdResizePanel,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -244,7 +412,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetPanelMaterial,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -252,7 +419,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetEdgeBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -260,7 +426,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearEdgeBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -268,7 +433,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetCornerBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -276,7 +440,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearCornerBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -284,7 +447,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetContourBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -292,7 +454,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearContourBanding,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -300,7 +461,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetCornerFeature,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -308,7 +468,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearCornerFeature,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -316,7 +475,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetEdgeBow,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -324,7 +482,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearEdgeBow,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -332,7 +489,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetBevel,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -340,7 +496,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearBevel,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -348,7 +503,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdAddMachining,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -356,7 +510,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdUpdateMachining,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -364,7 +517,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdRemoveMachining,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -372,7 +524,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdMoveMachining,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
-        key: None,
         icon: None,
     },
     Row {
@@ -380,7 +531,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdDelete,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: Some("Delete"),
         icon: None,
     },
     Row {
@@ -388,7 +538,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdDeleteSelection,
         places: &[Place::Palette],
         applies: Applies::Context(ActsOn::Selection),
-        key: None,
         icon: None,
     },
     Row {
@@ -396,7 +545,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdDuplicate,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -404,7 +552,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdGroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Selection),
-        key: None,
         icon: None,
     },
     Row {
@@ -412,7 +559,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdUngroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Container),
-        key: None,
         icon: None,
     },
     Row {
@@ -420,7 +566,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdPlace,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -428,7 +573,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdPlaceAtWorldZero,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -436,7 +580,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdPlaceSelection,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Selection),
-        key: None,
         icon: None,
     },
     Row {
@@ -444,7 +587,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetPivot,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -452,7 +594,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCenterPivot,
         places: &[Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -460,7 +601,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdRebaseOrigin,
         places: &[Place::Api],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -468,7 +608,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetProperty,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -476,7 +615,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetProperties,
         places: &[Place::Api],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -484,7 +622,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdClearProperty,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Node),
-        key: None,
         icon: None,
     },
     Row {
@@ -492,7 +629,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdConvertToGroup,
         places: &[Place::ContextMenu, Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Container),
-        key: None,
         icon: None,
     },
     Row {
@@ -500,7 +636,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreatePrimitive,
         places: &[Place::Ribbon],
         applies: Applies::Always,
-        key: None,
         icon: None,
     },
     Row {
@@ -508,7 +643,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdReplacePrimitive,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -516,7 +650,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateExtrusion,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -524,7 +657,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetExtrusionHeight,
         places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -532,7 +664,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdReplaceContour,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -540,7 +671,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreatePath,
         places: &[Place::Ribbon],
         applies: Applies::Always,
-        key: None,
         icon: None,
     },
     Row {
@@ -548,7 +678,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdExtrudePath,
         places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
     Row {
@@ -556,7 +685,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdReplacePath,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -564,7 +692,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCollapseToMesh,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -572,7 +699,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdMoveVertices,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
-        key: None,
         icon: None,
     },
     Row {
@@ -580,7 +706,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateCamera,
         places: &[Place::Ribbon, Place::Palette, Place::Card],
         applies: Applies::Always,
-        key: None,
         icon: Some(crate::icons::scene::CAMERA),
     },
     Row {
@@ -588,7 +713,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdCreateLight,
         places: &[Place::Ribbon, Place::Palette, Place::Card],
         applies: Applies::Always,
-        key: None,
         icon: Some(crate::icons::scene::LIGHT),
     },
     Row {
@@ -596,7 +720,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetActiveCamera,
         places: &[Place::Palette, Place::Card],
         applies: Applies::Context(ActsOn::Camera),
-        key: None,
         icon: None,
     },
     Row {
@@ -604,7 +727,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetCameraProjection,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Camera),
-        key: None,
         icon: None,
     },
     Row {
@@ -612,7 +734,6 @@ pub const ROWS: &[Row] = &[
         label: Message::CmdSetLightParameters,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Light),
-        key: None,
         icon: None,
     },
 ];
@@ -673,16 +794,65 @@ mod tests {
     }
 
     #[test]
-    fn a_key_and_an_icon_belong_to_one_row_each() {
-        let mut keys = BTreeMap::new();
+    fn an_icon_belongs_to_one_row() {
         let mut icons = BTreeMap::new();
         for row in ROWS {
-            if let Some(key) = row.key {
-                assert!(keys.insert(key, row.id).is_none(), "`{key}` is bound to two commands");
-            }
             if let Some(icon) = row.icon {
                 assert!(icons.insert(icon.uri(), row.id).is_none(), "one drawing names two commands");
             }
+        }
+    }
+
+    #[test]
+    fn a_key_runs_one_id_and_prints_its_own_pair() {
+        // The label is the row's spelling and the pair is what the shell consumes, so the two are
+        // checked against each other: a key moved without its label is a key the Settings page lies
+        // about (U96).
+        let mut keys = BTreeMap::new();
+        let mut ids = BTreeMap::new();
+        let mut labels = BTreeMap::new();
+        for binding in KEYS {
+            let pair = format!("{:?}+{}", binding.chord, binding.key.name());
+            assert!(keys.insert(pair.clone(), binding.id).is_none(), "`{pair}` runs two ids");
+            assert!(ids.insert(binding.id, binding.label).is_none(), "`{}` has two keys", binding.id);
+            assert!(labels.insert(binding.label, binding.id).is_none(), "`{}` prints twice", binding.label);
+            assert_eq!(
+                binding.label,
+                format!("{}{}", binding.chord.prefix(), binding.key.name()),
+                "`{}` prints a label its pair does not spell",
+                binding.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_key_runs_something_the_interface_knows() {
+        // A binding names a command, a shell action or a method of the ribbon map; a typo would be a
+        // key that reads as bound and runs nothing.
+        for binding in KEYS {
+            assert!(
+                words(binding.id).is_some(),
+                "`{}` is bound to `{}`, which no row, action or method names",
+                binding.label,
+                binding.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_action_answers_to_a_key() {
+        for action in ACTIONS {
+            assert!(binding(action.id).is_some(), "`{}` is an action no key runs", action.id);
+            assert!(row(action.id).is_none(), "`{}` is an action and a command", action.id);
+        }
+    }
+
+    #[test]
+    fn every_binding_prints_its_words_in_both_languages() {
+        for binding in KEYS {
+            let Some(words) = words(binding.id) else { continue };
+            assert!(!words.text(Lang::En).trim().is_empty(), "`{}` has no English words", binding.label);
+            assert!(!words.text(Lang::Ru).trim().is_empty(), "`{}` has no Russian words", binding.label);
         }
     }
 

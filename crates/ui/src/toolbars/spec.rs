@@ -23,8 +23,6 @@ use furnicraft_text::Message;
 use crate::draw::DrawTool;
 use crate::icons::{self, Icon};
 
-use super::shortcut_label;
-
 /// What a click on a tool runs.
 ///
 /// This is the only code a row carries: the map says where a tool sits and what it is called, this
@@ -142,8 +140,6 @@ pub struct ToolSpec {
     pub label: Message,
     /// The artwork, or `None` while the tool is planned.
     pub icon: Option<Icon>,
-    /// The shortcut this table prints in the hint, when the tool has one.
-    pub shortcut: Option<&'static str>,
     /// The method a click runs today, or `None` while the tool is planned.
     pub run: Option<ToolKind>,
     /// The name of the tool's own method, when its list names methods rather than repeating the
@@ -154,6 +150,14 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    /// The key that runs this cell, from the inventory's one table (U96).
+    ///
+    /// A cell is a method, so its key is filed under its own id: the map draws the words and the
+    /// inventory says which key runs it, and neither keeps a second copy of the other.
+    pub fn key(&self) -> Option<&'static str> {
+        crate::inventory::key_label(self.id)
+    }
+
     /// Whether the tool can run anything today, which is whether it is drawn at all.
     pub fn is_live(&self) -> bool {
         self.run.is_some() || self.variants.iter().any(|variant| variant.run.is_some())
@@ -170,7 +174,7 @@ impl ToolSpec {
             id: self.id,
             label: self.method.unwrap_or(self.label),
             icon: self.icon,
-            shortcut: self.shortcut,
+            shortcut: self.key(),
             run: self.run,
         }
     }
@@ -181,7 +185,7 @@ impl ToolSpec {
             id: variant.id,
             label: variant.label,
             icon: variant.icon,
-            shortcut: variant.run.and_then(shortcut_of),
+            shortcut: crate::inventory::key_label(variant.id),
             run: variant.run,
         }))
     }
@@ -209,12 +213,52 @@ impl ToolSpec {
     }
 }
 
-/// The shortcut label of a method that runs a drawing tool, when a key names it.
-pub fn shortcut_of(kind: ToolKind) -> Option<&'static str> {
-    match kind {
-        ToolKind::Draw(tool) => super::shortcut_label(tool),
-        _ => None,
+/// The method id the map gives the drawing tool `tool`, which is where its key lives (U96).
+///
+/// The map already ties a tool to its method through [`ToolSpec::run`] and its variants; this is the
+/// same tie read in the other direction, so the shell can ask for one tool's key without walking the
+/// whole map every frame. A test holds the two together.
+pub const fn method_id(tool: DrawTool) -> &'static str {
+    match tool {
+        DrawTool::Line => "sketch.create.line",
+        DrawTool::Polyline => "sketch.create.polyline",
+        DrawTool::Arc => "sketch.create.arc",
+        DrawTool::ArcFromCenter => "sketch.create.arc.centre",
+        DrawTool::Rectangle => "sketch.create.rectangle",
+        DrawTool::RectangleFromCenter => "sketch.create.rectangle.centre",
+        DrawTool::RectangleFromCenterDirected => "sketch.create.rectangle.centre-directed",
+        DrawTool::Circle => "sketch.create.circle",
+        DrawTool::CircleThreePoints => "sketch.create.circle.three-points",
+        DrawTool::RegularPolygon => "sketch.create.polygon",
     }
+}
+
+/// The drawing tool a method id starts, if the method draws.
+///
+/// The shell walks the drawing tools, so this is the inverse of [`method_id`] over the same ten: a
+/// method that does something else returns `None` and a key that names it is not a drawing key.
+pub fn drawing_method(id: &str) -> Option<DrawTool> {
+    crate::toolbars::CONTOUR_TOOLS.into_iter().find(|tool| method_id(*tool) == id)
+}
+
+/// The words a tool or one of its variants prints, by its id.
+///
+/// The Settings page walks the key table and asks this for every id that is not a command and not a
+/// shell action, so a key never describes a method in words of its own (U96).
+pub fn words(id: &str) -> Option<Message> {
+    for tab in tabs() {
+        for group in tab.groups {
+            for tool in group.tools {
+                if tool.id == id {
+                    return Some(tool.label);
+                }
+                if let Some(variant) = tool.variants.iter().find(|variant| variant.id == id) {
+                    return Some(variant.label);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// One captioned group inside a tab.
@@ -329,7 +373,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.line",
                 label: Message::ToolLine,
                 icon: Some(icons::contour::LINE),
-                shortcut: shortcut_label(DrawTool::Line),
                 run: Some(ToolKind::Draw(DrawTool::Line)),
                 method: Some(Message::ToolLineTwoPoints),
                 variants: &[VariantSpec {
@@ -343,7 +386,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.polyline",
                 label: Message::ToolPolyline,
                 icon: Some(icons::contour::POLYLINE),
-                shortcut: shortcut_label(DrawTool::Polyline),
                 run: Some(ToolKind::Draw(DrawTool::Polyline)),
                 method: None,
                 variants: &[],
@@ -352,7 +394,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.rectangle",
                 label: Message::ToolRectangle,
                 icon: Some(icons::contour::RECTANGLE),
-                shortcut: shortcut_label(DrawTool::Rectangle),
                 run: Some(ToolKind::Draw(DrawTool::Rectangle)),
                 method: Some(Message::ToolRectangleFromCorner),
                 variants: &[
@@ -374,7 +415,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.circle",
                 label: Message::ToolCircle,
                 icon: Some(icons::contour::CIRCLE),
-                shortcut: shortcut_label(DrawTool::Circle),
                 run: Some(ToolKind::Draw(DrawTool::Circle)),
                 method: Some(Message::ToolCircleCentreRadius),
                 variants: &[
@@ -402,7 +442,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.arc",
                 label: Message::ToolArc,
                 icon: Some(icons::contour::ARC),
-                shortcut: shortcut_label(DrawTool::Arc),
                 run: Some(ToolKind::Draw(DrawTool::Arc)),
                 method: Some(Message::ToolArcTwoPoints),
                 variants: &[
@@ -424,7 +463,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.create.polygon",
                 label: Message::ToolRegularPolygon,
                 icon: Some(icons::contour::POLYGON),
-                shortcut: shortcut_label(DrawTool::RegularPolygon),
                 run: Some(ToolKind::Draw(DrawTool::RegularPolygon)),
                 method: Some(Message::ToolPolygonSides),
                 variants: &[VariantSpec {
@@ -446,7 +484,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.modify.offset",
                 label: Message::ToolOffset,
                 icon: None,
-                shortcut: None,
                 run: None,
                 method: None,
                 variants: &[
@@ -468,7 +505,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.modify.fillet",
                 label: Message::ToolFillet,
                 icon: None,
-                shortcut: None,
                 run: None,
                 method: None,
                 variants: &[
@@ -490,7 +526,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.modify.chamfer",
                 label: Message::ToolChamfer,
                 icon: None,
-                shortcut: None,
                 run: None,
                 method: None,
                 variants: &[
@@ -531,7 +566,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.dimensions.radius",
                 label: Message::ToolDimensionRadius,
                 icon: None,
-                shortcut: None,
                 run: None,
                 method: None,
                 variants: &[VariantSpec {
@@ -560,7 +594,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.draft.close",
                 label: Message::Close,
                 icon: Some(icons::contour::CLOSE),
-                shortcut: None,
                 run: Some(ToolKind::CloseDraft),
                 method: None,
                 variants: &[],
@@ -569,7 +602,6 @@ const SKETCH: [GroupSpec; 6] = [
                 id: "sketch.draft.cancel",
                 label: Message::Cancel,
                 icon: Some(icons::contour::CANCEL),
-                shortcut: None,
                 run: Some(ToolKind::CancelDraft),
                 method: None,
                 variants: &[],
@@ -587,7 +619,6 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.primitives.cuboid",
                 label: Message::ToolBox,
                 icon: Some(icons::primitives::CUBOID),
-                shortcut: None,
                 run: Some(ToolKind::Primitive(PrimitiveKind::Cuboid)),
                 method: None,
                 variants: &[],
@@ -596,7 +627,6 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.primitives.cylinder",
                 label: Message::ToolCylinder,
                 icon: Some(icons::primitives::CYLINDER),
-                shortcut: None,
                 run: Some(ToolKind::Primitive(PrimitiveKind::Cylinder)),
                 method: None,
                 variants: &[],
@@ -605,7 +635,6 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.primitives.sphere",
                 label: Message::ToolSphere,
                 icon: Some(icons::primitives::SPHERE),
-                shortcut: None,
                 run: Some(ToolKind::Primitive(PrimitiveKind::Sphere)),
                 method: None,
                 variants: &[],
@@ -622,7 +651,6 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.create.extrude",
                 label: Message::ToolExtrude,
                 icon: Some(icons::bodies::EXTRUDE),
-                shortcut: None,
                 run: Some(ToolKind::Extrude),
                 method: None,
                 variants: &[],
@@ -672,7 +700,6 @@ const FURNITURE: [GroupSpec; 6] = [
             id: "furniture.product.frame",
             label: Message::ToolProductFrame,
             icon: Some(icons::scene::PRODUCT),
-            shortcut: None,
             run: Some(ToolKind::Product),
             method: None,
             // The card is the numeric method and the drawn box the pointer method; the split cell
@@ -693,7 +720,6 @@ const FURNITURE: [GroupSpec; 6] = [
                 id: "furniture.panels.post",
                 label: Message::ToolPost,
                 icon: Some(icons::scene::POST),
-                shortcut: None,
                 run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }),
                 method: Some(Message::FillMethodFit),
                 variants: FILL_POST_SHAPE,
@@ -702,7 +728,6 @@ const FURNITURE: [GroupSpec; 6] = [
                 id: "furniture.panels.shelf",
                 label: Message::ToolShelf,
                 icon: Some(icons::scene::SHELF),
-                shortcut: None,
                 run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }),
                 method: Some(Message::FillMethodFit),
                 variants: FILL_SHELF_SHAPE,
@@ -713,7 +738,6 @@ const FURNITURE: [GroupSpec; 6] = [
                 id: "furniture.panels.contour",
                 label: Message::ToolContourPanel,
                 icon: Some(icons::scene::PANEL),
-                shortcut: None,
                 run: Some(ToolKind::PanelContour),
                 method: None,
                 variants: &[],
@@ -771,7 +795,6 @@ const SCENE: [GroupSpec; 3] = [
                 id: "scene.objects.camera",
                 label: Message::ToolCamera,
                 icon: Some(icons::scene::CAMERA),
-                shortcut: None,
                 run: Some(ToolKind::Camera),
                 method: None,
                 variants: &[],
@@ -780,7 +803,6 @@ const SCENE: [GroupSpec; 3] = [
                 id: "scene.objects.light",
                 label: Message::ToolLight,
                 icon: Some(icons::scene::LIGHT),
-                shortcut: None,
                 run: Some(ToolKind::Light),
                 method: None,
                 variants: &[],
@@ -789,7 +811,6 @@ const SCENE: [GroupSpec; 3] = [
                 id: "scene.objects.assembly",
                 label: Message::ToolAssembly,
                 icon: Some(icons::scene::ASSEMBLY),
-                shortcut: None,
                 run: Some(ToolKind::Assembly),
                 method: None,
                 variants: &[],
@@ -824,7 +845,6 @@ const VIEW: [GroupSpec; 5] = [
                 id: "view.projection.toggle",
                 label: Message::ToolProjection,
                 icon: Some(icons::view::ORTHOGRAPHIC),
-                shortcut: Some("O"),
                 run: Some(ToolKind::Projection),
                 method: None,
                 variants: &[],
@@ -833,7 +853,6 @@ const VIEW: [GroupSpec; 5] = [
                 id: "view.projection.frame-all",
                 label: Message::ToolFrameAll,
                 icon: Some(icons::view::FRAME_ALL),
-                shortcut: Some("F"),
                 run: Some(ToolKind::FrameAll),
                 method: None,
                 variants: &[],
@@ -876,7 +895,6 @@ const VIEW: [GroupSpec; 5] = [
             id: "view.snaps.grid",
             label: Message::ToolGridSnap,
             icon: Some(icons::view::GRID_SNAP),
-            shortcut: Some("G"),
             run: Some(ToolKind::GridSnap),
             method: None,
             variants: &[],
@@ -886,7 +904,7 @@ const VIEW: [GroupSpec; 5] = [
 
 /// A tool whose command does not exist yet: it holds its place and its name in the map.
 const fn planned(id: &'static str, label: Message) -> ToolSpec {
-    ToolSpec { id, label, icon: None, shortcut: None, run: None, method: None, variants: &[] }
+    ToolSpec { id, label, icon: None, run: None, method: None, variants: &[] }
 }
 
 #[cfg(test)]
@@ -1018,6 +1036,23 @@ mod tests {
     }
 
     #[test]
+    fn every_drawing_tool_names_the_method_the_map_gives_it() {
+        // The key of a drawing tool is filed under the method id the tool draws, so the two maps —
+        // the tool's kind and the method's id — must name the same pair (U96).
+        for tool in crate::toolbars::CONTOUR_TOOLS {
+            let id = method_id(tool);
+            let method = every_tool()
+                .into_iter()
+                .flat_map(|(_, tool)| tool.methods())
+                .find(|method| method.id == id)
+                .unwrap_or_else(|| panic!("`{id}` is no method of the map"));
+            assert_eq!(method.run, Some(ToolKind::Draw(tool)), "`{id}` does not draw the tool it is filed under");
+            assert_eq!(drawing_method(id), Some(tool), "`{id}` answers no drawing tool");
+            assert!(method.shortcut.is_some(), "`{id}` has no key in the inventory's table");
+        }
+    }
+
+    #[test]
     fn the_grid_snap_is_filed_under_its_own_snaps_caption() {
         // The snap changes where a click lands, not how the scene looks, so it left *View › Display*
         // for a group the endpoint, the axis and the object snaps can join (U91).
@@ -1025,7 +1060,7 @@ mod tests {
         let snaps = view.groups.iter().find(|group| group.id == "view.snaps").expect("the snaps group");
         assert_eq!(snaps.label.text(furnicraft_text::Lang::En), "Snaps");
         assert_eq!(snaps.label.text(furnicraft_text::Lang::Ru), "Привязки");
-        let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.shortcut)).collect::<Vec<_>>();
+        let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.key())).collect::<Vec<_>>();
         assert_eq!(tools, vec![("view.snaps.grid", Some(ToolKind::GridSnap), Some("G"))], "the G key and the cell");
         let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
         assert!(

@@ -640,6 +640,16 @@ impl Document {
         save
     }
 
+    /// Turns the drawing grid on or off for the draft in front of the person.
+    ///
+    /// The key is the shell's, so it is read with the rest of the key table even when no tool runs;
+    /// outside a draft the action has nothing to snap and changes nothing.
+    pub(crate) fn toggle_draw_grid(&mut self) {
+        if self.editor.drawing().is_some() {
+            self.draw_gizmo.toggle_grid();
+        }
+    }
+
     /// Removes nodes in one `node.delete.many`, so the whole batch is one undo entry.
     ///
     /// The refusal lands in the status bar like every other failure, and a valid batch leaves the
@@ -2675,11 +2685,8 @@ impl Document {
                     }
                     None => {}
                 }
-                if ui.input(|input| input.key_pressed(egui::Key::G)) {
-                    self.draw_gizmo.toggle_grid();
-                }
-                // Tab is the one key that switches the polyline between a straight segment and an
-                // arc; Alt stays the snap override and never changes the gesture.
+                // The grid key is read by the shell with the rest of the key table and reaches this
+                // draft as one action; outside a draft it changes nothing (U96).
                 if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
                     self.editor.toggle_drawing_arc_mode();
                 }

@@ -890,6 +890,9 @@ impl FurniCraftApp {
             if shortcuts.delete {
                 self.delete_selection(furnicraft_ui::language(ui.ctx()));
             }
+            if shortcuts.grid_snap {
+                self.tabs.active_mut().toggle_draw_grid();
+            }
             if shortcuts.hide_panels {
                 self.shell.panels.toggle_hide_all();
             }
