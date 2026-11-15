@@ -422,6 +422,20 @@ The same basis serves `cuboid`, `cylinder`, `panel`, `assembly` and `extrude`: t
 passive face (`0.12–0.18`) and the geometry the action creates takes the result tone (`0.45–0.60`)
 with the heavy outline. A plate stays a plate at every size.
 
+### 9.3. How one solid is composed
+
+A solid is three passes, in this order, and the order is not cosmetic:
+
+1. the faces, fill only, no stroke — the top face in its tone and the visible side faces in theirs;
+2. the silhouette, one closed path, `fill="none"`, `1.5`, drawn after the faces;
+3. the inner edges, `fill="none"`, `1.5`, one `M` subpath per edge.
+
+Faces are drawn first so no fill ever lands on a finished outline. The inner edges are separate
+subpaths because a flat plate's near corner is an acute angle, and a miter join there grows a spike
+past the vertex — the corner of a shelf would stick out of its own footprint. A butt-ended stroke
+leaves a sub-unit wedge instead, which is invisible at 26 pt and honest at 200 %. Never reach for
+`stroke-linejoin="round"`: the joint is the language, not a per-file choice.
+
 ---
 
 ## 10. Universal Rules for Building Meaning
