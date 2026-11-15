@@ -121,12 +121,12 @@ messages! {
     AlongContour = ["Along contour", "Вдоль контура"],
     FreeMove = ["Free move", "Свободное перемещение"],
     ContourAlongHint = [
-        "Drag corners along their segment  ·  double-click a side to split  ·  Enter apply  ·  Esc cancel",
-        "Перетаскивайте углы вдоль их сегмента  ·  двойной щелчок по стороне делит её  ·  Enter применить  ·  Esc отмена"
+        "Drag corners along their segment, or click a corner twice to move it  ·  double-click a side to split  ·  Enter apply  ·  Esc cancel",
+        "Перетаскивайте углы вдоль их сегмента или щёлкните угол дважды, чтобы перенести  ·  двойной щелчок по стороне делит её  ·  Enter применить  ·  Esc отмена"
     ],
     ContourFreeHint = [
-        "Drag corners freely  ·  double-click a side to split  ·  Enter apply  ·  Esc cancel",
-        "Перетаскивайте углы свободно  ·  двойной щелчок по стороне делит её  ·  Enter применить  ·  Esc отмена"
+        "Drag corners freely, or click a corner twice to move it  ·  double-click a side to split  ·  Enter apply  ·  Esc cancel",
+        "Перетаскивайте углы свободно или щёлкните угол дважды, чтобы перенести  ·  двойной щелчок по стороне делит её  ·  Enter применить  ·  Esc отмена"
     ],
     DrawStatus = ["Draw · {}{}{}", "Рисование · {}{}{}"],
     PointsSuffixOne = [" · {} point", " · {} точка"],

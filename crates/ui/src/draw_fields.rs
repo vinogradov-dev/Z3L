@@ -6,6 +6,11 @@
 //! only maps work-plane points to the screen and hands the numbers to
 //! [`FieldSet`](crate::FieldSet).
 //!
+//! A node being moved measures the same pair as a segment being drawn: the length from where the
+//! node was and the angle from `+X` of the node's own plane ([`PointState::moved`]). The old
+//! position is the anchor, its dashed chord is the construction line and the arc's radius is the
+//! distance moved, so a moved corner is read with the grammar of a placed point (ADR 0129).
+//!
 //! The pointer drives every number, and a number the person typed replaces the one the pointer
 //! gives: [`PointState::live`] reads what the pointer alone produces, [`PointState::placed`] reads
 //! the same with every lock of a [`FieldSet`] applied, so a typed length survives a snap and a
@@ -167,9 +172,29 @@ impl PointState {
         Self::measure(draft, pointer, Some(fields))
     }
 
+    /// The point a moved node takes: the delta from where it was, as a length and an angle.
+    ///
+    /// `anchor` is the node's old position in its own plane, so the numbers are what the person
+    /// moved it by rather than where it landed: `Length` runs from the old position and `Angle` is
+    /// a direction from `+X`, read with the smaller-angle rule. `fields` applies the typed locks and
+    /// `None` reads the pointer alone. The chord from the old position to the point is the
+    /// construction line, exactly as it is for the chord of an arc (ADR 0127, 0129).
+    pub fn moved(anchor: DVec2, pointer: DVec2, fields: Option<&FieldSet>) -> Option<Self> {
+        let mut state = Self::at_stage(Stage { anchor, shape: Shape::Segment, turn: 0.0 }, pointer, fields)?;
+        state.construction = Some([anchor, state.at]);
+        Some(state)
+    }
+
     /// The point `draft` would place with `pointer`, and the plates that name it.
     fn measure(draft: &DrawDraft, pointer: DVec2, fields: Option<&FieldSet>) -> Option<Self> {
         let stage = stage(draft, pointer)?;
+        let mut state = Self::at_stage(stage, pointer, fields)?;
+        state.construction = construction(draft, state.at);
+        Some(state)
+    }
+
+    /// The point one stage places, and the plates and the reference that name it.
+    fn at_stage(stage: Stage, pointer: DVec2, fields: Option<&FieldSet>) -> Option<Self> {
         let read = |param: FieldParam, live: f64| -> f64 {
             match fields {
                 Some(fields) if fields.is_locked(param) => fields.value(param).unwrap_or(live),
@@ -284,7 +309,7 @@ impl PointState {
                 at
             }
         };
-        Some(Self { point: to_lengths(at)?, at, construction: construction(draft, at), rows, reference })
+        Some(Self { point: to_lengths(at)?, at, construction: None, rows, reference })
     }
 }
 
@@ -618,6 +643,40 @@ mod tests {
         assert_eq!(state.construction, Some([DVec2::ZERO, millimetres(100, 0)]));
         // The chord is measured from the arc's start, not from its middle point.
         assert_eq!(state.reference.map(|reference| reference.anchor), Some(DVec2::ZERO));
+    }
+
+    #[test]
+    fn a_moved_node_measures_the_delta_from_its_old_position() {
+        // A node taken from (10, 20) to (110, 20): a 100 mm move along +X.
+        let anchor = millimetres(10, 20);
+        let state = PointState::moved(anchor, millimetres(110, 20), None).expect("a moved point");
+        assert_eq!(state.point, [Length::from_micrometres(110_000), Length::from_micrometres(20_000)]);
+        assert_eq!(params(&state), vec![FieldParam::Length, FieldParam::Angle], "a move is a delta");
+        assert_eq!(state.rows[0].value, 100.0, "the length is the distance moved");
+        assert_eq!(state.rows[1].value, 0.0, "a move along +X reads zero");
+        // The construction line starts at the old position, and so does the reference.
+        assert_eq!(state.construction, Some([anchor, millimetres(110, 20)]));
+        let reference = state.reference.expect("a move has a reference");
+        assert_eq!(reference.anchor, anchor, "the reference is read from the old position");
+        assert_eq!(reference.radius, 100.0, "the arc's radius is the distance moved");
+        assert_eq!(reference.from, 0.0, "the axis is +X");
+        assert_eq!(state.rows[1].anchor, millimetres(110, 20), "the angle's plate sits on the arc");
+        assert_eq!(state.rows[0].anchor, millimetres(60, 20), "the length's plate sits on the chord");
+    }
+
+    #[test]
+    fn a_typed_distance_and_angle_move_the_node_by_them() {
+        let fields = FieldSet::with_typed(segment_rows(), &[(FieldParam::Length, 50.0), (FieldParam::Angle, 120.0)])
+            .expect("two plates");
+        // The pointer is somewhere else entirely: the typed numbers win.
+        let state = PointState::moved(DVec2::ZERO, millimetres(10, 10), Some(&fields)).expect("a moved point");
+        let expected = DVec2::new(50.0 * 120f64.to_radians().cos(), 50.0 * 120f64.to_radians().sin());
+        assert!((state.at - expected).length() < 1e-3, "{:?} is 50 mm at 120 degrees", state.at);
+        // An angle above 180 flips the reference to -X; 120 reads from -X the short way round.
+        let reference = state.reference.expect("a reference");
+        assert_eq!(reference.radius, 50.0, "the arc follows the typed distance");
+        assert!((reference.from - std::f64::consts::PI).abs() < 1e-9, "120 degrees reads from -X");
+        assert_eq!(state.construction, Some([DVec2::ZERO, state.at]), "the chord runs to the placed point");
     }
 
     #[test]

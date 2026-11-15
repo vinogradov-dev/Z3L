@@ -2250,3 +2250,230 @@ fn the_polyline_segment_kind_comes_from_the_right_click_menu() {
     assert_eq!(draft_points(&harness).len(), points, "and still wrote no point");
     assert!(harness.app.tabs.active().draft_menu_rect().is_none(), "the choice closes the menu");
 }
+
+/// A session whose root holds one open chain: (0,0) → (120,0) → (120,80) mm.
+fn one_sketch_path() -> (furnicraft_engine::Session, Id) {
+    let mm = furnicraft_testkit::millimetres;
+    let mut project = furnicraft_testkit::sample_project();
+    let root = project.root().id();
+    let path = furnicraft_model::Path::new(
+        vec![
+            furnicraft_model::ContourSegment::line([mm(0), mm(0)], [mm(120), mm(0)]).expect("the first side"),
+            furnicraft_model::ContourSegment::line([mm(120), mm(0)], [mm(120), mm(80)]).expect("the second side"),
+        ],
+        false,
+    )
+    .expect("an open chain");
+    let object = project
+        .add_object(root, "Sketch", furnicraft_model::Placement::IDENTITY, furnicraft_model::Geometry::Path(path))
+        .expect("a path object");
+    (furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog()), object)
+}
+
+/// A headless frame in contour edit mode on the open chain, framed so its corners are grabbable.
+///
+/// The mode is entered the way the inspector card enters it, and the chain's first corner is the one
+/// every latch test moves.
+fn sketching(name: &str) -> (Harness, Id, furnicraft_model::PathCorner) {
+    let (session, object) = one_sketch_path();
+    let mut harness = Harness::with_session(name, session);
+    harness.settle();
+    let corner = {
+        let document = harness.app.tabs.active();
+        let path = document.session.project().object_path(object).expect("the path");
+        furnicraft_model::PathCorner::Start(path.id_at(0).expect("the first segment"))
+    };
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(object));
+        assert!(
+            document.editor.start_contour_edit(document.session.project(), furnicraft_ui::ContourTarget::Path(object)),
+            "an open chain is editable"
+        );
+    }
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    (harness, object, corner)
+}
+
+/// The screen point of one point of a node's own plane, in millimetres.
+fn node_point_mm(harness: &Harness, node: Id, local: [f64; 2]) -> egui::Pos2 {
+    let document = harness.app.tabs.active();
+    let world = document.session.project().world_placement(node).expect("the node has a world frame");
+    let rect = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+    let at = furnicraft_geom::DVec3::new(local[0], local[1], 0.0);
+    gizmo_math::screen_point(document.camera(), rect, world.transform_point(at)).expect("the point is on screen")
+}
+
+/// The point of a node's own plane under a viewport position, in the units the gizmo resolves.
+fn node_point_under(harness: &Harness, node: Id, pointer: egui::Pos2) -> [Length; 2] {
+    let document = harness.app.tabs.active();
+    let project = document.session.project();
+    let placement = project.world_placement(node).expect("the node has a world frame");
+    let rect = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+    let ray = gizmo_math::ray_to(pointer, rect, document.camera());
+    let origin = placement.transform_point(furnicraft_geom::DVec3::ZERO);
+    let normal = placement.transform_vector(furnicraft_geom::DVec3::Z);
+    let hit = gizmo_math::ray_plane(ray, origin, normal).expect("the pointer meets the node's plane");
+    let local = placement.rotation().inverse() * (hit - origin);
+    [
+        Length::from_micrometres((local.x * 1_000.0).round() as i64),
+        Length::from_micrometres((local.y * 1_000.0).round() as i64),
+    ]
+}
+
+/// Whether two document points are the same within the one-micrometre joint tolerance.
+fn same_point(first: [Length; 2], second: [Length; 2]) -> bool {
+    first.iter().zip(second.iter()).all(|(a, b)| (a.micrometres() - b.micrometres()).abs() <= 1)
+}
+
+/// The corner of the live working copy.
+fn drafted_corner(harness: &Harness, corner: furnicraft_model::PathCorner) -> [Length; 2] {
+    harness
+        .app
+        .tabs
+        .active()
+        .editor
+        .contour_edit()
+        .expect("a live contour edit")
+        .draft()
+        .grip_position(furnicraft_ui::ContourGrip::Corner(corner))
+        .expect("the corner is on the draft")
+}
+
+/// The corner the document stores.
+fn stored_corner(harness: &Harness, object: Id, corner: furnicraft_model::PathCorner) -> [Length; 2] {
+    let path = harness.app.tabs.active().session.project().object_path(object).expect("the path");
+    furnicraft_ui::ContourDraft::Chain(path.clone())
+        .grip_position(furnicraft_ui::ContourGrip::Corner(corner))
+        .expect("the corner is on the stored path")
+}
+
+#[test]
+fn a_latched_corner_move_writes_one_command_and_one_revision() {
+    // C3: a click selects, a click on the selected corner latches the move, a ghost and the two
+    // guides follow the pointer, and the next click drops it as one command (ADR 0129).
+    let (mut harness, object, corner) = sketching("frame-contour-latch");
+    let before = harness.revision();
+    let from = node_point_mm(&harness, object, [0.0, 0.0]);
+    let to = node_point_mm(&harness, object, [60.0, 45.0]);
+    let scene = harness.scene();
+    assert!(scene.contains(from) && scene.contains(to), "the whole move is on screen: {from:?} {to:?}");
+
+    // The first click only selects the corner: a selection is view state.
+    harness.click(from, egui::PointerButton::Primary);
+    assert_eq!(harness.revision(), before, "selecting a corner writes nothing");
+    assert!(harness.app.tabs.active().editor.contour_edit().is_some(), "the mode stays live");
+
+    // The second click latches the move, and the pointer then carries the corner.
+    harness.click(from, egui::PointerButton::Primary);
+    assert_eq!(harness.revision(), before, "a latch writes nothing");
+    harness.hover(to);
+    assert_eq!(harness.revision(), before, "following the pointer writes nothing");
+    let expected = node_point_under(&harness, object, to);
+    let drafted = drafted_corner(&harness, corner);
+    assert!(same_point(drafted, expected), "the working copy follows the pointer: {drafted:?} vs {expected:?}");
+
+    // The next click drops it: one command, one revision, one undo entry.
+    harness.click(to, egui::PointerButton::Primary);
+    assert_eq!(harness.revision().get(), before.get() + 1, "the drop is one command");
+    let stored = stored_corner(&harness, object, corner);
+    assert!(same_point(stored, expected), "the document holds the dropped corner: {stored:?} vs {expected:?}");
+    assert!(harness.app.tabs.active().can_undo(), "the drop is one undo entry");
+    assert!(
+        harness.app.tabs.active().editor.contour_edit().is_some(),
+        "the mode keeps reshaping the contour, so the next corner takes one click to latch"
+    );
+
+    harness.app.tabs.active_mut().session.undo().expect("the drop undoes in one entry");
+    let back = stored_corner(&harness, object, corner);
+    assert!(same_point(back, [Length::ZERO, Length::ZERO]), "one undo takes the move back: {back:?}");
+}
+
+#[test]
+fn a_drop_without_motion_writes_nothing() {
+    // The latch promises a move; a click that names the corner's own position has nothing to write,
+    // so the document keeps its revision and the mode keeps its clean draft.
+    let (mut harness, object, corner) = sketching("frame-contour-latch-still");
+    let before = harness.revision();
+    let corner_at = node_point_mm(&harness, object, [0.0, 0.0]);
+    harness.click(corner_at, egui::PointerButton::Primary);
+    harness.click(corner_at, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().contour_gizmo.is_latched(), "the second click latched the move");
+
+    harness.click(corner_at, egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().contour_gizmo.is_latched(), "the third click dropped it");
+    assert_eq!(harness.revision(), before, "a drop that moved nothing writes nothing");
+    assert!(same_point(drafted_corner(&harness, corner), [Length::ZERO, Length::ZERO]), "the corner stayed put");
+    assert!(!harness.app.tabs.active().can_undo(), "and no undo entry was minted");
+}
+
+#[test]
+fn escape_after_a_latch_puts_the_corner_back_and_leaves_the_document_untouched() {
+    // Escape gives up the move before it gives up the mode: the corner returns to where it was
+    // latched, the working copy is clean, and nothing was written.
+    let (mut harness, object, corner) = sketching("frame-contour-latch-escape");
+    let before = harness.revision();
+    let from = node_point_mm(&harness, object, [0.0, 0.0]);
+    let to = node_point_mm(&harness, object, [70.0, 50.0]);
+    harness.click(from, egui::PointerButton::Primary);
+    harness.click(from, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().contour_gizmo.is_latched(), "latched");
+    harness.hover(to);
+    assert!(harness.app.tabs.active().contour_gizmo.is_latched(), "the hover did not drop it");
+    assert!(
+        !same_point(drafted_corner(&harness, corner), [Length::ZERO, Length::ZERO]),
+        "the corner moved: {:?}",
+        drafted_corner(&harness, corner)
+    );
+
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert_eq!(harness.revision(), before, "Escape writes nothing");
+    assert!(same_point(drafted_corner(&harness, corner), [Length::ZERO, Length::ZERO]), "the corner is back");
+    assert!(!harness.app.tabs.active().contour_gizmo.is_latched(), "the latch is given up");
+    assert!(harness.app.tabs.active().editor.contour_edit().is_some(), "the mode is still reshaping");
+    assert!(!harness.app.tabs.active().can_undo(), "nothing was written to undo");
+}
+
+#[test]
+fn a_press_and_drag_still_moves_a_corner_in_one_gesture() {
+    // The latch adds a path, it does not replace the one-gesture move: a press that becomes a drag
+    // takes the corner with it and arms no latch.
+    let (mut harness, object, corner) = sketching("frame-contour-drag");
+    let before = harness.revision();
+    let from = node_point_mm(&harness, object, [0.0, 0.0]);
+    let delta = egui::vec2(70.0, -40.0);
+    harness.drag(from, delta, egui::PointerButton::Primary);
+    assert_eq!(harness.revision(), before, "a drag edits the working copy, not the document");
+    assert!(!harness.app.tabs.active().contour_gizmo.is_latched(), "a drag is not a latch");
+    let expected = node_point_under(&harness, object, from + delta);
+    let drafted = drafted_corner(&harness, corner);
+    assert!(same_point(drafted, expected), "one gesture moves the corner: {drafted:?} vs {expected:?}");
+    assert!(harness.app.tabs.active().editor.contour_edit().is_some(), "the mode is still live");
+}
+
+#[test]
+fn a_typed_distance_and_angle_move_the_latched_corner() {
+    // The two plates of a latched move are the delta of the move, so a corner moved to 50 mm at
+    // 120° is typed, not aimed: the same grammar the point being placed has (ADR 0126, 0129).
+    let (mut harness, object, corner) = sketching("frame-contour-latch-typed");
+    let before = harness.revision();
+    let from = node_point_mm(&harness, object, [0.0, 0.0]);
+    harness.click(from, egui::PointerButton::Primary);
+    harness.click(from, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().contour_gizmo.is_latched(), "the second click latched the move");
+
+    type_text(&mut harness, "50");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "120");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    assert_eq!(harness.revision().get(), before.get() + 1, "Enter drops the move as one command");
+    let stored = stored_corner(&harness, object, corner);
+    let radians = 120f64.to_radians();
+    let expected = [
+        Length::from_micrometres((50.0 * radians.cos() * 1_000.0).round() as i64),
+        Length::from_micrometres((50.0 * radians.sin() * 1_000.0).round() as i64),
+    ];
+    assert!(same_point(stored, expected), "the typed distance and angle moved the corner: {stored:?}");
+}

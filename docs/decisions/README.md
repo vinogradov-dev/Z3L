@@ -134,6 +134,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0126](0126-the-point-being-placed-shows-its-numbers-at-the-cursor.md) | The point being placed shows its numbers at the cursor, and one of them holds the keys | Accepted |
 | [0127](0127-a-sketch-has-two-guides.md) | A sketch has two guides: a construction line and a reference line | Accepted |
 | [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) | A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate | Accepted |
+| [0129](0129-a-move-is-latched-by-a-second-click.md) | A move is latched by a second click, and its delta is read from the old position | Accepted |
 
 ## Format
 

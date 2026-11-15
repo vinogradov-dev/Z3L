@@ -20,7 +20,7 @@ use furnicraft_model::{
 use furnicraft_scene::Camera;
 use furnicraft_ui::{
     ContourDraft, ContourEdit, ContourGrip, ContourTarget, Editor, FieldLabel, FieldParam, FieldRow, FieldSet,
-    GripNumber, GripValue,
+    GripNumber, GripValue, PointState, guides,
 };
 use furnicraft_units::Length;
 
@@ -44,6 +44,15 @@ const BASE_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(150, 15
 const DRAFT_COLOR: egui::Color32 = egui::Color32::from_rgb(120, 200, 255);
 /// Colour of an untouched grip handle.
 const GRIP_COLOR: egui::Color32 = egui::Color32::from_rgb(240, 240, 240);
+
+/// The view one contour gesture is resolved against: the camera, its rectangle and the node's
+/// world frame.
+#[derive(Clone, Copy, Debug)]
+struct Screen {
+    camera: Camera,
+    rect: egui::Rect,
+    placement: Placement,
+}
 
 /// One grip drag that is in progress.
 #[derive(Clone, Copy, Debug)]
@@ -81,29 +90,116 @@ pub(crate) enum NumericAction {
     ApplyAlong(ContourGrip, GripValue, CornerMove),
 }
 
+/// What the gizmo asked the shell to do after one frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GizmoAction {
+    /// The frame changed nothing.
+    Idle,
+    /// The working copy changed, so the viewport repaints.
+    Changed,
+    /// A number typed at a grip, for the shell to apply to the working copy.
+    Numeric(NumericAction),
+    /// The latched move is dropped: write the working copy as one command.
+    Drop,
+    /// The latched move is abandoned: the corner goes back to where it was latched.
+    Abandon,
+}
+
+/// The latched move of one corner: the grammar `click, click, move, click` of a native editor.
+///
+/// The old position is the only fixed reference of a move, so it is the anchor of the two guides
+/// and of the two numbers: the chord to the point under the pointer and the reference whose arc
+/// radius is the distance moved (ADR 0127, 0129). The plates are the point-field atom, so a typed
+/// number locks its parameter, a typed `0` gives it back to the pointer, and Escape drops the locks.
+#[derive(Clone, Debug)]
+struct CornerLatch {
+    /// The corner that moves; a latch is only ever opened on a corner.
+    grip: ContourGrip,
+    /// Where the corner sat when the move was latched: the guide's anchor and what Escape restores.
+    start: [Length; 2],
+    /// The motion the move takes, resolved once at the latch from the along toggle.
+    motion: CornerMove,
+    /// The plates: the distance from `start` and the angle from `+X`.
+    fields: FieldSet,
+    /// The pointer in the node's local plane, for the plates and the guides.
+    pointer: DVec2,
+    /// The measurement of the last frame: what the plates name and the guides draw.
+    state: PointState,
+    /// Whether the working copy really left `start`, so a drop without motion writes nothing.
+    moved: bool,
+}
+
 /// Pointer state of the contour gizmo; the working copy itself belongs to the editor.
 #[derive(Debug, Default)]
 pub(crate) struct ContourGizmo {
     drag: Option<GripDrag>,
     hover: Option<ContourGrip>,
     hover_segment: Option<ContourSegmentId>,
+    /// The corner a click selected; a click on it again latches the move.
+    selected: Option<ContourGrip>,
+    /// The latched move, which follows the pointer until a click drops it.
+    latch: Option<CornerLatch>,
     numeric: Option<GripField>,
     /// Whether a corner drag runs along the contour instead of freely.
     along: bool,
 }
 
 impl ContourGizmo {
-    /// Drops every drag, hover and numeric state, for example when the mode ends.
+    /// Drops every drag, hover, selection and numeric state, for example when the mode ends.
     pub(crate) fn reset(&mut self) {
         self.drag = None;
         self.hover = None;
         self.hover_segment = None;
+        self.selected = None;
+        self.latch = None;
         self.numeric = None;
     }
 
     /// Whether a grip drag or its numeric field owns the keyboard right now.
     pub(crate) fn is_dragging(&self) -> bool {
         self.drag.is_some() || self.numeric.is_some()
+    }
+
+    /// Whether a latched move is waiting for the click that drops it.
+    pub(crate) fn is_latched(&self) -> bool {
+        self.latch.is_some()
+    }
+
+    /// Whether a plate owns the keyboard, so the mode's own key reader stands aside.
+    pub(crate) fn holds_keys(&self) -> bool {
+        self.latch.as_ref().is_some_and(|latch| latch.fields.is_holding())
+            || self.numeric.as_ref().is_some_and(|field| field.fields.is_holding())
+    }
+
+    /// Whether `point` lies on one of the plates, which are chrome and never the scene.
+    pub(crate) fn field_contains(&self, point: Pos2) -> bool {
+        self.latch.as_ref().is_some_and(|latch| latch.fields.contains(point))
+            || self.numeric.as_ref().is_some_and(|field| field.fields.contains(point))
+    }
+
+    /// The move a drop writes: the corner, the point its plates name and the motion it takes.
+    ///
+    /// The plates may have locked a typed number on the frame the drop arrives, so the point is read
+    /// from them here rather than from the working copy the last frame left behind.
+    pub(crate) fn latched_move(&self) -> Option<(ContourGrip, [Length; 2], CornerMove)> {
+        let latch = self.latch.as_ref()?;
+        let state = PointState::moved(plane_point(latch.start), latch.pointer, Some(&latch.fields))?;
+        Some((latch.grip, state.point, latch.motion))
+    }
+
+    /// Abandons the latched move: the corner is back where the latch found it.
+    ///
+    /// Returns whether there was a latch to abandon, so the caller's Escape ends the mode only
+    /// when the move was not the first thing it had to give up.
+    pub(crate) fn abandon_latch(&mut self, editor: &mut Editor) -> bool {
+        let Some(latch) = self.latch.take() else {
+            return false;
+        };
+        if let ContourGrip::Corner(corner) = latch.grip {
+            let _ = editor.contour_edit_move_corner_at(corner, latch.start, CornerMove::Free);
+            editor.contour_edit_clear_collapse();
+        }
+        true
     }
 
     /// Whether a corner drag follows the contour instead of moving freely.
@@ -116,11 +212,12 @@ impl ContourGizmo {
         self.along = !self.along;
     }
 
-    /// Applies the pointer to the working copy; returns whether the draft changed.
+    /// Applies the pointer to the working copy and reports what the shell must do with it.
     ///
-    /// The gizmo owns the left button while the mode is live: a drag moves the grabbed grip and a
-    /// double-click splits the side under the pointer. A rejected edit leaves the draft at its last
-    /// valid shape, so a grip simply stops when the ring would become invalid.
+    /// The gizmo owns the left button while the mode is live: a drag moves the grabbed grip, a
+    /// double-click splits the side under the pointer, and a click selects a corner or latches its
+    /// move (ADR 0129). A rejected edit leaves the draft at its last valid shape, so a grip simply
+    /// stops when the ring would become invalid.
     pub(crate) fn update(
         &mut self,
         response: &Response,
@@ -128,24 +225,39 @@ impl ContourGizmo {
         camera: Camera,
         project: &Project,
         editor: &mut Editor,
-    ) -> Result<bool, String> {
+    ) -> Result<GizmoAction, String> {
         let Some(edit) = editor.contour_edit() else {
             self.reset();
-            return Ok(false);
+            return Ok(GizmoAction::Idle);
         };
         let target = edit.target();
         let Some(placement) = project.world_placement(target.id()) else {
             self.reset();
-            return Ok(false);
+            return Ok(GizmoAction::Idle);
         };
         let draft = edit.draft().clone();
-        let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
+        let pointer = self.pointer(response);
         let segment = pointer.and_then(|pointer| segment_at(camera, rect, placement, &draft, pointer));
         let grip = pointer.and_then(|pointer| grip_at(camera, rect, placement, &draft, pointer, segment));
         self.hover = grip;
         self.hover_segment = segment;
 
+        // A latched move owns the pointer until a click drops it; nothing else may grab a grip or
+        // split a side meanwhile, or the drop would start an edit of its own.
+        if self.latch.is_some() {
+            let changed = self.follow(Screen { camera, rect, placement }, pointer, editor);
+            // A press on one of the move's own plates is the plate's: it focuses or scrubs a number
+            // and never drops the corner under it.
+            if response.clicked_by(egui::PointerButton::Primary) && !pointer.is_some_and(|at| self.field_contains(at)) {
+                return Ok(self.end_latch());
+            }
+            return Ok(if changed { GizmoAction::Changed } else { GizmoAction::Idle });
+        }
+
         let mut changed = false;
+        // A press that became a drag is the one-gesture move, so the release that ends it is never
+        // also a click on the corner the drag just put somewhere else.
+        let dragging = self.drag.is_some() || response.drag_started_by(egui::PointerButton::Primary);
         if response.drag_started_by(egui::PointerButton::Primary) {
             // Resolve the grabbed grip from the press origin, not the current pointer.
             // The pointer may have moved a few points before egui fires the drag threshold,
@@ -160,6 +272,9 @@ impl ContourGizmo {
                 grip,
                 motion: self.motion_for(camera, rect, placement, &draft, grip, press_origin),
             });
+            // A touched corner is the selected one, so the click that follows a drag latches its
+            // move instead of selecting it a second time.
+            self.selected = press_grip.filter(|grip| matches!(grip, ContourGrip::Corner(_)));
             if let Some(drag) = self.drag
                 && let Some(origin) = press_origin
             {
@@ -239,7 +354,106 @@ impl ContourGizmo {
                 changed = true;
             }
         }
-        Ok(changed)
+
+        // A click on an unselected corner selects it; a click on the selected corner latches its
+        // move, and the next click drops it with one command and one undo entry (ADR 0129).
+        if !dragging
+            && self.drag.is_none()
+            && response.clicked_by(egui::PointerButton::Primary)
+            && let Some(pointer) = pointer
+        {
+            // The plate of a finished drag belongs to the drag, not to the click after it.
+            self.numeric = None;
+            match grip {
+                Some(grip @ ContourGrip::Corner(_)) if self.selected == Some(grip) => {
+                    let motion = self.motion_for(camera, rect, placement, &draft, grip, Some(pointer));
+                    self.latch = self.latch_move(&draft, grip, pointer, Screen { camera, rect, placement }, motion);
+                }
+                Some(grip @ ContourGrip::Corner(_)) => self.selected = Some(grip),
+                _ => self.selected = None,
+            }
+        }
+        Ok(if changed { GizmoAction::Changed } else { GizmoAction::Idle })
+    }
+
+    /// The pointer the gizmo reads: the scene's hover, the drag's own position, and — while a move
+    /// is latched — the raw pointer, because the latch's plates sit beside the point they measure
+    /// and would otherwise freeze the move the moment the hand crossed one.
+    fn pointer(&self, response: &Response) -> Option<Pos2> {
+        response.hover_pos().or_else(|| response.interact_pointer_pos()).or_else(|| {
+            self.latch.as_ref()?;
+            response.ctx.input(|input| input.pointer.hover_pos())
+        })
+    }
+
+    /// Opens the latched move of `grip`: the plates of its delta and the anchor it started from.
+    fn latch_move(
+        &self,
+        draft: &ContourDraft,
+        grip: ContourGrip,
+        pointer: Pos2,
+        view: Screen,
+        motion: CornerMove,
+    ) -> Option<CornerLatch> {
+        let start = draft.grip_position(grip)?;
+        let anchor = plane_point(start);
+        let local = local_point(pointer, view.rect, view.camera, view.placement).unwrap_or(anchor);
+        let live = PointState::moved(anchor, local, None)?;
+        let rows = live
+            .rows
+            .iter()
+            .map(|row| {
+                let at = local_screen(view, row.anchor).unwrap_or(pointer);
+                FieldRow::for_param(row.param, row.value, at)
+            })
+            .collect();
+        let fields = FieldSet::new(rows)?;
+        let state = PointState::moved(anchor, local, Some(&fields))?;
+        Some(CornerLatch { grip, start, motion, fields, pointer: local, state, moved: false })
+    }
+
+    /// Moves the latched corner to what the pointer and the plates place, and keeps them live.
+    ///
+    /// A refused placement is the mode's usual silent refusal: the working copy stays at its last
+    /// valid shape, so a corner dragged into a self-crossing ring simply stops.
+    fn follow(&mut self, view: Screen, pointer: Option<Pos2>, editor: &mut Editor) -> bool {
+        let Some(latch) = self.latch.as_mut() else {
+            return false;
+        };
+        let Some(local) = pointer.and_then(|pointer| local_point(pointer, view.rect, view.camera, view.placement))
+        else {
+            return false;
+        };
+        let anchor = plane_point(latch.start);
+        let Some(live) = PointState::moved(anchor, local, None) else {
+            return false;
+        };
+        for row in &live.rows {
+            latch.fields.set_live(row.param, row.value);
+            if let Some(at) = local_screen(view, row.anchor) {
+                latch.fields.set_anchor(row.param, at);
+            }
+        }
+        latch.pointer = local;
+        let Some(state) = PointState::moved(anchor, local, Some(&latch.fields)) else {
+            return false;
+        };
+        let (grip, motion, start) = (latch.grip, latch.motion, latch.start);
+        latch.state = state.clone();
+        let before = editor.contour_edit().and_then(|edit| edit.draft().grip_position(grip));
+        let placed = editor.contour_edit_drag_grip(grip, state.point, motion).is_ok();
+        let after = editor.contour_edit().and_then(|edit| edit.draft().grip_position(grip));
+        latch.moved = after.is_some_and(|position| !near(position, start));
+        placed && after != before
+    }
+
+    /// Ends the latched move: a corner that really moved is written, one that did not is dropped.
+    fn end_latch(&mut self) -> GizmoAction {
+        let Some(latch) = self.latch.take() else {
+            return GizmoAction::Idle;
+        };
+        self.selected = Some(latch.grip);
+        if latch.moved { GizmoAction::Drop } else { GizmoAction::Idle }
     }
 
     /// The point a grip really receives, after the arc projection an along-contour corner needs.
@@ -286,7 +500,7 @@ impl ContourGizmo {
         camera: Camera,
         project: &Project,
         edit: &ContourEdit,
-    ) -> Option<NumericAction> {
+    ) -> Option<GizmoAction> {
         let placement = project.world_placement(edit.target().id())?;
         let painter = ui.painter().with_clip_rect(rect);
         if edit.is_dirty() {
@@ -302,7 +516,7 @@ impl ContourGizmo {
             let Some(position) = screen_point(camera, rect, world) else {
                 continue;
             };
-            let selected = self.drag.is_some_and(|drag| drag.grip == *grip);
+            let selected = self.marked(*grip);
             let hovered = self.hover == Some(*grip);
             paint_grip(&painter, position, *grip, selected, hovered);
         }
@@ -317,7 +531,45 @@ impl ContourGizmo {
                 paint_grip(&painter, position, grip, false, true);
             }
         }
-        self.paint_numeric(ui, rect)
+        if let Some(action) = self.paint_latch(ui, Screen { camera, rect, placement }) {
+            return Some(action);
+        }
+        self.paint_numeric(ui, rect).map(GizmoAction::Numeric)
+    }
+
+    /// Whether `grip` is the one a drag, a selection or a latched move is holding.
+    fn marked(&self, grip: ContourGrip) -> bool {
+        self.drag.is_some_and(|drag| drag.grip == grip)
+            || self.latch.as_ref().is_some_and(|latch| latch.grip == grip)
+            || self.selected == Some(grip)
+    }
+
+    /// Draws the guides of a latched move, then its two plates, and reads what they asked for.
+    ///
+    /// The construction line runs from the old position to the point the plates name and the
+    /// reference arc has the distance moved as its radius, so the number and the picture are the
+    /// same measurement (ADR 0127). The line, the ghost and the arc use the anchors
+    /// [`PointState::moved`] gives, so the motion the working copy takes and the one drawn can only
+    /// differ when the corner's own segment refuses the point.
+    fn paint_latch(&mut self, ui: &Ui, view: Screen) -> Option<GizmoAction> {
+        let latch = self.latch.as_mut()?;
+        let painter = ui.painter().with_clip_rect(view.rect);
+        paint_latch_guides(ui, &painter, view, latch);
+        let action = latch.fields.show(ui.ctx(), view.rect);
+        if action.cancel {
+            // Escape with nothing typed: the latch is the first thing the mode gives up.
+            return Some(GizmoAction::Abandon);
+        }
+        if action.commit {
+            // Enter places the point: the drop writes the move it names.
+            return Some(GizmoAction::Drop);
+        }
+        // A typed number, its zero and the Escape that drops every lock are the atom's own: the
+        // plates keep following the pointer with the typed numbers in place (ADR 0126).
+        if action.edit.is_some() || action.released {
+            ui.ctx().request_repaint();
+        }
+        None
     }
 
     /// Draws the editable number beside the cursor and applies what it asked for.
@@ -680,6 +932,41 @@ fn local_point(pointer: Pos2, rect: egui::Rect, camera: Camera, placement: Place
     let local = placement.rotation().inverse() * (hit - origin);
     let point = DVec2::new(local.x, local.y);
     point.is_finite().then_some(point)
+}
+
+/// A point of the node's local plane in viewport points.
+fn local_screen(view: Screen, point: DVec2) -> Option<Pos2> {
+    let world = view.placement.transform_point(DVec3::new(point.x, point.y, 0.0));
+    screen_point(view.camera, view.rect, world)
+}
+
+/// A contour point as a point of the node's local plane, in millimetres.
+fn plane_point(point: [Length; 2]) -> DVec2 {
+    DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64())
+}
+
+/// Paints a latched move: the old position, the chord to the placed point and the reference.
+///
+/// The ghost marks the position the corner will leave, the dashed chord is the length the plate
+/// shows, and the arc's radius is that same length, so the angle is read where it is measured
+/// (ADR 0127).
+fn paint_latch_guides(ui: &Ui, painter: &egui::Painter, view: Screen, latch: &CornerLatch) {
+    let Some(from) = local_screen(view, plane_point(latch.start)) else {
+        return;
+    };
+    let Some(to) = local_screen(view, latch.state.at) else {
+        return;
+    };
+    guides::construction(ui, painter, from, to);
+    painter.circle_stroke(from, GRIP_RADIUS, egui::Stroke::new(1.0, BASE_COLOR));
+    let Some(reference) = latch.state.reference else {
+        return;
+    };
+    let edge = reference.anchor + DVec2::new(reference.from.cos(), reference.from.sin()) * reference.radius;
+    let Some(edge) = local_screen(view, edge) else {
+        return;
+    };
+    guides::reference_between(painter, from, (edge - from).length(), reference.from as f32, reference.to as f32);
 }
 
 /// Keeps an arc corner on its circle, or returns a line corner unchanged.
@@ -1134,6 +1421,36 @@ mod tests {
             gizmo.motion_for(camera, viewport(), Placement::IDENTITY, &draft, ContourGrip::Corner(corner), pointer),
             CornerMove::Along(path.id_at(0).expect("bottom"))
         );
+    }
+
+    #[test]
+    fn a_latch_measures_the_move_from_the_corner_it_took() {
+        // The click that latches a corner opens the two numbers of its delta; the guides start at
+        // the old position, which is the only fixed reference a move has (ADR 0129).
+        let path = l_path();
+        let draft = ContourDraft::Chain(path.clone());
+        let corner = ContourGrip::Corner(PathCorner::Start(path.id_at(0).expect("the first segment")));
+        let start = draft.grip_position(corner).expect("the corner");
+        let camera = Camera::default();
+        let pointer = screen_of(camera, [millimetres(60), millimetres(40)]);
+        let latch = ContourGizmo::default()
+            .latch_move(
+                &draft,
+                corner,
+                pointer,
+                Screen { camera, rect: viewport(), placement: Placement::IDENTITY },
+                CornerMove::Free,
+            )
+            .expect("a latch");
+        assert_eq!(latch.start, start, "the latch keeps the old position");
+        assert_eq!(latch.grip, corner);
+        assert!(!latch.moved, "a latch that has not followed the pointer writes nothing");
+        assert_eq!(latch.fields.rows().len(), 2, "a move is a distance and an angle");
+        assert_eq!(latch.state.reference.map(|reference| reference.anchor), Some(plane_point(start)));
+        let moved = (latch.state.at - plane_point(start)).length();
+        assert!((latch.state.reference.map(|reference| reference.radius).unwrap_or_default() - moved).abs() < 1e-6);
+        assert_eq!(latch.state.construction, Some([plane_point(start), latch.state.at]));
+        assert_eq!(latch.fields.value(FieldParam::Length), Some(moved), "the plate shows the distance moved");
     }
 
     #[test]
