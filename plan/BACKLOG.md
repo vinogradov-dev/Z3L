@@ -40,29 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **C2** every sketch tool places its point from numbers at the cursor
-  Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
-   the pointer, so a line cannot be drawn to 600 mm at 30 degrees except by eye, and the guide
-   that would show the angle does not exist. The grammar is fixed: every field carries the live
-   value, one field is always focused, Tab hops, a typed number locks its parameter and
-   outranks a snap, typing is never snapped, 0 returns the parameter to the pointer, Enter
-   places the point with every field, and the angle is the smaller one from the nearer end of
-   the X axis (0..360 typed, at most 180 shown).
-  Shape: Per tool: the first point takes X and Y; a line, an arc chord and a polygon edge take
-   length and angle; a rectangle takes width and height, each at the outer midpoint of its own
-   side; a circle takes a radius; an arc draws its chord as a construction line and every
-   segment gets the reference axis and an arc whose radius is the segment length. A fixed tool
-   last point commits the figure as a click does; a polyline keeps its chain and its line/arc
-   switch moves to the right-click menu, because Tab now belongs to the fields. The plate never
-   covers the point being placed or the snap marker and flips at the edge of the workspace. One
-   ADR records the smaller-angle rule and the typed-field grammar.
-  Done: Every shipped sketch tool shows its fields; a typed length and angle place the point
-   exactly and the preview follows; the angle display and its typing obey the smaller-angle
-   rule, tested as a table across the four quadrants; a typed number survives a snap and a 0
-   gives the parameter back; Tab, Enter and Escape are tested through RawInput; the polyline
-   segment kind is switched from the context menu and Tab no longer toggles it; a fixed tool
-   commits once and one undo entry; cargo xtask ci is green.
-  `files: crates/ui/src/draw.rs, crates/ui/src/editor/drawing.rs, apps/furnicraft/src/draw_gizmo.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/ribbon.rs`
 - `[ ]` **C3** a contour node moves in a latched mode, with its distance and angle at the cursor
   Why: Moving a corner needs the button held for the whole gesture today, and the owner wants
    the select, latch, drop grammar a native editor has. The old position is the only fixed
@@ -152,6 +129,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C2** every sketch tool places its point from numbers at the cursor
+  Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
+   the pointer, so a line cannot be drawn to 600 mm at 30 degrees except by eye, and the guide
+   that would show the angle does not exist. The grammar is fixed: every field carries the live
+   value, one field is always focused, Tab hops, a typed number locks its parameter and
+   outranks a snap, typing is never snapped, 0 returns the parameter to the pointer, Enter
+   places the point with every field, and the angle is the smaller one from the nearer end of
+   the X axis (0..360 typed, at most 180 shown).
+  Shape: Per tool: the first point takes X and Y; a line, an arc chord and a polygon edge take
+   length and angle; a rectangle takes width and height, each at the outer midpoint of its own
+   side; a circle takes a radius; an arc draws its chord as a construction line and every
+   segment gets the reference axis and an arc whose radius is the segment length. A fixed tool
+   last point commits the figure as a click does; a polyline keeps its chain and its line/arc
+   switch moves to the right-click menu, because Tab now belongs to the fields. The plate never
+   covers the point being placed or the snap marker and flips at the edge of the workspace. One
+   ADR records the smaller-angle rule and the typed-field grammar.
+  Done: Every shipped sketch tool shows its fields; a typed length and angle place the point
+   exactly and the preview follows; the angle display and its typing obey the smaller-angle
+   rule, tested as a table across the four quadrants; a typed number survives a snap and a 0
+   gives the parameter back; Tab, Enter and Escape are tested through RawInput; the polyline
+   segment kind is switched from the context menu and Tab no longer toggles it; a fixed tool
+   commits once and one undo entry; cargo xtask ci is green.
+  `files: crates/ui/src/draw.rs, crates/ui/src/editor/drawing.rs, apps/furnicraft/src/draw_gizmo.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/ribbon.rs` — `dc33a92`
 
 - `[x]` **C1** the point being placed shows its numbers at the cursor, and a sketch has two guide kinds
   Why: Every sketch tool needs the same two things: the number of the point under the cursor
