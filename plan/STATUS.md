@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U98 state=doing base=01c7533 updated=2026-11-15
+STATE: milestone=M7 phase=T task=- state=idle base=08f51e4 updated=2026-11-15
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -46,7 +46,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 - `crates/export` writes the order package — the manifest and twelve flat tables — and `furnicraft
   export` runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
 - ADR 0117 makes one const table the capability inventory every surface filters and the gate checks;
-  0118 names the atom, 0119 the tool card, U94–U99 file that work (`plan/notes/U94.md`).
+  0118 names the atom and U98 is the first one — the ruler measures with two clicks and writes
+  nothing, 0119 the tool card, U94–U99 file that work (`plan/notes/U94.md`).
 - Faber's architecture is recorded (0028–0032) but not implemented. `state-contract` (L0) is the
   whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init` (P4–P7, P9, 0085);
   `xtask` keeps the layering rules and `ci` (P8), the gate follows every `files:` hint, a closed
@@ -55,8 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-U98 is next: the ruler is a transient measuring tool: two clicks, the length at the pointer and in
-the status bar, nothing written
+Nothing is scheduled: 2 open tasks wait in `## Next`.
 
 ## Index
 
