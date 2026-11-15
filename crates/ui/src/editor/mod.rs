@@ -46,6 +46,7 @@ mod mesh;
 mod ribbon;
 mod selection;
 mod visibility;
+mod void;
 
 #[cfg(test)]
 mod tests;
@@ -73,6 +74,10 @@ pub struct Editor {
     fill: Option<FillArm>,
     /// The ruler: the points of the live measurement while the tool is armed (ADR 0118).
     measure: Option<crate::measure::Measure>,
+    /// The niche under the pointer: one measurement every tool that names a void reads (ADR 0118).
+    void: crate::void::Void,
+    /// Whether the niche tool itself owns the pointer, rather than a fill that consumes its value.
+    void_armed: bool,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
     toolbars: toolbars::Toolbars,

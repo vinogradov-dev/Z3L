@@ -69,6 +69,9 @@ pub enum ToolKind {
     GridSnap,
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
+    /// Arms the niche tool: the pointer names the empty space inside the open product and writes
+    /// nothing (ADR 0118).
+    Void,
 }
 
 /// One input method of a tool: what U67 draws as the tool's list.
@@ -746,6 +749,16 @@ const FURNITURE: [GroupSpec; 6] = [
                 method: Some(Message::FillMethodFit),
                 variants: FILL_SHELF_SHAPE,
             },
+            // The niche is the space the two cells above fill: it sits with them because a maker
+            // reads the gap and the part together, and it creates nothing (ADR 0118).
+            ToolSpec {
+                id: "furniture.panels.void",
+                label: Message::ToolVoid,
+                icon: Some(icons::scene::VOID),
+                run: Some(ToolKind::Void),
+                method: None,
+                variants: &[],
+            },
             // The panel is drawn, not typed: a board outside a niche has no section to fill, so its
             // outline comes from the pointer and the close cuts it (ADR 0114).
             ToolSpec {
@@ -1044,7 +1057,13 @@ mod tests {
         );
         assert_eq!(
             live("furniture"),
-            ["furniture.panels.contour", "furniture.panels.post", "furniture.panels.shelf", "furniture.product.frame"]
+            [
+                "furniture.panels.contour",
+                "furniture.panels.post",
+                "furniture.panels.shelf",
+                "furniture.panels.void",
+                "furniture.product.frame",
+            ]
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
         assert_eq!(live("view"), ["view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]);
@@ -1142,6 +1161,7 @@ mod tests {
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape },
+            ToolKind::Void,
             ToolKind::Assembly,
             ToolKind::Camera,
             ToolKind::Light,
@@ -1188,7 +1208,7 @@ mod tests {
         assert_eq!(sketch.columns(), 9);
         // The planned groups draw nothing, so the Model tab is the three primitives and the extrusion.
         assert_eq!(tab("model").expect("model").columns(), 4);
-        assert_eq!(tab("furniture").expect("furniture").columns(), 4);
+        assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         assert_eq!(tab("view").expect("view").columns(), 3);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);

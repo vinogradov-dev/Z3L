@@ -50,6 +50,32 @@ const WALL_TOLERANCE: f64 = 5.0e-3;
 /// slab section with no end bevel; `Fit` answers the same cut (ADR 0109).
 const MAX_FILL_BEVEL: Degrees = Degrees::from_millidegrees(45_000);
 
+/// The numbers one fill asks with, so the plan's signature stays a request rather than a list.
+///
+/// The five travel together because they are one gesture: the point the pointer named, the class's
+/// axis pair, the mode the cell ran, the material's thickness and the free-axis position a typed
+/// field pinned. A fill plan, its refusal and the ghost a maker sees all read this value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FillRequest {
+    /// The point the pointer named inside the open product.
+    pub point: DVec3,
+    /// The pair of the niche's sides the part takes.
+    pub fill: Fill,
+    /// How the part reads the section the walls leave.
+    pub mode: FillMode,
+    /// The material's thickness, which is the part's third side.
+    pub thickness: Length,
+    /// The free-axis position a typed field pinned, or `None` while the pointer picks it.
+    pub free: Option<f64>,
+}
+
+impl FillRequest {
+    /// One tool's ask: the point it points at, the pair and mode its class names, and the thickness.
+    pub const fn new(point: DVec3, fill: Fill, mode: FillMode, thickness: Length, free: Option<f64>) -> Self {
+        Self { point, fill, mode, thickness, free }
+    }
+}
+
 /// How a fill tool reads the section the walls leave.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub enum FillMode {
@@ -132,19 +158,21 @@ impl Project {
     /// section is read and `free` the pinned free-axis position — `None` while the pointer picks it
     /// in whole millimetres, `Some` when a typed distance fixed it (ADR 0103). The result is the
     /// whole plan, so the caller never measures the void a second time.
-    pub fn fill_plan(
-        &self,
-        product: Id,
-        point: DVec3,
-        fill: Fill,
-        mode: FillMode,
-        thickness: Length,
-        free: Option<f64>,
-    ) -> Result<FillPlan, FillRefusal> {
-        let niche = self.niche(point).map_err(|refusal| match refusal {
+    pub fn fill_plan(&self, product: Id, request: FillRequest) -> Result<FillPlan, FillRefusal> {
+        let niche = self.niche(request.point).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
             NicheRefusal::Unrepresentable => FillRefusal::Unrepresentable,
         })?;
+        self.fill_plan_in(&niche, product, request)
+    }
+
+    /// Answers the part one click at `point` would create, in a niche already measured.
+    ///
+    /// This is the one plan behind [`Project::fill_plan`]: a caller that holds a [`Niche`] — the
+    /// niche atom, which measures the void once for every tool that consumes it (ADR 0118) — passes
+    /// it here, so no surface probes the document a second time for the same answer.
+    pub fn fill_plan_in(&self, niche: &Niche, product: Id, request: FillRequest) -> Result<FillPlan, FillRefusal> {
+        let FillRequest { point, fill, mode, thickness, free } = request;
         if niche.product != product {
             return Err(FillRefusal::OtherProduct);
         }
@@ -160,7 +188,7 @@ impl Project {
         {
             return Err(FillRefusal::TooSmall);
         }
-        let (part, placement) = board(&niche, local, gap, mode, free, fill, thickness)?;
+        let (part, placement) = board(niche, local, gap, mode, free, fill, thickness)?;
         // The free axis is the panel's own thickness axis, so the two ends are its base face and its
         // far face; which of them is lower depends on the stance (ADR 0105).
         let axis = free_axis(fill);
@@ -175,7 +203,7 @@ impl Project {
             outline: part.outline,
             nominal_size: part.nominal_size,
             placement,
-            niche,
+            niche: niche.clone(),
             corners: part.corners,
             far_corners: part.far_corners,
             bevels: part.bevels,
@@ -866,7 +894,7 @@ mod tests {
         mode: FillMode,
         thickness: Length,
     ) -> Result<FillPlan, FillRefusal> {
-        project.fill_plan(product, centre(project, product), fill, mode, thickness, None)
+        project.fill_plan(product, FillRequest::new(centre(project, product), fill, mode, thickness, None))
     }
 
     /// A board standing as a wall across the case's back, its inner face through `y = through` at
@@ -1173,24 +1201,30 @@ mod tests {
         let thickness = millimetres(18);
         let outside = project.fill_plan(
             product,
-            DVec3::new(-1000.0, -1000.0, -1000.0),
-            Fill::WidthAndDepth,
-            FillMode::Fit,
-            thickness,
-            None,
+            FillRequest::new(
+                DVec3::new(-1000.0, -1000.0, -1000.0),
+                Fill::WidthAndDepth,
+                FillMode::Fit,
+                thickness,
+                None,
+            ),
         );
         assert_eq!(outside, Err(FillRefusal::Outside));
         let root = project.root().id();
-        let wrong =
-            project.fill_plan(root, centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, thickness, None);
+        let wrong = project.fill_plan(
+            root,
+            FillRequest::new(centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, thickness, None),
+        );
         assert_eq!(wrong, Err(FillRefusal::OtherProduct));
         let thin = project.fill_plan(
             product,
-            centre(&project, product),
-            Fill::WidthAndDepth,
-            FillMode::Fit,
-            Length::from_micrometres(1),
-            None,
+            FillRequest::new(
+                centre(&project, product),
+                Fill::WidthAndDepth,
+                FillMode::Fit,
+                Length::from_micrometres(1),
+                None,
+            ),
         );
         assert!(thin.is_ok(), "a micrometre board still leaves a plan");
     }
@@ -1293,7 +1327,7 @@ mod turned {
         for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = project
-                    .fill_plan(product, point, fill, mode, millimetres(18), None)
+                    .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None))
                     .unwrap_or_else(|refusal| panic!("{fill:?}/{mode:?} refused: {refusal:?}"));
                 assert!(planned.corners.len() >= 3, "{fill:?}/{mode:?} has a footprint");
             }

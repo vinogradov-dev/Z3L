@@ -50,7 +50,7 @@ use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawModifiers};
 use crate::extrude_gizmo::{ExtrudeEvent, ExtrudeGizmo};
 use crate::file_menu::{FileAction, FileMenu, PreservedSections};
-use crate::fill_gizmo::{self, FillGizmo};
+use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
@@ -69,6 +69,7 @@ use crate::vertex_gizmo::{MeshVertexCommit, VertexGizmo, VertexPreview};
 use crate::view_cluster;
 use crate::view_cluster::{ClusterAction, ClusterView, NavigationMode, ViewCluster};
 use crate::view_layout::{Layout, LayoutKind};
+use crate::void_gizmo::{self, VoidGizmo};
 use crate::{Shell, Transform, theme};
 
 /// Orbit sensitivity in radians per point dragged.
@@ -314,6 +315,8 @@ pub(crate) struct Document {
     pub(crate) fill_gizmo: FillGizmo,
     /// The ruler's snapped point; the measurement itself lives in the editor (ADR 0118).
     pub(crate) measure_gizmo: MeasureGizmo,
+    /// The niche tool's overlay; the cell itself lives in the editor (ADR 0118).
+    pub(crate) void_gizmo: VoidGizmo,
     /// The grips of the selected box: four base corners and six faces, one drag each.
     pub(crate) box_grips: BoxGrips,
     /// The exact-distance fields of the running fill gesture: their pins, locks and keyboard.
@@ -408,6 +411,7 @@ impl Document {
             extrude_gizmo: ExtrudeGizmo::default(),
             fill_gizmo: FillGizmo::default(),
             measure_gizmo: MeasureGizmo::default(),
+            void_gizmo: VoidGizmo,
             box_grips: BoxGrips::default(),
             distance_fields: DistanceFields::default(),
             distances: None,
@@ -1168,8 +1172,7 @@ impl Document {
             .or_else(|| ui.input(|input| input.pointer.hover_pos()).filter(|pointer| on_field(*pointer)));
         let card_anchor = self.card_anchor(pointer, card_before);
         let point = pointer.and_then(|pointer| {
-            let ray = gizmo_math::ray_to(pointer, rect, self.scene.camera);
-            fill_gizmo::pointer_point(self.session.project(), product, ray)
+            void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer)
         });
         let Some(point) = point.or_else(|| {
             // The card sits beside the pointer now and then over the envelope's silhouette; the
@@ -1177,14 +1180,40 @@ impl Document {
             // maker's cursor.
             ui.input(|input| input.pointer.hover_pos())
                 .filter(|pointer| on_field(*pointer))
-                .and_then(|_| self.fill_gizmo.measured_point())
+                .and_then(|_| self.editor.void().point())
         }) else {
             self.reset_fill(ui.ctx());
             return;
         };
-        // A number typed into a field pins the free position; the pointer drives it otherwise.
-        let free = self.distances.as_ref().and_then(Distances::pinned_low);
-        if self.fill_gizmo.hover(self.session.project(), product, point, arm.fill, arm.mode, thickness, free) {
+        // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
+        // row and the part the click creates, so the pointer names one space in this frame.
+        let measured = self.editor.void_measure(self.session.project(), point);
+        let niche = self.editor.void().niche().cloned();
+        let planned = match niche.as_ref() {
+            Some(niche) => {
+                // A number typed into a field pins the free position; the pointer drives it otherwise.
+                let free = self.distances.as_ref().and_then(Distances::pinned_low);
+                self.fill_gizmo.hover(
+                    self.session.project(),
+                    product,
+                    point,
+                    niche,
+                    arm.fill,
+                    arm.mode,
+                    thickness,
+                    free,
+                )
+            }
+            None => {
+                let reason = self
+                    .editor
+                    .void()
+                    .refusal()
+                    .map(|refusal| refusal.words().text(furnicraft_ui::language(ui.ctx())).to_owned());
+                self.fill_gizmo.refuse(reason)
+            }
+        };
+        if measured || planned {
             ui.ctx().request_repaint();
         }
         let Some(ghost) = self.fill_gizmo.ghost().cloned() else {
@@ -1247,9 +1276,21 @@ impl Document {
         }
         let pinned = distances.pinned_low();
         if outcome.changed {
-            // The typed number or the midpoint moved the ghost: measure it again at that exact
-            // coordinate before the frame paints, so the picture and the field agree.
-            self.fill_gizmo.hover(self.session.project(), product, point, arm.fill, arm.mode, thickness, pinned);
+            // The typed number or the midpoint moved the ghost: plan it again at that exact
+            // coordinate before the frame paints, so the picture and the field agree. The cell is the
+            // one the atom holds, so the typed number moves the part and not the space.
+            if let Some(niche) = self.editor.void().niche().cloned() {
+                self.fill_gizmo.hover(
+                    self.session.project(),
+                    product,
+                    point,
+                    &niche,
+                    arm.fill,
+                    arm.mode,
+                    thickness,
+                    pinned,
+                );
+            }
             ui.ctx().request_repaint();
         }
         self.distances = Some(distances);
@@ -1292,6 +1333,68 @@ impl Document {
     pub(crate) fn cancel_measure(&mut self) {
         self.editor.cancel_measure();
         self.measure_gizmo.reset();
+    }
+
+    /// Arms the niche tool, or leaves it when it already owns the pointer.
+    ///
+    /// The key, the ribbon cell and the context menu entry land here, so every entry point toggles the
+    /// tool the same way; the editor clears every other pointer mode, and this clears the shell state
+    /// those modes held.
+    pub(crate) fn toggle_void(&mut self, ctx: &egui::Context) {
+        if self.editor.void_armed() {
+            self.cancel_void();
+        } else if self.session.active_product().is_none() {
+            // A niche belongs to the open product (ADR 0098): the key says what is missing instead
+            // of arming a tool with nothing to point into.
+            self.last_error = Some(Message::FillNeedsProduct.text(furnicraft_ui::language(ctx)).to_owned());
+        } else {
+            self.start_void(ctx);
+        }
+    }
+
+    /// Arms the niche tool and leaves the shell state of the tool it replaced.
+    ///
+    /// The niche is a measurement: nothing reaches the document, the undo stack or the session
+    /// preview, and a running draft, a fill ghost and an untyped distance field are left behind
+    /// because two armed modes at once is a defect (ADR 0118).
+    pub(crate) fn start_void(&mut self, ctx: &egui::Context) {
+        self.editor.arm_void();
+        self.draw_gizmo.reset();
+        self.cancel_extrude();
+        self.reset_fill(ctx);
+        self.measure_gizmo.reset();
+    }
+
+    /// Leaves the niche tool and drops the cell it named; nothing was written, so undo is untouched.
+    pub(crate) fn cancel_void(&mut self) {
+        self.editor.cancel_void();
+        self.void_gizmo.reset();
+    }
+
+    /// Feeds the pointer to the armed niche and keeps the reading in the editor's one atom.
+    ///
+    /// A pointer outside the open product, or a pointer on a widget, leaves the value as it stands:
+    /// the tool keeps the cell under the maker's hand instead of dropping it on chrome. The niche
+    /// writes nothing, so this is a read of the document, not a command.
+    fn update_void(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        pointer_over_widget: bool,
+    ) {
+        let changed = self.void_gizmo.update(
+            response,
+            rect,
+            self.scene.camera,
+            self.session.project(),
+            &mut self.editor,
+            self.session.active_product(),
+            pointer_over_widget,
+        );
+        if changed {
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Whether this frame's press landed on the tool card rather than on the scene.
@@ -1804,7 +1907,8 @@ impl Document {
                 || placing
                 || boxing
                 || self.editor.mesh_edit().is_some()
-                || self.editor.fill_arm().is_some())
+                || self.editor.fill_arm().is_some()
+                || self.editor.void_armed())
         {
             self.cancel_extrude();
         }
@@ -1821,6 +1925,9 @@ impl Document {
         // document is never touched (ADR 0118). It yields to no other mode, because arming it left
         // them all.
         let measuring = interactive && !pointer_on_chrome && self.editor.measure().is_some();
+        // The niche names the empty space under the pointer and creates nothing; it owns the press
+        // the same way the ruler does, so a click never selects through it (ADR 0118).
+        let voiding = interactive && !pointer_on_chrome && self.editor.void_armed();
         // An armed navigation gesture owns a primary-button drag, but not the other tools: while a
         // contour edit, a draft or a sub-object mode is live, that mode keeps the pointer.
         let navigation = shell.cluster.navigation;
@@ -1831,12 +1938,14 @@ impl Document {
             && !boxing
             && !pulling
             && !filling
-            && !measuring;
-        let mesh_object = if !interactive || contour_editing || drawing || placing || pulling || filling || measuring {
-            None
-        } else {
-            self.editor.mesh_edit().map(|edit| edit.object())
-        };
+            && !measuring
+            && !voiding;
+        let mesh_object =
+            if !interactive || contour_editing || drawing || placing || pulling || filling || measuring || voiding {
+                None
+            } else {
+                self.editor.mesh_edit().map(|edit| edit.object())
+            };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -1963,6 +2072,10 @@ impl Document {
             self.measure_gizmo.reset();
         }
 
+        if voiding {
+            self.update_void(ui, &response, rect, pointer_over_widget);
+        }
+
         if pulling {
             // The pull reads the pointer itself: a press on the arrow starts a drag, the release
             // writes the height and keeps pulling, and a click anywhere else finishes. One drag is
@@ -2015,6 +2128,7 @@ impl Document {
             && !pulling
             && !filling
             && !measuring
+            && !voiding
             && self.grip_target().is_some();
         if gripping {
             self.update_box_grips(ui, &response, rect);
@@ -2060,6 +2174,7 @@ impl Document {
             || pulling
             || filling
             || measuring
+            || voiding
             || self.box_grips.is_dragging()
             || navigating
             || mesh_object.is_some()
@@ -2115,6 +2230,7 @@ impl Document {
             || pulling
             || filling
             || measuring
+            || voiding
             || self.box_grips.is_dragging()
         {
             true
@@ -2225,6 +2341,7 @@ impl Document {
             && !boxing
             && !pulling
             && !measuring
+            && !voiding
             && !consumed_click
             && response.clicked_by(egui::PointerButton::Secondary)
             && let Some(pointer) = response.interact_pointer_pos()
@@ -2249,6 +2366,7 @@ impl Document {
             && !boxing
             && !pulling
             && !measuring
+            && !voiding
             && clicked
             && !pointer_over_gizmo
             && !consumed_click
@@ -2453,6 +2571,12 @@ impl Document {
             self.fill_gizmo.paint(ui, rect, self.scene.camera);
         } else if let Some(measure) = self.editor.measure() {
             self.measure_gizmo.paint(ui, rect, self.scene.camera, measure);
+        } else if voiding {
+            // The niche draws the cell it names: a wireframe box in the product's own frame, so the
+            // void reads through the boards around it, with the three sides at its middle.
+            if let Some(niche) = self.editor.void().niche() {
+                self.void_gizmo.paint(ui, rect, self.scene.camera, self.session.project(), niche);
+            }
         } else if navigating || locked_selection.is_some() {
             // The navigation gesture owns the viewport, and a locked selection owns nothing: an
             // axis under the pointer would compete with the camera drag, and a locked node draws no
@@ -2734,9 +2858,10 @@ impl Document {
             grid: self.draw_gizmo.grid(),
         };
         let mut outcome = None;
-        // Whether the ruler owned the pointer before this frame, so a cell that armed or dropped it
-        // also resets the shell's own gizmos (ADR 0118).
+        // Whether the ruler or the niche owned the pointer before this frame, so a cell that armed
+        // or dropped one also resets the shell's own gizmos (ADR 0118).
         let was_measuring = self.editor.measure().is_some();
+        let was_void = self.editor.void_armed();
         // The ribbon is its own chrome surface — one step above the window's surface and distinct
         // from the panel fill the side panels use behind their content. The Appearance slider scales
         // that fill's alpha, letting the scene it covers show through without changing any other
@@ -2779,6 +2904,15 @@ impl Document {
             } else if was_measuring && self.editor.measure().is_none() {
                 // A drawing or creation cell replaced it; the ruler's pointer state goes with it.
                 self.cancel_measure();
+            }
+            if self.editor.void_armed() && !was_void {
+                // The niche was armed from its cell or its key: leave the shell state of the tool it
+                // replaced and the navigation mode that would take the next press.
+                self.start_void(ui.ctx());
+                shell.cluster.navigation = None;
+            } else if was_void && !self.editor.void_armed() {
+                // Another cell replaced it; the cell it named goes with the tool.
+                self.cancel_void();
             }
             if let Some((object, height)) = outcome.extruded {
                 // The body exists at the height the field named; the arrow lets the user pull it
@@ -2906,6 +3040,10 @@ impl Document {
                 // the mode the next click uses.
                 self.editor.cancel_fill();
                 self.reset_fill(ui.ctx());
+            } else if self.editor.void_armed() {
+                // Escape leaves the niche tool the same way, and writes nothing because the tool
+                // wrote nothing: the point and the cell it named are view state (ADR 0118).
+                self.cancel_void();
             } else if self.editor.creation_parent().is_some() {
                 // The arm outranks leaving a container level: it is the mode the next creation uses,
                 // and the chip names it until Escape or ✕ clears it (ADR 0056).

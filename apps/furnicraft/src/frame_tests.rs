@@ -1945,6 +1945,89 @@ fn the_ruler_measures_two_points_and_writes_nothing() {
 }
 
 #[test]
+fn the_niche_is_a_tool_the_ribbon_arms_and_the_fill_reads() {
+    // U99, ADR 0118: the niche is a tool of its own. The Furniture cell arms it, the pointer names the
+    // cell the status bar prints, Escape leaves it without a document change — and the fill, armed at
+    // the same pointer, plans its part from the very cell the niche tool named.
+    let mut harness = Harness::with_session("frame-niche", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    let draft = furnicraft_ui::product_card::ProductDraft {
+        envelope: Envelope::new(
+            furnicraft_testkit::millimetres(600),
+            furnicraft_testkit::millimetres(560),
+            furnicraft_testkit::millimetres(720),
+        )
+        .expect("a valid box"),
+        class: ClassCode::GENERAL_PRODUCT,
+    };
+    harness.app.tabs.active_mut().create_product(draft, Lang::En).expect("create the frame");
+    let revision = harness.revision();
+
+    // The pointer sits on the middle of the reserved box, which is the whole void of an empty piece.
+    let product = harness.app.tabs.active().session.active_product().expect("the frame is open");
+    let pointer = {
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = furnicraft_geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let centre = project.world_placement(product).expect("a frame").transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen")
+    };
+
+    // The cell lives on the Furniture tab, and a fresh workspace opens the Sketch tab.
+    if let Some(tab) = furnicraft_ui::toolbars::spec::tab("furniture") {
+        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    harness.settle();
+    let cell = harness
+        .faces
+        .iter()
+        .find(|(name, _)| name.starts_with(Message::ToolVoid.text(Lang::En)))
+        .map(|(_, rect)| rect.center())
+        .expect("the niche cell is on the strip");
+    harness.click(cell, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().editor.void_armed(), "the cell arms the niche tool");
+    assert_eq!(harness.revision(), revision, "arming it writes nothing");
+
+    harness.hover(pointer);
+    let measured = {
+        let document = harness.app.tabs.active();
+        let void = document.editor.void();
+        assert_eq!(void.product(), Some(product), "the pointer names the open product's void");
+        let size = ["600", "560", "720"].map(|side| format!("{side} mm"));
+        let text = Message::VoidSize.with(Lang::En, [Message::StatusSize.with(Lang::En, size)]);
+        assert!(harness.drew(&text), "the status bar names the cell the pointer holds: {:?}", harness.drawn);
+        assert!(harness.drew(Message::VoidHint.text(Lang::En)), "and says what to do next: {:?}", harness.drawn);
+        void.niche().cloned().expect("the pointer names a cell")
+    };
+    assert_eq!(harness.revision(), revision, "measuring the void writes nothing");
+
+    // Escape leaves the tool and drops the cell it named; the document never changed.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().editor.void_armed(), "Escape leaves the niche tool");
+    assert!(harness.app.tabs.active().editor.void().niche().is_none(), "and drops its cell");
+    assert_eq!(harness.revision(), revision, "Escape writes nothing");
+
+    // The fill tool arms the same atom, so its ghost is built from the cell the niche tool named.
+    {
+        let document = harness.app.tabs.active_mut();
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, furnicraft_model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+    }
+    harness.hover(pointer);
+    let ghost = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the fill plans a part");
+    assert_eq!(ghost.niche, measured, "one pointer, one cell: the fill reads the niche tool's value");
+    assert_eq!(harness.revision(), revision, "and the fill wrote nothing before its click");
+}
+
+#[test]
 fn the_ruler_snaps_to_the_board_under_the_pointer() {
     // The probe is the ruler's point resolver (ADR 0103, 0118): a click lands on the face the
     // person points at, not on the work plane behind it and not on the reserved box around a part.

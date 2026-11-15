@@ -1463,6 +1463,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "furnicraft-engine",
+ "furnicraft-geom",
  "furnicraft-model",
  "furnicraft-scene",
  "furnicraft-testkit",

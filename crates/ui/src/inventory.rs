@@ -234,6 +234,9 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "sketch.create.circle.three-points", key: egui::Key::C, chord: Chord::Shift, label: "Shift+C" },
     Binding { id: "sketch.create.polygon", key: egui::Key::N, chord: Chord::Plain, label: "N" },
     Binding { id: "sketch.measure.length", key: egui::Key::M, chord: Chord::Plain, label: "M" },
+    // The niche is filed under the cell that arms it: the atom's own row names the mechanism, the
+    // map's method names the button (ADR 0117).
+    Binding { id: "furniture.panels.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
 ];
 
 /// The binding with `id`, if a key runs it.
@@ -737,14 +740,23 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Light),
         icon: None,
     },
-    // The atom: the last row is the one mechanism a surface draws without a command behind it.
-    // The ruler writes nothing, so it has no id in the engine registry and no undo entry (ADR 0118).
+    // The atoms: the last rows are the mechanisms a surface draws with no command behind them, so
+    // neither has an id in the engine registry and neither writes an undo entry (ADR 0118). The
+    // ruler is two clicks and a length; the niche is the empty space the pointer holds, which the
+    // fill tools, the report row and the assistant read from the same value.
     Row {
         id: "sketch.measure.length",
         label: Message::ToolMeasureLength,
         places: &[Place::Ribbon],
         applies: Applies::Always,
         icon: Some(crate::icons::contour::MEASURE),
+    },
+    Row {
+        id: "probe.void",
+        label: Message::ToolVoid,
+        places: &[Place::Ribbon, Place::ContextMenu],
+        applies: Applies::Context(ActsOn::Container),
+        icon: Some(crate::icons::scene::VOID),
     },
 ];
 
@@ -758,7 +770,7 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length"];
+pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {

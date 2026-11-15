@@ -157,6 +157,19 @@ messages! {
         "Измерение · щёлкните для нового измерения  ·  Esc выходит"
     ],
     MeasureValue = ["Length {}", "Длина {}"],
+    VoidHint = [
+        "Niche · point at the empty space  ·  Esc leaves",
+        "Ниша · укажите на пустое место  ·  Esc выходит"
+    ],
+    VoidSize = ["Niche {}", "Ниша {}"],
+    VoidOutside = [
+        "Point at the empty space inside the open product",
+        "Укажите на пустое место внутри открытого изделия"
+    ],
+    VoidUnrepresentable = [
+        "The empty space here is not one straight shape; point at a plainer gap",
+        "Пустое место здесь не одна прямая форма; укажите на более простой зазор"
+    ],
     NavigationStatus = ["Navigation · {}", "Навигация · {}"],
     GestureOrbit = ["Drag in the viewport to orbit  ·  Esc done", "Перетаскивайте в области просмотра для облёта  ·  Esc готово"],
     GesturePan = ["Drag in the viewport to pan  ·  Esc done", "Перетаскивайте в области просмотра для панорамы  ·  Esc готово"],
@@ -858,6 +871,7 @@ messages! {
     ToolProductFrameDraw = ["Frame by drawing", "Каркас по чертежу"],
     ToolPanel = ["Panel", "Панель"],
     ToolPost = ["Post", "Стойка"],
+    ToolVoid = ["Niche", "Ниша"],
     ToolShelf = ["Shelf", "Полка"],
     ToolContourPanel = ["Panel from contour", "Панель по контуру"],
     ToolAssembly = ["Assembly", "Сборка"],

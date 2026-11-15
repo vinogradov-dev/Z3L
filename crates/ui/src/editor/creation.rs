@@ -86,6 +86,7 @@ impl Editor {
         session.close_product();
         self.clear_creation_parent();
         self.cancel_fill();
+        self.cancel_void();
     }
 
     /// Drops an arm whose container no longer exists.
@@ -235,6 +236,10 @@ impl Editor {
         self.drawing = None;
         self.fill = None;
         self.measure = None;
+        // The niche is a measurement of a mode that no longer owns the pointer, so the value goes
+        // with the arm: a report row never names a space the pointer left (ADR 0118).
+        self.void_armed = false;
+        self.void.clear();
         self.pending_primitive = None;
         self.box_draft = None;
     }
