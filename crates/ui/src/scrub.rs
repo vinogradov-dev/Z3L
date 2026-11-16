@@ -18,7 +18,9 @@
 //! The pointer is hidden for the duration of the drag — the number, not the pointer, is what the
 //! user is steering. A click enters the value as text; the typed number is parsed, clamped to the
 //! offered range and written back by the field's [`CommitPolicy`]. Invalid text keeps the value the
-//! field already had, marks the box red and returns the reason for the card to print.
+//! field already had, marks the box red and returns the reason for the card to print. Only text the
+//! person typed is committed: a field that shows a running number loses the keyboard without
+//! writing the rounding of a value nobody edited (X54).
 
 use core::ops::RangeInclusive;
 use core::time::Duration;
@@ -349,7 +351,13 @@ impl<'a, N: Numeric> Scrub<'a, N> {
             let escaped = ui.input(|input| input.key_pressed(Key::Escape));
             let enter = ui.input(|input| input.key_pressed(Key::Enter));
             let lost = response.lost_focus();
-            let due = typed.borrow().pending && now - typed.borrow().changed_at >= DEBOUNCE_SECONDS;
+            let pending = typed.borrow().pending;
+            let due = pending && now - typed.borrow().changed_at >= DEBOUNCE_SECONDS;
+            // Only text the person typed is a promise, so only pending text commits when the focus
+            // goes. A field that shows a running number — a sketch plate following the pointer, a
+            // value a gizmo is moving — loses the keyboard with the number already written into
+            // `shown` at the field's decimals, and committing that rounded text would freeze a
+            // value nobody typed (X54).
             if escaped {
                 // Escape abandons the typed text: the number the edit started from comes back.
                 let mut state = typed.borrow_mut();
@@ -357,7 +365,7 @@ impl<'a, N: Numeric> Scrub<'a, N> {
                 state.pending = false;
                 state.error = None;
                 cancel = true;
-            } else if enter || lost || due {
+            } else if enter || due || (lost && pending) {
                 let text = typed.borrow().text.clone();
                 match parse(&text).and_then(|parsed| clamped(parsed, &range).ok_or(Message::NumberInvalid)) {
                     Ok(parsed) => {
@@ -933,6 +941,39 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         assert_eq!(value, 170, "losing the focus commits what was typed");
+    }
+
+    #[test]
+    fn a_blur_commits_nothing_when_the_person_typed_nothing() {
+        // X54: a live field shows its number at its own decimals, and that text is a presentation,
+        // not an edit. Losing the keyboard used to parse the shown text back and hand the rounding
+        // over as a commit, which locked a sketch plate and froze the point being placed.
+        let rect = Rect::from_min_size(pos2(300.0, 280.0), vec2(100.0, 20.0));
+        let ctx = egui::Context::default();
+        let mut value = 772.334_124_585_985_1f64;
+        let centre = rect.center();
+        let elsewhere = pos2(600.0, 500.0);
+        let mut commits = 0;
+        for events in [
+            moved(centre),
+            vec![button(centre, true)],
+            vec![button(centre, false)],
+            moved(elsewhere),
+            vec![button(elsewhere, true)],
+            vec![button(elsewhere, false)],
+            vec![],
+        ] {
+            let output = ctx.run_ui(input(events), |ui| {
+                let mut outcome = None;
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    outcome = Some(Scrub::new(&mut value).range(0.0..=10_000.0).decimals(1).show(ui));
+                });
+                commits += usize::from(outcome.expect("the field draws itself").commit);
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(commits, 0, "a blur is not an edit unless text was typed");
+        assert_eq!(value, 772.334_124_585_985_1, "and the live number keeps its value");
     }
 
     #[test]
