@@ -42,21 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U103** there is no rubber-band selection
-  Why: There is no way to select several objects with the pointer: a press either picks one
-   node or orbits. The owner asked for the AutoCAD rectangle — left-to-right and top-to-bottom
-   takes what it encloses, right-to-left and bottom-to-top takes everything it touches.
-  Shape: Add a selection drag to the viewport: a press on empty space draws the rubber band,
-   the direction of the drag decides the rule (screen-space corner order, not the world), and
-   the release applies it through the selection API the Shift/Ctrl work introduces, so a band
-   can also add. The band is chrome paint under the work cursor, and a press with no travel
-   stays the plain click that orbits nothing. Picking must test the projected silhouette of
-   every scene object, not the mesh.
-  Done: A band dragged left-to-right selects only the objects it encloses, one dragged the
-   other way selects every object it touches, the rule follows the drag direction in a test
-   with objects inside and straddling the band, and the band draws only while the pointer drags
-   on empty space.
-  `files: app/src/document.rs,crates/ui/src/editor/selection.rs`
 - `[ ]` **U104** the extrusion card offers create and cancel beside its height
   Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
    height. The owner wants the card to carry only the height — no units, no words, just H —
@@ -119,6 +104,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **U103** there is no rubber-band selection
+  Why: There is no way to select several objects with the pointer: a press either picks one
+   node or orbits. The owner asked for the AutoCAD rectangle — left-to-right and top-to-bottom
+   takes what it encloses, right-to-left and bottom-to-top takes everything it touches.
+  Shape: Add a selection drag to the viewport: a press on empty space draws the rubber band,
+   the direction of the drag decides the rule (screen-space corner order, not the world), and
+   the release applies it through the selection API the Shift/Ctrl work introduces, so a band
+   can also add. The band is chrome paint under the work cursor, and a press with no travel
+   stays the plain click that orbits nothing. Picking must test the projected silhouette of
+   every scene object, not the mesh.
+  Done: A band dragged left-to-right selects only the objects it encloses, one dragged the
+   other way selects every object it touches, the rule follows the drag direction in a test
+   with objects inside and straddling the band, and the band draws only while the pointer drags
+   on empty space.
+  `files: app/src/document.rs,crates/ui/src/editor/selection.rs` — `f251903`
 
 - `[x]` **U102** a selection cannot be added to or removed from
   Why: A selection is one object: a click replaces it, and there is no way to add or remove
