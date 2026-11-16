@@ -73,6 +73,43 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X43** the sketch plates, the reference guide and the switch between tools
+  Why: The owner's reclamation against C1-C5. (1) The first point of every sketch tool shows
+   only the Y plate: the first stage reads the point itself as X and Y, both rows name the same
+   anchor, and plate_corner places each plate at that anchor alone, so the later plate covers
+   the earlier one. (2) Two plates overlap whenever their anchors land close: a segment's
+   length plate sits on the chord's midpoint and its angle plate on the arc, and at some
+   pointer positions the two rectangles intersect (screenshots 09-52-25, 09-55-03). Every plate
+   is placed independently. (3) The reference guide is almost invisible: its dot is 0.4 points
+   with a 0.22 light centre, and on a dark board the dark rim and the faint centre read as
+   nothing (REFERENCE_DOT, REFERENCE_DOT_LIGHT, ADR 0127). (4) The reference axis and its sweep
+   arc are drawn in screen space from the work-plane angles: guides::reference_between takes
+   from/to in radians and a screen radius and draws a circle in the view, so in a perspective
+   or axonometric view the arc is not the ellipse the plane really projects and the axis points
+   in the wrong screen direction. Both the sketch gizmo and the contour latch's guide share the
+   call.
+  Shape: Lay the plates of one point out as one set: resolve every row's rectangle before
+   drawing, using the plate size the last frame measured (a conservative estimate on the first
+   frame of a stage) and stack a row that collides with an already placed one away from its
+   anchor, so X and Y of the first point are two visible plates and no two plates ever cover
+   each other. Sample the reference on the work plane — the axis as two points, the sweep as a
+   polyline of one sample per degree — project every sample with the camera and hand the
+   projected polylines to guides::reference, so the guide lies in the plane in every
+   projection; the same change serves the latched corner move. Raise the reference dot and its
+   light centre and widen the dot pitch until the line reads on a dark board, keeping the fixed
+   two-tone pair of ADR 0121 and recording the new sizes in an ADR. Add frame tests that walk
+   every drawing tool and every stage, hover each stage at several viewport positions and
+   assert each declared row is drawn, inside the view and clear of the others, and that
+   switching tools or to another creation mode mid-draft starts a clean stage.
+  Done: No sketch stage hides a plate: the first point of every tool always draws X and Y
+   apart, and no two plates intersect at any hover position or viewport edge; the reference
+   axis and sweep are projected from the work plane in perspective and axonometric views,
+   verified against a screen-space circle; the reference dot reads on a dark board; a table
+   test covers every DrawTool and every stage of it, and a switch test covers tool changes
+   after zero, one and two points, a pending arc and a non-drawing tool; cargo xtask ci is
+   green.
+  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,apps/furnicraft/src/draw_gizmo.rs,apps/furnicraft/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `7f5517c`
+
 - `[x]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
   Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
    second that runs nothing (sketch.create.polygon.edge); the owner needs the circumscribed
