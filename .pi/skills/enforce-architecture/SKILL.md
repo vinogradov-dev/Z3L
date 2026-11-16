@@ -42,6 +42,7 @@ What it verifies today:
 4. `render` does not depend on `egui`, `eframe`, `egui-wgpu`, `winit` or `model`.
 5. `ui` does not depend on `wgpu`, `egui-wgpu` or `winit`.
 6. `testkit` appears only under `[dev-dependencies]` (`DEV_ONLY`).
+7. No crate declares `mod <name>;` for a crate it depends on: the module would hide it (`plan/rename.md` §6).
 
 What it does **not** verify (see "Known gaps"): file I/O inside `model`, document mutations performed by `ui`, window creation inside `render`, the general dev/build-dependency policy beyond `testkit`, and dependency licenses. Those need the manual checklist below.
 

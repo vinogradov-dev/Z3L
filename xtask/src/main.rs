@@ -16,7 +16,7 @@
     clippy::unreachable
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -106,6 +106,7 @@ fn check_layers() -> Result<usize, Vec<String>> {
     let packages = array(&metadata, "packages").map_err(|error| vec![error])?;
     let (checked, mut violations) = collect_violations(CRATES, packages).map_err(|error| vec![error])?;
     violations.extend(c_vendoring_violations(packages));
+    violations.extend(shadow_violations(packages).map_err(|error| vec![error])?);
 
     if violations.is_empty() { Ok(checked) } else { Err(violations) }
 }
@@ -121,6 +122,80 @@ fn c_vendoring_violations(packages: &[serde_json::Value]) -> Vec<String> {
                 .then(|| format!("`{name}` compiles or vendors C/C++ code; Z3L dependencies must be pure Rust"))
         })
         .collect()
+}
+
+/// Rejects a crate whose module name hides a crate it depends on.
+///
+/// Crate names carry no prefix (ADR 0135), so a name can collide with a module: a crate that
+/// declares `mod scene;` and depends on the crate `scene` loses the crate. Inside it, `scene::…`
+/// resolves to the module, and the compiler reports `E0425` at a line that does not name the cause
+/// (`plan/rename.md` §6). The hazard is live only for a name at the declaring crate's own layer or
+/// below, because a crate may depend on nothing above it — `model`'s `mod mesh;` and `mod project;`
+/// are safe for exactly that reason. A prefix would move the collision to a less likely name instead
+/// of removing it, so the gate names it and the crates keep their bare names.
+fn shadow_violations(packages: &[serde_json::Value]) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for package in packages {
+        let name = string(package, "name")?;
+        let dependencies: BTreeSet<String> = array(package, "dependencies")?
+            .iter()
+            .filter(|dependency| dependency.get("kind").and_then(serde_json::Value::as_str) != Some("build"))
+            .filter_map(|dependency| {
+                // The name a `use` sees is the rename when there is one, the package name otherwise;
+                // `cargo metadata` writes `"rename": null` for a dependency without one.
+                dependency
+                    .get("rename")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| dependency.get("name").and_then(serde_json::Value::as_str))
+            })
+            .map(str::to_owned)
+            .collect();
+        if dependencies.is_empty() {
+            continue;
+        }
+        let manifest = Path::new(string(package, "manifest_path")?);
+        let Some(directory) = manifest.parent() else { continue };
+        for module in shadowed(&declared_modules(directory)?, &dependencies) {
+            violations.push(format!(
+                "`{name}` declares `mod {module};` and depends on the crate `{module}`: `{module}::…` resolves \
+                 to the module, not to the crate. Rename the module (`mod {module}_value;`) or write the \
+                 crate path as `::{module}::…`"
+            ));
+        }
+    }
+    Ok(violations)
+}
+
+/// The modules a crate declares, read from its crate root — `src/lib.rs` or `src/main.rs` — with
+/// `syn`, so a `mod` in a comment is not a module and an inline `mod x { … }` is one.
+fn declared_modules(directory: &Path) -> Result<BTreeSet<String>, String> {
+    let mut modules = BTreeSet::new();
+    for root in ["src/lib.rs", "src/main.rs"] {
+        let path = directory.join(root);
+        let Ok(source) = std::fs::read_to_string(&path) else { continue };
+        let names = module_names(&source).map_err(|error| format!("cannot parse `{}`: {error}", path.display()))?;
+        modules.extend(names);
+    }
+    Ok(modules)
+}
+
+/// Every name a crate root declares as a module, inline or external.
+fn module_names(source: &str) -> syn::Result<BTreeSet<String>> {
+    let file = syn::parse_file(source)?;
+    let names = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(module.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+    Ok(names)
+}
+
+/// The declared modules that collide with a crate the package depends on.
+fn shadowed(modules: &BTreeSet<String>, dependencies: &BTreeSet<String>) -> Vec<String> {
+    modules.intersection(dependencies).cloned().collect()
 }
 
 /// Checks every workspace package against the crate rules.
@@ -370,6 +445,21 @@ fn run_ci(global: &Global, config: &Config) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_module_that_shadows_a_dependency_is_a_violation() {
+        let modules = module_names("mod mesh;\nmod project;\n\nfn f() {}").expect("a crate root parses");
+        let dependencies: BTreeSet<String> = ["mesh".to_owned()].into_iter().collect();
+        assert_eq!(shadowed(&modules, &dependencies), ["mesh"], "the module hides the crate: {modules:?}");
+    }
+
+    #[test]
+    fn a_module_named_only_in_a_comment_is_not_a_module() {
+        let modules = module_names("// mod fake;\n/* mod also_fake; */\nmod real;").expect("a crate root parses");
+        assert!(modules.contains("real"));
+        assert!(!modules.contains("fake"), "a line comment is not a module: {modules:?}");
+        assert!(!modules.contains("also_fake"), "a block comment is not a module: {modules:?}");
+    }
     use serde_json::json;
 
     fn package(name: &str, dependencies: &[(&str, Option<&str>)]) -> serde_json::Value {

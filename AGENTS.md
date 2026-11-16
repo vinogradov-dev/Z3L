@@ -148,6 +148,10 @@ state-contract         tool  plan gate, report, writer and CLI; a project import
 xtask                  the host's rules and the ci gate; no plan logic
 ```
 
+- **Crate names are bare, and a module may not hide one.** The crate is `model`, not `z3l-model`; a
+  publish, if it ever happens, is `package = "z3l-model"` in `Cargo.toml` and no `use` changes.
+  `cargo xtask layers` fails when a crate declares `mod <name>;` for a crate it depends on, because
+  `name::…` would then resolve to the module (ADR 0135, `plan/rename.md` §6).
 - **Layering is enforced** by `cargo xtask layers`. A crate may depend only on crates in **lower** layers, and the same table lists per-crate forbidden dependencies. A new crate must be registered in `xtask/src/main.rs` and in `PROJECT.md` in the same change.
 - `model` holds serializable data and its invariants only: no `wgpu`, no `egui`, no window, no file I/O, no geometry kernels.
 - `kernel` is our port: `model` and `param` never see a third-party kernel type. `kernel-truck` is the only crate allowed to depend on `truck`; the app constructs it and injects it into the session.
