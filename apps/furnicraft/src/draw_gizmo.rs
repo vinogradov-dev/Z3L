@@ -19,7 +19,7 @@ use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
 use furnicraft_geom::DVec2;
 use furnicraft_model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path};
 use furnicraft_scene::Camera;
-use furnicraft_ui::{DrawDraft, Editor, FieldParam, FieldSet, PointState, field_row, guides};
+use furnicraft_ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides};
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{
@@ -107,8 +107,12 @@ pub(crate) struct DrawGizmo {
     preview_error: Option<String>,
     /// The plates that name the point being placed, one set per point.
     fields: Option<FieldSet>,
-    /// The stage the plates were built for: the number of points the draft holds.
-    stage: Option<usize>,
+    /// The stage the plates were built for: the tool and the number of points the draft holds.
+    ///
+    /// A stage is the pair, not the count alone: a tool change can keep the same point count, and
+    /// the plates (with their typed locks) belong to one tool's point, so the new tool must rebuild
+    /// them even when the shell did not reset this gizmo.
+    stage: Option<(DrawTool, usize)>,
     /// The snapped pointer of the last frame, before any typed number moved it.
     pointer: Option<DVec2>,
     /// The point being placed, with the plates and guides that name it.
@@ -343,7 +347,7 @@ impl DrawGizmo {
     /// numbers a tool asks for and resets the locks: a typed number is a promise for one point.
     /// Every other frame only moves the plates and refreshes the values the pointer produces.
     fn sync_fields(&mut self, draft: &DrawDraft, pointer: DVec2, plane: WorkPlane, camera: Camera, rect: egui::Rect) {
-        let stage = draft.points().len();
+        let stage = (draft.tool(), draft.points().len());
         let Some(state) = PointState::live(draft, pointer) else {
             return;
         };

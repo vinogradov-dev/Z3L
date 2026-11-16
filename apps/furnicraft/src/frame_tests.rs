@@ -2992,6 +2992,24 @@ fn switching_a_sketch_tool_mid_draft_starts_a_clean_stage() {
         }
     }
 
+    // A tool change that bypasses the shell's pointer reset still rebuilds the plates: a typed lock
+    // promises one number of one point of one tool, so the new tool's first point is its own X and Y.
+    arm_sketch(&mut harness, DrawTool::Circle);
+    harness.hover(hover);
+    let expected = harness.app.tabs.active().draw_gizmo.point_preview().expect("the circle's first point");
+    arm_sketch(&mut harness, DrawTool::Line);
+    harness.hover(hover);
+    type_text(&mut harness, "999");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    harness.app.tabs.active_mut().editor.start_drawing_with(DrawTool::Circle, 6);
+    harness.hover(hover);
+    assert!(
+        harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.tool() == DrawTool::Circle),
+        "the circle owns the draft"
+    );
+    let previewed = harness.app.tabs.active().draw_gizmo.point_preview().expect("the circle's first point");
+    assert_eq!(previewed, expected, "the line's typed X does not reach the circle's first point");
+
     // Choosing the same cell again restarts it, so a double click does not keep a half figure.
     arm_sketch(&mut harness, DrawTool::Line);
     push_stage_point(&mut harness, [0, 0]);
