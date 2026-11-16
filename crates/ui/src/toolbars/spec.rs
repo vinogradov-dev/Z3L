@@ -33,6 +33,11 @@ use crate::icons::{self, Icon};
 pub enum ToolKind {
     /// Starts one drawing method.
     Draw(DrawTool),
+    /// Starts one drawing method whose closed figure is the profile of a solid body.
+    ///
+    /// The box and cylinder cells carry the sketch's own rectangle and circle methods, so a body is
+    /// drawn by every method the sketch offers and built on Z afterwards (ADR 0138).
+    Body(DrawTool),
     /// Closes the running chain into a ring.
     CloseDraft,
     /// Drops the running chain; the document never changed.
@@ -657,17 +662,55 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.primitives.cuboid",
                 label: Message::ToolBox,
                 icon: Some(icons::primitives::CUBOID),
-                run: Some(ToolKind::Primitive(PrimitiveKind::Cuboid)),
-                method: None,
-                variants: &[],
+                run: Some(ToolKind::Body(DrawTool::Rectangle)),
+                method: Some(Message::ToolRectangleFromCorner),
+                variants: &[
+                    VariantSpec {
+                        id: "model.primitives.cuboid.centre",
+                        label: Message::ToolRectangleFromCentre,
+                        icon: Some(icons::contour::RECTANGLE_CENTRE),
+                        run: Some(ToolKind::Body(DrawTool::RectangleFromCenter)),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.cuboid.centre-directed",
+                        label: Message::ToolRectangleFromCentreDirected,
+                        icon: Some(icons::contour::RECTANGLE_CENTRE_DIRECTED),
+                        run: Some(ToolKind::Body(DrawTool::RectangleFromCenterDirected)),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.cuboid.edge",
+                        label: Message::ToolRectangleFromEdge,
+                        icon: Some(icons::contour::RECTANGLE_EDGE),
+                        run: Some(ToolKind::Body(DrawTool::RectangleTilted)),
+                    },
+                ],
             },
             ToolSpec {
                 id: "model.primitives.cylinder",
                 label: Message::ToolCylinder,
                 icon: Some(icons::primitives::CYLINDER),
-                run: Some(ToolKind::Primitive(PrimitiveKind::Cylinder)),
-                method: None,
-                variants: &[],
+                run: Some(ToolKind::Body(DrawTool::Circle)),
+                method: Some(Message::ToolCircleCentreRadius),
+                variants: &[
+                    VariantSpec {
+                        id: "model.primitives.cylinder.diameter",
+                        label: Message::ToolCircleCentreDiameter,
+                        icon: Some(icons::contour::CIRCLE_DIAMETER),
+                        run: Some(ToolKind::Body(DrawTool::CircleDiameter)),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.cylinder.three-points",
+                        label: Message::ToolCircleThreePoints,
+                        icon: Some(icons::contour::CIRCLE_THREE_POINTS),
+                        run: Some(ToolKind::Body(DrawTool::CircleThreePoints)),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.cylinder.tangent",
+                        label: Message::ToolCircleTangent,
+                        icon: Some(icons::contour::CIRCLE_TANGENT),
+                        run: Some(ToolKind::Body(DrawTool::CircleTangent)),
+                    },
+                ],
             },
             ToolSpec {
                 id: "model.primitives.sphere",
@@ -1149,11 +1192,40 @@ mod tests {
         let box_tool = model
             .live_groups()
             .flat_map(GroupSpec::live_tools)
-            .find(|tool| tool.run == Some(ToolKind::Primitive(PrimitiveKind::Cuboid)))
+            .find(|tool| tool.run == Some(ToolKind::Body(DrawTool::Rectangle)))
             .expect("the box cell");
         assert_eq!(box_tool.id, "model.primitives.cuboid");
         assert_eq!(box_tool.label.text(text::Lang::En), "Box");
         assert_eq!(box_tool.icon, Some(icons::primitives::CUBOID));
+        // The box and the cylinder are drawn, not placed: each cell lists the sketch's methods of
+        // its own figure, so a body learns the whole grammar the sketch already had (ADR 0138).
+        let methods: Vec<_> = box_tool.methods().map(|method| method.run).collect();
+        assert_eq!(
+            methods,
+            vec![
+                Some(ToolKind::Body(DrawTool::Rectangle)),
+                Some(ToolKind::Body(DrawTool::RectangleFromCenter)),
+                Some(ToolKind::Body(DrawTool::RectangleFromCenterDirected)),
+                Some(ToolKind::Body(DrawTool::RectangleTilted)),
+            ],
+            "every rectangle method drives the box"
+        );
+        let cylinder = model
+            .live_groups()
+            .flat_map(GroupSpec::live_tools)
+            .find(|tool| tool.id == "model.primitives.cylinder")
+            .expect("the cylinder cell");
+        let methods: Vec<_> = cylinder.methods().map(|method| method.run).collect();
+        assert_eq!(
+            methods,
+            vec![
+                Some(ToolKind::Body(DrawTool::Circle)),
+                Some(ToolKind::Body(DrawTool::CircleDiameter)),
+                Some(ToolKind::Body(DrawTool::CircleThreePoints)),
+                Some(ToolKind::Body(DrawTool::CircleTangent)),
+            ],
+            "every circle method draws the cylinder's rim"
+        );
     }
 
     #[test]
@@ -1199,9 +1271,15 @@ mod tests {
             ToolKind::Projection,
             ToolKind::GridSnap,
             ToolKind::Measure,
-            ToolKind::Primitive(PrimitiveKind::Cuboid),
-            ToolKind::Primitive(PrimitiveKind::Cylinder),
             ToolKind::Primitive(PrimitiveKind::Sphere),
+            ToolKind::Body(DrawTool::Rectangle),
+            ToolKind::Body(DrawTool::RectangleFromCenter),
+            ToolKind::Body(DrawTool::RectangleFromCenterDirected),
+            ToolKind::Body(DrawTool::RectangleTilted),
+            ToolKind::Body(DrawTool::Circle),
+            ToolKind::Body(DrawTool::CircleDiameter),
+            ToolKind::Body(DrawTool::CircleThreePoints),
+            ToolKind::Body(DrawTool::CircleTangent),
             ToolKind::Draw(DrawTool::Line),
             ToolKind::Draw(DrawTool::LineByAngle),
             ToolKind::Draw(DrawTool::Polyline),

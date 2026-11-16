@@ -14,7 +14,7 @@
 use egui::Ui;
 
 use engine::object_cmds::{OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_EXTRUDE_ID};
-use engine::{ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
+use engine::{EditScope, ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
 use model::{Id, Path};
 use text::{Lang, Message};
 use units::Length;
@@ -91,6 +91,10 @@ impl Editor {
                     self.start_drawing_with(tool, sides);
                     outcome.started_drawing = true;
                 }
+                ToolAction::DrawBody { tool } => {
+                    self.start_body_drawing(tool);
+                    outcome.started_drawing = true;
+                }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
                 ToolAction::DrawProductFrame => self.arm_box(BoxOwner::Product),
                 ToolAction::DrawPanelContour => {
@@ -163,6 +167,22 @@ impl Editor {
         height: Length,
         lang: Lang,
     ) -> Result<(), String> {
+        self.extrude_path_in(None, session, object, height, lang)
+    }
+
+    /// Extrudes a drawn profile into its body as one step of an open edit scope (ADR 0138).
+    ///
+    /// The body a cell drew goes through the same command, in the scope its profile was created in,
+    /// so the ring and the body are one undo entry. `None` is the ribbon's plain extrusion, which is
+    /// its own entry.
+    pub fn extrude_path_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        height: Length,
+        lang: Lang,
+    ) -> Result<(), String> {
         session
             .project()
             .object_path(object)
@@ -170,7 +190,12 @@ impl Editor {
             .to_contour()
             .map_err(|error| Message::ExtrudeRefused.with(lang, [error]))?;
         let params = json(&ObjectPathExtrude { object, height })?;
-        dispatch(session, OBJECT_PATH_EXTRUDE_ID, &params)?;
+        match scope {
+            Some(scope) => {
+                session.dispatch_in(scope, OBJECT_PATH_EXTRUDE_ID, &params).map_err(|error| error.to_string())?
+            }
+            None => dispatch(session, OBJECT_PATH_EXTRUDE_ID, &params)?,
+        };
         self.end_contour_edit();
         self.select_node(Some(object));
         Ok(())

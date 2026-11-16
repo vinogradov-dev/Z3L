@@ -24,7 +24,7 @@
 use core::f64::consts::PI;
 
 use engine::object_cmds::OBJECT_PATH_CREATE_ID;
-use engine::{ObjectPathCreate, Session};
+use engine::{EditScope, ObjectPathCreate, Session};
 use geom::DVec2;
 use model::{
     ContourSegment, ContourSegmentError, Id, MAX_CONTOUR_COORDINATE, MAX_CONTOUR_SEGMENTS, MAX_POLYGON_SIDES,
@@ -38,9 +38,10 @@ use crate::command::{dispatch, json};
 
 /// What a committed draft becomes.
 ///
-/// One draft serves two cells: a sketch tool commits the figure as a path object of its own, and the
-/// *Panel from contour* cell cuts a board to the same ring and leaves no path behind. The intent is
-/// view state, like the tool, and never reaches the document.
+/// One draft serves three cells: a sketch tool commits the figure as a path object of its own, the
+/// *Panel from contour* cell cuts a board to the same ring and leaves no path behind, and the box and
+/// cylinder cells draw a body's profile, which the shell then pulls into a solid (ADR 0138). The
+/// intent is view state, like the tool, and never reaches the document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DrawIntent {
     /// One `object.path.create`: the figure the user drew, editable as a path.
@@ -48,6 +49,12 @@ pub enum DrawIntent {
     Path,
     /// One `panel.create` carrying the closed ring as its outline (ADR 0042, 0114).
     Panel,
+    /// One `object.path.create` whose path the shell extrudes at once: the profile of a solid body.
+    ///
+    /// The figure is a path for the length of the pull and becomes one constructive object when the
+    /// height is accepted, so the drawn profile and the body it builds are one node and one undo
+    /// entry (ADR 0138).
+    Body,
 }
 
 /// The tool a drawing draft is building with.
@@ -1003,6 +1010,9 @@ pub struct DrawnNode {
     pub tool: DrawTool,
     /// What the draft became: a path of its own, or a board cut to its ring.
     pub intent: DrawIntent,
+    /// The open edit scope when the node is a body's profile, so the extrusion it awaits joins the
+    /// same undo entry and Escape takes the profile back. `None` for every other figure.
+    pub scope: Option<EditScope>,
 }
 
 impl DrawDraft {
@@ -1015,10 +1025,32 @@ impl DrawDraft {
     /// success the caller drops the draft; a rejected path leaves it intact so the user can undo or
     /// cancel.
     pub fn commit(&self, session: &mut Session, parent: Id, placement: Placement, lang: Lang) -> Result<Id, String> {
+        self.commit_in(None, session, parent, placement, None, lang)
+    }
+
+    /// Commits the drawing as one step of an open edit scope.
+    ///
+    /// A body's profile enters the document now and becomes its solid when the height is accepted;
+    /// the scope is what makes the two commands one undo entry and lets Escape take the profile back
+    /// (ADR 0092, 0138). Every other caller passes no scope and gets the plain history entry.
+    pub(crate) fn commit_in(
+        &self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        parent: Id,
+        placement: Placement,
+        name: Option<&str>,
+        lang: Lang,
+    ) -> Result<Id, String> {
         let path = self.to_path().map_err(|error| error.to_string())?;
-        let name = Message::DrawingName.with(lang, [self.tool.label().text(lang)]);
+        let name = name.map_or_else(|| Message::DrawingName.with(lang, [self.tool.label().text(lang)]), str::to_owned);
         let params = json(&ObjectPathCreate { parent, name, path, placement })?;
-        let outcome = dispatch(session, OBJECT_PATH_CREATE_ID, &params)?;
+        let outcome = match scope {
+            Some(scope) => {
+                session.dispatch_in(scope, OBJECT_PATH_CREATE_ID, &params).map_err(|error| error.to_string())?
+            }
+            None => dispatch(session, OBJECT_PATH_CREATE_ID, &params)?,
+        };
         outcome.created_id().ok_or_else(|| "the path command created no node".to_owned())
     }
 }

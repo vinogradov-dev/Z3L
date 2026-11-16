@@ -1691,9 +1691,17 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     drawing.drop_without_applying_deltas();
 
     editor.cancel_drawing();
-    let size = Length::from_millimetres(crate::toolbars::DEFAULT_PRIMITIVE_SIZE_MM).expect("size");
-    editor.arm_primitive(PrimitiveKind::Cylinder, size).expect("arm");
+    editor.start_body_drawing(DrawTool::Circle);
     editor.set_ribbon_tab(spec::tab("model").expect("the map declares the model tab"));
+    let body = ctx.run_ui(Default::default(), |ui| {
+        editor.show_ribbon(ui, &mut session, view).expect("ribbon");
+    });
+    assert_eq!(pressed_fill(&body.shapes, fill), 1, "the body cell presses the method that drew its profile");
+    body.drop_without_applying_deltas();
+
+    editor.cancel_drawing();
+    let size = Length::from_millimetres(crate::toolbars::DEFAULT_PRIMITIVE_SIZE_MM).expect("size");
+    editor.arm_primitive(PrimitiveKind::Sphere, size).expect("arm");
     let primitive = ctx.run_ui(Default::default(), |ui| {
         editor.show_ribbon(ui, &mut session, view).expect("ribbon");
     });

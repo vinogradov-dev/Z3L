@@ -1240,6 +1240,154 @@ fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
     assert_eq!(document.editor.creation_target(document.session.project()), frame, "the next part lands inside");
 }
 
+/// The signed volume of a closed polygon mesh, in cubic millimetres.
+fn solid_volume(mesh: &model::Mesh) -> f64 {
+    let corner = |index: u32| {
+        let position = mesh.positions()[index as usize];
+        (position[0].millimetres_f64(), position[1].millimetres_f64(), position[2].millimetres_f64())
+    };
+    let mut total = 0.0;
+    for face in mesh.faces() {
+        for index in 1..face.len().saturating_sub(1) {
+            let a = corner(face[0]);
+            let b = corner(face[index]);
+            let c = corner(face[index + 1]);
+            let cross = (b.1 * c.2 - b.2 * c.1, b.2 * c.0 - b.0 * c.2, b.0 * c.1 - b.1 * c.0);
+            total += (a.0 * cross.0 + a.1 * cross.1 + a.2 * cross.2) / 6.0;
+        }
+    }
+    total
+}
+
+/// Arms a body cell and draws its profile with `tool`, then returns the profile's node.
+///
+/// The cell and the sketch share one draft: `start_body_drawing` is what the box and cylinder cells
+/// run, and the points are the ones a sketch stage places (ADR 0138).
+fn draw_body_profile(harness: &mut Harness, tool: DrawTool) -> Id {
+    let points = stage_samples(tool);
+    let document = harness.app.tabs.active_mut();
+    document.editor.start_body_drawing(tool);
+    for point in points {
+        document.editor.drawing_point([mesh(point[0]), mesh(point[1])]).expect("a valid point of the body's profile");
+    }
+    document.commit_drawing(Lang::En).expect("the profile commits");
+    let object = document.extrude_gizmo.object().expect("the pull holds the profile");
+    assert!(document.extrude_gizmo.is_growing(), "a drawn profile awaits its height");
+    assert_eq!(
+        document.session.project().object(object).map(|node| node.geometry().as_path().is_some()),
+        Some(true),
+        "the profile is a path for the length of the pull"
+    );
+    object
+}
+
+#[test]
+fn a_box_is_drawn_by_any_rectangle_method_and_swept_on_z() {
+    // V4 (ADR 0138): the box cell carries the sketch's four rectangle methods, and the body it
+    // builds is the solid the retired cuboid primitive drew — eight corners, six faces, and the
+    // profile's own area swept along Z.
+    for tool in [
+        DrawTool::Rectangle,
+        DrawTool::RectangleFromCenter,
+        DrawTool::RectangleFromCenterDirected,
+        DrawTool::RectangleTilted,
+    ] {
+        let mut harness =
+            Harness::with_session("body-box-profile", crate::scene_build::empty_session().expect("an empty session"));
+        harness.settle();
+        let object = draw_body_profile(&mut harness, tool);
+        let before = harness.revision();
+        {
+            let document = harness.app.tabs.active_mut();
+            document.finish_extrude(object, mesh(300), Lang::En).expect("the check sweeps the body");
+        }
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        let node = project.object(object).expect("the drawn box is in the document");
+        let body = node.geometry().as_constructive().expect("the profile became a constructive body");
+        assert_eq!(body.height(), Some(mesh(300)), "{tool:?}: the height is the pulled one");
+        assert_eq!(body.path().shape(), Some(model::PathShape::Rectangle), "{tool:?}: a box keeps its rectangle");
+        let ([min_x, min_y], [max_x, max_y]) = body.contour().expect("a ring").bounds_micrometres();
+        let area = (max_x - min_x) as f64 * (max_y - min_y) as f64 / 1.0e6;
+        assert!(area > 0.0, "{tool:?}: the profile encloses space");
+        let solid = param::build_constructive_mesh(body).expect("the body builds");
+        assert_eq!(
+            (solid.positions().len(), solid.faces().len()),
+            (8, 6),
+            "{tool:?}: a box keeps eight corners and six faces, as the retired primitive did"
+        );
+        let volume = solid_volume(&solid);
+        assert!(
+            (volume - area * 300.0).abs() < area * 300.0 * 1.0e-6,
+            "{tool:?}: the swept volume is the profile's area times the height, got {volume}"
+        );
+        assert_eq!(project.revision().get(), before.get() + 1, "{tool:?}: the check is one command");
+        // The whole gesture — the profile and the body — is one undo entry.
+        let document = harness.app.tabs.active_mut();
+        document.session.undo().expect("undo the drawn body");
+        assert!(
+            document.session.project().object(object).is_none(),
+            "{tool:?}: one undo takes the profile and the body it became"
+        );
+    }
+}
+
+#[test]
+fn a_cylinder_is_drawn_by_any_circle_method_and_swept_on_z() {
+    // The cylinder cell carries the sketch's circle methods, so the rim can be drawn by its centre,
+    // by a diameter, through three points or tangent to two lines; the body is the one the retired
+    // cylinder primitive drew, swept to the pulled height.
+    for tool in [DrawTool::Circle, DrawTool::CircleDiameter, DrawTool::CircleThreePoints, DrawTool::CircleTangent] {
+        let mut harness = Harness::with_session(
+            "body-cylinder-profile",
+            crate::scene_build::empty_session().expect("an empty session"),
+        );
+        harness.settle();
+        let object = draw_body_profile(&mut harness, tool);
+        {
+            let document = harness.app.tabs.active_mut();
+            document.finish_extrude(object, mesh(300), Lang::En).expect("the check sweeps the body");
+        }
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        let node = project.object(object).expect("the drawn cylinder is in the document");
+        let body = node.geometry().as_constructive().expect("the profile became a constructive body");
+        assert_eq!(body.height(), Some(mesh(300)), "{tool:?}: the height is the pulled one");
+        assert_eq!(body.path().shape(), Some(model::PathShape::Circle), "{tool:?}: a cylinder keeps its circle");
+        let ([min_x, min_y], [max_x, max_y]) = body.contour().expect("a ring").bounds_micrometres();
+        let radius = (max_x - min_x) as f64 / 2.0 / 1_000.0;
+        assert!((radius - (max_y - min_y) as f64 / 2.0 / 1_000.0).abs() < 0.001, "{tool:?}: the ring is round");
+        let solid = param::build_constructive_mesh(body).expect("the body builds");
+        let expected = std::f64::consts::PI * radius * radius * 300.0;
+        let volume = solid_volume(&solid);
+        assert!(
+            (volume - expected).abs() < expected * 5.0e-3,
+            "{tool:?}: the swept volume is the circle's area times the height, got {volume} of {expected}"
+        );
+        // One undo takes the rim and the body it became.
+        let document = harness.app.tabs.active_mut();
+        document.session.undo().expect("undo the drawn cylinder");
+        assert!(document.session.project().object(object).is_none(), "{tool:?}: one undo takes the gesture");
+    }
+}
+
+#[test]
+fn escape_during_the_height_pull_leaves_the_drawn_profile_behind() {
+    // The profile is in the document for the length of the pull so the shaded preview can show the
+    // body; the pull's edit scope is what makes Escape leave nothing at all (ADR 0138).
+    let mut harness =
+        Harness::with_session("body-pull-cancel", crate::scene_build::empty_session().expect("an empty session"));
+    harness.settle();
+    let object = draw_body_profile(&mut harness, DrawTool::Rectangle);
+    assert!(harness.app.tabs.active().session.project().object(object).is_some(), "the profile is drawn");
+    harness.app.tabs.active_mut().cancel_extrude();
+    let document = harness.app.tabs.active();
+    assert!(document.session.project().object(object).is_none(), "Escape takes the profile back");
+    assert!(!document.extrude_gizmo.is_active(), "and drops the pull");
+    assert!(!document.session.can_undo(), "a cancelled create leaves no history entry");
+    assert!(!document.session.can_redo(), "and no redo entry for a gesture nobody finished");
+}
+
 #[test]
 fn a_drag_on_a_frame_corner_resizes_the_envelope_in_one_undo_step() {
     // The grips read a frame exactly as they read a solid (ADR 0101): a press mints the edit scope,

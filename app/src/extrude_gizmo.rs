@@ -6,6 +6,11 @@
 //! command bar's ✓ runs one `object.extrude.height.set`, so a whole adjustment is one undo entry
 //! (M71).
 //!
+//! The same arrow also pulls the profile a body cell has just drawn (ADR 0138): the node is a path
+//! for the length of the gesture, the ✓ extrudes it into the body with one `object.path.extrude`, and
+//! the ✕ takes the profile back through the edit scope it was created in. So the box and the cylinder
+//! are drawn by the sketch's own grammar and built on Z, without a second gesture of their own.
+//!
 //! The preview is the body itself, evaluated at the height the arrow shows, so the user sees the
 //! solid they are about to accept rather than a stand-in for it. The arrow sits on that top face,
 //! at the contour's bounds centre, and points along the body's local `+Z`. A drag is read as a
@@ -13,8 +18,9 @@
 //! far from it produces the same number of millimetres.
 
 use eframe::egui::{self, Pos2, Response, Stroke, Ui, Vec2};
+use engine::EditScope;
 use geom::{DVec2, DVec3};
-use model::{Id, Placement, Project};
+use model::{Geometry, Id, Placement, Project};
 use scene::Camera;
 use units::Length;
 
@@ -39,13 +45,16 @@ const FOCUS_REQUESTS: u8 = 2;
 /// Colour of the arrow when the pointer is elsewhere.
 const ARROW_COLOR: egui::Color32 = egui::Color32::from_rgb(120, 200, 255);
 
-/// The body a pull is adjusting, with the height the document holds and the previewed one.
+/// The node a pull is adjusting, with the height the document holds and the previewed one.
 #[derive(Clone, Copy, Debug)]
 struct Pull {
-    /// The constructive body.
+    /// The body, or the profile a body cell drew and the ✓ will extrude.
     object: Id,
-    /// The height the document holds.
-    committed: Length,
+    /// The height the document holds; `None` while the node is still a flat profile.
+    committed: Option<Length>,
+    /// The edit scope the profile entered the document in, so the ✓ joins that entry and the ✕
+    /// takes the profile back.
+    scope: Option<EditScope>,
     /// The height the arrow currently shows.
     height: Length,
 }
@@ -96,12 +105,21 @@ struct Body {
 }
 
 impl Body {
-    /// Reads the frame and contour centre of an extruded body.
+    /// Reads the frame and contour centre of an extruded body or of a drawn profile.
+    ///
+    /// A constructive body stores its ring and its height; a path is the profile a body cell just
+    /// drew, which has the same ring and no height yet (ADR 0138). Any other payload has no profile
+    /// to pull.
     fn read(project: &Project, object: Id) -> Option<Self> {
         let node = project.object(object)?;
-        let body = node.geometry().as_constructive()?;
-        body.height()?;
-        let contour = body.contour().ok()?;
+        let contour = match node.geometry() {
+            Geometry::Constructive(body) => {
+                body.height()?;
+                body.contour().ok()?
+            }
+            Geometry::Path(path) => path.to_contour().ok()?,
+            Geometry::Mesh(_) | Geometry::Primitive(_) => return None,
+        };
         let ([min_x, min_y], [max_x, max_y]) = contour.bounds_micrometres();
         let centre = DVec2::new((min_x as f64 + max_x as f64) / 2_000.0, (min_y as f64 + max_y as f64) / 2_000.0);
         if !centre.is_finite() {
@@ -133,7 +151,20 @@ pub(crate) struct ExtrudeGizmo {
 impl ExtrudeGizmo {
     /// Starts a pull on a body that was just extruded at `height`.
     pub(crate) fn start(&mut self, object: Id, height: Length) {
-        self.pull = Some(Pull { object, committed: height, height });
+        self.start_pull(Pull { object, committed: Some(height), scope: None, height });
+    }
+
+    /// Starts a pull on a profile a body cell has just drawn (ADR 0138).
+    ///
+    /// The path is already in the document, inside `scope`; the ✓ extrudes it into the body and the
+    /// ✕ restores the document the gesture began with, so a cancelled create leaves no profile
+    /// behind. `height` is the typed default the ribbon would hand an extrusion.
+    pub(crate) fn start_profile(&mut self, object: Id, scope: EditScope, height: Length) {
+        self.start_pull(Pull { object, committed: None, scope: Some(scope), height });
+    }
+
+    fn start_pull(&mut self, pull: Pull) {
+        self.pull = Some(pull);
         self.drag = None;
         self.hover = false;
         self.focus = FOCUS_REQUESTS;
@@ -160,8 +191,21 @@ impl ExtrudeGizmo {
     }
 
     /// The height the document holds for the body.
+    ///
+    /// `None` while the pulled node is still a flat profile: it has no height until the ✓
+    /// extrudes it.
     pub(crate) fn committed(&self) -> Option<Length> {
-        self.pull.as_ref().map(|pull| pull.committed)
+        self.pull.as_ref().and_then(|pull| pull.committed)
+    }
+
+    /// The edit scope a drawn profile entered the document in.
+    pub(crate) fn scope(&self) -> Option<EditScope> {
+        self.pull.as_ref().and_then(|pull| pull.scope)
+    }
+
+    /// Whether the pull is growing a body out of a profile rather than adjusting one.
+    pub(crate) fn is_growing(&self) -> bool {
+        self.pull.as_ref().is_some_and(|pull| pull.committed.is_none())
     }
 
     /// The height the arrow currently shows.
@@ -366,12 +410,18 @@ mod tests {
     }
 
     #[test]
-    fn a_drawn_path_has_no_pull() {
+    fn a_drawn_profile_can_be_pulled_and_a_baked_mesh_cannot() {
         let mut project = testkit::sample_project();
         let root = project.root().id();
         let path = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(50), millimetres(50)]).expect("path");
         let id = project.add_object(root, "Drawing", Placement::IDENTITY, Geometry::Path(path)).expect("path");
-        assert!(Body::read(&project, id).is_none(), "only an extrusion has a height to pull");
+        // A body cell draws its profile as a path and the pull grows the body from it (ADR 0138).
+        let body = Body::read(&project, id).expect("a profile has a ring to pull");
+        assert_eq!(body.centre, DVec2::new(25.0, 25.0), "the arrow stands on the ring's bounds centre");
+
+        let mesh = testkit::cube_mesh(millimetres(10));
+        let baked = project.add_object(root, "Baked", Placement::IDENTITY, Geometry::Mesh(mesh)).expect("mesh");
+        assert!(Body::read(&project, baked).is_none(), "a baked mesh has no profile to pull");
     }
 
     #[test]

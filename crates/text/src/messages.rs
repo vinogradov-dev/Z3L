@@ -994,6 +994,7 @@ messages! {
     ExtrudeNotPath = ["The selected object is not a path", "Выбранный объект не является путём"],
     PrimitiveClickPlane = ["{}: click the work plane", "{}: щёлкните по рабочей плоскости"],
     PrimitiveDrawBase = ["{}: draw its base on the work plane", "{}: начертите основание на рабочей плоскости"],
+    BodyProfileOpen = ["A body is swept from a closed profile", "Тело выдавливается из замкнутого профиля"],
     BoxHeight = ["Box height", "Высота блока"],
     FrameHeight = ["Frame height", "Высота каркаса"],
 

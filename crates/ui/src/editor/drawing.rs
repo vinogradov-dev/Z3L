@@ -2,10 +2,11 @@
 //!
 //! The draft is view state until its one commit: `crate::draw::DrawDraft` collects the
 //! clicks, and `commit_drawing` turns the finished chain into one command — `object.path.create`
-//! for a sketch tool, or `panel.create` carrying the closed ring as its outline when the *Panel from
-//! contour* cell armed the draft (ADR 0114). The shell measures the work plane, so a commit receives
+//! for a sketch tool, `panel.create` carrying the closed ring as its outline when the *Panel from
+//! contour* cell armed the draft (ADR 0114), or a path the shell extrudes at once when a body cell
+//! drew a profile (ADR 0138). The shell measures the work plane, so a commit receives
 //! the *world* frame and converts it to the parent's frame here. A committed path hands the new node
-//! to the contour edit mode.
+//! to the contour edit mode, a body's profile to the height pull instead.
 //!
 //! Refuses to commit with no draft via `DrawDraftError`, a panel draft whose ring is still open, and
 //! returns the command's own sentence when the document rejects the ring; a refused close reopens
@@ -20,7 +21,21 @@ use units::Length;
 
 use super::Editor;
 use crate::contour_edit::ContourTarget;
+use model::PathShape;
+
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
+
+/// The name a drawn body commits under: the cell the profile belongs to, not the tool.
+///
+/// A rectangle is a box and a circle is a cylinder whatever method drew them, so the node says what
+/// the body is; any other ring keeps the drawing's own name (ADR 0138).
+fn body_name(profile: &model::Path, lang: Lang) -> String {
+    match profile.shape() {
+        Some(PathShape::Rectangle) => Message::ToolBox.text(lang).to_owned(),
+        Some(PathShape::Circle) => Message::ToolCylinder.text(lang).to_owned(),
+        _ => Message::DrawingName.with(lang, [Message::GroupBodies.text(lang)]),
+    }
+}
 
 impl Editor {
     /// The live drawing draft, when a drawing tool is building a chain.
@@ -50,6 +65,17 @@ impl Editor {
     pub fn start_panel_drawing(&mut self) {
         self.start_drawing_with(DrawTool::Polyline, DEFAULT_POLYGON_SIDES);
         self.drawing_intent = DrawIntent::Panel;
+    }
+
+    /// Arms the profile of a solid body: the figure a body cell draws before its height is pulled.
+    ///
+    /// The box and cylinder cells offer the sketch grammar's own rectangle and circle tools
+    /// (ADR 0138), so the draft is the sketch draft and the figure is a closed ring; the commit
+    /// stores that ring as a path and the shell pulls its height, which turns the node into the body.
+    /// Only a tool that closes its figure can be a profile, so an open chain never reaches the pull.
+    pub fn start_body_drawing(&mut self, tool: DrawTool) {
+        self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Body;
     }
 
     /// Starts an empty drawing draft with `tool` and the regular polygon's side count.
@@ -116,7 +142,8 @@ impl Editor {
         self.drawing.as_mut().is_some_and(DrawDraft::undo)
     }
 
-    /// Commits the running draft as one node: a path object, or the panel cut to its ring.
+    /// Commits the running draft as one node: a path object, the panel cut to its ring, or a body's
+    /// profile.
     ///
     /// The drawing lands in the armed container, or at the scene root like every other creation
     /// tool. `placement` is the work plane's *world* frame, the one the shell can measure; the
@@ -124,8 +151,10 @@ impl Editor {
     /// inverse first. The command then moves the chain so its creation pivot is the node's local
     /// zero. A path becomes the selection and immediately enters contour edit mode with its grips, so
     /// the figure the user just drew can be reshaped without a second click; a panel is selected and
-    /// needs none, because its ring is edited through its card. Escape or Enter leaves that mode. A
-    /// refused commit leaves the draft and the selection untouched.
+    /// needs none, because its ring is edited through its card. A body's profile is selected and left
+    /// to the shell, which pulls its height in the same edit scope; Escape during that pull takes the
+    /// profile back. Escape or Enter leaves the contour mode. A refused commit leaves the draft and
+    /// the selection untouched.
     pub fn commit_drawing(
         &mut self,
         session: &mut Session,
@@ -139,8 +168,22 @@ impl Editor {
         let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
         let tool = draft.tool();
         let intent = self.drawing_intent;
+        // A body is swept from a profile, so an open chain is refused before anything is written:
+        // the shell's pull has no ring to extrude. The cells offer only closing tools, so this
+        // guards a caller rather than a gesture.
+        if intent == DrawIntent::Body && !draft.to_path().is_ok_and(|path| path.is_closed()) {
+            return Err(Message::BodyProfileOpen.text(lang).to_owned());
+        }
+        // A body's ring and the body itself are one gesture, so the profile enters the document in
+        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138).
+        let scope = (intent == DrawIntent::Body).then(|| session.edit_scope());
         let object = match intent {
-            DrawIntent::Path => draft.commit(session, parent, placement, lang)?,
+            DrawIntent::Path => draft.commit_in(None, session, parent, placement, None, lang)?,
+            DrawIntent::Body => {
+                let profile = draft.to_path().map_err(|error| error.to_string())?;
+                let name = body_name(&profile, lang);
+                draft.commit_in(scope, session, parent, placement, Some(&name), lang)?
+            }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
         };
         self.drawing = None;
@@ -155,7 +198,7 @@ impl Editor {
             // mode.
             self.start_contour_edit(session.project(), ContourTarget::Path(object));
         }
-        Ok(DrawnNode { object, tool, intent })
+        Ok(DrawnNode { object, tool, intent, scope })
     }
 
     /// Commits the running ring as one panel, the board the user drew.

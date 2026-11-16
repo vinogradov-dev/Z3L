@@ -1023,11 +1023,25 @@ impl Document {
     /// Commits the live drawing on the work plane and ends the tool.
     ///
     /// The plane is the one the draft started on, so a commit does not depend on where the camera
-    /// has orbited since. A refused path leaves the draft live and reports why.
+    /// has orbited since. A refused path leaves the draft live and reports why. A body cell's profile
+    /// is not finished here: the shell starts the height pull on the path it just committed, in the
+    /// same edit scope, so the box or cylinder is built on Z by the one gesture (ADR 0138).
     pub(crate) fn commit_drawing(&mut self, lang: Lang) -> Result<(), String> {
         let placement = self.drawing_placement()?;
-        self.editor.commit_drawing(&mut self.session, placement, lang)?;
-        self.end_drawing()
+        let drawn = self.editor.commit_drawing(&mut self.session, placement, lang)?;
+        let profile = (drawn.intent == ui::DrawIntent::Body)
+            .then_some(drawn)
+            .and_then(|drawn| Some((drawn.object, drawn.scope?)));
+        self.end_drawing()?;
+        if let Some((object, scope)) = profile {
+            // The ring is in the document and the height pull grows its body from it; the preview
+            // shows the body at the typed height before the pointer moves (ADR 0138).
+            self.extrude_gizmo.start_profile(object, scope, self.editor.extrude_height());
+            if let Err(error) = self.preview_extrude(object, self.editor.extrude_height()) {
+                self.last_error = Some(error);
+            }
+        }
+        Ok(())
     }
 
     /// Closes the running ring and commits it in one step.
@@ -1103,10 +1117,10 @@ impl Document {
     ///
     /// A drag only previews the height: the overlay shows the body the pull would produce and the
     /// document is not written. A click finishes the pull, and finishing is the one command.
-    fn apply_extrude_event(&mut self, event: ExtrudeEvent) -> Result<(), String> {
+    fn apply_extrude_event(&mut self, event: ExtrudeEvent, lang: text::Lang) -> Result<(), String> {
         match event {
             ExtrudeEvent::Preview { object, height } => self.preview_extrude(object, height),
-            ExtrudeEvent::Finish { object, height } => self.finish_extrude(object, height),
+            ExtrudeEvent::Finish { object, height } => self.finish_extrude(object, height, lang),
         }
     }
 
@@ -1127,10 +1141,18 @@ impl Document {
 
     /// Writes the pull's height once and drops the preview.
     ///
+    /// A body already in the document takes the height alone. A profile the body cells drew has none:
+    /// the ✓ is the command that builds its body from the ring the pull grew, and it joins the edit
+    /// scope the profile was created in so the whole gesture is one undo entry (ADR 0138).
+    ///
     /// Idempotent by construction: after the first call the pull is gone, so a second ✓ — a double
     /// click, a key and a button in one frame — has no object to write and dispatches nothing.
-    pub(crate) fn finish_extrude(&mut self, object: Id, height: Length) -> Result<(), String> {
-        if extrude_writes(self.extrude_gizmo.committed(), height) {
+    pub(crate) fn finish_extrude(&mut self, object: Id, height: Length, lang: text::Lang) -> Result<(), String> {
+        if self.extrude_gizmo.is_growing() {
+            let scope = self.extrude_gizmo.scope();
+            self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
+            self.session.end_edit();
+        } else if extrude_writes(self.extrude_gizmo.committed(), height) {
             self.editor.set_extrude_height(&mut self.session, object, height)?;
         }
         self.extrude_gizmo.cancel();
@@ -1140,11 +1162,19 @@ impl Document {
 
     /// Drops the pull and its preview, leaving the body at the height the document holds.
     ///
-    /// This is the ✕ and the Escape of the command bar: nothing was written, so restoring the
-    /// pre-command state is dropping the overlay and evaluating the document again.
+    /// This is the ✕ and the Escape of the command bar: for a body nothing was written, so restoring
+    /// the pre-command state is dropping the overlay and evaluating the document again. For a profile
+    /// the gesture did write the ring, so the pull's edit scope is rolled back and the profile goes
+    /// with it — a cancelled create leaves no trace (ADR 0138).
     pub(crate) fn cancel_extrude(&mut self) {
         if !self.extrude_gizmo.is_active() {
             return;
+        }
+        if let Some(scope) = self.extrude_gizmo.scope() {
+            // The gesture created the profile it was pulling, so rolling the scope back leaves no
+            // node for the selection to name.
+            self.session.cancel_edit(scope);
+            self.editor.select_node(None);
         }
         self.extrude_gizmo.cancel();
         self.session.clear_preview();
@@ -1827,7 +1857,7 @@ impl Document {
                         self.last_error = Some(error);
                     }
                 } else if let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                    && let Err(error) = self.finish_extrude(object, height)
+                    && let Err(error) = self.finish_extrude(object, height, ui::language(ctx))
                 {
                     self.last_error = Some(error);
                 }
@@ -2255,7 +2285,7 @@ impl Document {
             // one `object.extrude.height.set`, so the whole adjustment is a single undo entry.
             match self.extrude_gizmo.update(ui, &response, rect, self.scene.camera, self.session.project()) {
                 Ok(Some(event)) => {
-                    if let Err(error) = self.apply_extrude_event(event) {
+                    if let Err(error) = self.apply_extrude_event(event, ui::language(ui.ctx())) {
                         self.last_error = Some(error);
                     }
                 }
@@ -3272,7 +3302,7 @@ impl Document {
             } else if enter
                 && !ui.ctx().text_edit_focused()
                 && let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                && let Err(error) = self.finish_extrude(object, height)
+                && let Err(error) = self.finish_extrude(object, height, ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);
             }
@@ -3529,13 +3559,24 @@ fn extrude_writes(committed: Option<Length>, height: Length) -> bool {
 /// ✓ would store: the same path, the same features and the same evaluator (M71).
 fn previewed_body(project: &Project, object: Id, height: Length) -> Result<Geometry, String> {
     let node = project.object(object).ok_or_else(|| format!("{object:?} is not in the scene"))?;
-    let mut body = node
-        .geometry()
-        .as_constructive()
-        .cloned()
-        .ok_or_else(|| format!("{} is not a constructive body", node.name()))?;
-    body.set_height(height).map_err(|error| error.to_string())?;
-    Ok(Geometry::Constructive(body))
+    match node.geometry() {
+        Geometry::Path(path) => {
+            // A profile has no height yet, so the preview is the body the ✓ would build from it
+            // (ADR 0138).
+            model::Constructive::extrude(path.clone(), height)
+                .map(Geometry::Constructive)
+                .map_err(|error| error.to_string())
+        }
+        _ => {
+            let mut body = node
+                .geometry()
+                .as_constructive()
+                .cloned()
+                .ok_or_else(|| format!("{} is not a constructive body", node.name()))?;
+            body.set_height(height).map_err(|error| error.to_string())?;
+            Ok(Geometry::Constructive(body))
+        }
+    }
 }
 
 /// World placements a drag previews for cameras and lights.

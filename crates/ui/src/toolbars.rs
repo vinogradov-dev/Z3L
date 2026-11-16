@@ -77,6 +77,15 @@ pub enum ToolAction {
         /// The side count the polygon tool uses.
         sides: u32,
     },
+    /// Starts a drawing tool whose closed figure becomes the profile of a solid body.
+    ///
+    /// One `object.path.create` puts the profile in the document and the shell then pulls its
+    /// height in the same edit scope, so the ring and the body are one gesture and one undo entry
+    /// (ADR 0138).
+    DrawBody {
+        /// Which rectangle or circle method draws the profile.
+        tool: DrawTool,
+    },
     /// Opens the product-frame card; the card dispatches `product.create`.
     CreateProductCard,
     /// Arms the box tool with the frame as its owner: the next clicks draw the reserved box and the
@@ -158,6 +167,11 @@ pub const CONTOUR_TOOLS: [DrawTool; 10] = [
 pub enum ToolActivity {
     /// A drawing tool is building a chain.
     Draw(DrawTool),
+    /// A drawing tool is building the profile of a solid body.
+    ///
+    /// The draft is the sketch draft; only what its commit becomes differs, so the pressed cell is the
+    /// body cell and not the sketch tool whose glyph the draft borrows (ADR 0138).
+    Body(DrawTool),
     /// A drawing tool is building the outline of one panel.
     ///
     /// The draft is the same; only what its close becomes differs, so the pressed cell is the contour
@@ -196,6 +210,7 @@ pub fn tool_activity(
 ) -> Option<ToolActivity> {
     match (drawing, primitive, box_owner, fill, measure, niche) {
         (Some((tool, DrawIntent::Path)), _, _, _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((tool, DrawIntent::Body)), _, _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _, _) => Some(ToolActivity::PanelContour),
         (None, Some(kind), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
         (None, None, Some(BoxOwner::Cuboid), _, _, _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
@@ -214,6 +229,7 @@ pub fn tool_activity(
 fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
     match (activity, kind) {
         (Some(ToolActivity::Draw(armed)), ToolKind::Draw(tool)) => armed == tool,
+        (Some(ToolActivity::Body(armed)), ToolKind::Body(tool)) => armed == tool,
         (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
         (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive(kind)) => armed == kind,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
@@ -683,7 +699,11 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 Some(ready) if !ready.enabled => ready.hint.clone(),
                 // A fill's own hint names the tool and then the method — «Post: Largest rectangle» —
                 // because the two fills are two cells whose methods would otherwise read the same.
-                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. })) => ready.hint.clone(),
+                // A body cell's method says what it builds — «Box: draw its base on the work plane»
+                // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
+                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. } | ToolKind::Body(_))) => {
+                    ready.hint.clone()
+                }
                 // Every other tool names the method alone: the glyph already says which tool it is.
                 Some(_) => icons::tool_hint(method.label.text(lang), method.shortcut),
             };
@@ -899,7 +919,7 @@ mod tests {
                 "model",
                 &[
                     "Box: draw its base on the work plane",
-                    "Cylinder: click the work plane",
+                    "Cylinder: draw its base on the work plane",
                     "Select a closed path first",
                     "Sphere: click the work plane",
                 ],
@@ -1306,19 +1326,34 @@ mod tests {
     }
 
     #[test]
-    fn a_primitive_cell_runs_at_the_default_size() {
-        let tool = tool("model.primitives.cuboid");
+    fn the_sphere_cell_runs_at_the_default_size() {
+        let tool = tool("model.primitives.sphere");
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (actions, _) = click_cell(&mut state, tool, main_point());
         assert_eq!(
             actions,
             vec![ToolAction::CreatePrimitive {
-                kind: PrimitiveKind::Cuboid,
+                kind: PrimitiveKind::Sphere,
                 size: Length::from_millimetres(DEFAULT_PRIMITIVE_SIZE_MM).expect("the default size is a length"),
             }],
             "the cell hands the command the typed default"
         );
+    }
+
+    #[test]
+    fn a_body_cell_starts_the_sketch_method_that_draws_its_profile() {
+        // A box and a cylinder are drawn, so their cells hand the editor a drawing tool and no size:
+        // the profile's own plates carry the numbers (ADR 0138).
+        let box_cell = tool("model.primitives.cuboid");
+        let mut state = Toolbars::new();
+        state.set_tab(tab("model"));
+        let (actions, _) = click_cell(&mut state, box_cell, main_point());
+        assert_eq!(actions, vec![ToolAction::DrawBody { tool: DrawTool::Rectangle }], "the box draws its base");
+
+        let cylinder_cell = tool("model.primitives.cylinder");
+        let (actions, _) = click_cell(&mut state, cylinder_cell, main_point());
+        assert_eq!(actions, vec![ToolAction::DrawBody { tool: DrawTool::Circle }], "the cylinder draws its rim");
     }
 
     #[test]
@@ -1358,9 +1393,11 @@ mod tests {
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (_, labels, actions) = draw(&mut state, full_context());
-        for label in
-            ["Box: draw its base on the work plane", "Cylinder: click the work plane", "Sphere: click the work plane"]
-        {
+        for label in [
+            "Box: draw its base on the work plane",
+            "Cylinder: draw its base on the work plane",
+            "Sphere: click the work plane",
+        ] {
             assert!(labels.iter().any(|text| text.contains(label)), "{label} is missing: {labels:?}");
         }
         assert!(actions.is_empty(), "drawing alone runs no tool");

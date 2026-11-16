@@ -1,12 +1,13 @@
 //! The selected geometry object card.
 //!
 //! An object is a leaf with one geometry payload. A mesh object is edited directly and has no
-//! feature history. A primitive object shows its parameters — three sides of a box, a radius, a
-//! height, the number of sides and bands — because they are the source of truth and the mesh is
-//! derived ([ADR 0054]). A constructive object shows its contour instead: the contour and the feature
-//! height are the source of truth, and `object.collapse` bakes it into an editable mesh
-//! ([ADR 0037]). A path object shows its flat drawing: it has no mesh and no feature height until
-//! it becomes a contour or is extruded.
+//! feature history. A primitive object shows its parameters — a radius, the number of sides and
+//! bands — because they are the source of truth and the mesh is derived ([ADR 0054]). A constructive
+//! object shows its contour instead: the ring, the figure's own dimensions and the extrusion height
+//! are the source of truth, and `object.collapse` bakes it into an editable mesh ([ADR 0037]). A
+//! path object shows its flat drawing: it has no mesh and no feature height until it becomes a
+//! contour or is extruded. A body the Model tab drew is a constructive object, so the box a maker
+//! drew as a rectangle edits its profile here and its height on the same card (ADR 0138).
 //!
 //! The card has one reading order and no headers ([ADR 0116]): a head that says which object this
 //! is and what it measures, the fields the selected kind can be edited by, one row of actions and
@@ -29,10 +30,12 @@ use core::ops::RangeInclusive;
 use egui::{RichText, TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
 use engine::object_cmds::{
-    OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID,
+    OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_REPLACE_ID,
+    OBJECT_PRIMITIVE_REPLACE_ID,
 };
 use engine::{
-    EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectPathReplace, ObjectPrimitiveReplace, Session,
+    EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet, ObjectPathReplace,
+    ObjectPrimitiveReplace, Session,
 };
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
@@ -71,6 +74,7 @@ pub(crate) struct ObjectCard {
     contour_draft: Option<ContourDraft>,
     primitive_draft: Option<PrimitiveDraft>,
     figure_draft: Option<FigureDraft>,
+    height_draft: Option<HeightDraft>,
     confirm_collapse: bool,
     error: Option<String>,
 }
@@ -107,6 +111,19 @@ struct PrimitiveDraft {
     object: Id,
     base: Primitive,
     fields: PrimitiveFields,
+}
+
+/// The extrusion height of a constructive body, and the height it was read from.
+///
+/// A body's profile has its own dimensions (a rectangle's sides, a circle's radius) and this is the
+/// third number it was swept by, so the card can change the box a body cell drew without starting the
+/// pull again. `base` detects an edit made elsewhere — by undo, a grip or the pull — the same way the
+/// other drafts do.
+#[derive(Clone, Copy, Debug)]
+struct HeightDraft {
+    object: Id,
+    base: Length,
+    millimetres: f64,
 }
 
 /// The parameter fields as the numbers the shared field edits, one per editable dimension.
@@ -527,6 +544,7 @@ impl ObjectCard {
             self.primitive_draft = None;
         }
         self.sync_figure_draft(object_id, &summary);
+        self.sync_height_draft(object_id, &summary);
 
         // One reading order, top to bottom: which object this is and what it measures, the numbers
         // this kind of geometry can be edited by, one row of actions, and the detail of a mode that
@@ -534,6 +552,7 @@ impl ObjectCard {
         // hides the fields a person came for.
         let (rename, name_error) = self.head(ui, &summary, single_selection);
         let (figure_result, figure_report) = self.figure_fields(ui, &summary, contour_editing, fresh);
+        let (height_result, height_report) = self.height_field(ui, &summary, contour_editing, fresh);
         // The viewport owns the working copy while the mode is live; a number replacement or a
         // collapse would silently make that copy stale.
         let (primitive_result, primitive_report) = self.primitive_fields(ui, &summary, fresh);
@@ -549,10 +568,15 @@ impl ObjectCard {
         let (collapse, cancel) = (row.collapse, row.cancel);
 
         // A field that refused its typed text kept its number: the box is red, the card says why.
-        if let Some(message) = figure_report.refused.or(primitive_report.refused) {
+        if let Some(message) = figure_report.refused.or(primitive_report.refused).or(height_report.refused) {
             self.error = Some(message.text(lang).to_owned());
         }
-        for scope in figure_report.cancelled.iter().chain(primitive_report.cancelled.iter()) {
+        for scope in figure_report
+            .cancelled
+            .iter()
+            .chain(primitive_report.cancelled.iter())
+            .chain(height_report.cancelled.iter())
+        {
             session.cancel_edit(*scope);
         }
         if let Some(error) = name_error {
@@ -588,6 +612,14 @@ impl ObjectCard {
                     self.error = Some(error);
                     self.primitive_draft = None;
                 }
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
+        if let Some(result) = height_result {
+            match result.and_then(|height| replace_body_height(session, object_id, height, height_report.scope)) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
             }
             ui.ctx().request_repaint();
             return action;
@@ -719,8 +751,11 @@ impl ObjectCard {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
             }
             FigureKind::Rectangle => {
+                // A body's base rectangle is the plan of a solid, so its second side is a depth and
+                // the height below is the sweep; a flat drawing keeps the two sides it measures.
+                let second = if summary.height.is_some() { Message::FieldDepth } else { Message::FieldHeight };
                 report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
+                report.absorb(length_row(ui, second.text(lang), &mut draft.fields.height, fresh));
             }
             FigureKind::Polygon => {
                 report.absorb(count_row(
@@ -741,6 +776,48 @@ impl ObjectCard {
             return (None, report);
         }
         (Some(draft.parse(lang)), report)
+    }
+
+    /// Keeps the height draft in step with the extrusion the document holds.
+    fn sync_height_draft(&mut self, object: Id, summary: &ObjectSummary) {
+        let Some(height) = summary.height else {
+            self.height_draft = None;
+            return;
+        };
+        if self.height_draft.is_none_or(|draft| draft.object != object || draft.base != height) {
+            self.height_draft = Some(HeightDraft { object, base: height, millimetres: height.millimetres_f64() });
+        }
+    }
+
+    /// Draws the extrusion height of a constructive body; returns the parsed height when it committed.
+    ///
+    /// The profile's numbers sit above and this is the Z of the sweep: the third dimension a body has
+    /// and the one number the ring cannot describe, so the box a body cell drew keeps every side
+    /// editable on the card (ADR 0138). While the viewport owns the working copy the field is dead,
+    /// because a height written under a live pull would move the body the user is still dragging.
+    fn height_field(
+        &mut self,
+        ui: &mut Ui,
+        summary: &ObjectSummary,
+        contour_editing: bool,
+        fresh: EditScope,
+    ) -> (Option<Result<Length, String>>, FieldReport) {
+        let mut report = FieldReport::default();
+        if summary.height.is_none() {
+            return (None, report);
+        }
+        let lang = crate::language(ui.ctx());
+        let Some(draft) = self.height_draft.as_mut() else {
+            return (None, report);
+        };
+        ui.add_enabled_ui(!contour_editing, |ui| {
+            report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.millimetres, fresh));
+        });
+        if !report.committed {
+            return (None, report);
+        }
+        let height = scrub::millimetres(draft.millimetres);
+        (Some(height.ok_or_else(|| Message::LengthErrorOutOfRange.text(lang).to_owned())), report)
     }
 
     /// Draws the primitive parameters; returns the parsed primitive when a field handed its number over.
@@ -1152,6 +1229,17 @@ fn replace_path(session: &mut Session, object: Id, path: Path, scope: Option<Edi
     }
 }
 
+/// Sets the extrusion height of a constructive body, folding the edit into its field's scope.
+fn replace_body_height(
+    session: &mut Session,
+    object: Id,
+    height: Length,
+    scope: Option<EditScope>,
+) -> Result<(), String> {
+    let params = json(&ObjectExtrudeHeightSet { object, height })?;
+    apply_object_edit(session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params, scope)
+}
+
 fn replace_primitive(
     session: &mut Session,
     object: Id,
@@ -1524,6 +1612,24 @@ mod tests {
     }
 
     #[test]
+    fn a_body_card_reads_its_extrusion_height_and_writes_it_back() {
+        let (mut session, id) = constructive_session();
+        let texts = drew_card(&mut session, id);
+        assert!(texts.iter().any(|text| text == "18"), "the sweep is a field of its own: {texts:?}");
+
+        // The field commits through `object.extrude.height.set`, the command the pull's check runs,
+        // so a box drawn by a body cell keeps its height editable after the gesture (ADR 0138).
+        let before = session.project().revision();
+        replace_body_height(&mut session, id, millimetres(40), None).expect("set the height");
+        let body = session.project().object(id).expect("object").geometry().as_constructive().expect("body").clone();
+        assert_eq!(body.height(), Some(millimetres(40)));
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one command, one entry");
+        session.undo().expect("undo");
+        let body = session.project().object(id).expect("object").geometry().as_constructive().expect("body");
+        assert_eq!(body.height(), Some(millimetres(18)), "undo restores the pulled height");
+    }
+
+    #[test]
     fn extrude_parameters_create_the_object_the_card_expects() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let value = json(&ObjectExtrudeCreate {
@@ -1797,8 +1903,10 @@ mod tests {
         assert!(drew(&figure, "Collapse to mesh"), "and can be baked: {figure:?}");
         assert!(!drew(&figure, "Edit mesh"), "but not before it is baked: {figure:?}");
         assert!(!drew(&figure, "Apply contour"), "a tagged figure is edited by its fields: {figure:?}");
-        for field in ["Width", "Height"] {
-            assert_eq!(count_exactly(&figure, field), 1, "a rectangle has one `{field}` field: {figure:?}");
+        // The base rectangle of a body is its plan and the height is the sweep, so the three sides a
+        // box cell used to show are the three fields it shows now (ADR 0138).
+        for field in ["Width", "Depth", "Height"] {
+            assert_eq!(count_exactly(&figure, field), 1, "a body has one `{field}` field: {figure:?}");
         }
 
         let (mut ring, id) = constructive_session();
