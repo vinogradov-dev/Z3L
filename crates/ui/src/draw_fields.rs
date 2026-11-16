@@ -143,12 +143,20 @@ enum Shape {
     Position,
     /// A length and an angle from the anchor.
     Segment,
+    /// A direction from the anchor and nothing else: the point's distance is not a number the figure
+    /// reads, so only the angle is a plate (ADR 0128).
+    Direction,
     /// A rectangle's two sides from the anchor: `centred` when the anchor is its middle.
     Sides { centred: bool },
     /// A radius from the anchor, and the direction of the rim point when `turned`.
     Radius { turned: bool },
     /// A diameter from the anchor: the rim point stands half of it away.
     Diameter,
+    /// The apothem of a circumscribed polygon: the distance from the anchor to a side, with the
+    /// direction of that side's midpoint.
+    Apothem,
+    /// A rectangle standing on a base edge `base` long: the height square to it, on the pointer's side.
+    Rise { base: f64 },
     /// A direction at a radius the earlier point fixed.
     Sweep { radius: f64 },
 }
@@ -162,6 +170,11 @@ struct Stage {
     shape: Shape,
     /// The angle the rectangle's sides are turned to, in radians; zero for every other shape.
     turn: f64,
+    /// The side count of the polygon being built, on the stage that shapes it.
+    ///
+    /// The count is the figure's own number rather than the point's: the plate writes the draft, so it
+    /// is carried here and not read back out of the placed point.
+    sides: Option<u32>,
 }
 
 impl PointState {
@@ -183,7 +196,8 @@ impl PointState {
     /// `None` reads the pointer alone. The chord from the old position to the point is the
     /// construction line, exactly as it is for the chord of an arc (ADR 0127, 0129).
     pub fn moved(anchor: DVec2, pointer: DVec2, fields: Option<&FieldSet>) -> Option<Self> {
-        let mut state = Self::at_stage(Stage { anchor, shape: Shape::Segment, turn: 0.0 }, pointer, fields)?;
+        let mut state =
+            Self::at_stage(Stage { anchor, shape: Shape::Segment, turn: 0.0, sides: None }, pointer, fields)?;
         state.construction = Some([anchor, state.at]);
         Some(state)
     }
@@ -214,7 +228,7 @@ impl PointState {
                 rows.push(PointRow { param: FieldParam::Y, value: at.y, anchor: at });
                 at
             }
-            Shape::Segment | Shape::Sweep { .. } => {
+            Shape::Segment | Shape::Direction | Shape::Sweep { .. } => {
                 let offset = pointer - stage.anchor;
                 // A typed angle is a direction from +X; an untyped one is the pointer's own.
                 let (direction, angle) = if locked(FieldParam::Angle) {
@@ -223,8 +237,12 @@ impl PointState {
                 } else {
                     (offset, sketch_angle(offset))
                 };
+                // A direction is the one stage whose length the figure does not read: typing it would
+                // move a construction point and change nothing, so it has no plate and keeps the
+                // pointer's own distance (ADR 0128).
                 let length = match stage.shape {
                     Shape::Sweep { radius } => radius,
+                    Shape::Direction => offset.length(),
                     _ => read(FieldParam::Length, offset.length()),
                 };
                 let at = stage.anchor + unit_or_x(direction) * length;
@@ -295,6 +313,50 @@ impl PointState {
                 });
                 at
             }
+            // A circumscribed polygon is read exactly like an inscribed one with the number the person
+            // types moved onto the side: the click is the distance to a side, and its direction is the
+            // side's midpoint, so the plate and the guide are the radius pair with another term.
+            Shape::Apothem => {
+                let offset = pointer - stage.anchor;
+                let apothem = read(FieldParam::Apothem, offset.length());
+                let direction =
+                    if locked(FieldParam::Rotation) { from_degrees(read(FieldParam::Rotation, 0.0)) } else { offset };
+                let rim = unit_or_x(direction);
+                let at = stage.anchor + rim * apothem;
+                rows.push(PointRow {
+                    param: FieldParam::Apothem,
+                    value: apothem,
+                    anchor: stage.anchor + rim * (apothem / 2.0),
+                });
+                let angle = sketch_angle(direction);
+                rows.push(PointRow {
+                    param: FieldParam::Rotation,
+                    value: degrees_or_zero(direction),
+                    anchor: arc_anchor(stage.anchor, apothem, angle),
+                });
+                reference = Some(Reference {
+                    anchor: stage.anchor,
+                    radius: apothem,
+                    from: angle.end.radians(),
+                    to: angle.direction(),
+                });
+                at
+            }
+            // A rectangle on a base edge has its width already: the edge was clicked. Only the height
+            // is left, and it is measured square to the edge on the side the pointer is on.
+            Shape::Rise { base } => {
+                let local = to_local(pointer - stage.anchor, stage.turn);
+                let sign = if local.y < 0.0 { -1.0 } else { 1.0 };
+                let height = read(FieldParam::Height, local.y.abs());
+                let reach = DVec2::new(base, height * sign);
+                let at = stage.anchor + to_world(reach, stage.turn);
+                rows.push(PointRow {
+                    param: FieldParam::Height,
+                    value: height,
+                    anchor: stage.anchor + to_world(DVec2::new(base / 2.0, reach.y), stage.turn),
+                });
+                at
+            }
             Shape::Radius { turned } => {
                 let offset = pointer - stage.anchor;
                 let radius = read(FieldParam::Radius, offset.length());
@@ -327,6 +389,12 @@ impl PointState {
                 at
             }
         };
+        // The side count belongs to the figure, not to the point: it is on every stage of a polygon and
+        // its plate writes the draft, so the number of sides is one value however many clicks the
+        // method takes (ADR 0128).
+        if let Some(sides) = stage.sides {
+            rows.push(PointRow { param: FieldParam::Sides, value: f64::from(sides), anchor: stage.anchor });
+        }
         Some(Self { point: to_lengths(at)?, at, construction: None, rows, reference })
     }
 }
@@ -338,9 +406,10 @@ impl PointState {
 fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
     let start = draft.points().first().map(|point| plane_point(*point))?;
     let end = draft.points().get(1).map(|point| plane_point(*point));
-    if draft.tool() == DrawTool::ArcByRadius {
-        // The chord of an arc drawn from its radius is fixed by the two clicks, so the third stage
-        // measures the radius against the whole chord rather than against the pointer.
+    // The chord of an arc drawn from its radius, and the base edge of a rectangle drawn on one, are
+    // fixed by the two clicks: the third stage measures its number against that line rather than
+    // against the pointer (ADR 0127).
+    if matches!(draft.tool(), DrawTool::ArcByRadius | DrawTool::RectangleTilted) {
         return match end {
             Some(end) if draft.points().len() == 2 => Some([start, end]),
             _ => None,
@@ -359,7 +428,7 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
     let points = draft.points();
     let Some(first) = points.first().copied().map(plane_point) else {
         // Before the first click there is nothing to measure from: the point is X and Y of itself.
-        return Some(Stage { anchor: pointer, shape: Shape::Position, turn: 0.0 });
+        return Some(Stage { anchor: pointer, shape: Shape::Position, turn: 0.0, sides: None });
     };
     let last = draft.last_end().map(plane_point).unwrap_or(first);
     let (anchor, shape, turn) = match draft.tool() {
@@ -385,10 +454,22 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         }
         DrawTool::Rectangle => (first, Shape::Sides { centred: false }, 0.0),
         DrawTool::RectangleFromCenter => (first, Shape::Sides { centred: true }, 0.0),
+        // The second click of a directed rectangle only names an axis, so the stage takes the angle and
+        // not a length; the third reads the two sides in the frame that axis turns.
         DrawTool::RectangleFromCenterDirected => {
             if let Some(direction) = points.get(1).copied().map(plane_point) {
                 let axis = direction - first;
                 (first, Shape::Sides { centred: true }, axis.y.atan2(axis.x))
+            } else {
+                (first, Shape::Direction, 0.0)
+            }
+        }
+        // A base edge is the width already: the next click is only the height, square to the edge the
+        // person drew, on the side the pointer is on.
+        DrawTool::RectangleTilted => {
+            if let Some(end) = points.get(1).copied().map(plane_point) {
+                let edge = end - first;
+                (first, Shape::Rise { base: edge.length() }, edge.y.atan2(edge.x))
             } else {
                 (first, Shape::Segment, 0.0)
             }
@@ -399,8 +480,19 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         // from the one before it.
         DrawTool::CircleThreePoints => (last, Shape::Segment, 0.0),
         DrawTool::RegularPolygon => (first, Shape::Radius { turned: true }, 0.0),
+        // A circumscribed polygon is clicked on a side, so the pair is the apothem and a direction.
+        DrawTool::PolygonApothem => (first, Shape::Apothem, 0.0),
+        // A polygon by its edge starts at one of its corners: the second corner is a length and an
+        // angle from the first, exactly like a segment.
+        DrawTool::PolygonByEdge => (first, Shape::Segment, 0.0),
     };
-    Some(Stage { anchor, shape, turn })
+    // The three polygon methods shape their ring on the same second stage: every one of them shows the
+    // side count there, so the count is live while the figure is being built (ADR 0128).
+    let sides = match draft.tool() {
+        DrawTool::RegularPolygon | DrawTool::PolygonApothem | DrawTool::PolygonByEdge => Some(draft.sides()),
+        _ => None,
+    };
+    Some(Stage { anchor, shape, turn, sides })
 }
 
 /// The sketch point a plate sits at while an angle is drawn: on the arc, halfway along the sweep.
@@ -488,6 +580,11 @@ mod tests {
         DVec2::new(x as f64, y as f64)
     }
 
+    /// One coordinate as a length, for the points a draft stores.
+    fn mm(value: i64) -> Length {
+        Length::from_millimetres(value).expect("a whole millimetre")
+    }
+
     fn draft(tool: DrawTool, points: &[(i64, i64)]) -> DrawDraft {
         let mut draft = DrawDraft::with_sides(tool, 6);
         for (x, y) in points {
@@ -543,10 +640,13 @@ mod tests {
             DrawTool::Rectangle,
             DrawTool::RectangleFromCenter,
             DrawTool::RectangleFromCenterDirected,
+            DrawTool::RectangleTilted,
             DrawTool::Circle,
             DrawTool::CircleDiameter,
             DrawTool::CircleThreePoints,
             DrawTool::RegularPolygon,
+            DrawTool::PolygonApothem,
+            DrawTool::PolygonByEdge,
         ] {
             let fresh = DrawDraft::with_sides(tool, 6);
             let state = PointState::live(&fresh, millimetres(50, 25)).expect("a first point");
@@ -565,16 +665,26 @@ mod tests {
             (DrawTool::ArcByRadius, vec![(0, 0), (100, 0)], vec![FieldParam::Radius]),
             (DrawTool::Rectangle, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
             (DrawTool::RectangleFromCenter, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
-            (DrawTool::RectangleFromCenterDirected, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            // A directed rectangle's second click only names an axis, so it takes the angle and not a
+            // length the figure would ignore (ADR 0128).
+            (DrawTool::RectangleFromCenterDirected, vec![(0, 0)], vec![FieldParam::Angle]),
             (
                 DrawTool::RectangleFromCenterDirected,
                 vec![(0, 0), (100, 0)],
                 vec![FieldParam::Width, FieldParam::Height],
             ),
+            (DrawTool::RectangleTilted, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            (DrawTool::RectangleTilted, vec![(0, 0), (100, 0)], vec![FieldParam::Height]),
             (DrawTool::Circle, vec![(0, 0)], vec![FieldParam::Radius]),
             (DrawTool::CircleDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
             (DrawTool::CircleThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
-            (DrawTool::RegularPolygon, vec![(0, 0)], vec![FieldParam::Radius, FieldParam::Rotation]),
+            (DrawTool::RegularPolygon, vec![(0, 0)], vec![FieldParam::Radius, FieldParam::Rotation, FieldParam::Sides]),
+            (
+                DrawTool::PolygonApothem,
+                vec![(0, 0)],
+                vec![FieldParam::Apothem, FieldParam::Rotation, FieldParam::Sides],
+            ),
+            (DrawTool::PolygonByEdge, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle, FieldParam::Sides]),
         ];
         for (tool, points, expected) in cases {
             let draft = draft(tool, &points);
@@ -633,9 +743,105 @@ mod tests {
         let polygon = draft(DrawTool::RegularPolygon, &[(0, 0)]);
         assert_eq!(
             plates(&polygon, millimetres(0, 100)),
-            vec![(FieldParam::Radius, 100.0), (FieldParam::Rotation, 90.0)]
+            vec![(FieldParam::Radius, 100.0), (FieldParam::Rotation, 90.0), (FieldParam::Sides, 6.0)]
         );
         assert!(PointState::live(&polygon, millimetres(0, 100)).expect("a point").reference.is_some());
+    }
+
+    #[test]
+    fn a_circumscribed_polygon_reads_the_apothem_its_side_stands_on() {
+        // The click lands on a side's midpoint, so the number is the distance to the side and the
+        // direction is that side's own: the plate pair is the radius pair with the other term.
+        let polygon = draft(DrawTool::PolygonApothem, &[(0, 0)]);
+        let state = PointState::live(&polygon, millimetres(0, 100)).expect("a side");
+        assert_eq!(state.point, [Length::ZERO, mm(100)], "the point is the side");
+        assert_eq!(
+            params(&state),
+            vec![FieldParam::Apothem, FieldParam::Rotation, FieldParam::Sides],
+            "an apothem, the direction of the side and the count"
+        );
+        assert_eq!(state.rows[0].value, 100.0, "the apothem the pointer stands at");
+        assert_eq!(state.rows[1].value, 90.0, "the side faces the pointer");
+        assert_eq!(state.rows[2].value, 6.0, "the count the draft holds");
+        assert!(state.reference.is_some(), "the direction is read from an arc");
+
+        // The same click builds the polygon round that circle: a vertex stands `apothem / cos(pi/n)`
+        // away, and a side of the hexagon closes across the clicked direction.
+        let mut drawn = polygon.clone();
+        drawn.push(state.point).expect("the side");
+        let path = drawn.to_path().expect("a hexagon");
+        assert_eq!(path.entries().len(), 6);
+        let (min, max) = path.bounds_micrometres();
+        assert_eq!(max[1], 100_000, "the top side is the apothem the person named");
+        // cos(30) * 100 = 86.6 and the two top vertices stand 57.7 either side of the centre.
+        assert_eq!((min[0], max[0]), (-115_470, 115_470), "the rim is the apothem over cos(pi/6)");
+    }
+
+    #[test]
+    fn a_polygon_by_edge_reads_the_corner_its_edge_ends_at() {
+        let polygon = draft(DrawTool::PolygonByEdge, &[(0, 0)]);
+        assert_eq!(
+            plates(&polygon, millimetres(100, 0)),
+            vec![(FieldParam::Length, 100.0), (FieldParam::Angle, 0.0), (FieldParam::Sides, 6.0)],
+            "one corner is the anchor, the other is a length and an angle, and the count is the figure's"
+        );
+        // The edge is the first side of the ring, so the polygon grows on the left of A to B: a hexagon
+        // whose second vertex is the click and whose other four lie above.
+        let mut drawn = polygon.clone();
+        drawn.push([mm(100), Length::ZERO]).expect("the second corner");
+        let path = drawn.to_path().expect("a hexagon");
+        assert_eq!(path.entries().len(), 6);
+        let (min, max) = path.bounds_micrometres();
+        assert_eq!((min[0], max[0]), (-50_000, 150_000), "the edge is one side and the ring grows left");
+        let apex = 100.0 * 3f64.sqrt();
+        let top = max[1] as f64 / 1_000.0;
+        assert!((top - apex).abs() < 0.002, "the ring stands {apex:.1} mm tall on the left of the edge: {top}");
+    }
+
+    #[test]
+    fn a_rectangle_on_its_edge_reads_only_the_height() {
+        // The edge was clicked, so its length is already the width; the third click is the height and
+        // nothing else, measured square to the edge on the side the pointer is on.
+        let rectangle = draft(DrawTool::RectangleTilted, &[(0, 0), (100, 0)]);
+        let state = PointState::live(&rectangle, millimetres(50, 60)).expect("a height");
+        assert_eq!(params(&state), vec![FieldParam::Height]);
+        assert_eq!(state.rows[0].value, 60.0);
+        assert_eq!(state.point, [mm(100), mm(60)], "the far corner");
+        assert_eq!(state.rows[0].anchor, millimetres(50, 60), "the plate sits on the far side");
+        assert_eq!(
+            state.construction,
+            Some([DVec2::ZERO, millimetres(100, 0)]),
+            "the base edge is the line the height is measured against"
+        );
+
+        // The pointer below the edge puts the same board on that half, and the number stays positive.
+        let below = PointState::live(&rectangle, millimetres(50, -60)).expect("a height");
+        assert_eq!(below.rows[0].value, 60.0);
+        assert_eq!(below.point, [mm(100), mm(-60)]);
+
+        // A turned edge turns the height with it: the corner stays square to the edge the person drew.
+        let slanted = draft(DrawTool::RectangleTilted, &[(0, 0), (0, 100)]);
+        let state = PointState::live(&slanted, millimetres(60, 50)).expect("a height");
+        assert_eq!(state.rows[0].value, 60.0, "the height is the pointer's distance from the edge's line");
+        assert!((state.at - DVec2::new(60.0, 100.0)).length() < 1e-6, "{:?} is square to the edge", state.at);
+    }
+
+    #[test]
+    fn the_side_count_is_a_number_of_the_figure_not_of_the_point() {
+        // The count is on the stage that shapes the ring and nowhere else: the first click of a polygon
+        // is still a point, and a tool that is not a polygon never carries the number.
+        for tool in [DrawTool::RegularPolygon, DrawTool::PolygonApothem, DrawTool::PolygonByEdge] {
+            let mut shaped = DrawDraft::with_sides(tool, 9);
+            let first = PointState::live(&shaped, millimetres(10, 10)).expect("a first point");
+            assert_eq!(params(&first), vec![FieldParam::X, FieldParam::Y], "{tool:?} starts with a point");
+            shaped.push([Length::ZERO, Length::ZERO]).expect("the first click");
+            let state = PointState::live(&shaped, millimetres(100, 0)).expect("a figure");
+            assert_eq!(state.rows.last().map(|row| row.param), Some(FieldParam::Sides), "{tool:?}");
+            assert_eq!(state.rows.last().map(|row| row.value), Some(9.0), "{tool:?} shows the draft's count");
+        }
+        let rectangle = draft(DrawTool::Rectangle, &[(0, 0)]);
+        let state = PointState::live(&rectangle, millimetres(100, 100)).expect("a corner");
+        assert!(state.rows.iter().all(|row| row.param != FieldParam::Sides), "a rectangle has no side count");
     }
 
     /// The plates a segment stage declares, for a set built by hand.

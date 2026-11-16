@@ -233,10 +233,13 @@ pub const fn method_id(tool: DrawTool) -> &'static str {
         DrawTool::Rectangle => "sketch.create.rectangle",
         DrawTool::RectangleFromCenter => "sketch.create.rectangle.centre",
         DrawTool::RectangleFromCenterDirected => "sketch.create.rectangle.centre-directed",
+        DrawTool::RectangleTilted => "sketch.create.rectangle.edge",
         DrawTool::Circle => "sketch.create.circle",
         DrawTool::CircleDiameter => "sketch.create.circle.diameter",
         DrawTool::CircleThreePoints => "sketch.create.circle.three-points",
         DrawTool::RegularPolygon => "sketch.create.polygon",
+        DrawTool::PolygonApothem => "sketch.create.polygon.apothem",
+        DrawTool::PolygonByEdge => "sketch.create.polygon.edge",
     }
 }
 
@@ -416,6 +419,12 @@ const SKETCH: [GroupSpec; 7] = [
                         icon: Some(icons::contour::RECTANGLE_CENTRE_DIRECTED),
                         run: Some(ToolKind::Draw(DrawTool::RectangleFromCenterDirected)),
                     },
+                    VariantSpec {
+                        id: "sketch.create.rectangle.edge",
+                        label: Message::ToolRectangleFromEdge,
+                        icon: Some(icons::contour::RECTANGLE_EDGE),
+                        run: Some(ToolKind::Draw(DrawTool::RectangleTilted)),
+                    },
                 ],
             },
             ToolSpec {
@@ -471,13 +480,21 @@ const SKETCH: [GroupSpec; 7] = [
                 label: Message::ToolRegularPolygon,
                 icon: Some(icons::contour::POLYGON),
                 run: Some(ToolKind::Draw(DrawTool::RegularPolygon)),
-                method: Some(Message::ToolPolygonSides),
-                variants: &[VariantSpec {
-                    id: "sketch.create.polygon.edge",
-                    label: Message::ToolPolygonEdge,
-                    icon: None,
-                    run: None,
-                }],
+                method: Some(Message::ToolPolygonRadius),
+                variants: &[
+                    VariantSpec {
+                        id: "sketch.create.polygon.apothem",
+                        label: Message::ToolPolygonApothem,
+                        icon: Some(icons::contour::POLYGON_APOTHEM),
+                        run: Some(ToolKind::Draw(DrawTool::PolygonApothem)),
+                    },
+                    VariantSpec {
+                        id: "sketch.create.polygon.edge",
+                        label: Message::ToolPolygonEdge,
+                        icon: Some(icons::contour::POLYGON_EDGE),
+                        run: Some(ToolKind::Draw(DrawTool::PolygonByEdge)),
+                    },
+                ],
             },
         ],
     },
@@ -1186,6 +1203,9 @@ mod tests {
             ToolKind::Draw(DrawTool::CircleDiameter),
             ToolKind::Draw(DrawTool::CircleThreePoints),
             ToolKind::Draw(DrawTool::RegularPolygon),
+            ToolKind::Draw(DrawTool::PolygonApothem),
+            ToolKind::Draw(DrawTool::PolygonByEdge),
+            ToolKind::Draw(DrawTool::RectangleTilted),
         ];
         let mut seen = Vec::new();
         for (_, tool) in every_tool() {

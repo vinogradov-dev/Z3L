@@ -1398,19 +1398,10 @@ mod tests {
             .expect("a rectangle on a horizontal edge");
         assert_eq!(path.shape(), Some(PathShape::Rectangle));
         assert_eq!(path.entries().len(), 4);
-        let corners = path
-            .entries()
-            .iter()
-            .map(|entry| entry.segment().start().expect("a corner"))
-            .collect::<Vec<_>>();
+        let corners = path.entries().iter().map(|entry| entry.segment().start().expect("a corner")).collect::<Vec<_>>();
         assert_eq!(
             corners,
-            vec![
-                [mm(100), mm(100)],
-                [mm(400), mm(100)],
-                [mm(400), mm(300)],
-                [mm(100), mm(300)],
-            ],
+            vec![[mm(100), mm(100)], [mm(400), mm(100)], [mm(400), mm(300)], [mm(100), mm(300)],],
             "the edge is two sides, the height the other two, from the corner it names"
         );
         assert_eq!(path.bounds_micrometres(), ([100_000, 100_000], [400_000, 300_000]));
@@ -1419,20 +1410,9 @@ mod tests {
         // still stored counter-clockwise from the corner: the ring turns left at every joint.
         let below = Path::rectangle_from_edge([mm(100), mm(100)], [mm(400), mm(100)], [mm(250), mm(-100)])
             .expect("a rectangle below its edge");
-        let corners = below
-            .entries()
-            .iter()
-            .map(|entry| entry.segment().start().expect("a corner"))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            corners,
-            vec![
-                [mm(100), mm(100)],
-                [mm(400), mm(100)],
-                [mm(400), mm(-100)],
-                [mm(100), mm(-100)],
-            ]
-        );
+        let corners =
+            below.entries().iter().map(|entry| entry.segment().start().expect("a corner")).collect::<Vec<_>>();
+        assert_eq!(corners, vec![[mm(100), mm(100)], [mm(400), mm(100)], [mm(400), mm(-100)], [mm(100), mm(-100)],]);
 
         // A slanted edge gives a slanted board whose sides are the edge and the height square to it.
         let slanted = Path::rectangle_from_edge([mm(0), mm(0)], [mm(300), mm(400)], [mm(-400), mm(300)])
@@ -2726,11 +2706,7 @@ impl Path {
     /// The ring runs counter-clockwise from `corner`, like every rectangle, so the board lies on the
     /// left of the edge it was drawn along. A zero-length edge, or a `side` on the edge's own line,
     /// encloses no area and is refused.
-    pub fn rectangle_from_edge(
-        corner: [Length; 2],
-        end: [Length; 2],
-        side: [Length; 2],
-    ) -> Result<Self, PathError> {
+    pub fn rectangle_from_edge(corner: [Length; 2], end: [Length; 2], side: [Length; 2]) -> Result<Self, PathError> {
         check_point(corner)?;
         check_point(end)?;
         check_point(side)?;

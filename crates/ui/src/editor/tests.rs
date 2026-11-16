@@ -613,12 +613,15 @@ fn every_new_tool_commits_its_path_and_opens_the_edit() {
     let (project, _panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    let cases: [(DrawTool, &[(i64, i64)]); 5] = [
+    let cases: [(DrawTool, &[(i64, i64)]); 8] = [
         (DrawTool::ArcFromCenter, &[(0, 0), (50, 0), (0, 50)]),
         (DrawTool::RectangleFromCenter, &[(0, 0), (60, 40)]),
         (DrawTool::RectangleFromCenterDirected, &[(0, 0), (50, 0), (40, 30)]),
+        (DrawTool::RectangleTilted, &[(0, 0), (80, 40), (0, 60)]),
         (DrawTool::CircleThreePoints, &[(0, 0), (100, 0), (50, 80)]),
         (DrawTool::RegularPolygon, &[(0, 0), (80, 0)]),
+        (DrawTool::PolygonApothem, &[(0, 0), (0, 60)]),
+        (DrawTool::PolygonByEdge, &[(0, 0), (80, 0)]),
     ];
     for (tool, points) in cases {
         let mut editor = Editor::new();

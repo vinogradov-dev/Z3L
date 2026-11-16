@@ -17,9 +17,9 @@
 
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
 use furnicraft_geom::DVec2;
-use furnicraft_model::Path;
+use furnicraft_model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path};
 use furnicraft_scene::Camera;
-use furnicraft_ui::{DrawDraft, Editor, FieldSet, PointState, field_row, guides};
+use furnicraft_ui::{DrawDraft, Editor, FieldParam, FieldSet, PointState, field_row, guides};
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{
@@ -222,6 +222,31 @@ impl DrawGizmo {
         self.plane.unwrap_or_else(|| WorkPlane::from_camera(camera))
     }
 
+    /// Writes a typed side count into the running draft and returns the draft the frame must read.
+    ///
+    /// The side count is the figure's own number rather than the point's, so the plate edits the draft
+    /// — the slot the ribbon fills — instead of the point being placed. A typed number locks its plate,
+    /// which is what makes it a promise; a released plate leaves the count the draft already has. The
+    /// draft clamps it to the model's range, so the preview, the commit and the document agree.
+    fn apply_sides(&self, editor: &mut Editor, draft: DrawDraft) -> DrawDraft {
+        let Some(fields) = self.fields.as_ref() else {
+            return draft;
+        };
+        if !fields.is_locked(FieldParam::Sides) {
+            return draft;
+        }
+        let Some(value) = fields.value(FieldParam::Sides) else {
+            return draft;
+        };
+        let Some(sides) = whole_sides(value) else {
+            return draft;
+        };
+        if editor.set_drawing_sides(sides) == Some(draft.sides()) {
+            return draft;
+        }
+        editor.drawing().cloned().unwrap_or(draft)
+    }
+
     /// Whether points snap to the 10 mm grid.
     pub(crate) const fn grid(&self) -> bool {
         self.grid
@@ -276,6 +301,7 @@ impl DrawGizmo {
         // pointer with every number the person typed in its place (ADR 0126, 0128).
         let raw = plane_point(snapped.point);
         self.sync_fields(&draft, raw, plane, camera, rect);
+        let draft = self.apply_sides(editor, draft);
         let placed = self.fields.as_ref().and_then(|fields| PointState::placed(&draft, raw, fields));
         let (point, at) = placed.as_ref().map_or((snapped.point, raw), |state| (state.point, state.at));
         let screen = project(plane, camera, rect, at).unwrap_or(snapped.screen);
@@ -358,6 +384,9 @@ impl DrawGizmo {
             editor.cancel_drawing();
             return Ok(Some(DrawAction::Cancel));
         }
+        // A count typed in this frame is the figure's number: it reaches the draft here, so the next
+        // click or Enter builds the polygon the plate promised rather than the one before it.
+        self.apply_sides(editor, DrawDraft::default());
         if !action.commit {
             return Ok(None);
         }
@@ -507,6 +536,22 @@ fn snap_cursor(
     let world = plane.world(DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
     let screen = screen_point(camera, rect, world)?;
     Some(SnapOutcome { point, target: snapped.target, screen })
+}
+
+/// The whole side count a plate's number names, inside the range a polygon accepts.
+///
+/// The plate's own range already keeps the number between three and the model's widest polygon, so
+/// this is the one place the field's `f64` becomes the count: a value that is not a number in that
+/// range is refused rather than clamped, because a plate can never show one.
+fn whole_sides(value: f64) -> Option<u32> {
+    if !value.is_finite() {
+        return None;
+    }
+    let whole = value.round();
+    if whole < f64::from(MIN_POLYGON_SIDES) || whole > f64::from(MAX_POLYGON_SIDES) {
+        return None;
+    }
+    Some(whole as u32)
 }
 
 /// Whether the hovered point is the chain's first one, where a click closes the ring.

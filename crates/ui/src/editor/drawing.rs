@@ -86,6 +86,16 @@ impl Editor {
         self.drawing.as_mut().map(|draft| draft.set_arc_mode(arc))
     }
 
+    /// Chooses the side count the running draft's polygon is built with.
+    ///
+    /// The count is the figure's own number, so a plate at the cursor writes it here rather than into
+    /// the point: the draft clamps it to the model's range and returns the count it now holds, or
+    /// `None` when no draft is running. The document sees nothing until the commit, exactly as for
+    /// every other number of a drawing.
+    pub fn set_drawing_sides(&mut self, sides: u32) -> Option<u32> {
+        self.drawing.as_mut().map(|draft| draft.set_sides(sides))
+    }
+
     /// Appends a work-plane point to the running draft as a straight segment.
     pub fn drawing_point(&mut self, point: [Length; 2]) -> Result<(), DrawDraftError> {
         self.drawing.as_mut().ok_or(DrawDraftError::NotStarted)?.push(point)
