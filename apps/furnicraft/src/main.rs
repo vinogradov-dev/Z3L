@@ -1,4 +1,4 @@
-//! FurniCraft desktop application shell.
+//! Z3L desktop application shell.
 //!
 //! This is the composition root: it creates the window, holds the open tabs, the workspace settings
 //! and the window's own view state, and it draws the chrome around the active scene. Everything
@@ -73,6 +73,13 @@ use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::header::{HeaderAction, HeaderState, TabView};
 use crate::scene_build::{empty_session, initial_session};
+
+/// The machine identity of the application: its window class and the directory its settings live in.
+///
+/// It is the short word rather than a reverse-DNS id, because it is a path component a person reads —
+/// `~/.config/z3l` — and because the project owns no domain to name. A `.desktop`, Flatpak or Wayland
+/// identity that wants reverse DNS takes its own line here and changes nothing else (ADR 0135).
+pub(crate) const APP_ID: &str = "z3l";
 use crate::settings_store::SettingsStore;
 use crate::shortcuts::take_shortcuts;
 use crate::side_panels::{
@@ -237,7 +244,7 @@ enum Gesture {
     },
 }
 
-struct FurniCraftApp {
+struct App {
     /// The open scenes, in the order the tab row draws them. Never empty.
     tabs: Tabs<Document>,
     /// The wgpu handles the window and every tab draw with; `None` in a headless run, where a test
@@ -268,10 +275,12 @@ struct FurniCraftApp {
     quit_requested: bool,
 }
 
-impl FurniCraftApp {
+impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Result<Self, String> {
-        let render_state =
-            cc.wgpu_render_state.clone().ok_or_else(|| "FurniCraft requires the wgpu renderer".to_owned())?;
+        let render_state = cc
+            .wgpu_render_state
+            .clone()
+            .ok_or_else(|| format!("{} requires the wgpu renderer", theme::PRODUCT_NAME))?;
         let settings_store = SettingsStore::for_workspace();
         let loaded = settings_store.load();
         let (preference, preset, accent) = loaded.settings.install_args();
@@ -1013,7 +1022,7 @@ impl FurniCraftApp {
     }
 }
 
-impl eframe::App for FurniCraftApp {
+impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
     }
@@ -1044,22 +1053,29 @@ fn exit_with(code: i32) -> ! {
 
 /// Opens the window and runs the editor.
 fn run_window() -> eframe::Result {
-    let options = eframe::NativeOptions {
+    let options = native_options();
+    eframe::run_native(
+        theme::PRODUCT_NAME,
+        options,
+        Box::new(|cc| {
+            let app = App::new(cc)?;
+            Ok(Box::new(app))
+        }),
+    )
+}
+
+/// The window the shell asks `eframe` for: its title and its machine identity both come from the
+/// product constants, so a rename cannot leave one of them behind (ADR 0135).
+fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("FurniCraft")
+            .with_title(theme::PRODUCT_NAME)
+            .with_app_id(APP_ID)
             .with_inner_size([1280.0, 840.0])
             .with_min_inner_size([640.0, 480.0]),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
-    };
-    eframe::run_native(
-        "FurniCraft",
-        options,
-        Box::new(|cc| {
-            let app = FurniCraftApp::new(cc)?;
-            Ok(Box::new(app))
-        }),
-    )
+    }
 }
 
 #[cfg(test)]
@@ -1070,6 +1086,18 @@ mod tests {
 
     use super::*;
     use crate::view_cluster::{cluster_anchor, projection_button};
+
+    #[test]
+    fn the_window_carries_the_product_identity() {
+        let options = native_options();
+        assert_eq!(options.viewport.title.as_deref(), Some(theme::PRODUCT_NAME), "the title is the product name");
+        assert_eq!(
+            options.viewport.app_id.as_deref(),
+            Some(APP_ID),
+            "the window class and the settings path share one id"
+        );
+        assert_eq!(APP_ID, APP_ID.to_lowercase(), "an app id is a path component, so it carries no capitals");
+    }
 
     #[test]
     fn the_projection_button_draws_the_mode_the_view_is_in() {

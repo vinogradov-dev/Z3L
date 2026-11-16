@@ -21,7 +21,7 @@ use furnicraft_units::Length;
 
 use crate::document::Document;
 use crate::view_cluster::NavigationMode;
-use crate::{FurniCraftApp, TransformMode};
+use crate::{App, TransformMode};
 
 /// What separates the parts of the selection context.
 const SUMMARY_SEPARATOR: &str = " · ";
@@ -413,7 +413,7 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
     changed.then_some(chosen)
 }
 
-impl FurniCraftApp {
+impl App {
     /// The thin bar at the bottom of the window: the armed tool, the gesture it expects, the counts
     /// it would affect and the last error.
     ///

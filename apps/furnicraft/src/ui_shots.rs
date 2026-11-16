@@ -26,7 +26,7 @@ use furnicraft_ui::settings::{
 use furnicraft_ui::theme::ThemePreset;
 use furnicraft_ui::ui_scale;
 
-use crate::FurniCraftApp;
+use crate::App;
 
 /// The window a shot is drawn for, in points: the default launch size (M2).
 const WINDOW: egui::Vec2 = egui::vec2(1280.0, 840.0);
@@ -164,7 +164,7 @@ fn capture(render_state: &egui_wgpu::RenderState, shot: &Shot, path: &Path) -> R
     let workspace = furnicraft_testkit::scratch_dir("ui-shots").join("workspace.json");
     let session = crate::scene_build::demo_session()?;
     let settings = shot.settings();
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)?;
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)?;
     app.tabs.active_mut().zoom_active_view(1.0 / MODEL_ZOOM);
 
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
@@ -186,7 +186,7 @@ fn capture(render_state: &egui_wgpu::RenderState, shot: &Shot, path: &Path) -> R
 /// Every frame's texture deltas reach the renderer, because the font atlas grows between frames and
 /// the last frame's glyphs were uploaded by the ones before it; only the last frame is painted.
 fn settle(
-    app: &mut FurniCraftApp,
+    app: &mut App,
     ctx: &egui::Context,
     render_state: &egui_wgpu::RenderState,
     screen: egui::Rect,
@@ -405,7 +405,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
         furnicraft_testkit::sample_project(),
         furnicraft_testkit::sample_catalog(),
     );
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
     // tab a fresh workspace happens to open.
@@ -506,7 +506,7 @@ fn the_box_grips_are_painted_offscreen() {
         furnicraft_testkit::sample_project(),
         furnicraft_testkit::sample_catalog(),
     );
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
     // tab a fresh workspace happens to open.
@@ -592,7 +592,7 @@ fn the_frame_grips_are_painted_offscreen() {
     let workspace = furnicraft_testkit::scratch_dir("ui-shots").join("frame-grips-workspace.json");
     // An empty document, so the picture is the reserved box and nothing else.
     let session = crate::scene_build::empty_session().expect("an empty session");
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
     // tab a fresh workspace happens to open.
@@ -698,8 +698,8 @@ fn gizmo_picture(
     let mut settings = Settings::default();
     settings.gizmo.handle_points = handle_points;
     settings.gizmo.ring_percent = ring_percent;
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
-        .expect("the application builds");
+    let mut app =
+        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
     app.shell.mode = mode;
     // The sample shelf is the one node the picture selects; its pivot is where the gizmo stands.
     let node = furnicraft_model::Id::new(2).ok_or_else(|| "the sample shelf has no id".to_owned())?;
@@ -821,7 +821,7 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     let (project, product) = empty_product();
     let mut session = furnicraft_engine::Session::with_catalog(project, furnicraft_testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
-    let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
     // tab a fresh workspace happens to open.
@@ -940,7 +940,7 @@ fn the_panels_last_row_is_painted_clear_of_the_bar() {
         let (session, panel) = deep_session().expect("the deep scene builds");
         let mut settings = Settings::default();
         settings.appearance.theme = variant;
-        let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
             .expect("the application builds");
         app.tabs.active_mut().editor.select_node(Some(panel));
         let mut jobs = settle(&mut app, &ctx, &render_state, screen);
@@ -1033,7 +1033,7 @@ fn the_work_cursor_is_painted_offscreen_in_both_themes() {
         settings.pointer.cursor_size = DEFAULT_CURSOR_POINTS;
         settings.pointer.crosshair = true;
         let session = crate::scene_build::demo_session().expect("the sample session builds");
-        let mut app = FurniCraftApp::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
             .expect("the application builds");
         app.tabs.active_mut().zoom_active_view(1.0 / MODEL_ZOOM);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);

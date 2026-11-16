@@ -224,7 +224,11 @@ pub const FLOATING_OFFSET: f32 = 12.0;
 pub const RADIUS: u8 = 4;
 
 /// The title of the window, and the word the header draws.
-pub const PRODUCT_NAME: &str = "FurniCraft";
+///
+/// The product is named for a zero and three laws — `Local`, `Literal`, `Lasting` — and the whole
+/// statement is in `docs/philosophy.md`. This constant is the only place the words live; the window
+/// title, the header and the error sentences read it (ADR 0135).
+pub const PRODUCT_NAME: &str = "Z3L";
 
 /// One theme variant: every chrome and text colour the window draws with.
 ///

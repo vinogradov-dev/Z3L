@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use eframe::egui::{Color32, Id, Modal, TextEdit, Ui};
+use furnicraft_project::EXTENSION;
 use furnicraft_text::{Lang, Message};
 
 /// One file operation the user asked for.
@@ -287,13 +288,14 @@ impl FileMenu {
         self.dialog = Some(PathDialog { mode: PathMode::SaveAs, path: self.default_path(), error: None });
     }
 
-    /// The path a dialog starts with: the current file, or `scene.fcs` in the working directory.
+    /// The path a dialog starts with: the current file, or `scene` with the scene extension in the
+    /// working directory.
     fn default_path(&self) -> String {
         if let Some(current) = &self.current {
             return current.display().to_string();
         }
         let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        directory.join("scene.fcs").display().to_string()
+        directory.join(format!("scene.{EXTENSION}")).display().to_string()
     }
 
     fn path_dialog_ui(&mut self, ctx: &egui::Context) -> Option<FileAction> {
@@ -394,7 +396,7 @@ fn scene_files_near(path: &str) -> Vec<PathBuf> {
                 && candidate
                     .extension()
                     .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("fcs"))
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case(EXTENSION))
         })
         .collect();
     files.sort();
@@ -486,7 +488,7 @@ mod tests {
         assert_eq!(menu.command(MenuCommand::Open), None);
         let dialog = menu.dialog.as_ref().expect("the open dialog");
         assert_eq!(dialog.mode, PathMode::Open);
-        assert!(dialog.path.ends_with("scene.fcs"), "path was {}", dialog.path);
+        assert!(dialog.path.ends_with(&format!("scene.{EXTENSION}")), "path was {}", dialog.path);
     }
 
     #[test]
@@ -501,13 +503,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("furnicraft-scene-list-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create the fixture directory");
-        for name in ["b.fcs", "a.fcs", "notes.txt", "save.fcs.tmp"] {
+        for name in [
+            format!("b.{EXTENSION}"),
+            format!("a.{EXTENSION}"),
+            "notes.txt".to_owned(),
+            format!("save.{EXTENSION}.tmp"),
+        ] {
             fs::write(dir.join(name), "{}").expect("write a fixture");
         }
 
         let files = scene_files_near(&dir.display().to_string());
         let names: Vec<_> = files.iter().filter_map(|path| path.file_name()).filter_map(|name| name.to_str()).collect();
-        assert_eq!(names, ["a.fcs", "b.fcs"], "only scene files are listed, sorted");
+        let expected = [format!("a.{EXTENSION}"), format!("b.{EXTENSION}")];
+        assert_eq!(names, expected, "only scene files are listed, sorted");
 
         fs::remove_dir_all(&dir).expect("remove the fixture directory");
     }

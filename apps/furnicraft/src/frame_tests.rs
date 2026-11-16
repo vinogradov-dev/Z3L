@@ -1,6 +1,6 @@
 //! The shell's one frame, asserted without a window.
 //!
-//! `FurniCraftApp::frame` is the whole interface: the header, the ribbon, the floating panels, the
+//! `App::frame` is the whole interface: the header, the ribbon, the floating panels, the
 //! scene, the cluster and the modals. These tests drive it with an [`egui::Context`] and
 //! [`egui::RawInput`] — no window, no device, no adapter — and assert what a live session used to
 //! check by eye: the scene rectangle and its camera aspect in every panel and ribbon state, the fact
@@ -38,11 +38,11 @@ fn ctrl_shift() -> egui::Modifiers {
 /// A headless application, the context that stands in for its window, and the workspace file it
 /// would write to.
 ///
-/// Everything below it is the real interface: [`FurniCraftApp::headless`] composes the same shell the
+/// Everything below it is the real interface: [`App::headless`] composes the same shell the
 /// window composes, and [`Harness::run`] draws the same frame `eframe::App::ui` draws (U77).
 struct Harness {
     ctx: egui::Context,
-    app: FurniCraftApp,
+    app: App,
     /// Where the workspace would be written; the tests never write it, but a headless run must not
     /// be able to reach the file in the OS config directory.
     path: std::path::PathBuf,
@@ -75,7 +75,7 @@ impl Harness {
         // The accessible tree names every ribbon face with the rectangle it took, which is how a test
         // aims at a caret without repeating the strip's layout.
         ctx.enable_accesskit();
-        let app = FurniCraftApp::headless(&ctx, path.clone(), Settings::default(), session)
+        let app = App::headless(&ctx, path.clone(), Settings::default(), session)
             .expect("the application builds with no device, no adapter and no window");
         Self {
             ctx,

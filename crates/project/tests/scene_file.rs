@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use furnicraft_model::{
     Container, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
 };
-use furnicraft_project::{MAX_SCENE_BYTES, SceneFile, SceneFileError};
+use furnicraft_project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
 use furnicraft_units::{Degrees, Length};
 
 const GOLDEN: &str = include_str!("golden/scene.fcs");
@@ -159,15 +159,16 @@ fn any_other_document_schema_is_the_same_readable_error() {
 
 #[test]
 fn a_missing_or_foreign_format_is_a_readable_error() {
-    let missing = GOLDEN.replacen("\"format\": \"furnicraft.scene\",", "", 1);
+    let present = format!("\"format\": \"{FORMAT}\"");
+    let missing = GOLDEN.replacen(&format!("{present},"), "", 1);
     assert_ne!(missing, GOLDEN);
     assert!(matches!(SceneFile::parse(&missing), Err(SceneFileError::MissingFormat)));
 
-    let foreign = GOLDEN.replacen("\"format\": \"furnicraft.scene\"", "\"format\": \"another.app\"", 1);
+    let foreign = GOLDEN.replacen(&present, "\"format\": \"another.app\"", 1);
     assert_ne!(foreign, GOLDEN);
     assert!(matches!(
         SceneFile::parse(&foreign),
-        Err(SceneFileError::WrongFormat { found, expected: "furnicraft.scene" }) if found == "another.app"
+        Err(SceneFileError::WrongFormat { found, expected }) if found == "another.app" && expected == FORMAT
     ));
 }
 

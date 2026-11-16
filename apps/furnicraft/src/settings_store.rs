@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use furnicraft_text::{Lang, Message};
 use furnicraft_ui::settings::Settings;
 
+use crate::APP_ID;
+
 /// The name of the settings file inside the application's config directory.
 const FILE_NAME: &str = "settings.json";
 
@@ -124,20 +126,23 @@ fn notice(repair: furnicraft_ui::settings::Repair) -> Notice {
 }
 
 /// The application's config directory, following each platform's convention.
+///
+/// Every branch names the directory [`APP_ID`], so a rename moves one constant and nothing here
+/// (ADR 0135).
 fn config_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
-        return std::env::var_os("APPDATA").map(PathBuf::from).map(|appdata| appdata.join("FurniCraft"));
+        return std::env::var_os("APPDATA").map(PathBuf::from).map(|appdata| appdata.join(APP_ID));
     }
     if cfg!(target_os = "macos") {
         return std::env::var_os("HOME")
             .map(PathBuf::from)
-            .map(|home| home.join("Library").join("Application Support").join("FurniCraft"));
+            .map(|home| home.join("Library").join("Application Support").join(APP_ID));
     }
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|directory| directory.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from).map(|home| home.join(".config")))
-        .map(|directory| directory.join("furnicraft"))
+        .map(|directory| directory.join(APP_ID))
 }
 
 /// Writes `bytes` to a temporary sibling, flushes it and renames it over `target`.
@@ -279,6 +284,18 @@ mod tests {
         let loaded = SettingsStore::at(path).load();
         assert_eq!(loaded.settings.appearance.ui_scale, furnicraft_ui::ui_scale::MAX_PERCENT);
         assert_eq!(loaded.notice, None);
+    }
+
+    #[test]
+    fn the_settings_directory_is_named_by_the_app_id() {
+        let Some(directory) = config_dir() else {
+            return;
+        };
+        assert_eq!(
+            directory.file_name().and_then(|name| name.to_str()),
+            Some(APP_ID),
+            "every platform branch names the same directory: {directory:?}"
+        );
     }
 
     #[test]
