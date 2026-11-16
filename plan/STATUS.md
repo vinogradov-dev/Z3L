@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=c7cd17d updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=4e609a7 updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,8 +55,8 @@ entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` keeps the log `/
 
 ## Next
 
-Nothing is scheduled: 6 open tasks wait in `## Next`, and U102 is the head — a selection can be
-added to and removed from before the rubber band lands on it.
+Nothing is scheduled: U102 is the head of the work order — a selection gains and loses members
+before the rubber band lands on it.
 
 ## Index
 

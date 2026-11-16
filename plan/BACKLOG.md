@@ -41,28 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X54** a click on a widget over the scene commits the running draft's next point
-  Why: Observation: with a line tool armed and waiting for its next point — the segment after a
-   straight line's start, a point of an arc — a click meant for something other than the scene
-   fixes the plate: the length is set and the line commits at it, the arc takes its second
-   point there. The owner names the surfaces: the axes widget in the view's top-right corner,
-   and any of the two panels. Reproduced on 2026-11-16 in a headless frame test: a line with
-   its start placed, the pointer 200 × 37 points right of it, a press on the left panel, then a
-   hover 400 points further on — the length plate hands over the rounded text of its live value
-   (772.3 for a live 772.3341245859851) when it loses the keyboard, locks `Length = 772.3`, and
-   the length stays there wherever the pointer goes. Expectation: a press outside the plates
-   takes nothing from them — the point being placed keeps following the pointer, and only a
-   number the person typed, or the Enter key, becomes a promise. Suspected cause, measured:
-   `Scrub` commits its text whenever the field loses the focus (`crates/ui/src/scrub.rs`, the
-   `enter || lost || due` branch, `commit = parsed != old`), and the text is not the value but
-   `number_text(old, decimals)` — one decimal for every parameter but `Sides`
-   (`FieldParam::decimals`) — so a live value almost never round-trips and a blur is a commit;
-   `FieldSet::show` turns every non-zero commit into a lock, and the plate takes the keyboard
-   by itself because `FieldSet::new` requests it. The press does reach the widget it was aimed
-   at: the trace of a real run shows the axes widget swallowing the click (`on_chrome=false`,
-   `clicked_p=false`) while the plate behind it hands its number over.
-  `files: crates/ui/src/scrub.rs,crates/ui/src/point_fields.rs,app/src/draw_gizmo.rs,app/src/frame_tests.rs`
-
 ## Next
 - `[ ]` **U102** a selection cannot be added to or removed from
   Why: A selection is one object: a click replaces it, and there is no way to add or remove
@@ -156,6 +134,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **X54** a click on a widget over the scene commits the running draft's next point
+  Why: Observation: with a line tool armed and waiting for its next point — the segment after a
+   straight line's start, a point of an arc — a click meant for something other than the scene
+   fixes the plate: the length is set and the line commits at it, the arc takes its second
+   point there. The owner names the surfaces: the axes widget in the view's top-right corner,
+   and any of the two panels. Reproduced on 2026-11-16 in a headless frame test: a line with
+   its start placed, the pointer 200 × 37 points right of it, a press on the left panel, then a
+   hover 400 points further on — the length plate hands over the rounded text of its live value
+   (772.3 for a live 772.3341245859851) when it loses the keyboard, locks `Length = 772.3`, and
+   the length stays there wherever the pointer goes. Expectation: a press outside the plates
+   takes nothing from them — the point being placed keeps following the pointer, and only a
+   number the person typed, or the Enter key, becomes a promise. Suspected cause, measured:
+   `Scrub` commits its text whenever the field loses the focus (`crates/ui/src/scrub.rs`, the
+   `enter || lost || due` branch, `commit = parsed != old`), and the text is not the value but
+   `number_text(old, decimals)` — one decimal for every parameter but `Sides`
+   (`FieldParam::decimals`) — so a live value almost never round-trips and a blur is a commit;
+   `FieldSet::show` turns every non-zero commit into a lock, and the plate takes the keyboard
+   by itself because `FieldSet::new` requests it. The press does reach the widget it was aimed
+   at: the trace of a real run shows the axes widget swallowing the click (`on_chrome=false`,
+   `clicked_p=false`) while the plate behind it hands its number over.
+  `files: crates/ui/src/scrub.rs,crates/ui/src/point_fields.rs,app/src/draw_gizmo.rs,app/src/frame_tests.rs` — `4e609a7`
 
 - `[x]` **X53** the line list has a by-angle row that draws nothing
   Why: The line list offers «by angle» with no glyph and no action: the row is declared as a
