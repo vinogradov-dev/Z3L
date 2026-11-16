@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=C5 state=idle base=a27016f updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=4fdda6f updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 
 ## Next
 
-C5 adds the polygon's remaining ways to be built and a rectangle on an angled base edge
+Nothing is scheduled: 1 open task waits in `## Next`.
 
 ## Index
 

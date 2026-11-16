@@ -40,26 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
-  Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
-   second that runs nothing (sketch.create.polygon.edge); the owner needs the circumscribed
-   polygon and the polygon by an edge, each a cell of its own with the parameters at the
-   cursor, and a rectangle grown from an angled base edge, which the tool set lacks.
-   RectangleFromCenterDirected exists but predates the field rules.
-  Shape: One draft builds all three: inscribed as today, circumscribed by the apothem (rim =
-   apothem / cos(pi/n)), by edge (rim = side / (2 sin(pi/n)), phase shifted by half a step,
-   built on the pointer side). The method is not stored: the result is the same regular polygon
-   and the angle is a construction parameter, so no schema bump. Fields at the cursor are the
-   radius or apothem, the second point angle and the side count. A new
-   DrawTool::RectangleTilted takes a corner, a base edge and a height;
-   RectangleFromCenterDirected is brought onto the same field rules. Three icons.
-  Done: Each of the three polygon methods and the tilted rectangle builds the expected ring
-   from typed values, tested against the model own vertices; the side count field is live and
-   clamped to the model range; the phantom follows the pointer on the chosen side; three icons
-   exist with README rows, the fallback test and inventory rows; no polygon or rectangle cell
-   with run: None remains; cargo xtask ci is green.
-  `files: crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
@@ -92,6 +72,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
 
 ## Done
+
+- `[x]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
+  Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
+   second that runs nothing (sketch.create.polygon.edge); the owner needs the circumscribed
+   polygon and the polygon by an edge, each a cell of its own with the parameters at the
+   cursor, and a rectangle grown from an angled base edge, which the tool set lacks.
+   RectangleFromCenterDirected exists but predates the field rules.
+  Shape: One draft builds all three: inscribed as today, circumscribed by the apothem (rim =
+   apothem / cos(pi/n)), by edge (rim = side / (2 sin(pi/n)), phase shifted by half a step,
+   built on the pointer side). The method is not stored: the result is the same regular polygon
+   and the angle is a construction parameter, so no schema bump. Fields at the cursor are the
+   radius or apothem, the second point angle and the side count. A new
+   DrawTool::RectangleTilted takes a corner, a base edge and a height;
+   RectangleFromCenterDirected is brought onto the same field rules. Three icons.
+  Done: Each of the three polygon methods and the tilted rectangle builds the expected ring
+   from typed values, tested against the model own vertices; the side count field is live and
+   clamped to the model range; the phantom follows the pointer on the chosen side; three icons
+   exist with README rows, the fallback test and inventory rows; no polygon or rectangle cell
+   with run: None remains; cargo xtask ci is green.
+  `files: crates/ui/src/draw.rs, crates/ui/src/toolbars/spec.rs, assets/icons/contour, crates/text/src/messages.rs` — `4fdda6f`
 
 - `[x]` **C4** a circle by diameter and an arc from its start, end and radius
   Why: The circle cell and the arc cell each declare a method that runs nothing
