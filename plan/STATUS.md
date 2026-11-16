@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=R1 state=doing base=d4a56f3 updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=58480ef updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,8 +55,7 @@ entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` keeps the log `/
 
 ## Next
 
-R1 is next: draft: the pre-release rename gives the product name one home before anything is
-released
+Nothing is scheduled: 8 open tasks wait in `## Next`.
 
 ## Index
 

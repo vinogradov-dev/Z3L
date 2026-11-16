@@ -40,35 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **R1** draft: the pre-release rename gives the product name one home before anything is released
-  Why: This task was not in the queue and no session started it: it ran when the owner
-   commanded the release, and that command also named the product, which was the one input the
-   entry could not supply. Until then it kept its place at the end of `## Next`, so the
-   measured procedure in `plan/rename.md` did not get lost. The product name was hardcoded in
-   the window title, the app name, the error text, the `.z3l` default and its filter, the
-   settings directory and the path hints, so renaming after a release would have been a
-   refactor instead of a constant.
-  Shape: (1) Give the identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for
-   the window class and the settings directory set through `ViewportBuilder::with_app_id`,
-   `project::FORMAT` + `project::EXTENSION` for the file — and delete the hardcoded duplicates
-   in `main.rs` (title, app name, error), `file_menu.rs` (the default file name and the filter)
-   and `settings_store.rs` (three platform branches). (2) Rename the fifteen crates to bare
-   names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and `mv` in
-   `plan/rename.md` and `cargo fmt --all` after them. (3) The four registers that must agree in
-   that commit — the `CRATES` table and its tests in `xtask`, the crate map in `AGENTS.md` and
-   `PROJECT.md`, the layer list in the architecture skill, and the path hints in
-   `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan gate rejects once the
-   path is gone. (4) The envelope `format` string and the golden's second line, leaving the
-   `generator` fixture alone. No compatibility path: nothing is released, so the file format
-   and the settings directory change outright.
-  Done: A single constant decides the product name, and a test asserts that the window title,
-   `app_id`, the settings directory and the open-dialog filter all read it, so a second rename
-   cannot miss a copy. Measured on this tree: 2208 tests pass, clippy clean, `layers: ok`,
-   `ui-rules: ok`, `plan: ok`, `docs: ok`, `skills: ok`; the mechanical commit touches 338
-   files (2835 insertions, 3136 deletions) and changes no behaviour beyond the file extension
-   and the settings path. `cargo xtask ci` is green.
-  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
@@ -192,6 +163,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **R1** draft: the pre-release rename gives the product name one home before anything is released
+  Why: This task was not in the queue and no session started it: it ran when the owner
+   commanded the release, and that command also named the product, which was the one input the
+   entry could not supply. Until then it kept its place at the end of `## Next`, so the
+   measured procedure in `plan/rename.md` did not get lost. The product name was hardcoded in
+   the window title, the app name, the error text, the `.z3l` default and its filter, the
+   settings directory and the path hints, so renaming after a release would have been a
+   refactor instead of a constant.
+  Shape: (1) Give the identity one home — `theme::PRODUCT_NAME` for the words, an `APP_ID` for
+   the window class and the settings directory set through `ViewportBuilder::with_app_id`,
+   `project::FORMAT` + `project::EXTENSION` for the file — and delete the hardcoded duplicates
+   in `main.rs` (title, app name, error), `file_menu.rs` (the default file name and the filter)
+   and `settings_store.rs` (three platform branches). (2) Rename the fifteen crates to bare
+   names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and `mv` in
+   `plan/rename.md` and `cargo fmt --all` after them. (3) The four registers that must agree in
+   that commit — the `CRATES` table and its tests in `xtask`, the crate map in `AGENTS.md` and
+   `PROJECT.md`, the layer list in the architecture skill, and the path hints in
+   `plan/BACKLOG.md`, `plan/map.md` and `plan/debt.md`, which the plan gate rejects once the
+   path is gone. (4) The envelope `format` string and the golden's second line, leaving the
+   `generator` fixture alone. No compatibility path: nothing is released, so the file format
+   and the settings directory change outright.
+  Done: A single constant decides the product name, and a test asserts that the window title,
+   `app_id`, the settings directory and the open-dialog filter all read it, so a second rename
+   cannot miss a copy. Measured on this tree: 2208 tests pass, clippy clean, `layers: ok`,
+   `ui-rules: ok`, `plan: ok`, `docs: ok`, `skills: ok`; the mechanical commit touches 338
+   files (2835 insertions, 3136 deletions) and changes no behaviour beyond the file extension
+   and the settings path. `cargo xtask ci` is green.
+  `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs` — `d4a56f3`
 
 - `[x]` **X51** the arc's second click reads a length it never draws
   Why: While a three-point arc is being drawn, the second click shows a length plate whose
