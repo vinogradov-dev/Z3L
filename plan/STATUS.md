@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=P16 state=doing base=6277597 updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=a895cd0 updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -55,7 +55,7 @@ entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` keeps the log `/
 
 ## Next
 
-P16 is next: the gate rejects a crate whose name equals a module it depends on
+Nothing is scheduled: 8 open tasks wait in `## Next`.
 
 ## Index
 

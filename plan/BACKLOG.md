@@ -40,24 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **P16** the gate rejects a crate whose name equals a module it depends on
-  Why: The crates carry bare names (ADR 0135), so a name can collide with a module: a crate
-   that declares `mod scene;` and depends on the crate `scene` loses the crate, and `scene::…`
-   resolves to the module — `E0425` at a line that does not name the cause (`plan/rename.md`
-   §6). Layering alone does not prevent it, because a crate may legitimately name a module
-   after a crate below it (`render` + `mod scene;`, `ui` + `mod model;`), and a prefix would
-   only move the collision to a less likely name. Measured: with the module in place the check
-   reports it, and it is clear on this tree.
-  Shape: `cargo xtask layers` reads every workspace package from `cargo metadata`, parses its
-   crate root (`src/lib.rs`, `src/main.rs`) with `syn`, and fails when a declared module has
-   the same name as one of the package's non-build dependencies, naming both and the two ways
-   out: rename the module, or write `::name::…`. A pure test covers the match and a
-   comment-only `mod` line, and this tree must stay green.
-  Done: `cargo xtask layers` fails on a crate that declares `mod <dependency>;` and passes on
-   this tree; a test proves a comment-only `// mod fake;` is not a module; AGENTS.md §3 and the
-   architecture skill state the rule; `cargo xtask ci` is green.
-  `files: xtask/src/main.rs, AGENTS.md, .pi/skills/enforce-architecture/SKILL.md, .opencode/skills/enforce-architecture/SKILL.md`
-
 ## Bugs
 ## Next
 - `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
@@ -181,6 +163,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **P16** the gate rejects a crate whose name equals a module it depends on
+  Why: The crates carry bare names (ADR 0135), so a name can collide with a module: a crate
+   that declares `mod scene;` and depends on the crate `scene` loses the crate, and `scene::…`
+   resolves to the module — `E0425` at a line that does not name the cause (`plan/rename.md`
+   §6). Layering alone does not prevent it, because a crate may legitimately name a module
+   after a crate below it (`render` + `mod scene;`, `ui` + `mod model;`), and a prefix would
+   only move the collision to a less likely name. Measured: with the module in place the check
+   reports it, and it is clear on this tree.
+  Shape: `cargo xtask layers` reads every workspace package from `cargo metadata`, parses its
+   crate root (`src/lib.rs`, `src/main.rs`) with `syn`, and fails when a declared module has
+   the same name as one of the package's non-build dependencies, naming both and the two ways
+   out: rename the module, or write `::name::…`. A pure test covers the match and a
+   comment-only `mod` line, and this tree must stay green.
+  Done: `cargo xtask layers` fails on a crate that declares `mod <dependency>;` and passes on
+   this tree; a test proves a comment-only `// mod fake;` is not a module; AGENTS.md §3 and the
+   architecture skill state the rule; `cargo xtask ci` is green.
+  `files: xtask/src/main.rs, AGENTS.md, .pi/skills/enforce-architecture/SKILL.md, .opencode/skills/enforce-architecture/SKILL.md` — `a895cd0`
 
 - `[x]` **R1** draft: the pre-release rename gives the product name one home before anything is released
   Why: This task was not in the queue and no session started it: it ran when the owner
