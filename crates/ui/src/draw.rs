@@ -21,8 +21,11 @@
 //!
 //! Changes when: a drawing tool, its point grammar or the closing rule changes.
 
+use core::f64::consts::PI;
+
 use furnicraft_engine::object_cmds::OBJECT_PATH_CREATE_ID;
 use furnicraft_engine::{ObjectPathCreate, Session};
+use furnicraft_geom::DVec2;
 use furnicraft_model::{
     ContourSegment, ContourSegmentError, Id, MAX_CONTOUR_COORDINATE, MAX_CONTOUR_SEGMENTS, MAX_POLYGON_SIDES,
     MIN_POLYGON_SIDES, Path, PathError, Placement,
@@ -69,6 +72,9 @@ pub enum DrawTool {
     RectangleFromCenter,
     /// A centre, a side direction and a corner make one closed rectangle at any angle.
     RectangleFromCenterDirected,
+    /// Two corners of a base edge and a height make one closed rectangle: the edge sets one side and
+    /// the third point sets the other, square to it, on the pointer's own side.
+    RectangleTilted,
     /// A centre and a rim point make one closed circle.
     Circle,
     /// A centre and a rim point make one closed circle the same way, but the number the person types
@@ -79,6 +85,14 @@ pub enum DrawTool {
     /// A centre and a rim point make one closed regular polygon; the side count comes from the
     /// ribbon.
     RegularPolygon,
+    /// A centre and a point on a side make one closed regular polygon: the number the person types is
+    /// the apothem, the distance from the centre to a side, so the rim point is `apothem / cos(pi/n)`
+    /// away and the polygon wraps a circle of that radius.
+    PolygonApothem,
+    /// Two corners of one side make one closed regular polygon: the edge fixes both the rim and the
+    /// phase, and the rest of the ring follows counter-clockwise, so the polygon grows on the left of
+    /// the edge the person drew.
+    PolygonByEdge,
 }
 
 impl DrawTool {
@@ -93,12 +107,15 @@ impl DrawTool {
             | Self::RectangleFromCenter
             | Self::Circle
             | Self::CircleDiameter
-            | Self::RegularPolygon => Some(2),
+            | Self::RegularPolygon
+            | Self::PolygonApothem
+            | Self::PolygonByEdge => Some(2),
             Self::Arc
             | Self::ArcFromCenter
             | Self::ArcByRadius
             | Self::CircleThreePoints
-            | Self::RectangleFromCenterDirected => Some(3),
+            | Self::RectangleFromCenterDirected
+            | Self::RectangleTilted => Some(3),
             Self::Polyline => None,
         }
     }
@@ -115,10 +132,13 @@ impl DrawTool {
             Self::Rectangle
                 | Self::RectangleFromCenter
                 | Self::RectangleFromCenterDirected
+                | Self::RectangleTilted
                 | Self::Circle
                 | Self::CircleDiameter
                 | Self::CircleThreePoints
                 | Self::RegularPolygon
+                | Self::PolygonApothem
+                | Self::PolygonByEdge
         )
     }
 
@@ -141,6 +161,8 @@ impl DrawTool {
             Self::CircleDiameter => Message::ToolCircle,
             Self::CircleThreePoints => Message::ToolCircleThreePoints,
             Self::RegularPolygon => Message::ToolRegularPolygon,
+            Self::PolygonApothem | Self::PolygonByEdge => Message::ToolRegularPolygon,
+            Self::RectangleTilted => Message::ToolRectangle,
         }
     }
 }
@@ -190,20 +212,13 @@ impl DrawDraft {
     /// The count is clamped to the model's accepted range, so a bad ribbon value can never build a
     /// polygon the document refuses.
     pub const fn with_sides(tool: DrawTool, sides: u32) -> Self {
-        let sides = if sides < MIN_POLYGON_SIDES {
-            MIN_POLYGON_SIDES
-        } else if sides > MAX_POLYGON_SIDES {
-            MAX_POLYGON_SIDES
-        } else {
-            sides
-        };
         Self {
             tool,
             segments: Vec::new(),
             points: Vec::new(),
             pending_arc: None,
             arc_mode: false,
-            sides,
+            sides: clamp_sides(sides),
             closed: false,
         }
     }
@@ -238,6 +253,16 @@ impl DrawDraft {
 
     /// The side count of the regular polygon this draft would build.
     pub const fn sides(&self) -> u32 {
+        self.sides
+    }
+
+    /// Chooses the side count the polygon is built with, clamped to the model's range.
+    ///
+    /// The ribbon fills the same slot when the tool is armed, so a number typed at the cursor and a
+    /// pinned count are one value: the plate writes the draft, never the document. Returns the count
+    /// the draft now holds.
+    pub fn set_sides(&mut self, sides: u32) -> u32 {
+        self.sides = clamp_sides(sides);
         self.sides
     }
 
@@ -606,10 +631,32 @@ impl DrawDraft {
                 };
                 Path::circle_three_points(first, second, third).map_err(DrawDraftError::from)
             }
+            DrawTool::RectangleTilted => {
+                let (Some(&corner), Some(&end), Some(&side)) = (points.first(), points.get(1), points.get(2)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
+                };
+                Path::rectangle_from_edge(corner, end, side).map_err(DrawDraftError::from)
+            }
             DrawTool::RegularPolygon => {
                 let (Some(&center), Some(&rim)) = (points.first(), points.get(1)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
                 };
+                Path::regular_polygon(center, rim, self.sides).map_err(DrawDraftError::from)
+            }
+            // Both other methods are the same regular polygon: the click names another point of the
+            // figure, and the rim — radius and phase — is read out of it before the model sees it.
+            DrawTool::PolygonApothem => {
+                let (Some(&center), Some(&side)) = (points.first(), points.get(1)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
+                };
+                let rim = apothem_rim(center, side, self.sides)?;
+                Path::regular_polygon(center, rim, self.sides).map_err(DrawDraftError::from)
+            }
+            DrawTool::PolygonByEdge => {
+                let (Some(&corner), Some(&end)) = (points.first(), points.get(1)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
+                };
+                let (center, rim) = edge_rim(corner, end, self.sides)?;
                 Path::regular_polygon(center, rim, self.sides).map_err(DrawDraftError::from)
             }
             DrawTool::Polyline => Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() }),
@@ -722,6 +769,99 @@ fn closing_segment(
         Some(through) => ContourSegment::arc_through(start, through, end)?,
         None => ContourSegment::line(start, end)?,
     }))
+}
+
+/// The side count a polygon is built with, kept inside the model's own range.
+///
+/// Every path into the draft's count — the ribbon's default, a pinned setting, a number typed at the
+/// cursor — comes through here, so the document never receives a count it refuses.
+const fn clamp_sides(sides: u32) -> u32 {
+    if sides < MIN_POLYGON_SIDES {
+        MIN_POLYGON_SIDES
+    } else if sides > MAX_POLYGON_SIDES {
+        MAX_POLYGON_SIDES
+    } else {
+        sides
+    }
+}
+
+/// The rim point a circumscribed polygon's apothem names, in whole micrometres.
+///
+/// The click stands on a side's midpoint, `apothem` from the centre, and the polygon wraps the circle
+/// of that radius: a vertex is `apothem / cos(pi/sides)` away, half a step counter-clockwise from the
+/// clicked direction, so the side the person pointed at closes between two vertices. The point is
+/// rounded once, exactly as the rim point of the inscribed method is, and the model recomputes every
+/// vertex from it.
+fn apothem_rim(center: [Length; 2], side: [Length; 2], sides: u32) -> Result<[Length; 2], DrawDraftError> {
+    let apothem = distance(center, side)?.millimetres_f64();
+    let offset = offset_from(center, side);
+    let half_step = PI / f64::from(clamp_sides(sides));
+    let radius = apothem / half_step.cos();
+    if !radius.is_finite() {
+        return Err(DrawDraftError::PointOutOfRange);
+    }
+    let angle = offset.y.atan2(offset.x) + half_step;
+    point_from_millimetres(center, [angle.cos() * radius, angle.sin() * radius])
+}
+
+/// The centre and the rim point of a regular polygon drawn by one of its edges.
+///
+/// The edge runs from `corner` to `end` and is one side of the ring, so the polygon turns
+/// counter-clockwise from it and its centre stands half a step off the edge's midpoint on the left,
+/// `edge / (2 tan(pi/sides))` away. The rim point is the corner that was clicked: the model builds the
+/// vertices from it, and the two clicked ends can miss their own clicks by a micrometre the way every
+/// rounded figure in a path can.
+fn edge_rim(corner: [Length; 2], end: [Length; 2], sides: u32) -> Result<([Length; 2], [Length; 2]), DrawDraftError> {
+    let step = PI / f64::from(clamp_sides(sides));
+    let edge = distance(corner, end)?.millimetres_f64();
+    let offset = offset_from(corner, end);
+    let span = offset.length();
+    if !span.is_finite() || span <= 0.0 {
+        return Err(DrawDraftError::DuplicatePoint);
+    }
+    let apothem = edge / (2.0 * step.tan());
+    let rim = edge / (2.0 * step.sin());
+    let left = DVec2::new(-offset.y / span, offset.x / span);
+    // The offset is micrometres and the edge is millimetres: the midpoint is the edge's own length
+    // along its direction, so the two readings meet in the apothem's unit.
+    let middle = offset / span * (edge / 2.0);
+    let center = point_from_millimetres(corner, [middle.x + left.x * apothem, middle.y + left.y * apothem])?;
+    let to_corner = offset_from(center, corner);
+    let reach = to_corner.length();
+    if !reach.is_finite() || reach <= 0.0 {
+        return Err(DrawDraftError::DuplicatePoint);
+    }
+    let rim_point = point_from_millimetres(center, [to_corner.x / reach * rim, to_corner.y / reach * rim])?;
+    Ok((center, rim_point))
+}
+
+/// The vector from `from` to `to`, in millimetres.
+///
+/// Both points are inside the document's range, so the difference fits a `f64` exactly enough to
+/// round: the same reading [`distance`] takes of the same pair.
+fn offset_from(from: [Length; 2], to: [Length; 2]) -> DVec2 {
+    let x = i128::from(to[0].micrometres()) - i128::from(from[0].micrometres());
+    let y = i128::from(to[1].micrometres()) - i128::from(from[1].micrometres());
+    DVec2::new(x as f64, y as f64)
+}
+
+/// `anchor` moved by a millimetre offset, in whole micrometres, or a refusal outside the range.
+///
+/// The draft is view state, so a figure is constructed in millimetres here and crosses into `Length`
+/// once, exactly where a click already crosses.
+fn point_from_millimetres(anchor: [Length; 2], offset: [f64; 2]) -> Result<[Length; 2], DrawDraftError> {
+    let max = MAX_CONTOUR_COORDINATE.micrometres() as f64;
+    let mut point = [Length::ZERO; 2];
+    for (index, slot) in point.iter_mut().enumerate() {
+        let at = anchor.get(index).copied().ok_or(DrawDraftError::PointOutOfRange)?;
+        let by = offset.get(index).copied().ok_or(DrawDraftError::PointOutOfRange)?;
+        let value = at.micrometres() as f64 + by * 1_000.0;
+        if !value.is_finite() || value.abs() > max {
+            return Err(DrawDraftError::PointOutOfRange);
+        }
+        *slot = Length::from_micrometres(value.round() as i64);
+    }
+    Ok(point)
 }
 
 /// Why a drawing draft refused an edit.

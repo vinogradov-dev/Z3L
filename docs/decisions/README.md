@@ -136,6 +136,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) | A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate | Accepted |
 | [0129](0129-a-move-is-latched-by-a-second-click.md) | A move is latched by a second click, and its delta is read from the old position | Accepted |
 | [0130](0130-an-arc-from-its-chord-and-radius-bows-away-from-the-pointer.md) | An arc from its chord and radius bows away from the pointer that named its centre | Accepted |
+| [0131](0131-a-stage-shows-the-numbers-its-figure-reads.md) | A stage shows the numbers its figure reads, and a figure's own number is on every stage | Accepted |
 
 ## Format
 

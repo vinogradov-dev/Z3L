@@ -885,7 +885,7 @@ mod tests {
                 "sketch",
                 &[
                     "A draft needs two segments to close",
-                    "By side count  (N)",
+                    "By radius  (N)",
                     "Centre and radius  (C)",
                     "From corner  (R)",
                     "Measure  (M)",

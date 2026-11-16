@@ -58,6 +58,8 @@ pub enum FieldParam {
     Height,
     /// A circle's or a polygon's radius, in millimetres.
     Radius,
+    /// The apothem of a circumscribed polygon: the distance from its centre to a side, in millimetres.
+    Apothem,
     /// A circle's diameter, in millimetres.
     Diameter,
     /// A regular polygon's side count.
@@ -86,6 +88,7 @@ impl FieldParam {
             Self::Width => FieldLabel::Symbol("W"),
             Self::Height => FieldLabel::Symbol("H"),
             Self::Radius => FieldLabel::Symbol("R"),
+            Self::Apothem => FieldLabel::Symbol("a"),
             Self::Diameter => FieldLabel::Symbol("Ø"),
             Self::Sides => FieldLabel::Symbol("N"),
         }
@@ -94,7 +97,14 @@ impl FieldParam {
     /// The unit drawn dim outside the box; a side count carries none.
     pub const fn unit(self) -> &'static str {
         match self {
-            Self::X | Self::Y | Self::Length | Self::Width | Self::Height | Self::Radius | Self::Diameter => "mm",
+            Self::X
+            | Self::Y
+            | Self::Length
+            | Self::Width
+            | Self::Height
+            | Self::Radius
+            | Self::Apothem
+            | Self::Diameter => "mm",
             Self::Angle | Self::Rotation => "°",
             Self::Sides => "",
         }
@@ -104,7 +114,9 @@ impl FieldParam {
     pub fn range(self) -> RangeInclusive<f64> {
         match self {
             Self::X | Self::Y => -MAX_COORDINATE_MM..=MAX_COORDINATE_MM,
-            Self::Length | Self::Width | Self::Height | Self::Radius | Self::Diameter => 0.0..=MAX_COORDINATE_MM,
+            Self::Length | Self::Width | Self::Height | Self::Radius | Self::Apothem | Self::Diameter => {
+                0.0..=MAX_COORDINATE_MM
+            }
             // An angle is typed as a direction from 0 to 360: a value above 180 flips the side of
             // the reference, which is the smaller-angle rule the plate and the guide share.
             Self::Angle | Self::Rotation => 0.0..=360.0,

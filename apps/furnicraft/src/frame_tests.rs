@@ -2393,6 +2393,211 @@ fn an_arc_radius_under_half_its_chord_is_refused_and_the_draft_keeps_its_points(
     assert_eq!(harness.revision(), before, "and nothing was written");
 }
 
+#[test]
+fn a_typed_apothem_builds_the_polygon_round_its_circle() {
+    // C5: the circumscribed method names the distance from the centre to a side. The two numbers are
+    // typed, so the ring is exact: the apothem is the side's own distance and the rim is that over
+    // cos(pi/6), which is what the stored bounds measure.
+    let mut harness = Harness::new("frame-sketch-apothem");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::PolygonApothem);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness), vec![[mesh(100), mesh(100)]], "the centre the plates named");
+
+    harness.hover(scene.center() + egui::vec2(0.0, 120.0));
+    type_text(&mut harness, "80");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "90");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the side and commits");
+
+    let object = harness.selected().first().copied().expect("the polygon is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the drawn figure is a path");
+    assert_eq!(path.entries().len(), 6, "the count the ribbon started with");
+    let (min, max) = path.bounds_micrometres();
+    assert_eq!((min[1], max[1]), (-80_000, 80_000), "the apothem typed is the distance to the two sides");
+    let rim = 80.0 / (std::f64::consts::PI / 6.0).cos();
+    let across = max[0] as f64 / 1_000.0;
+    assert!((across - rim).abs() < 0.002, "the rim is the apothem over cos(pi/6): {across} against {rim}");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one polygon, one undo entry");
+}
+
+#[test]
+fn a_typed_edge_builds_the_polygon_from_that_side() {
+    // C5: the polygon by an edge starts at the corner the person clicked and turns
+    // counter-clockwise, so the clicked corner and the clicked direction are the ring's own.
+    let mut harness = Harness::new("frame-sketch-polygon-edge");
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::PolygonByEdge);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness), vec![[mesh(100), mesh(100)]], "the corner the plates named");
+
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "30");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the edge and commits");
+
+    let object = harness.selected().first().copied().expect("the polygon is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the drawn figure is a path");
+    assert!(path.is_closed(), "a polygon is a ring");
+    assert_eq!(path.entries().len(), 6);
+    let world = project.world_placement(object).expect("the polygon has a world frame");
+    let vertices = ring_vertices(path, world);
+    let corner = DVec2::new(100.0, 100.0);
+    let start = nearest(&vertices, corner);
+    let direction = DVec2::new(30f64.to_radians().cos(), 30f64.to_radians().sin());
+    assert!((vertices[start] - corner).length() < 0.002, "the clicked corner is a vertex: {:?}", vertices[start]);
+    let next = vertices.get(start + 1).copied().unwrap_or(vertices[0]);
+    let edge = next - vertices[start];
+    assert!((edge.length() - 100.0).abs() < 0.002, "the typed edge is one side: {edge:?}");
+    assert!((edge.normalize() - direction).length() < 1e-4, "it runs the way the angle said: {edge:?}");
+    // The rest of the ring is on the left of that edge, which is the winding the tool promises.
+    let middle = (vertices[start] + next) / 2.0;
+    let center = vertices.iter().fold(DVec2::ZERO, |sum, vertex| sum + *vertex) / vertices.len() as f64;
+    assert!((center - middle).dot(DVec2::new(-direction.y, direction.x)) > 0.0, "the ring grows on the left");
+}
+
+#[test]
+fn a_typed_height_builds_the_rectangle_on_its_edge() {
+    // C5: a rectangle on an angled base edge. The edge is the width, so the third plate is the height
+    // and nothing else — and it stands square to an edge that is not on an axis.
+    let mut harness = Harness::new("frame-sketch-rectangle-edge");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::RectangleTilted);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    type_text(&mut harness, "200");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "30");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness).len(), 2, "a 200 mm edge at 30 degrees");
+
+    harness.hover(scene.center() + egui::vec2(0.0, -120.0));
+    let probe = placed_point(&harness);
+    type_text(&mut harness, "60");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the height and commits");
+
+    let object = harness.selected().first().copied().expect("the rectangle is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the drawn figure is a path");
+    assert_eq!(path.entries().len(), 4, "four sides");
+    assert!(path.is_closed());
+    let world = project.world_placement(object).expect("the rectangle has a world frame");
+    let vertices = ring_vertices(path, world);
+    let corner = DVec2::new(100.0, 100.0);
+    let start = nearest(&vertices, corner);
+    let direction = DVec2::new(30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let next = vertices.get(start + 1).copied().unwrap_or(vertices[0]);
+    let edge = next - vertices[start];
+    assert!((vertices[start] - corner).length() < 0.002, "the first corner is the click: {:?}", vertices[start]);
+    assert!((edge.length() - 200.0).abs() < 0.002, "the typed edge is one side: {edge:?}");
+    assert!((edge.normalize() - direction).length() < 1e-4, "it turns by the typed 30 degrees: {edge:?}");
+    // The height is the pointer's side and the typed number: the side after the edge is square to it.
+    let third = vertices.get(start + 2).copied().unwrap_or(vertices[0]);
+    let rise = third - next;
+    assert!((rise.length() - 60.0).abs() < 0.002, "the typed height is the next side: {rise:?}");
+    assert!(rise.normalize().dot(direction).abs() < 1e-4, "square to the edge: {rise:?}");
+    // The far corner is the point the plates showed before the Enter, on the side the pointer was on.
+    let probe = DVec2::new(probe[0].millimetres_f64(), probe[1].millimetres_f64());
+    let left = DVec2::new(-direction.y, direction.x);
+    let side = |point: DVec2| (point - vertices[start]).dot(left);
+    assert!(
+        side(third) * side(probe) > 0.0,
+        "the rectangle grows on the side the pointer was on: {third:?} against {probe:?}"
+    );
+    assert_eq!(harness.revision().get(), before.get() + 1, "one rectangle, one undo entry");
+}
+
+#[test]
+fn the_side_count_plate_rebuilds_the_polygon() {
+    // C5: the count is live at the cursor. A typed 8 is the draft's own number, so the ring previews and
+    // commits as an octagon without a point being placed for it.
+    let mut harness = Harness::new("frame-sketch-polygon-sides");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(furnicraft_ui::DrawTool::RegularPolygon);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness), vec![[mesh(100), mesh(100)]], "the centre");
+    assert_eq!(harness.app.tabs.active().editor.drawing().map(|draft| draft.sides()), Some(6));
+
+    // The plates of the shaping stage are the radius, the direction and the count.
+    harness.hover(scene.center() + egui::vec2(150.0, 0.0));
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "8");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert_eq!(
+        harness.app.tabs.active().editor.drawing().map(|draft| draft.sides()),
+        Some(8),
+        "the typed count reached the draft"
+    );
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter commits the octagon");
+
+    let object = harness.selected().first().copied().expect("the polygon is selected");
+    let project = harness.app.tabs.active().session.project();
+    assert_eq!(project.object_path(object).expect("a path").entries().len(), 8, "eight sides, as typed");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one polygon, one undo entry");
+}
+
+/// The corners of a closed ring in the world frame, in travel order. The stored chain is local to the
+/// object, so a test that names where a person clicked reads them through the world placement.
+fn ring_vertices(path: &furnicraft_model::Path, world: furnicraft_model::Placement) -> Vec<DVec2> {
+    path.entries()
+        .iter()
+        .filter_map(|entry| entry.segment().start().ok())
+        .map(|point| {
+            let at = world.transform_point(furnicraft_geom::DVec3::new(
+                point[0].millimetres_f64(),
+                point[1].millimetres_f64(),
+                0.0,
+            ));
+            DVec2::new(at.x, at.y)
+        })
+        .collect()
+}
+
+/// The index of the ring corner nearest `point`.
+fn nearest(vertices: &[DVec2], point: DVec2) -> usize {
+    let mut best = (usize::MAX, f64::INFINITY);
+    for (index, vertex) in vertices.iter().enumerate() {
+        let distance = (*vertex - point).length();
+        if distance < best.1 {
+            best = (index, distance);
+        }
+    }
+    best.0
+}
+
 /// `value` whole millimetres, as the drawing plates name a length.
 fn mesh(value: i64) -> Length {
     Length::from_millimetres(value).expect("whole millimetres fit a length")

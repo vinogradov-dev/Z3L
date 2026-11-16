@@ -358,6 +358,74 @@ fn every_new_tool_builds_its_own_figure() {
     // The ribbon may hand over any number; the draft holds what the model accepts.
     assert_eq!(DrawDraft::with_sides(DrawTool::RegularPolygon, 2).sides(), MIN_POLYGON_SIDES);
     assert_eq!(DrawDraft::with_sides(DrawTool::RegularPolygon, 999).sides(), MAX_POLYGON_SIDES);
+
+    let mut apothem = DrawDraft::new(DrawTool::PolygonApothem);
+    apothem.push([millimetres(0), millimetres(0)]).expect("centre");
+    apothem.push([millimetres(0), millimetres(50)]).expect("a side");
+    assert_eq!(apothem.to_path().expect("a hexagon").entries().len(), 6);
+
+    let mut edge = DrawDraft::new(DrawTool::PolygonByEdge);
+    edge.push([millimetres(0), millimetres(0)]).expect("corner");
+    edge.push([millimetres(100), millimetres(0)]).expect("the other corner");
+    assert_eq!(edge.to_path().expect("a hexagon").entries().len(), 6);
+
+    let mut tilted = DrawDraft::new(DrawTool::RectangleTilted);
+    tilted.push([millimetres(0), millimetres(0)]).expect("corner");
+    tilted.push([millimetres(200), millimetres(100)]).expect("the other corner");
+    tilted.push([millimetres(0), millimetres(150)]).expect("height");
+    let path = tilted.to_path().expect("a rectangle");
+    assert!(path.is_closed());
+    assert_eq!(path.entries().len(), 4);
+}
+
+#[test]
+fn the_three_polygon_methods_build_the_same_ring() {
+    // A hexagon with a 100 mm edge: one ring described three ways. The method is a construction, so
+    // the stored figure is the same regular polygon whichever pair of points the person clicked
+    // (ADR 0131), and each method agrees with the model's own vertices to the micrometre a rounded
+    // vertex costs.
+    let mut by_edge = DrawDraft::with_sides(DrawTool::PolygonByEdge, 6);
+    by_edge.push([millimetres(0), millimetres(0)]).expect("corner");
+    by_edge.push([millimetres(100), millimetres(0)]).expect("the other corner");
+    let expected = by_edge.to_path().expect("a hexagon");
+    assert_eq!(expected.entries().len(), 6);
+
+    let center = [millimetres(50), Length::from_micrometres(86_603)];
+    let mut inscribed = DrawDraft::with_sides(DrawTool::RegularPolygon, 6);
+    inscribed.push(center).expect("centre");
+    inscribed.push([millimetres(0), millimetres(0)]).expect("a vertex");
+    let mut circumscribed = DrawDraft::with_sides(DrawTool::PolygonApothem, 6);
+    circumscribed.push(center).expect("centre");
+    circumscribed.push([millimetres(50), millimetres(0)]).expect("the bottom side");
+
+    // The vertex the ring starts at is the one the person clicked, so the two rings are compared as
+    // figures: every vertex of one lies on a vertex of the other, and they hold the same count.
+    let wanted = expected.entries().iter().filter_map(|entry| entry.segment().start().ok()).collect::<Vec<_>>();
+    for (name, draft) in [("inscribed", inscribed), ("circumscribed", circumscribed)] {
+        let path = draft.to_path().unwrap_or_else(|error| panic!("the {name} hexagon: {error}"));
+        let built = path.entries().iter().filter_map(|entry| entry.segment().start().ok()).collect::<Vec<_>>();
+        assert_eq!(built.len(), wanted.len(), "the {name} method names the same six sides");
+        for (index, vertex) in built.iter().enumerate() {
+            let near = wanted.iter().any(|other| {
+                (0..2).all(|axis| (vertex[axis].micrometres() - other[axis].micrometres()).abs() <= 2_000)
+            });
+            assert!(near, "the {name} vertex {index} {vertex:?} lies on no vertex of the edge-built hexagon");
+        }
+    }
+}
+
+#[test]
+fn a_typed_side_count_rebuilds_the_polygon_and_keeps_the_model_range() {
+    // The count is the figure's own number: it is written into the draft, clamped exactly as the
+    // ribbon's count is, and the ring follows it without a point being placed for it.
+    let mut draft = DrawDraft::new(DrawTool::RegularPolygon);
+    draft.push([millimetres(0), millimetres(0)]).expect("centre");
+    draft.push([millimetres(100), millimetres(0)]).expect("rim");
+    assert_eq!(draft.to_path().expect("a hexagon").entries().len(), 6);
+    assert_eq!(draft.set_sides(8), 8);
+    assert_eq!(draft.to_path().expect("an octagon").entries().len(), 8);
+    assert_eq!(draft.set_sides(2), MIN_POLYGON_SIDES, "a count under the model's floor is the floor");
+    assert_eq!(draft.set_sides(4096), MAX_POLYGON_SIDES, "and a count over its ceiling is the ceiling");
 }
 
 #[test]
@@ -642,6 +710,9 @@ fn every_tool_states_its_point_count_and_name() {
         (DrawTool::CircleDiameter, Some(2), false, false, "Circle"),
         (DrawTool::CircleThreePoints, Some(3), false, false, "Circle through 3 points"),
         (DrawTool::RegularPolygon, Some(2), false, false, "Polygon"),
+        (DrawTool::PolygonApothem, Some(2), false, false, "Polygon"),
+        (DrawTool::PolygonByEdge, Some(2), false, false, "Polygon"),
+        (DrawTool::RectangleTilted, Some(3), false, false, "Rectangle"),
     ];
     for (tool, need, closes, open_ended, label) in cases {
         assert_eq!(tool.points(), need, "{}", tool.label().text(Lang::En));
