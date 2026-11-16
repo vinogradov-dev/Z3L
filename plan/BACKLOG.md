@@ -45,25 +45,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Why: Observation: with a line tool armed and waiting for its next point — the segment after a
    straight line's start, a point of an arc — a click meant for something other than the scene
    fixes that point: the line's length is set and the line commits, and the arc takes its second
-   point. The owner saw it while changing the view from the view cluster, while opening the
-   polyline's segment menu to change the segment kind, and while opening another menu; he named
-   no widget, so which one it was is still open. Expectation: a press belongs to the surface it
-   lands on — a widget, a popover or a menu changes the view or the segment kind and leaves the
-   draft exactly as it was, and only a press whose position is the scene places a draft point.
-   Suspected cause: the draft reads its click from the viewport response (`draw_gizmo::update`,
-   `response.clicked_by(Primary)`), so whether a press is the scene's is decided by
-   `pointer_on_chrome` — a hand-kept inventory (`Chrome::covers`: the ribbon band, the method
-   list, the node menu, the tool card, the panels — plus the tool card of the last frame, the
-   plates of the point being placed and the draft menu) that names neither the view cluster and
-   its two popovers nor the palette, the class picker, the product card, the file menu and the
-   Settings window. Measured on 2026-11-16: a headless frame run did not reproduce the report on
-   any of those surfaces — each swallowed the press, because every one is an `egui::Area` or
-   `Window` whose root senses a click — and a press 5 to 13 points outside a floating frame is
-   already a scene press that commits the line, which is where the visual edge and the clickable
-   edge part company; `plan/notes/X54.md` holds the surfaces, the rectangles and the numbers.
-   The next session asks the owner which widget and menu he pressed and in which layout (ribbon
-   folded, a view maximised, panels hidden), reproduces it in a frame test, and changes nothing
-   before that.
+   point. The owner names the surfaces: the axes widget in the view's top-right corner, and any
+   of the two panels, with the size fixed at the place he pressed. Expectation: a press belongs
+   to the surface it lands on — a widget, a popover or a menu changes the view or the selection
+   and leaves the draft exactly as it was, and only a press whose position is the scene places a
+   draft point. Measured on 2026-11-16 with a headless frame run: no press on the ribbon band,
+   the header, the panels, the status bar, the view cluster, its popovers, the draft menu, the
+   file menu or the Settings window places a point — each is an `egui::Area` or `Window` whose
+   root senses a click, and egui gives the press to the topmost widget that senses one — while a
+   press one point outside a floating surface's rectangle is already a scene press that commits
+   the line; the panels leave an `INSET` (8 pt) margin inside the window and around their rounded
+   corners, and that margin, the gap between the axes widget and the inspector, and the strip
+   under the cluster all belong to the scene. Suspected cause: the draft reads its click from the
+   viewport response (`draw_gizmo::update`, `response.clicked_by(Primary)`) and
+   `pointer_on_chrome` is the only gate; it is a bare rectangle test (`Chrome::covers`) with no
+   margin, so a press that misses a surface by one point is the scene's. `plan/notes/X54.md`
+   holds the surfaces, the rectangles and the numbers; `Z3L_TRACE=1` on the running binary
+   prints the frame's opinion of every press, so the next session pins the exact position before
+   it changes anything.
   `files: app/src/document.rs,app/src/view_cluster.rs,crates/ui/src/draw_menu.rs,app/src/frame_tests.rs`
 
 ## Next
