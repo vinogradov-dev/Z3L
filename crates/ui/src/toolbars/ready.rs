@@ -111,13 +111,9 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // catalogue material; the cell then arms the free-outline tool, whose close is the one
             // command that cuts the board (ADR 0114).
             let draw = Message::PanelContourDraw.with(lang, [tool.label.text(lang)]);
-            let hint = if !product_open {
-                Message::FillNeedsProduct.text(lang)
-            } else if !has_panel_material {
-                Message::FillNeedsMaterial.text(lang)
-            } else {
-                draw.as_str()
-            };
+            // A furniture tool always names itself: the missing product disables the cell but is not
+            // written in its hint, so a dim cell still says which tool it is (X46).
+            let hint = if !has_panel_material { Message::FillNeedsMaterial.text(lang) } else { draw.as_str() };
             let enabled = product_open && has_panel_material;
             Ready {
                 enabled,
@@ -138,9 +134,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // The two methods of one cell would otherwise read the same, so a hint that can run
             // names the tool and then the method: «Post: Largest rectangle».
             let ready = Message::FillMethod.with(lang, [tool.label.text(lang), method.text(lang)]);
-            let hint = if !product_open {
-                Message::FillNeedsProduct.text(lang)
-            } else if !has_panel_material {
+            let hint = if !has_panel_material {
                 Message::FillNeedsMaterial.text(lang)
             } else if !fills {
                 Message::FillNeedsFillTrait.text(lang)
@@ -198,10 +192,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // material, no selection and no document write (ADR 0118).
             enabled: product_open,
             armed: is_armed(active, kind),
-            hint: tool_hint(
-                if product_open { tool.label.text(lang) } else { Message::FillNeedsProduct.text(lang) },
-                tool.key(),
-            ),
+            hint: tool_hint(tool.label.text(lang), tool.key()),
             action: product_open.then_some(ToolAction::Void),
         },
         ToolKind::GridSnap => Ready {

@@ -1384,7 +1384,12 @@ mod tests {
             let kind = tool.primary().expect("a live tool");
             let cell = ready(kind, tool, &state, closed, Lang::En);
             assert!(!cell.enabled, "{tool_id} cannot fill a void with no product open");
-            assert!(cell.hint.contains(Message::FillNeedsProduct.text(Lang::En)), "got {}", cell.hint);
+            assert!(
+                !cell.hint.contains(Message::FillNeedsProduct.text(Lang::En)),
+                "the hint names the tool: {}",
+                cell.hint
+            );
+            assert!(cell.hint.contains(tool.label.text(Lang::En)), "the dim cell names itself: {}", cell.hint);
             assert_eq!(cell.action, None);
         }
 
@@ -1767,14 +1772,32 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_fill_face_says_what_is_missing_rather_than_naming_its_method() {
+    fn a_disabled_fill_face_names_itself_and_its_missing_material_rather_than_the_product() {
         let post = tool("furniture.panels.post");
         let state = Toolbars::new();
-        let rows = method_rows(post, &state, RibbonContext { product_open: false, ..full_context() }, Lang::En);
-        let face = main_face(post, &rows, 0).expect("a face");
+        let closed = method_rows(post, &state, RibbonContext { product_open: false, ..full_context() }, Lang::En);
+        let face = main_face(post, &closed, 0).expect("a face");
         assert!(!face.enabled);
-        assert_eq!(face.hint, Message::FillNeedsProduct.text(Lang::En), "the cell explains itself");
         assert_eq!(face.action, None);
+        assert!(
+            !face.hint.contains(Message::FillNeedsProduct.text(Lang::En)),
+            "the product is not written: {}",
+            face.hint
+        );
+        assert!(
+            face.hint.contains(Message::FillMethodFit.text(Lang::En)),
+            "a dim cell still names the tool and its method: {}",
+            face.hint
+        );
+
+        let materialless =
+            method_rows(post, &state, RibbonContext { has_panel_material: false, ..full_context() }, Lang::En);
+        let face = main_face(post, &materialless, 0).expect("a face");
+        assert!(
+            face.hint.contains(Message::FillNeedsMaterial.text(Lang::En)),
+            "a missing material is still explained: {}",
+            face.hint
+        );
     }
 
     #[test]
