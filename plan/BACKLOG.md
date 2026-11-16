@@ -70,24 +70,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    cannot miss a copy. Measured on a scratch copy of this tree: 1140 tests pass, clippy clean,
    `layers: ok`, 960 changed lines and no behaviour change. `cargo xtask ci` is green.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
-- `[ ]` **X51** the arc's second click reads a length it never draws
-  Why: While a three-point arc is being drawn, the second click shows a length plate whose
-   number is the chord from the start to the through point — a distance the figure does not
-   contain, drawn only as the dashed construction line. The owner could not tell what the
-   number measured: the arc itself is not drawn yet, so the plate names a length against a
-   figure that is not on screen.
-  shape: Decide what the second stage of Arc reads and draw the thing it measures. The owner's
-   words — «draw L1 at once so it is clear what the distance is» — suggest the chord is the
-   measurement and must be drawn as a real draft segment (solid draft ink from the start to the
-   placed point) rather than as the dashed construction guide, with the plate on its midpoint,
-   so the number and the line are one object. `PointState::construction` already carries the
-   pair; the change is in `paint_guides`, `DrawDraft::preview` and the plate anchor. Confirm
-   with the owner whether L1 names the first chord of the arc or the first plate of the set
-   before drawing.
-  Done: The second click of an arc draws the segment its length plate measures, in draft ink,
-   and the plate sits on it; a frame test asserts the drawn segment and the plate's value agree
-   at several pointer positions. The owner confirms the reading of L1.
-  `files: crates/ui/src/draw_fields.rs,apps/furnicraft/src/draw_gizmo.rs,crates/ui/src/guides.rs`
 - `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
   Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is
    declared as a planned method (`icon: None, run: None`), so it draws a blank row that runs
@@ -209,6 +191,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **X51** the arc's second click reads a length it never draws
+  Why: While a three-point arc is being drawn, the second click shows a length plate whose
+   number is the chord from the start to the through point — a distance the figure does not
+   contain, drawn only as the dashed construction line. The owner could not tell what the
+   number measured: the arc itself is not drawn yet, so the plate names a length against a
+   figure that is not on screen.
+  shape: Decide what the second stage of Arc reads and draw the thing it measures. The owner's
+   words — «draw L1 at once so it is clear what the distance is» — suggest the chord is the
+   measurement and must be drawn as a real draft segment (solid draft ink from the start to the
+   placed point) rather than as the dashed construction guide, with the plate on its midpoint,
+   so the number and the line are one object. `PointState::construction` already carries the
+   pair; the change is in `paint_guides`, `DrawDraft::preview` and the plate anchor. Confirm
+   with the owner whether L1 names the first chord of the arc or the first plate of the set
+   before drawing.
+  Done: The second click of an arc draws the segment its length plate measures, in draft ink,
+   and the plate sits on it; a frame test asserts the drawn segment and the plate's value agree
+   at several pointer positions. The owner confirms the reading of L1.
+  `files: crates/ui/src/draw_fields.rs,apps/furnicraft/src/draw_gizmo.rs,crates/ui/src/guides.rs` — `17ae4b5`
 
 - `[x]` **X50** the reference arc changes side every 90 degrees
   Why: The auxiliary arc and its plate flipped to the other end of the X axis at 90 and at 270
