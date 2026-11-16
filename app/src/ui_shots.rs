@@ -192,27 +192,38 @@ fn settle(
 ) -> Vec<egui::ClippedPrimitive> {
     let mut jobs = Vec::new();
     for _ in 0..SETTLE_FRAMES {
-        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
-            app.frame(ui);
-        });
-        let mut delta = std::mem::take(&mut output.textures_delta);
-        {
-            let mut renderer = render_state.renderer.write();
-            for (id, images) in &delta.set {
-                for image in images {
-                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
-                }
-            }
-            for id in &delta.free {
-                renderer.free_texture(id);
-            }
-        }
-        // `epaint` asserts on drop that a delta reached a renderer; the renderer above is that
-        // renderer, and `clear` is how it stops asking.
-        delta.clear();
-        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+        jobs = run_frame(app, ctx, render_state, screen, Vec::new());
     }
     jobs
+}
+
+/// Draws one frame with `events`, uploads what it new-textured and returns the jobs to paint.
+fn run_frame(
+    app: &mut App,
+    ctx: &egui::Context,
+    render_state: &egui_wgpu::RenderState,
+    screen: egui::Rect,
+    events: Vec<egui::Event>,
+) -> Vec<egui::ClippedPrimitive> {
+    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+        app.frame(ui);
+    });
+    let mut delta = std::mem::take(&mut output.textures_delta);
+    {
+        let mut renderer = render_state.renderer.write();
+        for (id, images) in &delta.set {
+            for image in images {
+                renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+            }
+        }
+        for id in &delta.free {
+            renderer.free_texture(id);
+        }
+    }
+    // `epaint` asserts on drop that a delta reached a renderer; the renderer above is that
+    // renderer, and `clear` is how it stops asking.
+    delta.clear();
+    ctx.tessellate(output.shapes, output.pixels_per_point)
 }
 
 /// Paints the interface into a texture of `size` and copies its pixels back, top row first.
@@ -1165,4 +1176,86 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
         .add_object(root, "Box", Placement::IDENTITY, Geometry::Primitive(cuboid))
         .map_err(|error| error.to_string())?;
     Ok((engine::Session::with_catalog(project, testkit::sample_catalog()), [panel, object, frame]))
+}
+
+/// Draws the rubber band mid-drag in both themes, for each of its two rules.
+///
+/// The band is translucent chrome over the model with a solid outline when it encloses and a dashed
+/// one when it crosses (ADR 0137), and neither the fill's weight over a shaded board nor the
+/// difference between the two outlines can be read from a rectangle. The four files are
+/// `band-window-dark.png`, `band-crossing-dark.png` and the light pair.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/band-*.png"]
+fn the_rubber_band_is_painted_offscreen_in_both_themes() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    for (name, variant) in [("dark", ThemeChoice::Dark), ("light", ThemeChoice::Light)] {
+        for rule in ["window", "crossing"] {
+            let ctx = egui::Context::default();
+            let workspace = testkit::scratch_dir("ui-shots").join(format!("band-{name}-{rule}.json"));
+            let mut settings = Settings::default();
+            settings.appearance.theme = variant;
+            let session = crate::scene_build::demo_session().expect("the sample session builds");
+            let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+                .expect("the application builds");
+            let _ = settle(&mut app, &ctx, &render_state, screen);
+            // The whole piece stays in view: the shot is about the rectangle around it, so the
+            // camera is not moved in the way the panel shots move it.
+            let (low, high) = {
+                let document = app.tabs.active();
+                let frame = document.frame();
+                let scene = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+                let mut model = egui::Rect::NOTHING;
+                for drawable in frame.drawables() {
+                    for position in drawable.mesh.positions.iter() {
+                        let world = drawable.world_transform.transform_point3(geom::DVec3::new(
+                            f64::from(position[0]),
+                            f64::from(position[1]),
+                            f64::from(position[2]),
+                        ));
+                        if let Some(point) = crate::gizmo_math::screen_point(frame.camera, scene, world) {
+                            model = model.union(egui::Rect::from_min_max(point, point));
+                        }
+                    }
+                }
+                let margin = 40.0;
+                (
+                    egui::pos2(model.left() - margin, model.bottom() + margin),
+                    egui::pos2(model.right() + margin, model.top() - margin),
+                )
+            };
+            // A window is drawn from the low corner to the high one, a crossing band back again.
+            let (from, to) = if rule == "window" { (low, high) } else { (high, low) };
+            let _ = run_frame(&mut app, &ctx, &render_state, screen, vec![egui::Event::PointerMoved(from)]);
+            let press = egui::Event::PointerButton {
+                pos: from,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let _ = run_frame(&mut app, &ctx, &render_state, screen, vec![press]);
+            let jobs = run_frame(&mut app, &ctx, &render_state, screen, vec![egui::Event::PointerMoved(to)]);
+            let band = app.tabs.active().rubber_band().expect("the drag drew the band");
+            assert_eq!(band.from, from, "the {name} {rule} band starts where the press landed");
+            let pixels_per_point = ctx.pixels_per_point();
+            let size = [
+                (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+                (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+            ];
+            let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+            let path = directory.join(format!("band-{rule}-{name}.png"));
+            testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+            app.tabs.active_mut().release_target();
+            let picture = Picture { width: size[0], height: size[1], rgba };
+            assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+            println!("the {name} {rule} band is in {}", path.display());
+        }
+    }
 }

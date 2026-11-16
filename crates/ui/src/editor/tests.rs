@@ -2,6 +2,11 @@
 
 use super::*;
 
+use std::sync::Arc;
+
+use geom::{DMat4, DVec3, MeshData};
+use scene::{Camera, Drawable, SceneFrame};
+
 use crate::box_tool::BoxOwner;
 use crate::toolbars::RibbonView;
 
@@ -2209,4 +2214,150 @@ fn a_fill_creates_a_classed_panel_of_exactly_the_ghost_size() {
 
     session.undo().expect("one entry");
     assert!(session.project().panel(id).is_none(), "one undo takes the whole fill back");
+}
+
+/// The view a band test is drawn in: one viewport of the default camera.
+fn band_viewport() -> egui::Rect {
+    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0))
+}
+
+/// The screen point of a world point in `viewport`, the mapping the shell's own gizmos use.
+fn band_screen(camera: Camera, viewport: egui::Rect, world: DVec3) -> egui::Pos2 {
+    let aspect = f64::from(viewport.width()) / f64::from(viewport.height());
+    let ndc = camera.project_ndc(world, aspect).expect("the test point is in front of the camera");
+    egui::Pos2::new(
+        viewport.left() + (ndc.x as f32 + 1.0) * 0.5 * viewport.width(),
+        viewport.top() + (1.0 - ndc.y as f32) * 0.5 * viewport.height(),
+    )
+}
+
+/// The four screen corners of a flat square of half-side `half` standing at `at`.
+fn band_square(camera: Camera, viewport: egui::Rect, at: DVec3, half: f64) -> Vec<egui::Pos2> {
+    let mut corners = Vec::new();
+    for (x, y) in [(-half, -half), (half, -half), (half, half), (-half, half)] {
+        corners.push(band_screen(camera, viewport, at + DVec3::new(x, y, 0.0)));
+    }
+    corners
+}
+
+/// The two corners of the band around `corners`, grown by `margin`; drawn low to high it is a
+/// window, and the caller swaps the corners to draw a crossing band instead.
+fn band_around(corners: &[egui::Pos2], margin: f32) -> (egui::Pos2, egui::Pos2) {
+    let mut min = egui::pos2(f32::INFINITY, f32::INFINITY);
+    let mut max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for corner in corners {
+        min = egui::pos2(min.x.min(corner.x), min.y.min(corner.y));
+        max = egui::pos2(max.x.max(corner.x), max.y.max(corner.y));
+    }
+    (min - egui::vec2(margin, margin), max + egui::vec2(margin, margin))
+}
+
+/// A product with two parts, the frame that draws one square per part and the camera both use.
+///
+/// The squares stand where the frame places them, not where the document's own geometry is: the
+/// band resolves ids and measures silhouettes, and a kernel is not part of either.
+fn band_product() -> (Session, Id, Id, Id, SceneFrame) {
+    let (mut project, product) = testkit::sample_product_project();
+    let left = project
+        .add_panel(
+            product,
+            "Left",
+            PanelCreate::default_nominal_size().expect("a panel size"),
+            None,
+            millimetres(18),
+            Placement::IDENTITY,
+        )
+        .expect("a left part");
+    let right = project
+        .add_panel(
+            product,
+            "Right",
+            PanelCreate::default_nominal_size().expect("a panel size"),
+            None,
+            millimetres(18),
+            Placement::IDENTITY,
+        )
+        .expect("a right part");
+    let session = Session::with_catalog(project, testkit::sample_catalog());
+    let mut frame = SceneFrame::default();
+    for (id, at) in [(left, -300.0), (right, 300.0)] {
+        let mesh = Arc::new(MeshData {
+            positions: vec![[-100.0, -100.0, 0.0], [100.0, -100.0, 0.0], [100.0, 100.0, 0.0], [-100.0, 100.0, 0.0]],
+            normals: Vec::new(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+        });
+        frame.push(Drawable::new(id, mesh, DMat4::from_translation(DVec3::new(at, 0.0, 0.0)), [1.0; 4]));
+    }
+    (session, product, left, right, frame)
+}
+
+#[test]
+fn a_band_reads_its_rule_from_the_direction_it_is_dragged() {
+    let origin = egui::pos2(100.0, 100.0);
+    let band = |delta: egui::Vec2| SelectionBand::new(origin, origin + delta);
+    assert_eq!(band(egui::vec2(50.0, 4.0)).rule(), BandRule::Window, "to the right encloses");
+    assert_eq!(band(egui::vec2(-50.0, 4.0)).rule(), BandRule::Crossing, "to the left touches");
+    assert_eq!(band(egui::vec2(3.0, 50.0)).rule(), BandRule::Window, "downward encloses");
+    assert_eq!(band(egui::vec2(-3.0, -50.0)).rule(), BandRule::Crossing, "upward touches");
+    assert_eq!(band(egui::vec2(40.0, -30.0)).rule(), BandRule::Window, "a diagonal is read along its dominant axis");
+    assert_eq!(band(egui::vec2(-60.0, 20.0)).rule(), BandRule::Crossing, "and the other way round");
+}
+
+#[test]
+fn a_band_encloses_a_closed_product_and_only_touches_it_when_it_crosses() {
+    let (mut session, product, left, right, frame) = band_product();
+    // The sample product project opens its piece; the first half is about the cabinet a closed one
+    // is, so it is closed here (ADR 0098).
+    session.close_product();
+    let camera = Camera::default();
+    let viewport = band_viewport();
+    let left_corners = band_square(camera, viewport, DVec3::new(-300.0, 0.0, 0.0), 100.0);
+    let right_corners = band_square(camera, viewport, DVec3::new(300.0, 0.0, 0.0), 100.0);
+    let mut editor = Editor::new();
+    let view = BandView { scene: &frame, camera, viewport };
+
+    // A window over both parts encloses the product, which is the one object a closed cabinet is.
+    let (from, to) = band_around(&[left_corners.clone(), right_corners.clone()].concat(), 4.0);
+    editor.select_band(&session, view, SelectionBand::new(from, to), Pick::Replace);
+    assert_eq!(editor.selected_nodes(), &[product], "the closed product is enclosed and selected");
+
+    // A window over the left part alone does not enclose the product: it draws a second part.
+    let (from, to) = band_around(&left_corners, 4.0);
+    editor.select_band(&session, view, SelectionBand::new(from, to), Pick::Replace);
+    assert!(editor.selected_nodes().is_empty(), "a part is not the cabinet");
+
+    // The same rectangle dragged the other way is a crossing band and takes what it touches.
+    editor.select_band(&session, view, SelectionBand::new(to, from), Pick::Replace);
+    assert_eq!(editor.selected_nodes(), &[product], "a crossing band touches the cabinet");
+
+    // An open product exposes its parts: the same window now encloses each one on its own.
+    assert!(session.open_product(product), "the product opens");
+    let (from, to) = band_around(&[left_corners, right_corners].concat(), 4.0);
+    editor.select_band(&session, view, SelectionBand::new(from, to), Pick::Replace);
+    assert_eq!(editor.selected_nodes(), &[left, right], "each part is its own object now");
+}
+
+#[test]
+fn a_band_adds_and_removes_a_whole_set_rather_than_toggling_members() {
+    let (session, product, _left, _right, frame) = band_product();
+    let camera = Camera::default();
+    let viewport = band_viewport();
+    let corners = band_square(camera, viewport, DVec3::new(0.0, 0.0, 0.0), 700.0);
+    let (from, to) = band_around(&corners, 4.0);
+    let everything = SelectionBand::new(from, to);
+    let mut editor = Editor::new();
+    let view = BandView { scene: &frame, camera, viewport };
+
+    editor.select_node(Some(product));
+    // Shift over the same product takes nothing new: a band adds, it never takes a member back out.
+    editor.select_band(&session, view, everything, Pick::Add);
+    assert_eq!(editor.selected_nodes(), &[product], "a second Shift-band keeps the member");
+    // Ctrl takes the member out and leaves nothing.
+    editor.select_band(&session, view, everything, Pick::Remove);
+    assert!(editor.selected_nodes().is_empty(), "Ctrl removes the covered set");
+    // A plain band over empty space clears, like an empty click.
+    editor.select_node(Some(product));
+    let away = SelectionBand::new(egui::pos2(5.0, 5.0), egui::pos2(15.0, 15.0));
+    editor.select_band(&session, view, away, Pick::Replace);
+    assert!(editor.selected_nodes().is_empty(), "a band over nothing clears the selection");
 }

@@ -316,6 +316,11 @@ pub(crate) struct Document {
     pub(crate) void_gizmo: VoidGizmo,
     /// The grips of the selected box: four base corners and six faces, one drag each.
     pub(crate) box_grips: BoxGrips,
+    /// The rubber band a primary drag on empty space draws, between its press and its release (U103).
+    ///
+    /// Only work-area paint and the selection read it: no mode owns the rectangle, and the document
+    /// never sees one.
+    band: Option<ui::SelectionBand>,
     /// The exact-distance fields of the running fill gesture: their pins, locks and keyboard.
     pub(crate) distance_fields: DistanceFields,
     /// The measurement the fields draw, rebuilt from the ghost every frame (ADR 0103).
@@ -412,6 +417,7 @@ impl Document {
             measure_gizmo: MeasureGizmo::default(),
             void_gizmo: VoidGizmo,
             box_grips: BoxGrips::default(),
+            band: None,
             distance_fields: DistanceFields::default(),
             distances: None,
             move_distances: None,
@@ -627,6 +633,18 @@ impl Document {
     #[cfg(test)]
     pub(crate) fn highlighted_nodes(&self) -> &[Id] {
         &self.highlighted
+    }
+
+    /// The rubber band the last frame drew, or `None` while no drag is live (U103).
+    #[cfg(test)]
+    pub(crate) fn rubber_band(&self) -> Option<ui::SelectionBand> {
+        self.band
+    }
+
+    /// The frame the last upload built, so a frame test can ask which shapes the viewport drew.
+    #[cfg(test)]
+    pub(crate) fn frame(&self) -> &SceneFrame {
+        &self.scene
     }
 
     /// Applies the viewport section of the workspace settings to this scene.
@@ -1139,6 +1157,52 @@ impl Document {
             return None;
         };
         offers_grips(self.session.project(), *only, self.session.active_product()).then_some(*only)
+    }
+
+    /// Reads one frame of the rubber band: the press that arms it, the pointer that draws it and
+    /// the release that selects with it (U103).
+    ///
+    /// `starts` is the caller's verdict on this frame's press — the scene is under it, nothing else
+    /// is — so the band never begins on an object, a handle or a tool. The band lives between the
+    /// press and the release: a press that never travels is a click, which the viewport handles on
+    /// its own, and only a release egui calls the end of a drag selects. Escape is not needed and
+    /// does nothing: a band writes only on its release, so there is nothing to take back.
+    fn update_band(&mut self, ui: &mut egui::Ui, response: &egui::Response, rect: egui::Rect, starts: bool) {
+        let pressed = ui.input(|input| input.pointer.primary_pressed());
+        if pressed {
+            self.band = match (starts, response.interact_pointer_pos()) {
+                (true, Some(pointer)) if rect.is_positive() => Some(ui::SelectionBand::new(pointer, pointer)),
+                _ => None,
+            };
+            return;
+        }
+        let Some(band) = self.band else {
+            return;
+        };
+        // The pointer keeps drawing the band after it leaves the view: the rectangle is clamped to
+        // the view it was drawn in when it is painted, not while it is dragged.
+        let pointer = response.interact_pointer_pos().or_else(|| ui.input(|input| input.pointer.latest_pos()));
+        let band = match pointer {
+            Some(pointer) => band.with_to(pointer),
+            None => band,
+        };
+        self.band = Some(band);
+        if ui.input(|input| input.pointer.primary_down()) {
+            return;
+        }
+        self.band = None;
+        if !response.drag_stopped_by(egui::PointerButton::Primary) {
+            // A click after all: the viewport's own click handling is the whole gesture, so an
+            // empty-space click still clears the selection and a press on nothing writes nothing.
+            return;
+        }
+        let pick = Pick::from_modifiers(&ui.input(|input| input.modifiers));
+        let view = ui::BandView { scene: &self.scene, camera: self.scene.camera, viewport: rect };
+        self.editor.select_band(&self.session, view, band, pick);
+        if let Err(error) = self.upload_scene() {
+            self.last_error = Some(error);
+        }
+        ui.ctx().request_repaint();
     }
 
     /// Reads one frame of the box gesture: the live base, the pulled height, and the click that
@@ -2425,6 +2489,42 @@ impl Document {
         let pointer_over_gizmo = response
             .interact_pointer_pos()
             .is_some_and(|pointer| gizmo_rect.is_some_and(|widget| widget.contains(pointer)));
+
+        // The rubber band is the one gesture that starts where nothing else does: a press on the
+        // scene with no object, no handle and no tool under it. It is armed here, after the gizmos
+        // have claimed their presses, so a press that moved an axis or a grip never draws one.
+        let band_starts = interactive
+            && !pointer_on_chrome
+            && !consumed_click
+            && !pointer_over_gizmo
+            && !contour_editing
+            && !drawing
+            && !placing
+            && !boxing
+            && !pulling
+            && !filling
+            && !measuring
+            && !voiding
+            && mesh_object.is_none()
+            && navigation.is_none()
+            && !self.translate_gizmo.is_dragging()
+            && !self.rotate_gizmo.is_dragging()
+            && !self.box_grips.is_dragging()
+            && !self.gizmo.is_dragging()
+            && ui.input(|input| input.pointer.primary_pressed())
+            && response.interact_pointer_pos().is_some_and(|pointer| {
+                scene_gizmo::pick(
+                    self.scene.camera,
+                    rect,
+                    self.session.project(),
+                    pointer,
+                    &previewed,
+                    self.editor.flags(),
+                )
+                .is_none()
+                    && mesh_pick::pick_surface(rect, &self.scene, pointer).is_none()
+            });
+        self.update_band(ui, &response, rect, band_starts);
         let clicked = interactive
             && !pointer_on_chrome
             && if mesh_object.is_some() {
@@ -2692,6 +2792,11 @@ impl Document {
                 Some(Transform::Move) => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
                 Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
             }
+        }
+        // The rubber band is work-area paint: it lies over the image and the gizmos and under the
+        // work cursor's own layer, and it is clipped to the view it was drawn in (ADR 0123).
+        if let Some(band) = self.band {
+            band.paint(ui, rect);
         }
         // The widget belongs to the view under the pointer, so clicking an axis snaps that view and
         // the readout names the camera it draws with.
@@ -3199,6 +3304,11 @@ impl Document {
                 // The arm outranks leaving a container level: it is the mode the next creation uses,
                 // and the chip names it until Escape or ✕ clears it (ADR 0056).
                 self.editor.clear_creation_parent();
+            } else if self.band.is_some() {
+                // A live rubber band is the last gesture Escape gives up before a container level:
+                // the rectangle is a gesture and not content, so the release that follows selects
+                // nothing and nothing was written to undo (ADR 0137).
+                self.band = None;
             } else {
                 let before = self.editor.selected_nodes().to_vec();
                 if self.editor.exit_level(&mut self.session) {

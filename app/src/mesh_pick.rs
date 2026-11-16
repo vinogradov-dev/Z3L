@@ -32,6 +32,15 @@ pub(crate) fn pick_scene(viewport: Rect, frame: &SceneFrame, pointer: Pos2) -> O
     frame.pick(ray, f64::from(viewport.height()))
 }
 
+/// The shape under `pointer`: a solid face or a line chain, never a product envelope.
+///
+/// A rubber band starts only where there is no shape to pick, and a piece's envelope is not a
+/// shape: the empty part of a product is empty space, so a rectangle can begin there (U103).
+pub(crate) fn pick_surface(viewport: Rect, frame: &SceneFrame, pointer: Pos2) -> Option<Id> {
+    let ray = ray_to(pointer, viewport, frame.camera);
+    frame.pick_surface(ray, f64::from(viewport.height()))
+}
+
 /// The mesh of an editable object and its world placement, resolved once for bulk work.
 pub(crate) fn vertex_frame(project: &Project, object: Id) -> Option<(Placement, &Mesh)> {
     let mesh = project.object(object)?.geometry().as_mesh()?;

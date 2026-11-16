@@ -34,9 +34,11 @@ use model::Id;
 
 use crate::ray::{ray_hit_drawable, ray_hit_polyline, ray_hit_product_envelope};
 
+pub mod band;
 pub mod camera;
 pub mod ray;
 
+pub use band::{BandCoverage, NdcRect};
 pub use camera::{
     Camera, CameraError, DEFAULT_FOV_Y, MAX_DISTANCE_MM, MAX_PITCH, MIN_DISTANCE_MM, MIN_PITCH, POLE_TOLERANCE,
     Projection, canonical_up,
@@ -629,24 +631,7 @@ impl SceneFrame {
     /// Malformed vertices, indices, transforms and envelopes are skipped. Picking returns a document
     /// id, never a mesh index or a pointer: the caller can select it or send it to a command.
     pub fn pick(&self, ray: Ray, viewport_height: f64) -> Option<Id> {
-        let mut nearest: Option<(f64, Id)> = None;
-        for drawable in &self.drawables {
-            let Some(distance) = ray_hit_drawable(ray, drawable) else {
-                continue;
-            };
-            if nearest.is_none_or(|(best, _)| distance < best) {
-                nearest = Some((distance, drawable.id));
-            }
-        }
-        for polyline in &self.polylines {
-            let Some(distance) = ray_hit_polyline(ray, polyline, self.camera, viewport_height) else {
-                continue;
-            };
-            if nearest.is_none_or(|(best, _)| distance <= best) {
-                nearest = Some((distance, polyline.id));
-            }
-        }
-        if let Some((_, id)) = nearest {
+        if let Some(id) = self.pick_surface(ray, viewport_height) {
             return Some(id);
         }
         // Only an unoccluded click reaches an envelope, and then the innermost product wins: the
@@ -668,6 +653,37 @@ impl SceneFrame {
             }
         }
         innermost.map(|(_, _, id)| id)
+    }
+
+    /// The document id of the nearest drawable or line chain hit by `ray`, product envelopes aside.
+    ///
+    /// This is the shape under the pointer and nothing else, which is what a rubber band asks before
+    /// it starts: a piece's envelope is its container's own target, not a shape, so the empty part of
+    /// an open piece is still empty space a rectangle can be dragged in (ADR 0100, ADR 0137).
+    ///
+    /// A line chain has no thickness, so it is hit when the ray passes within
+    /// [`LINE_PICK_RADIUS_POINTS`] points of a segment at that segment's depth; `viewport_height` is
+    /// the viewport's height in points. A path wins a tie with a solid it lies on. Malformed vertices,
+    /// indices and transforms are skipped.
+    pub fn pick_surface(&self, ray: Ray, viewport_height: f64) -> Option<Id> {
+        let mut nearest: Option<(f64, Id)> = None;
+        for drawable in &self.drawables {
+            let Some(distance) = ray_hit_drawable(ray, drawable) else {
+                continue;
+            };
+            if nearest.is_none_or(|(best, _)| distance < best) {
+                nearest = Some((distance, drawable.id));
+            }
+        }
+        for polyline in &self.polylines {
+            let Some(distance) = ray_hit_polyline(ray, polyline, self.camera, viewport_height) else {
+                continue;
+            };
+            if nearest.is_none_or(|(best, _)| distance <= best) {
+                nearest = Some((distance, polyline.id));
+            }
+        }
+        nearest.map(|(_, id)| id)
     }
 
     /// A copy of the frame with every selected drawable and line chain highlighted for picking
