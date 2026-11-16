@@ -63,7 +63,7 @@ A local-axis mode is a useful future tool, but it should be a mode, not the only
 - [0020](0020-the-translate-gizmo-previews-and-commits-one-placement.md) established the
   preview-and-commit shape; [0026](0026-the-manipulation-pivot-is-stored-node-data.md) defines the
   pivot.
-- `apps/furnicraft/src/rotate_gizmo.rs`, `apps/furnicraft/src/gizmo_math.rs`.
+- `app/src/rotate_gizmo.rs`, `app/src/gizmo_math.rs`.
 
 ## Pivot note (2026-11-11)
 

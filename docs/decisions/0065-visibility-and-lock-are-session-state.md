@@ -7,7 +7,7 @@
 `plan/questions.md` carried an open question: whether a node's *visible* and *locked* flags are
 document data or session state. The scene tree the owner asked for draws an eye and a padlock per
 row, so the answer now blocks the icon set and the tree layout, and the wrong answer would be
-expensive later — a flag in the `.fcs` means every visibility toggle is an undoable document change,
+expensive later — a flag in the `.z3l` means every visibility toggle is an undoable document change,
 a version bump and a round-trip through every command that copies a node.
 
 The constitution already separates the two kinds of state: `AGENTS.md` §4.10 puts the node tree,

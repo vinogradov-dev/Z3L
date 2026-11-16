@@ -132,7 +132,7 @@ mod tests {
             goal: Some("arcs in the card".to_owned()),
             now: Some("the arc arm".to_owned()),
             blocked: Some("nothing".to_owned()),
-            run: Some("cargo test -p furnicraft-ui".to_owned()),
+            run: Some("cargo test -p ui".to_owned()),
             resume: Some("finish the arc arm".to_owned()),
         }
     }
@@ -205,7 +205,7 @@ mod tests {
             "  goal: arcs in the card\n",
             "  now: the arc arm\n",
             "  blocked: nothing\n",
-            "  run: cargo test -p furnicraft-ui\n",
+            "  run: cargo test -p ui\n",
             "  resume: finish the arc arm\n",
         ] {
             assert!(text.contains(line), "the block must carry `{line}`: {text}");

@@ -4,7 +4,7 @@ What this program believes about furniture, about the work, and about itself. `A
 rules; this page holds the reason they exist, so a decision the rules do not cover can still be
 decided the same way twice.
 
-**A piece of furniture is a countable product, not a picture.** FurniCraft counts parts. The image is
+**A piece of furniture is a countable product, not a picture.** Z3L counts parts. The image is
 a consequence: the mesh, the drawing, the cutting list and the CNC program are derived from one
 parts list, and none of them may disagree with it.
 

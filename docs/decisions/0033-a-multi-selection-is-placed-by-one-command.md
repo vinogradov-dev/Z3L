@@ -59,7 +59,7 @@ move when a container and one of its children are both selected, and which pivot
 - [0026](0026-the-manipulation-pivot-is-stored-node-data.md) defines the stored pivot.
 - [0029](0029-view-state-belongs-to-the-session.md) keeps the selection out of the document.
 - `crates/model/src/lib.rs`, `crates/engine/src/node_cmds.rs`,
-  `apps/furnicraft/src/gizmo_math.rs`.
+  `app/src/gizmo_math.rs`.
 
 ## Pivot note (2026-11-11)
 

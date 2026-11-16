@@ -20,7 +20,7 @@ measuring register. The demo lived in `/tmp`; the measurements are in `plan/note
 
 ## Decision
 
-**The v2 language is the icon language of FurniCraft.** It states its own grid, footprint, weights,
+**The v2 language is the icon language of Z3L.** It states its own grid, footprint, weights,
 caps and node gap, and the pipeline, the gate and both icon documents follow it:
 
 - the ink stays inside `2.25..21.75` on the 24 grid and covers 10–40 % of the 20 × 20 working area,

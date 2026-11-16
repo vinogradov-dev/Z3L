@@ -12,9 +12,9 @@
 use egui::{
     Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals, style::WidgetVisuals, style::Widgets, vec2,
 };
-use furnicraft_scene::SceneColors;
-use furnicraft_text::Message;
+use scene::SceneColors;
 use serde::{Deserialize, Serialize};
+use text::Message;
 
 /// The darkest chrome: the window frame around the panels.
 pub const CHROME: Color32 = Color32::from_rgb(0x14, 0x17, 0x1b);
@@ -676,7 +676,7 @@ fn helper_ink(warn: Color32, dark: bool) -> Color32 {
     mix(warn, if dark { Color32::WHITE } else { Color32::BLACK }, HELPER_LIFT)
 }
 
-/// Applies the dark FurniCraft visuals and spacing to `style`.
+/// Applies the dark Z3L visuals and spacing to `style`.
 pub fn apply(style: &mut egui::Style) {
     apply_with(style, DARK);
 }
@@ -1040,7 +1040,7 @@ mod tests {
                     (palette.accent, "the action accent"),
                     (palette.accent_fill, "the filled accent"),
                     (palette.danger, "the danger ink"),
-                    (ink_of(furnicraft_scene::SELECTION_LINE_COLOR), "the selection ink"),
+                    (ink_of(scene::SELECTION_LINE_COLOR), "the selection ink"),
                 ] {
                     assert_ne!(ink, other, "{name}: a guide is never {what}");
                 }

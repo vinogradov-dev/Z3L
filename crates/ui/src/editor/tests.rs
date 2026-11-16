@@ -11,16 +11,16 @@ use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
 use crate::node_actions::NodeAction;
 use crate::toolbars::{ToolAction, spec};
-use furnicraft_engine::{PanelCreate, PrimitiveKind, Session};
-use furnicraft_model::Contour;
-use furnicraft_model::{
+use engine::{PanelCreate, PrimitiveKind, Session};
+use model::Contour;
+use model::{
     ClassCode, Container, Cutout, CutoutDepth, CutoutShape, DEFAULT_BANDS, DEFAULT_SEGMENTS, Envelope, EulerAngles,
     FaceSide, FillMode, Geometry, MachiningAnchor, MachiningParams, Panel, PivotLocal, Placement,
 };
-use furnicraft_model::{Path, PathCorner, Project};
-use furnicraft_testkit::{cube_mesh, millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
-use furnicraft_units::Degrees;
-use furnicraft_units::Length;
+use model::{Path, PathCorner, Project};
+use testkit::{cube_mesh, millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
+use units::Degrees;
+use units::Length;
 
 fn cube_project() -> (Project, Id) {
     let mut project = sample_project();
@@ -393,9 +393,7 @@ fn a_committed_drawing_is_one_path_object_and_one_undo_entry() {
         .expect("opposite corner");
 
     let revision = session.project().revision();
-    let drawn = editor
-        .commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En)
-        .expect("commit the rectangle");
+    let drawn = editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit the rectangle");
     assert_eq!(drawn.tool, DrawTool::Rectangle);
     assert!(editor.drawing().is_none(), "the tool ends with the commit");
     assert_eq!(editor.selected_nodes(), [drawn.object], "the new node is selected");
@@ -437,8 +435,7 @@ fn a_drawing_in_a_turned_container_is_stored_in_the_parents_frame() {
 
     let world = Placement::IDENTITY.with_translation(mm(200), mm(100), mm(900)).expect("the work plane");
     let before = session.project().revision();
-    let drawn =
-        editor.commit_drawing(&mut session, world, furnicraft_text::Lang::En).expect("commit into the container");
+    let drawn = editor.commit_drawing(&mut session, world, text::Lang::En).expect("commit into the container");
     assert_eq!(session.project().revision(), before.checked_next().expect("revision"));
     assert_eq!(session.project().parent_of(drawn.object), Some(parent), "the node lands in the armed container");
 
@@ -467,10 +464,10 @@ fn create_assembly_under(session: &mut Session, parent: Id, name: &str) -> Id {
 
 /// Creates an assembly with a given placement under `parent` and returns its id.
 fn create_assembly_placed_under(session: &mut Session, parent: Id, name: &str, placement: Placement) -> Id {
-    let params = serde_json::to_value(furnicraft_engine::AssemblyCreate { parent, name: name.to_owned(), placement })
-        .expect("params");
+    let params =
+        serde_json::to_value(engine::AssemblyCreate { parent, name: name.to_owned(), placement }).expect("params");
     session
-        .dispatch(furnicraft_engine::node_cmds::ASSEMBLY_CREATE_ID, &params)
+        .dispatch(engine::node_cmds::ASSEMBLY_CREATE_ID, &params)
         .expect("create the assembly")
         .created_id()
         .expect("the assembly id")
@@ -496,7 +493,7 @@ fn closing_through_a_pending_arc_commits_a_closed_path() {
     assert!(editor.drawing().is_some_and(DrawDraft::can_close), "Close is offered and will work");
     let revision = session.project().revision();
     let drawn = editor
-        .close_and_commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En)
+        .close_and_commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En)
         .expect("close through the pending arc and commit");
     assert!(editor.drawing().is_none(), "the close ends the tool");
     assert_eq!(session.project().revision(), revision.checked_next().expect("revision"));
@@ -529,7 +526,7 @@ fn a_panel_draft_refuses_an_open_ring_and_cuts_the_board_on_close() {
     let refusal = editor
         .commit_drawing(&mut session, Placement::IDENTITY, crate::Lang::En)
         .expect_err("an open chain encloses no outline");
-    assert!(refusal.contains(furnicraft_text::Message::PanelContourOpen.text(crate::Lang::En)), "got {refusal}");
+    assert!(refusal.contains(text::Message::PanelContourOpen.text(crate::Lang::En)), "got {refusal}");
     assert!(editor.drawing().is_some(), "the refusal keeps the draft editable");
     let revision = session.project().revision();
     assert_eq!(revision, opened, "the refusal writes nothing");
@@ -573,7 +570,7 @@ fn the_ribbon_reports_a_close_instead_of_running_it() {
     let revision = session.project().revision();
 
     let outcome = editor
-        .apply_ribbon_actions(&mut session, vec![ToolAction::CloseDrawing], furnicraft_text::Lang::En)
+        .apply_ribbon_actions(&mut session, vec![ToolAction::CloseDrawing], text::Lang::En)
         .expect("the ribbon runs");
     assert!(outcome.close_draft, "the ribbon asks the shell for the close and its commit");
     assert_eq!(session.project().revision(), revision, "reporting a close writes nothing");
@@ -599,7 +596,7 @@ fn a_refused_close_leaves_the_ring_open_and_the_document_untouched() {
     let revision = session.project().revision();
 
     editor
-        .close_and_commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En)
+        .close_and_commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En)
         .expect_err("the document refuses the commit");
     assert_eq!(session.project().revision(), revision, "a refused close writes nothing");
     assert!(!session.can_undo(), "and leaves no undo entry behind");
@@ -629,22 +626,16 @@ fn every_new_tool_commits_its_path_and_opens_the_edit() {
         for point in points {
             editor.drawing_point([mm(point.0), mm(point.1)]).expect("a tool point");
         }
-        let drawn = editor
-            .commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En)
-            .expect("the figure commits");
+        let drawn =
+            editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).expect("the figure commits");
         assert_eq!(drawn.tool, tool);
         let path = session.project().object_path(drawn.object).expect("a path object");
-        assert_eq!(
-            path.is_closed(),
-            tool.is_closed(),
-            "{} keeps its closure",
-            tool.label().text(furnicraft_text::Lang::En)
-        );
+        assert_eq!(path.is_closed(), tool.is_closed(), "{} keeps its closure", tool.label().text(text::Lang::En));
         assert_eq!(
             editor.contour_edit().map(ContourEdit::target),
             Some(ContourTarget::Path(drawn.object)),
             "{} opens its edit mode",
-            tool.label().text(furnicraft_text::Lang::En)
+            tool.label().text(text::Lang::En)
         );
         editor.end_contour_edit();
     }
@@ -664,8 +655,7 @@ fn free_creation_tools_land_at_the_root_beside_a_selected_nested_assembly() {
     editor.start_drawing(DrawTool::Line);
     editor.drawing_point([Length::ZERO, Length::ZERO]).expect("start");
     editor.drawing_point([Length::from_millimetres(300).expect("x"), Length::ZERO]).expect("end");
-    let drawn =
-        editor.commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).expect("commit the line");
+    let drawn = editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit the line");
     assert_eq!(session.project().parent_of(drawn.object), Some(root), "a drawing lands at the root");
 
     editor.select_node(Some(inner));
@@ -705,7 +695,7 @@ fn a_panel_at_the_root_is_refused_because_no_product_is_open() {
 
     let refusal = plain_panel(&mut editor, &mut session, root).expect_err("a panel needs an open product");
     assert!(
-        refusal.contains(furnicraft_text::Message::CreationNeedsProduct.text(crate::Lang::En)),
+        refusal.contains(text::Message::CreationNeedsProduct.text(crate::Lang::En)),
         "the refusal names the missing product: {refusal}"
     );
     assert_eq!(session.project().root().children().len(), 1, "nothing is written");
@@ -728,8 +718,7 @@ fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
     editor.start_drawing(DrawTool::Line);
     editor.drawing_point([Length::ZERO, Length::ZERO]).expect("start");
     editor.drawing_point([Length::from_millimetres(300).expect("x"), Length::ZERO]).expect("end");
-    let drawn =
-        editor.commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).expect("commit the line");
+    let drawn = editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit the line");
     assert_eq!(session.project().parent_of(drawn.object), Some(assembly), "the path lands in the arm");
 
     let target = editor.creation_target(session.project());
@@ -779,7 +768,7 @@ fn deleting_the_armed_container_clears_the_arm() {
 
     assert!(editor.arm_creation(session.project(), inner));
     editor
-        .apply_node_action(&mut session, NodeAction::Delete { node: outer }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: outer }, text::Lang::En)
         .expect("delete the outer assembly");
     assert!(editor.creation_parent().is_none(), "deleting an ancestor of the arm clears it");
     assert_eq!(editor.creation_target(session.project()), root);
@@ -795,10 +784,7 @@ fn a_refused_drawing_keeps_the_draft_and_the_selection() {
     editor.drawing_point([Length::ZERO, Length::ZERO]).expect("one corner");
 
     let revision = session.project().revision();
-    assert!(
-        editor.commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).is_err(),
-        "one point is no path"
-    );
+    assert!(editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).is_err(), "one point is no path");
     assert!(editor.drawing().is_some(), "the draft stays");
     assert_eq!(session.project().revision(), revision);
     assert!(!session.can_undo());
@@ -809,7 +795,7 @@ fn committing_without_a_draft_reports_it() {
     let (project, _panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
-    assert!(editor.commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).is_err());
+    assert!(editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).is_err());
 }
 
 #[test]
@@ -823,8 +809,7 @@ fn an_open_polyline_commits_as_drawn() {
     editor
         .drawing_point([Length::from_millimetres(400).expect("x"), Length::from_millimetres(300).expect("y")])
         .expect("end");
-    let drawn =
-        editor.commit_drawing(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).expect("commit the chain");
+    let drawn = editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit the chain");
     let path = session.project().object_path(drawn.object).expect("a path object");
     assert!(!path.is_closed());
     assert_eq!(path.entries().len(), 2);
@@ -995,7 +980,7 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     let height = Length::from_millimetres(18).expect("height");
     let children_before = session.project().root().children().len();
 
-    editor.extrude_path(&mut session, path, height, furnicraft_text::Lang::En).expect("extrude the path");
+    editor.extrude_path(&mut session, path, height, text::Lang::En).expect("extrude the path");
     assert_eq!(editor.selected_node(), Some(path), "the node becomes the body in place");
     let object = session.project().object(path).expect("object");
     assert_eq!(object.name(), "Drawing", "the node keeps its name");
@@ -1006,7 +991,7 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     assert!(session.project().object_path(path).is_err(), "the drawing is the body now");
     let revision = session.project().revision();
     assert!(
-        editor.extrude_path(&mut session, path, height, furnicraft_text::Lang::En).is_err(),
+        editor.extrude_path(&mut session, path, height, text::Lang::En).is_err(),
         "a body is not extruded a second time"
     );
     assert_eq!(session.project().revision(), revision, "the refused extrusion changes nothing");
@@ -1019,7 +1004,7 @@ fn a_pulled_height_becomes_the_next_extrusions_default() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(100).expect("height"), furnicraft_text::Lang::En)
+        .extrude_path(&mut session, path, Length::from_millimetres(100).expect("height"), text::Lang::En)
         .expect("extrude the path");
     assert_eq!(
         editor.extrude_height(),
@@ -1046,7 +1031,7 @@ fn one_undo_restores_the_drawing_a_body_came_from() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), furnicraft_text::Lang::En)
+        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect("extrude the path");
 
     undo(&mut session, &mut editor);
@@ -1062,7 +1047,7 @@ fn an_open_path_is_refused_with_a_readable_reason() {
     let mut editor = Editor::new();
     let revision = session.project().revision();
     let error = editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), furnicraft_text::Lang::En)
+        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect_err("an open chain is no ring");
     assert!(error.contains("open path"), "the message names the problem: {error}");
     assert_eq!(session.project().revision(), revision, "a refused extrusion changes nothing");
@@ -1081,10 +1066,10 @@ fn a_body_keeps_the_paths_placement_and_frame() {
             Length::ZERO,
         )
         .expect("placement");
-    let params = crate::command::json(&furnicraft_engine::NodePlacementSet { node: path, placement }).expect("params");
-    session.dispatch(furnicraft_engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
+    let params = crate::command::json(&engine::NodePlacementSet { node: path, placement }).expect("params");
+    session.dispatch(engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), furnicraft_text::Lang::En)
+        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect("extrude");
     let body = editor.selected_node().expect("the body");
     assert_eq!(session.project().node(body).expect("body node").placement(), placement);
@@ -1139,7 +1124,7 @@ fn the_drawing_shortcuts_name_their_tool() {
             Some(shortcut),
             "{} starts {}",
             key.name(),
-            tool.label().text(furnicraft_text::Lang::En)
+            tool.label().text(text::Lang::En)
         );
         editor.start_drawing(tool);
         assert_eq!(editor.drawing().map(DrawDraft::tool), Some(tool));
@@ -1533,7 +1518,7 @@ fn the_box_tool_draws_its_base_and_pulls_its_height() {
     // The plane frame sits on the base rectangle's minimum corner, so the box's own zero is that
     // corner and the height runs along the plane's normal.
     let placement = Placement::IDENTITY.with_translation(mm(0), mm(0), mm(0)).expect("the base corner");
-    let id = editor.commit_box(&mut session, placement, furnicraft_text::Lang::En).expect("commit the box");
+    let id = editor.commit_box(&mut session, placement, text::Lang::En).expect("commit the box");
     assert!(editor.box_tool().is_none(), "the gesture is over");
     let object = session.project().object(id).expect("the new box");
     assert_eq!(object.name(), "Box");
@@ -1591,7 +1576,7 @@ fn the_frame_tool_draws_the_box_the_ghost_shows_and_creates_it() {
         "the ghost is exactly the frame the ✓ builds"
     );
 
-    let id = editor.commit_box(&mut session, Placement::IDENTITY, furnicraft_text::Lang::En).expect("commit");
+    let id = editor.commit_box(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit");
     assert!(editor.box_tool().is_none(), "the gesture is over");
     let frame = session.project().container(id).expect("the frame");
     assert!(frame.is_product(), "a drawn frame is a product, not a plain container");
@@ -1609,7 +1594,7 @@ fn the_ribbons_drawn_frame_method_arms_the_box_tool() {
     let mut session = empty_editor_session();
     let mut editor = Editor::new();
     let outcome = editor
-        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrame], furnicraft_text::Lang::En)
+        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrame], text::Lang::En)
         .expect("the drawn method arms");
     assert_eq!(editor.box_tool(), Some(BoxOwner::Product), "the box tool draws a frame");
     assert!(!outcome.open_product_card, "the drawn method opens no card");
@@ -1626,12 +1611,12 @@ fn the_card_and_the_drawn_gesture_produce_the_same_document() {
     let mut card_editor = Editor::new();
     let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("an envelope");
     let draft = crate::product_card::ProductDraft { envelope, class: ClassCode::GENERAL_PRODUCT };
-    card_editor.create_product(&mut carded, draft, furnicraft_text::Lang::En).expect("the card creates the frame");
+    card_editor.create_product(&mut carded, draft, text::Lang::En).expect("the card creates the frame");
 
     let mut drawn = empty_editor_session();
     let mut drawn_editor = Editor::new();
     draw_the_frame_box(&mut drawn_editor);
-    drawn_editor.commit_box(&mut drawn, Placement::IDENTITY, furnicraft_text::Lang::En).expect("the gesture");
+    drawn_editor.commit_box(&mut drawn, Placement::IDENTITY, text::Lang::En).expect("the gesture");
 
     assert_eq!(carded.project(), drawn.project(), "one command, one document, whichever entry was used");
 }
@@ -1759,13 +1744,13 @@ fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
     assert_eq!(editor.locked_selection(session.project()), Some(panel), "the viewport sees the refusal");
     assert!(
         editor
-            .locked_refusal(session.project(), panel, furnicraft_text::Lang::En)
+            .locked_refusal(session.project(), panel, text::Lang::En)
             .is_some_and(|refusal| refusal.contains("locked"))
     );
 
     let revision = session.project().revision();
     let refusal = editor
-        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, text::Lang::En)
         .expect_err("a locked node refuses the delete");
     assert!(refusal.contains("locked"), "the refusal says why: {refusal}");
     assert_eq!(session.project().revision(), revision, "a refusal dispatches nothing");
@@ -1774,7 +1759,7 @@ fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
     editor.set_locked(panel, false);
     assert_eq!(editor.locked_selection(session.project()), None, "unlocking ends the refusal");
     editor
-        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, text::Lang::En)
         .expect("the unlocked delete runs");
     assert!(!session.project().contains_node(panel));
 }
@@ -1792,11 +1777,7 @@ fn a_locked_container_refuses_a_group_and_an_ungroup() {
     let revision = session.project().revision();
     assert!(
         editor
-            .apply_node_action(
-                &mut session,
-                NodeAction::Group { nodes: vec![first, second] },
-                furnicraft_text::Lang::En
-            )
+            .apply_node_action(&mut session, NodeAction::Group { nodes: vec![first, second] }, text::Lang::En)
             .is_err(),
         "grouping a locked node would restructure it"
     );
@@ -1806,11 +1787,7 @@ fn a_locked_container_refuses_a_group_and_an_ungroup() {
     editor.set_locked(second, true);
     assert!(
         editor
-            .apply_node_action(
-                &mut session,
-                NodeAction::Group { nodes: vec![first, second] },
-                furnicraft_text::Lang::En
-            )
+            .apply_node_action(&mut session, NodeAction::Group { nodes: vec![first, second] }, text::Lang::En)
             .is_err(),
         "one locked node in the selection is enough"
     );
@@ -1830,7 +1807,7 @@ fn a_deleted_node_drops_its_flags_and_an_undo_starts_clean() {
     editor.set_locked(panel, false);
 
     editor
-        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, furnicraft_text::Lang::En)
+        .apply_node_action(&mut session, NodeAction::Delete { node: panel }, text::Lang::En)
         .expect("delete the panel");
     assert!(!editor.flags().is_hidden(panel), "the flag goes with the node");
     assert!(!editor.flags().is_locked(panel));
@@ -1936,7 +1913,7 @@ fn a_caret_click_opens_the_list_and_writes_no_revision() {
     let revision = session.project().revision();
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
-    let help = furnicraft_text::Message::ToolMethods.text(furnicraft_text::Lang::En);
+    let help = text::Message::ToolMethods.text(text::Lang::En);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 720.0));
     let mut caret = None;
     for press in [None, Some(true), Some(false)] {
@@ -1982,11 +1959,7 @@ fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Fit, crate::Lang::En).expect("a post fills a void");
     assert_eq!(
         editor.fill_arm(),
-        Some(FillArm {
-            class: ClassCode::VERTICAL_PANEL,
-            fill: furnicraft_model::Fill::HeightAndDepth,
-            mode: FillMode::Fit,
-        }),
+        Some(FillArm { class: ClassCode::VERTICAL_PANEL, fill: model::Fill::HeightAndDepth, mode: FillMode::Fit }),
         "a post takes the niche's height and depth, fitted by default"
     );
 
@@ -1995,14 +1968,14 @@ fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
         .expect("a shelf fills a void");
     assert_eq!(
         editor.fill_arm().map(|arm| (arm.fill, arm.mode)),
-        Some((furnicraft_model::Fill::WidthAndDepth, FillMode::Shape)),
+        Some((model::Fill::WidthAndDepth, FillMode::Shape)),
         "a shelf takes the niche's width and depth in the mode it was asked for"
     );
 
     let back: ClassCode = "30.12.00".parse().expect("a back panel");
     let refusal =
         editor.arm_fill(&session, back, FillMode::Fit, crate::Lang::En).expect_err("a back panel does not fill a void");
-    assert!(refusal.contains(furnicraft_text::Message::FillNeedsFillTrait.text(crate::Lang::En)), "{refusal}");
+    assert!(refusal.contains(text::Message::FillNeedsFillTrait.text(crate::Lang::En)), "{refusal}");
     assert_eq!(editor.fill_arm().map(|arm| arm.class), Some(ClassCode::HORIZONTAL_PANEL), "a refusal keeps the arm");
 }
 
@@ -2014,7 +1987,7 @@ fn the_empty_space_tool_refuses_without_an_open_product() {
     let refusal = editor
         .arm_fill(&session, ClassCode::HORIZONTAL_PANEL, FillMode::Fit, crate::Lang::En)
         .expect_err("no product offers no niche");
-    assert!(refusal.contains(furnicraft_text::Message::FillNeedsProduct.text(crate::Lang::En)), "{refusal}");
+    assert!(refusal.contains(text::Message::FillNeedsProduct.text(crate::Lang::En)), "{refusal}");
     assert!(editor.fill_arm().is_none());
 }
 
@@ -2075,7 +2048,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         .expect("a product");
     let mut editor = Editor::new();
     editor.arm_void();
-    let point = furnicraft_geom::DVec3::new(300.0, 280.0, 360.0);
+    let point = geom::DVec3::new(300.0, 280.0, 360.0);
     assert!(editor.void_measure(&project, point), "the pointer measures the void");
     let niche = editor.void().niche().expect("the point is inside the open product").clone();
     assert_eq!(niche.product, product);
@@ -2086,12 +2059,9 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     );
 
     // The fill plans its part from the cell the atom holds, and the plan names the same void.
-    for (fill, mode) in [
-        (furnicraft_model::Fill::WidthAndDepth, FillMode::Fit),
-        (furnicraft_model::Fill::HeightAndDepth, FillMode::Shape),
-    ] {
+    for (fill, mode) in [(model::Fill::WidthAndDepth, FillMode::Fit), (model::Fill::HeightAndDepth, FillMode::Shape)] {
         let plan = project
-            .fill_plan_in(&niche, product, furnicraft_model::FillRequest::new(point, fill, mode, millimetres(18), None))
+            .fill_plan_in(&niche, product, model::FillRequest::new(point, fill, mode, millimetres(18), None))
             .expect("a part fills the measured cell");
         assert_eq!(plan.niche, niche, "the plan is built from the atom's cell, not a second measurement");
     }
@@ -2100,26 +2070,14 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     let direct = project
         .fill_plan(
             product,
-            furnicraft_model::FillRequest::new(
-                point,
-                furnicraft_model::Fill::WidthAndDepth,
-                FillMode::Fit,
-                millimetres(18),
-                None,
-            ),
+            model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
         )
         .expect("the direct query plans the same part");
     let from_atom = project
         .fill_plan_in(
             &niche,
             product,
-            furnicraft_model::FillRequest::new(
-                point,
-                furnicraft_model::Fill::WidthAndDepth,
-                FillMode::Fit,
-                millimetres(18),
-                None,
-            ),
+            model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
         )
         .expect("the atom plans the same part");
     assert_eq!(direct, from_atom, "one cell, one plan");
@@ -2132,7 +2090,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     editor.arm_fill(&session, ClassCode::HORIZONTAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the shelf");
     let project = session.project();
     let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
-    let half = furnicraft_geom::DVec3::new(
+    let half = geom::DVec3::new(
         envelope.x().millimetres_f64() / 2.0,
         envelope.y().millimetres_f64() / 2.0,
         envelope.z().millimetres_f64() / 2.0,
@@ -2144,13 +2102,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         .fill_plan_in(
             &fill_niche,
             product,
-            furnicraft_model::FillRequest::new(
-                point,
-                furnicraft_model::Fill::WidthAndDepth,
-                FillMode::Fit,
-                millimetres(18),
-                None,
-            ),
+            model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
         )
         .expect("the fill plans from the cell its own pointer measured");
     assert_eq!(plan.niche, fill_niche, "the fill's ghost and the report row read one value");
@@ -2193,7 +2145,7 @@ fn the_other_method_of_the_cell_switches_the_mode_instead_of_dropping_the_tool()
 fn a_fill_creates_a_classed_panel_of_exactly_the_ghost_size() {
     let (mut session, product) = fill_session();
     let mut editor = Editor::new();
-    let size = furnicraft_model::PanelNominalSize::new(millimetres(560), millimetres(500)).expect("a size");
+    let size = model::PanelNominalSize::new(millimetres(560), millimetres(500)).expect("a size");
     let placement =
         Placement::IDENTITY.with_translation(millimetres(20), millimetres(30), millimetres(350)).expect("a placement");
 

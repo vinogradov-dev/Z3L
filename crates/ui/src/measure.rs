@@ -13,7 +13,7 @@
 //!
 //! Changes when: the ruler gains a method (an angle, a radius), or the click sequence changes.
 
-use furnicraft_units::Length;
+use units::Length;
 
 /// Where the ruler stands, which is what the status bar names in words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

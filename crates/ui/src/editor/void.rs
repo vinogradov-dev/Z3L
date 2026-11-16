@@ -8,8 +8,8 @@
 //!
 //! Changes when: the niche is armed or disarmed by another surface, or it stops owning the pointer.
 
-use furnicraft_geom::DVec3;
-use furnicraft_model::Project;
+use geom::DVec3;
+use model::Project;
 
 use super::Editor;
 use crate::void::Void;

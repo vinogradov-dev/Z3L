@@ -6,8 +6,8 @@
 
 use std::collections::HashSet;
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
+use units::Length;
 
 use crate::panel::geometry::{PanelDimensionError, validate_dimension};
 use crate::{Contour, ContourSegmentId, EdgeId, MaterialId, Panel, PanelError, SegmentSource, VertexId};

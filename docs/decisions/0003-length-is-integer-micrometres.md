@@ -11,7 +11,7 @@ exactly; the error accumulates into dimensions that change after a save and a lo
 
 ## Decision
 
-`furnicraft_units::Length` is a signed `i64` count of micrometres, with checked arithmetic, a fallible
+`units::Length` is a signed `i64` count of micrometres, with checked arithmetic, a fallible
 constructor from whole millimetres, and an explicit float conversion only at the geometry boundary.
 
 ## Consequences
@@ -21,5 +21,5 @@ constructor from whole millimetres, and an explicit float conversion only at the
   not a design limit.
 - Floating point exists only at the geometry and rendering boundary: `param` converts to millimetres
   for the kernel, `render` converts to scene units.
-- Formatting for humans goes through `furnicraft-units`; parsing from text belongs there too, so no
+- Formatting for humans goes through `units`; parsing from text belongs there too, so no
   other crate formats or parses a length.

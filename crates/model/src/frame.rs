@@ -6,10 +6,10 @@
 //! only its anchor for a strategy and a shifted copy of itself ([`Anchored`]). Nothing here moves
 //! anything on its own: the creation commands call the rule (ADR 0082).
 
-use furnicraft_geom::DVec3;
-use furnicraft_units::Length;
+use geom::DVec3;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 use crate::placement::lengths_from_millimetres;
 use crate::tree::panel_bounds;
@@ -297,8 +297,8 @@ mod tests {
     use super::*;
     use crate::fixtures::{box_mesh, millimetres, sample_panel};
     use crate::{ContourSegment, ContourSegmentId, Geometry, Id, Object};
-    use furnicraft_geom::DQuat;
-    use furnicraft_units::Degrees;
+    use geom::DQuat;
+    use units::Degrees;
 
     /// The world points of a path's segment ends, in millimetres.
     fn path_world_points(path: &Path, placement: Placement) -> Vec<DVec3> {

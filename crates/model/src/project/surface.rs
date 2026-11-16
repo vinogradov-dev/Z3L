@@ -11,7 +11,7 @@
 //! not against the box around it (ADR 0099). Both readings are measurement devices, never stored in
 //! the document.
 
-use furnicraft_geom::DVec3;
+use geom::DVec3;
 
 use super::move_query::MoveAxis;
 use crate::{Id, Placement};
@@ -231,7 +231,7 @@ mod tests {
     fn a_turned_body_is_measured_by_the_box_around_its_corners() {
         let turn = Placement::IDENTITY
             .with_rotation_euler(crate::EulerAngles {
-                z: furnicraft_units::Degrees::from_millidegrees(45_000),
+                z: units::Degrees::from_millidegrees(45_000),
                 ..crate::EulerAngles::default()
             })
             .expect("a turn");
@@ -249,7 +249,7 @@ mod tests {
         // A 10 x 2 board turned 45 degrees: its world box is wider than the board, so a ray along X
         // that meets its world box would report a wall the board does not have.
         let turn = Placement::IDENTITY.with_rotation_euler(crate::EulerAngles {
-            z: furnicraft_units::Degrees::from_millidegrees(45_000),
+            z: units::Degrees::from_millidegrees(45_000),
             ..crate::EulerAngles::default()
         });
         let turn = turn.expect("a turn");

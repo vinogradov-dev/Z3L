@@ -6,10 +6,10 @@
 //! ungrouping live in the scene tree so the same action covers several selected nodes.
 
 use egui::{RichText, TextEdit, Ui};
-use furnicraft_engine::node_cmds::NODE_RENAME_ID;
-use furnicraft_engine::{NodeRename, Session};
-use furnicraft_model::{Id, Project};
-use furnicraft_text::Message;
+use engine::node_cmds::NODE_RENAME_ID;
+use engine::{NodeRename, Session};
+use model::{Id, Project};
+use text::Message;
 
 use crate::command::{dispatch, json};
 use crate::section::section;
@@ -165,7 +165,7 @@ fn rename_container(session: &mut Session, node: Id, name: String) -> Result<(),
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 

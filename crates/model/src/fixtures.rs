@@ -4,7 +4,7 @@
 //! module stays in that module's own `tests`. The three helpers every crate shares — `millimetres`,
 //! `open_path` and `sample_project` — come from [`crate::testing`].
 
-use furnicraft_units::Length;
+use units::Length;
 
 use crate::{
     ClassCode, Contour, ContourSegmentId, Geometry, Id, MaterialId, Mesh, Object, Panel, PanelNominalSize, PanelRect,

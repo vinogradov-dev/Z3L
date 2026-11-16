@@ -7,20 +7,20 @@
 //! state owned by the shell, never document data.
 
 use egui::{Align, Context, Id, Key, Layout, Modifiers, RichText, Sense, TextEdit, Ui, Vec2};
-use furnicraft_engine::node_cmds::{
+use engine::node_cmds::{
     NODE_COMPONENT_CONVERT_TO_GROUP_ID, NODE_DELETE_ID, NODE_DELETE_MANY_ID, NODE_DUPLICATE_ID, NODE_GROUP_ID,
     NODE_PIVOT_CENTER_ID, NODE_RENAME_ID, NODE_UNGROUP_ID,
 };
-use furnicraft_engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
-use furnicraft_engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID, SCENE_ACTIVE_CAMERA_SET_ID};
-use furnicraft_engine::{
+use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
+use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID, SCENE_ACTIVE_CAMERA_SET_ID};
+use engine::{
     AssemblyCreate, CameraCreate, CommandOutcome, CommandRegistry, CommandSpec, LightCreate,
     NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter, NodeUngroup,
     PanelCreate, SceneActiveCameraSet, Session,
 };
-use furnicraft_model::{CameraProjection, Id as NodeId, LightKind, Placement};
-use furnicraft_text::{Counted, Lang, Message};
+use model::{CameraProjection, Id as NodeId, LightKind, Placement};
 use serde_json::Value;
+use text::{Counted, Lang, Message};
 
 use crate::command::{dispatch, json};
 use crate::{icons, inventory, theme};
@@ -485,7 +485,7 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
                 bevels: Vec::new(),
             })
         }
-        furnicraft_engine::node_cmds::ASSEMBLY_CREATE_ID => json(&AssemblyCreate {
+        engine::node_cmds::ASSEMBLY_CREATE_ID => json(&AssemblyCreate {
             parent: create_parent(session, context),
             name: Message::ToolAssembly.text(lang).to_owned(),
             placement: Placement::IDENTITY,
@@ -554,7 +554,7 @@ fn entry_job(ui: &Ui, entry: &Entry) -> egui::WidgetText {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 
@@ -716,7 +716,7 @@ mod tests {
 
         let document = serde_json::to_string(session.project()).expect("serialise the project");
         for key in ["history", "query", "highlight", "palette"] {
-            assert!(!document.contains(key), "`{key}` is session state and must stay out of the .fcs");
+            assert!(!document.contains(key), "`{key}` is session state and must stay out of the .z3l");
         }
     }
 

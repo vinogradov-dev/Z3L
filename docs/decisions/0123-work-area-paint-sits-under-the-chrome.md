@@ -32,7 +32,7 @@ decision, because this record puts work-area paint below it.
 
 ## References
 
-- `apps/furnicraft/src/work_cursor.rs` — `layer`, `paint`, the scene clip.
+- `app/src/work_cursor.rs` — `layer`, `paint`, the scene clip.
 - ADR [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) — the outline and the layer
   this record changes.
 - ADR [0122](0122-the-custom-pointer-belongs-to-the-work-area.md) — the scope this record layers.

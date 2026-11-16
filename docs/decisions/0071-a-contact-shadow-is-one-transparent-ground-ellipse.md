@@ -11,7 +11,7 @@ shadow map or a projected pass, which adds a depth target, a second camera and a
 can grow with the scene — exactly the cost the viewport must not pay for a visual cue.
 
 The shadow is also not document data. It is a consequence of the scene and the view, like the grid,
-the display style and the selection: a `.fcs` never carries it, and turning it off must not change
+the display style and the selection: a `.z3l` never carries it, and turning it off must not change
 the model.
 
 ## Decision
@@ -46,8 +46,8 @@ the model.
 ## Consequences
 
 A cabinet reads as standing on the floor for one triangle fan per object and no frame cost beyond a
-few hundred vertices, and `cargo test -p furnicraft-scene` covers the derivation while
-`cargo test -p furnicraft-render` covers the fan, the malformed input and the depth state without a
+few hundred vertices, and `cargo test -p scene` covers the derivation while
+`cargo test -p render` covers the fan, the malformed input and the depth state without a
 GPU. The shadow does not know about occlusion, self-shadowing, a directional light or the object's
 real silhouette: an L-shaped cabinet gets one rectangle-wide ellipse, and a wall-mounted object with
 a floor-touching part still casts the full footprint. Those are the costs of not having a shadow

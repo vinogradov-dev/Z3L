@@ -6,9 +6,9 @@
 //! parameters that build its mesh. In both cases the mesh is derived and replaces the parameters
 //! only when the user collapses it. A path payload is a flat drawing that has no solid yet.
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 use crate::contour::{Contour, ContourError, MAX_CONTOUR_COORDINATE, Path, PathError};
 use crate::mesh::Mesh;
@@ -408,7 +408,7 @@ mod tests {
     use crate::*;
 
     use crate::tree::object_bounds_mm;
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     #[test]
     fn object_round_trips_in_the_current_schema() {

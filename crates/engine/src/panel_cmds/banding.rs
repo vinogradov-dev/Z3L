@@ -10,21 +10,21 @@
 //!
 //! Changes when: what a panel stores on one of its outline edges or corners changes.
 //!
-//! It does not do: derive the trimmed size, the outline ring or a mesh — `furnicraft-param` owns
+//! It does not do: derive the trimmed size, the outline ring or a mesh — `param` owns
 //! that.
 
-use furnicraft_model::{
+use model::{
     Catalog, ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow, EdgeId, Id,
     MaterialId, Operation, Project, ProjectError, RingBanding, VertexId,
 };
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use units::Length;
 
 use crate::class_rules::NodeRules;
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the edge-banding command.
 pub const EDGE_BANDING_SET_ID: &str = "panel.edge_banding.set";

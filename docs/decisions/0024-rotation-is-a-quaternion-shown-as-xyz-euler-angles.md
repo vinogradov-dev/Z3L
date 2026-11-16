@@ -24,7 +24,7 @@ translation instead; [0025](0025-one-manipulation-pivot.md) settles that point.
   read and are never serialized.
 - The inspector shows intrinsic XYZ Euler angles in degrees: `R = Rx · Ry · Rz`, applied about the
   node's local axes in that order. Y is the middle axis, so gimbal lock is at Y = ±90°.
-- Angles are integer millidegrees (`furnicraft_units::Degrees`), like lengths are integer
+- Angles are integer millidegrees (`units::Degrees`), like lengths are integer
   micrometres. Text parses without floats and round-trips exactly through the displayed precision.
   The inspector wraps each angle into `(-180°, 180°]`.
 - The rotate gizmo draws three rings on the selected node's local axes, centred on its manipulation
@@ -68,7 +68,7 @@ translation instead; [0025](0025-one-manipulation-pivot.md) settles that point.
   post-multiplied turn.
 - [0003](0003-length-is-integer-micrometres.md) is the same argument for lengths.
 - `crates/model` (`EulerAngles`, `Placement::rotation_euler`), `crates/units` (`Degrees`),
-  `crates/ui/src/placement_card.rs`, `apps/furnicraft/src/rotate_gizmo.rs`.
+  `crates/ui/src/placement_card.rs`, `app/src/rotate_gizmo.rs`.
 
 ## Pivot note (2026-11-11)
 

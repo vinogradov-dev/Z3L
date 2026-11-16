@@ -21,7 +21,7 @@ Related decisions: [0005](../decisions/0005-material-catalogue.md),
 
 ## 1. Terms
 
-- **Document** (scene) — a saved FurniCraft project: node tree, panels, their placements, properties, machining and material references.
+- **Document** (scene) — a saved Z3L project: node tree, panels, their placements, properties, machining and material references.
 - **Catalogue** — the external material collection; it is not part of the scene file.
 - **Fallback** — the last known value stored in the scene in case a material disappears from the catalogue.
 - **Diagnostic** — a computed panel or scene state that is not stored as data.

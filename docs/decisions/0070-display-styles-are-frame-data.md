@@ -18,7 +18,7 @@ could only be tested by looking at a window.
 ## Decision
 
 - `ShadingStyle` lives in `crates/scene` and is a field of `SceneFrame`, beside the camera, grid and
-  lighting. It is frame data, never document data: a `.fcs` does not carry it (ADR 0029). The
+  lighting. It is frame data, never document data: a `.z3l` does not carry it (ADR 0029). The
   settings file stores the default and each view leaf stores the live choice; both are view state.
   The cluster reads and writes the active leaf's style and owns none of its own (U63).
 - The style alone decides the passes. `ShadingStyle` promises `draws_faces`, `draws_edges`,
@@ -61,9 +61,9 @@ could only be tested by looking at a window.
 
 ## Consequences
 
-The style is testable as data, and `cargo test -p furnicraft-render` covers the pass mapping, the
+The style is testable as data, and `cargo test -p render` covers the pass mapping, the
 per-view mapping, the translucent depth state, the hidden-edge stencil gate, the face depth bias and
-the back-to-front order without a GPU; `cargo test -p furnicraft-mesh` covers the form-edge
+the back-to-front order without a GPU; `cargo test -p mesh` covers the form-edge
 classification.
 
 Sorting whole cabinet panels by centre is honest for flat panels and wrong for interpenetrating

@@ -23,16 +23,16 @@
 
 use core::f64::consts::PI;
 
-use furnicraft_engine::object_cmds::OBJECT_PATH_CREATE_ID;
-use furnicraft_engine::{ObjectPathCreate, Session};
-use furnicraft_geom::DVec2;
-use furnicraft_model::{
+use engine::object_cmds::OBJECT_PATH_CREATE_ID;
+use engine::{ObjectPathCreate, Session};
+use geom::DVec2;
+use model::{
     ContourSegment, ContourSegmentError, Id, MAX_CONTOUR_COORDINATE, MAX_CONTOUR_SEGMENTS, MAX_POLYGON_SIDES,
     MIN_POLYGON_SIDES, Path, PathError, Placement,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use text::{Lang, Message};
 use thiserror::Error;
+use units::Length;
 
 use crate::command::{dispatch, json};
 

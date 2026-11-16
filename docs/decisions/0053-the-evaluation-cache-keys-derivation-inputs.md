@@ -5,7 +5,7 @@
 
 ## Context
 
-`furnicraft-mesh` had no cache: every scene rebuild walked the whole tree, built every panel body,
+`mesh` had no cache: every scene rebuild walked the whole tree, built every panel body,
 every band strip and every constructive object again, then tessellated them all. A one-panel move
 re-tessellated a whole cabinet, and a camera orbit — which rebuilds nothing — still paid for the
 first edit after it.

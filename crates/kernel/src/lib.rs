@@ -1,12 +1,12 @@
 //! The geometry kernel **port**.
 //!
-//! This crate defines what FurniCraft needs from solid geometry — profiles, opaque bodies,
+//! This crate defines what Z3L needs from solid geometry — profiles, opaque bodies,
 //! extrusion, booleans, tessellation and measures — using only our own types. It deliberately
-//! knows nothing about the third-party engine that implements it; `furnicraft-kernel-truck` is
+//! knows nothing about the third-party engine that implements it; `kernel-truck` is
 //! the adapter. `model` and `param` depend on this port, never on the adapter.
 //!
 //! Coordinates in this crate are millimetres (`f64`). This is the geometry boundary: `param`
-//! converts the document's `furnicraft_units::Length` values on the way in.
+//! converts the document's `units::Length` values on the way in.
 #![forbid(unsafe_code)]
 #![deny(
     clippy::unwrap_used,
@@ -17,7 +17,7 @@
     clippy::unreachable
 )]
 
-use furnicraft_geom::{DVec2, Frame, MeshData};
+use geom::{DVec2, Frame, MeshData};
 use thiserror::Error;
 
 /// A geometry error that a caller can report to the user.
@@ -179,7 +179,7 @@ pub struct Measure {
     pub volume: f64,
 }
 
-/// What the rest of FurniCraft needs from a solid modelling engine.
+/// What the rest of Z3L needs from a solid modelling engine.
 ///
 /// The port is intentionally small and shape-driven: it exposes primitive operations, not
 /// furniture features. `param` composes panels, pockets, chamfers and cutter paths from these;

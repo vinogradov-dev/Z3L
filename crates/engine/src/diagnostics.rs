@@ -4,11 +4,11 @@
 //! no longer fits — are computed from the project and catalogue on demand. They are never stored in
 //! the document and never make a scene unreadable.
 
-use furnicraft_model::{
+use model::{
     Catalog, ContourSegmentId, CoreViolation, CutoutDepth, EdgeId, Id, MachiningId, MaterialId, PanelGeometryError,
     Project, ProjectError, VertexId,
 };
-use furnicraft_units::Length;
+use units::Length;
 
 /// One issue found while resolving a panel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,11 +164,11 @@ mod tests {
 
     use super::*;
 
-    use furnicraft_model::{
+    use model::{
         Catalog, Contour, CornerBanding, CornerFeature, CornerFeatureKind, CutoutShape, EdgeBanding, EdgeId, FaceSide,
         MaterialId, PanelMaterial, Placement, RectCorner, RingBanding,
     };
-    use furnicraft_testkit::{
+    use testkit::{
         sample_blind_depth, sample_catalog, sample_material_id, sample_panel_thickness, sample_project,
         sample_thin_panel_thickness,
     };
@@ -294,7 +294,7 @@ mod tests {
         project
             .add_cutout(
                 panel_id(),
-                CutoutShape::Rectangle(furnicraft_testkit::sample_cutout_rect()),
+                CutoutShape::Rectangle(testkit::sample_cutout_rect()),
                 CutoutDepth::Blind { depth: sample_blind_depth() },
                 FaceSide::A,
             )

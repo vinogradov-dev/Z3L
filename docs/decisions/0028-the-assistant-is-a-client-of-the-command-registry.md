@@ -5,7 +5,7 @@
 
 ## Context
 
-FurniCraft is to gain an assistant — **Faber** — that follows the project in real time, answers in
+Z3L is to gain an assistant — **Faber** — that follows the project in real time, answers in
 chat or by voice, and edits the document the way a person does. It must run with a window, so the
 user can watch it work, and headless, so it can process existing orders in the background. The
 language model may be local or remote, and the feature is disabled by default because it needs a
@@ -21,7 +21,7 @@ it one more client of the surface the UI already uses. A private mutation path w
   mutation path, no direct `Project` write, and no shell or filesystem tool by default. The tool
   registry is built from `CommandRegistry` plus read-only session queries; the UI, a future CLI, an
   MCP adapter and Faber dispatch the same ids.
-- **The core is deterministic and model-agnostic.** `furnicraft-agent` holds the tool registry, the
+- **The core is deterministic and model-agnostic.** `agent` holds the tool registry, the
   permission policy, the task runner, the scene digest and the ports. It has no HTTP client, no
   async runtime, no `egui` and no `wgpu`. A scripted model in tests must run a whole task without a
   network. The language model is an injected adapter behind a `ChatModel` port, exactly as
@@ -38,7 +38,7 @@ it one more client of the surface the UI already uses. A private mutation path w
 - **The core does not see pixels in v1.** Faber reads the scene: the node tree, panels, materials,
   placements, machining, diagnostics and derived measures. An optional screenshot channel for a
   vision model is a separate decision and never a prerequisite for control.
-- **The persona is Faber; the code stays neutral.** The crate and types are `furnicraft-agent` and
+- **The persona is Faber; the code stays neutral.** The crate and types are `agent` and
   `Agent*`, settings are `agent.*`. Renaming the persona must not touch code.
 - **The app never listens.** A remote agent is reached through an outbound connection; the product
   contains no HTTP server (`AGENTS.md` §7).

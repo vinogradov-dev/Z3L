@@ -6,7 +6,7 @@
 use crate::contour::{MAX_SELF_INTERSECTION_PAIRS, SELF_INTERSECTION_TOLERANCE_MICROMETRES, SegBounds, segments_touch};
 use crate::panel::{core_violation_of, rects_overlap, validate_ring_banding};
 use crate::tree::{find_container_mut, find_panel_mut};
-use furnicraft_geom::Region;
+use geom::Region;
 
 use super::scan_tree;
 use crate::*;
@@ -937,7 +937,7 @@ mod tests {
     use crate::fixtures::*;
     use crate::*;
 
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     #[test]
     fn a_new_panel_is_anchored_at_its_base_corner_in_a_nested_turned_parent() {
@@ -1561,7 +1561,7 @@ mod tests {
 
     /// A bevel about one rectangle edge, at `millidegrees`.
     fn bevel(edge: RectEdge, millidegrees: i64) -> EdgeBevel {
-        EdgeBevel::new(EdgeRef::Rect { edge: edge.id() }, furnicraft_units::Degrees::from_millidegrees(millidegrees))
+        EdgeBevel::new(EdgeRef::Rect { edge: edge.id() }, units::Degrees::from_millidegrees(millidegrees))
             .expect("a bevel")
     }
 
@@ -1579,8 +1579,8 @@ mod tests {
             ContourSegment::arc(
                 [millimetres(90), millimetres(10)],
                 millimetres(10),
-                furnicraft_units::Degrees::from_millidegrees(-90_000),
-                furnicraft_units::Degrees::from_millidegrees(90_000),
+                units::Degrees::from_millidegrees(-90_000),
+                units::Degrees::from_millidegrees(90_000),
             )
             .expect("quarter arc"),
             ContourSegment::line([millimetres(100), millimetres(10)], [millimetres(100), millimetres(50)])
@@ -1689,19 +1689,19 @@ mod tests {
         let mut project = Project::new(root).expect("valid project");
 
         let line = EdgeRef::Ring { segment: segment_id(1) };
-        let turn = EdgeBevel::new(line, furnicraft_units::Degrees::from_millidegrees(20_000)).expect("a bevel");
+        let turn = EdgeBevel::new(line, units::Degrees::from_millidegrees(20_000)).expect("a bevel");
         project.set_panel_bevel(panel_id, turn).expect("bevel a straight ring segment");
         assert_eq!(project.panel(panel_id).expect("panel").bevel_at(line), Some(turn));
 
         // The quarter arc's end face is a ruled surface, not a plane, so it is refused.
         let arc = EdgeRef::Ring { segment: segment_id(2) };
-        let curved = EdgeBevel::new(arc, furnicraft_units::Degrees::from_millidegrees(20_000)).expect("a bevel");
+        let curved = EdgeBevel::new(arc, units::Degrees::from_millidegrees(20_000)).expect("a bevel");
         assert_eq!(
             project.validate_panel_bevel(panel_id, curved),
             Err(ProjectError::Panel(PanelError::CurvedBevel { on: arc }))
         );
         let missing = EdgeRef::Ring { segment: segment_id(9) };
-        let ghost = EdgeBevel::new(missing, furnicraft_units::Degrees::from_millidegrees(20_000)).expect("a bevel");
+        let ghost = EdgeBevel::new(missing, units::Degrees::from_millidegrees(20_000)).expect("a bevel");
         assert_eq!(
             project.validate_panel_bevel(panel_id, ghost),
             Err(ProjectError::Panel(PanelError::UnsupportedBevel { on: missing }))

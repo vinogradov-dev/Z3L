@@ -1,6 +1,6 @@
 //! The tool: one command table that drives dispatch and the help, and nothing hand-written twice.
 //!
-//! A project imports this crate and registers at most a few commands of its own — FurniCraft adds
+//! A project imports this crate and registers at most a few commands of its own — Z3L adds
 //! only its layer rules and its `ci` step list — so the plan surface, its `--help` and its behaviour
 //! come with the version of the crate, not with a copy in the host's runner.
 //!
@@ -561,13 +561,13 @@ mod tests {
         std::fs::create_dir_all(root.join("plan")).expect("plan is writable");
         std::fs::write(
             root.join("plan/state.conf"),
-            "# a comment\nrunner = cargo xtask\ndecisions = docs/adr\nproject = FurniCraft\n",
+            "# a comment\nrunner = cargo xtask\ndecisions = docs/adr\nproject = Z3L\n",
         )
         .expect("the config is writable");
         let config = Config::read(&root).expect("the config parses").expect("the file exists");
         assert_eq!(config.runner, "cargo xtask");
         assert_eq!(config.decisions, PathBuf::from("docs/adr"));
-        assert_eq!(config.project, "FurniCraft");
+        assert_eq!(config.project, "Z3L");
         assert_eq!(config.task_command(), "cargo xtask task");
 
         std::fs::write(root.join("plan/state.conf"), "runnerr = oops\n").expect("the config is writable");
@@ -580,9 +580,9 @@ mod tests {
 
     #[test]
     fn the_agents_section_speaks_about_the_project_and_its_command() {
-        let config = Config { project: "FurniCraft".to_owned(), runner: "cargo xtask".to_owned(), ..Config::default() };
+        let config = Config { project: "Z3L".to_owned(), runner: "cargo xtask".to_owned(), ..Config::default() };
         let text = agents_text(&config);
-        assert!(text.contains("FurniCraft"), "{text}");
+        assert!(text.contains("Z3L"), "{text}");
         assert!(text.contains("cargo xtask task"), "{text}");
         assert!(!text.contains("{{"), "every placeholder is filled: {text}");
     }

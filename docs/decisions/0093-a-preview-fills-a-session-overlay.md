@@ -20,7 +20,7 @@ mean, and what an assistant or a CLI would have to call.
 
 ## Decision
 
-**The overlay is session state.** `furnicraft_engine::Preview` maps a node id to the geometry that node
+**The overlay is session state.** `engine::Preview` maps a node id to the geometry that node
 would have, and `Session` holds one. `Session::set_preview_geometry` and `Session::clear_preview` are
 the only ways in; neither touches `Project::revision`, the undo stack or the dirty marker, and nothing
 in the overlay is ever serialised. `Session::drawn_geometry(id)` is what the viewport asks for, and it

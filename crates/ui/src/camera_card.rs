@@ -9,12 +9,12 @@
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
 use egui::{TextEdit, Ui};
-use furnicraft_engine::node_cmds::NODE_RENAME_ID;
-use furnicraft_engine::scene_cmds::{CAMERA_PROJECTION_SET_ID, SCENE_ACTIVE_CAMERA_SET_ID};
-use furnicraft_engine::{CameraProjectionSet, EditScope, NodeRename, SceneActiveCameraSet, Session};
-use furnicraft_model::{CameraProjection, Id};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::{Degrees, Length};
+use engine::node_cmds::NODE_RENAME_ID;
+use engine::scene_cmds::{CAMERA_PROJECTION_SET_ID, SCENE_ACTIVE_CAMERA_SET_ID};
+use engine::{CameraProjectionSet, EditScope, NodeRename, SceneActiveCameraSet, Session};
+use model::{CameraProjection, Id};
+use text::{Lang, Message};
+use units::{Degrees, Length};
 
 use crate::command::{dispatch, json};
 use crate::scrub::{self, CommitPolicy, Scrub};
@@ -285,10 +285,10 @@ fn set_active_camera(session: &mut Session, request: SceneActiveCameraSet) -> Re
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::CameraCreate;
-    use furnicraft_engine::scene_cmds::CAMERA_CREATE_ID;
-    use furnicraft_model::Placement;
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use engine::CameraCreate;
+    use engine::scene_cmds::CAMERA_CREATE_ID;
+    use model::Placement;
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 

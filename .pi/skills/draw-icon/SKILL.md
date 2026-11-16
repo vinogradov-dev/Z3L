@@ -1,6 +1,6 @@
 ---
 name: draw-icon
-description: "Create, edit or review a FurniCraft icon: a toolbar geometry icon or a service action (confirm, cancel, undo, file, warning). Use only when adding or changing an SVG under assets/icons."
+description: "Create, edit or review a Z3L icon: a toolbar geometry icon or a service action (confirm, cancel, undo, file, warning). Use only when adding or changing an SVG under assets/icons."
 license: MIT
 compatibility: pi
 metadata:
@@ -8,7 +8,7 @@ metadata:
   workflow: ui-assets
 ---
 
-# Draw a FurniCraft icon
+# Draw a Z3L icon
 
 Icons are assets, not code (`AGENTS.md` §4.12). This skill is the checklist for adding, editing or
 reviewing one; it does not apply to code that merely displays an icon.
@@ -133,7 +133,7 @@ If an element cannot be labelled with its role (guide §3), remove it.
 - the metaphor matches the operation, not a neighbouring command;
 - a service icon uses the same glyph on every surface and distinguishes status by enclosure;
 - the SVG parses and rasterises at the size the button draws;
-- `cargo test -p furnicraft-ui --lib icons` passes: footprint inside `2.25..21.75`, coverage
+- `cargo test -p ui --lib icons` passes: footprint inside `2.25..21.75`, coverage
   10–40 % of the 20 × 20 area, non-empty at 16 and 20 px.
 
 ## 7. Register and close

@@ -19,12 +19,12 @@ features; only evaluation should know how those features become solids.
 
 ## Decision
 
-- `furnicraft-param::solid` defines the one derived description of a solid: `SolidPlan` is a base
+- `param::solid` defines the one derived description of a solid: `SolidPlan` is a base
   `Extrude` followed by boolean steps, and each step owns a nested `SolidPlan` as its tool.
 - A plan is built through `PlanBuilder`, is never serialized, and is rebuilt from the document when
   a feature changes. The document remains the source of truth.
-- `SolidPlan` knows profiles, frames and distances in millimetres. It imports `furnicraft-geom` and
-  `furnicraft-kernel` and never `furnicraft-model`; a caller converts `Length` to millimetres at
+- `SolidPlan` knows profiles, frames and distances in millimetres. It imports `geom` and
+  `kernel` and never `model`; a caller converts `Length` to millimetres at
   the boundary.
 - `PlanBackend` is the extension point. `evaluate_with` owns the fold, so the same plan drives the
   geometry kernel (`KernelBackend`) and the analytic single-extrusion backend

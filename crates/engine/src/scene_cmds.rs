@@ -6,14 +6,14 @@
 //!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
-use furnicraft_model::{CameraProjection, Catalog, Id, LightKind, LightNode, Placement, Project};
+use model::{CameraProjection, Catalog, Id, LightKind, LightNode, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::node_cmds::{parse, validate_name};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the camera creation command.
 pub const CAMERA_CREATE_ID: &str = "camera.create";
@@ -263,8 +263,8 @@ fn valid_intensity(intensity: f32) -> bool {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::Revision;
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use model::Revision;
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 
@@ -331,7 +331,7 @@ mod tests {
         assert!(session.dispatch(CAMERA_CREATE_ID, &value).is_err());
 
         bad_parent.name = "Camera".to_owned();
-        bad_parent.projection = CameraProjection::Perspective { fov_y: furnicraft_units::Degrees::ZERO };
+        bad_parent.projection = CameraProjection::Perspective { fov_y: units::Degrees::ZERO };
         let value = serde_json::to_value(&bad_parent).expect("params");
         assert!(session.dispatch(CAMERA_CREATE_ID, &value).is_err());
 
@@ -388,9 +388,8 @@ mod tests {
             .expect("a light id");
         let before = session.project().revision();
 
-        let orthographic = CameraProjection::Orthographic {
-            height: furnicraft_units::Length::from_millimetres(2_000).expect("height"),
-        };
+        let orthographic =
+            CameraProjection::Orthographic { height: units::Length::from_millimetres(2_000).expect("height") };
         let value = serde_json::to_value(CameraProjectionSet { camera, projection: orthographic }).expect("params");
         session.dispatch(CAMERA_PROJECTION_SET_ID, &value).expect("projection");
         assert_eq!(session.project().revision(), before.checked_next().expect("revision"));
@@ -422,7 +421,7 @@ mod tests {
     fn a_camera_and_a_light_rename_move_and_hold_properties() {
         use crate::node_cmds::{NODE_PLACEMENT_SET_MANY_ID, NODE_PROPERTY_SET_ID, NODE_RENAME_ID};
         use crate::{NodePlacement, NodePlacementSetMany, NodePropertySet, NodeRename};
-        use furnicraft_model::PropertyValue;
+        use model::PropertyValue;
 
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let camera = session

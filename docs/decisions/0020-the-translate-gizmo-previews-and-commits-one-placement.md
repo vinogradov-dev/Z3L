@@ -22,7 +22,7 @@ the document or the evaluated meshes.
 
 ## Decision
 
-- The shell owns a screen-space translate gizmo in `apps/furnicraft/src/translate_gizmo.rs`. It
+- The shell owns a screen-space translate gizmo in `app/src/translate_gizmo.rs`. It
   projects three world-axis handles from the selected node's manipulation pivot, keeps them at a
   constant screen length, and paints them over the viewport image. It changes only shell state. The
   pivot is settled by [0026](0026-the-manipulation-pivot-is-stored-node-data.md).

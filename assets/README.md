@@ -123,6 +123,6 @@ theme and the file name stay unchanged.
 
 ## Ownership
 
-The icons are drawn for FurniCraft and carry the project license, MIT OR Apache-2.0. Do not copy an
+The icons are drawn for Z3L and carry the project license, MIT OR Apache-2.0. Do not copy an
 icon set from another product (`AGENTS.md` §4.6): a third-party icon keeps its license file next to
 the asset and gets a row in `ATTRIBUTION.md` in the same change.

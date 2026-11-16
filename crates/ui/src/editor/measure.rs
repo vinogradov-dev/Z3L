@@ -7,7 +7,7 @@
 //!
 //! Changes when: the ruler is armed or disarmed by another surface, or it stops owning the pointer.
 
-use furnicraft_units::Length;
+use units::Length;
 
 use super::Editor;
 use crate::measure::{Measure, MeasureClick};

@@ -15,11 +15,11 @@
 use std::ops::RangeInclusive;
 
 use egui::{RichText, Ui};
-use furnicraft_engine::node_cmds::{NODE_PLACEMENT_SET_ID, NODE_PLACEMENT_WORLD_ZERO_ID};
-use furnicraft_engine::{EditScope, NodePlacementSet, NodePlacementWorldZero, Session};
-use furnicraft_model::{EulerAngles, Id, Placement};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use engine::node_cmds::{NODE_PLACEMENT_SET_ID, NODE_PLACEMENT_WORLD_ZERO_ID};
+use engine::{EditScope, NodePlacementSet, NodePlacementWorldZero, Session};
+use model::{EulerAngles, Id, Placement};
+use text::{Lang, Message};
+use units::Length;
 
 use crate::command::{dispatch, json};
 use crate::coords;
@@ -347,8 +347,8 @@ fn apply_world_zero(session: &mut Session, node: Id, lang: Lang) -> Result<(), S
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_testkit::{sample_catalog, sample_project};
-    use furnicraft_units::Degrees;
+    use testkit::{sample_catalog, sample_project};
+    use units::Degrees;
 
     use super::*;
 

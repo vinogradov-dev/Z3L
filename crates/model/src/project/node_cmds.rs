@@ -1,7 +1,7 @@
 //! Commands that change the tree: placement, naming, duplication, grouping and removal.
 
-use furnicraft_geom::DVec3;
-use furnicraft_units::Length;
+use geom::DVec3;
+use units::Length;
 
 use crate::frame::children_center;
 use crate::tree::{
@@ -484,7 +484,7 @@ mod tests {
     use crate::tree::panel_bounds;
     use crate::*;
 
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     /// Asserts that two placements describe the same frame within the micrometre an anchor keeps.
     fn assert_same_frame(actual: Placement, expected: Placement, what: &str) {

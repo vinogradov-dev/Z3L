@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{Align, Context, Id, Layout, Modal, RichText, Ui};
 
-use furnicraft_text::Message;
+use text::Message;
 
 use crate::theme;
 
@@ -179,8 +179,8 @@ mod tests {
 
     #[test]
     fn home_names_the_start_actions_and_the_recent_file() {
-        let texts = drawn_home(&[PathBuf::from("/tmp/cabinet.fcs")]);
-        for expected in ["New scene", "Open scene…", "Empty template", "cabinet.fcs"] {
+        let texts = drawn_home(&[PathBuf::from("/tmp/cabinet.z3l")]);
+        for expected in ["New scene", "Open scene…", "Empty template", "cabinet.z3l"] {
             assert!(texts.iter().any(|text| text.contains(expected)), "{expected} is missing: {texts:?}");
         }
     }

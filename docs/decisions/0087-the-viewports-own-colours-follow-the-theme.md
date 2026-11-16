@@ -18,11 +18,11 @@ not a property of the piece.
 
 ## Decision
 
-- `furnicraft_scene` owns the pairs: `SceneColors::DARK` and `SceneColors::LIGHT`, each holding the
+- `scene` owns the pairs: `SceneColors::DARK` and `SceneColors::LIGHT`, each holding the
   clear colour, a dark or light `Grid` (`Grid::DARK`, `Grid::LIGHT`) and the line ink. The values
   live beside the frame they paint, so the renderer needs no theme concept and `scene` keeps its
   layer: it does not know `egui`.
-- `furnicraft_ui::theme::scene_colors(theme)` is the one bridge from the active `egui::Theme` to
+- `ui::theme::scene_colors(theme)` is the one bridge from the active `egui::Theme` to
   those values. The shell resolves it once per frame into `Shell::colors`, so a preference switch —
   including *System* following the OS while the window is open — reaches the viewport on the next
   frame without a document edit.

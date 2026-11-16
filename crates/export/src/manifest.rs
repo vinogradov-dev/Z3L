@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::table::{Column, TABLES};
 
 /// The format identity written into every manifest.
-pub const FORMAT: &str = "furnicraft.order";
+pub const FORMAT: &str = "furniture.order";
 
 /// The major version of the published contract (ADR 0095).
 pub const VERSION: u32 = 1;

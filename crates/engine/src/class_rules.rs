@@ -17,8 +17,8 @@
 
 use std::fmt;
 
-use furnicraft_model::{ClassCode, Extent, Id, Level, MachiningKind, Measure, Nesting, Operation, Project, TraitSet};
-use furnicraft_text::{Lang, Message};
+use model::{ClassCode, Extent, Id, Level, MachiningKind, Measure, Nesting, Operation, Project, TraitSet};
+use text::{Lang, Message};
 
 /// One local dimension of a node: the pair the `extent` trait gates.
 ///
@@ -259,8 +259,8 @@ impl NodeRules {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{PropertyValue, SYSTEM_CLASS};
-    use furnicraft_testkit::sample_project;
+    use model::{PropertyValue, SYSTEM_CLASS};
+    use testkit::sample_project;
 
     use super::*;
 

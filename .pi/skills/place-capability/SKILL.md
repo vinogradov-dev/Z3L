@@ -1,6 +1,6 @@
 ---
 name: place-capability
-description: "Place a FurniCraft capability in the interface: its inventory row, the places that draw it, its context, key, icon and label, and the atoms it consumes. Use when a command, a method or an atom is added, renamed or removed, or when a capability moves between the ribbon, the context menu, the tool card, the palette, an inspector card and the API."
+description: "Place a Z3L capability in the interface: its inventory row, the places that draw it, its context, key, icon and label, and the atoms it consumes. Use when a command, a method or an atom is added, renamed or removed, or when a capability moves between the ribbon, the context menu, the tool card, the palette, an inspector card and the API."
 license: MIT
 compatibility: pi
 metadata:
@@ -31,7 +31,7 @@ same defect as a second numeric field.
 ## The row
 
 One `Row` per capability, keyed by the command's stable id: `id`, `label`, `places`, `applies`, `key`,
-`icon`. A row carries no behaviour — the command stays in `furnicraft-engine`.
+`icon`. A row carries no behaviour — the command stays in `engine`.
 
 1. **Name the id.** `<area>.<verb>`, lowercase and stable forever: a new meaning gets a new id. Add
    the command to `crates/engine/src/commands.rs` (`COMMANDS`) from its own
@@ -51,7 +51,7 @@ One `Row` per capability, keyed by the command's stable id: `id`, `label`, `plac
    under its id; a drawing or view tool's under the *method* id of the ribbon map, because a command
    reached by six methods has six keys; a shell action (`file.save`, `edit.undo`) is one row of
    `ACTIONS` with its words. The readers ask the table by id — `consume` in
-   `apps/furnicraft/src/shortcuts.rs` for the shell, `inventory::key_label` for the ribbon hint and
+   `app/src/shortcuts.rs` for the shell, `inventory::key_label` for the ribbon hint and
    the Settings page — so a remapped key is a data edit. A key that shadows a text field or a running
    tool is a finding (ADR 0076).
 5. **Name the icon, or leave it empty.** `icon` is the *one* button that draws the capability, taken

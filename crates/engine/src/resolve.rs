@@ -3,8 +3,8 @@
 //! The model stores fallback thicknesses so a missing material never makes a scene unreadable. The
 //! session resolves the catalogue first and uses those fallbacks only when a material is absent.
 
-use furnicraft_model::{BandingSpec, Catalog, Id, Panel, PanelGeometry, Project, ProjectError};
-use furnicraft_units::Length;
+use model::{BandingSpec, Catalog, Id, Panel, PanelGeometry, Project, ProjectError};
+use units::Length;
 
 /// The resolved panel thickness: catalogue material first, stored fallback otherwise.
 pub(crate) fn panel_thickness(panel: &Panel, catalog: &Catalog) -> Length {
@@ -41,16 +41,14 @@ mod tests {
 
     use super::*;
 
-    use furnicraft_model::{EdgeBanding, EdgeBandingMaterial, PanelMaterial};
-    use furnicraft_testkit::{
-        millimetres, sample_edge_material_id, sample_material_id, sample_panel_thickness, sample_project,
-    };
+    use model::{EdgeBanding, EdgeBandingMaterial, PanelMaterial};
+    use testkit::{millimetres, sample_edge_material_id, sample_material_id, sample_panel_thickness, sample_project};
 
     #[test]
     fn catalogue_values_override_stored_fallbacks() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let edge_id = furnicraft_model::EdgeId::new(1).expect("edge");
+        let edge_id = model::EdgeId::new(1).expect("edge");
         let band =
             EdgeBanding::new(edge_id, sample_edge_material_id(), true, millimetres(2), millimetres(22)).expect("band");
         project.set_edge_banding(panel_id, band).expect("banding");

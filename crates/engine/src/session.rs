@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use furnicraft_model::{BandingSpec, Catalog, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
-use furnicraft_param::EdgeBandProfile;
+use model::{BandingSpec, Catalog, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
+use param::EdgeBandProfile;
 use serde_json::Value;
 
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
@@ -343,20 +343,20 @@ impl Session {
 mod tests {
     use super::*;
 
-    use furnicraft_model::{
+    use model::{
         Catalog, ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth,
         CutoutShape, EdgeBandingMaterial, EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor,
         MachiningParams, PanelContourError, PanelMaterial, PanelNominalSize, PanelOutline, PivotLocal, Placement,
         ProjectError, PropertyValue, RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
     };
-    use furnicraft_testkit::{
+    use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
         sample_edge_cutout_rect, sample_edge_material_id, sample_material_id, sample_narrow_panel_nominal_size,
         sample_notch_cutout_rect, sample_outside_cutout_rect, sample_overlapping_cutout_rect,
         sample_panel_nominal_size, sample_panel_thickness, sample_product_project, sample_project,
         sample_resized_panel_nominal_size, sample_thin_panel_thickness, sample_wide_band_thickness,
     };
-    use furnicraft_units::Length;
+    use units::Length;
 
     use crate::class_rules::{ClassRefusal, CreationRefusal, Dimension};
     use crate::node_cmds::{
@@ -620,8 +620,8 @@ mod tests {
         // A shaped fill that meets a leaned wall hands its bevel list to the same `panel.create`, so
         // the part is one create and one undo entry rather than a create plus one edit per edge
         // (ADR 0107, ADR 0108).
-        use furnicraft_model::{ContourSegmentId, EdgeBevel, EdgeRef};
-        use furnicraft_units::Degrees;
+        use model::{ContourSegmentId, EdgeBevel, EdgeRef};
+        use units::Degrees;
 
         let mut session = product_session();
         let product = session.active_product().expect("a product is open");
@@ -672,7 +672,7 @@ mod tests {
         let mut session = product_session();
         let product = session.active_product().expect("a product is open");
         let size = PanelNominalSize::new(millimetres_length(600), millimetres_length(400)).expect("a size");
-        let feature = furnicraft_model::CornerFeature::new(
+        let feature = model::CornerFeature::new(
             RectCorner::TopRight.id(),
             CornerFeatureKind::Chamfer { incoming: millimetres_length(15), outgoing: millimetres_length(40) },
         )
@@ -712,7 +712,7 @@ mod tests {
         let features = [(RectCorner::BottomLeft, 40, 40), (RectCorner::BottomRight, 60, 20)]
             .into_iter()
             .map(|(corner, incoming, outgoing)| {
-                furnicraft_model::CornerFeature::new(
+                model::CornerFeature::new(
                     corner.id(),
                     CornerFeatureKind::Chamfer {
                         incoming: millimetres_length(incoming),
@@ -805,15 +805,15 @@ mod tests {
         ));
 
         let mut unknown_material = contour_panel_create(&session, source, "Top");
-        unknown_material.material = furnicraft_model::MaterialId::new(9_999).expect("id");
+        unknown_material.material = model::MaterialId::new(9_999).expect("id");
         assert!(!spec.enabled(&session, &json_params(&unknown_material)));
         assert_eq!(session.project().revision(), before);
     }
 
     #[test]
     fn contour_panel_create_lands_exactly_over_its_source_in_a_turned_container() {
-        use furnicraft_model::{EulerAngles, Placement};
-        use furnicraft_units::Degrees;
+        use model::{EulerAngles, Placement};
+        use units::Degrees;
 
         let mm = |value: i64| Length::from_millimetres(value).expect("millimetres");
         let (mut project, product) = sample_product_project();
@@ -913,7 +913,7 @@ mod tests {
 
         // The re-anchored panel is a valid document: a save and load keeps it as it is.
         let text = serde_json::to_string(session.project()).expect("serialize the edited project");
-        let decoded: furnicraft_model::Project = serde_json::from_str(&text).expect("reload the edited project");
+        let decoded: model::Project = serde_json::from_str(&text).expect("reload the edited project");
         assert_eq!(decoded.panel(created).expect("reloaded panel").outline_contour(), Some(&moved));
         assert_eq!(decoded.pivot_local(created), Some(PivotLocal::ZERO));
 
@@ -1108,7 +1108,7 @@ mod tests {
 
         let scope = session.begin_edit();
         for width in [720, 740, 760] {
-            let size = furnicraft_model::PanelNominalSize::new(
+            let size = model::PanelNominalSize::new(
                 Length::from_millimetres(700).expect("length"),
                 Length::from_millimetres(width).expect("width"),
             )
@@ -1135,7 +1135,7 @@ mod tests {
         // dispatch that carries it, so no `begin_edit` is needed.
         let scope = session.edit_scope();
         for width in [720, 740] {
-            let size = furnicraft_model::PanelNominalSize::new(
+            let size = model::PanelNominalSize::new(
                 Length::from_millimetres(700).expect("length"),
                 Length::from_millimetres(width).expect("width"),
             )
@@ -1577,7 +1577,7 @@ mod tests {
     #[test]
     fn unknown_materials_are_rejected_without_mutation() {
         let mut session = sample_session();
-        let missing = furnicraft_model::MaterialId::new(999).expect("id");
+        let missing = model::MaterialId::new(999).expect("id");
         let params = json_params(&PanelMaterialSet { panel: Id::new(2).expect("id"), material: missing });
         let error = session.dispatch("panel.material.set", &params).expect_err("unknown material");
         assert!(matches!(error, CommandError::UnknownMaterial { material } if material == missing));
@@ -2549,7 +2549,7 @@ mod tests {
             .dispatch("node.placement.world_zero", &json_params(&NodePlacementWorldZero { node: panel }))
             .expect("zero a root-level translation");
         let world = session.project().world_placement(panel).expect("world placement");
-        assert_eq!(world.translation(), furnicraft_model::Placement::IDENTITY.translation());
+        assert_eq!(world.translation(), model::Placement::IDENTITY.translation());
         assert_eq!(world.rotation(), turned.rotation());
 
         let error = session
@@ -2774,7 +2774,7 @@ mod tests {
     }
 
     fn resize_request(panel: Id, length_mm: i64, width_mm: i64) -> Value {
-        let nominal_size = furnicraft_model::PanelNominalSize::new(
+        let nominal_size = model::PanelNominalSize::new(
             Length::from_millimetres(length_mm).expect("length"),
             Length::from_millimetres(width_mm).expect("width"),
         )
@@ -2939,8 +2939,8 @@ mod tests {
 mod product_tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{ClassCode, Envelope};
-    use furnicraft_testkit::{millimetres, sample_catalog, sample_project};
+    use model::{ClassCode, Envelope};
+    use testkit::{millimetres, sample_catalog, sample_project};
 
     use crate::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
     use crate::session::Session;
@@ -2954,7 +2954,7 @@ mod product_tests {
     }
 
     /// A session with two products, created through the one creation command.
-    fn session_with_two_products() -> (Session, furnicraft_model::Id, furnicraft_model::Id) {
+    fn session_with_two_products() -> (Session, model::Id, model::Id) {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let mut create = |name: &str| {
@@ -3005,7 +3005,7 @@ mod product_tests {
     fn only_a_product_container_can_be_opened() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let root = session.project().root().id();
-        let panel = furnicraft_model::Id::new(2).expect("the sample panel");
+        let panel = model::Id::new(2).expect("the sample panel");
         assert!(!session.open_product(root), "the root is a frame, not a product");
         assert!(!session.open_product(panel), "a panel is not a product");
         assert_eq!(session.active_product(), None);
@@ -3020,7 +3020,7 @@ mod product_tests {
         assert!(!text.contains("active_product"), "openness never reaches the file: {text}");
         assert!(!text.contains("\"open\""), "no open flag is stored on a node");
 
-        let reloaded = serde_json::from_str::<furnicraft_model::Project>(&text).expect("load the scene");
+        let reloaded = serde_json::from_str::<model::Project>(&text).expect("load the scene");
         let next = Session::with_catalog(reloaded, sample_catalog());
         assert_eq!(next.active_product(), None, "a reloaded scene starts with every product closed");
     }

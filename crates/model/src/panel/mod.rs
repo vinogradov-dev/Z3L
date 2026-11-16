@@ -2,15 +2,15 @@
 //!
 //! The panel stores the outline and the fallbacks, not the resolved core; [`Panel::geometry`]
 //! derives that. Its local frame is anchored at the outline's minimum corner. Commands in
-//! `furnicraft-engine` reach the panel through the crate API and mutate it through the
+//! `engine` reach the panel through the crate API and mutate it through the
 //! crate-internal setters here.
 
 use std::collections::HashSet;
 
-use furnicraft_geom::{DVec3, Region, Segment, subtract_regions};
-use furnicraft_units::Length;
+use geom::{DVec3, Region, Segment, subtract_regions};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 mod banding;
 mod classify;
@@ -1012,7 +1012,7 @@ mod tests {
     use super::*;
     use crate::*;
 
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     use crate::fixtures::*;
 

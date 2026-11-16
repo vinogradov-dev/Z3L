@@ -4,10 +4,10 @@
 
 #![allow(clippy::expect_used)]
 
-use furnicraft_testkit::millimetres;
+use testkit::millimetres;
 
 use super::*;
-use furnicraft_text::Lang;
+use text::Lang;
 
 #[test]
 fn a_drawing_draft_builds_an_open_path_from_its_clicks() {

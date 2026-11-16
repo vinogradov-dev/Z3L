@@ -14,17 +14,17 @@ mod cutout;
 use std::collections::HashSet;
 
 use egui::{ComboBox, RichText, Ui};
-use furnicraft_engine::panel_cmds::{MACHINING_ADD_ID, MACHINING_MOVE_ID, MACHINING_REMOVE_ID, MACHINING_UPDATE_ID};
-use furnicraft_engine::{
+use engine::panel_cmds::{MACHINING_ADD_ID, MACHINING_MOVE_ID, MACHINING_REMOVE_ID, MACHINING_UPDATE_ID};
+use engine::{
     NodeRules, PanelDiagnostic, PanelMachiningAdd, PanelMachiningMove, PanelMachiningRemove, PanelMachiningUpdate,
     Session, operation_of,
 };
-use furnicraft_model::{
+use model::{
     EdgeId, EdgeRef, FaceSide, Id, MACHINING_DESCRIPTORS, Machining, MachiningAnchor, MachiningCapabilities,
     MachiningCategory, MachiningId, MachiningKind, MachiningParams, Panel,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use text::{Lang, Message};
+use units::Length;
 
 use crate::command::{dispatch, json};
 use crate::contour_edit::{ContourEntry, ContourTarget};
@@ -461,8 +461,8 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use furnicraft_model::{Cutout, CutoutDepth, CutoutShape, PanelRect};
-    use furnicraft_testkit::{sample_catalog, sample_cutout_rect, sample_project};
+    use model::{Cutout, CutoutDepth, CutoutShape, PanelRect};
+    use testkit::{sample_catalog, sample_cutout_rect, sample_project};
 
     fn mm(millimetres: i64) -> Length {
         Length::from_millimetres(millimetres).expect("millimetres")
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn the_add_menu_lists_only_the_operations_the_class_admits() {
-        use furnicraft_model::ClassCode;
+        use model::ClassCode;
 
         let free = NodeRules::of_code(ClassCode::UNCLASSIFIED);
         assert_eq!(admitted_groups(free).iter().map(|(_, kinds)| kinds.len()).sum::<usize>(), MachiningKind::ALL.len());
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn an_edge_only_kind_anchors_on_the_first_ring_segment_of_a_contour_panel() {
-        use furnicraft_model::{Contour, Placement};
+        use model::{Contour, Placement};
         let mut project = sample_project();
         let ring = Contour::from_polygon(vec![
             [Length::ZERO, Length::ZERO],

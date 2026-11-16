@@ -38,10 +38,10 @@
 use std::collections::BTreeMap;
 
 use egui::Ui;
-use furnicraft_engine::PrimitiveKind;
-use furnicraft_model::{ClassCode, FillMode, Id};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use engine::PrimitiveKind;
+use model::{ClassCode, FillMode, Id};
+use text::{Lang, Message};
+use units::Length;
 
 use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
 use crate::box_tool::BoxOwner;
@@ -268,7 +268,7 @@ pub const fn strip_label(tool: DrawTool) -> Message {
 
 /// The view state the ribbon reads from the shell: how the camera and the work plane are set.
 ///
-/// The ribbon is a UI surface in `furnicraft-ui`, but the projection, the grid snap and the framing
+/// The ribbon is a UI surface in `ui`, but the projection, the grid snap and the framing
 /// belong to the shell that owns the view camera and the drawing gizmo. They arrive as this small
 /// snapshot, and a click comes back as a [`RibbonViewAction`], so the ribbon neither reads nor
 /// writes the viewport.
@@ -1476,7 +1476,7 @@ mod tests {
     #[test]
     fn every_drawn_row_fits_the_narrowest_window() {
         // A split cell adds its caret column beside the cell (X36), so the body is wider than its cell
-        // count by one caret per listed tool. The narrowest window FurniCraft opens is 640 x 480, and
+        // count by one caret per listed tool. The narrowest window Z3L opens is 640 x 480, and
         // the ribbon has no scroll area by design (ADR 0091), so a row that outgrew the window would
         // be clipped and lose a tool.
         const MIN_WINDOW_WIDTH: f32 = 640.0;

@@ -14,20 +14,18 @@
 //!
 //! Changes when: a creation tool, its command or the rule that places it changes.
 
-use furnicraft_engine::node_cmds::ASSEMBLY_CREATE_ID;
-use furnicraft_engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID;
-use furnicraft_engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
-use furnicraft_engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
-use furnicraft_engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
-use furnicraft_engine::{
-    AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, PrimitiveKind, Session,
-};
-use furnicraft_model::{
+use engine::node_cmds::ASSEMBLY_CREATE_ID;
+use engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID;
+use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
+use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
+use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
+use engine::{AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, PrimitiveKind, Session};
+use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
     Placement, Primitive, Project,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use text::{Lang, Message};
+use units::Length;
 
 use super::Editor;
 use crate::box_tool::{BoxDraft, BoxDraftError, BoxOwner};

@@ -1,6 +1,6 @@
 ---
 name: enforce-architecture
-description: "Audit FurniCraft's architectural boundaries: crate layering, forbidden UI/GPU dependencies, dependency hygiene and the checks that enforce them. Use when adding or moving code, adding a crate or dependency, reviewing a change, or before finishing a task that touches the workspace."
+description: "Audit Z3L's architectural boundaries: crate layering, forbidden UI/GPU dependencies, dependency hygiene and the checks that enforce them. Use when adding or moving code, adding a crate or dependency, reviewing a change, or before finishing a task that touches the workspace."
 license: MIT
 compatibility: pi
 metadata:
@@ -8,7 +8,7 @@ metadata:
   workflow: architecture
 ---
 
-# Enforce FurniCraft's architecture
+# Enforce Z3L's architecture
 
 The crate map is not a suggestion: a crate may depend only on **lower** layers, the document never touches the GPU, and the engine never touches the UI. This skill is the procedure for checking those boundaries before a task is called done.
 
@@ -16,7 +16,7 @@ The crate map is not a suggestion: a crate may depend only on **lower** layers, 
 
 - Adding, moving or deleting code that crosses a crate boundary.
 - Adding a workspace crate or an external dependency.
-- Reviewing a change, or finishing any task that touches `Cargo.toml`, `crates/`, `apps/` or `xtask/`.
+- Reviewing a change, or finishing any task that touches `Cargo.toml`, `crates/`, `app/` or `xtask/`.
 
 ## Source of truth
 
@@ -39,77 +39,77 @@ What it verifies today:
 1. Every workspace crate (except `xtask`) is registered in `CRATES`; an unregistered crate fails the check.
 2. Normal dependencies point only to **strictly lower** layers. Dev- and build-dependencies are skipped by design.
 3. Domain crates (`units`, `geom`, `model`, `param`, `mesh`, `scene`, `engine`) do not depend on `egui`, `eframe`, `egui-wgpu`, `wgpu` or `winit`.
-4. `render` does not depend on `egui`, `eframe`, `egui-wgpu`, `winit` or `furnicraft-model`.
+4. `render` does not depend on `egui`, `eframe`, `egui-wgpu`, `winit` or `model`.
 5. `ui` does not depend on `wgpu`, `egui-wgpu` or `winit`.
-6. `furnicraft-testkit` appears only under `[dev-dependencies]` (`DEV_ONLY`).
+6. `testkit` appears only under `[dev-dependencies]` (`DEV_ONLY`).
 
 What it does **not** verify (see "Known gaps"): file I/O inside `model`, document mutations performed by `ui`, window creation inside `render`, the general dev/build-dependency policy beyond `testkit`, and dependency licenses. Those need the manual checklist below.
 
 ## Manual checklist by crate
 
-### `furnicraft-units` (L0) — lengths
+### `units` (L0) — lengths
 
 - Allowed: `serde`.
 - Forbidden: anything graphical, the document, floats as the canonical representation of a physical size.
 - Check: public API exposes `Length` (integer micrometres), not `f32`/`f64` millimetres.
 
-### `furnicraft-geom` (L0) — math primitives
+### `geom` (L0) — math primitives
 
 - Allowed: `glam`, `serde`.
-- Forbidden: `furnicraft-model`, `wgpu`, `egui`, window/event types.
+- Forbidden: `model`, `wgpu`, `egui`, window/event types.
 - Check: `glam` types are re-exported here so the rest of the workspace never depends on `glam` directly.
 
-### `furnicraft-model` (L1) — document data
+### `model` (L1) — document data
 
-- Allowed: `furnicraft-units`, `serde`.
+- Allowed: `units`, `serde`.
 - Forbidden: `geom`, `mesh`, `scene`, `render`, `engine`, `ui`, `wgpu`, `egui`, `winit`, file/network/process APIs (`std::fs`, `std::net`, `std::process`), threads.
 - Check: the crate is data plus invariants; loading and saving belong to a future I/O layer, not here.
 
-### `furnicraft-param` (L2) — parametric resolve
+### `param` (L2) — parametric resolve
 
-- Allowed: `furnicraft-model`, `furnicraft-units`.
+- Allowed: `model`, `units`.
 - Forbidden: `mesh`, `geom`, `scene`, `render`, `engine`, `ui`, GPU/UI crates.
 - Check: resolution returns parts and typed errors; it does not build triangles.
 
-### `furnicraft-mesh` (L3) — triangle meshes
+### `mesh` (L3) — triangle meshes
 
-- Allowed: `furnicraft-model`, `furnicraft-geom`, `furnicraft-units`.
+- Allowed: `model`, `geom`, `units`.
 - Forbidden: `scene`, `render`, `engine`, `ui`, `wgpu`, `egui`.
 - Check: produces `geom` meshes; owns no GPU buffers, pipelines or devices.
 
-### `furnicraft-scene` (L4) — frame description
+### `scene` (L4) — frame description
 
-- Allowed: `furnicraft-model`, `furnicraft-geom`, `furnicraft-mesh`.
+- Allowed: `model`, `geom`, `mesh`.
 - Forbidden: `wgpu`, `egui`, `eframe`, `winit`, `render`, `engine`, `ui`.
 - Check: drawables, camera, lights and selection are plain data, testable without a GPU.
 
-### `furnicraft-render` (L5) — wgpu renderer
+### `render` (L5) — wgpu renderer
 
-- Allowed: `furnicraft-scene`, `furnicraft-geom`, `wgpu`, `bytemuck`.
-- Forbidden: `egui`, `eframe`, `egui-wgpu`, `winit`, `furnicraft-engine`, `furnicraft-ui`, `furnicraft-model` (the scene already carries what to draw).
-- Check: no window or event loop is created here; `egui_wgpu` integration lives in `apps/furnicraft`.
+- Allowed: `scene`, `geom`, `wgpu`, `bytemuck`.
+- Forbidden: `egui`, `eframe`, `egui-wgpu`, `winit`, `engine`, `ui`, `model` (the scene already carries what to draw).
+- Check: no window or event loop is created here; `egui_wgpu` integration lives in `app`.
 - Enforced by `cargo xtask layers` (`render` is outside the domain list but has its own forbidden set).
 
-### `furnicraft-engine` (L6) — session and commands
+### `engine` (L6) — session and commands
 
-- Allowed: `furnicraft-model`, `furnicraft-param`, `furnicraft-mesh`.
-- Forbidden: `wgpu`, `egui`, `eframe`, `winit`, `furnicraft-scene`, `furnicraft-render`, `furnicraft-ui`.
+- Allowed: `model`, `param`, `mesh`.
+- Forbidden: `wgpu`, `egui`, `eframe`, `winit`, `scene`, `render`, `ui`.
 - Check: every document mutation is a command (see the `create-command` skill); no rendering, no windows, no UI types in error messages.
 
-### `furnicraft-ui` (L7) — egui shell
+### `ui` (L7) — egui shell
 
-- Allowed: `egui`, `furnicraft-engine`, `furnicraft-model`.
-- Forbidden: `wgpu`, `egui-wgpu`, `winit`, `furnicraft-render`, `furnicraft-scene` (the app passes what the UI needs).
+- Allowed: `egui`, `engine`, `model`.
+- Forbidden: `wgpu`, `egui-wgpu`, `winit`, `render`, `scene` (the app passes what the UI needs).
 - Check: no document mutation — no `&mut` on a model/session document, no `document_mut()`, no direct field assignment. Only `dispatch(command_id, params)` and reading session state.
 - Enforced by `cargo xtask layers` for the GPU edge; the "no mutation" rule still needs review.
 
-### `apps/furnicraft` (L7) — native shell
+### `app` (L7) — native shell
 
 - Allowed: everything below; this is the composition root.
 - Forbidden: domain rules, geometry algorithms, command implementations. The shell owns the window, input, the `egui_wgpu` paint callback and the event loop, and nothing else.
 - Check: the only crate that may create a window or an `eframe` app.
 
-### `furnicraft-testkit` (dev) — test helpers
+### `testkit` (dev) — test helpers
 
 - Allowed: anything in the workspace, for convenience.
 - Forbidden: appearing in a normal `[dependencies]` table anywhere.
@@ -140,13 +140,13 @@ Before adding an external crate:
 cargo xtask layers
 
 # 2. The engine must not see renderer, scene or UI crates.
-cargo tree -p furnicraft-engine -e normal | grep -E 'furnicraft-(render|scene|ui)|wgpu|egui'
+cargo tree -p engine -e normal | grep -E '^(render|scene|ui) |wgpu|egui'
 
 # 3. The renderer must stay egui-free (no window, no UI types).
-cargo tree -p furnicraft-render -e normal | grep -E 'egui|eframe|winit'
+cargo tree -p render -e normal | grep -E 'egui|eframe|winit'
 
 # 4. The UI must stay GPU-free.
-cargo tree -p furnicraft-ui -e normal | grep -E '\bwgpu\b|egui-wgpu'
+cargo tree -p ui -e normal | grep -E '\bwgpu\b|egui-wgpu'
 
 # 5. No UI/GPU imports in the domain-side sources.
 grep -rnE '\b(wgpu|egui|eframe|winit)::' crates/units/src crates/geom/src crates/model/src crates/param/src crates/mesh/src crates/scene/src crates/engine/src
@@ -155,14 +155,14 @@ grep -rnE '\b(wgpu|egui|eframe|winit)::' crates/units/src crates/geom/src crates
 grep -rnE 'std::fs|std::net|std::process' crates/model/src
 
 # 7. testkit is dev-only: every hit must be a [dev-dependencies] entry.
-grep -rn 'furnicraft-testkit' --include=Cargo.toml .
+grep -rn 'testkit' --include=Cargo.toml .
 ```
 
 Reading the results: for commands 2–6 an **empty** result is a pass; any line is a violation to investigate. In command 7, hits in the root `Cargo.toml` (`[workspace.dependencies]`) and in `crates/testkit/Cargo.toml` itself are normal; every other hit must be a `[dev-dependencies]` entry, and `cargo tree -e normal` will not show a dev-only helper.
 
 Also inspect the change itself, because no command catches these:
 
-- `apps/furnicraft`: does it contain geometry or command logic? It must not.
+- `app`: does it contain geometry or command logic? It must not.
 - `model`: does it import anything from a higher layer, even behind a feature flag? It must not.
 
 ## Review checklist

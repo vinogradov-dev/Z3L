@@ -6,9 +6,9 @@
 
 use std::collections::HashSet;
 
-use furnicraft_units::{Degrees, Length};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::{Degrees, Length};
 
 use crate::{EdgeId, EdgeRef, Panel, PanelDimensionError, PanelError, VertexId};
 

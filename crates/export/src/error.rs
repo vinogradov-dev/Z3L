@@ -4,7 +4,7 @@
 //! a placement that is not a rigid transform, a table whose record does not match its columns, or
 //! the operating system refusing a file. The exporter never panics and never writes half a table.
 
-use furnicraft_model::{ContourSegmentError, PanelContourError, PanelGeometryError, PlacementError};
+use model::{ContourSegmentError, PanelContourError, PanelGeometryError, PlacementError};
 use thiserror::Error;
 
 /// Why an order package could not be built or written.

@@ -11,7 +11,7 @@ variant and preset (`theme.rs`, ADR 0063), and the scene's own inks, which are c
 (ADR 0059), the accent is the action, the warning is a sentence in a panel, and the open
 product's envelope picked its amber by hand.
 
-U88's work cursor and U89's corner brackets are the first things FurniCraft draws to **help** rather
+U88's work cursor and U89's corner brackets are the first things Z3L draws to **help** rather
 than to show furniture, and more will follow: a work plane, a snap mark, a measurement. Without a
 rule each one invents a colour and a thickness, and a guide either disappears into the light theme or
 reads as an action, a refusal or a selection. A colour literal in a feature module is exactly what

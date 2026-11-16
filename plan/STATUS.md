@@ -42,8 +42,8 @@ standing object (0071), X11 closed a ring by an arc (0072), X12 a tool switch re
 X23 every *Close* commits. U65 gave every number one 76 x 22 field, right-aligned with its unit
 outside the string and one undo entry per drag (0092); U88 draws the work cursor in the settings
 size, X41 confines it to the work area, X42 puts that paint under the chrome (0121–0123).
-- `crates/export` writes the order package — a manifest and twelve flat tables — and `furnicraft
-export` runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
+- `crates/export` writes the order package — a manifest and twelve flat tables — and `z3l export`
+runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
 - ADR 0117 makes one const table the capability inventory every surface filters and the gate checks;
 0118 names the atom and U98 is the first — the ruler measures with two clicks and writes nothing,
 0119 the tool card, U94–U99 file that work.

@@ -20,8 +20,8 @@ the program — the worst class of error on a shop floor.
 
 ## Decision
 
-**The export is a one-way, versioned snapshot: an order package.** The scene file (`.fcs`) stays the
-only import format; there is no package reader in FurniCraft. A package is a directory
+**The export is a one-way, versioned snapshot: an order package.** The scene file (`.z3l`) stays the
+only import format; there is no package reader in Z3L. A package is a directory
 `<name>.fcpkg/` with `manifest.json` as its entry point, or a single JSON file with the same content
 embedded.
 
@@ -71,7 +71,7 @@ External readers read files. Anything we want in-app later is ours to implement 
   `supply`/`measure`/`nesting`, not on our codes, so a worktop lands in linear purchase and never in
   nesting in any report that honours the table.
 - Because the catalogue is external today, two different catalogues produce two different packages
-  from one scene. The snapshot makes the package reproducible; whether the `.fcs` itself should embed
+  from one scene. The snapshot makes the package reproducible; whether the `.z3l` itself should embed
   its materials is a separate decision, not taken here.
 - Sheet sizes and prices are not in the catalogue yet, so the first package version carries areas and
   stock groups, not per-sheet plans or money. The nesting and purchase views grow when the catalogue

@@ -1,8 +1,8 @@
-//! Geometry foundation shared by every FurniCraft crate.
+//! Geometry foundation shared by every Z3L crate.
 //!
-//! Vectors, matrices and Euler orders are `glam` types re-exported here; FurniCraft-specific shapes
+//! Vectors, matrices and Euler orders are `glam` types re-exported here; Z3L-specific shapes
 //! (frames, bounds, meshes) live in this crate. Physical values are millimetres at this
-//! boundary; the document keeps `furnicraft_units::Length` (micrometres).
+//! boundary; the document keeps `units::Length` (micrometres).
 #![forbid(unsafe_code)]
 #![deny(
     clippy::unwrap_used,

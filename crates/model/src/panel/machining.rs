@@ -6,7 +6,7 @@
 //! the remaining core; the trace subtracts the exact union of every through cutout from the core
 //! region, so a rectangle and a contour ring take the same part in it.
 
-use furnicraft_geom::{DVec2, Rect, Region, RegionError, subtract_regions};
+use geom::{DVec2, Rect, Region, RegionError, subtract_regions};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{

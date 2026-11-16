@@ -24,8 +24,8 @@
 //! or a new reason to refuse a mesh.
 
 use bytemuck::{Pod, Zeroable};
-use furnicraft_geom::{DMat4, DVec3, MeshData};
-use furnicraft_scene::{ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
+use geom::{DMat4, DVec3, MeshData};
+use scene::{ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
 
 use crate::RenderError;
 use crate::pipelines::MAX_STENCIL_OWNERS;
@@ -487,15 +487,12 @@ pub(crate) fn grid_vertices(grid: &Grid) -> Vec<MeshVertex> {
         return Vec::new();
     }
     let spacing = if grid.spacing_mm.is_finite() && grid.spacing_mm >= 1.0 {
-        grid.spacing_mm.min(furnicraft_scene::MAX_DISTANCE_MM)
+        grid.spacing_mm.min(scene::MAX_DISTANCE_MM)
     } else {
         100.0
     };
-    let requested_extent = if grid.extent_mm.is_finite() {
-        grid.extent_mm.clamp(spacing, furnicraft_scene::MAX_DISTANCE_MM)
-    } else {
-        5000.0
-    };
+    let requested_extent =
+        if grid.extent_mm.is_finite() { grid.extent_mm.clamp(spacing, scene::MAX_DISTANCE_MM) } else { 5000.0 };
     let divisions = ((requested_extent / spacing).floor() as i64).clamp(0, MAX_GRID_DIVISIONS);
     let extent = divisions as f64 * spacing;
     let major_every = i64::from(grid.major_every.max(1));

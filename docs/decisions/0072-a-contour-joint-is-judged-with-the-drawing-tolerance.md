@@ -33,7 +33,7 @@ arc_slack = radius × 8.73e-6   (0 for a line)
 - The rule is one function. In document units `ContourSegment::end_meets` (and `Path::assemble` and
   `Contour::assemble` through it) compares with it in integer micrometres; at the geometry boundary
   `joint_tolerance_mm` hands the same rule to
-  `furnicraft_geom::Contour::new_with_joint_tolerance`, which judges every pair separately. A wide
+  `geom::Contour::new_with_joint_tolerance`, which judges every pair separately. A wide
   arc on a ring therefore never loosens a line-to-line joint beside it.
 - `Contour::to_geometry` and every other converter of stored segments to a geometry chain pass the
   rule, so the boundary accepts exactly what the document accepted.

@@ -2,13 +2,13 @@
 //!
 //! A panel stores a nominal size, a thickness, an outline and banding; the core and overall regions,
 //! the sizes derived from their bounds and the cutout fit rules are computed here. Lengths are
-//! integer micrometres except in the predicates that hand a region to `furnicraft_geom`, which is the
+//! integer micrometres except in the predicates that hand a region to `geom`, which is the
 //! only floating-point edge.
 
-use furnicraft_geom::{DVec2, Rect, Region, RegionError};
-use furnicraft_units::Length;
+use geom::{DVec2, Rect, Region, RegionError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 use crate::{EdgeId, Panel, VertexId};
 
@@ -272,8 +272,7 @@ impl PanelGeometry {
     /// A through cutout that does not reach the core would remove nothing and is rejected. The test
     /// is exact for a rectangle and a curved ring alike.
     pub fn cutout_reaches_core(&self, cutout: &Region) -> Result<bool, RegionError> {
-        let overlap =
-            furnicraft_geom::intersect_regions(std::slice::from_ref(&self.core), std::slice::from_ref(cutout))?;
+        let overlap = geom::intersect_regions(std::slice::from_ref(&self.core), std::slice::from_ref(cutout))?;
         Ok(overlap.iter().any(|region| region.area() > 0.0))
     }
 
@@ -282,8 +281,7 @@ impl PanelGeometry {
     /// This is the rule for a blind cutout: it removes no through material, so it may open at the
     /// edge like a blind rectangle.
     pub fn cutout_fits_core(&self, cutout: &Region) -> Result<bool, RegionError> {
-        let outside =
-            furnicraft_geom::subtract_regions(std::slice::from_ref(cutout), std::slice::from_ref(&self.core))?;
+        let outside = geom::subtract_regions(std::slice::from_ref(cutout), std::slice::from_ref(&self.core))?;
         Ok(outside.iter().all(|region| region.area() <= 0.0))
     }
 

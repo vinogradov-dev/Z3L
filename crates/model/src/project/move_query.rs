@@ -17,7 +17,7 @@
 //! A drag in which no product is involved — free geometry, a panel at the root — is not a furniture
 //! move: [`Project::move_rule`] answers `None` and the gizmo keeps its exact micrometre move.
 
-use furnicraft_geom::DVec3;
+use geom::DVec3;
 
 use super::surface::{Span, SurfaceBox, SurfaceKind, surface_box};
 use crate::project::Project;
@@ -388,7 +388,7 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_units::Degrees;
+    use units::Degrees;
 
     use crate::fixtures::*;
     use crate::*;

@@ -1,4 +1,4 @@
-//! FurniCraft workspace tasks.
+//! Z3L workspace tasks.
 //!
 //! Usage: `cargo xtask <layers|ui-rules|skills|plan|status|task|next|dashboard|ci>`
 //!
@@ -30,18 +30,18 @@ mod ui_rules;
 const UI_GPU_DEPS: &[&str] = &["egui", "eframe", "egui-wgpu", "wgpu", "winit"];
 
 /// Crates that may only be reached through a dev-dependency.
-const DEV_ONLY: &[&str] = &["furnicraft-testkit"];
+const DEV_ONLY: &[&str] = &["testkit"];
 
 /// The third-party geometry kernel is an implementation detail of its adapter.
 const TRUCK_PREFIX: &str = "truck-";
-const TRUCK_ADAPTER: &str = "furnicraft-kernel-truck";
+const TRUCK_ADAPTER: &str = "kernel-truck";
 
 /// Crates that only the composition root may wire in as normal dependencies.
 const COMPOSITION_ONLY: &[&str] = &[TRUCK_ADAPTER];
 
 /// Crates that compile or vendor C/C++ sources. OS bindings that only load a
 /// platform library through Rust FFI are not listed here: the rule is about
-/// native code shipped and built with FurniCraft, not about the operating system.
+/// native code shipped and built with Z3L, not about the operating system.
 const C_VENDORING_CRATES: &[&str] =
     &["bindgen", "bzip2-sys", "cmake", "libz-sys", "lzma-sys", "openssl-sys", "vtkio", "xz2", "zstd-sys"];
 
@@ -66,35 +66,31 @@ struct CrateRule {
 
 /// The crate map. Keep in sync with `PROJECT.md` › Crate map.
 const CRATES: &[CrateRule] = &[
-    CrateRule { name: "furnicraft-text", layer: 0, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-units", layer: 0, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-geom", layer: 0, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "text", layer: 0, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "units", layer: 0, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "geom", layer: 0, forbidden: UI_GPU_DEPS },
     // The geometry port. It must not know the third-party engine: the global
     // `TRUCK_PREFIX` rule below keeps truck out of every crate but the adapter.
-    CrateRule { name: "furnicraft-kernel", layer: 1, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-model", layer: 1, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "kernel", layer: 1, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "model", layer: 1, forbidden: UI_GPU_DEPS },
     // The only crate allowed to depend on truck.
     CrateRule { name: TRUCK_ADAPTER, layer: 2, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-param", layer: 2, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-project", layer: 2, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-export", layer: 3, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-mesh", layer: 3, forbidden: UI_GPU_DEPS },
-    CrateRule { name: "furnicraft-scene", layer: 4, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "param", layer: 2, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "project", layer: 2, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "export", layer: 3, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "mesh", layer: 3, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "scene", layer: 4, forbidden: UI_GPU_DEPS },
     // The renderer draws the scene; it must stay egui-free (the app owns the
     // paint callback) and must not reach into the document.
-    CrateRule {
-        name: "furnicraft-render",
-        layer: 5,
-        forbidden: &["egui", "eframe", "egui-wgpu", "winit", "furnicraft-model"],
-    },
-    CrateRule { name: "furnicraft-engine", layer: 6, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "render", layer: 5, forbidden: &["egui", "eframe", "egui-wgpu", "winit", "model"] },
+    CrateRule { name: "engine", layer: 6, forbidden: UI_GPU_DEPS },
     // The UI owns egui but never the GPU: the shell wires the renderer in.
-    CrateRule { name: "furnicraft-ui", layer: 7, forbidden: &["wgpu", "egui-wgpu", "winit"] },
+    CrateRule { name: "ui", layer: 7, forbidden: &["wgpu", "egui-wgpu", "winit"] },
     // The native shell is the composition root; layers alone constrain it.
-    CrateRule { name: "furnicraft", layer: 8, forbidden: &[] },
+    CrateRule { name: "app", layer: 8, forbidden: &[] },
     // Development-only helpers may use anything; product crates may only reach
     // them through a dev-dependency (see `DEV_ONLY`).
-    CrateRule { name: "furnicraft-testkit", layer: 9, forbidden: &[] },
+    CrateRule { name: "testkit", layer: 9, forbidden: &[] },
     // The plan gate is a generic tool: at L0 it can depend on no product crate
     // at all, which is exactly the rule the extracted crate must keep.
     CrateRule { name: "state-contract", layer: 0, forbidden: UI_GPU_DEPS },
@@ -122,7 +118,7 @@ fn c_vendoring_violations(packages: &[serde_json::Value]) -> Vec<String> {
             let name = package.get("name")?.as_str()?;
             C_VENDORING_CRATES
                 .contains(&name)
-                .then(|| format!("`{name}` compiles or vendors C/C++ code; FurniCraft dependencies must be pure Rust"))
+                .then(|| format!("`{name}` compiles or vendors C/C++ code; Z3L dependencies must be pure Rust"))
         })
         .collect()
 }
@@ -173,7 +169,7 @@ fn collect_violations(rules: &[CrateRule], packages: &[serde_json::Value]) -> Re
 
             // The adapter is composed once, in the native shell; other crates may use it only
             // from tests as a real-kernel fixture.
-            if COMPOSITION_ONLY.contains(&dependency_name) && name != "furnicraft" && kind != Some("dev") {
+            if COMPOSITION_ONLY.contains(&dependency_name) && name != "app" && kind != Some("dev") {
                 violations.push(format!(
                     "`{name}` must not depend on `{dependency_name}`: only the app composes the kernel adapter"
                 ));
@@ -232,7 +228,7 @@ fn string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, String
         .ok_or_else(|| format!("`cargo metadata` field `{key}` is not a string"))
 }
 
-/// The commands FurniCraft adds to the plan tool: its layer rules and the whole gate.
+/// The commands Z3L adds to the plan tool: its layer rules and the whole gate.
 ///
 /// Everything else — `plan`, `status`, `task`, `next`, `dashboard`, `docs`, `state` — comes from
 /// `state-contract`, so this file holds the product's rules and no plan logic at all.
@@ -408,34 +404,34 @@ mod tests {
 
     #[test]
     fn renderer_must_not_depend_on_egui() {
-        let violations = collect(&[package("furnicraft-render", &[("egui", None), ("wgpu", None)])]);
+        let violations = collect(&[package("render", &[("egui", None), ("wgpu", None)])]);
         assert!(
-            violations.iter().any(|violation| violation.contains("`furnicraft-render` must not depend on `egui`")),
+            violations.iter().any(|violation| violation.contains("`render` must not depend on `egui`")),
             "{violations:?}"
         );
     }
 
     #[test]
     fn ui_must_not_depend_on_wgpu() {
-        let violations = collect(&[package("furnicraft-ui", &[("wgpu", None)])]);
+        let violations = collect(&[package("ui", &[("wgpu", None)])]);
         assert!(
-            violations.iter().any(|violation| violation.contains("`furnicraft-ui` must not depend on `wgpu`")),
+            violations.iter().any(|violation| violation.contains("`ui` must not depend on `wgpu`")),
             "{violations:?}"
         );
     }
 
     #[test]
     fn domain_crates_must_not_depend_on_ui_or_gpu() {
-        let violations = collect(&[package("furnicraft-model", &[("wgpu", None)])]);
+        let violations = collect(&[package("model", &[("wgpu", None)])]);
         assert!(
-            violations.iter().any(|violation| violation.contains("`furnicraft-model` must not depend on `wgpu`")),
+            violations.iter().any(|violation| violation.contains("`model` must not depend on `wgpu`")),
             "{violations:?}"
         );
     }
 
     #[test]
     fn crates_may_not_depend_on_their_own_layer_or_above() {
-        let violations = collect(&[package("furnicraft-engine", &[("furnicraft-ui", None)])]);
+        let violations = collect(&[package("engine", &[("ui", None)])]);
         assert!(
             violations.iter().any(|violation| violation.contains("a crate may only depend on lower layers")),
             "{violations:?}"
@@ -444,34 +440,31 @@ mod tests {
 
     #[test]
     fn testkit_is_dev_only() {
-        let normal = collect(&[package("furnicraft-model", &[("furnicraft-testkit", None)])]);
+        let normal = collect(&[package("model", &[("testkit", None)])]);
         assert!(normal.iter().any(|violation| violation.contains("development-only")), "{normal:?}");
 
-        let dev = collect(&[package("furnicraft-model", &[("furnicraft-testkit", Some("dev"))])]);
+        let dev = collect(&[package("model", &[("testkit", Some("dev"))])]);
         assert!(dev.is_empty(), "{dev:?}");
     }
 
     #[test]
     fn only_the_adapter_may_use_truck() {
-        let leaked = collect(&[package("furnicraft-model", &[("truck-modeling", None)])]);
-        assert!(
-            leaked.iter().any(|violation| violation.contains("only `furnicraft-kernel-truck` may use")),
-            "{leaked:?}"
-        );
+        let leaked = collect(&[package("model", &[("truck-modeling", None)])]);
+        assert!(leaked.iter().any(|violation| violation.contains("only `kernel-truck` may use")), "{leaked:?}");
 
-        let adapter = collect(&[package("furnicraft-kernel-truck", &[("truck-modeling", None)])]);
+        let adapter = collect(&[package("kernel-truck", &[("truck-modeling", None)])]);
         assert!(adapter.is_empty(), "{adapter:?}");
     }
 
     #[test]
     fn only_the_app_composes_the_adapter() {
-        let leaked = collect(&[package("furnicraft-engine", &[("furnicraft-kernel-truck", None)])]);
+        let leaked = collect(&[package("engine", &[("kernel-truck", None)])]);
         assert!(leaked.iter().any(|violation| violation.contains("only the app composes")), "{leaked:?}");
 
-        let app = collect(&[package("furnicraft", &[("furnicraft-kernel-truck", None)])]);
+        let app = collect(&[package("app", &[("kernel-truck", None)])]);
         assert!(app.is_empty(), "{app:?}");
 
-        let dev = collect(&[package("furnicraft-mesh", &[("furnicraft-kernel-truck", Some("dev"))])]);
+        let dev = collect(&[package("mesh", &[("kernel-truck", Some("dev"))])]);
         assert!(dev.is_empty(), "{dev:?}");
     }
 
@@ -487,7 +480,7 @@ mod tests {
 
     #[test]
     fn unregistered_crate_fails() {
-        let violations = collect(&[package("furnicraft-unknown", &[])]);
+        let violations = collect(&[package("nonsense", &[])]);
         assert!(
             violations.iter().any(|violation| violation.contains("is not registered in the crate rules")),
             "{violations:?}"
@@ -496,7 +489,7 @@ mod tests {
 
     #[test]
     fn the_plan_gate_crate_must_not_depend_on_the_product() {
-        let violations = collect(&[package("state-contract", &[("furnicraft-model", None)])]);
+        let violations = collect(&[package("state-contract", &[("model", None)])]);
         assert!(
             violations.iter().any(|violation| violation.contains("a crate may only depend on lower layers")),
             "{violations:?}"
@@ -509,10 +502,10 @@ mod tests {
     #[test]
     fn clean_workspace_passes() {
         let packages = [
-            package("furnicraft-units", &[("serde", None)]),
-            package("furnicraft-model", &[("furnicraft-units", None), ("serde", None)]),
-            package("furnicraft-render", &[("wgpu", None), ("furnicraft-scene", None)]),
-            package("furnicraft-testkit", &[("furnicraft-model", None), ("egui", None)]),
+            package("units", &[("serde", None)]),
+            package("model", &[("units", None), ("serde", None)]),
+            package("render", &[("wgpu", None), ("scene", None)]),
+            package("testkit", &[("model", None), ("egui", None)]),
             package("xtask", &[("serde_json", None)]),
         ];
         let (checked, violations) = collect_violations(CRATES, &packages).expect("synthetic metadata is valid");

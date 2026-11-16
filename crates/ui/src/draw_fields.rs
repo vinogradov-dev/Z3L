@@ -29,9 +29,9 @@
 
 use core::f64::consts::PI;
 
-use furnicraft_geom::DVec2;
-use furnicraft_model::MAX_CONTOUR_COORDINATE;
-use furnicraft_units::Length;
+use geom::DVec2;
+use model::MAX_CONTOUR_COORDINATE;
+use units::Length;
 
 use crate::draw::{DrawDraft, DrawTool};
 use crate::point_fields::{FieldParam, FieldRow, FieldSet};
@@ -628,7 +628,7 @@ mod tests {
     use egui::pos2;
 
     use super::*;
-    use furnicraft_model::ContourSegment;
+    use model::ContourSegment;
 
     fn millimetres(x: i64, y: i64) -> DVec2 {
         DVec2::new(x as f64, y as f64)

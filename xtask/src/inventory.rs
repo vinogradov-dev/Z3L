@@ -2,7 +2,7 @@
 //!
 //! ADR 0117 makes a const table the register of the interface: a command that no surface draws is a
 //! finding, and a command with two homes that disagree is the same defect twice. `xtask` cannot link
-//! `furnicraft-ui` — it is the build tool, not the product — so this check reads the sources the way
+//! `ui` — it is the build tool, not the product — so this check reads the sources the way
 //! `ui_rules` does, with `syn`, and resolves the two registers by name:
 //!
 //! - the registry (`static COMMANDS: &[CommandSpec]`) names `panel_cmds::CREATE`;

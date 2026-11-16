@@ -1132,7 +1132,7 @@ messages! {
     ShortcutPan = ["Pan", "Панорама"],
     ShortcutZoom = ["Zoom", "Масштаб"],
 
-    // ── Commands (furnicraft-engine) ────────────────────────────────────────
+    // ── Commands (engine) ────────────────────────────────────────
     CmdCreateCamera = ["Create camera", "Создать камеру"],
     CmdCreateLight = ["Create light", "Создать источник света"],
     CmdSetActiveCamera = ["Set active camera", "Сделать камеру активной"],

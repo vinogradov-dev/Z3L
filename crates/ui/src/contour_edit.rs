@@ -22,14 +22,14 @@
 //!
 //! Changes when: the corner, grip, split or collapse rule of an existing contour changes.
 
-use furnicraft_engine::object_cmds::{OBJECT_CONTOUR_REPLACE_ID, OBJECT_PATH_REPLACE_ID};
-use furnicraft_engine::panel_cmds::{MACHINING_UPDATE_ID, OUTLINE_SET_ID};
-use furnicraft_engine::{ObjectContourReplace, ObjectPathReplace, PanelMachiningUpdate, PanelOutlineSet, Session};
-use furnicraft_model::{
+use engine::object_cmds::{OBJECT_CONTOUR_REPLACE_ID, OBJECT_PATH_REPLACE_ID};
+use engine::panel_cmds::{MACHINING_UPDATE_ID, OUTLINE_SET_ID};
+use engine::{ObjectContourReplace, ObjectPathReplace, PanelMachiningUpdate, PanelOutlineSet, Session};
+use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, Cutout, CutoutShape,
     Id, MachiningId, MachiningParams, Path, PathCorner, Project,
 };
-use furnicraft_units::Length;
+use units::Length;
 
 use crate::command::{dispatch, json};
 use crate::contour_grips::{ContourGrip, GripValue};
@@ -432,14 +432,12 @@ fn ring_corner_segment(contour: &Contour, corner: PathCorner) -> Result<ContourS
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::NodeDelete;
-    use furnicraft_engine::PanelMachiningAdd;
-    use furnicraft_engine::node_cmds::NODE_DELETE_ID;
-    use furnicraft_engine::panel_cmds::MACHINING_ADD_ID;
-    use furnicraft_model::{
-        Constructive, Container, CutoutDepth, FaceSide, Geometry, MachiningAnchor, Panel, Placement, Project,
-    };
-    use furnicraft_testkit::{millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
+    use engine::NodeDelete;
+    use engine::PanelMachiningAdd;
+    use engine::node_cmds::NODE_DELETE_ID;
+    use engine::panel_cmds::MACHINING_ADD_ID;
+    use model::{Constructive, Container, CutoutDepth, FaceSide, Geometry, MachiningAnchor, Panel, Placement, Project};
+    use testkit::{millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
 
     use super::*;
 
@@ -694,7 +692,7 @@ mod tests {
             panel,
             anchor: MachiningAnchor::face(FaceSide::A),
             params: MachiningParams::Cutout(Cutout::new(
-                CutoutShape::Rectangle(furnicraft_testkit::sample_cutout_rect()),
+                CutoutShape::Rectangle(testkit::sample_cutout_rect()),
                 CutoutDepth::Through,
             )),
         };

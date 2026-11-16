@@ -10,8 +10,8 @@
 //!
 //! Changes when: a flag is added, or a surface needs another question answered about it.
 
-use furnicraft_model::{Id, Project};
-use furnicraft_text::{Lang, Message};
+use model::{Id, Project};
+use text::{Lang, Message};
 
 use super::Editor;
 use crate::view_flags::ViewFlags;
@@ -65,7 +65,7 @@ impl Editor {
         if !self.flags.is_locked(node) {
             return None;
         }
-        let name = project.node(node).map(furnicraft_model::Node::name).unwrap_or(Message::TheNode.text(lang));
+        let name = project.node(node).map(model::Node::name).unwrap_or(Message::TheNode.text(lang));
         Some(Message::LockedNode.with(lang, [name]))
     }
 

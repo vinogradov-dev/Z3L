@@ -16,7 +16,7 @@ point off the joint it just joined.
 
 ## Decision
 
-- Snapping is pure and lives in `apps/furnicraft/src/gizmo_math.rs`: `SnapRequest` in, `SnappedPoint`
+- Snapping is pure and lives in `app/src/gizmo_math.rs`: `SnapRequest` in, `SnappedPoint`
   and `SnapTarget` out, all coordinates in work-plane millimetres. It touches no document, no
   revision and no undo stack.
 - The grid step is 10 mm (`SNAP_GRID_MM`), rounded on both plane axes.

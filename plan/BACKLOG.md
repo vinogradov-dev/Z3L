@@ -53,7 +53,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    `project::FORMAT` + `project::EXTENSION` for the file — and delete the hardcoded duplicates
    in `main.rs` (title, app name, error), `file_menu.rs` (the `scene.fcs` default and the
    `"fcs"` filter) and `settings_store.rs` (three platform branches); (2) rename the 13 crates
-   to bare names and move `apps/furnicraft` to `app/` at the workspace root, with the `sed` and
+   to bare names and move `app` to `app/` at the workspace root, with the `sed` and
    `mv` in `plan/rename.md` and `cargo fmt --all` after them; (3) the four registers that must
    agree in that commit — the `CRATES` table and its tests in `xtask`, the crate map in
    `AGENTS.md` and `PROJECT.md`, the layer list in `skills/enforce-architecture/SKILL.md`, and
@@ -61,7 +61,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    gate rejects once the path is gone; (4) the envelope `format` string and line 2 of the eight
    goldens, leaving the `generator` fixture alone. No compatibility path: nothing is released,
    so the file format and the settings directory change outright. U82 removed the sample scene,
-   so the `"FurniCraft sample"` copy the old inventory named is gone: the inventory starts at
+   so the `"Z3L sample"` copy the old inventory named is gone: the inventory starts at
    `main.rs`, `file_menu.rs` and `settings_store.rs`.
   Done: A single constant decides the product name, and a test asserts that the window title,
    `app_id`, the settings directory and the open-dialog filter all read it, so a second rename
@@ -114,7 +114,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Shift-click builds an ordered set, Ctrl-click removes one member, a plain click
    replaces, and a test asserts the order survives a toggle of a member and is cleared by the
    replacement; the scene draws the added members as selected.
-  `files: crates/ui/src/editor/selection.rs,apps/furnicraft/src/document.rs,crates/engine/src/session.rs`
+  `files: crates/ui/src/editor/selection.rs,app/src/document.rs,crates/engine/src/session.rs`
 - `[ ]` **U103** there is no rubber-band selection
   Why: There is no way to select several objects with the pointer: a press either picks one
    node or orbits. The owner asked for the AutoCAD rectangle — left-to-right and top-to-bottom
@@ -129,7 +129,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    other way selects every object it touches, the rule follows the drag direction in a test
    with objects inside and straddling the band, and the band draws only while the pointer drags
    on empty space.
-  `files: apps/furnicraft/src/document.rs,crates/ui/src/editor/selection.rs`
+  `files: app/src/document.rs,crates/ui/src/editor/selection.rs`
 - `[ ]` **U104** the extrusion card offers create and cancel beside its height
   Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
    height. The owner wants the card to carry only the height — no units, no words, just H —
@@ -141,7 +141,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    becomes the only control that takes the keyboard.
   Done: The card draws one H field and no tick or cross; a frame test asserts the card holds
    exactly one field and that Enter commits while Escape cancels.
-  `files: apps/furnicraft/src/extrude_gizmo.rs`
+  `files: app/src/extrude_gizmo.rs`
 - `[ ]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
   Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a
    primitive does not know the sketch grammar: a rectangle cannot be built from its centre, its
@@ -159,7 +159,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    circle by any of the three circle methods, each with its own plates; the body is built on Z
    from the profile; the card edits the profile; a test builds each method and asserts the
    resulting solid matches the old parameter shape.
-  `files: crates/model/src/primitive.rs,crates/ui/src/draw.rs,apps/furnicraft/src/document.rs,crates/ui/src/toolbars/spec.rs`
+  `files: crates/model/src/primitive.rs,crates/ui/src/draw.rs,app/src/document.rs,crates/ui/src/toolbars/spec.rs`
 - `[ ]` **V5** a sphere has one click and one method
   Why: A sphere is put down in one click and sized in the card: there is no first point, no
    phantom and no second gesture, and it has one method. The owner asked for a step-by-step
@@ -175,7 +175,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A sphere is built centre-then-radius with a phantom, by centre and diameter, and by
    three points including tangency picks; each method is a stage table entry with its plates,
    and a test asserts the radius each method produces against a known three-point set.
-  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/draw.rs,apps/furnicraft/src/document.rs`
+  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/draw.rs,app/src/document.rs`
 - `[ ]` **V6** there is no cone primitive
   Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
    `assets/icons/primitives/cone.svg` is empty although U46 counted it as declared. The owner
@@ -210,7 +210,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: The second click of an arc draws the segment its length plate measures, in draft ink,
    and the plate sits on it; a frame test asserts the drawn segment and the plate's value agree
    at several pointer positions. The owner confirms the reading of L1.
-  `files: crates/ui/src/draw_fields.rs,apps/furnicraft/src/draw_gizmo.rs,crates/ui/src/guides.rs` — `17ae4b5`
+  `files: crates/ui/src/draw_fields.rs,app/src/draw_gizmo.rs,crates/ui/src/guides.rs` — `17ae4b5`
 
 - `[x]` **X50** the reference arc changes side every 90 degrees
   Why: The auxiliary arc and its plate flipped to the other end of the X axis at 90 and at 270
@@ -251,7 +251,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    draws — and puts the pointer in the set of rectangles a plate may not cover: a plate the
    pointer reaches steps to the other side of its anchor, and one pushed onto it steps past it.
    The frame test measures the clearance at every stage of every tool and of a pending arc.
-  `files: crates/ui/src/point_fields.rs,apps/furnicraft/src/frame_tests.rs` — `923b5d7`
+  `files: crates/ui/src/point_fields.rs,app/src/frame_tests.rs` — `923b5d7`
 
 - `[x]` **X48** the extrude icon is a cuboid and shows no operation
   Why: The body-extrude glyph was a second cuboid: the same drawing the primitive cell uses,
@@ -271,7 +271,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    closed product is one object in the scene, not a box being sized (ADR 0098).
   Done: The grip target admits a product frame only while it is the open product and keeps
    admitting any cuboid part; the rule is one function, offers_grips, with its own test.
-  `files: apps/furnicraft/src/document.rs` — `d335ddd`
+  `files: app/src/document.rs` — `d335ddd`
 
 - `[x]` **X46** a furniture tool writes «open a product first» instead of its own name
   Why: With the product closed, every furniture cell wrote «Open a product first» in place of
@@ -337,7 +337,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    test covers every DrawTool and every stage of it, and a switch test covers tool changes
    after zero, one and two points, a pending arc and a non-drawing tool; cargo xtask ci is
    green.
-  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,apps/furnicraft/src/draw_gizmo.rs,apps/furnicraft/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `1657e1e`
+  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,app/src/draw_gizmo.rs,app/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `1657e1e`
 
 - `[x]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
   Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
@@ -396,7 +396,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the construction line starts at the old position and the angle arc radius equals the
    distance moved; the fields move the node by the typed distance and angle; a press-and-drag
    still moves a node in one gesture; cargo xtask ci is green.
-  `files: apps/furnicraft/src/contour_gizmo.rs, crates/ui/src/contour_grips.rs, crates/ui/src/editor/contour.rs, apps/furnicraft/src/document.rs` — `06c28a3`
+  `files: app/src/contour_gizmo.rs, crates/ui/src/contour_grips.rs, crates/ui/src/editor/contour.rs, app/src/document.rs` — `06c28a3`
 
 - `[x]` **C2** every sketch tool places its point from numbers at the cursor
   Why: The drawing tools show one text label today (size_label in draw_gizmo.rs) and take only
@@ -420,7 +420,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    gives the parameter back; Tab, Enter and Escape are tested through RawInput; the polyline
    segment kind is switched from the context menu and Tab no longer toggles it; a fixed tool
    commits once and one undo entry; cargo xtask ci is green.
-  `files: crates/ui/src/draw.rs, crates/ui/src/editor/drawing.rs, apps/furnicraft/src/draw_gizmo.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/ribbon.rs` — `dc33a92`
+  `files: crates/ui/src/draw.rs, crates/ui/src/editor/drawing.rs, app/src/draw_gizmo.rs, app/src/document.rs, crates/ui/src/editor/ribbon.rs` — `dc33a92`
 
 - `[x]` **C1** the point being placed shows its numbers at the cursor, and a sketch has two guide kinds
   Why: Every sketch tool needs the same two things: the number of the point under the cursor
@@ -446,7 +446,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    reads on the header, a panel and the workspace of every preset and that its dot is thinner
    than every guide; both ADRs are in docs/decisions and the README lists them; cargo xtask ci
    is green.
-  `files: crates/ui/src/tool_card.rs, crates/ui/src/scrub.rs, crates/ui/src/theme.rs, apps/furnicraft/src/contour_gizmo.rs, apps/furnicraft/src/draw_gizmo.rs, docs/decisions` — `bf165a1`
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/scrub.rs, crates/ui/src/theme.rs, app/src/contour_gizmo.rs, app/src/draw_gizmo.rs, docs/decisions` — `bf165a1`
 
 - `[x]` **U99** the niche becomes a tool of its own, and fill, a shelf and a report consume the same value
   Why: The owner example: the geometry of the empty space was written for one tool, and a
@@ -463,7 +463,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the same cell for the same pointer; a test calls the atom once and asserts fill and the
    inspector see the same value; cancelling either leaves no document change; `plan/map.md`
    gains the atom row; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs` — `ada0639`
+  `files: app/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, crates/ui/src/toolbars/spec.rs` — `ada0639`
 
 - `[x]` **T8** the P2 and P4 accents separate from the model and scene inks
   Why: The P2 azure accent is 7.2/8.6 Delta E from the model blue and the P4 mint accent is
@@ -534,7 +534,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    resolver or probe.
   Shape: A `measure` atom in `crates/ui/src/measure.rs` holding the first point and the current
    value; it consumes the shared snap resolver (0051) and the probe (0103) and formats lengths
-   through `furnicraft-units`. The state machine: idle, first point, measured; a third click
+   through `units`. The state machine: idle, first point, measured; a third click
    starts a new measurement rather than extending the last; Escape leaves and writes nothing.
    The length is painted at the pointer and written to the centre zone of the status bar, while
    the left zone says what to do. The ribbon gains a `sketch.measure.length` row with its icon
@@ -545,7 +545,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    revision moved; the status bar shows the value and the next step; the icon file, its README
    row and the ribbon cell land together; `plan/map.md` and `references/surfaces.md` gain the
    row; `cargo xtask ci` is green.
-  `files: crates/ui/src, apps/furnicraft/src/status_bar.rs, assets/icons/contour` — `08f51e4`
+  `files: crates/ui/src, app/src/status_bar.rs, assets/icons/contour` — `08f51e4`
 
 - `[x]` **U97** an armed tool shows its parameters at the pointer, and the inspector shows the same fields
   Why: The owner asked for both ends of one rule: the number at the cursor and the full data in
@@ -565,7 +565,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and no pick; Escape closes it and writes nothing; the card rectangle is asserted at two UI
    scales; `plan/map.md` and `references/surfaces.md` gain the surface; ADR 0119 is followed;
    `cargo xtask ci` is green.
-  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, apps/furnicraft/src/document.rs` — `01c7533`
+  `files: crates/ui/src/tool_card.rs, crates/ui/src/distance.rs, app/src/document.rs` — `01c7533`
 
 - `[x]` **U96** the keymap is a column of the inventory, so a key is data and remapping needs no refactor
   Why: `shortcuts.rs` reads `Ctrl+S`, `Ctrl+N`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Y`, `F`, `O`, `Alt+W`
@@ -582,7 +582,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    label; no key is bound twice; a headless test presses each default key and asserts the same
    command runs; remapping stays planned and `plan/debt.md` gains it if it is deferred; `cargo
    xtask ci` is green.
-  `files: apps/furnicraft/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs` — `d1dacb1`
+  `files: app/src/shortcuts.rs, crates/ui/src/toolbars/spec.rs` — `d1dacb1`
 
 - `[x]` **U95** two skills carry the interface rules to where they are needed: placing a capability and designing an operation
   Why: `ui-design` is one procedure for a surface, and it fires when a file under `crates/ui`
@@ -627,7 +627,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    panel, an object and a product frame and asserts the sections drawn for each; an offscreen
    shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
    `cargo xtask ci` is green.
-  `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/text/src/messages.rs, apps/furnicraft/src/ui_shots.rs` — `43ef744`
+  `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/text/src/messages.rs, app/src/ui_shots.rs` — `43ef744`
 
 - `[x]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
   Why: The tree row menu is the only context menu in the program: a right click in the viewport
@@ -651,7 +651,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    opens nothing; a headless frame test right-clicks a panel and asserts the menu's rectangle
    and its first entry, and that the press changed no document revision; `plan/map.md` and the
    ui-design skill's `references/surfaces.md` gain the surface; `cargo xtask ci` is green.
-  `files: crates/ui/src/scene_tree.rs, crates/ui/src/lib.rs, apps/furnicraft/src/document.rs` — `32a39fb`
+  `files: crates/ui/src/scene_tree.rs, crates/ui/src/lib.rs, app/src/document.rs` — `32a39fb`
 
 - `[x]` **U91** the snap toggle leaves View › Display for a group of its own captioned Snaps
   Why: The grid-snap toggle sits under View › Display among style, contours, shadows and
@@ -790,7 +790,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    length at two zoom levels; a frame test opens a group and counts exactly eight brackets,
    closes it and counts none, and the same for an open product; the ink is `theme::helper()`;
    `plan/map.md` gains the row; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/open_frame.rs, apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/document.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/frame_tests.rs` — `d231f22`
+  `files: app/src/open_frame.rs, app/src/scene_build.rs, app/src/document.rs, crates/ui/src/editor/selection.rs, app/src/frame_tests.rs` — `d231f22`
 
 - `[x]` **X42** the work-area guide and pointer sit under the chrome, and expertise challenges a brief before code
   Why: The square and the crosshair are work-area paint, but they still sit on Order::Tooltip,
@@ -807,7 +807,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    after; the offscreen shots in both themes show the crosshair interrupted by the side cards
    and the square over the scene; the AGENTS bullet names expertise before execution; cargo
    xtask ci and cargo xtask docs are green with ADR 0123.
-  `files: apps/furnicraft/src/work_cursor.rs, apps/furnicraft/src/frame_tests.rs, AGENTS.md, .pi/skills/ui-design/SKILL.md, docs/decisions` — `063ad6a`
+  `files: app/src/work_cursor.rs, app/src/frame_tests.rs, AGENTS.md, .pi/skills/ui-design/SKILL.md, docs/decisions` — `063ad6a`
 
 - `[x]` **X41** the custom pointer belongs to the work area and every system element keeps the system cursor
   Why: The owner's rule is the one U88 started from and X40 lost: the custom square belongs to
@@ -830,7 +830,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    still hide the arrow and draw the square; the product card keeps the arrow; the offscreen
    shot points into the scene and shows the two-tone square in both themes; cargo xtask ci and
    cargo xtask docs are green with ADR 0122.
-  `files: apps/furnicraft/src/work_cursor.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/frame_tests.rs, docs/decisions, .pi/skills/ui-design/SKILL.md` — `d7c26d9`
+  `files: app/src/work_cursor.rs, app/src/main.rs, app/src/document.rs, app/src/frame_tests.rs, docs/decisions, .pi/skills/ui-design/SKILL.md` — `d7c26d9`
 
 - `[x]` **X40** the work cursor is the shell's pointer everywhere but a menu, and its two-tone outline shows on any surface
   Why: U88 made the square the scene's fallback and let each gesture keep an OS icon, so a
@@ -853,7 +853,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    ends of the brightness range; an offscreen shot in both themes with the pointer over the
    bottom cluster shows the square above it; cargo xtask ci and cargo xtask docs are green with
    the new ADR listed.
-  `files: apps/furnicraft/src, apps/furnicraft/src/document.rs, crates/ui/src/theme.rs, apps/furnicraft/src/frame_tests.rs, docs/decisions` — `6fe7481`
+  `files: app/src, app/src/document.rs, crates/ui/src/theme.rs, app/src/frame_tests.rs, docs/decisions` — `6fe7481`
 
 - `[x]` **U88** the viewport draws its own work cursor, sized in settings, with an optional full crosshair
   Why: The OS arrow hides the point a click lands on and reads as a pointer to buttons rather
@@ -876,7 +876,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and the maximum size, and that the crosshair spans the viewport; settings round-trip clamps
    2 to 6 and 64 to 32; an offscreen shot in both themes shows the square and the crosshair
    (the eye check this task names); `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/document.rs, crates/ui/src/settings.rs, apps/furnicraft/src/main.rs` — `b3a6d40`
+  `files: app/src/document.rs, crates/ui/src/settings.rs, app/src/main.rs` — `b3a6d40`
 
 - `[x]` **U87** the transform mode can be off, and Select is the state a window opens in
   Why: One of the two gizmos is always up, so a person who only wants to look, pick and read
@@ -894,7 +894,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    their own gizmo and nothing else; a headless frame test asserts no handle consumes the click
    in `Select`; the status bar control changes the mode; ADR 0113 is written; `cargo xtask ci`
    is green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/status_bar.rs, apps/furnicraft/src/document.rs` — `5d08a7d`
+  `files: app/src/main.rs, app/src/status_bar.rs, app/src/document.rs` — `5d08a7d`
 
 - `[x]` **U86** the transform gizmos are smaller and their size is a setting
   Why: The translate handles are 84 pt (`gizmo_math::HANDLE_LENGTH`) and the rotate rings are 9
@@ -915,7 +915,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the file; a headless test drags an axis at the minimum and at the maximum handle length and
    the hit radius follows; no document revision moves when the size changes; an offscreen shot
    shows the small and the large gizmo; `cargo xtask ci` is green.
-  `files: apps/furnicraft/src/gizmo_math.rs, apps/furnicraft/src/rotate_gizmo.rs, crates/ui/src/settings.rs` — `115d4f2`
+  `files: app/src/gizmo_math.rs, app/src/rotate_gizmo.rs, crates/ui/src/settings.rs` — `115d4f2`
 
 - `[x]` **U85** the Delete key removes the whole selection behind one question
   Why: Shift-click builds a multi-selection but nothing deletes it: the tree's row menu removes
@@ -935,7 +935,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    restoring all of them in one step; a headless frame test presses Del over two selected nodes
    and asserts one question with no document change until *Delete*; the label and the question
    are message ids; ADR 0112 is written; `cargo xtask ci` is green.
-  `files: crates/engine/src/node_cmds.rs, crates/engine/src/commands.rs, crates/model/src/project/node_cmds.rs, apps/furnicraft/src/shortcuts.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/file_menu.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/frame_tests.rs, crates/ui/src/palette.rs, crates/text/src/messages.rs` — `4586041`
+  `files: crates/engine/src/node_cmds.rs, crates/engine/src/commands.rs, crates/model/src/project/node_cmds.rs, app/src/shortcuts.rs, app/src/document.rs, app/src/file_menu.rs, app/src/main.rs, app/src/frame_tests.rs, crates/ui/src/palette.rs, crates/text/src/messages.rs` — `4586041`
 
 - `[x]` **U84** the method list is one flat list of names: the section captions go
   Why: The owner asked for the captions to go: a «Build» or «Tangents» heading over one or two
@@ -977,7 +977,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    format. No second binary, no new dependency.
   Done: A CLI test writes a package from a fixture and checks its manifest and one table; no
    window opens; the help text names the flags; cargo xtask ci is green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/Cargo.toml` — `39ae4c3`
+  `files: app/src/main.rs, app/Cargo.toml` — `39ae4c3`
 
 - `[x]` **K2** the order package writer: one manifest and ten flat tables other programs read
   Why: The reason for the whole discussion: reports, drawings and CNC are written outside our
@@ -1018,7 +1018,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    bottom inset is at least the side inset plus the scrollbar height; an offscreen shot of the
    longest card and the deepest tree shows no clipped row in either theme; `cargo xtask ci` is
    green.
-  `files: apps/furnicraft/src/side_panels.rs, apps/furnicraft/src/main.rs` — `09f4c02`
+  `files: app/src/side_panels.rs, app/src/main.rs` — `09f4c02`
 
 - `[x]` **X38** inside an open product a click selects the whole product instead of the part under the pointer
   Why: Observation: with a product opened by a double click, every click in the viewport
@@ -1036,7 +1036,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    closed one the product; a frame test opens the fixture product, clicks a panel and asserts
    the selection and the status bar name the part; `plan/map.md`'s picking row stops claiming a
    click inside a product picks the product; `cargo xtask ci` is green.
-  `files: crates/ui/src/target.rs, crates/ui/src/editor/selection.rs, apps/furnicraft/src/document.rs` — `cbb6a8b`
+  `files: crates/ui/src/target.rs, crates/ui/src/editor/selection.rs, app/src/document.rs` — `cbb6a8b`
 
 - `[x]` **X37** an open method list owns the pointer only across part of its own rectangle
   Why: Observation: with a drawing tool armed, the pointer over an open method list keeps the
@@ -1055,7 +1055,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    cursor returns on the frame the list closes.
   Done: The whole open list shows one cursor and the frame after it closes shows the tool's;
    the test fails before the change and passes after; `cargo xtask ci` is green.
-  `files: crates/ui/src/toolbars/list.rs, apps/furnicraft/src/document.rs` — `caf5f08`
+  `files: crates/ui/src/toolbars/list.rs, app/src/document.rs` — `caf5f08`
 
 - `[x]` **X36** a split ribbon cell squeezes its main face to 24 pt, so the glyph reads as cut off
   Why: Observation: a cell is `RIBBON_CELL_WIDTH` (34) x `RIBBON_ROW_HEIGHT` (30), and a tool
@@ -1077,7 +1077,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 - `[x]` **U83** the program's own guides get one ink and one stroke: the helper ink
   why: The corner brackets of an open level (U89) and the viewport's own cursor (U88) are the
-   first things FurniCraft draws to help rather than to show the furniture, and the owner asked
+   first things Z3L draws to help rather than to show the furniture, and the owner asked
    for the colour and thickness rule before more helper geometry arrives. A guide whose colour
    is a literal in a feature module is the defect `cargo xtask ui-rules` exists to stop (ADR
    0063, 0089), and a guide that disappears into the light theme is worse than no guide.
@@ -1152,7 +1152,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    ceiling takes the slab section with no bevels instead of refusing; the splayed and box fills
    keep their answers; the shell's one-click-one-undo tests pass with the ghost captured on the
    press; cargo xtask ci is green.
-  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,apps/furnicraft/src/fill_gizmo.rs,apps/furnicraft/src/document.rs,docs/domain/products.md,docs/decisions/README.md` — `9773ddc`
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,app/src/fill_gizmo.rs,app/src/document.rs,docs/domain/products.md,docs/decisions/README.md` — `9773ddc`
 
 - `[x]` **N12** the shaped fill bevels its ends onto the walls, so a board meets a joined panel flush
   Why: This is the point of the bevel: once a part takes the niche's shape, a shelf or a post
@@ -1181,7 +1181,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    with no bevels, since the walls are vertical; the ghost's far rim equals the panel's; a
    click is one undo entry; `cargo xtask ci` is green. A new ADR records the reverse placement
    and the wedge refusal.
-  `files: crates/model/src/project/, crates/engine/src/panel_cmds/panel.rs, apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, apps/furnicraft/src/document.rs, docs/domain/products.md, docs/decisions/README.md` — `925d809`
+  `files: crates/model/src/project/, crates/engine/src/panel_cmds/panel.rs, app/src/fill_gizmo.rs, crates/ui/src/editor/fill.rs, app/src/document.rs, docs/domain/products.md, docs/decisions/README.md` — `925d809`
 
 - `[x]` **N11** a panel's end can be given a bevel angle about its edge
   Why: A board that butts a wall turned in two planes cannot meet it with a square end: its end
@@ -1244,7 +1244,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    chamfer; a rounded ring given to the classifier directly becomes a radius; a section whose
    cut would consume an edge is a contour; the mode survives a tool switch and is the one the
    ghost and the panel carry; a click is one undo entry; `cargo xtask ci` is green.
-  `files: crates/model/src/project/, crates/model/src/lib.rs, apps/furnicraft/src/fill_gizmo.rs, crates/ui/src/toolbars/spec.rs, crates/ui/src/toolbars.rs, crates/ui/src/toolbars/ready.rs, crates/ui/src/editor/fill.rs, crates/ui/src/editor/ribbon.rs, apps/furnicraft/src/document.rs, crates/text/src/messages.rs, docs/domain/products.md` — `114d79e`
+  `files: crates/model/src/project/, crates/model/src/lib.rs, app/src/fill_gizmo.rs, crates/ui/src/toolbars/spec.rs, crates/ui/src/toolbars.rs, crates/ui/src/toolbars/ready.rs, crates/ui/src/editor/fill.rs, crates/ui/src/editor/ribbon.rs, app/src/document.rs, crates/text/src/messages.rs, docs/domain/products.md` — `114d79e`
 
 - `[x]` **N9** the niche is a convex cell of wall planes, so boards turned in space are measured
   Why: The owner reports that a niche bounded by panels turned out of the vertical gives no
@@ -1284,7 +1284,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    slab's depth; a body standing inside the cell is refused; the ghost equals the created panel
    in every case; `cargo xtask ci` is green. A new ADR records the cell and the refusal of a
    non-convex void, and `docs/domain/products.md` section 4 describes it.
-  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, crates/model/src/lib.rs, apps/furnicraft/src/fill_gizmo.rs, docs/domain/products.md, docs/decisions/README.md` — `09a29e0`
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, crates/model/src/lib.rs, app/src/fill_gizmo.rs, docs/domain/products.md, docs/decisions/README.md` — `09a29e0`
 
 - `[x]` **X35** a post stands on the niche's ceiling, so its first corner is at the top and edge 1 is the top edge
   Why: The owner read the corner order off a created post and reported it upside down. The fill
@@ -1309,7 +1309,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    floor, the thickness runs on the chosen side of the pointer plane, and the ghost stays
    inside the void at both ends of the free travel. The niche and fill tests pass with the
    updated helper and cargo xtask ci is green.
-  `files: apps/furnicraft/src/fill_gizmo.rs, crates/model/src/project/niche.rs, docs/domain/panels.md` — `8abe395`
+  `files: app/src/fill_gizmo.rs, crates/model/src/project/niche.rs, docs/domain/panels.md` — `8abe395`
 
 - `[x]` **P13** the work order may be empty, and the plan says so instead of inventing a task
   Why: The order cannot be emptied: closing or deferring the last task in `## Now` is refused,
@@ -1360,7 +1360,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    exactly the ghost size with the placeholder class; the card and the gesture produce the same
    document; the grips are checked offscreen and the drag feel by a live run; cargo xtask ci is
    green.
-  `files: apps/furnicraft/src/box_gizmo.rs, crates/ui/src/box_tool.rs` — `6f8b62c`
+  `files: app/src/box_gizmo.rs, crates/ui/src/box_tool.rs` — `6f8b62c`
 
 - `[x]` **U82** the editor opens empty: a new scene carries no demonstration panels, edges or groups
   Why: The startup document is the maker's work surface. Three sample panels, two cutouts,
@@ -1374,7 +1374,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Tests: launching the editor yields a document with no children and a frame that draws
    nothing, asserted through the function the launcher calls; the fixture still evaluates in
    the tests that use it; cargo xtask ci is green.
-  `files: apps/furnicraft/src/scene_build.rs, apps/furnicraft/src/main.rs` — `03a076b`
+  `files: app/src/scene_build.rs, app/src/main.rs` — `03a076b`
 
 - `[x]` **V2** the cube becomes a cuboid: drawn base, pulled height, edited by corner, face and card
   Why: The only solid primitive is a cube with one size for three edges, which nothing in
@@ -1419,7 +1419,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    face; the centred value produces the midpoint coordinate; a missing neighbour disables the
    field; an impossible value is refused. The overlay is checked offscreen for the focus ring
    and the lock glyph, and a live run for the typing feel; cargo xtask rules and ci are green.
-  `files: crates/ui/src/scrub.rs, apps/furnicraft/src/main.rs, crates/ui/src/theme.rs` — `168362e`
+  `files: crates/ui/src/scrub.rs, app/src/main.rs, crates/ui/src/theme.rs` — `168362e`
 
 - `[x]` **N7** a shaped niche: an angled pair of posts gives a trapezoid, and the shelf takes its outline
   Why: The owner named the trapezoid case as part of the feature, not as a later refinement:
@@ -1437,7 +1437,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    created in it has the contour outline, not a rectangle; a rectangular case still produces
    the rectangle through the same path; an unrepresentable section is a readable refusal; the
    preview and the created panel agree; cargo xtask ci is green.
-  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, apps/furnicraft/src/fill_gizmo.rs, crates/engine/src/panel_cmds/panel.rs, crates/ui/src/editor/creation.rs` — `0efd3b4`
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, app/src/fill_gizmo.rs, crates/engine/src/panel_cmds/panel.rs, crates/ui/src/editor/creation.rs` — `0efd3b4`
 
 - `[x]` **N6** the empty-space tool: a post or a shelf follows the cursor and is created to fit the void
   Why: This is the owner entrance to the whole product idea and, after the wall cabinet, the
@@ -1462,7 +1462,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    equals the created panel size; a click is one undo entry; the tool refuses when no product
    is open; only classes with a fill can be chosen; the ghost is checked offscreen and the 1 mm
    feel by a live run.
-  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, crates/ui/src/editor/fill.rs, apps/furnicraft/src/fill_gizmo.rs, apps/furnicraft/src/document.rs` — `13a42ad`
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/surface.rs, crates/ui/src/editor/fill.rs, app/src/fill_gizmo.rs, app/src/document.rs` — `13a42ad`
 
 - `[x]` **N5** the furniture move tool: floor-bound or free by class, no interpenetration, with snapping
   Why: The current translate tool moves anything anywhere, which is right for geometry and
@@ -1480,7 +1480,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    product can; a drag that would intersect another product stops at contact; snapping lands on
    the grid and on a face; one undo restores the whole drag. The frame and the class attributes
    drive the behaviour without a code literal check.
-  `files: apps/furnicraft/src/translate_gizmo.rs, apps/furnicraft/src/gizmo_math.rs, crates/model/src/project/move_query.rs` — `1c82740`
+  `files: app/src/translate_gizmo.rs, app/src/gizmo_math.rs, crates/model/src/project/move_query.rs` — `1c82740`
 
 - `[x]` **N4** the creation guard: a furniture part is created only inside the open product
   Why: The rule "no furniture part outside an open product" is worth nothing if a palette
@@ -1519,7 +1519,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    opening A then B leaves B open; closing leaves none; the state is not in the saved file; a
    double click on a part does not open a product that does not contain it; each tab keeps its
    own open product; the card is driven through an egui context; cargo xtask ci is green.
-  `files: crates/engine/src/session.rs, crates/ui/src/scene_tree.rs, apps/furnicraft/src/main.rs` — `5f5a232`
+  `files: crates/engine/src/session.rs, crates/ui/src/scene_tree.rs, app/src/main.rs` — `5f5a232`
 
 - `[x]` **N2** the product frame is drawn as a dashed wireframe that never picks
   Why: The envelope is useless if nobody can see it and nobody can click it: the owner
@@ -1539,7 +1539,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    panel selects the panel, a click on a nested product selects the inner one; a click through
    the frame behind it still reaches what is behind; the colours come from the theme and are
    checked offscreen; cargo xtask ci is green.
-  `files: crates/scene/src/lib.rs, crates/render/src/lib.rs, apps/furnicraft/src/scene_build.rs` — `36d4dde`
+  `files: crates/scene/src/lib.rs, crates/render/src/lib.rs, app/src/scene_build.rs` — `36d4dde`
 
 - `[x]` **N1** the product entity: a container with a class and an authored envelope, created by a command
   Why: Reports, the export and the creation guard all need the same answer — which piece is
@@ -1575,7 +1575,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Tests: a worktop resizes by length only, a hinge offers no resize and no banding, a
    fitting never enters nesting, and changing a class row flips the behaviour without touching
    the command; no code path compares a class literal outside a test.
-  `files: crates/engine/src/class_rules.rs, crates/engine/src/commands.rs, crates/engine/src/node_cmds.rs, apps/furnicraft/src/gizmo_math.rs` — `173acb4`
+  `files: crates/engine/src/class_rules.rs, crates/engine/src/commands.rs, crates/engine/src/node_cmds.rs, app/src/gizmo_math.rs` — `173acb4`
 
 - `[x]` **T3** the inspector assigns a class from the registry tree instead of typing six digits
   Why: docs/domain/classes.md §6 says the inspector assigns a class from the registry tree;
@@ -1620,7 +1620,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    The envelope keeps format_version as it is. docs/domain/scene-file.md §7 and
    docs/domain/document.md §8 already state the rule; this task makes the code match them. A
    default stays only where the field is optional in the current layout.
-  Done: cargo test -p furnicraft-model -p furnicraft-project is green with one golden file; a
+  Done: cargo test -p model -p project is green with one golden file; a
    file with any other schema number is rejected by the same sentence; rg finds no migration
    pass and no alias for an older name; the two domain documents no longer describe a
    migration; cargo xtask ci is green.
@@ -1667,7 +1667,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the cell; a machine without an adapter skips with a readable sentence; the image at 55 %
    shows the model through the panel and the light image is not washed out; cargo test
    --workspace and cargo xtask ci stay green without a GPU.
-  `files: apps/furnicraft/src/main.rs, crates/render/src/lib.rs, crates/ui/src/theme.rs, crates/testkit/src/lib.rs` — `b370740`
+  `files: app/src/main.rs, crates/render/src/lib.rs, crates/ui/src/theme.rs, crates/testkit/src/lib.rs` — `b370740`
 
 - `[x]` **U80** cargo xtask ui-rules fails a literal colour and a raw egui host outside the module that owns it
   Why: theme.rs owns the colours and three modules own the overlay hosts, but nothing checks
@@ -1685,7 +1685,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Tests: a literal colour in ui/panel_card.rs fails and the message names file and line;
    a host in a card fails; theme.rs and every owner in the table pass; an alias (use
    egui::Color32 as C) is still caught; the real tree passes; cargo xtask ci runs the step.
-  `files: xtask/src/ui_rules.rs, xtask/src/main.rs, crates/ui/src/theme.rs, crates/ui/src/icons.rs, crates/ui/src/panel_card.rs, apps/furnicraft/src/side_panels.rs` — `7d78778`
+  `files: xtask/src/ui_rules.rs, xtask/src/main.rs, crates/ui/src/theme.rs, crates/ui/src/icons.rs, crates/ui/src/panel_card.rs, app/src/side_panels.rs` — `7d78778`
 
 - `[x]` **U79** cargo xtask skills keeps the project skills honest: every path, command and sibling they name exists, and the frontmatter is what the loader needs
   Why: A skill that names a file or a `cargo xtask` command that is gone sends the next session
@@ -1709,7 +1709,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    panel selects nothing" and "both themes checked by eye"; each of those is re-verified today
    by starting the app on the owner's screen. After U77 the same frame runs in a test, so the
    sentence becomes an assertion and a regression cannot come back quietly.
-  Shape: A test module beside the shell (apps/furnicraft/src/frame_tests.rs, declared from
+  Shape: A test module beside the shell (app/src/frame_tests.rs, declared from
    main.rs) with one helper that builds the app headless and drives RawInput. Cover: the scene
    rectangle and the active camera aspect are identical with both panels expanded, folded and
    hidden and with the ribbon open and folded; a click on a panel is chrome and starts no pick,
@@ -1720,15 +1720,15 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Every listed assertion is a test that fails when the rule is broken, proven by
    temporarily reverting one line of Chrome::content and one of the key handler; cargo xtask ci
    green.
-  `files: apps/furnicraft/src/frame_tests.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/shortcuts.rs` — `04e6a7d`
+  `files: app/src/frame_tests.rs, app/src/main.rs, app/src/document.rs, app/src/shortcuts.rs` — `04e6a7d`
 
 - `[x]` **U77** the shell's one frame is callable without a window, so a session can check the real interface silently
-  Why: FurniCraftApp implements eframe::App::ui and holds render_state: egui_wgpu::RenderState,
+  Why: Z3LApp implements eframe::App::ui and holds render_state: egui_wgpu::RenderState,
    so only the running window can drive the real interface: the checks in crates/ui exercise a
    card or a field in isolation, and a shell rule — the scene rectangle, the layer order,
    Chrome::covers, a key while a modal is up — is verified by starting the app. The owner wants
    those checks to run while he uses the machine.
-  Shape: Move everything App::ui does today into an inherent FurniCraftApp::frame(&mut self,
+  Shape: Move everything App::ui does today into an inherent Z3LApp::frame(&mut self,
    ui: &mut egui::Ui); the trait method delegates and ignores its Frame. Make the GPU handle
    optional, so a test builds the app with no device, no adapter and no window and the paint
    callback is skipped instead of registered. Give SettingsStore a constructor on an explicit
@@ -1739,7 +1739,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    panic, no document revision); the app constructs and runs with no GPU and no window; the
    workspace settings file is byte-identical after a headless run; the window still opens and
    draws by eye. cargo xtask ci green.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/tabs.rs, apps/furnicraft/src/settings_store.rs, crates/testkit/src/lib.rs` — `d6d0a4b`
+  `files: app/src/main.rs, app/src/tabs.rs, app/src/settings_store.rs, crates/testkit/src/lib.rs` — `d6d0a4b`
 
 - `[x]` **U76** the ribbon holds tools only: the polygon sides, primitive size and extrude height fields leave the tool row and their typed values become session defaults
   Why: Three `CellSpec::Field` cells take two 34 pt cells each and turn a row of icons into a
@@ -1818,7 +1818,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the inspector covers the cube and its home and projection buttons. The widget has no on/off
    switch, while the owner wants one in the bottom cluster settings.
   Shape: Add `ViewCluster::show_widget: bool` (default true) and a checkbox in
-   `settings_popover` beside the angle readout, with a `furnicraft-text` label and hint;
+   `settings_popover` beside the angle readout, with a `text` label and hint;
    `Document::viewport` skips `Gizmo::show` when it is false and keeps the gizmo state. Place
    the widget from the part of the view no chrome covers: start with the view rect, remove the
    ribbon band at the top, then remove the right panel when its rect overlaps the candidate
@@ -1831,7 +1831,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    no cube, home or projection button and consumes no click; the switch does not change the
    document revision; the label and hint resolve in both languages. Checked by eye in both
    themes and at 200 % scale.
-  `files: apps/furnicraft/src/gizmo.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/view_cluster.rs, apps/furnicraft/src/side_panels.rs, crates/text/src/messages.rs` — `45283da`
+  `files: app/src/gizmo.rs, app/src/document.rs, app/src/view_cluster.rs, app/src/side_panels.rs, crates/text/src/messages.rs` — `45283da`
 
 - `[x]` **U72** the side panels are a true overlay: the scene keeps one rectangle and one camera however a panel folds, and the translucent panel shows the furniture drawn under it
   Why: U66 gave both panels `Area`s over a full-width viewport, but `Chrome::content` still
@@ -1854,7 +1854,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   layouts still tile the view rect exactly and their dividers stay grabbable outside the
   panels; no document revision on any fold or hide. Both themes checked by eye with the panels
   at 55, 92 and 100 %.
-  `files: apps/furnicraft/src/side_panels.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/strip.rs, docs/decisions/0080-the-tool-strips-float-over-the-design-space.md` — `c23e14b`
+  `files: app/src/side_panels.rs, app/src/document.rs, app/src/main.rs, app/src/strip.rs, docs/decisions/0080-the-tool-strips-float-over-the-design-space.md` — `c23e14b`
 
 - `[x]` **M72** the figure, primitive and typed-property numbers use the shared field
   Why: U65 converted the placement, pivot, panel, camera and light cards to the shared 76 px
@@ -1883,7 +1883,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: Tests: the preview changes no revision and no history; the check applies once however
    often it is clicked; the cross restores the pre-command state; a simulated slow rebuild
    reports busy and the window stays responsive.
-  `files: apps/furnicraft/src/status_bar.rs` — `3abe271`
+  `files: app/src/status_bar.rs` — `3abe271`
 
 - `[x]` **U64** the status bar shows the tool and counts; the owner wants the selection context in the centre — name, kind, size, material, edge banding, warnings — and the three display sliders renamed and moved to Settings → View.
   Why: The card should not carry derived context, and the display names are ambiguous: «Сетка»
@@ -1905,7 +1905,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    runs; the settings round-trip keeps the three strengths and the reset restores 60/70/40; the
    cluster no longer draws the triangle diagnostic; the status bar reads «Привязка 10 мм». Both
    themes and a narrow window are checked by eye.
-  `files: apps/furnicraft/src/status_bar.rs, apps/furnicraft/src/view_cluster.rs, crates/ui/src/settings.rs, crates/ui/src/theme.rs` — `7703a06`
+  `files: app/src/status_bar.rs, app/src/view_cluster.rs, crates/ui/src/settings.rs, crates/ui/src/theme.rs` — `7703a06`
 
 - `[x]` **U65** inspector fields carry units inside the editable text, are wide, and some edits need Apply; the owner wants numbers only at 76 px, immediate feedback with a short debounce, one undo per value, and a command bar with a check and a cross for operations that preview.
   Why: A unit inside the field is selected with the number and reads as data; Apply adds a
@@ -1951,7 +1951,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    all three surfaces; the panel tops stay aligned with the ribbon during the animation (a
    frame test or a golden of the inset function); the split-view layout tiles only the
    uncovered area; no document write. Both themes and 55/92/100 % are checked by eye.
-  `files: apps/furnicraft/src/side_panels.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/document.rs, apps/furnicraft/src/header.rs, apps/furnicraft/src/view_cluster.rs, apps/furnicraft/src/shortcuts.rs, apps/furnicraft/src/strip.rs, crates/ui/src/settings.rs, crates/ui/src/theme.rs, crates/ui/src/icons.rs, crates/text/src/messages.rs` — `cd4db46`
+  `files: app/src/side_panels.rs, app/src/main.rs, app/src/document.rs, app/src/header.rs, app/src/view_cluster.rs, app/src/shortcuts.rs, app/src/strip.rs, crates/ui/src/settings.rs, crates/ui/src/theme.rs, crates/ui/src/icons.rs, crates/text/src/messages.rs` — `cd4db46`
 
 - `[x]` **U67** variants of one tool — circle by centre and radius, by two points, by three points, tangent — live in a dropdown under the tool; a click always opens it; it closes on Esc, an outside click and a tab change; the pinned variant is a global setting.
   Why: The ten `DrawTool` values are siblings with their own icons, so the map cannot say
@@ -1987,7 +1987,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    (`enabled(context)`), the table holds order and labels; a `Planned` tool (no command yet) is
    skipped, so a tab with no live tool is not drawn. Adopt the metrics: 28 px tab row, 30 px
    tool row, 12 px caption band, 34×30 cells, 72 px open / 29 px collapsed; persist the open
-   state; labels and hints go through `furnicraft-text`. This task keeps one cell per tool —
+   state; labels and hints go through `text`. This task keeps one cell per tool —
    variants come in U67.
   Done: The five tabs draw the live tools of the map; every implemented `ToolAction` sits in
    exactly one tool; a planned row is skipped and an empty tab is not drawn; ids are unique and
@@ -1995,7 +1995,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    collapsed; tests cover the map (every action once, unique ids, computed columns, empty tabs,
    height) and the open state round-trips; the old `RibbonTab`/`ToolGroup` matches and their
    tests are gone.
-  `files: crates/ui/src/toolbars.rs, apps/furnicraft/src/main.rs, crates/ui/src/icons.rs, crates/text/src/messages.rs` — `2e71b9c`
+  `files: crates/ui/src/toolbars.rs, app/src/main.rs, crates/ui/src/icons.rs, crates/text/src/messages.rs` — `2e71b9c`
 
 - `[x]` **U69** the approved sketch map needs sixteen tools with no artwork — trim, extend, offset, fillet, chamfer, break, four construction tools, three dimensions and three booleans — and the ten existing contour icons must be re-inked in the draw role.
   Why: A zero-byte asset draws its label, so the ribbon at 22 px would read as text; the mock's
@@ -2059,7 +2059,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    keeps preset, accent and opacity; an unknown preset and a corrupt settings file load P1 and
    report one notice; both themes of all three presets are checked by eye on the ribbon, the
    panels and the viewport chrome.
-  `files: crates/ui/src/theme.rs, crates/ui/src/settings.rs, apps/furnicraft/src/main.rs` — `c0d6edc`
+  `files: crates/ui/src/theme.rs, crates/ui/src/settings.rs, app/src/main.rs` — `c0d6edc`
 
 - `[x]` **P11** the plan tool cannot take a bug: a session that fixes an entry in `## Bugs` has no verb that moves it into `## Now`, so it edits `plan/BACKLOG.md` by hand, which ADR 0085 forbids. Add `cargo xtask task take <ID> [--at top|end]` (default end): move an open `## Bugs` entry into `## Now` at the chosen place, keeping its text, fields and `files:` hint, in one validated write. Refuse a done task, an unknown id, a task already in `## Now`, and `--at top` while another task is in progress. Into an occupied `## Now` it changes no `STATE`; into an empty one it sets `STATE: task=` to the taken task, rewrites `## Next` and leaves `state=idle`. Tests: a bug moves with every line intact, taking it into an occupied `## Now` leaves `STATE` alone, taking it into an empty one makes it `STATE`, and a done or unknown task is refused.
   `files: state-contract/src/cli/write.rs, state-contract/src/edit.rs, state-contract/src/cli/mod.rs` — `9d63579`
@@ -2111,7 +2111,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    preserves world vertices and pivot_world, set_pivot/center_pivot change only pivot_local,
    placement.world_zero changes only translation, a panel's pivot is read-only zero, old
    goldens load unchanged through the alias, ADR 0088 exists, cargo xtask ci is green.
-  `files: crates/model/src/frame.rs, crates/model/src/placement.rs, crates/model/src/contour.rs, crates/model/src/project/object_cmds.rs, crates/model/src/project/node_cmds.rs, crates/model/src/project/panel_cmds.rs, crates/model/src/project/query.rs, crates/model/src/project/wire.rs, crates/model/src/project/frame_contract.rs, crates/engine/src/node_cmds.rs, crates/engine/src/session.rs, crates/ui/src/pivot_card.rs, crates/ui/src/placement_card.rs, crates/ui/src/coords.rs, crates/text/src/messages.rs, docs/decisions/0088-origin-and-pivot-are-different-points.md, docs/decisions/0026-the-manipulation-pivot-is-stored-node-data.md, docs/decisions/0082-the-local-zero-is-the-creation-anchor.md, docs/decisions/0083-a-panel-is-anchored-at-its-base-corner.md, docs/domain/document.md, docs/domain/geometry.md, docs/domain/panels.md, docs/domain/scene-file.md, crates/project/tests/golden/scene.fcs, PROJECT.md, AGENTS.md, plan/map.md` — `c250d09`
+  `files: crates/model/src/frame.rs, crates/model/src/placement.rs, crates/model/src/contour.rs, crates/model/src/project/object_cmds.rs, crates/model/src/project/node_cmds.rs, crates/model/src/project/panel_cmds.rs, crates/model/src/project/query.rs, crates/model/src/project/wire.rs, crates/model/src/project/frame_contract.rs, crates/engine/src/node_cmds.rs, crates/engine/src/session.rs, crates/ui/src/pivot_card.rs, crates/ui/src/placement_card.rs, crates/ui/src/coords.rs, crates/text/src/messages.rs, docs/decisions/0088-origin-and-pivot-are-different-points.md, docs/decisions/0026-the-manipulation-pivot-is-stored-node-data.md, docs/decisions/0082-the-local-zero-is-the-creation-anchor.md, docs/decisions/0083-a-panel-is-anchored-at-its-base-corner.md, docs/domain/document.md, docs/domain/geometry.md, docs/domain/panels.md, docs/domain/scene-file.md, crates/project/tests/golden/scene.z3l, PROJECT.md, AGENTS.md, plan/map.md` — `c250d09`
 
 - `[x]` **X8** the scene stays dark in the light theme: with the workspace on *Light*, the viewport
   still clears to the dark chrome, the floor grid keeps its light-on-dark lines, and the rendered
@@ -2122,7 +2122,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   and the shipped frame never gets them from the active `egui::Visuals` when `theme::install_with`
   changes. Tests: a light frame carries the light background and grid; switching variant changes the
   uploaded scene without touching the document revision.
-  `files: crates/scene/src/lib.rs, crates/render/src/lib.rs, apps/furnicraft/src/main.rs` — `eba2f51`
+  `files: crates/scene/src/lib.rs, crates/render/src/lib.rs, app/src/main.rs` — `eba2f51`
 
 - `[x]` **X33** a drag on the UI scale makes the window jump and loses the scale
   Why: Dragging the UI-scale field makes the window jump between values: with the Settings
@@ -2168,11 +2168,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   strip keeps its icon and turned title, and the click, edge-double-click and outward-drag restore
   rules from U40 stay. Tests: neither header draws a count; a left panel's chevron sits at its right
   edge and a right panel's at its left; folding and restoring keeps the expanded width.
-  Session notes: `panel_header` and `count_chip` in `apps/furnicraft/src/main.rs` draw the current
+  Session notes: `panel_header` and `count_chip` in `app/src/main.rs` draw the current
   row; `node_count` is cached only for that chip. `PanelSide` already names which edge a panel sits
   on, so the chevron side follows from it.
   now: committing the finished header and running the gate
-  `files: apps/furnicraft/src/main.rs, crates/ui/src/theme.rs` — `873515c`
+  `files: app/src/main.rs, crates/ui/src/theme.rs` — `873515c`
 
 - `[x]` **U49** the interface speaks English and Russian: one typed message table behind a language
   switch, and no user-facing string left inline. A new `crates/text` (L0, no dependencies, registered
@@ -2180,7 +2180,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   variant per string; `Message::text(self, lang) -> &'static str` reads a `&[&str; Lang::COUNT]`
   table, so adding a third language changes `Lang` and turns every missing translation into a
   compile error instead of an English fallback. Every call site in `crates/ui` and
-  `apps/furnicraft` draws through that table: the header, the ribbon tabs, group captions and button
+  `app` draws through that table: the header, the ribbon tabs, group captions and button
   captions, the scene tree context menu, all inspector cards and section titles, the status bar,
   the file and modal dialogs, and the argument messages of `PanelDiagnostic`
   (`crates/ui/src/panel_card.rs` `diagnostic_message` moves into the table and stops being a
@@ -2201,14 +2201,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   English with its node names unchanged; the longest Russian ribbon caption fits the 48 pt labelled
   button of U39 without clipping. Session notes: `Lang` is a plain enum and the table is
   `const`, so `crates/text` needs no serde, no `egui` and no file I/O — it is data, like
-  `furnicraft-units`. The 48 labels are the `CommandSpec::new` calls in
+  `units`. The 48 labels are the `CommandSpec::new` calls in
   `crates/engine/src/commands.rs`; `label()` is read in `crates/ui/src/toolbars.rs`,
-  `crates/ui/src/lib.rs` and `apps/furnicraft/src/header.rs`. Existing inline strings are ~530 in
-  `crates/ui` and ~200 in `apps/furnicraft`; `theme::PRODUCT_NAME` and the logo stay as they are.
+  `crates/ui/src/lib.rs` and `app/src/header.rs`. Existing inline strings are ~530 in
+  `crates/ui` and ~200 in `app`; `theme::PRODUCT_NAME` and the logo stay as they are.
   Do this after U39–U48 so the labels stop moving, and before M8/M9, which add hardware, cutting
   lists and CNC text on top of the same surface. A future move to per-language files (a translator
   working outside the repository) reuses `Message` as the key, so this does not lock the format.
-  `files: crates/ui/src, apps/furnicraft/src, xtask/src/main.rs` — `c027309`
+  `files: crates/ui/src, app/src, xtask/src/main.rs` — `c027309`
 
 - `[x]` **U46** the icon set catches up with the new surfaces: the header, the ribbon groups, the
   viewport bar and the split layout get their drawings under `assets/icons`, so no chrome surface
@@ -2241,11 +2241,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   the flags survive a selection change and die with the session.
   Session notes: `Editor` owns `open: HashSet<Id>` in `crates/ui/src/lib.rs` and prunes it in
   `retain_open`, which is the shape to copy for `hidden` and `locked`; `scene_build::evaluate` in
-  `apps/furnicraft/src/scene_build.rs` is where a skipped subtree disappears, and
+  `app/src/scene_build.rs` is where a skipped subtree disappears, and
   `mesh_pick::pick_scene` plus `scene_gizmo::pick` are where picking must agree. `icons::actions`
   already declares `VISIBLE`, `HIDDEN`, `LOCK`, `UNLOCK` as zero-byte placeholders, so the buttons
   draw their text label until U46 fills them.
-  `files: crates/ui/src/scene_tree.rs, apps/furnicraft/src/scene_build.rs` — `6b5c502`
+  `files: crates/ui/src/scene_tree.rs, app/src/scene_build.rs` — `6b5c502`
 
 - `[x]` **X32** the cross on a tab does not close it, the File menu offers no Close and no Exit, the active tab is barely distinguishable and the new-scene button is a text label
   Done: the cross closes its tab (a click on the cross is a close, a click on the body
@@ -2253,7 +2253,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    changes), the active tab draws an accent bar and an accent-tinted fill, and the new-scene
    button draws assets/icons/actions/add.svg instead of its label; a test proves the cross wins
    over the body and the two File entries land in the right path
-  `files: apps/furnicraft/src/header.rs, apps/furnicraft/src/file_menu.rs, apps/furnicraft/src/main.rs, assets/icons/actions/add.svg` — `71a636f`
+  `files: app/src/header.rs, app/src/file_menu.rs, app/src/main.rs, assets/icons/actions/add.svg` — `71a636f`
 
 - `[x]` **U45** several scenes open at once: the tab row in the header holds one tab per open file,
   each with its own session, undo history, selection, camera and dirty marker, and activating a tab
@@ -2264,14 +2264,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   fields of the application into one `Document` per tab with its own renderer target, so it gets a
   plan of its own and lands last. Tests: a tab keeps its own undo stack and dirty flag; switching
   tabs restores the selection and the camera; a close with unsaved changes asks and a discard drops only that tab.
-  Plan (approved by the owner 2026-11-09; not started): `apps/furnicraft/src/tabs.rs` is the pure
+  Plan (approved by the owner 2026-11-09; not started): `app/src/tabs.rs` is the pure
   policy — `TabId`, `Tabs` with the order, the active tab, `activate`, and `close` returning
   `CloseOutcome { Closed, NeedsConfirmation, LastTab }` — testable without a window or a GPU like
-  `view_layout`. `apps/furnicraft/src/document.rs` holds the scene-bound payload: `Session`, `Editor`,
+  `view_layout`. `app/src/document.rs` holds the scene-bound payload: `Session`, `Editor`,
   `TruckKernel`, `EvaluationCache`, `SceneFrame`, `scene_revision`, `Layout` (its cameras),
   `home_camera`, `renderer`, `texture_id`, `FileMenu`, `PreservedSections`, the gizmos, `highlighted`,
   `selected_chains`, `uploaded_preview`, `node_count` and `last_error`; `sync_scene`, `upload_scene`,
-  `viewport` and the `apply_*` handlers move onto it. `FurniCraftApp` stays the shell: the tabs, the
+  `viewport` and the `apply_*` handlers move onto it. `Z3LApp` stays the shell: the tabs, the
   settings and store, Settings/Home, the palette, the panel folds, the viewport cluster, the transform
   mode and the pointer. Every tab registers its own `TextureId` from its own `TextureView` and a close
   calls `Renderer::free_texture` for that id; the last close leaves one empty *Untitled*, never zero.
@@ -2281,7 +2281,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   with the tab because it already owns the cameras. Four commits: (1) `tabs.rs` and its tests with no
   behaviour change; (2) extract `Document` at one tab, all tests green; (3) the tab row, activation,
   close and per-tab textures; (4) ADR 0081, the map row, the plan close and the gate.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/file_menu.rs` — `c6d3836`
+  `files: app/src/main.rs, app/src/file_menu.rs` — `c6d3836`
 
 - `[x]` **S22** `main.rs` keeps the frame loop and gives up its chrome — rules: B1, B4, B8, H5.
   Why: after S21 the file is ~1980 lines, and four chrome pieces each have their own reason to change:
@@ -2289,7 +2289,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   folding side panels (`PanelHead`, `side_panel`, `panel_header`, `count_chip`, `collapsed_strip`), the
   ribbon-band geometry (`strip_rect`, `strip_area`, `uncovered`, `fit_uncovered`, `view_region`) and
   the shortcut readers (`Shortcuts`, `take_shortcuts`, `take_drawing_shortcut`) — F1, B4.
-  Shape: they move to `apps/furnicraft/src/status_bar.rs`, `side_panels.rs`, `strip.rs` and
+  Shape: they move to `app/src/status_bar.rs`, `side_panels.rs`, `strip.rs` and
   `shortcuts.rs`; `main.rs` 1980 -> ~1460, and U45 then takes `viewport` (635) onto `Document` and
   leaves the shell near 800.
   Done: suite unchanged (the same 34 tests, 14 of them left in `main.rs`); each module states
@@ -2299,17 +2299,17 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    `status_bar.rs` 287, `side_panels.rs` 159, `strip.rs` 114, `shortcuts.rs` 82 production
    lines, no ceiling of `plan/refactor.md` §3 crossed.
   Commits: one move.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src` — `a543599`
+  `files: app/src/main.rs, app/src` — `a543599`
 
 - `[x]` **S21** the shell's Home surface moves out of `main.rs` — rules: B4, B8, H2, H5.
-  Why: `home_surface` is one 632-line function inside `impl FurniCraftApp` (1620 lines, 40 fields),
+  Why: `home_surface` is one 632-line function inside `impl Z3LApp` (1620 lines, 40 fields),
   four times B4's 150-line function ceiling (F1).
-  Shape: `home_surface` becomes a free function in `apps/furnicraft/src/home.rs` (~640) over the state
+  Shape: `home_surface` becomes a free function in `app/src/home.rs` (~640) over the state
   it reads, called from `ui()`; `main.rs` 2609 -> ~1980.
   Done: the existing Home tests move unchanged; `home.rs` states that it draws the start surface and
   returns one action, that it never touches the document, and `//! Changes when:`.
   Commits: one move.
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src` — `c83ace5`
+  `files: app/src/main.rs, app/src` — `c83ace5`
 
 - `[x]` **S20** `ui/contour_edit.rs` gives the drawing draft its own module — rules: B1, B4, B8.
   Why: 1112 production lines in one file cover two operations: editing an existing contour
@@ -2559,7 +2559,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   (conversions 27 -> ~8), 1572 -> ~1280. The `model/contour.rs` header states that the document
   converts once at its edge and that the maths lives in `geom`.
   Done: every contour-edit test passes unchanged; if a test disagrees with the `geom` formula, stop and
-  file an `X` task instead of bending the test (§12); `cargo test -p furnicraft-model -p furnicraft-geom`.
+  file an `X` task instead of bending the test (§12); `cargo test -p model -p geom`.
   Commits: one move.
   Measured: `geom/segment.rs` grew 701 -> 875 production lines and holds `Arc::with_radius_through`,
   `Arc::through_ends`, `Arc::sweep_to`, `Arc::midpoint`, `Segment::clamp_to_extent`,
@@ -2615,12 +2615,12 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `4a16ee8`
   `files: crates/geom/src/contour.rs, crates/geom/src/segment.rs, crates/geom/src/lib.rs`
 
-- `[x]` **S8** the shared test fixtures move into `furnicraft-testkit` — rules: C7, T1, C4.
+- `[x]` **S8** the shared test fixtures move into `testkit` — rules: C7, T1, C4.
   Why: `fn millimetres` was written 20 times across 8 crates, `open_path` 5 times and `sample_project`
-  twice, although `furnicraft-testkit` exists for exactly this (F7). Test-only: no production line
+  twice, although `testkit` exists for exactly this (F7). Test-only: no production line
   change, no ceiling crossed — the finding was duplicated knowledge in 26 test modules.
   Shape: the three helpers have one definition in `model::testing`, behind the non-default `testing`
-  feature that `furnicraft-testkit` enables and re-exports them from; `model` itself cannot dev-depend
+  feature that `testkit` enables and re-exports them from; `model` itself cannot dev-depend
   on the testkit, because the cycle compiles the library twice and its types stop matching (ADR 0084).
   `crates/model/src/fixtures.rs` keeps the fixtures only the model's own tests need; `param` and `mesh`
   gained the testkit `[dev-dependencies]` entry, `model` reaches the helpers through the feature.
@@ -2636,11 +2636,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   small behaviour-preserving subtask per finding (`S8`, `S9`, … in dependency order) in `## Now`, then
   stops. The audit commit touches `plan/` only — no source file and no test. It runs right after S6
   because it is cheap and gives the rest of `## Now` its order; a subtask that edits `main.rs`,
-  `crates/ui/src/lib.rs` or `apps/furnicraft/src/file_menu.rs` lands before U45, which moves exactly
+  `crates/ui/src/lib.rs` or `app/src/file_menu.rs` lands before U45, which moves exactly
   those files into `Document` and `tabs.rs`, and U45 then re-plans against the smaller result; a
   subtask inside `geom`, `model`, `scene`, `render` or `param` is independent of U45.
   Findings measured on 2026-11-10, a baseline to re-measure and not a requirement: `F1`
-  `apps/furnicraft/src/main.rs` 2609 production lines, `impl FurniCraftApp` ≈1620, `viewport` 637,
+  `app/src/main.rs` 2609 production lines, `impl Z3LApp` ≈1620, `viewport` 637,
   40 fields, 113 functions, ≥8 reasons to change; `F2` `crates/ui/src/lib.rs` `Editor` 18 fields, 60
   public methods, `impl` 1039, four pointer modes plus ribbon state plus eight cards, and three
   document rules inside it (`placement_in_parent`, `NEW_PANEL_LENGTH_MM/WIDTH_MM`,
@@ -2655,7 +2655,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `render/lib.rs` 1446; `F6` `ui/panel_card.rs` and `ui/object_card.rs` ≈989 each (`impl PanelCard`
   ≈857, `run_action` 74) and `ui/toolbars.rs` 982 (`show_group_row` 146); `F7` shared fixtures
   rewritten in four crates (`millimetres`, `sample_project`, `open_path`) although
-  `furnicraft-testkit` exists. Clean at filing time and not a finding: `cargo xtask layers` green, no
+  `testkit` exists. Clean at filing time and not a finding: `cargo xtask layers` green, no
   `kernel` or GPU edge in `model`, no `egui` or `model` edge in `render`, the UI dispatches and never
   writes the document, the kernel port is five methods, tests are 39% of the tree.
   Instructions: read `plan/refactor.md` in full before the audit — it holds the measurement recipe
@@ -2793,7 +2793,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   rotated, moved container puts the primitive on the pointer; its pivot is zero, its mesh bounds are
   symmetric about the local zero, and the document changes once.
   `5370454`
-  `files: crates/ui/src/lib.rs, apps/furnicraft/src/gizmo_math.rs, crates/engine/src/object_cmds.rs`
+  `files: crates/ui/src/lib.rs, app/src/gizmo_math.rs, crates/engine/src/object_cmds.rs`
 
 - `[x]` **X24** a drawing is born at its own zero: a line drawn at (600, 400) stores
   `translation = (0, 0, 0)` and puts (600, 400) into `pivot_local`, so the card honestly reports a
@@ -2853,7 +2853,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   cached preview; a pointer over the strip band does not hover the viewport behind it. ADR 0052
   already decides the behaviour, so this adds no record.
   `ed0e8af`
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/draw_gizmo.rs, crates/ui/src/lib.rs, crates/ui/src/toolbars.rs`
+  `files: app/src/main.rs, app/src/draw_gizmo.rs, crates/ui/src/lib.rs, crates/ui/src/toolbars.rs`
 
 - `[x]` **U51** the toolbars float over the design space: the ribbon is an `Order::Middle` overlay
   anchored to the window below the header instead of a top panel, so the scene image runs under it,
@@ -2866,7 +2866,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   it never reaches the viewport; the drawn band equals the reserved one; frame-all keeps the bounds
   inside the uncovered view. ADR 0080.
   `f5270e2`
-  `files: apps/furnicraft/src/main.rs, crates/ui/src/toolbars.rs, crates/ui/src/theme.rs`
+  `files: app/src/main.rs, crates/ui/src/toolbars.rs, crates/ui/src/theme.rs`
 
 - `[x]` **U63** the display style belongs to one view: `Leaf` carries `ShadingStyle`, the cluster's
   five style buttons read and write the active leaf's style, and `ViewCluster` stops owning a
@@ -2879,7 +2879,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   mapping matches `StylePasses`; opening a scene keeps each layout's styles; the settings default
   applies to a new view and to the active one when changed.
   `009a73f`
-  `files: crates/render/src/lib.rs, apps/furnicraft/src/view_layout.rs, apps/furnicraft/src/view_cluster.rs, apps/furnicraft/src/main.rs`
+  `files: crates/render/src/lib.rs, app/src/view_layout.rs, app/src/view_cluster.rs, app/src/main.rs`
 
 - `[x]` **U62** the active view expands over the whole workspace and comes back: `Layout` gains
   `maximized: Option<LeafId>`; `regions()` returns one full-area rectangle for that leaf and
@@ -2893,7 +2893,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   is consumed and the single layout refuses it; the icon files pass the existing footprint and
   coverage tests and the URI count is 74.
   `2cbc453`
-  `files: apps/furnicraft/src/view_layout.rs, apps/furnicraft/src/view_cluster.rs, apps/furnicraft/src/main.rs, crates/ui/src/settings.rs, assets/icons/view, crates/ui/src/icons.rs`
+  `files: app/src/view_layout.rs, app/src/view_cluster.rs, app/src/main.rs, crates/ui/src/settings.rs, assets/icons/view, crates/ui/src/icons.rs`
 
 - `[x]` **U61** *Frame all* fits the objects the scene has now: the app stores `scene_bounds` from
   the latest `evaluate`, and `frame_all` computes `scene_build::home_camera(scene_bounds)` on every
@@ -2906,7 +2906,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   view keeps its direction and ortho; an empty scene still yields a usable camera. A standard view
   the user made perspective also keeps that projection.
   `33c2275`
-  `files: apps/furnicraft/src/main.rs, apps/furnicraft/src/view_layout.rs, apps/furnicraft/src/scene_build.rs`
+  `files: app/src/main.rs, app/src/view_layout.rs, app/src/scene_build.rs`
 
 - `[x]` **U60** every layout remembers its own views: `Layout` holds one `LayoutState` per
   `LayoutKind` (tree, leaves, active, next id) instead of one tree that `set_kind` reshapes. First
@@ -2924,7 +2924,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   gesture over an inactive view is ignored until a press activates it; a border drag keeps the
   active view. ADR 0079 records the layout state.
   `c014bf9`
-  `files: apps/furnicraft/src/view_layout.rs, apps/furnicraft/src/main.rs`
+  `files: app/src/view_layout.rs, app/src/main.rs`
 
 - `[x]` **U59** the standard views become the six the owner names: `OpeningView` gains `Left` and
   `Bottom` and takes the owner's eye convention — `Front` looks from `+Y` to `-Y`, `Left` from `+X`
@@ -2939,7 +2939,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   are orthographic; an axonometric preset and a free direction keep the projection; the toggle works
   in a standard view and the preset stays; `set_orthographic` preserves the visible height.
   `7dc71d1`
-  `files: crates/ui/src/display.rs, crates/scene/src/lib.rs, apps/furnicraft/src/view_layout.rs`
+  `files: crates/ui/src/display.rs, crates/scene/src/lib.rs, app/src/view_layout.rs`
 
 - `[x]` **U58** the corner widget gains the roll ring and its step setting: a functional ring on a
   52 pt radius in a 124 pt square rotates the camera about its view axis, always visible with the
@@ -2959,7 +2959,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   orbit keeps the roll and a preset resets it; a ring drag is reported to the shell so it cannot
   orbit the viewport; the setting clamps and applies live.
   `8c329ad`
-  `files: apps/furnicraft/src/gizmo.rs, crates/ui/src/settings.rs, apps/furnicraft/src/main.rs`
+  `files: app/src/gizmo.rs, crates/ui/src/settings.rs, app/src/main.rs`
 
 - `[x]` **U57** the camera rolls about its own view axis: `Camera` has no roll, so `right()` is
   horizontal, `up()` follows yaw and pitch only, and the readout's roll is always zero. Add a
@@ -2978,7 +2978,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   forward, eye or target; snaps reset while orbit keeps; a pinned camera ignores the roll; the
   readout shows the field.
   `6cd7ee6`
-  `files: crates/scene/src/lib.rs, apps/furnicraft/src/view_layout.rs, apps/furnicraft/src/gizmo.rs`
+  `files: crates/scene/src/lib.rs, app/src/view_layout.rs, app/src/gizmo.rs`
 
 - `[x]` **U56** the projection toggle joins the corner widget as a flat icon: the corner orientation
   widget has no projection control, and its Home button is the only control under the cube, drawn as
@@ -2993,7 +2993,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `ToggleProjection`; the icon and hint follow the projection; a flat button paints no filled rect
   at rest and one on hover; an undrawn placeholder draws its label.
   `879f456`
-  `files: apps/furnicraft/src/gizmo.rs, crates/ui/src/icons.rs, apps/furnicraft/src/main.rs`
+  `files: app/src/gizmo.rs, crates/ui/src/icons.rs, app/src/main.rs`
 
 - `[x]` **X20** a pole view has a canonical up: clicking the top view inherited whatever yaw the
   camera had, so the elevation arrived rolled. `Camera::look_from_oriented(direction, up)` takes the
@@ -3006,7 +3006,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   the canonical basis at both poles; a side view ignores the requested up; a pole with an up
   parallel to the view keeps its yaw; a preset and the widget produce the same camera.
   `b6a974f`
-  `files: crates/scene/src/lib.rs, apps/furnicraft/src/view_layout.rs`
+  `files: crates/scene/src/lib.rs, app/src/view_layout.rs`
 
 - `[x]` **X19** the extrusion pulls a phantom body: the arrow detached from the body while the pull
   was open and the body only appeared after release. The pull now draws a wireframe prism at the
@@ -3019,7 +3019,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   height command and one undo restores it; Escape keeps the committed height. A solid preview is
   recorded in `plan/debt.md`.
   `efb153c`
-  `files: apps/furnicraft/src/extrude_gizmo.rs`
+  `files: app/src/extrude_gizmo.rs`
 
 - `[x]` **X18** a figure's geometry is editable in its card: the object card had no radius for a
   circle, no width and height for a rectangle and no side count for a polygon, and a constructive
@@ -3051,7 +3051,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   moves the corner; a drag cannot pass the opposite node; reaching 0 collapses and Apply joins the
   nodes; a ring of three refuses; the undo entry is one.
   `fc2d1f3`
-  `files: apps/furnicraft/src/contour_gizmo.rs, crates/model/src/contour_edit.rs, crates/ui/src/contour_edit.rs`
+  `files: app/src/contour_gizmo.rs, crates/model/src/contour_edit.rs, crates/ui/src/contour_edit.rs`
 
 - `[x]` **X16** a rectangle and a polygon keep their figure: dragging a side midpoint collapses a
   rectangle to a line, a rotated rectangle turns into a parallelogram and a corner drag then yields
@@ -3084,7 +3084,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   takes the radius from the centre; a polygon has no grip off the figure; a vertex still scales it;
   an arc chain keeps its arc grips.
   `916b15e`
-  `files: crates/ui/src/contour_grips.rs, crates/model/src/contour_edit.rs, apps/furnicraft/src/contour_gizmo.rs`
+  `files: crates/ui/src/contour_grips.rs, crates/model/src/contour_edit.rs, app/src/contour_gizmo.rs`
 
 - `[x]` **X15** the pointer grabs the node it is on: a press that visually lands on a grip often does
   not grab it, and the cursor turns into a hand over a node. Expectation: a press within the grip's
@@ -3097,7 +3097,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   press exactly on a grip grabs it; a press 12 pt away does not; a press followed by a 5 pt move
   before the threshold still grabs; the cursor is the default.
   `52f1d0f`
-  `files: apps/furnicraft/src/contour_gizmo.rs, apps/furnicraft/src/main.rs`
+  `files: app/src/contour_gizmo.rs, app/src/main.rs`
 
 - `[x]` **X13** an arc follows its nodes: an arc cannot be reshaped by dragging its nodes — the
   endpoints only slide along the arc and change its angle — and dragging the middle node makes the
@@ -3113,7 +3113,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   the other end stays; the mid node stays finite; a collinear mid point is refused; the along mode
   keeps centre and radius. ADR 0075 is updated.
   `64c11d3`
-  `files: crates/model/src/contour_edit.rs, apps/furnicraft/src/contour_gizmo.rs`
+  `files: crates/model/src/contour_edit.rs, app/src/contour_gizmo.rs`
 
 - `[x]` **X12** a drawing tool can be switched and cancelled: choosing another drawing tool while one
   runs does nothing, Escape does not reset the tool, and only Ctrl+Esc discards. Expectation:
@@ -3129,7 +3129,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   document untouched; Enter commits; a shortcut starts a tool while a draft runs; a failed commit
   keeps it. ADR 0076 is updated.
   `62cfc45`
-  `files: crates/ui/src/lib.rs, apps/furnicraft/src/main.rs, apps/furnicraft/src/draw_gizmo.rs`
+  `files: crates/ui/src/lib.rs, app/src/main.rs, app/src/draw_gizmo.rs`
 
 - `[x]` **X21** a polyline closes through the arc it is drawing: with arc mode on and the arc's start
   and middle already placed, the *Close* button refused with "the arc is still waiting for its end
@@ -3150,7 +3150,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   pending arc; both Close buttons enable from two segments; the gesture commits one closed path and
   one undo entry. ADR 0077.
   `8ff248f`
-  `files: crates/ui/src/contour_edit.rs, apps/furnicraft/src/draw_gizmo.rs, crates/ui/src/toolbars.rs, apps/furnicraft/src/main.rs`
+  `files: crates/ui/src/contour_edit.rs, app/src/draw_gizmo.rs, crates/ui/src/toolbars.rs, app/src/main.rs`
 
 - `[x]` **X11** a polyline closed by an arc is one ring: a chain whose last segment is an arc never
   closes — the third click on the first point does not finish it and the command reports "path
@@ -3168,7 +3168,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   on a 100 mm arc is still refused; a rejected preview keeps the last valid one; a 1 µm gap loads.
   Correct ADR 0072; note explicit arc endpoints (schema 20) in `plan/debt.md`.
   `f3123d7`
-  `files: crates/model/src/contour.rs, crates/ui/src/contour_edit.rs, apps/furnicraft/src/draw_gizmo.rs`
+  `files: crates/model/src/contour.rs, crates/ui/src/contour_edit.rs, app/src/draw_gizmo.rs`
 
 - `[x]` **U55** a fresh extrusion pulls its height in the viewport: the ribbon creates the body at
   the last height used in the session (100 mm at first) and reports it, so an arrow runs from the
@@ -3179,7 +3179,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   drag maps to millimetres along the body's own axis, a click finishes at the pull's height, a
   pulled height becomes the next extrusion's default, and a path has no pull.
   `5efa195`
-  `files: apps/furnicraft/src/main.rs`
+  `files: app/src/main.rs`
 
 - `[x]` **U54** every figure exposes its grips: a circle its centre and four quadrants, an arc its
   centre, a midpoint and a radius grip on a hovered curve, a rectangle its corners, four side
@@ -3192,7 +3192,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   arc centre moves the arc; a rectangle midpoint changes one extent; a polygon vertex keeps every
   side; a numeric entry parses its kind and applies it.
   ADR 0075 — `1321fee`
-  `files: apps/furnicraft/src/contour_gizmo.rs`
+  `files: app/src/contour_gizmo.rs`
 
 - `[x]` **U53** the drawing tools that finish a shape: `DrawTool` gains arc from centre (three
   clicks), circle through three points, rectangle from its centre (two clicks), a directed
@@ -3312,7 +3312,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   region's `y` as though the framebuffer grew upwards, while the pointer was tested against the
   top-left rectangles the shell paints; a one-view workspace hid it because the whole target is one
   region and a flip of it is the identity — `6690ae6`
-  `files: crates/render/src/lib.rs, apps/furnicraft/src/main.rs`
+  `files: crates/render/src/lib.rs, app/src/main.rs`
 
 - `[x]` **U42** the workspace divides into views: the central area holds a layout tree of leaves and
   splits — one view by default, then *two vertical*, *two horizontal* and *four* from the bar, and
@@ -3324,7 +3324,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   views never moves the model. The orientation widget gains a *home* button that returns the active
   leaf to *Axonometric*, and an optional readout under it — `Pitch 32.1° · Yaw -51.7° · Roll 0.0° ·
   Ortho` — drawn only when the switch U40 added to the display-settings popover is on; the numbers
-  come from `Camera::pitch`/`yaw` and `Projection`, formatted through `furnicraft-units`, so no new
+  come from `Camera::pitch`/`yaw` and `Projection`, formatted through `units`, so no new
   document data and no second source of truth. The renderer draws one offscreen target and one view
   per pass with a scissored region and a uniform slot per view, rather than one texture per view, so
   memory does not grow with the grid and egui keeps a single texture id. Tests: a split and a join
@@ -3338,7 +3338,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `render_with_lighting`, so a slot array with a dynamic offset keeps one buffer. Respect ADR 0049 per
   leaf: an authored camera pins its own projection. Reuse `scene_build::home_camera` for a leaf's fit —
   `502f870`
-  `files: apps/furnicraft/src, crates/render/src/lib.rs, crates/scene/src/lib.rs`
+  `files: app/src, crates/render/src/lib.rs, crates/scene/src/lib.rs`
 
 - `[x]` **U47** a command palette on `Ctrl+K`: one search field over `CommandRegistry::specs()`,
   listing a command's label, its id and whether it is enabled for the current session; the chosen
@@ -3357,7 +3357,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `G` and the drawing letters are taken, and `ui.input(|i| i.modifiers.command)` must not fire while
   a text field has focus.
   `8066ec8`
-  `files: apps/furnicraft/src, crates/ui/src`
+  `files: app/src, crates/ui/src`
 
 - `[x]` **U41** the settings window and the one place the workspace is remembered: a *Settings*
   modal with the sections *Appearance* (theme dark/light/system, accent, UI scale — the control U40
@@ -3366,14 +3366,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   (the existing table). The window is a view, not a document surface: a change applies at once and
   never touches the `.fcs`, and a scene saved by another machine carries none of it. The state is
   written as JSON under the operating system's config directory through a small `settings` module
-  with an atomic write, the same shape `furnicraft-project` uses, so a crash during a save cannot
+  with an atomic write, the same shape `project` uses, so a crash during a save cannot
   leave a half-written file; a missing, unreadable or older file falls back to the defaults with the
   reason in the status bar instead of a panic. The same module gains the *Home* surface that the
   header's house button opens: new, open, the recent files and the empty template, drawn over the
   workspace and dismissed by Escape. Tests: a round trip through JSON restores every field; a
   truncated or unknown-version file yields defaults; a value outside a range is clamped on read; the settings never appear in a serialised document.
   `c83ace5`, `bbef3e2`
-  `files: apps/furnicraft/src, crates/ui/src`
+  `files: app/src, crates/ui/src`
 
 - `[x]` **U40** the side panels become windows that fold and the viewport gets its floating cluster:
   the scene tree and the inspector each get a header row — a title, a count chip and a fold chevron —
@@ -3391,7 +3391,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   the status line names the armed tool and its gesture; the cluster is anchored to the bottom centre
   and does not move when the side panels resize; the settings popover toggles the angle readout —
   `4934ebf`
-  `files: crates/ui/src/lib.rs, apps/furnicraft/src/main.rs`
+  `files: crates/ui/src/lib.rs, app/src/main.rs`
 
 - `[x]` **X7** a ribbon button is one measured cell, so a caption never sizes it: the tool row of
   every tab draws buttons of one width and one height, whatever their caption and whatever the
@@ -3439,7 +3439,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   control, line, text, dim, disabled, one accent, danger, warn), a 4 pt spacing step, row heights, one
   rounding and one type scale, and `install` applies the same style to both of `egui`'s variants so a
   system light preference cannot leave half the window in the stock palette. `header.rs` draws one row
-  — mark, *FurniCraft*, *Home*, *File*, *Save*, *Undo*, *Redo*, the open tab with its unsaved dot, and
+  — mark, *Z3L*, *Home*, *File*, *Save*, *Undo*, *Redo*, the open tab with its unsaved dot, and
   the gear pinned to the far edge with `Sides` — and returns a `HeaderAction` the shell performs, so
   the row owns no document state; the window keeps its system frame, so no window buttons are drawn.
   The status text, the view controls, the work plane and the UI scale moved out of the viewport's first
@@ -3448,7 +3448,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   hairline. New assets: `assets/logo.svg`, the `window` theme (`minimize`, `maximize`, `restore`,
   `close`, drawn for a future frameless mode) and `actions/{file-save,undo,redo,settings}`; `view/home`.
   ADR 0063 (theme) and 0064 (header) — `c7ad880`
-  `files: apps/furnicraft/src/main.rs, crates/ui/src/toolbars.rs`
+  `files: app/src/main.rs, crates/ui/src/toolbars.rs`
 - `[x]` **U29** an arc inside the polyline: the Polyline tool appends either a straight segment or a
   two-click arc, and a chain that mixes both still closes and extrudes. The arc leaves the last
   vertex: the first click is the point it passes through, the second is its end, and the next
@@ -3468,7 +3468,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   is refused, a draft mixes both kinds and closes, an arc endpoint becomes the next vertex, undo
   cancels a pending arc, and the commit is still one `object.path.create`.
   Shipped as one draft of segments with Alt+click arcs — `ad95254`
-  `files: crates/ui/src/contour_edit.rs, apps/furnicraft/src/draw_gizmo.rs, crates/model/src/contour.rs`
+  `files: crates/ui/src/contour_edit.rs, app/src/draw_gizmo.rs, crates/model/src/contour.rs`
 - `[x]` **X2** a valid contour with more than 1024 sampled points cannot become an extrusion.
   Observed: the command now refuses it with "one extrusion cap holds at most 1024", where before
   A6 it was stored and drew nothing. Expected: any simple ring the user can draw becomes a solid.
@@ -3526,7 +3526,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   handle. Handles, the drag and the arc projection are addressed with `PathCorner`, so a drag on the
   last point edits the last segment and the free start and free end project against their one
   segment. The object card offers *Edit contour* for a path as well as a constructive object — `f73a8ab`
-  `files: apps/furnicraft/src/contour_gizmo.rs, crates/ui/src/object_card.rs`
+  `files: app/src/contour_gizmo.rs, crates/ui/src/object_card.rs`
 
 - `[x]` **U34** the path edit mode in the editor: `ContourTarget` gains `Path(Id)` and `ContourEdit`
   holds a `ContourDraft` that is either a ring or a chain, so an open line or a circle drawn by the
@@ -3618,7 +3618,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   is unwrapped — `b03e88b`
 
 - `[x]` **S4** revision-keyed evaluation cache: `(Revision, Id)` to evaluated body and mesh in
-  `furnicraft-mesh`; `scene_build` and `object.collapse` share one evaluator and a rebuild touches
+  `mesh`; `scene_build` and `object.collapse` share one evaluator and a rebuild touches
   only changed nodes. The key is the node id plus the derivation inputs, because the revision is
   document-wide and would miss on every edit; `finish` prunes unvisited nodes — `42fc9a6`
 - `[x]` **U23** extrude a selected closed path: a height field and one Extrude button in the Bodies

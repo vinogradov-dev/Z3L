@@ -6,15 +6,15 @@
 
 #![allow(clippy::expect_used)]
 
-use furnicraft_model::{
+use model::{
     ClassCode, Contour, ContourSegment, Cutout, CutoutDepth, CutoutShape, EdgeBanding, EdgeId, Envelope, FaceSide, Id,
     PanelNominalSize, PanelRect, Placement, Project, PropertyValue, SYSTEM_CLASS,
 };
-use furnicraft_testkit::{millimetres, sample_catalog, sample_product_project};
-use furnicraft_units::Degrees;
+use testkit::{millimetres, sample_catalog, sample_product_project};
+use units::Degrees;
 
 /// The scene the exporter tests and the golden package are built from.
-pub fn fixture() -> (Project, furnicraft_model::Catalog) {
+pub fn fixture() -> (Project, model::Catalog) {
     let (mut project, product) = sample_product_project();
     let catalog = sample_catalog();
     add_parts(&mut project, product);
@@ -25,21 +25,14 @@ pub fn fixture() -> (Project, furnicraft_model::Catalog) {
 fn add_parts(project: &mut Project, product: Id) {
     let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
     let side = project
-        .add_panel(
-            product,
-            "Side",
-            size,
-            Some(furnicraft_testkit::sample_material_id()),
-            millimetres(18),
-            Placement::IDENTITY,
-        )
+        .add_panel(product, "Side", size, Some(testkit::sample_material_id()), millimetres(18), Placement::IDENTITY)
         .expect("a side is added");
     project
         .set_property(side, SYSTEM_CLASS, PropertyValue::class(ClassCode::VERTICAL_PANEL))
         .expect("a vertical panel");
     let band = EdgeBanding::new(
         EdgeId::new(1).expect("edge 1"),
-        furnicraft_testkit::sample_edge_material_id(),
+        testkit::sample_edge_material_id(),
         true,
         millimetres(2),
         millimetres(22),
@@ -59,7 +52,7 @@ fn add_parts(project: &mut Project, product: Id) {
             product,
             "Shelf",
             PanelNominalSize::new(millimetres(650), millimetres(450)).expect("a valid size"),
-            Some(furnicraft_testkit::sample_material_id()),
+            Some(testkit::sample_material_id()),
             millimetres(18),
             Placement::IDENTITY,
         )
@@ -73,7 +66,7 @@ fn add_parts(project: &mut Project, product: Id) {
             product,
             "Door",
             PanelNominalSize::new(millimetres(600), millimetres(700)).expect("a valid size"),
-            Some(furnicraft_testkit::sample_material_id()),
+            Some(testkit::sample_material_id()),
             millimetres(18),
             Placement::IDENTITY,
         )
@@ -106,7 +99,7 @@ fn add_second_product(project: &mut Project) {
             product,
             "Back",
             PanelNominalSize::new(millimetres(880), millimetres(2050)).expect("a valid size"),
-            Some(furnicraft_testkit::sample_material_id()),
+            Some(testkit::sample_material_id()),
             millimetres(18),
             Placement::IDENTITY,
         )
@@ -136,7 +129,7 @@ fn add_second_product(project: &mut Project) {
             product,
             "Round shelf",
             &ring,
-            Some(furnicraft_testkit::sample_material_id()),
+            Some(testkit::sample_material_id()),
             millimetres(18),
             Placement::IDENTITY,
         )

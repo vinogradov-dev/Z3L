@@ -15,9 +15,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-use furnicraft_text::Message;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
+use text::Message;
 use thiserror::Error;
 
 /// The largest class code: two digits for each of group, type and variant.
@@ -1753,7 +1753,7 @@ pub fn registry() -> &'static [ClassRow] {
 mod tests {
     use super::*;
 
-    use furnicraft_text::Lang;
+    use text::Lang;
 
     use crate::fixtures::class;
 

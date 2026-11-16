@@ -20,7 +20,7 @@
 //!
 //! Changes when: the ray primitive, a cast primitive or the pick tolerance changes.
 
-use furnicraft_geom::{DMat4, DVec3, MeshData};
+use geom::{DMat4, DVec3, MeshData};
 
 use crate::camera::Camera;
 use crate::{Drawable, Polyline, ProductEnvelope};

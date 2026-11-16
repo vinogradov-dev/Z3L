@@ -17,14 +17,14 @@ the transform mode, the panel folds, the measured ribbon band and the viewport r
 
 ## Decision
 
-- **`apps/furnicraft/src/document.rs` holds one open scene.** A `Document` owns the session (project,
+- **`app/src/document.rs` holds one open scene.** A `Document` owns the session (project,
   undo history, dirty marker), the editor, the kernel and the cache, the frame, the layout with its
   cameras, its own renderer target and its own gizmos. It builds itself from a session and it can
   read a file, write one and close.
-- **`apps/furnicraft/src/tabs.rs` holds the open documents and the close policy.** `TabId` is stable
+- **`app/src/tabs.rs` holds the open documents and the close policy.** `TabId` is stable
   and never reused; `activate`, `add` and the three close answers (`Closed`, `NeedsConfirmation`,
   `LastTab`) are pure policy, testable with a plain payload and no GPU.
-- **The shell keeps the window.** `FurniCraftApp` owns the tabs, the settings and its store, the
+- **The shell keeps the window.** `Z3LApp` owns the tabs, the settings and its store, the
   Settings and Home surfaces, the palette and one `Shell`: the folds, the floating cluster, the
   transform mode, the pointer, the ribbon band, the viewport rectangle and the pending close
   question. A document borrows `Shell` for the frame it draws; it never stores any of it.
@@ -51,7 +51,7 @@ the transform mode, the panel folds, the measured ribbon band and the viewport r
 
 - Undo, redo, the selection, the camera, the dirty marker and the file path are per scene, and the
   header, the ribbon, the tree, the inspector and the status bar all read the active tab.
-- The shell dropped from 2037 production lines to about 450 and `impl FurniCraftApp` from 113
+- The shell dropped from 2037 production lines to about 450 and `impl Z3LApp` from 113
   functions to 22; `viewport` (655 lines) and everything it drives now sit on `Document`, where S7
   can split it without the window in the way.
 - A path dialog belongs to its tab: it is drawn while that tab is active and waits otherwise, which

@@ -1,8 +1,8 @@
-# PROJECT.md — FurniCraft
+# PROJECT.md — Z3L
 
 ## Vision
 
-FurniCraft is a native, free and open-source 3D editor for parametric cabinet furniture. The user describes a product the way a furniture maker thinks about it — overall dimensions, panels, materials, edge banding and hardware — and the program builds an accurate 3D model that later becomes drawings, cutting lists and CNC programs. It is built for the craft, not for the cloud: a fast Rust binary with `wgpu` graphics and `egui` UI, with interaction quality close to Blender, and no web technologies anywhere in the product.
+Z3L is a native, free and open-source 3D editor for parametric cabinet furniture. The user describes a product the way a furniture maker thinks about it — overall dimensions, panels, materials, edge banding and hardware — and the program builds an accurate 3D model that later becomes drawings, cutting lists and CNC programs. It is built for the craft, not for the cloud: a fast Rust binary with `wgpu` graphics and `egui` UI, with interaction quality close to Blender, and no web technologies anywhere in the product.
 
 ## Philosophy
 
@@ -92,7 +92,7 @@ A rigid transform relative to the parent frame: translation and rotation. Scale 
 
 ### Commands
 
-Every document change is a command in `furnicraft-engine` with a stable id and typed parameters. `panel.create` takes the parent container id, a name, a `PanelNominalSize`, a `MaterialId` from the session catalogue and a `Placement`; it resolves the material thickness, allocates the panel id, bumps the revision once and returns the created id. `panel.rename` takes a panel id and a non-blank name and bumps the revision once. `panel.resize` takes a panel id and a new `PanelNominalSize` and bumps the revision once. `panel.material.set` takes a panel and a catalogue material and updates the material with its nominal thickness as the fallback. `panel.edge_banding.set` takes a panel, an edge, a catalogue banding material and the included-in-size flag; replacing an edge moves it to the end of the application order. `panel.edge_banding.clear` removes the banding on an edge. `cutout.create` takes a panel id, a rectangular `CutoutShape`, a `CutoutDepth` and an entry face, allocates the cutout id and bumps the revision once. The scene-tree commands operate on panels and containers: `assembly.create` adds an empty container marked as a component under a parent, `product.create` adds a product — an ordinary container whose class has `level = Product` and which stores an authored `Envelope` of three sides, assigned the general-product placeholder when the caller names no class — and `product.envelope.set` edits that box, never a child size ([ADR 0097](docs/decisions/0097-a-product-is-a-container-with-an-authored-envelope.md)), `node.rename` renames any node including the root, `node.delete` removes a subtree, `node.duplicate` deep-copies one with fresh ids, `node.group` wraps two or more sibling nodes in a new group container, `node.ungroup` flattens a non-component container back into its parent, `node.component.convert_to_group` clears the component marker, the prototype keys and a product's class and envelope and then flattens the container, and `node.placement.set` moves a node relative to its parent. `node.property.set`, `node.property.clear` and their batch form edit typed properties as one revision each; setting `class` or `prototype.id` marks a container as a component. `node.placement.set_many` places a batch of nodes as one change: the selection's top-most nodes each get a placement, the revision bumps once and the whole drag is one undo entry ([ADR 0033](docs/decisions/0033-a-multi-selection-is-placed-by-one-command.md)). Geometry objects have their own commands: `object.primitive.create` takes a parent, a name, a primitive kind, a size and a placement and returns the created id, `object.primitive.replace` takes an object and a validated primitive and stores the new parameters in one revision ([ADR 0054](docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)), and `mesh.vertices.move` takes an object and a batch of (vertex index, local position) pairs, validates every index before changing anything and moves the batch as one revision; a face move is the same command over the face's vertices. A panel is an atomic leaf: it is never split by grouping and never ungrouped. A component is not flattened by `node.ungroup`; `node.component.convert_to_group` clears the marker and prototype keys and flattens it, so the two operations stay explicit. Grouping keeps order and world transforms; the root container is immutable for delete, placement, grouping and ungrouping. The UI dispatches commands by id; `Session` snapshots the document before a command and keeps one undo entry per successful change. Undo and redo restore content but advance the revision and keep the id allocator, so caches stay keyed to a monotonic counter and ids are never reused.
+Every document change is a command in `engine` with a stable id and typed parameters. `panel.create` takes the parent container id, a name, a `PanelNominalSize`, a `MaterialId` from the session catalogue and a `Placement`; it resolves the material thickness, allocates the panel id, bumps the revision once and returns the created id. `panel.rename` takes a panel id and a non-blank name and bumps the revision once. `panel.resize` takes a panel id and a new `PanelNominalSize` and bumps the revision once. `panel.material.set` takes a panel and a catalogue material and updates the material with its nominal thickness as the fallback. `panel.edge_banding.set` takes a panel, an edge, a catalogue banding material and the included-in-size flag; replacing an edge moves it to the end of the application order. `panel.edge_banding.clear` removes the banding on an edge. `cutout.create` takes a panel id, a rectangular `CutoutShape`, a `CutoutDepth` and an entry face, allocates the cutout id and bumps the revision once. The scene-tree commands operate on panels and containers: `assembly.create` adds an empty container marked as a component under a parent, `product.create` adds a product — an ordinary container whose class has `level = Product` and which stores an authored `Envelope` of three sides, assigned the general-product placeholder when the caller names no class — and `product.envelope.set` edits that box, never a child size ([ADR 0097](docs/decisions/0097-a-product-is-a-container-with-an-authored-envelope.md)), `node.rename` renames any node including the root, `node.delete` removes a subtree, `node.duplicate` deep-copies one with fresh ids, `node.group` wraps two or more sibling nodes in a new group container, `node.ungroup` flattens a non-component container back into its parent, `node.component.convert_to_group` clears the component marker, the prototype keys and a product's class and envelope and then flattens the container, and `node.placement.set` moves a node relative to its parent. `node.property.set`, `node.property.clear` and their batch form edit typed properties as one revision each; setting `class` or `prototype.id` marks a container as a component. `node.placement.set_many` places a batch of nodes as one change: the selection's top-most nodes each get a placement, the revision bumps once and the whole drag is one undo entry ([ADR 0033](docs/decisions/0033-a-multi-selection-is-placed-by-one-command.md)). Geometry objects have their own commands: `object.primitive.create` takes a parent, a name, a primitive kind, a size and a placement and returns the created id, `object.primitive.replace` takes an object and a validated primitive and stores the new parameters in one revision ([ADR 0054](docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)), and `mesh.vertices.move` takes an object and a batch of (vertex index, local position) pairs, validates every index before changing anything and moves the batch as one revision; a face move is the same command over the face's vertices. A panel is an atomic leaf: it is never split by grouping and never ungrouped. A component is not flattened by `node.ungroup`; `node.component.convert_to_group` clears the marker and prototype keys and flattens it, so the two operations stay explicit. Grouping keeps order and world transforms; the root container is immutable for delete, placement, grouping and ungrouping. The UI dispatches commands by id; `Session` snapshots the document before a command and keeps one undo entry per successful change. Undo and redo restore content but advance the revision and keep the id allocator, so caches stay keyed to a monotonic counter and ids are never reused.
 
 ### `Panel`
 
@@ -126,7 +126,7 @@ A catalogue entry: kind (chipboard, MDF, solid wood, plywood, HPL), nominal thic
 
 ### Scene file
 
-A saved scene is a UTF-8 JSON envelope with the extension `.fcs`: `format` (`furnicraft.scene`),
+A saved scene is a UTF-8 JSON envelope with the extension `.z3l`: `format` (`furniture.scene`),
 `format_version` for the framing, and one `document` payload that carries its own `schema`. The
 envelope owns the versions, protects unknown top-level sections and lets the document layout change
 without touching the framing. The file holds the scene — objects, camera and light objects, the active
@@ -152,18 +152,18 @@ Detailed, normative descriptions live in `docs/domain/`:
 
 - **Data is separate from rendering.** `model` is serializable data; meshes and scene descriptions are derived in `mesh` and `scene`; only `render` touches `wgpu`. No GPU type ever appears in the document.
 - **Space is data; views are state.** The document stores placements, the node tree, and the camera and light objects the user adds. Viewport navigation, grids, shading, selection and per-node open state are session or UI state.
-- **The kernel is behind a port.** `model` and `param` use `furnicraft-kernel` types and traits; only `kernel-truck` knows the third-party B-rep engine.
+- **The kernel is behind a port.** `model` and `param` use `kernel` types and traits; only `kernel-truck` knows the third-party B-rep engine.
 - **Pure Rust dependencies.** No dependency may compile or vendor C/C++/Objective-C sources. Platform bindings that load an OS-provided library through Rust FFI are allowed; they must not add native build steps. `cargo xtask layers` checks the dependency graph for known C-vendoring crates.
 - **Commands change data.** Every document mutation is a command in `engine` with a stable id and a `Result`; the UI dispatches commands and never writes to the model directly. This is what makes undo/redo, tests and future automation possible.
 - **Derive, don't store.** Meshes, parts lists, bounds and caches are computed from the document and invalidated by `Revision`.
-- **Units are explicit.** All physical sizes are `Length` in integer micrometres (`furnicraft-units`). Floating-point millimetres exist only at the geometry/rendering boundary (`furnicraft-geom`, `furnicraft-kernel`, `furnicraft-render`).
+- **Units are explicit.** All physical sizes are `Length` in integer micrometres (`units`). Floating-point millimetres exist only at the geometry/rendering boundary (`geom`, `kernel`, `render`).
 - **Stable ids, no pointers.** Cross-references use `Id`, so serialization, undo and clipboard operations stay sound.
 - **Errors, not panics.** Every public operation returns a typed error; malformed input is reported to the user, never fatal.
 - **Layers are enforced.** A crate may depend only on lower layers; `cargo xtask layers` checks the map below.
 
 ## Model space, placements and views
 
-FurniCraft separates the model from the way it is viewed.
+Z3L separates the model from the way it is viewed.
 
 ### Model space
 
@@ -188,7 +188,7 @@ FurniCraft separates the model from the way it is viewed.
 
 ## Assistant (Faber)
 
-FurniCraft ships an assistant named **Faber** that follows the project in real time. It is disabled by
+Z3L ships an assistant named **Faber** that follows the project in real time. It is disabled by
 default because it needs a language-model connection; without one the editor behaves exactly as
 before.
 
@@ -217,10 +217,10 @@ before.
   (ADR 0036).
 
 Open questions: what API the material and order programs expose locally and whether they ship with
-FurniCraft; where the workshop profile lives; whether reference retrieval (catalogues, norms, past
+Z3L; where the workshop profile lives; whether reference retrieval (catalogues, norms, past
 jobs) is needed and in what form; voice input and output.
 
-The assistant adds `furnicraft-agent` between `engine` and `ui`, a model adapter and resource
+The assistant adds `agent` between `engine` and `ui`, a model adapter and resource
 adapters at the composition boundary, and a project store for save and load. They enter the crate map
 only when the crates exist.
 
@@ -228,27 +228,27 @@ only when the crates exist.
 
 | Layer | Crate | Responsibility | Depends on |
 |---|---|---|---|
-| L0 | `furnicraft-text` | The interface's words: `Lang::{En, Ru}`, one `Message` per user-facing string, its `[&str; Lang::COUNT]` table, and counted messages that pick the Russian one/few/many form | — |
-| L0 | `furnicraft-units` | `Length` in micrometres and `Degrees` in millidegrees, thickness helpers, parsing and formatting in mm and degrees | serde |
-| L0 | `furnicraft-geom` | `glam` re-exports, `Frame`, indexed `MeshData`; bounds and planes as features need them | glam, serde |
-| L1 | `furnicraft-kernel` | Geometry kernel **port**: `Profile`, opaque `BodyId`, extrusion (linear sweep), booleans, tessellation, measures. No third-party kernel types | geom, thiserror |
-| L1 | `furnicraft-model` | Document data: `Project`, `Container`, `Object`, `Geometry`, `Properties`, `ClassCode` and its registry, `Placement`, `Panel`, `Material`, `Hardware`, `Id`, `Revision`; invariants and typed errors | units, geom, text, serde |
-| L2 | `furnicraft-kernel-truck` | Geometry kernel **adapter** implemented with `truck` (Apache-2.0). The only crate allowed to depend on `truck` | kernel, geom, truck-modeling, truck-shapeops, truck-meshalgo |
-| L2 | `furnicraft-param` | Compiles document features into kernel operations: panel features, placements, panel machining | model, kernel, geom, units |
-| L2 | `furnicraft-project` | Scene file envelope: format identity and version, read, atomic write, preserved unknown sections | model, serde, serde_json, thiserror |
-| L3 | `furnicraft-export` | Order package writer: one manifest and twelve flat JSON Lines tables, with CSV copies and a single-file form, for programs we do not control | model, text, units, geom, serde, serde_json, thiserror |
-| L3 | `furnicraft-mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh; tessellation policy | model, param, kernel, geom, units |
-| L4 | `furnicraft-scene` | Renderer-agnostic frame description: drawables, world transforms, materials, selection highlight, camera, lights, grid | model, mesh, geom |
-| L5 | `furnicraft-render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
-| L6 | `furnicraft-engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |
-| L7 | `furnicraft-ui` | `egui` panels and viewport widgets: scene tree, inspector, input, gizmos; dispatches commands | engine, model, scene, egui, egui_extras |
-| L8 | `apps/furnicraft` | Composition root: `eframe` window, input, `egui` ↔ `wgpu` paint callback, constructs `TruckKernel` and evaluates the sample document | ui, engine, render, scene, model, param, mesh, kernel, kernel-truck, geom, units, eframe |
-| dev | `furnicraft-testkit` | Fixtures and helpers for tests; re-exports `millimetres`, `open_path` and `sample_project` from `furnicraft-model`'s `testing` feature, where they are defined once (ADR 0084) | model, units |
+| L0 | `text` | The interface's words: `Lang::{En, Ru}`, one `Message` per user-facing string, its `[&str; Lang::COUNT]` table, and counted messages that pick the Russian one/few/many form | — |
+| L0 | `units` | `Length` in micrometres and `Degrees` in millidegrees, thickness helpers, parsing and formatting in mm and degrees | serde |
+| L0 | `geom` | `glam` re-exports, `Frame`, indexed `MeshData`; bounds and planes as features need them | glam, serde |
+| L1 | `kernel` | Geometry kernel **port**: `Profile`, opaque `BodyId`, extrusion (linear sweep), booleans, tessellation, measures. No third-party kernel types | geom, thiserror |
+| L1 | `model` | Document data: `Project`, `Container`, `Object`, `Geometry`, `Properties`, `ClassCode` and its registry, `Placement`, `Panel`, `Material`, `Hardware`, `Id`, `Revision`; invariants and typed errors | units, geom, text, serde |
+| L2 | `kernel-truck` | Geometry kernel **adapter** implemented with `truck` (Apache-2.0). The only crate allowed to depend on `truck` | kernel, geom, truck-modeling, truck-shapeops, truck-meshalgo |
+| L2 | `param` | Compiles document features into kernel operations: panel features, placements, panel machining | model, kernel, geom, units |
+| L2 | `project` | Scene file envelope: format identity and version, read, atomic write, preserved unknown sections | model, serde, serde_json, thiserror |
+| L3 | `export` | Order package writer: one manifest and twelve flat JSON Lines tables, with CSV copies and a single-file form, for programs we do not control | model, text, units, geom, serde, serde_json, thiserror |
+| L3 | `mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh; tessellation policy | model, param, kernel, geom, units |
+| L4 | `scene` | Renderer-agnostic frame description: drawables, world transforms, materials, selection highlight, camera, lights, grid | model, mesh, geom |
+| L5 | `render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
+| L6 | `engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |
+| L7 | `ui` | `egui` panels and viewport widgets: scene tree, inspector, input, gizmos; dispatches commands | engine, model, scene, egui, egui_extras |
+| L8 | `app` | Composition root: `eframe` window, input, `egui` ↔ `wgpu` paint callback, constructs `TruckKernel` and evaluates the sample document | ui, engine, render, scene, model, param, mesh, kernel, kernel-truck, geom, units, eframe |
+| dev | `testkit` | Fixtures and helpers for tests; re-exports `millimetres`, `open_path` and `sample_project` from `model`'s `testing` feature, where they are defined once (ADR 0084) | model, units |
 | tool | `xtask` | The host's rules only: layering, the C-vendoring check and the `ci` step list, registered into the plan tool's command table (`cargo xtask help`) | serde_json, state-contract |
 | tool | `state-contract` | The plan tool: gate, status, report, writer, dashboard, ADR index and the command table a host imports; reusable, zero dependencies | — |
 
 ```text
-apps/furnicraft        composition root (window, input, egui <-> wgpu, TruckKernel)
+app        composition root (window, input, egui <-> wgpu, TruckKernel)
 └── ui                 egui panels, viewport, commands by id
     └── engine         session: selection, view state, undo/redo
         ├── mesh       evaluation cache: revision -> mesh
@@ -263,7 +263,7 @@ render (wgpu) ────────── scene (what to draw) ── mesh, g
 
 A crate may depend only on crates in lower layers. `kernel-truck` is the only crate that may depend on `truck`; `model`, `param`, `engine` and `ui` see only the `kernel` port. `engine` never sees `wgpu` or `egui`; `ui` never writes to the document.
 
-`truck-shapeops` is vendored in `vendor/truck-shapeops` with one Cargo.toml change: its `truck-meshalgo` dependency is narrowed to `analyzers` and `tessellation`, so the VTK I/O stack and its C compression backend are not part of FurniCraft. The Rust source has only a lint allowance; see `vendor/truck-shapeops/PATCH.md` and `ATTRIBUTION.md`.
+`truck-shapeops` is vendored in `vendor/truck-shapeops` with one Cargo.toml change: its `truck-meshalgo` dependency is narrowed to `analyzers` and `tessellation`, so the VTK I/O stack and its C compression backend are not part of Z3L. The Rust source has only a lint allowance; see `vendor/truck-shapeops/PATCH.md` and `ATTRIBUTION.md`.
 
 ## Milestones
 
@@ -276,7 +276,7 @@ A crate may depend only on crates in lower layers. `kernel-truck` is the only cr
 | M4 | Panel geometry | Panel outline, thickness, rectangular through and blind cutouts with an entry face, holes generated by hardware, chamfers/roundovers, shaped-cutter sweeps and edge banding, with volume and tessellation tests |
 | M5 | Editing | `egui` shell, command registry, undo/redo, scene tree with atomic panels, components and groups, create/place/select, closed-container viewport picking with an open mode, Blender-like axes and orientation widget, move/rotate, multi-node placement as one undo entry |
 | M6 | Properties and classification | Every node carries typed properties; `Assembly`/`Group` become one container with a component marker; a numeric `FurnType` registry and prefix queries select objects by type; reports derive from queries |
-| M7 | Objects and the scene file | Geometry objects with a baked mesh and with a feature history, mesh editing gated to the mesh payload, `object.collapse`, camera and light objects, and a versioned `.fcs` scene file with a migration and a golden file per schema |
+| M7 | Objects and the scene file | Geometry objects with a baked mesh and with a feature history, mesh editing gated to the mesh payload, `object.collapse`, camera and light objects, and a versioned `.z3l` scene file with a migration and a golden file per schema |
 | M8 | Hardware and joinery | Hardware catalogue, anchor points, generated holes, collision warnings |
 | M9 | Output | Cutting lists per material and sheet, panel drawings, CNC export |
 | M10 | Assistant | Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per task, a whole task runnable by a scripted model without a network, and a headless job over a saved project |

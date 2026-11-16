@@ -7,7 +7,7 @@
 ## Context
 
 The document schema is at version 20 (`crates/model/src/project/mod.rs`). Getting there produced a
-repository full of compatibility machinery: nine golden files `scene-v7.fcs` … `scene-v20.fcs`,
+repository full of compatibility machinery: nine golden files `scene-v7.z3l` … `scene-v20.z3l`,
 two migration passes that walk the tree, a set of `serde` aliases for renamed fields, a readable
 error for a file from a newer build, and a section in each of `docs/domain/document.md` and
 `docs/domain/scene-file.md` that explains how old layouts become the current one.

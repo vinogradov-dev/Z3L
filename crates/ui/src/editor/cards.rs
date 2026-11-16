@@ -12,12 +12,12 @@
 
 use egui::Ui;
 
-use furnicraft_engine::node_cmds::{
+use engine::node_cmds::{
     NODE_COMPONENT_CONVERT_TO_GROUP_ID, NODE_DELETE_ID, NODE_DUPLICATE_ID, NODE_GROUP_ID, NODE_UNGROUP_ID,
 };
-use furnicraft_engine::{NodeComponentConvertToGroup, NodeDelete, NodeDuplicate, NodeGroup, NodeUngroup, Session};
-use furnicraft_model::Id;
-use furnicraft_text::Message;
+use engine::{NodeComponentConvertToGroup, NodeDelete, NodeDuplicate, NodeGroup, NodeUngroup, Session};
+use model::Id;
+use text::Message;
 
 use super::Editor;
 use crate::command::{dispatch, json};
@@ -239,9 +239,9 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use furnicraft_engine::Session;
-    use furnicraft_model::{Geometry, Placement};
-    use furnicraft_testkit::{cube_mesh, millimetres, sample_catalog, sample_product_project};
+    use engine::Session;
+    use model::{Geometry, Placement};
+    use testkit::{cube_mesh, millimetres, sample_catalog, sample_product_project};
 
     /// A session with one of each kind the inspector picks a card for, and their ids.
     ///

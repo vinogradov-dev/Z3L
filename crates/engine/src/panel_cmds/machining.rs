@@ -10,17 +10,17 @@
 //!
 //! Changes when: the shape or the order of a panel's machining records changes.
 //!
-//! It does not do: compute the machining effects or the outline they cut — `furnicraft-param`
+//! It does not do: compute the machining effects or the outline they cut — `param`
 //! owns that.
 
-use furnicraft_model::{Catalog, Id, MachiningAnchor, MachiningId, MachiningKind, MachiningParams, Project};
+use model::{Catalog, Id, MachiningAnchor, MachiningId, MachiningKind, MachiningParams, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::class_rules::{NodeRules, operation_of};
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the machining creation command.
 pub const MACHINING_ADD_ID: &str = "panel.machining.add";

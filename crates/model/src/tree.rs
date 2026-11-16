@@ -4,7 +4,7 @@
 //! [`Project::MAX_ASSEMBLY_DEPTH`], so a hostile file cannot overflow the stack; a walk returns
 //! `None` or an error rather than recursing forever. Ids are never reused while a document is open.
 
-use furnicraft_geom::DVec3;
+use geom::DVec3;
 
 use crate::{Container, Geometry, Id, Node, Panel, Placement, Project, ProjectError};
 
@@ -268,7 +268,7 @@ mod tests {
     use crate::fixtures::*;
     use crate::*;
 
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     #[test]
     fn world_placement_composes_the_chain_and_lists_geometry() {

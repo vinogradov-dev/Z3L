@@ -9,11 +9,11 @@
 //! A plan is never serialized. The document keeps the feature parameters and rebuilds the plan when
 //! it changes, so the plan can be reshaped without touching the file format.
 //!
-//! Coordinates are millimetres, the unit of [`furnicraft_kernel`]. Conversion from the document's
+//! Coordinates are millimetres, the unit of [`kernel`]. Conversion from the document's
 //! integer micrometres happens at the caller's boundary, never in this module.
 
-use furnicraft_geom::Frame;
-use furnicraft_kernel::{BodyId, BooleanOp, KernelError, Profile, SolidKernel};
+use geom::Frame;
+use kernel::{BodyId, BooleanOp, KernelError, Profile, SolidKernel};
 
 /// Largest nesting depth of a solid plan.
 ///
@@ -215,8 +215,8 @@ pub fn evaluate(plan: &SolidPlan, kernel: &mut dyn SolidKernel) -> Result<BodyId
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_geom::DVec3;
-    use furnicraft_kernel_truck::TruckKernel;
+    use geom::DVec3;
+    use kernel_truck::TruckKernel;
 
     use super::*;
 

@@ -7,7 +7,7 @@ prose, and the word `FurnType` do not. Read `classes.md` for the live specificat
 only until the rename lands.
 
 The rest of this file is the previous milestone's registry, kept for the history of the encoding.
-It defines FurniCraft's numeric furniture-type classification: what a `FurnType` is, how it is
+It defines Z3L's numeric furniture-type classification: what a `FurnType` is, how it is
 encoded, which codes existed and how commands and reports used them.
 
 Related decisions: [0034](../decisions/0034-nodes-carry-typed-properties.md),
@@ -195,9 +195,9 @@ so a report and a machining program cannot disagree about which parts are shelve
 
 ## 8. Compatibility
 
-FurniCraft does not import or reproduce any other program's classifier, including K3. The six-digit
+Z3L does not import or reproduce any other program's classifier, including K3. The six-digit
 shape is a local convention chosen because it is small, readable and queryable. Files saved by
-FurniCraft carry only these codes, and a code means what this registry says it means.
+Z3L carry only these codes, and a code means what this registry says it means.
 
 ## 9. Open questions
 

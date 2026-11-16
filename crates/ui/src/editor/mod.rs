@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use furnicraft_model::Id;
+use model::Id;
 
 use crate::box_tool::BoxDraft;
 use crate::camera_card::CameraCard;

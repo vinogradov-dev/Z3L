@@ -14,18 +14,18 @@
 //! It does not do: the edge and corner trims (`banding.rs`), the machining records
 //! (`machining.rs`), or any geometry derivation.
 
-use furnicraft_model::{
+use model::{
     Catalog, ClassCode, Contour, EdgeBevel, EdgeRef, Id, Level, MaterialId, Operation, Panel, PanelNominalSize,
     PanelOutline, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
 };
-use furnicraft_units::{Degrees, Length};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use units::{Degrees, Length};
 
 use crate::class_rules::{Dimension, NodeRules, allow_creation};
 use crate::commands::{CommandError, CommandOutcome, CommandSpec, Creation};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the panel creation command.
 pub const CREATE_ID: &str = "panel.create";
@@ -322,7 +322,7 @@ fn bevel_clear_run(project: &mut Project, _catalog: &Catalog, params: &Value) ->
 /// corner, so `offset ∘ inverse(parent_world) ∘ source_world` is the pre-rebase frame: the model
 /// then appends the base corner in the source frame, and no world point moves (ADR 0083).
 fn over_source_placement(project: &Project, params: &PanelContourCreate) -> Result<Placement, CommandError> {
-    let invalid = |error: furnicraft_model::PlacementError| CommandError::InvalidParams {
+    let invalid = |error: model::PlacementError| CommandError::InvalidParams {
         command: CONTOUR_CREATE_ID,
         message: error.to_string(),
     };
@@ -674,9 +674,9 @@ fn material_set_run(project: &mut Project, catalog: &Catalog, params: &Value) ->
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{RectEdge, Revision};
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use model::{RectEdge, Revision};
     use serde_json::Value;
+    use testkit::{sample_catalog, sample_project};
 
     use crate::commands::{CommandError, CommandRegistry};
     use crate::session::Session;
@@ -759,7 +759,7 @@ mod tests {
                 &params(&crate::panel_cmds::PanelEdgeBandingSet {
                     panel: panel_id(),
                     edge: RectEdge::Bottom.id(),
-                    material: furnicraft_testkit::sample_edge_material_id(),
+                    material: testkit::sample_edge_material_id(),
                     included_in_size: false,
                 }),
             )

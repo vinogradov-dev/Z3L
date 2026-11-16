@@ -3,7 +3,7 @@
 //! Every user-facing string the editor draws is a [`Message`], and every language it can draw is a
 //! [`Lang`]. A message is a key, not a sentence: the translation lives in the table next to it, so a
 //! missing translation is a compile error rather than an English fallback. The crate is data, like
-//! `furnicraft-units`: no serde, no `egui`, no file I/O, and no allocation unless a message carries
+//! `units`: no serde, no `egui`, no file I/O, and no allocation unless a message carries
 //! an argument.
 //!
 //! The language is workspace settings, never document data. A name the editor generates on its own

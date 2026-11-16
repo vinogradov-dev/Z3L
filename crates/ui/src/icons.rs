@@ -535,7 +535,7 @@ pub fn mark(ui: &mut Ui, size: f32, color: Color32) -> Response {
 /// The rasterised mark at `size` points and `color`, cached like an icon.
 fn logo_texture(ctx: &egui::Context, point_size: f32, color: Color32) -> Option<TextureHandle> {
     let px = pixel_size(point_size, ctx.pixels_per_point());
-    let id = egui::Id::unique(("furnicraft.logo", px, color.to_array()));
+    let id = egui::Id::unique(("z3l.logo", px, color.to_array()));
     if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
         return Some(texture);
     }
@@ -998,9 +998,9 @@ fn icon_texture(
 ) -> Option<TextureHandle> {
     let lightened = matches!(tone, IconTone::Hover | IconTone::Press);
     let id = if roles {
-        egui::Id::unique(("furnicraft.icon.role", icon.uri(), px, dark, lightened))
+        egui::Id::unique(("z3l.icon.role", icon.uri(), px, dark, lightened))
     } else {
-        egui::Id::unique(("furnicraft.icon.ink", icon.uri(), px, color.to_array()))
+        egui::Id::unique(("z3l.icon.ink", icon.uri(), px, color.to_array()))
     };
     if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
         return Some(texture);

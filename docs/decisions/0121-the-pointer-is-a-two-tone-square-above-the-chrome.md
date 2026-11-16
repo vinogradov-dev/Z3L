@@ -45,9 +45,9 @@ other surface, which is one call at the end of the shell's frame.
 
 ## References
 
-- `apps/furnicraft/src/work_cursor.rs` — the geometry, the layer and the two-stroke paint.
+- `app/src/work_cursor.rs` — the geometry, the layer and the two-stroke paint.
 - `crates/ui/src/theme.rs` — `cursor_inks()`, `CURSOR_DARK`, `CURSOR_LIGHT`.
-- `apps/furnicraft/src/main.rs` — the frame resets the cursor and paints the square last.
+- `app/src/main.rs` — the frame resets the cursor and paints the square last.
 - ADR [0111](0111-a-guide-is-one-amber-in-screen-space.md) — the guide ink this record carves the
   pointer out of.
 - Plan: U88 (the first square), X40 (the correction).

@@ -33,11 +33,11 @@ Related decisions: [0005](../decisions/0005-material-catalogue.md),
 
 ## 2. The file is an envelope around the document
 
-A scene file is UTF-8 JSON with the extension `.fcs`:
+A scene file is UTF-8 JSON with the extension `.z3l`:
 
 ```json
 {
-  "format": "furnicraft.scene",
+  "format": "furniture.scene",
   "format_version": 1,
   "document": {
     "schema": 11,
@@ -49,7 +49,7 @@ A scene file is UTF-8 JSON with the extension `.fcs`:
 }
 ```
 
-- `format` is the constant `furnicraft.scene`. A file without it is not a scene file, and the reader
+- `format` is the constant `furniture.scene`. A file without it is not a scene file, and the reader
   says so instead of guessing.
 - `format_version` versions the framing: the envelope keys, the document key and the top-level
   layout.
@@ -57,7 +57,7 @@ A scene file is UTF-8 JSON with the extension `.fcs`:
   cameras and lights are nodes inside it, not a second section ([0036](../decisions/0036-cameras-and-lights-are-scene-objects.md)).
 - The two versions are independent. A new geometry feature bumps `schema`; only a change to the
   framing bumps `format_version`.
-- `furnicraft-project` implements this envelope and the atomic writer; check its goldens under
+- `project` implements this envelope and the atomic writer; check its goldens under
   `crates/project/tests/golden/` when a schema bump lands
   ([ADR 0038](../decisions/0038-the-scene-file-lives-in-its-own-crate.md)).
 
@@ -115,8 +115,8 @@ Rules:
 
 ## 6. Saving
 
-- Writing is atomic: the new content goes to `<name>.fcs.tmp` in the target directory, is flushed,
-  and is renamed over `<name>.fcs`. A failure at any point leaves the previous file intact; the file
+- Writing is atomic: the new content goes to `<name>.z3l.tmp` in the target directory, is flushed,
+  and is renamed over `<name>.z3l`. A failure at any point leaves the previous file intact; the file
   is never truncated before the new content exists.
 - Only the envelope and the document are written. Derived geometry is not recomputed into the file;
   `last_known_*` fallbacks are refreshed from the catalogue when a material resolves

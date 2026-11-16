@@ -3,7 +3,7 @@
 //! A saved scene is UTF-8 JSON with the extension in [`EXTENSION`]. The envelope owns the format identity
 //! and its version, carries the serialized [`Project`] as its only payload, and preserves
 //! top-level sections it does not understand so an older build never destroys a newer build's
-//! data. The document keeps its own schema version in [`furnicraft_model`], and that version is the
+//! data. The document keeps its own schema version in [`model`], and that version is the
 //! only one this build reads: a file from any other build is a readable error, never a migration.
 //!
 //! The crate is deliberately below `engine` and `ui`: saving and loading are file operations on
@@ -28,7 +28,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use furnicraft_model::Project;
+use model::Project;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;

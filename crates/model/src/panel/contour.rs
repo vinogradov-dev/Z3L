@@ -6,7 +6,7 @@
 
 use std::f64::consts::FRAC_PI_2;
 
-use furnicraft_geom::{Arc, Contour, ContourError, DEFAULT_TANGENT_TOLERANCE, DVec2, Line, Segment};
+use geom::{Arc, Contour, ContourError, DEFAULT_TANGENT_TOLERANCE, DVec2, Line, Segment};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -818,7 +818,7 @@ fn document_ring(
 /// An arc of the same centre and sweep that starts at a document point.
 fn arc_starting_at(
     center: [Length; 2],
-    sweep: furnicraft_units::Degrees,
+    sweep: units::Degrees,
     start: [Length; 2],
 ) -> Result<crate::ContourSegment, PanelContourError> {
     let dx = start[0].millimetres_f64() - center[0].millimetres_f64();
@@ -950,7 +950,7 @@ mod tests {
 
     use super::*;
     use crate::{CornerBanding, EdgeBow, Id, MaterialId, PanelNominalSize, Placement, RectCorner, RectEdge};
-    use furnicraft_units::Length;
+    use units::Length;
 
     fn panel(length: i64, width: i64) -> Panel {
         Panel::new(

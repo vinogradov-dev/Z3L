@@ -33,7 +33,7 @@ from memory:
 
 ```sh
 # production lines per file (approximate: everything before the last test module)
-for f in $(git ls-files 'crates/*/src/*.rs' 'apps/*/src/*.rs' | grep -v /tests/); do
+for f in $(git ls-files 'crates/*/src/*.rs' 'app/src/*.rs' | grep -v /tests/); do
   n=$(grep -n 'cfg(test)' "$f" | tail -1 | cut -d: -f1); echo "${n:-$(wc -l <"$f")} $f"
 done | sort -rn | head -20
 ```
@@ -70,7 +70,7 @@ Count public methods per `impl` and fields per struct with `grep -c '^\s\{4\}pub
 - **B8** A move changes no logic. A move and a fix never share a commit; a moved test keeps its
   assertions and changes only its path and names.
 
-## 4. Data and behaviour (borrowed from SolidCraft, kept in FurniCraft's units)
+## 4. Data and behaviour (borrowed from SolidCraft, kept in Z3L's units)
 
 - **D1** Geometry never lives inside document data. A document type holds `Length`, `Degrees`, ids
   and invariants; the maths over it is a free function or a trait **in the lower layer** (`geom`),
@@ -170,7 +170,7 @@ A subtask is done when all of these hold for the area it touched:
 | ADRs in an untracked `plan/` | our `docs/decisions/` stays in the repository |
 | an L0 crate that also holds colours, paper sizes and title blocks | L0 is numbers and geometry; a drawing sheet is a domain object of a later layer |
 
-| Keep from FurniCraft | Why |
+| Keep from Z3L | Why |
 |---|---|
 | layer map with per-crate forbidden edges (`cargo xtask layers`) | the cheapest architecture test there is |
 | commands with stable ids, a registry and undo | the only path into the document, and it is already honest |

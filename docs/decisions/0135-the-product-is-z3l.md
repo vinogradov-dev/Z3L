@@ -5,9 +5,9 @@
 
 ## Context
 
-The product carried a working name, `FurniCraft`, that described what it was for and nothing it
+The product carried a working name, `Z3L`, that described what it was for and nothing it
 believed. The name was also hardcoded in fourteen places — the window title, the `run_native` app
-name, an error sentence, the `.fcs` default and its filter, the settings directory in three platform
+name, an error sentence, the `.z3l` default and its filter, the settings directory in three platform
 branches — so a name chosen after a release would have been a refactor instead of a constant.
 
 A name had to satisfy four conditions at once: it must be clear in the software classes (Nice 9 and

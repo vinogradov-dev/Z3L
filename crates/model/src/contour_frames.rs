@@ -7,21 +7,21 @@
 //! construction allows it, so banding and selection keyed by [`ContourSegmentId`] survive a drag.
 //!
 //! Units are the document's: whole micrometres and millidegrees in, whole micrometres and
-//! millidegrees out; the millimetre trigonometry happens inside `furnicraft_geom`, and a point on a
+//! millidegrees out; the millimetre trigonometry happens inside `geom`, and a point on a
 //! circle may miss it by half a micrometre before it is rounded. A frame refuses a path whose tag
 //! is not the figure asked for ([`ContourEditError::NotShaped`]), a value that cannot build the
 //! figure ([`ContourEditError::InvalidValue`]) and an arc edit on a segment that is not an arc
 //! ([`ContourEditError::NotAnArc`]).
 //!
-//! The corner machinery is `contour_edit`'s and the segment maths is `furnicraft_geom`'s: this
+//! The corner machinery is `contour_edit`'s and the segment maths is `geom`'s: this
 //! module calls `with_corner`, `geometry_arc` and `distance` from the former and computes no
 //! trigonometry of its own (ADR 0040, D1).
 //!
 //! Changes when: the frame, the grips or a numeric edit of a tagged figure changes — not when a
 //! corner of an untagged ring moves.
 
-use furnicraft_geom::{DVec2, Segment, point_on_circle};
-use furnicraft_units::{Degrees, Length};
+use geom::{DVec2, Segment, point_on_circle};
+use units::{Degrees, Length};
 
 use crate::contour::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, point_to_geometry};
 use crate::contour_edit::{ContourEditError, SUPPORT_TOLERANCE, distance, geometry_arc, with_corner};

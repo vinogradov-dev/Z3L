@@ -14,18 +14,18 @@
 //! button and keeps its cells for the rest.
 //!
 //! What the table does not carry is behaviour: a row names an id, a message, an icon and a key, and
-//! the command itself stays in `furnicraft-engine`. The gate in `cargo xtask ui-rules` fails when a
+//! the command itself stays in `engine`. The gate in `cargo xtask ui-rules` fails when a
 //! registered command has no row, when a row names an id no command registered, when an id carries
 //! two labels or two keys, when an `Api` row claims another place, and when a live ribbon cell has
 //! no artwork.
 //!
 //! A key is data, not a match arm. [`KEYS`] holds every binding once — the modifiers, the key, the
 //! spelling the interface prints and the id it runs — so the shell consumes a key by id
-//! (`apps/furnicraft/src/shortcuts.rs`), the ribbon prints the label of the method it belongs to, and
+//! (`app/src/shortcuts.rs`), the ribbon prints the label of the method it belongs to, and
 //! the Settings page lists the same rows. A user-assignable key would rewrite this table and nothing
 //! else (U96); until then the defaults are what the table says.
 
-use furnicraft_text::Message;
+use text::Message;
 
 use crate::icons::Icon;
 
@@ -780,9 +780,9 @@ pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use furnicraft_engine::CommandRegistry;
-    use furnicraft_text::Lang;
+    use engine::CommandRegistry;
     use std::collections::BTreeMap;
+    use text::Lang;
 
     #[test]
     fn every_registered_command_has_one_row() {

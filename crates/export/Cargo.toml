@@ -1,5 +1,5 @@
 [package]
-name = "furnicraft-export"
+name = "export"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,13 +9,13 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-furnicraft-geom = { workspace = true }
-furnicraft-model = { workspace = true }
-furnicraft-text = { workspace = true }
-furnicraft-units = { workspace = true }
+geom = { workspace = true }
+model = { workspace = true }
+text = { workspace = true }
+units = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-furnicraft-testkit = { workspace = true }
+testkit = { workspace = true }

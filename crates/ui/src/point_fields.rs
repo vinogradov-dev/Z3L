@@ -25,7 +25,7 @@ use core::ops::RangeInclusive;
 use egui::{
     Align, Align2, Context, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke, Vec2, pos2,
 };
-use furnicraft_model::{MAX_CONTOUR_COORDINATE, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES};
+use model::{MAX_CONTOUR_COORDINATE, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES};
 
 use crate::scrub::Scrub;
 use crate::theme;

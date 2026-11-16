@@ -28,4 +28,4 @@ A second palette must pass the same contrast floor as the first, and a new colou
 both. Any widget that still reaches for a palette constant instead of the active style draws the
 dark value in light mode; the call sites were converted in the same change, and a new one is a review
 item. The light variant is a visual design decision, not a document or session field: it lives in the
-workspace file (ADR 0068) and never in the `.fcs`.
+workspace file (ADR 0068) and never in the `.z3l`.

@@ -12,7 +12,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use furnicraft_model::{Catalog, Project};
+use model::{Catalog, Project};
 
 use crate::error::ExportError;
 use crate::manifest::{DocumentMeta, Manifest, MoneyUnit, OrderMeta};

@@ -11,9 +11,9 @@
 //!
 //! Changes when: a grip, a corner or a segment of the working copy gets a new operation.
 
-use furnicraft_engine::Session;
-use furnicraft_model::{ContourEditError, ContourSegmentId, CornerMove, PathCorner, Project};
-use furnicraft_units::Length;
+use engine::Session;
+use model::{ContourEditError, ContourSegmentId, CornerMove, PathCorner, Project};
+use units::Length;
 
 use super::Editor;
 use crate::contour_edit::{ContourEdit, ContourTarget};

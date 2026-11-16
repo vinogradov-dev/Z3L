@@ -3,7 +3,7 @@
 //! One golden file carries the current schema: it is written by this build and must keep loading
 //! after a change to the code. A file with any other schema number is a readable error, never a
 //! migration — before the first release the format has no past (ADR 0096). Regenerate the golden
-//! with `cargo test -p furnicraft-project --test make_golden -- --ignored`.
+//! with `cargo test -p project --test make_golden -- --ignored`.
 
 #![allow(clippy::expect_used)]
 
@@ -12,13 +12,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use furnicraft_model::{
-    Container, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
-};
-use furnicraft_project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
-use furnicraft_units::{Degrees, Length};
+use model::{Container, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind};
+use project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
+use units::{Degrees, Length};
 
-const GOLDEN: &str = include_str!("golden/scene.fcs");
+const GOLDEN: &str = include_str!("golden/scene.z3l");
 
 /// A unique directory under the system temporary directory, removed on drop.
 struct TempDir(PathBuf);
@@ -27,11 +25,7 @@ impl TempDir {
     fn new(tag: &str) -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0);
-        let name = format!(
-            "furnicraft-scene-{tag}-{}-{nanos}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
+        let name = format!("scene-{tag}-{}-{nanos}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
         let path = std::env::temp_dir().join(name);
         fs::create_dir_all(&path).expect("create the temporary directory");
         Self(path)
@@ -186,7 +180,7 @@ fn the_old_pivot_field_and_the_old_container_tags_are_unknown() {
 #[test]
 fn saving_and_reading_a_file_round_trips_the_document() {
     let dir = TempDir::new("round-trip");
-    let target = dir.path().join("scene.fcs");
+    let target = dir.path().join("scene.z3l");
     let scene = SceneFile::parse(GOLDEN).expect("the golden loads");
 
     scene.write(&target).expect("write");
@@ -194,19 +188,19 @@ fn saving_and_reading_a_file_round_trips_the_document() {
 
     assert_eq!(loaded.document(), scene.document());
     assert_eq!(loaded.extra(), scene.extra());
-    assert!(!dir.path().join("scene.fcs.tmp").exists(), "the temporary file is renamed away");
+    assert!(!dir.path().join("scene.z3l.tmp").exists(), "the temporary file is renamed away");
 }
 
 #[test]
 fn a_failed_write_leaves_the_previous_file_intact() {
     let dir = TempDir::new("atomic");
-    let target = dir.path().join("scene.fcs");
+    let target = dir.path().join("scene.z3l");
     let original = SceneFile::parse(GOLDEN).expect("the golden loads");
     original.write(&target).expect("first write");
     let before = fs::read_to_string(&target).expect("read the saved file");
 
     // A directory on the temporary path makes the write fail after the target already exists.
-    fs::create_dir(dir.path().join("scene.fcs.tmp")).expect("create the blocking directory");
+    fs::create_dir(dir.path().join("scene.z3l.tmp")).expect("create the blocking directory");
     let mut replacement = original.document().clone();
     replacement.set_active_camera(None).expect("clear the camera");
     let error = SceneFile::new(replacement).write(&target).expect_err("the write must fail");
@@ -238,7 +232,7 @@ fn a_saved_file_holds_only_the_envelope_and_the_document() {
 #[test]
 fn a_file_above_the_size_limit_is_rejected_before_it_is_read() {
     let dir = TempDir::new("too-large");
-    let target = dir.path().join("scene.fcs");
+    let target = dir.path().join("scene.z3l");
     let file = fs::File::create(&target).expect("create");
     file.set_len(MAX_SCENE_BYTES + 1).expect("extend sparsely");
 

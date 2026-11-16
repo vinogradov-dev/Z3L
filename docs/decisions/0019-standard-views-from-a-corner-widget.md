@@ -23,7 +23,7 @@ gimbal flip, but it means an axis-aligned direction never matches the camera's e
   grow with the grid.
 - The shell draws a corner widget with six projected world-axis balls, positioned with the camera's
   right and up vectors and depth-sorted so the near balls cover the far ones. The widget lives in
-  `apps/furnicraft/src/gizmo.rs`, not in `furnicraft-ui`: it reads the camera, which is shell view
+  `app/src/gizmo.rs`, not in `ui`: it reads the camera, which is shell view
   state, and changes no document data.
 - A click returns an eye direction and the shell applies `Camera::look_from`. Clicking the side the
   camera already looks from flips to the opposite side. The clamped top and bottom pitches count as

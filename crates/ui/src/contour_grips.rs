@@ -9,12 +9,12 @@
 //! is a length for a radius or a side, and an angle for an arc end. Dragging is a separate call, so
 //! the viewport owns the pointer while the model owns the geometry.
 
-use furnicraft_model::{
+use model::{
     ArcFrame, CircleFrame, ContourEditError, ContourSegment, ContourSegmentId, CornerMove, PathCorner, PathShape,
     PolygonFrame, RectangleFrame,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::{Degrees, Length, LengthParseError};
+use text::{Lang, Message};
+use units::{Degrees, Length, LengthParseError};
 
 use crate::ContourDraft;
 
@@ -475,8 +475,8 @@ fn midpoint(first: [Length; 2], second: [Length; 2]) -> Option<[Length; 2]> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::Path;
-    use furnicraft_testkit::millimetres;
+    use model::Path;
+    use testkit::millimetres;
 
     use super::*;
 
@@ -810,8 +810,7 @@ mod tests {
 
     #[test]
     fn a_ring_exposes_corner_grips_only() {
-        let ring =
-            furnicraft_model::Contour::from_polygon(vec![point(0, 0), point(100, 0), point(100, 60)]).expect("a ring");
+        let ring = model::Contour::from_polygon(vec![point(0, 0), point(100, 0), point(100, 60)]).expect("a ring");
         let draft = ContourDraft::Ring(ring);
         assert_eq!(draft.grips().len(), 3);
         assert!(draft.grips().iter().all(|grip| matches!(grip, ContourGrip::Corner(_))));

@@ -63,7 +63,7 @@ pointer would freeze the move it belongs to. And a press on a plate means "let m
 ## References
 
 - `crates/ui/src/draw_fields.rs` — `PointState::moved`, the measurement a move shares with a segment.
-- `apps/furnicraft/src/contour_gizmo.rs` — `CornerLatch`, `follow`, `end_latch`, `latched_move`,
+- `app/src/contour_gizmo.rs` — `CornerLatch`, `follow`, `end_latch`, `latched_move`,
   `paint_latch` and the selection the click sets.
 - ADR [0126](0126-the-point-being-placed-shows-its-numbers-at-the-cursor.md) — the plate, its focus
   and its locks; ADR [0127](0127-a-sketch-has-two-guides.md) — the two guides; ADR

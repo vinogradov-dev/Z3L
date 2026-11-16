@@ -4,25 +4,25 @@
 //! on losing focus or through an explicit button; combo boxes and checkboxes dispatch immediately.
 
 use egui::{ComboBox, TextEdit, Ui};
-use furnicraft_engine::panel_cmds::{
+use engine::panel_cmds::{
     BEVEL_CLEAR_ID, BEVEL_SET_ID, BOW_CLEAR_ID, BOW_SET_ID, CORNER_BANDING_CLEAR_ID, CORNER_BANDING_SET_ID,
     CORNER_CLEAR_ID, CORNER_SET_ID, EDGE_BANDING_CLEAR_ID, EDGE_BANDING_SET_ID, MATERIAL_SET_ID, OUTLINE_CONTOUR_ID,
     RENAME_ID, RESIZE_ID, RING_BANDING_CLEAR_ID, RING_BANDING_SET_ID,
 };
-use furnicraft_engine::{
+use engine::{
     Dimension, EditScope, NodeRules, PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet,
     PanelCornerBandingClear, PanelCornerBandingSet, PanelCornerClear, PanelCornerSet, PanelDiagnostic,
     PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMaterialSet, PanelOutlineToContour, PanelRename, PanelResize,
     PanelRingBandingClear, PanelRingBandingSet, Session,
 };
-use furnicraft_model::{
+use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeId, EdgeRef, Extent, Id,
     MAX_BEVEL_ANGLE, MachiningId, MaterialId, Operation, Panel, PanelNominalSize, RectCorner, RectEdge, RingBanding,
     SegmentSource, VertexId,
 };
-use furnicraft_text::Message;
-use furnicraft_units::{Degrees, Length};
 use serde_json::Value;
+use text::Message;
+use units::{Degrees, Length};
 
 use crate::command::{dispatch as dispatch_command, json};
 use crate::contour_edit::{ContourEntry, ContourTarget};
@@ -32,7 +32,7 @@ use crate::section::section;
 use crate::theme;
 
 /// The largest panel size a field may name, in millimetres: the document's own ceiling.
-const MAX_SIZE_MM: f64 = furnicraft_model::Panel::MAX_LENGTH.micrometres() as f64 / 1_000.0;
+const MAX_SIZE_MM: f64 = model::Panel::MAX_LENGTH.micrometres() as f64 / 1_000.0;
 
 /// Persistent state of the panel card.
 #[derive(Debug, Default)]
@@ -1248,7 +1248,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use furnicraft_model::{Contour, MachiningId, Placement};
+    use model::{Contour, MachiningId, Placement};
 
     fn material(value: u64) -> MaterialId {
         MaterialId::new(value).expect("material id")
@@ -1256,7 +1256,7 @@ mod tests {
 
     /// A session whose root holds a 700 x 500 contour panel.
     fn contour_session() -> (Session, Id) {
-        let mut project = furnicraft_testkit::sample_project();
+        let mut project = testkit::sample_project();
         let ring = Contour::from_polygon(vec![
             [Length::ZERO, Length::ZERO],
             [mm(700), Length::ZERO],
@@ -1267,7 +1267,7 @@ mod tests {
         let panel = project
             .add_panel_contour(project.root().id(), "Contour", &ring, None, mm(18), Placement::IDENTITY)
             .expect("contour panel");
-        (Session::with_catalog(project, furnicraft_testkit::sample_catalog()), panel)
+        (Session::with_catalog(project, testkit::sample_catalog()), panel)
     }
 
     fn ring_segments(panel: &Panel) -> Vec<SegmentSource> {
@@ -1334,8 +1334,7 @@ mod tests {
 
     #[test]
     fn band_picker_lists_existing_unbanded_segments() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let panel = session.project().panel(panel_id).expect("panel");
         assert_eq!(
@@ -1354,7 +1353,7 @@ mod tests {
             &Action::SetBand {
                 panel: panel_id,
                 edge: RectEdge::Bottom.id(),
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: false,
             },
         )
@@ -1382,7 +1381,7 @@ mod tests {
             &Action::SetCornerBand {
                 panel: panel_id,
                 corner,
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: false,
             },
         )
@@ -1398,8 +1397,7 @@ mod tests {
 
     #[test]
     fn to_contour_action_bakes_a_rectangle_and_refuses_a_ring() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
 
         run_action(&mut session, &Action::ToContour { panel: panel_id }).expect("bake the outline");
@@ -1424,14 +1422,13 @@ mod tests {
 
     #[test]
     fn card_actions_dispatch_through_the_engine() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
 
         run_action(&mut session, &Action::Rename { panel: panel_id, name: "Renamed".to_owned() }).expect("rename");
         assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Renamed");
 
-        let material = furnicraft_testkit::sample_material_id();
+        let material = testkit::sample_material_id();
         run_action(&mut session, &Action::SetMaterial { panel: panel_id, material }).expect("set material");
         assert_eq!(session.project().panel(panel_id).expect("panel").material(), Some(material));
 
@@ -1441,7 +1438,7 @@ mod tests {
             &Action::SetBand {
                 panel: panel_id,
                 edge,
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: true,
             },
         )
@@ -1469,7 +1466,7 @@ mod tests {
             &Action::SetRingBand {
                 panel: panel_id,
                 segment,
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: true,
             },
         )
@@ -1503,7 +1500,7 @@ mod tests {
             &Action::SetRingBand {
                 panel: panel_id,
                 segment,
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: false,
             },
         )
@@ -1539,8 +1536,7 @@ mod tests {
 
     #[test]
     fn corner_and_bow_actions_dispatch_through_the_engine() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::TopRight.id();
         let edge = RectEdge::Top.id();
@@ -1572,8 +1568,7 @@ mod tests {
 
     #[test]
     fn corner_band_actions_dispatch_through_the_engine() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::BottomRight.id();
 
@@ -1594,7 +1589,7 @@ mod tests {
             &Action::SetCornerBand {
                 panel: panel_id,
                 corner,
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: true,
             },
         )
@@ -1607,8 +1602,7 @@ mod tests {
 
     #[test]
     fn band_actions_accept_a_shaped_panel() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::BottomLeft.id();
         run_action(
@@ -1628,7 +1622,7 @@ mod tests {
             &Action::SetBand {
                 panel: panel_id,
                 edge: RectEdge::Bottom.id(),
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: true,
             },
         )
@@ -1646,8 +1640,7 @@ mod tests {
 
     #[test]
     fn bevel_actions_dispatch_through_the_engine() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let source = EdgeRef::Rect { edge: RectEdge::Bottom.id() };
 
@@ -1668,7 +1661,7 @@ mod tests {
             &Action::SetBand {
                 panel: panel_id,
                 edge: RectEdge::Bottom.id(),
-                material: furnicraft_testkit::sample_edge_material_id(),
+                material: testkit::sample_edge_material_id(),
                 included_in_size: false,
             },
         )
@@ -1683,8 +1676,7 @@ mod tests {
 
     #[test]
     fn the_bevel_rows_cover_straight_edges_only() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let panel = session.project().panel(panel_id).expect("panel");
         assert_eq!(
@@ -1741,8 +1733,7 @@ mod tests {
 
     #[test]
     fn typing_an_angle_writes_the_bevel_and_zero_clears_it() {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let source = EdgeRef::Rect { edge: RectEdge::Bottom.id() };
         let mut context = egui::Context::default();
@@ -1861,8 +1852,7 @@ mod tests {
         text: &str,
         ending: Vec<egui::Event>,
     ) -> Vec<Action> {
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         for corner in RectCorner::ALL {
             run_action(&mut session, &Action::SetCorner { panel: panel_id, corner: corner.id(), feature })
@@ -1914,7 +1904,7 @@ mod tests {
 
     #[test]
     fn a_typed_bowed_edge_commits_on_enter() {
-        let session = Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let mut context = egui::Context::default();
         shape_frame(&mut context, &session, panel_id, Vec::new());
@@ -1983,11 +1973,10 @@ mod tests {
 
     /// The sample shelf classed as `code`, with a session the card can draw.
     fn classed_panel_session(code: Option<&str>) -> (Session, Id) {
-        use furnicraft_engine::{NodePropertySet, node_cmds::NODE_PROPERTY_SET_ID};
-        use furnicraft_model::{PropertyValue, SYSTEM_CLASS};
+        use engine::{NodePropertySet, node_cmds::NODE_PROPERTY_SET_ID};
+        use model::{PropertyValue, SYSTEM_CLASS};
 
-        let mut session =
-            Session::with_catalog(furnicraft_testkit::sample_project(), furnicraft_testkit::sample_catalog());
+        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
         let panel = Id::new(2).expect("panel id");
         if let Some(code) = code {
             let params = crate::command::json(&NodePropertySet {

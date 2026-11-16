@@ -30,11 +30,11 @@ implemented inside one tool is a defect of the same size as a second numeric fie
 resolver (0051); the surfaces an atom meets come from the one probe (0103). A second snap list or a
 second probe is the defect, whatever the tool it hides in.
 
-**The ruler is a transient atom, not a command.** No document object, no undo entry, no `.fcs`
+**The ruler is a transient atom, not a command.** No document object, no undo entry, no `.z3l`
 field: its result is information. Two clicks set a length; the value is drawn at the pointer and in
 the centre zone of the status bar, while the left zone says what to do next. The next click starts a
 new measurement rather than extending the previous one, and Escape leaves and writes nothing, because
-nothing was written. Lengths are formatted by `furnicraft-units` like every other number.
+nothing was written. Lengths are formatted by `units` like every other number.
 
 **A dimension on a drawing is a different thing.** It is a document object with an id and undo —
 `sketch.dimensions.linear` in the ribbon map — and it stays planned until drawings exist. Merging the

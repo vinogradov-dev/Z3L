@@ -25,7 +25,7 @@
 
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_8, PI, TAU};
 
-use furnicraft_geom::{DMat4, DVec2, DVec3};
+use geom::{DMat4, DVec2, DVec3};
 use thiserror::Error;
 
 use crate::ray::Ray;

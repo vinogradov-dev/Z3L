@@ -66,13 +66,13 @@ pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use draw_fields::{PointRow, PointState, Reference, SketchAngle, XEnd, field_row, sketch_angle};
 pub use draw_menu::{DraftMenu, DraftMenuChoice};
 pub use editor::{Editor, FillArm};
-pub use furnicraft_text::{Counted, Lang, Message};
 pub use inventory::{ActsOn, Applies, NodeKind, Place, Row};
 pub use measure::{Measure, MeasureClick, MeasureStage};
 pub use mesh_edit::{MeshEdit, MeshElement};
 pub use node_actions::{MenuSource, NodeAction, Subject, ViewportMenu};
 pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use point_fields::{CURSOR_CLEARANCE, FieldAction, FieldEdit, FieldLabel, FieldParam, FieldRow, FieldSet};
+pub use text::{Counted, Lang, Message};
 pub use tool_card::{ToolAction, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use view_flags::ViewFlags;
@@ -83,7 +83,7 @@ pub use void::{Void, VoidRefusal, pointer_point};
 /// The language is workspace settings, not document data: the shell writes it once per frame and
 /// every surface reads it, so a new panel never has to thread a `Lang` through five signatures to
 /// draw one caption. A test publishes its own language the same way.
-const LANGUAGE_KEY: &str = "furnicraft.language";
+const LANGUAGE_KEY: &str = "z3l.language";
 
 /// Publishes the language every surface draws in.
 pub fn set_language(ctx: &egui::Context, lang: Lang) {
@@ -96,7 +96,7 @@ pub fn language(ctx: &egui::Context) -> Lang {
 }
 
 /// The `egui` memory key the shell publishes the workspace icon-colour mode under.
-const ICON_COLOR_KEY: &str = "furnicraft.icon_color";
+const ICON_COLOR_KEY: &str = "z3l.icon_color";
 
 /// Publishes how the icon pipeline colours a glyph.
 ///
@@ -119,8 +119,8 @@ pub fn text(ctx: &egui::Context, message: Message) -> &'static str {
 
 /// The interface's words for a refused length, so a raw `thiserror` sentence never reaches the
 /// screen. The error itself stays English for logs and tests.
-pub fn length_error(error: furnicraft_units::LengthParseError) -> Message {
-    use furnicraft_units::LengthParseError as Error;
+pub fn length_error(error: units::LengthParseError) -> Message {
+    use units::LengthParseError as Error;
     match error {
         Error::Empty => Message::LengthErrorEmpty,
         Error::Invalid => Message::LengthErrorInvalid,
@@ -130,8 +130,8 @@ pub fn length_error(error: furnicraft_units::LengthParseError) -> Message {
 }
 
 /// The interface's words for a refused angle, for the same reason as [`length_error`].
-pub fn degrees_error(error: furnicraft_units::DegreesParseError) -> Message {
-    use furnicraft_units::DegreesParseError as Error;
+pub fn degrees_error(error: units::DegreesParseError) -> Message {
+    use units::DegreesParseError as Error;
     match error {
         Error::Empty => Message::DegreesErrorEmpty,
         Error::Invalid => Message::DegreesErrorInvalid,

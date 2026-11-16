@@ -24,8 +24,8 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use furnicraft_geom::{DQuat, DVec2, DVec3};
-use furnicraft_units::{Degrees, Length};
+use geom::{DQuat, DVec2, DVec3};
+use units::{Degrees, Length};
 
 use crate::*;
 

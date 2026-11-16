@@ -4,9 +4,9 @@
 //! ordered chain of the same segments: open or closed, not necessarily simple, and capped at the
 //! ring size it eventually has to become. The document keeps micrometres and millidegrees; this
 //! module is the only place where a segment becomes floating-point millimetres, and the only place
-//! where it comes back. Callers never see a `furnicraft_geom` type, so the geometry layer stays
+//! where it comes back. Callers never see a `geom` type, so the geometry layer stays
 //! free to change. The maths over a segment — a projection, a split, an arc rebuilt through new
-//! ends — is `furnicraft_geom::segment`'s; this module converts once at its edge and computes no
+//! ends — is `geom::segment`'s; this module converts once at its edge and computes no
 //! trigonometry of its own.
 //!
 //! Validation is total: every coordinate is inside [`MAX_CONTOUR_COORDINATE`], a line has two
@@ -17,10 +17,10 @@
 use std::collections::HashSet;
 use std::f64::consts::TAU;
 
-use furnicraft_geom::{Arc, DVec2, Line, Segment};
-use furnicraft_units::{Degrees, Length};
+use geom::{Arc, DVec2, Line, Segment};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::{Degrees, Length};
 
 use crate::ContourSegmentId;
 
@@ -349,7 +349,7 @@ pub enum ContourSegmentError {
     NonFinite,
     /// The geometry layer rejected the segment despite a document-level check.
     #[error(transparent)]
-    Geometry(#[from] furnicraft_geom::ContourError),
+    Geometry(#[from] geom::ContourError),
 }
 
 /// Serialized form of [`ContourSegment`]; validation happens in its `TryFrom` implementation.
@@ -1928,15 +1928,13 @@ impl Contour {
     ///
     /// Every segment keeps its curve, so an arc stays an arc until the geometry boundary samples
     /// it. The ids stay with the document ring; the geometry layer only needs the shape.
-    pub fn to_geometry(&self) -> Result<furnicraft_geom::Contour, ContourError> {
+    pub fn to_geometry(&self) -> Result<geom::Contour, ContourError> {
         let segments = self
             .entries
             .iter()
             .map(|entry| entry.segment().to_geom())
             .collect::<Result<Vec<_>, ContourSegmentError>>()?;
-        Ok(furnicraft_geom::Contour::new_with_joint_tolerance(segments, true, |first, next| {
-            joint_tolerance_mm(*first, *next)
-        })?)
+        Ok(geom::Contour::new_with_joint_tolerance(segments, true, |first, next| joint_tolerance_mm(*first, *next))?)
     }
 
     /// The segment with this id.
@@ -2065,8 +2063,8 @@ impl Contour {
         let mut total = 0.0;
         for entry in &self.entries {
             total += match entry.segment().to_geom()? {
-                furnicraft_geom::Segment::Line(line) => line.start().perp_dot(line.end()),
-                furnicraft_geom::Segment::Arc(arc) => arc_area2(arc),
+                geom::Segment::Line(line) => line.start().perp_dot(line.end()),
+                geom::Segment::Arc(arc) => arc_area2(arc),
             };
         }
         let area2 = total * 1_000_000.0;
@@ -3015,7 +3013,7 @@ fn arc_slack_micrometres(radius_micrometres: i128) -> i64 {
 /// The joint tolerance between two geometry segments converted from stored ones, in millimetres.
 ///
 /// This is the same rule [`Contour::assemble`] and [`Path::assemble`] use, for a caller that hands
-/// a chain to [`furnicraft_geom::Contour::new_with_joint_tolerance`]: one document unit plus the
+/// a chain to [`geom::Contour::new_with_joint_tolerance`]: one document unit plus the
 /// rounding slack of either arc endpoint. A line contributes nothing, because its endpoints are
 /// stored exactly (ADR 0072).
 pub fn joint_tolerance_mm(first: Segment, second: Segment) -> f64 {
@@ -3218,7 +3216,7 @@ fn translate_point(point: [Length; 2], offset: [Length; 2]) -> Result<[Length; 2
 }
 
 /// Twice the signed area of one arc, in square millimetres; it follows from the sector integral.
-fn arc_area2(arc: furnicraft_geom::Arc) -> f64 {
+fn arc_area2(arc: geom::Arc) -> f64 {
     let start = arc.start_angle();
     let end = start + arc.sweep_angle();
     let center = arc.center();
@@ -3384,7 +3382,7 @@ pub enum ContourError {
     Segment(#[from] ContourSegmentError),
     /// The geometry layer rejected the whole ring despite valid segments.
     #[error(transparent)]
-    Geometry(#[from] furnicraft_geom::ContourError),
+    Geometry(#[from] geom::ContourError),
     /// The contour has fewer than three segments.
     #[error("a contour needs at least three segments, got {count}")]
     TooFewSegments {

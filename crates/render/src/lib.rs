@@ -33,8 +33,8 @@ mod gpu;
 mod pipelines;
 
 use bytemuck::{Pod, Zeroable};
-use furnicraft_geom::DVec3;
-use furnicraft_scene::{Camera, ContactShadows, Lighting, MAX_POINT_LIGHTS, SceneFrame, ShadingStyle};
+use geom::DVec3;
+use scene::{Camera, ContactShadows, Lighting, MAX_POINT_LIGHTS, SceneFrame, ShadingStyle};
 use thiserror::Error;
 use wgpu::util::DeviceExt as _;
 
@@ -189,7 +189,7 @@ impl RenderTargets {
         // product never copies its colour target.
         let copy = if cfg!(test) { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() };
         let color = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("FurniCraft viewport colour"),
+            label: Some("Z3L viewport colour"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -199,7 +199,7 @@ impl RenderTargets {
             view_formats: &[],
         });
         let depth = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("FurniCraft viewport depth"),
+            label: Some("Z3L viewport depth"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -317,7 +317,7 @@ impl ViewportRenderer {
         let size = clamp_size(width, height, device.limits().max_texture_dimension_2d);
         let targets = RenderTargets::new(device, size[0], size[1]);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("FurniCraft scene shader"),
+            label: Some("Z3L scene shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
         });
 
@@ -325,14 +325,14 @@ impl ViewportRenderer {
         let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment).max(1);
         let camera_stride = uniform_size.next_multiple_of(alignment);
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FurniCraft camera uniform"),
+            label: Some("Z3L camera uniform"),
             size: camera_stride * MAX_VIEWS as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("FurniCraft camera layout"),
+            label: Some("Z3L camera layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -345,7 +345,7 @@ impl ViewportRenderer {
             }],
         });
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FurniCraft camera bind group"),
+            label: Some("Z3L camera bind group"),
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -357,7 +357,7 @@ impl ViewportRenderer {
             }],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("FurniCraft scene pipeline layout"),
+            label: Some("Z3L scene pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
@@ -366,7 +366,7 @@ impl ViewportRenderer {
             device,
             &pipeline_layout,
             &shader,
-            "FurniCraft shaded mesh pipeline",
+            "Z3L shaded mesh pipeline",
             "fs_mesh",
             ShadingStyle::Shaded,
         );
@@ -374,26 +374,16 @@ impl ViewportRenderer {
             device,
             &pipeline_layout,
             &shader,
-            "FurniCraft translucent mesh pipeline",
+            "Z3L translucent mesh pipeline",
             "fs_mesh_translucent",
             ShadingStyle::Translucent,
         );
         let line_pipeline =
-            create_line_pipeline(device, &pipeline_layout, &shader, "FurniCraft line pipeline", line_depth_state());
-        let edge_pipeline = create_line_pipeline(
-            device,
-            &pipeline_layout,
-            &shader,
-            "FurniCraft edge pipeline",
-            edge_depth_state(false),
-        );
-        let hidden_edge_pipeline = create_line_pipeline(
-            device,
-            &pipeline_layout,
-            &shader,
-            "FurniCraft hidden edge pipeline",
-            edge_depth_state(true),
-        );
+            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L line pipeline", line_depth_state());
+        let edge_pipeline =
+            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L edge pipeline", edge_depth_state(false));
+        let hidden_edge_pipeline =
+            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L hidden edge pipeline", edge_depth_state(true));
         let shadow_pipeline = create_shadow_pipeline(device, &pipeline_layout, &shader);
 
         Self {
@@ -456,12 +446,12 @@ impl ViewportRenderer {
             }
             let index_count = u32::try_from(indices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("FurniCraft drawable vertices"),
+                label: Some("Z3L drawable vertices"),
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
             let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("FurniCraft drawable indices"),
+                label: Some("Z3L drawable indices"),
                 contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
@@ -475,12 +465,11 @@ impl ViewportRenderer {
             });
         }
 
-        let grid = line_list(device, "FurniCraft grid vertices", grid_vertices(&frame.grid))?;
-        let polylines =
-            line_list(device, "FurniCraft path vertices", polyline_vertices(frame.polylines(), frame.line_ink)?)?;
+        let grid = line_list(device, "Z3L grid vertices", grid_vertices(&frame.grid))?;
+        let polylines = line_list(device, "Z3L path vertices", polyline_vertices(frame.polylines(), frame.line_ink)?)?;
         let product_envelopes = line_list(
             device,
-            "FurniCraft product envelope vertices",
+            "Z3L product envelope vertices",
             product_envelope_vertices(
                 frame.product_envelopes(),
                 frame.product_envelope_active,
@@ -488,9 +477,9 @@ impl ViewportRenderer {
             )?,
         )?;
         let (edge_vertices, edge_slices) = edge_geometry(frame.drawables(), frame.all_edges, frame.background);
-        let edges = line_list(device, "FurniCraft edge vertices", edge_vertices)?;
+        let edges = line_list(device, "Z3L edge vertices", edge_vertices)?;
         let (shadow_vertices, shadow_indices) = shadow_geometry(frame.shadows())?;
-        let shadows = triangle_list(device, "FurniCraft contact shadows", &shadow_vertices, &shadow_indices);
+        let shadows = triangle_list(device, "Z3L contact shadows", &shadow_vertices, &shadow_indices);
 
         let draw_order: Vec<usize> = (0..drawables.len()).collect();
         self.drawables = drawables;
@@ -573,7 +562,7 @@ impl ViewportRenderer {
         }
 
         let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("FurniCraft scene encoder") });
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Z3L scene encoder") });
         // One clear for the whole target, so a view that does not cover every pixel of a rounding
         // edge leaves the background there instead of the previous frame's image.
         {
@@ -589,7 +578,7 @@ impl ViewportRenderer {
                 stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
             };
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("FurniCraft clear pass"),
+                label: Some("Z3L clear pass"),
                 color_attachments: &[color_attachment],
                 depth_stencil_attachment: Some(depth_attachment),
                 timestamp_writes: None,
@@ -621,7 +610,7 @@ impl ViewportRenderer {
                 stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("FurniCraft view pass"),
+                label: Some("Z3L view pass"),
                 color_attachments: &[color_attachment],
                 depth_stencil_attachment: Some(depth_attachment),
                 timestamp_writes: None,
@@ -787,11 +776,9 @@ mod tests {
         EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_CONTACT_SHADOWS, MAX_GRID_DIVISIONS, SHADOW_SEGMENTS, edge_color,
     };
     use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, shadow_depth_state};
-    use furnicraft_geom::{DMat4, MeshData};
-    use furnicraft_model::Id;
-    use furnicraft_scene::{
-        ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors,
-    };
+    use geom::{DMat4, MeshData};
+    use model::Id;
+    use scene::{ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
 
     fn triangle() -> MeshData {
         MeshData {
@@ -963,10 +950,10 @@ mod tests {
 
         let mut frame = SceneFrame::default();
         frame.push_polyline(chain);
-        frame.apply_colors(furnicraft_scene::SceneColors::LIGHT);
+        frame.apply_colors(scene::SceneColors::LIGHT);
         let vertices = polyline_vertices(frame.polylines(), frame.line_ink).expect("valid polyline");
-        assert_eq!(vertices[0].color, furnicraft_scene::SceneColors::LIGHT.line_ink);
-        assert_ne!(vertices[0].color, furnicraft_scene::SceneColors::DARK.line_ink, "the ink followed the theme");
+        assert_eq!(vertices[0].color, scene::SceneColors::LIGHT.line_ink);
+        assert_ne!(vertices[0].color, scene::SceneColors::DARK.line_ink, "the ink followed the theme");
     }
 
     #[test]
@@ -1069,7 +1056,7 @@ mod tests {
     fn point_lights_fill_the_uniform_and_stop_at_the_budget() {
         let mut lighting = Lighting::default();
         for index in 0..MAX_POINT_LIGHTS + 2 {
-            lighting.points.push(furnicraft_scene::PointLight {
+            lighting.points.push(scene::PointLight {
                 position: DVec3::new(index as f64, 0.0, 0.0),
                 color: [0.25, 0.5, 0.75],
                 power: 1000.0,
@@ -1279,7 +1266,7 @@ mod tests {
         let row_bytes = width.checked_mul(4).expect("a row fits");
         let padded = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FurniCraft product envelope shot pixels"),
+            label: Some("Z3L product envelope shot pixels"),
             size: u64::from(padded) * u64::from(height),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -1360,7 +1347,7 @@ mod tests {
             });
         }
         let mut renderer = ViewportRenderer::new(&device, 1280, 800);
-        let directory = furnicraft_testkit::ui_shots_dir().expect("the shots directory is created");
+        let directory = testkit::ui_shots_dir().expect("the shots directory is created");
 
         for (name, colors) in [("dark", SceneColors::DARK), ("light", SceneColors::LIGHT)] {
             frame.apply_colors(colors);
@@ -1368,7 +1355,7 @@ mod tests {
             renderer.render(&device, &queue, &frame);
             let pixels = read_pixels(&renderer, &device, &queue);
             let path = directory.join(format!("product-envelope-{name}.png"));
-            furnicraft_testkit::write_png(&path, 1280, 800, &pixels).expect("the shot is written");
+            testkit::write_png(&path, 1280, 800, &pixels).expect("the shot is written");
             let active = pixels_of(&pixels, colors.product_envelope_active);
             let inactive = pixels_of(&pixels, colors.product_envelope_inactive);
             assert!(active > 20, "{name}: the open envelope is drawn, {active} pixels");

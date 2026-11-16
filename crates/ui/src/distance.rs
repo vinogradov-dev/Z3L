@@ -28,7 +28,7 @@ use core::ops::RangeInclusive;
 
 use egui::{Id, Key, Modifiers, Pos2, Rect, Ui};
 
-use furnicraft_text::Message;
+use text::Message;
 
 use crate::tool_card::{ToolOutcome, ToolParam, ToolRow, ToolView};
 

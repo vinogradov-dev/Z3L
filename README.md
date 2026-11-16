@@ -1,4 +1,4 @@
-# FurniCraft
+# Z3L
 
 Native, free and open-source 3D editor for parametric cabinet furniture: set dimensions, panels and hardware, get a 3D model — and, later, drawings and CNC programs.
 
@@ -7,7 +7,7 @@ Built with Rust, `wgpu` and `egui`: a native binary, with no Electron, no Tauri,
 ## Quick start
 
 ```sh
-cargo run -p furnicraft     # opens the editor
+cargo run -p app            # opens the editor as `z3l`
 cargo test --workspace
 cargo xtask layers          # checks the crate dependency rules
 ```

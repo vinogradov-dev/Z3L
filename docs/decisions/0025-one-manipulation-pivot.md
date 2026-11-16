@@ -70,7 +70,7 @@ geometry as soon as the object rotates.
   representation; its statement that rotation preserves the translation applies only at a zero
   pivot now.
 - `crates/model` (`Project::pivot_local`, `Project::pivot_world`),
-  `apps/furnicraft/src/translate_gizmo.rs`, `apps/furnicraft/src/rotate_gizmo.rs`.
+  `app/src/translate_gizmo.rs`, `app/src/rotate_gizmo.rs`.
 
 ## Vocabulary note (2026-11-11)
 

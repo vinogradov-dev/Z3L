@@ -11,7 +11,7 @@ to trust a feeling. Values are the floor for a desktop tool at 100 % scale; they
   target, and only the drawing is smaller.
 - **Near misses count**: a target carries 2–4 pt of slack around its visual shape; a 16 pt icon in a
   24 pt box, not a 16 pt click area. The gizmo already works this way — the ring hit radius in
-  `apps/furnicraft/src/rotate_gizmo.rs` is wider than the stroke it draws.
+  `app/src/rotate_gizmo.rs` is wider than the stroke it draws.
 - **Fitts (1954)**: time to a target grows with distance and shrinks with width. Consequences: the
   most frequent action sits closest to where the hand already is (the cell under the pointer, the
   view's own corner), and edge-anchored targets (a status bar row, a panel header) are "infinitely"

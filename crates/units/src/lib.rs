@@ -36,7 +36,7 @@ impl Length {
     /// Builds a length from whole millimetres, returning `None` on overflow.
     ///
     /// Use [`Length::from_micrometres`] for sub-millimetre precision, or parse user input
-    /// through `furnicraft-units` rather than converting floats in the domain.
+    /// through `units` rather than converting floats in the domain.
     pub fn from_millimetres(millimetres: i64) -> Option<Self> {
         millimetres.checked_mul(1_000).map(Self)
     }

@@ -6,9 +6,9 @@
 
 use std::collections::HashSet;
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 /// Largest accepted number of vertices in one mesh.
 pub const MAX_MESH_VERTICES: usize = 1_000_000;

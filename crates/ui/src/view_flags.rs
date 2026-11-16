@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use furnicraft_model::{Id, Project};
+use model::{Id, Project};
 
 /// The hidden and locked nodes of one editor session.
 #[derive(Clone, Debug, Default)]
@@ -138,8 +138,8 @@ impl ViewFlags {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Container, Node, Placement};
-    use furnicraft_testkit::sample_project;
+    use model::{Container, Node, Placement};
+    use testkit::sample_project;
 
     use super::*;
 

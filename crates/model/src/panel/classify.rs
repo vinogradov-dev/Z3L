@@ -15,7 +15,7 @@
 //! Changes when: the classifier gains a candidate family, or the ring generator changes what a
 //! corner treatment draws.
 
-use furnicraft_geom::{Contour as GeometryRing, DVec2, Segment};
+use geom::{Contour as GeometryRing, DVec2, Segment};
 
 use crate::{Contour, CornerFeature, CornerFeatureKind, Length, PanelNominalSize, PanelOutline, RectCorner};
 

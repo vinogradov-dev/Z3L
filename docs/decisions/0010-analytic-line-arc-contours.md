@@ -27,7 +27,7 @@ that layer separately.
 
 ## Decision
 
-`furnicraft-geom::contour` owns planar `Line`, `Arc`, `Segment` and `Contour` values. An offset moves a
+`geom::contour` owns planar `Line`, `Arc`, `Segment` and `Contour` values. An offset moves a
 path to the left of its travel direction by a signed distance; for a counter-clockwise closed contour
 that is the material side. Lines translate along their left normal. A circular arc keeps its center
 and start angle and changes radius by the signed distance, with the sign taken from the sweep
@@ -38,7 +38,7 @@ internal joint to be tangent continuous within `1e-6` radians; a sharp joint is 
 being mitered. Closed contours must bound a non-zero area and must not self-intersect. Sampling is
 bounded by a chord tolerance and by hard caps so hostile input cannot allocate without limit.
 
-Arcs are sampled to polylines for `furnicraft_kernel::Profile` until a future kernel port carries
+Arcs are sampled to polylines for `kernel::Profile` until a future kernel port carries
 curved profiles. The document keeps the arc parameters; the sampled points are derived data.
 
 ## Consequences
@@ -50,5 +50,5 @@ curved profiles. The document keeps the arc parameters; the sampled points are d
   a mixed core contour with sharp joints needs a join step when stage 2 is wired in.
 - Stage 3 needs a 2D union for through cutouts; ADR 0012 chooses an in-house `geom::boolean` module over
   `geom::ring` for it, adding no dependency and no kernel-port change.
-- The tangent and connection tolerances are defaults in `furnicraft-geom`; if the domain spec changes
+- The tangent and connection tolerances are defaults in `geom`; if the domain spec changes
   them, they change in one place.

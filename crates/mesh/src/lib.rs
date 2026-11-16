@@ -20,13 +20,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use furnicraft_geom::{DVec3, MeshData, triangulate_face};
-use furnicraft_kernel::{BodyId, KernelError, SolidKernel, TessOptions};
-use furnicraft_model::{
+use geom::{DVec3, MeshData, triangulate_face};
+use kernel::{BodyId, KernelError, SolidKernel, TessOptions};
+use model::{
     BandingSpec, Constructive, CornerBanding, EdgeBanding, EdgeBevel, Id, Machining, Mesh, Object, Panel,
     PanelGeometry, PanelNominalSize, PanelOutline, Path, Primitive, Revision, RingBanding, SegmentSource,
 };
-use furnicraft_param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
+use param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
 use thiserror::Error;
 
 mod primitive;
@@ -50,7 +50,7 @@ pub enum MeshError {
     Param(#[from] ParamError),
     /// The document rejected the derived polygon mesh.
     #[error("invalid primitive mesh: {0}")]
-    Model(#[from] furnicraft_model::MeshError),
+    Model(#[from] model::MeshError),
     /// The adapter returned a mesh that is not safe to render.
     #[error("invalid panel mesh: {0}")]
     Invalid(String),
@@ -282,8 +282,8 @@ pub fn path_points(path: &Path) -> Result<Vec<DVec3>, MeshError> {
         .map(|segment| segment.to_geom())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| MeshError::Invalid(error.to_string()))?;
-    let chain = furnicraft_geom::Contour::new_with_joint_tolerance(segments, false, |first, next| {
-        furnicraft_model::joint_tolerance_mm(*first, *next)
+    let chain = geom::Contour::new_with_joint_tolerance(segments, false, |first, next| {
+        model::joint_tolerance_mm(*first, *next)
     })
     .map_err(|error| MeshError::Invalid(error.to_string()))?;
     let samples = chain.sample(PATH_SAMPLE_TOLERANCE_MM).map_err(|error| MeshError::Invalid(error.to_string()))?;
@@ -364,7 +364,7 @@ struct PanelInputs {
     ring_banding: Vec<RingBanding>,
     band_order: Vec<SegmentSource>,
     bevels: Vec<EdgeBevel>,
-    thickness: furnicraft_units::Length,
+    thickness: units::Length,
     profiles: Vec<(BandingSpec, EdgeBandProfile)>,
 }
 
@@ -573,15 +573,15 @@ impl EvaluationCache {
         &mut self,
         revision: Revision,
         id: Id,
-        geometry: &furnicraft_model::Geometry,
+        geometry: &model::Geometry,
     ) -> Result<NodeGeometry, MeshError> {
         let pass = self.pass;
         if let Some(entry) = self.nodes.get_mut(&id) {
             let unchanged = match (&entry.payload, geometry) {
-                (Payload::Mesh(cached), furnicraft_model::Geometry::Mesh(current)) => cached == current,
-                (Payload::Constructive(cached), furnicraft_model::Geometry::Constructive(current)) => cached == current,
-                (Payload::Primitive(cached), furnicraft_model::Geometry::Primitive(current)) => cached == current,
-                (Payload::Path(cached), furnicraft_model::Geometry::Path(current)) => cached == current,
+                (Payload::Mesh(cached), model::Geometry::Mesh(current)) => cached == current,
+                (Payload::Constructive(cached), model::Geometry::Constructive(current)) => cached == current,
+                (Payload::Primitive(cached), model::Geometry::Primitive(current)) => cached == current,
+                (Payload::Path(cached), model::Geometry::Path(current)) => cached == current,
                 _ => false,
             };
             if unchanged {
@@ -591,19 +591,19 @@ impl EvaluationCache {
         }
 
         let (payload, evaluated) = match geometry {
-            furnicraft_model::Geometry::Mesh(mesh) => {
+            model::Geometry::Mesh(mesh) => {
                 let data = object_mesh(mesh)?;
                 (Payload::Mesh(mesh.clone()), solid_geometry(data))
             }
-            furnicraft_model::Geometry::Constructive(constructive) => {
+            model::Geometry::Constructive(constructive) => {
                 let data = constructive_mesh(constructive)?;
                 (Payload::Constructive(constructive.clone()), solid_geometry(data))
             }
-            furnicraft_model::Geometry::Primitive(primitive) => {
+            model::Geometry::Primitive(primitive) => {
                 let data = primitive_mesh(primitive)?;
                 (Payload::Primitive(primitive.clone()), solid_geometry(data))
             }
-            furnicraft_model::Geometry::Path(path) => {
+            model::Geometry::Path(path) => {
                 let points = path_points(path)?;
                 (
                     Payload::Path(path.clone()),
@@ -710,12 +710,12 @@ fn validate_mesh(mesh: &MeshData) -> Result<(), MeshError> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_kernel::{BooleanOp, Measure, Profile};
-    use furnicraft_kernel_truck::TruckKernel;
-    use furnicraft_model::{Contour, EdgeBevel, EdgeId, EdgeRef, Id, Panel, PanelNominalSize, Placement, RectEdge};
-    use furnicraft_param::build_panel;
-    use furnicraft_testkit::millimetres;
-    use furnicraft_units::{Degrees, Length};
+    use kernel::{BooleanOp, Measure, Profile};
+    use kernel_truck::TruckKernel;
+    use model::{Contour, EdgeBevel, EdgeId, EdgeRef, Id, Panel, PanelNominalSize, Placement, RectEdge};
+    use param::build_panel;
+    use testkit::millimetres;
+    use units::{Degrees, Length};
 
     use super::*;
 
@@ -724,24 +724,19 @@ mod tests {
     }
 
     impl SolidKernel for StaticKernel {
-        fn extrude(
-            &mut self,
-            _profile: &Profile,
-            _frame: &furnicraft_geom::Frame,
-            _height: f64,
-        ) -> furnicraft_kernel::Result<BodyId> {
+        fn extrude(&mut self, _profile: &Profile, _frame: &geom::Frame, _height: f64) -> kernel::Result<BodyId> {
             Err(KernelError::Unsupported("static kernel does not implement extrusion"))
         }
 
-        fn boolean(&mut self, _op: BooleanOp, _target: BodyId, _tool: BodyId) -> furnicraft_kernel::Result<BodyId> {
+        fn boolean(&mut self, _op: BooleanOp, _target: BodyId, _tool: BodyId) -> kernel::Result<BodyId> {
             Err(KernelError::Unsupported("static kernel does not implement booleans"))
         }
 
-        fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> furnicraft_kernel::Result<MeshData> {
+        fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> kernel::Result<MeshData> {
             self.mesh.clone().ok_or(KernelError::Unsupported("static kernel has no mesh"))
         }
 
-        fn measure(&self, _body: BodyId) -> furnicraft_kernel::Result<Measure> {
+        fn measure(&self, _body: BodyId) -> kernel::Result<Measure> {
             Err(KernelError::Unsupported("static kernel does not implement measurement"))
         }
 
@@ -806,7 +801,7 @@ mod tests {
 
     #[test]
     fn object_mesh_triangulates_a_cube_into_twelve_flat_triangles() {
-        let cube = furnicraft_testkit::cube_mesh(millimetres(100));
+        let cube = testkit::cube_mesh(millimetres(100));
         let mesh = object_mesh(&cube).expect("render mesh");
         assert_eq!(mesh.triangle_count(), 12);
         assert_eq!(mesh.vertex_count(), 36, "flat shading duplicates vertices per face");
@@ -826,7 +821,7 @@ mod tests {
 
     #[test]
     fn object_mesh_skips_degenerate_faces_without_failing() {
-        let collinear = furnicraft_model::Mesh::new(
+        let collinear = model::Mesh::new(
             vec![
                 [millimetres(0), millimetres(0), millimetres(0)],
                 [millimetres(10), millimetres(0), millimetres(0)],
@@ -843,7 +838,7 @@ mod tests {
 
     #[test]
     fn object_mesh_with_only_degenerate_faces_is_empty() {
-        let collinear = furnicraft_model::Mesh::new(
+        let collinear = model::Mesh::new(
             vec![
                 [millimetres(0), millimetres(0), millimetres(0)],
                 [millimetres(10), millimetres(0), millimetres(0)],
@@ -951,7 +946,7 @@ mod tests {
 
     #[test]
     fn a_cube_edge_list_is_the_twelve_box_edges_without_diagonals() {
-        let cube = furnicraft_testkit::cube_mesh(millimetres(100));
+        let cube = testkit::cube_mesh(millimetres(100));
         let mesh = object_mesh(&cube).expect("render mesh");
         assert_eq!(mesh_edges(&mesh).len() / 2, 12, "a cube shows its twelve box edges");
         assert_eq!(mesh_all_edges(&mesh).len() / 2, 18, "the diagnostic list adds six face diagonals");
@@ -1059,7 +1054,7 @@ mod tests {
     fn band(material: u64, thickness: i64, width: i64) -> EdgeBanding {
         EdgeBanding::new(
             EdgeId::new(1).expect("edge"),
-            furnicraft_model::MaterialId::new(material).expect("material"),
+            model::MaterialId::new(material).expect("material"),
             false,
             millimetres(thickness),
             millimetres(width),
@@ -1152,7 +1147,7 @@ mod tests {
         // A bevel is a body feature folded after the extrusion, so the cache must compare it like
         // the outline and the banding. Without it the document revision moved but the old mesh was
         // reused, and the card's angle changed nothing on screen.
-        use furnicraft_model::Project;
+        use model::Project;
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1206,13 +1201,9 @@ mod tests {
 
     #[test]
     fn an_object_is_reused_until_its_payload_changes() {
-        let cube = furnicraft_testkit::cube_mesh(millimetres(100));
-        let object = Object::new(
-            Id::new(3).expect("id"),
-            "Cube",
-            Placement::IDENTITY,
-            furnicraft_model::Geometry::Mesh(cube.clone()),
-        );
+        let cube = testkit::cube_mesh(millimetres(100));
+        let object =
+            Object::new(Id::new(3).expect("id"), "Cube", Placement::IDENTITY, model::Geometry::Mesh(cube.clone()));
         let mut cache = EvaluationCache::new();
         cache.start();
         let first = cache.object(Revision::ZERO, &object).expect("cube mesh");
@@ -1224,8 +1215,8 @@ mod tests {
         cache.finish();
         assert!(Arc::ptr_eq(first.body().expect("body"), second.body().expect("body")));
 
-        let scaled = furnicraft_testkit::cube_mesh(millimetres(200));
-        let changed = Object::new(object.id(), "Cube", Placement::IDENTITY, furnicraft_model::Geometry::Mesh(scaled));
+        let scaled = testkit::cube_mesh(millimetres(200));
+        let changed = Object::new(object.id(), "Cube", Placement::IDENTITY, model::Geometry::Mesh(scaled));
         cache.start();
         let third = cache.object(Revision::ZERO.checked_next().expect("revision"), &changed).expect("cube mesh");
         cache.finish();
@@ -1239,7 +1230,7 @@ mod tests {
             Id::new(9).expect("id"),
             "Body",
             Placement::IDENTITY,
-            furnicraft_model::Geometry::Constructive(body.clone()),
+            model::Geometry::Constructive(body.clone()),
         );
         let mut cache = EvaluationCache::new();
         cache.start();
@@ -1258,8 +1249,7 @@ mod tests {
                     .expect("rectangle"),
             )
             .expect("replace the path");
-        let changed =
-            Object::new(object.id(), "Body", Placement::IDENTITY, furnicraft_model::Geometry::Constructive(edited));
+        let changed = Object::new(object.id(), "Body", Placement::IDENTITY, model::Geometry::Constructive(edited));
         cache.start();
         let third = cache.object(Revision::ZERO.checked_next().expect("revision"), &changed).expect("body mesh");
         cache.finish();
@@ -1276,7 +1266,7 @@ mod tests {
             Id::new(5).expect("id"),
             "Ball",
             Placement::IDENTITY,
-            furnicraft_model::Geometry::Primitive(primitive.clone()),
+            model::Geometry::Primitive(primitive.clone()),
         );
         let mut cache = EvaluationCache::new();
         cache.start();
@@ -1294,8 +1284,7 @@ mod tests {
         );
 
         let smoother = Primitive::sphere(millimetres(50), 32, 16).expect("sphere");
-        let changed =
-            Object::new(object.id(), "Ball", Placement::IDENTITY, furnicraft_model::Geometry::Primitive(smoother));
+        let changed = Object::new(object.id(), "Ball", Placement::IDENTITY, model::Geometry::Primitive(smoother));
         cache.start();
         let third = cache.object(Revision::ZERO.checked_next().expect("revision"), &changed).expect("sphere mesh");
         cache.finish();
@@ -1304,7 +1293,7 @@ mod tests {
 
     #[test]
     fn a_path_is_drawn_as_a_line_chain_without_a_solid() {
-        use furnicraft_model::ContourSegment;
+        use model::ContourSegment;
 
         let path = Path::new(
             vec![
@@ -1316,8 +1305,7 @@ mod tests {
             false,
         )
         .expect("path");
-        let object =
-            Object::new(Id::new(4).expect("id"), "Sketch", Placement::IDENTITY, furnicraft_model::Geometry::Path(path));
+        let object = Object::new(Id::new(4).expect("id"), "Sketch", Placement::IDENTITY, model::Geometry::Path(path));
         let mut cache = EvaluationCache::new();
         cache.start();
         let geometry = cache.object(Revision::ZERO, &object).expect("path chain");
@@ -1327,8 +1315,8 @@ mod tests {
     }
 
     /// A project whose root holds two panels with distinct ids, for the invalidation tests.
-    fn project_with_two_panels() -> furnicraft_model::Project {
-        use furnicraft_model::{Container, Project};
+    fn project_with_two_panels() -> model::Project {
+        use model::{Container, Project};
 
         let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("valid panel size");
         let first = Panel::new(Id::new(1).expect("id"), "First", size, None, millimetres(18), Placement::IDENTITY)
@@ -1339,7 +1327,7 @@ mod tests {
             Id::new(3).expect("id"),
             "Root",
             Placement::IDENTITY,
-            vec![furnicraft_model::Node::Panel(first), furnicraft_model::Node::Panel(second)],
+            vec![model::Node::Panel(first), model::Node::Panel(second)],
         );
         Project::new(root).expect("project")
     }
@@ -1348,8 +1336,8 @@ mod tests {
     fn a_path_closed_by_a_rounded_arc_samples_as_one_chain() {
         // The document accepts a 5 µm miss at a 600 mm arc end (ADR 0072); the preview and the
         // scene must judge the same joint the document did, or the ring is not drawn at all.
-        use furnicraft_model::{ContourSegment, Path};
-        use furnicraft_units::Degrees;
+        use model::{ContourSegment, Path};
+        use units::Degrees;
 
         let arc = ContourSegment::arc(
             [Length::ZERO, Length::ZERO],

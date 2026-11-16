@@ -11,8 +11,8 @@
 
 use std::collections::HashSet;
 
-use furnicraft_engine::Session;
-use furnicraft_model::{Container, Id, Project};
+use engine::Session;
+use model::{Container, Id, Project};
 
 use super::Editor;
 use crate::target::{child_containing, resolve_viewport_pick};

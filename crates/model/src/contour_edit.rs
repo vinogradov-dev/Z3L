@@ -11,7 +11,7 @@
 //! error, because redefining the circle would change the curve the user drew. The same holds for a
 //! trim or a split: the point must lie on the segment's own supporting line or circle.
 //!
-//! The geometry over a segment is `furnicraft_geom::segment`'s: it rebuilds an arc through new ends,
+//! The geometry over a segment is `geom::segment`'s: it rebuilds an arc through new ends,
 //! projects a point onto a support, clamps a sliding corner to a segment's extent and splits a
 //! curve. This module owns the ids and the errors, and converts `Length`/`Degrees` at the call — it
 //! computes no trigonometry of its own (ADR 0040, D1).
@@ -23,9 +23,9 @@
 //!
 //! Changes when: a corner move, a trim, a split, a removal or a close changes.
 
-use furnicraft_geom::{Arc, ContourError as GeomError, DVec2, Segment};
-use furnicraft_units::{Degrees, Length};
+use geom::{Arc, ContourError as GeomError, DVec2, Segment};
 use thiserror::Error;
+use units::{Degrees, Length};
 
 use crate::contour::point_to_geometry;
 use crate::{
@@ -548,7 +548,7 @@ impl Contour {
     /// The corner the segment shares with its neighbour moves with it; the neighbour is trimmed or
     /// extended to the same corner. `at_end` addresses the segment's end instead of its start. A
     /// line trims to any point on its supporting line as long as it does not pass its other end; an
-    /// arc trims or extends along its circle within [`furnicraft_geom::MAX_ARC_EXTENSION`]. The
+    /// arc trims or extends along its circle within [`geom::MAX_ARC_EXTENSION`]. The
     /// segment keeps its id.
     pub fn trim_segment(
         &self,

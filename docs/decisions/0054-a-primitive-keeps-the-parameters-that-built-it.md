@@ -26,7 +26,7 @@ height and derives the mesh. A primitive is the same idea with a different set o
 - The parameter set is the shape's own: a cube has one edge, and only the curved shapes have a face
   count. A cube therefore always has six faces; "sides" is a cylinder parameter and "bands" a sphere
   one. The three parameters are not unified into one generic tessellation field.
-- The mesh is derived, never stored and never stored beside the parameters. `furnicraft-mesh` owns
+- The mesh is derived, never stored and never stored beside the parameters. `mesh` owns
   the one definition (`evaluate_primitive`), which the viewport draws through `EvaluationCache` and
   `object.collapse` bakes, so a collapsed primitive keeps exactly the shape the user saw.
 - The bounds are analytic (`Primitive::bounds_micrometres`), so the tree, the pivot and the camera

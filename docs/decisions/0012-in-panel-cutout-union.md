@@ -13,7 +13,7 @@ leaves the choice of the 2D union/boolean layer to stage 3; ADR 0009 lists the c
 
 ## Decision
 
-`furnicraft-geom` gains an in-house `region` module: a small arrangement-based boolean layer that
+`geom` gains an in-house `region` module: a small arrangement-based boolean layer that
 performs the 2D union of the through cutouts and the subtraction `C \ K`. It operates on the same
 `Contour` primitives as the rest of the contour model.
 

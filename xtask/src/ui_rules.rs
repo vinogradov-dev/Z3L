@@ -26,10 +26,10 @@ use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, ExprCall, ExprPath, ExprStruct, ImplItem, Item, Path as SynPath, UseTree};
 
 /// The two source trees the interface rules read.
-const UI_TREES: &[&str] = &["crates/ui/src", "apps/furnicraft/src"];
+const UI_TREES: &[&str] = &["crates/ui/src", "app/src"];
 
 /// The crate roots: a module declared under `#[cfg(test)]` is not shipped code.
-const CRATE_ROOTS: &[&str] = &["crates/ui/src/lib.rs", "apps/furnicraft/src/main.rs"];
+const CRATE_ROOTS: &[&str] = &["crates/ui/src/lib.rs", "app/src/main.rs"];
 
 /// One module that owns a fact, and the fact it owns.
 struct Owner {
@@ -59,16 +59,13 @@ const HOST_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/tool_card.rs", owns: "the armed tool's card at the pointer" },
     Owner { path: "crates/ui/src/toolbars.rs", owns: "the ribbon and the anchor of its variant list" },
     Owner { path: "crates/ui/src/toolbars/list.rs", owns: "the ribbon's variant list" },
-    Owner { path: "apps/furnicraft/src/contour_gizmo.rs", owns: "the numeric entry beside a contour grip" },
-    Owner { path: "apps/furnicraft/src/file_menu.rs", owns: "the file dialogs and the destructive question" },
-    Owner {
-        path: "apps/furnicraft/src/main.rs",
-        owns: "the window skeleton: the central workspace and the header band",
-    },
-    Owner { path: "apps/furnicraft/src/side_panels.rs", owns: "the two floating side panels" },
-    Owner { path: "apps/furnicraft/src/status_bar.rs", owns: "the status row" },
-    Owner { path: "apps/furnicraft/src/strip.rs", owns: "the floating ribbon strip" },
-    Owner { path: "apps/furnicraft/src/view_cluster.rs", owns: "the viewport cluster and its popovers" },
+    Owner { path: "app/src/contour_gizmo.rs", owns: "the numeric entry beside a contour grip" },
+    Owner { path: "app/src/file_menu.rs", owns: "the file dialogs and the destructive question" },
+    Owner { path: "app/src/main.rs", owns: "the window skeleton: the central workspace and the header band" },
+    Owner { path: "app/src/side_panels.rs", owns: "the two floating side panels" },
+    Owner { path: "app/src/status_bar.rs", owns: "the status row" },
+    Owner { path: "app/src/strip.rs", owns: "the floating ribbon strip" },
+    Owner { path: "app/src/view_cluster.rs", owns: "the viewport cluster and its popovers" },
 ];
 
 /// The `egui` hosts: a docked panel, a free window, a modal and an overlay area.
@@ -492,7 +489,7 @@ mod tests {
     fn healthy() -> Vec<(&'static str, &'static str)> {
         vec![
             ("crates/ui/src/lib.rs", ROUTER),
-            ("apps/furnicraft/src/main.rs", ROUTER),
+            ("app/src/main.rs", ROUTER),
             ("crates/ui/src/panel_card.rs", "pub fn card() { ui.label(\"ok\"); }\n"),
         ]
     }
@@ -597,7 +594,7 @@ mod tests {
             ));
         }
         files.push(("crates/ui/src/lib.rs", ROUTER));
-        files.push(("apps/furnicraft/src/main.rs", ROUTER));
+        files.push(("app/src/main.rs", ROUTER));
         let root = project("owners", &files);
         assert!(check(&root).is_ok(), "{:?}", check(&root).err());
         let _ = std::fs::remove_dir_all(&root);
