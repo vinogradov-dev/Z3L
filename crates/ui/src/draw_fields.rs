@@ -17,11 +17,11 @@
 //! the same with every lock of a [`FieldSet`] applied, so a typed length survives a snap and a
 //! typed `0` gives the number back to the pointer.
 //!
-//! **The smaller angle.** A segment's angle is read from the nearer end of the X axis: the right
-//! half-plane reads from +X, the left half-plane from −X, and the plate shows at most half a turn.
-//! The sweep is signed — positive counter-clockwise — so the guide arc always takes the short way.
-//! A typed number is a direction from +X, so a value above 180 flips the reference to −X, which is
-//! the same rule read the other way round (ADR 0128).
+//! **Half a turn per side.** A segment's angle is read from one end of the X axis: the upper
+//! half-plane reads from +X, the lower one from −X, so the plate shows at most half a turn and the
+//! guide arc keeps its side until the sweep passes 180 degrees (ADR 0134). The sweep is signed —
+//! positive counter-clockwise. A typed number is a direction from +X, so a value above 180 flips the
+//! reference to −X, which is the same rule read the other way round.
 //!
 //! It writes nothing: a draft is view state and the commit is one `object.path.create` elsewhere.
 //!
@@ -81,16 +81,20 @@ impl SketchAngle {
     }
 }
 
-/// The angle a direction shows: the smaller one, read from the nearer end of the X axis.
+/// The angle a direction shows: a sweep from one end of the X axis, never over half a turn.
 ///
-/// A zero vector has no direction and reads as `0` from `+X`, which is the one place a sketch
-/// falls back to a direction the pointer did not name.
+/// The end is chosen by the half-plane the direction lies in — the upper one reads from `+X`, the
+/// lower one from `−X` — so the auxiliary arc and its number keep one side until the sweep passes
+/// 180, and a pointer that wobbles across the vertical axis does not make the guide jump to the
+/// other end at 90 (ADR 0134). A zero vector has no direction and reads as `0` from `+X`, which is
+/// the one place a sketch falls back to a direction the pointer did not name.
 pub fn sketch_angle(vector: DVec2) -> SketchAngle {
     let degrees = vector.y.atan2(vector.x).to_degrees();
-    if degrees.abs() <= 90.0 {
+    if (0.0..=180.0).contains(&degrees) {
         SketchAngle { end: XEnd::Plus, sweep: degrees }
     } else {
-        SketchAngle { end: XEnd::Minus, sweep: if degrees > 0.0 { degrees - 180.0 } else { degrees + 180.0 } }
+        // Below `+X`: read from `−X`, which brings the angle back into (0, 180).
+        SketchAngle { end: XEnd::Minus, sweep: if degrees < 0.0 { degrees + 180.0 } else { degrees - 180.0 } }
     }
 }
 
@@ -648,16 +652,18 @@ mod tests {
     }
 
     #[test]
-    fn the_angle_reads_from_the_nearer_end_of_the_x_axis() {
-        // One row per quadrant: the end the sweep is read from and the smaller angle it shows.
+    fn the_angle_keeps_one_side_until_the_sweep_passes_half_a_turn() {
+        // One row per quadrant: the end the sweep is read from and the angle it shows. The upper
+        // half of the plane always reads from +X and the lower from −X, so the guide and its number
+        // change side once per turn and not twice.
         let table = [
             (millimetres(100, 0), XEnd::Plus, 0.0),
             (millimetres(100, 100), XEnd::Plus, 45.0),
-            (millimetres(-100, 100), XEnd::Minus, 45.0),
-            (millimetres(-100, 0), XEnd::Minus, 0.0),
+            (millimetres(-100, 100), XEnd::Plus, 135.0),
+            (millimetres(-100, 0), XEnd::Plus, 180.0),
             (millimetres(-100, -100), XEnd::Minus, 45.0),
-            (millimetres(100, -100), XEnd::Plus, 45.0),
-            (millimetres(-100, 20), XEnd::Minus, 11.3),
+            (millimetres(100, -100), XEnd::Minus, 135.0),
+            (millimetres(-100, 20), XEnd::Plus, 168.7),
             (millimetres(-100, -20), XEnd::Minus, 11.3),
         ];
         for (vector, end, shown) in table {
@@ -741,9 +747,9 @@ mod tests {
     fn a_segment_shows_its_length_and_the_pointers_angle() {
         let line = draft(DrawTool::Line, &[(0, 0)]);
         assert_eq!(plates(&line, millimetres(600, 0)), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 0.0)]);
-        // A direction below the axis is the smaller angle from +X, so 30 and not 330.
+        // A direction below the axis reads from -X, so a point 30 degrees below +X shows 150.
         let below = DVec2::new(600.0 * 30f64.to_radians().cos(), -300.0);
-        assert_eq!(plates(&line, below), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 30.0)]);
+        assert_eq!(plates(&line, below), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 150.0)]);
         // The guide's radius is the segment's own length, and it starts at the anchor.
         let state = PointState::live(&line, millimetres(0, 600)).expect("a point");
         let reference = state.reference.expect("a segment has a reference");
@@ -1004,10 +1010,11 @@ mod tests {
         let state = PointState::moved(DVec2::ZERO, millimetres(10, 10), Some(&fields)).expect("a moved point");
         let expected = DVec2::new(50.0 * 120f64.to_radians().cos(), 50.0 * 120f64.to_radians().sin());
         assert!((state.at - expected).length() < 1e-3, "{:?} is 50 mm at 120 degrees", state.at);
-        // An angle above 180 flips the reference to -X; 120 reads from -X the short way round.
+        // The reference keeps +X while the direction stays in the upper half of the plane, so 120
+        // is read from +X; only a direction below the axis flips the end to -X (ADR 0134).
         let reference = state.reference.expect("a reference");
         assert_eq!(reference.radius, 50.0, "the arc follows the typed distance");
-        assert!((reference.from - std::f64::consts::PI).abs() < 1e-9, "120 degrees reads from -X");
+        assert_eq!(reference.from, 0.0, "120 degrees reads from +X");
         assert_eq!(state.construction, Some([DVec2::ZERO, state.at]), "the chord runs to the placed point");
     }
 
