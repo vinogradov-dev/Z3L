@@ -41,6 +41,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
+- `[ ]` **X54** a click on a widget over the scene commits the running draft's next point
+  Why: Observation: with a line tool armed and waiting for its next point — the segment after a
+   straight line's start, a point of an arc — a click meant for something other than the scene
+   fixes that point: the line's length is set and the line commits, and the arc takes its second
+   point. The owner saw it while changing the view from the view cluster, while opening the
+   polyline's segment menu to change the segment kind, and while opening another menu; he named
+   no widget, so which one it was is still open. Expectation: a press belongs to the surface it
+   lands on — a widget, a popover or a menu changes the view or the segment kind and leaves the
+   draft exactly as it was, and only a press whose position is the scene places a draft point.
+   Suspected cause: the draft reads its click from the viewport response (`draw_gizmo::update`,
+   `response.clicked_by(Primary)`), so whether a press is the scene's is decided by
+   `pointer_on_chrome` — a hand-kept inventory (`Chrome::covers`: the ribbon band, the method
+   list, the node menu, the tool card, the panels — plus the tool card of the last frame, the
+   plates of the point being placed and the draft menu) that names neither the view cluster and
+   its two popovers nor the palette, the class picker, the product card, the file menu and the
+   Settings window. Measured on 2026-11-16: a headless frame run did not reproduce the report on
+   any of those surfaces — each swallowed the press, because every one is an `egui::Area` or
+   `Window` whose root senses a click — and a press 5 to 13 points outside a floating frame is
+   already a scene press that commits the line, which is where the visual edge and the clickable
+   edge part company; `plan/notes/X54.md` holds the surfaces, the rectangles and the numbers.
+   The next session asks the owner which widget and menu he pressed and in which layout (ribbon
+   folded, a view maximised, panels hidden), reproduces it in a frame test, and changes nothing
+   before that.
+  `files: app/src/document.rs,app/src/view_cluster.rs,crates/ui/src/draw_menu.rs,app/src/frame_tests.rs`
+
 ## Next
 - `[ ]` **U102** a selection cannot be added to or removed from
   Why: A selection is one object: a click replaces it, and there is no way to add or remove
