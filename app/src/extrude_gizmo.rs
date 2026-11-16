@@ -29,6 +29,13 @@ const CLICK_SLOP: f32 = 3.0;
 /// The smallest height a pull may leave, in millimetres.
 pub(crate) const MIN_HEIGHT_MM: f64 = 1.0;
 
+/// How many frames a fresh pull's field asks for the keyboard.
+///
+/// egui builds the widget after it is asked for the focus, so the request of the frame a new card
+/// first appears is lost; asking on the next frame too gives the field the keyboard, and asking any
+/// longer would hold it against the user's next click. A sketch plate counts the same way.
+const FOCUS_REQUESTS: u8 = 2;
+
 /// Colour of the arrow when the pointer is elsewhere.
 const ARROW_COLOR: egui::Color32 = egui::Color32::from_rgb(120, 200, 255);
 
@@ -118,9 +125,9 @@ pub(crate) struct ExtrudeGizmo {
     pull: Option<Pull>,
     drag: Option<Drag>,
     hover: bool,
-    /// Whether the bar's field still has to take the keyboard focus, so a fresh pull can be typed
-    /// into without a click.
-    focus: bool,
+    /// How many frames the card's field still asks for the keyboard, so a fresh pull can be typed
+    /// into without a click; zero once it has asked.
+    focus: u8,
 }
 
 impl ExtrudeGizmo {
@@ -129,7 +136,7 @@ impl ExtrudeGizmo {
         self.pull = Some(Pull { object, committed: height, height });
         self.drag = None;
         self.hover = false;
-        self.focus = true;
+        self.focus = FOCUS_REQUESTS;
     }
 
     /// Drops the pull. The caller drops the preview overlay in the same breath.
@@ -162,12 +169,24 @@ impl ExtrudeGizmo {
         self.pull.as_ref().map(|pull| pull.height)
     }
 
+    /// Takes a height typed into the card's field as the one the arrow shows.
+    ///
+    /// The card and the arrow are one number: a field that wrote its own copy would leave the
+    /// arrow at the dragged height and the field showing a value the next frame overwrites.
+    pub(crate) fn set_height(&mut self, height: Length) {
+        if let Some(pull) = self.pull.as_mut() {
+            pull.height = height;
+        }
+    }
+
     /// Whether the command bar's field must take the focus this frame.
     ///
-    /// The flag is cleared by the read, so the field cannot ask for the focus on every frame and
-    /// hold it against the user's next click.
+    /// The count falls by the read, so the field asks on the two frames its card settles and then
+    /// leaves the keyboard alone instead of holding it against the user's next click.
     pub(crate) fn take_focus(&mut self) -> bool {
-        std::mem::take(&mut self.focus)
+        let asking = self.focus > 0;
+        self.focus = self.focus.saturating_sub(1);
+        asking
     }
 
     /// Reads the pointer: a press on the arrow starts a drag, a move previews a height, a release
@@ -382,12 +401,13 @@ mod tests {
     }
 
     #[test]
-    fn the_field_asks_for_the_focus_once() {
+    fn the_field_asks_for_the_focus_on_the_frames_its_card_settles() {
         let object = Id::new(7).expect("id");
         let mut gizmo = ExtrudeGizmo::default();
         gizmo.start(object, millimetres(100));
         assert!(gizmo.take_focus(), "a fresh pull can be typed into without a click");
-        assert!(!gizmo.take_focus(), "the second read holds the flag down");
+        assert!(gizmo.take_focus(), "the ask is repeated, because the card's first frame loses it");
+        assert!(!gizmo.take_focus(), "and then the field leaves the keyboard alone");
     }
 
     #[test]

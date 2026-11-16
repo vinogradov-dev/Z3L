@@ -1116,6 +1116,10 @@ impl Document {
     /// would store, so the user sees the solid and not a stand-in for it. It moves no revision and
     /// leaves no undo entry (M71).
     fn preview_extrude(&mut self, object: Id, height: Length) -> Result<(), String> {
+        // The pull's own height is the number its field shows, so a height typed into the card is
+        // adopted here: the next frame draws the field and the arrow at the number just committed
+        // instead of snapping back to the dragged one.
+        self.extrude_gizmo.set_height(height);
         let geometry = previewed_body(self.session.project(), object, height)?;
         self.session.set_preview_geometry(object, geometry);
         self.refresh()
@@ -1760,7 +1764,9 @@ impl Document {
         let height = self.extrude_gizmo.height()?;
         let maximum = (model::MAX_CONTOUR_COORDINATE.micrometres() / 1_000) as f64;
         let range = crate::extrude_gizmo::MIN_HEIGHT_MM..=maximum;
-        Some(ToolView::height(Message::CmdSetExtrusionHeight, height.millimetres_f64(), range, 3))
+        // A pull's card is a number, not a dialog: `H` names it, no unit repeats it and the gesture's
+        // own Enter and Escape commit and cancel, so the field is the only control it draws (U104).
+        Some(ToolView::lettered_height("H", height.millimetres_f64(), range, 3))
     }
 
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
@@ -1774,7 +1780,7 @@ impl Document {
         }
         let arm = self.editor.fill_arm()?;
         let distances = self.distances.as_ref()?;
-        Some(ToolView { title: arm.class.label(), rows: distances.rows(), actions: false })
+        Some(ToolView { title: arm.class.label(), rows: distances.rows(), commit: ui::ToolCommit::Gesture })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.

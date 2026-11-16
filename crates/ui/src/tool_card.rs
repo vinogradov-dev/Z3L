@@ -7,15 +7,18 @@
 //! commit path and one edit scope.
 //!
 //! The inspector draws the same rows from the same draft: the shell builds one [`ToolView`] and both
-//! surfaces read it, so the number at the hand and the number in the panel cannot drift apart. The
-//! ✓ commits the operation once and the ✕ drops it; a tool that commits on its own gesture (a fill's
-//! click) draws neither.
+//! surfaces read it, so the number at the hand and the number in the panel cannot drift apart. How
+//! the operation's one commit is offered is the tool's choice ([`ToolCommit`]): the ✓ and ✕ pair, the
+//! gesture's own Enter and Escape with a lettered plate that draws no button, or neither, for a tool
+//! that commits on its own click. A fresh card's field takes the keyboard so its number can be typed
+//! without a click; the shell owns the count of frames it asks for it.
 //!
-//! Nothing here writes a document. The surface reports the numbers its fields committed, the buttons
-//! pressed this frame and the rectangle it drew, which the shell hands to `Chrome`, so a press inside
-//! the card is chrome and never a pick or a camera gesture (ADR 0080). Keys stay with the shell —
-//! `handle_keys` owns Escape, Enter and Tab for the running tool — so the card adds no second key
-//! reader (ADR 0076).
+//! Nothing here writes a document. The surface reports the numbers its fields committed, the button
+//! pressed this frame, the field that took Enter and the rectangle it drew, which the shell hands to
+//! `Chrome`, so a press inside the card is chrome and never a pick or a camera gesture (ADR 0080).
+//! The shell still owns Escape, Enter and Tab for the running tool — `handle_keys` reads them before
+//! the frame and the card only reports what its own focused field saw — so the card adds no second
+//! key reader (ADR 0076).
 
 use core::ops::RangeInclusive;
 
@@ -24,7 +27,7 @@ use egui::{Align2, CornerRadius, Id, Margin, Order, Pos2, Rect, RichText, Sense,
 use crate::icons;
 use crate::scrub::Scrub;
 use crate::theme;
-use crate::{Message, language};
+use crate::{FieldLabel, Message, language};
 
 /// The clearance between the pointer and the card's nearest corner, in points.
 pub const CARD_GAP: f32 = 18.0;
@@ -45,8 +48,9 @@ pub enum ToolParam {
 pub struct ToolRow {
     /// The parameter the row edits.
     pub param: ToolParam,
-    /// The row's name; a tool with one number names it in the title instead.
-    pub label: Option<Message>,
+    /// What the row writes before its number; a tool that names its one number in the title
+    /// carries none.
+    pub label: Option<FieldLabel>,
     /// The number the field shows, in `unit`.
     pub value: f64,
     /// The unit, drawn dim outside the box.
@@ -80,21 +84,45 @@ impl ToolRow {
     }
 }
 
-/// What both surfaces draw: the tool's name, its numbers and whether it offers the ✓ / ✕ pair.
+/// What both surfaces draw: the tool's name, its numbers and how its commit is offered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolView {
     /// The tool's name, drawn above the rows when it has more than one.
     pub title: Option<Message>,
     /// The numbers, in the order the tool declares them.
     pub rows: Vec<ToolRow>,
-    /// Whether the surface offers the ✓ / ✕ pair, because the tool has one explicit commit.
-    pub actions: bool,
+    /// How the surface offers the tool's one commit.
+    pub commit: ToolCommit,
+}
+
+/// How the tool's commit is offered to the hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolCommit {
+    /// The ✓ and ✕ pair under the rows, beside the gesture's own Enter and Escape.
+    Pair,
+    /// The keys alone: the card draws no button, so its field is the only control it holds and the
+    /// gesture's Enter commits and Escape cancels (U104).
+    Keys,
+    /// Neither: the tool commits on its own gesture, like a fill's click.
+    Gesture,
 }
 
 impl ToolView {
     /// A tool with one number, named by its title.
     pub fn height(title: Message, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
-        Self { title: Some(title), rows: vec![ToolRow::height(value, range, decimals)], actions: true }
+        Self { title: Some(title), rows: vec![ToolRow::height(value, range, decimals)], commit: ToolCommit::Pair }
+    }
+
+    /// A tool whose one number is named by a symbol and nothing else.
+    ///
+    /// This is the plate rule of the sketch fields: `H` in front of the number says what it is, so
+    /// the plate carries no word, no unit and no button pair — the gesture's own Enter commits and
+    /// its Escape cancels, and the field is the only control that takes the keyboard (U104).
+    pub fn lettered_height(symbol: &'static str, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
+        let mut row = ToolRow::height(value, range, decimals);
+        row.label = Some(FieldLabel::Symbol(symbol));
+        row.unit = "";
+        Self { title: None, rows: vec![row], commit: ToolCommit::Keys }
     }
 
     /// Whether the surface draws anything at all.
@@ -206,14 +234,22 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
     if titled && let Some(title) = view.title {
         ui.label(RichText::new(title.text(lang)).strong());
     }
-    let labels = view.rows.len() > 1;
+    // A single row carries its own name when it has one: a lettered plate has nothing else to say
+    // what the number is, and a titled one keeps the title as its name.
+    let labels = view.rows.len() > 1 || view.rows.iter().any(|row| row.label.is_some());
+    let mut entered = false;
     for row in &mut view.rows {
-        row_ui(ui, row, labels, focus == Some(row.param), &mut outcome);
+        entered |= row_ui(ui, row, labels, focus == Some(row.param), &mut outcome);
+    }
+    // Enter in a focused field is the tool's commit as much as the ✓ is, and it is read after the
+    // field drew: the number it just committed is the number the tool applies (M71, U104).
+    if entered && view.commit != ToolCommit::Gesture {
+        outcome.action = Some(ToolAction::Apply);
     }
     if let Some(message) = outcome.error {
         ui.colored_label(theme::danger(ui), message.text(lang));
     }
-    if view.actions {
+    if view.commit == ToolCommit::Pair {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             if icons::icon_button(ui, icons::actions::CONFIRM, Message::ApplyEnter.text(lang)).clicked() {
@@ -228,11 +264,20 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
 }
 
 /// Draws one row through the shared field and reports the number it committed this frame.
-fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &mut ToolOutcome) {
+///
+/// The answer is whether the row's field took Enter, which is the card's commit and not only a
+/// number: a field reports both from one frame (M71, U104).
+fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &mut ToolOutcome) -> bool {
     let lang = language(ui.ctx());
+    let mut submitted = false;
     ui.horizontal(|ui| {
         if labels && let Some(label) = row.label {
-            ui.label(label.text(lang));
+            match label {
+                FieldLabel::Word(message) => ui.label(message.text(lang)),
+                // A symbol is notation, so it is never translated: it sits small and dim in front of
+                // the number the way a sketch plate writes it (U104).
+                FieldLabel::Symbol(symbol) => ui.label(RichText::new(symbol).small().color(theme::text_dim(ui))),
+            };
         }
         if row.disabled {
             ui.label(RichText::new("—").monospace().color(theme::text_dim(ui)));
@@ -269,6 +314,9 @@ fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &m
         if let Some(message) = field.error {
             outcome.error = Some(message);
         }
+        if field.submit {
+            submitted = true;
+        }
         if row.centre {
             field.response.context_menu(|ui| {
                 if ui.button(Message::DistanceCentred.text(lang)).clicked() {
@@ -278,6 +326,7 @@ fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &m
             });
         }
     });
+    submitted
 }
 
 #[cfg(test)]
@@ -317,6 +366,38 @@ mod tests {
     }
 
     #[test]
+    fn a_lettered_plate_names_its_number_and_offers_no_button() {
+        let view = ToolView::lettered_height("H", 40.0, 1.0..=10_000.0, 3);
+        assert_eq!(view.title, None, "no word stands above the number");
+        assert_eq!(view.commit, ToolCommit::Keys, "the gesture's own keys are the commit");
+        let [row] = view.rows.as_slice() else { panic!("a lettered plate holds one field") };
+        assert_eq!(row.label, Some(FieldLabel::Symbol("H")), "the symbol names the number");
+        assert_eq!(row.unit, "", "and no unit repeats what the symbol says");
+    }
+
+    #[test]
+    fn a_field_asked_for_the_keyboard_takes_it_and_keeps_it() {
+        // A card asks on the two frames its area settles: `egui` creates the widget after the ask,
+        // so the request of the first frame is lost. The counted ask is what makes a fresh pull
+        // typeable, and the count is why the field never holds the keyboard after that (U104).
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let mut tool = view();
+        let mut states = Vec::new();
+        for frame in 0..4 {
+            let mut focused = false;
+            let focus = (frame < 2).then_some(ToolParam::Height);
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
+                show(ui, viewport(), Pos2::new(200.0, 200.0), &mut tool, focus, 92);
+                focused = ui.ctx().text_edit_focused();
+            });
+            output.drop_without_applying_deltas();
+            states.push(focused);
+        }
+        assert_eq!(states, vec![false, true, true, true], "the ask lands on the second frame and is kept");
+    }
+
+    #[test]
     fn a_card_at_rest_asks_for_nothing() {
         let (outcome, rect, texts) = run(Vec::new(), Pos2::new(200.0, 200.0), 1.0);
         assert_eq!(outcome, ToolOutcome::default(), "drawing the card applies nothing");
@@ -350,10 +431,10 @@ mod tests {
         crate::set_language(&ctx, crate::Lang::En);
         let mut tool = ToolView {
             title: None,
-            actions: false,
+            commit: ToolCommit::Gesture,
             rows: vec![ToolRow {
                 param: ToolParam::LowGap,
-                label: Some(Message::ToolGapLow),
+                label: Some(FieldLabel::Word(Message::ToolGapLow)),
                 value: 0.0,
                 unit: "mm",
                 range: 0.0..=600.0,

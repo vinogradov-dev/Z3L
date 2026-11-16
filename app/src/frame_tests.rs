@@ -1860,9 +1860,91 @@ fn a_pull_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree
     let chrome = harness.settle();
     let document = harness.app.tabs.active();
     let card = document.tool_card_rect().expect("the pull draws its card");
-    let in_card = texts_inside(&harness, card);
+    let in_card = texts_over(&harness, card);
     assert!(in_card.iter().any(|text| text == "40"), "the card shows the pulled height: {in_card:?}");
     assert_the_card_and_the_inspector_agree(&harness, &chrome);
+}
+
+/// A harness holding one extruded body with its pull open at `height`, and the body's id.
+fn pulling(name: &str, height: units::Length) -> (Harness, Id) {
+    let (session, body) = one_body();
+    let mut harness = Harness::with_session(name, session);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(body));
+        document.extrude_gizmo.start(body, height);
+    }
+    harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);
+    harness.settle();
+    (harness, body)
+}
+
+/// Every text the last frame drew over `rect`, by where its middle landed.
+///
+/// A focused field paints its number through a text edit, whose glyph rectangle can overhang the
+/// card by a point or two, so a test that asks what a card *shows* reads the words over it rather
+/// than the shapes wholly inside it.
+fn texts_over(harness: &Harness, rect: egui::Rect) -> Vec<String> {
+    harness.drawn_rects.iter().filter(|(at, _)| rect.contains(at.center())).map(|(_, text)| text.clone()).collect()
+}
+
+/// The height the document holds for an extruded body.
+fn body_height(harness: &Harness, body: Id) -> Option<units::Length> {
+    harness
+        .app
+        .tabs
+        .active()
+        .session
+        .project()
+        .object(body)
+        .and_then(|node| node.geometry().as_constructive())
+        .and_then(model::Constructive::height)
+}
+
+#[test]
+fn the_extrusion_card_is_one_lettered_field_with_no_tick_or_cross() {
+    // U104: the owner wants the pull's plate to be a number, not a dialog. `H` names it, no unit
+    // repeats it, no word sits above it, and the gesture's own keys are its commit and its cancel —
+    // so the card draws no ✓ and no ✕ and the field is the only control it holds.
+    let (harness, _) = pulling("frame-tool-card-pull-lettered", testkit::millimetres(40));
+    let card = harness.app.tabs.active().tool_card_rect().expect("the pull draws its card");
+    let mut texts = texts_over(&harness, card);
+    texts.sort();
+    assert_eq!(texts, ["40", "H"], "one field, lettered and without a unit or a title");
+    let buttons: Vec<&str> =
+        harness.faces.iter().filter(|(_, rect)| card.contains_rect(*rect)).map(|(name, _)| name.as_str()).collect();
+    assert!(buttons.is_empty(), "the card offers no tick and no cross: {buttons:?}");
+}
+
+#[test]
+fn the_extrusion_field_commits_with_enter_and_cancels_with_escape() {
+    // The field is the only control, so the keys are the whole commit path: Enter writes the height
+    // once and Escape drops the pull without touching the document.
+    let (mut harness, body) = pulling("frame-tool-card-pull-enter", testkit::millimetres(40));
+    let revision = harness.revision();
+    harness.run(vec![egui::Event::Text("55".to_owned())]);
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Enter commits the pull");
+    assert_eq!(body_height(&harness, body), Some(testkit::millimetres(55)), "at the typed height");
+    assert_eq!(
+        document.session.project().revision(),
+        revision.checked_next().expect("a revision"),
+        "one command, not one per frame"
+    );
+    assert!(document.session.can_undo(), "and one undo entry");
+
+    let (mut harness, body) = pulling("frame-tool-card-pull-escape", testkit::millimetres(40));
+    let document = harness.app.tabs.active();
+    let committed = body_height(&harness, body);
+    let revision = document.session.project().revision();
+    harness.run(vec![egui::Event::Text("55".to_owned())]);
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Escape cancels the pull");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+    assert_eq!(body_height(&harness, body), committed, "the body keeps the height the document holds");
 }
 
 #[test]

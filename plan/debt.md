@@ -154,6 +154,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `object.path.extrude` from the command palette or an API, and `object.extrude.create` from a
   contour, leave the body without a pull. The shell reads the height from the command result, so
   another entry point needs the same signal before it can pull too.
+- `[ui]` A box's height card never takes the keyboard on its own: `Document::tool_focus` is the slot
+  that should hold the row, and nothing writes it, so the box field is typed into only after a click.
+  U104 gave the pull its own counted ask in `ExtrudeGizmo::take_focus`; the box needs the same ask
+  from `Editor::pull_box_height`.
 
 - `[design]` `app/src/main.rs` `viewport` is one 635-line function. U45 moves it onto
   `Document` with the rest of the scene-bound state, so the S7 audit filed no split; it is measured
