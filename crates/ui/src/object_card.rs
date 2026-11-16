@@ -132,9 +132,6 @@ struct HeightDraft {
 /// the document keeps [`Length`], and the card converts at the command edge.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct PrimitiveFields {
-    width: f64,
-    depth: f64,
-    height: f64,
     radius: f64,
     segments: u32,
     bands: u32,
@@ -144,16 +141,6 @@ impl PrimitiveFields {
     fn read(primitive: &Primitive) -> Self {
         let mut fields = Self::default();
         match primitive {
-            Primitive::Cuboid(cuboid) => {
-                fields.width = cuboid.width().millimetres_f64();
-                fields.depth = cuboid.depth().millimetres_f64();
-                fields.height = cuboid.height().millimetres_f64();
-            }
-            Primitive::Cylinder(cylinder) => {
-                fields.radius = cylinder.radius().millimetres_f64();
-                fields.height = cylinder.height().millimetres_f64();
-                fields.segments = cylinder.segments();
-            }
             Primitive::Sphere(sphere) => {
                 fields.radius = sphere.radius().millimetres_f64();
                 fields.segments = sphere.segments();
@@ -172,22 +159,14 @@ impl PrimitiveDraft {
     /// The primitive the fields describe, or a readable reason they do not.
     ///
     /// The shape comes from `base`, so a field that belongs to another shape is never invented: a
-    /// box has only its three sides and a sphere has no height.
+    /// sphere has a radius, its sides and its bands, and the box and cylinder fields left with the
+    /// shapes the body cells draw (ADR 0138).
     fn parse(&self, lang: Lang) -> Result<Primitive, String> {
         let length = |value: f64| {
             scrub::millimetres(value)
                 .ok_or_else(|| Message::PrimitiveRefused.with(lang, [Message::LengthErrorOutOfRange.text(lang)]))
         };
         let primitive = match &self.base {
-            Primitive::Cuboid(_) => {
-                let width = length(self.fields.width)?;
-                let depth = length(self.fields.depth)?;
-                let height = length(self.fields.height)?;
-                Primitive::cuboid(width, depth, height)
-            }
-            Primitive::Cylinder(_) => {
-                Primitive::cylinder(length(self.fields.radius)?, length(self.fields.height)?, self.fields.segments)
-            }
             Primitive::Sphere(_) => {
                 Primitive::sphere(length(self.fields.radius)?, self.fields.segments, self.fields.bands)
             }
@@ -424,8 +403,6 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
 /// The interface's name for a primitive shape.
 fn primitive_kind_label(kind: model::PrimitiveKind) -> Message {
     match kind {
-        model::PrimitiveKind::Cuboid => Message::ToolBox,
-        model::PrimitiveKind::Cylinder => Message::ToolCylinder,
         model::PrimitiveKind::Sphere => Message::ToolSphere,
     }
 }
@@ -822,8 +799,8 @@ impl ObjectCard {
 
     /// Draws the primitive parameters; returns the parsed primitive when a field handed its number over.
     ///
-    /// Only the fields the shape has are shown: a box its width, depth and height, a cylinder a
-    /// radius, a height and its sides, a sphere a radius, its sides and its bands.
+    /// Only the fields the shape has are shown: the sphere has a radius, its sides and its bands, and
+    /// it is the last shape that is still a parameter set (ADR 0138).
     fn primitive_fields(
         &mut self,
         ui: &mut Ui,
@@ -840,22 +817,6 @@ impl ObjectCard {
         };
         ui.separator();
         match primitive {
-            Primitive::Cuboid(_) => {
-                report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
-                report.absorb(length_row(ui, Message::FieldDepth.text(lang), &mut draft.fields.depth, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
-            }
-            Primitive::Cylinder(_) => {
-                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
-                report.absorb(count_row(
-                    ui,
-                    Message::FieldSides.text(lang),
-                    &mut draft.fields.segments,
-                    MIN_SEGMENTS..=MAX_SEGMENTS,
-                    fresh,
-                ));
-            }
             Primitive::Sphere(_) => {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
                 report.absorb(count_row(
@@ -1380,43 +1341,14 @@ mod tests {
 
     #[test]
     fn the_primitive_fields_read_and_parse_the_stored_parameters() {
-        let cases = [
-            Primitive::cuboid(
-                Length::from_millimetres(600).expect("width"),
-                Length::from_millimetres(400).expect("depth"),
-                Length::from_millimetres(720).expect("height"),
-            )
-            .expect("box"),
-            Primitive::cylinder(
-                Length::from_millimetres(25).expect("radius"),
-                Length::from_millimetres(80).expect("height"),
-                20,
-            )
-            .expect("cylinder"),
-            Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere"),
-        ];
-        for primitive in cases {
-            let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
-            assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
-            assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
-        }
+        let primitive = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
+        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
+        assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
+        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
     }
 
     #[test]
     fn the_primitive_fields_refuse_a_value_the_document_cannot_hold() {
-        let box_ = Primitive::cuboid(
-            Length::from_millimetres(100).expect("width"),
-            Length::from_millimetres(100).expect("depth"),
-            Length::from_millimetres(100).expect("height"),
-        )
-        .expect("box");
-        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &box_);
-        draft.fields.width = 0.0;
-        assert!(draft.parse(Lang::En).is_err(), "a zero side is not a solid");
-        draft.fields.width = 100.0;
-        draft.fields.depth = 2_000_000.0;
-        assert!(draft.parse(Lang::En).is_err(), "a two-hundred-kilometre side is past the document's cap");
-
         let sphere = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
         let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &sphere);
         draft.fields.segments = 2;
@@ -1428,20 +1360,10 @@ mod tests {
 
     #[test]
     fn applying_new_parameters_is_one_command_and_keeps_the_id() {
-        let original = Primitive::cuboid(
-            Length::from_millimetres(600).expect("width"),
-            Length::from_millimetres(400).expect("depth"),
-            Length::from_millimetres(720).expect("height"),
-        )
-        .expect("box");
+        let original = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
         let (mut session, id) = primitive_session(original.clone());
         let before = session.project().revision();
-        let wider = Primitive::cuboid(
-            Length::from_millimetres(700).expect("width"),
-            Length::from_millimetres(400).expect("depth"),
-            Length::from_millimetres(720).expect("height"),
-        )
-        .expect("box");
+        let wider = Primitive::sphere(Length::from_millimetres(70).expect("radius"), 24, 12).expect("sphere");
         replace_primitive(&mut session, id, wider.clone(), None).expect("replace the parameters");
         assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision per commit");
         assert_eq!(session.project().object_primitive(id), Ok(&wider));
@@ -1453,23 +1375,17 @@ mod tests {
 
     #[test]
     fn a_dragged_primitive_field_is_one_undo_entry() {
-        let box_ = |width: f64| {
-            Primitive::cuboid(
-                scrub::millimetres(width).expect("a length"),
-                Length::from_millimetres(400).expect("depth"),
-                Length::from_millimetres(720).expect("height"),
-            )
-            .expect("box")
-        };
-        let original = box_(600.0);
+        let ball =
+            |radius: f64| Primitive::sphere(scrub::millimetres(radius).expect("a length"), 24, 12).expect("sphere");
+        let original = ball(40.0);
         let (mut session, id) = primitive_session(original.clone());
         let scope = session.edit_scope();
-        for width in [620.0, 640.0, 660.0] {
-            replace_primitive(&mut session, id, box_(width), Some(scope))
+        for radius in [42.0, 44.0, 46.0] {
+            replace_primitive(&mut session, id, ball(radius), Some(scope))
                 .expect("the field writes while the hand moves");
         }
         session.end_edit();
-        assert_eq!(session.project().object_primitive(id), Ok(&box_(660.0)));
+        assert_eq!(session.project().object_primitive(id), Ok(&ball(46.0)));
         session.undo().expect("undo the drag");
         assert_eq!(session.project().object_primitive(id), Ok(&original), "one undo returns the whole drag");
     }
@@ -1877,11 +1793,11 @@ mod tests {
         assert!(!drew(&mesh, "Collapse"), "a mesh is already a mesh: {mesh:?}");
         assert!(!drew(&mesh, "Width"), "and it stores no parameter to type: {mesh:?}");
 
-        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box");
-        let (mut primitive, id) = primitive_session(cuboid);
+        let sphere = Primitive::sphere(millimetres(400), 24, 12).expect("sphere");
+        let (mut primitive, id) = primitive_session(sphere);
         let primitive = drew_card(&mut primitive, id);
-        for field in ["Width", "Depth", "Height"] {
-            assert_eq!(count_exactly(&primitive, field), 1, "a box has one `{field}` field: {primitive:?}");
+        for field in ["Radius", "Sides", "Bands"] {
+            assert_eq!(count_exactly(&primitive, field), 1, "a sphere has one `{field}` field: {primitive:?}");
         }
         assert!(drew(&primitive, "Collapse to mesh"), "a primitive can be baked into a mesh: {primitive:?}");
         assert!(
@@ -1940,12 +1856,12 @@ mod tests {
 
     #[test]
     fn the_primitive_card_draws_numbers_and_their_units_and_no_apply() {
-        let primitive = Primitive::cylinder(millimetres(25), millimetres(80), 20).expect("the card has fields for it");
+        let primitive = Primitive::sphere(millimetres(25), 20, 8).expect("the card has fields for it");
         let (mut session, id) = primitive_session(primitive);
         let texts = drew_card(&mut session, id);
         assert!(texts.iter().any(|text| text == "25"), "the radius is the field's own number: {texts:?}");
-        assert!(texts.iter().any(|text| text == "80"), "the height too: {texts:?}");
-        assert!(texts.iter().any(|text| text == "20"), "and the side count: {texts:?}");
+        assert!(texts.iter().any(|text| text == "20"), "the side count too: {texts:?}");
+        assert!(texts.iter().any(|text| text == "8"), "and the bands: {texts:?}");
         assert!(texts.iter().any(|text| text == "mm"), "the unit is drawn outside the box: {texts:?}");
         assert!(
             !texts.iter().any(|text| text.contains("Apply")),

@@ -1220,7 +1220,7 @@ fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box(ui::BoxOwner::Product);
+        document.editor.arm_box();
         assert!(!document.editor.click_box([mm(600), mm(560)]).expect("the anchor"), "the first click only anchors");
         assert!(document.editor.click_box([mm(0), mm(0)]).expect("the base"), "the second fixes the base");
         document.editor.pull_box_height(mm(720)).expect("the pull");
@@ -1845,10 +1845,10 @@ fn the_square_marks_the_work_area_only() {
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a contour tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
-    // An armed primitive and a box do the same.
-    harness.app.tabs.active_mut().editor.arm_box(ui::BoxOwner::Cuboid);
+    // An armed primitive and a frame draft do the same.
+    harness.app.tabs.active_mut().editor.arm_box();
     harness.hover(centre);
-    assert_eq!(harness.cursor, egui::CursorIcon::None, "a primitive tool keeps the shell's square");
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "a frame tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
     // A modal is a system surface: the arrow comes back and no square covers its fields.
@@ -1928,7 +1928,7 @@ fn a_box_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree(
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box(ui::BoxOwner::Cuboid);
+        document.editor.arm_box();
         assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
         assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"), "the second fixes the base");
         document.editor.pull_box_height(mm(120)).expect("the pull");
@@ -1938,7 +1938,7 @@ fn a_box_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree(
     let card = document.tool_card_rect().expect("the height pull draws its card");
     let in_card = texts_inside(&harness, card);
     assert!(in_card.iter().any(|text| text == "120"), "the card shows the pulled height: {in_card:?}");
-    assert!(in_card.iter().any(|text| text == "Box height"), "and names what it sizes: {in_card:?}");
+    assert!(in_card.iter().any(|text| text == "Frame height"), "and names what it sizes: {in_card:?}");
     assert_the_card_and_the_inspector_agree(&harness, &chrome);
 }
 
@@ -2128,7 +2128,7 @@ fn escape_closes_the_card_and_writes_nothing() {
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box(ui::BoxOwner::Cuboid);
+        document.editor.arm_box();
         assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
         assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"));
         document.editor.pull_box_height(mm(120)).expect("the pull");

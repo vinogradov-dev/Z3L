@@ -1183,8 +1183,8 @@ impl Document {
         }
     }
 
-    /// The single box the grips act on: the selection, when it is exactly one box — a cuboid
-    /// primitive or a product frame, which own the same three lengths (ADR 0101).
+    /// The single frame the grips act on: the selection, when it is exactly one product frame,
+    /// which owns the three lengths the grips move (ADR 0101).
     fn grip_target(&self) -> Option<Id> {
         let selected = self.editor.selected_nodes();
         let [only] = selected else {
@@ -1775,20 +1775,15 @@ impl Document {
 
     /// The view of the tool whose parameters are dragged at the hand, if one is running.
     ///
-    /// The box's height and the pull's height are the two tools this surface draws; a niche's gaps
-    /// are drawn by `update_fill` from the same [`Distances`], and every tool reaches the inspector
-    /// through [`Self::tool_view`].
+    /// The frame's reserved height and the pull's height are the two tools this surface draws; a
+    /// niche's gaps are drawn by `update_fill` from the same [`Distances`], and every tool reaches
+    /// the inspector through [`Self::tool_view`].
     fn height_view(&self) -> Option<ToolView> {
         if let Some(draft) = self.editor.box_draft().copied().filter(BoxDraft::is_pulling) {
             let maximum = box_gizmo::MAX_SIDE_MM as f64;
-            // A frame's pull is the height it reserves, not a solid's edge: the card says which box
-            // it is sizing (ADR 0101).
-            let title = match self.editor.box_tool() {
-                Some(ui::BoxOwner::Product) => Message::FrameHeight,
-                Some(ui::BoxOwner::Cuboid) | None => Message::BoxHeight,
-            };
+            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101).
             let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
-            return Some(ToolView::height(title, draft.height().millimetres_f64(), range, 3));
+            return Some(ToolView::height(Message::FrameHeight, draft.height().millimetres_f64(), range, 3));
         }
         self.extrude_gizmo.object()?;
         let height = self.extrude_gizmo.height()?;
@@ -2102,9 +2097,9 @@ impl Document {
         // A drawing tool owns it too: the left button places points, not selections. A click on the
         // chrome is never a point, so the tool waits for a click on the scene.
         let drawing = interactive && !pointer_on_chrome && self.editor.drawing().is_some();
-        // An armed primitive owns the next click: it places a cylinder or a sphere, it does not
-        // select. The box tool owns a whole gesture instead: two clicks for the base, one for the
-        // height (ADR 0101).
+        // An armed primitive owns the next click: it places the sphere, it does not select. The
+        // frame tool owns a whole gesture instead: two clicks for the base, one for the height
+        // (ADR 0101).
         let placing = interactive && !pointer_on_chrome && self.editor.pending_primitive().is_some();
         let boxing = interactive && !pointer_on_chrome && self.editor.box_draft().is_some();
         // The pull arrow is the live gesture after an extrusion. A contour edit, a draft, a
@@ -3682,10 +3677,10 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
 
 /// Whether `node` offers the three-length grips when it is the only selection.
 ///
-/// A cuboid part owns its three lengths (ADR 0101) and is always grabbable. A product frame owns an
-/// envelope, and those handles belong to the piece being worked in: a closed product is one object in
-/// the scene, not a box being sized, and selecting it must not open handles that write
-/// `product.envelope.set` (ADR 0098, X47).
+/// A product frame owns an envelope, and those handles belong to the piece being worked in: a closed
+/// product is one object in the scene, not a box being sized, and selecting it must not open handles
+/// that write `product.envelope.set` (ADR 0098, X47). A solid box is a drawn profile, so its handles
+/// are the contour's corner grips (ADR 0138).
 fn offers_grips(project: &Project, node: Id, active_product: Option<Id>) -> bool {
     if project.container(node).is_some_and(|container| container.is_product()) {
         return active_product == Some(node);

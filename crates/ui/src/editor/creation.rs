@@ -1,11 +1,11 @@
-//! Creation: the armed container, the armed primitive, the box tool and the five `create` commands.
+//! Creation: the armed container, the armed primitive, the frame tool and the five `create` commands.
 //!
 //! Every creation lands in the container armed here, or at the scene root when nothing is armed
-//! (ADR 0056). A cylinder or a sphere is armed rather than created, because its placement is the
-//! next work-plane click; the arm is resolved at the click, so clearing or moving it changes where
-//! the primitive lands. A box is drawn instead: the ribbon starts a draft whose base rectangle and
-//! pulled height become one `object.primitive.create` (ADR 0101). A create command's node becomes
-//! the selection.
+//! (ADR 0056). The sphere is armed rather than created, because its placement is the next work-plane
+//! click; the arm is resolved at the click, so clearing or moving it changes where the primitive
+//! lands. A product frame is drawn instead: the ribbon starts a draft whose base rectangle and pulled
+//! height become one `product.create` (ADR 0101), and a solid body is a profile drawn in the sketch
+//! and swept on Z (ADR 0138). A create command's node becomes the selection.
 //!
 //! Refuses an arm for the root or for a node that cannot own children, a primitive size that is not
 //! positive, and a panel creation without a panel material in the catalogue; each reason is a
@@ -28,7 +28,7 @@ use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
-use crate::box_tool::{BoxDraft, BoxDraftError, BoxOwner};
+use crate::box_tool::{BoxDraft, BoxDraftError};
 use crate::command::{dispatch, json};
 use crate::product_card::ProductDraft;
 use crate::target::creation_target;
@@ -195,19 +195,14 @@ impl Editor {
         Ok(())
     }
 
-    /// Arms a primitive tool: a click places a cylinder or a sphere, a box starts its base.
+    /// Arms a primitive tool: one click places the sphere at the typed size.
     ///
     /// The panel asks for a click instead of creating at the origin: the tool is a placement, and a
     /// stale primitive at the world origin is never what the user wanted. Arming leaves the other
     /// pointer modes, because the next click creates rather than selects. The parent is resolved at
-    /// the click, so clearing or moving the arm changes where the primitive lands. A box has three
-    /// independent sides, so one extent cannot describe it: the tool draws its base and pulls its
-    /// height instead (ADR 0101).
+    /// the click, so clearing or moving the arm changes where the primitive lands. A box and a
+    /// cylinder are drawn profiles instead, so they are not placed this way (ADR 0138).
     pub(super) fn arm_primitive(&mut self, kind: PrimitiveKind, size: Length) -> Result<(), String> {
-        if kind == PrimitiveKind::Cuboid {
-            self.arm_box(BoxOwner::Cuboid);
-            return Ok(());
-        }
         if size.micrometres() <= 0 {
             return Err("The primitive size must be positive.".to_owned());
         }
@@ -216,15 +211,14 @@ impl Editor {
         Ok(())
     }
 
-    /// Arms the box tool for one owner: the next clicks draw its base rectangle and pull its height.
+    /// Arms the frame tool: the next clicks draw its base rectangle and pull its height.
     ///
-    /// A box has three independent sides, so it is drawn rather than placed by one click from one
-    /// extent (ADR 0101). The owner is the field the ✓ will write — a cuboid's primitive or a
-    /// product's envelope — so one gesture serves both and the shell reads the draft, not the tool.
-    /// Arming drops the other pointer modes but writes nothing.
-    pub fn arm_box(&mut self, owner: BoxOwner) {
+    /// A frame reserves a box of three independent sides, so it is drawn rather than placed by one
+    /// click from one extent (ADR 0101). Arming drops the other pointer modes but writes nothing; a
+    /// solid body is not drawn here, because it is a profile swept on Z (ADR 0138).
+    pub fn arm_box(&mut self) {
         self.leave_pointer_modes();
-        self.box_draft = Some(BoxDraft::new(owner));
+        self.box_draft = Some(BoxDraft::new());
     }
 
     /// Drops every pointer mode a creation tool replaces.
@@ -250,11 +244,6 @@ impl Editor {
     /// The box being drawn, when the box tool is armed or its height is being pulled.
     pub fn box_draft(&self) -> Option<&BoxDraft> {
         self.box_draft.as_ref()
-    }
-
-    /// The owner the box tool would write, while its draft lives; this is what arms the ribbon cell.
-    pub fn box_tool(&self) -> Option<BoxOwner> {
-        self.box_draft.as_ref().map(BoxDraft::owner)
     }
 
     /// The corner the live base rectangle runs to.
@@ -300,13 +289,13 @@ impl Editor {
         self.selection.primary().ok_or_else(|| "The primitive command created no node.".to_owned())
     }
 
-    /// Creates the box the draft describes through one command, chosen by its owner.
+    /// Creates the frame the draft describes through one command.
     ///
-    /// `placement` is the work plane's *world* frame with its origin on the base rectangle's
-    /// minimum corner, so the box's own zero is that corner; the command stores the placement
-    /// relative to the parent. A solid goes to `object.primitive.create`; a frame goes to
-    /// `product.create` at the scene root with the placeholder class, exactly as the card's create
-    /// does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo entry.
+    /// `placement` is the work plane's *world* frame with its origin on the base rectangle's minimum
+    /// corner, so the frame's own zero is that corner; the command stores the placement relative to
+    /// the root. The frame goes to `product.create` with the placeholder class, exactly as the card's
+    /// create does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo
+    /// entry.
     pub fn commit_box(&mut self, session: &mut Session, placement: Placement, lang: Lang) -> Result<Id, String> {
         let Some(draft) = self.box_draft else {
             return Err(BoxDraftError::NoBase.to_string());
@@ -314,22 +303,10 @@ impl Editor {
         let Some([width, depth, height]) = draft.sizes() else {
             return Err(BoxDraftError::NoBase.to_string());
         };
-        match draft.owner() {
-            BoxOwner::Cuboid => {
-                let primitive = Primitive::cuboid(width, depth, height).map_err(|error| error.to_string())?;
-                let parent = self.creation_target(session.project());
-                let placement =
-                    session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-                self.create_primitive_node(session, parent, primitive, placement)?;
-            }
-            BoxOwner::Product => {
-                // A frame is a top-level piece: its parent is the root whatever container is armed.
-                let parent = session.project().root().id();
-                let placement =
-                    session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-                self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
-            }
-        }
+        // A frame is a top-level piece: its parent is the root whatever container is armed.
+        let parent = session.project().root().id();
+        let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
+        self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
         self.box_draft = None;
         self.selection.primary().ok_or_else(|| "The box command created no node.".to_owned())
     }

@@ -195,15 +195,16 @@ fn a_contour_and_the_body_it_grows_anchor_at_their_creation_origin() {
 }
 
 #[test]
-fn a_box_is_born_with_its_base_corner_on_its_own_origin() {
-    let primitive = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
+fn a_sphere_is_born_centred_on_its_own_origin() {
+    let primitive = Primitive::sphere(millimetres(300), 24, 12).expect("a sphere");
     let (min, max) = primitive.bounds_micrometres();
-    assert_eq!(min, [0; 3], "a box starts at its own zero");
-    assert_eq!(max, [600_000, 400_000, 720_000], "and reaches its three sides from there");
+    assert_eq!(min, [-300_000; 3], "a sphere reaches the same radius every way");
+    assert_eq!(max, [300_000; 3]);
 
     let mut project = sample_project();
     let root = project.root().id();
-    let id = project.add_object(root, "Box", Placement::IDENTITY, Geometry::Primitive(primitive)).expect("add the box");
+    let id =
+        project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(primitive)).expect("add the ball");
 
     assert_eq!(project.pivot_local(id), Some(PivotLocal::ZERO), "a primitive keeps the zero pivot");
     assert_eq!(project.world_placement(id), Some(Placement::IDENTITY), "the primitive lands at its parent origin");
@@ -346,11 +347,11 @@ fn a_geometry_edit_leaves_an_objects_frame_alone() {
     project.set_object_extrusion_height(body_id, millimetres(24)).expect("edit the height");
     assert_eq!(frame_of(&project, body_id), before, "a body edit keeps the frame");
 
-    let primitive = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
-    let primitive_id = project.add_object(root, "Box", frame, Geometry::Primitive(primitive)).expect("add the box");
+    let primitive = Primitive::sphere(millimetres(300), 24, 12).expect("a sphere");
+    let primitive_id = project.add_object(root, "Ball", frame, Geometry::Primitive(primitive)).expect("add the ball");
     project.set_node_pivot(primitive_id, pivot).expect("author the pivot");
     let before = frame_of(&project, primitive_id);
-    let replaced = Primitive::sphere(millimetres(60), 24, 12).expect("a sphere");
+    let replaced = Primitive::sphere(millimetres(60), 32, 16).expect("another sphere");
     project.set_object_primitive(primitive_id, replaced).expect("replace the parameters");
     assert_eq!(frame_of(&project, primitive_id), before, "a primitive edit keeps the frame");
 

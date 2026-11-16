@@ -1,22 +1,23 @@
-//! The box tool's draft: a base rectangle on the work plane and the height pulled from it.
+//! The frame tool's draft: a base rectangle on the work plane and the height pulled from it.
 //!
-//! A box is created the way the extrusion works: draw the base rectangle in the active work plane
-//! and fix it, then pull the height along the plane's normal (ADR 0101). The draft is view state
-//! until its one commit: it stores the two base corners in work-plane millimetres, the pulled height
-//! and which field will keep the three sides — a cuboid's primitive or a product's envelope — and
-//! nothing reaches the document until `commit_box` dispatches one command. Escape costs nothing
-//! because nothing was written.
+//! A product frame reserves a box, and it is drawn the way the extrusion works: the base rectangle on
+//! the active work plane, fixed, then the height pulled along the plane's normal (ADR 0101). The
+//! draft is view state until its one commit — the two base corners in work-plane millimetres and the
+//! pulled height — and nothing reaches the document until `commit_box` dispatches `product.create`.
+//! Escape costs nothing because nothing was written. A solid box is not drawn here: it is a profile
+//! swept on Z (ADR 0138).
 //!
-//! The base rectangle names the box's own frame: its minimum corner in the plane becomes the node's
-//! origin, its sides become width and depth, and the normal becomes the height, so the space the box
-//! occupies is `[0..width] × [0..depth] × [0..height]` in its own frame — the anchor a panel has and
-//! a product frame reserves (ADR 0083, ADR 0101).
+//! The base rectangle names the frame's own frame: its minimum corner in the plane becomes the node's
+//! origin, its sides become width and depth, and the normal becomes the height, so the space the
+//! frame occupies is `[0..width] × [0..depth] × [0..height]` in its own frame — the anchor a panel
+//! has and a product reserves (ADR 0083, ADR 0101).
 //!
-//! Refuses a second corner that makes a flat rectangle: a box needs three positive sides, so a
+//! Refuses a second corner that makes a flat rectangle: a frame needs three positive sides, so a
 //! degenerate base leaves the draft waiting for a corner that encloses space.
 //!
 //! [ADR 0083]: ../docs/decisions/0083-a-panel-is-anchored-at-its-base-corner.md
 //! [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
+//! [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
 
 use thiserror::Error;
 use units::Length;
@@ -38,20 +39,6 @@ pub enum BoxDraftError {
     NoBase,
 }
 
-/// What the three sides of a drawn box become.
-///
-/// One box editor, two owners (ADR 0101): a cuboid primitive stores its three sides as geometry
-/// parameters, and a product frame stores them as the envelope its class reserves (ADR 0097). The
-/// gesture, the grips and the card are one code path; only the command that receives the numbers and
-/// the document field that keeps them differ.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BoxOwner {
-    /// A solid box: `object.primitive.create` and `object.primitive.replace`.
-    Cuboid,
-    /// A product's reserved space: `product.create` and `product.envelope.set`.
-    Product,
-}
-
 /// The fixed base rectangle: its minimum corner and its two sides, in work-plane millimetres.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BoxBase {
@@ -66,8 +53,6 @@ pub struct BoxBase {
 /// The base rectangle being drawn and the height pulled from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BoxDraft {
-    /// What the three sides become: a solid's primitive or a frame's envelope.
-    owner: BoxOwner,
     /// The first corner, once it is clicked.
     first: Option<[Length; 2]>,
     /// The corner a second click would fix the base at.
@@ -78,15 +63,16 @@ pub struct BoxDraft {
     height: Length,
 }
 
-impl BoxDraft {
-    /// An empty draft for one owner, waiting for the first corner of the base.
-    pub fn new(owner: BoxOwner) -> Self {
-        Self { owner, first: None, live: None, base: None, height: Length::ZERO }
+impl Default for BoxDraft {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// What the three sides of this box become.
-    pub const fn owner(&self) -> BoxOwner {
-        self.owner
+impl BoxDraft {
+    /// An empty draft, waiting for the first corner of the base.
+    pub const fn new() -> Self {
+        Self { first: None, live: None, base: None, height: Length::ZERO }
     }
 
     /// The first corner of the base, when it is already on the plane.
@@ -197,7 +183,7 @@ mod tests {
 
     #[test]
     fn the_first_click_anchors_and_the_second_fixes_the_base() {
-        let mut draft = BoxDraft::new(BoxOwner::Cuboid);
+        let mut draft = BoxDraft::new();
         assert!(!draft.click(point(600, 400)).expect("the anchor"), "the first click only anchors");
         assert_eq!(draft.first(), Some(point(600, 400)));
         assert!(draft.click(point(0, 0)).expect("the base"), "the second click fixes the base");
@@ -209,7 +195,7 @@ mod tests {
 
     #[test]
     fn a_flat_base_is_refused_and_the_draft_waits() {
-        let mut draft = BoxDraft::new(BoxOwner::Cuboid);
+        let mut draft = BoxDraft::new();
         draft.click(point(100, 100)).expect("the anchor");
         assert_eq!(draft.click(point(400, 100)), Err(BoxDraftError::FlatBase), "no depth is no box");
         assert!(!draft.is_pulling(), "the base stays unfixed");
@@ -219,7 +205,7 @@ mod tests {
 
     #[test]
     fn the_height_rounds_to_whole_millimetres_and_never_reaches_zero() {
-        let mut draft = BoxDraft::new(BoxOwner::Cuboid);
+        let mut draft = BoxDraft::new();
         draft.click(point(0, 0)).expect("anchor");
         draft.click(point(600, 400)).expect("base");
         assert_eq!(draft.sizes(), Some([millimetres(600), millimetres(400), Length::ZERO]), "no height yet");
@@ -234,7 +220,7 @@ mod tests {
 
     #[test]
     fn a_height_before_the_base_is_refused() {
-        let mut draft = BoxDraft::new(BoxOwner::Cuboid);
+        let mut draft = BoxDraft::new();
         assert_eq!(draft.set_height(millimetres(720)), Err(BoxDraftError::NoBase));
         assert_eq!(draft.sizes(), None);
     }

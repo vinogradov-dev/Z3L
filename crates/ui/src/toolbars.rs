@@ -44,7 +44,6 @@ use text::{Lang, Message};
 use units::Length;
 
 use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
-use crate::box_tool::BoxOwner;
 use crate::draw::{DrawIntent, DrawTool};
 use crate::icons::{self, Icon};
 use crate::theme::{RIBBON_CAPTION_HEIGHT, RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT, RIBBON_RULE, RIBBON_TAB_HEIGHT};
@@ -59,8 +58,7 @@ pub use self::state::Toolbars;
 
 use self::ready::{projection_icon, ready};
 
-/// Full extent of a new primitive, in millimetres; the size a cylinder or a sphere starts at and
-/// the equal-sided box a one-extent creation builds.
+/// Full extent of a new primitive, in millimetres: the diameter a sphere starts at.
 pub const DEFAULT_PRIMITIVE_SIZE_MM: i64 = 200;
 
 /// Height of a new extrusion, in millimetres; also the height the next extrusion starts at.
@@ -203,22 +201,21 @@ pub enum ToolActivity {
 pub fn tool_activity(
     drawing: Option<(DrawTool, DrawIntent)>,
     primitive: Option<PrimitiveKind>,
-    box_owner: Option<BoxOwner>,
+    frame: bool,
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
 ) -> Option<ToolActivity> {
-    match (drawing, primitive, box_owner, fill, measure, niche) {
+    match (drawing, primitive, frame, fill, measure, niche) {
         (Some((tool, DrawIntent::Path)), _, _, _, _, _) => Some(ToolActivity::Draw(tool)),
         (Some((tool, DrawIntent::Body)), _, _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _, _) => Some(ToolActivity::PanelContour),
         (None, Some(kind), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
-        (None, None, Some(BoxOwner::Cuboid), _, _, _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
-        (None, None, Some(BoxOwner::Product), _, _, _) => Some(ToolActivity::ProductFrame),
-        (None, None, None, Some((class, mode)), _, _) => Some(ToolActivity::Fill { class, mode }),
-        (None, None, None, None, true, _) => Some(ToolActivity::Measure),
-        (None, None, None, None, false, true) => Some(ToolActivity::Void),
-        (None, None, None, None, false, false) => None,
+        (None, None, true, _, _, _) => Some(ToolActivity::ProductFrame),
+        (None, None, false, Some((class, mode)), _, _) => Some(ToolActivity::Fill { class, mode }),
+        (None, None, false, None, true, _) => Some(ToolActivity::Measure),
+        (None, None, false, None, false, true) => Some(ToolActivity::Void),
+        (None, None, false, None, false, false) => None,
     }
 }
 
@@ -1139,54 +1136,54 @@ mod tests {
         let path = DrawIntent::Path;
         let panel = DrawIntent::Panel;
         let cases = [
-            (None, None, None, None, false, false, None),
-            (Some((DrawTool::Line, path)), None, None, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
-            (Some((DrawTool::Polyline, panel)), None, None, None, false, false, Some(ToolActivity::PanelContour)),
+            (None, None, false, None, false, false, None),
+            (Some((DrawTool::Line, path)), None, false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
+            (
+                Some((DrawTool::Rectangle, DrawIntent::Body)),
+                None,
+                false,
+                None,
+                false,
+                false,
+                Some(ToolActivity::Body(DrawTool::Rectangle)),
+            ),
+            (Some((DrawTool::Polyline, panel)), None, false, None, false, false, Some(ToolActivity::PanelContour)),
             (
                 None,
                 Some(PrimitiveKind::Sphere),
-                None,
+                false,
                 None,
                 false,
                 false,
                 Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
             ),
+            (None, None, true, None, false, false, Some(ToolActivity::ProductFrame)),
             (
                 None,
                 None,
-                Some(BoxOwner::Cuboid),
-                None,
                 false,
-                false,
-                Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
-            ),
-            (None, None, Some(BoxOwner::Product), None, false, false, Some(ToolActivity::ProductFrame)),
-            (
-                None,
-                None,
-                None,
                 Some((post, FillMode::Fit)),
                 false,
                 false,
                 Some(ToolActivity::Fill { class: post, mode: FillMode::Fit }),
             ),
-            (None, None, None, None, true, false, Some(ToolActivity::Measure)),
-            (None, None, None, None, false, true, Some(ToolActivity::Void)),
+            (None, None, false, None, true, false, Some(ToolActivity::Measure)),
+            (None, None, false, None, false, true, Some(ToolActivity::Void)),
             (
                 Some((DrawTool::Arc, path)),
                 Some(PrimitiveKind::Sphere),
-                None,
+                false,
                 None,
                 false,
                 true,
                 Some(ToolActivity::Draw(DrawTool::Arc)),
             ),
         ];
-        for (drawing, primitive, box_owner, fill, measure, niche, expected) in cases {
+        for (drawing, primitive, frame, fill, measure, niche, expected) in cases {
             assert_eq!(
-                tool_activity(drawing, primitive, box_owner, fill, measure, niche),
+                tool_activity(drawing, primitive, frame, fill, measure, niche),
                 expected,
-                "drawing={drawing:?} primitive={primitive:?} box={box_owner:?} fill={fill:?} \
+                "drawing={drawing:?} primitive={primitive:?} frame={frame} fill={fill:?} \
                  measure={measure} niche={niche}"
             );
         }
@@ -1201,12 +1198,15 @@ mod tests {
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::PanelContour, false),
             (Some(ToolActivity::PanelContour), ToolKind::PanelContour, true),
             (Some(ToolActivity::PanelContour), ToolKind::Draw(DrawTool::Polyline), false),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Cuboid), true),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Sphere), false),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Light, false),
+            (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Primitive(PrimitiveKind::Sphere), true),
+            (Some(ToolActivity::Body(DrawTool::Rectangle)), ToolKind::Body(DrawTool::Rectangle), true),
+            (Some(ToolActivity::Body(DrawTool::Rectangle)), ToolKind::Body(DrawTool::Circle), false),
+            (Some(ToolActivity::Body(DrawTool::Circle)), ToolKind::Draw(DrawTool::Circle), false),
+            (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Draw(DrawTool::Circle), false),
+            (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Light, false),
             (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw, true),
             (Some(ToolActivity::ProductFrame), ToolKind::Product, false),
-            (Some(ToolActivity::ProductFrame), ToolKind::Primitive(PrimitiveKind::Cuboid), false),
+            (Some(ToolActivity::ProductFrame), ToolKind::Primitive(PrimitiveKind::Sphere), false),
             (Some(ToolActivity::Measure), ToolKind::Measure, true),
             (Some(ToolActivity::Measure), ToolKind::FrameAll, false),
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Measure, false),

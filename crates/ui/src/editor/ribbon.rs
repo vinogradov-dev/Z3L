@@ -20,7 +20,6 @@ use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
-use crate::box_tool::BoxOwner;
 use crate::command::{dispatch, json};
 use crate::toolbars::{self, ToolAction};
 
@@ -48,7 +47,7 @@ impl Editor {
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
             self.pending_primitive.map(|pending| pending.kind),
-            self.box_tool(),
+            self.box_draft().is_some(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
             self.void_armed(),
@@ -96,7 +95,7 @@ impl Editor {
                     outcome.started_drawing = true;
                 }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
-                ToolAction::DrawProductFrame => self.arm_box(BoxOwner::Product),
+                ToolAction::DrawProductFrame => self.arm_box(),
                 ToolAction::DrawPanelContour => {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;

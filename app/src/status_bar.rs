@@ -324,8 +324,6 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
     // height field, the check and the cross, so the status bar names no second Apply (M71).
     if let Some((kind, size)) = info.primitive {
         let name = match kind {
-            engine::PrimitiveKind::Cuboid => Message::ToolBox,
-            engine::PrimitiveKind::Cylinder => Message::ToolCylinder,
             engine::PrimitiveKind::Sphere => Message::ToolSphere,
         };
         ui.label(Message::PrimitiveStatus.with(lang, [name.text(lang), &size.to_string()]));

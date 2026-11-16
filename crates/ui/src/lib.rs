@@ -58,7 +58,7 @@ pub mod ui_scale;
 mod view_flags;
 mod void;
 
-pub use box_tool::{BoxBase, BoxDraft, BoxDraftError, BoxOwner, MIN_BOX_HEIGHT_MM};
+pub use box_tool::{BoxBase, BoxDraft, BoxDraftError, MIN_BOX_HEIGHT_MM};
 pub use contour_edit::{ContourDraft, ContourEdit, ContourTarget};
 pub use contour_grips::{ContourGrip, GripNumber, GripValue};
 pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, FieldPlacement, Side};

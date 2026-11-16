@@ -318,8 +318,6 @@ fn show_object(
     let kind = match object.geometry() {
         model::Geometry::Mesh(_) => Message::TreeBadgeMesh,
         model::Geometry::Primitive(primitive) => match primitive.kind() {
-            model::PrimitiveKind::Cuboid => Message::TreeBadgeBox,
-            model::PrimitiveKind::Cylinder => Message::TreeBadgeCylinder,
             model::PrimitiveKind::Sphere => Message::TreeBadgeSphere,
         },
         model::Geometry::Constructive(_) => Message::TreeBadgeContour,

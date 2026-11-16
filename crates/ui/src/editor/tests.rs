@@ -7,7 +7,6 @@ use std::sync::Arc;
 use geom::{DMat4, DVec3, MeshData};
 use scene::{Camera, Drawable, SceneFrame};
 
-use crate::box_tool::BoxOwner;
 use crate::toolbars::RibbonView;
 
 use crate::contour_edit::ContourTarget;
@@ -324,9 +323,9 @@ fn another_tool_replaces_the_running_draft_and_writes_nothing() {
     editor.drawing_point([Length::from_millimetres(600).expect("x"), Length::ZERO]).expect("end");
     assert_eq!(editor.drawing().map(DrawDraft::len), Some(1));
     editor
-        .arm_primitive(PrimitiveKind::Cuboid, Length::from_millimetres(100).expect("size"))
-        .expect("arm the box tool, which a drawing tool must drop");
-    assert!(editor.box_tool().is_some(), "the box tool owns the next clicks");
+        .arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size"))
+        .expect("arm the sphere, which a drawing tool must drop");
+    assert!(editor.pending_primitive().is_some(), "the sphere owns the next click");
 
     editor.start_drawing(DrawTool::Rectangle);
     let draft = editor.drawing().expect("the rectangle tool is live");
@@ -334,7 +333,6 @@ fn another_tool_replaces_the_running_draft_and_writes_nothing() {
     assert!(draft.points().is_empty(), "the new tool starts with an empty draft");
     assert!(draft.segments().is_empty(), "the old chain is gone");
     assert!(editor.pending_primitive().is_none(), "a drawing tool drops an armed primitive");
-    assert!(editor.box_tool().is_none(), "a drawing tool drops the box base too");
     assert_eq!(session.project().revision(), revision, "the switch writes nothing");
     assert!(!session.can_undo(), "no half figure entered the undo history");
 }
@@ -670,10 +668,8 @@ fn free_creation_tools_land_at_the_root_beside_a_selected_nested_assembly() {
     assert_eq!(session.project().parent_of(created_assembly), Some(root), "an assembly lands at the root");
 
     editor.select_node(Some(inner));
-    editor
-        .arm_primitive(PrimitiveKind::Cylinder, Length::from_millimetres(100).expect("size"))
-        .expect("arm a cylinder");
-    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the cylinder");
+    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm a sphere");
+    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the sphere");
     assert_eq!(session.project().parent_of(created_primitive), Some(root), "a primitive lands at the root");
 
     editor.select_node(Some(inner));
@@ -738,10 +734,8 @@ fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
     );
     assert_eq!(editor.creation_target(session.project()), assembly, "a refused arm changes nothing");
 
-    editor
-        .arm_primitive(PrimitiveKind::Cylinder, Length::from_millimetres(100).expect("size"))
-        .expect("arm a cylinder");
-    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the cylinder");
+    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm a sphere");
+    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the sphere");
     assert_eq!(session.project().parent_of(created_primitive), Some(assembly), "the primitive lands in the arm");
 }
 
@@ -822,13 +816,13 @@ fn an_open_polyline_commits_as_drawn() {
 }
 
 #[test]
-fn arming_a_cylinder_waits_for_a_click_and_places_it_there() {
+fn arming_a_sphere_waits_for_a_click_and_places_it_there() {
     let (project, panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
     let size = Length::from_millimetres(300).expect("size");
-    editor.arm_primitive(PrimitiveKind::Cylinder, size).expect("arm the cylinder");
-    assert_eq!(editor.pending_primitive(), Some((PrimitiveKind::Cylinder, size)));
+    editor.arm_primitive(PrimitiveKind::Sphere, size).expect("arm the sphere");
+    assert_eq!(editor.pending_primitive(), Some((PrimitiveKind::Sphere, size)));
     assert!(editor.drawing().is_none(), "an armed primitive leaves a drawing");
 
     let placement = Placement::IDENTITY
@@ -838,7 +832,7 @@ fn arming_a_cylinder_waits_for_a_click_and_places_it_there() {
             Length::ZERO,
         )
         .expect("placement");
-    let id = editor.place_primitive(&mut session, placement).expect("place the cylinder");
+    let id = editor.place_primitive(&mut session, placement).expect("place the sphere");
     assert!(editor.pending_primitive().is_none(), "one click places one primitive");
     assert_eq!(editor.selected_node(), Some(id));
     let object = session.project().object(id).expect("object");
@@ -872,10 +866,10 @@ fn a_clicked_primitive_lands_on_the_pointer_at_the_root_and_in_a_turned_containe
         if let Some(container) = armed {
             assert!(editor.arm_creation(session.project(), container), "the primitive lands in the container");
         }
-        editor.arm_primitive(PrimitiveKind::Cylinder, mm(300)).expect("arm the cylinder");
+        editor.arm_primitive(PrimitiveKind::Sphere, mm(300)).expect("arm the sphere");
 
         let before = session.project().revision();
-        let cube = editor.place_primitive(&mut session, click).expect("place the cylinder");
+        let cube = editor.place_primitive(&mut session, click).expect("place the sphere");
         let what = if armed.is_some() { "in the container" } else { "at the root" };
         assert_eq!(
             session.project().revision(),
@@ -913,51 +907,39 @@ fn a_clicked_primitive_lands_on_the_pointer_at_the_root_and_in_a_turned_containe
 #[test]
 fn a_primitive_size_must_be_positive() {
     let mut editor = Editor::new();
-    assert!(editor.arm_primitive(PrimitiveKind::Cylinder, Length::ZERO).is_err());
+    assert!(editor.arm_primitive(PrimitiveKind::Sphere, Length::ZERO).is_err());
 }
 
 #[test]
-fn every_primitive_kind_can_be_armed() {
+fn the_sphere_is_the_primitive_that_arms_a_click() {
     let size = Length::from_millimetres(120).expect("size");
-    for kind in [PrimitiveKind::Cylinder, PrimitiveKind::Sphere] {
-        let mut editor = Editor::new();
-        editor.arm_primitive(kind, size).expect("arm");
-        assert_eq!(editor.pending_primitive(), Some((kind, size)));
-        assert!(
-            Session::with_catalog(sample_project(), sample_catalog())
-                .project()
-                .object(Id::new(5).expect("id"))
-                .is_none(),
-            "arming alone creates nothing"
-        );
-    }
-    // A box has three independent sides, so the tool starts its base rectangle instead of arming
-    // one extent it could not describe (ADR 0101).
+    let kind = PrimitiveKind::Sphere;
     let mut editor = Editor::new();
-    editor.arm_primitive(PrimitiveKind::Cuboid, size).expect("arm the box");
-    assert_eq!(editor.pending_primitive(), None, "a box waits for its base, not for a click");
-    assert_eq!(editor.box_tool(), Some(BoxOwner::Cuboid));
+    editor.arm_primitive(kind, size).expect("arm");
+    assert_eq!(editor.pending_primitive(), Some((kind, size)));
+    assert!(
+        Session::with_catalog(sample_project(), sample_catalog()).project().object(Id::new(5).expect("id")).is_none(),
+        "arming alone creates nothing"
+    );
 }
 
 #[test]
-fn placing_a_cylinder_and_a_sphere_names_and_shapes_them() {
-    let cases = [
-        (PrimitiveKind::Cylinder, "Cylinder", DEFAULT_SEGMENTS * 2),
-        (PrimitiveKind::Sphere, "Sphere", 2 + DEFAULT_SEGMENTS * (DEFAULT_BANDS - 1)),
-    ];
-    for (kind, name, vertices) in cases {
-        let (project, _panel) = contour_panel_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
-        let mut editor = Editor::new();
-        editor.arm_primitive(kind, Length::from_millimetres(100).expect("size")).expect("arm");
-        let id = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place");
-        let object = session.project().object(id).expect("object");
-        assert_eq!(object.name(), name);
-        let stored = object.geometry().as_primitive().expect("the parameters are stored");
-        assert_eq!(stored.kind(), kind);
-        assert_eq!(stored.vertex_count() as u32, vertices, "the counts follow the parameters");
-        assert!(object.geometry().as_mesh().is_none(), "the mesh is derived");
-    }
+fn placing_a_sphere_names_and_shapes_it() {
+    let (project, _panel) = contour_panel_project();
+    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm");
+    let id = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place");
+    let object = session.project().object(id).expect("object");
+    assert_eq!(object.name(), "Sphere");
+    let stored = object.geometry().as_primitive().expect("the parameters are stored");
+    assert_eq!(stored.kind(), PrimitiveKind::Sphere);
+    assert_eq!(
+        stored.vertex_count() as u32,
+        2 + DEFAULT_SEGMENTS * (DEFAULT_BANDS - 1),
+        "the counts follow the parameters"
+    );
+    assert!(object.geometry().as_mesh().is_none(), "the mesh is derived");
 }
 
 /// A project whose root holds one closed path object.
@@ -1099,12 +1081,12 @@ fn the_toolbar_creates_the_primitive_at_the_scene_root() {
     let mut editor = Editor::new();
     let root = Id::new(1).expect("root");
     editor.select_node(Some(root));
-    editor.arm_primitive(PrimitiveKind::Cylinder, Length::from_millimetres(200).expect("size")).expect("arm");
-    editor.place_primitive(&mut session, Placement::IDENTITY).expect("cylinder");
-    let cylinder = editor.selected_node().expect("the new primitive is selected");
-    assert!(session.project().object(cylinder).is_some());
+    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(200).expect("size")).expect("arm");
+    editor.place_primitive(&mut session, Placement::IDENTITY).expect("sphere");
+    let sphere = editor.selected_node().expect("the new primitive is selected");
+    assert!(session.project().object(sphere).is_some());
     assert!(session.project().panel(panel).is_some());
-    assert_eq!(session.project().parent_of(cylinder), Some(root));
+    assert_eq!(session.project().parent_of(sphere), Some(root));
     assert!(editor.initialized, "the fresh selection survives the next frame");
 }
 
@@ -1522,14 +1504,20 @@ fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
     let mut session = Session::with_catalog(sample_project(), sample_catalog());
     let mut editor = Editor::new();
 
-    editor.arm_primitive(PrimitiveKind::Cylinder, Length::from_millimetres(200).expect("size")).expect("arm");
-    editor.place_primitive(&mut session, Placement::IDENTITY).expect("create the cylinder");
+    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(200).expect("size")).expect("arm");
+    editor.place_primitive(&mut session, Placement::IDENTITY).expect("create the sphere");
 
     let id = editor.selected_node().expect("the new object is selected");
     let object = session.project().object(id).expect("object");
-    assert_eq!(object.name(), "Cylinder", "the new object is named after its shape");
+    assert_eq!(object.name(), "Sphere", "the new object is named after its shape");
     let primitive = object.geometry().as_primitive().expect("the parameters are stored");
-    assert_eq!(primitive.mesh_counts(), (DEFAULT_SEGMENTS as usize * 2, DEFAULT_SEGMENTS as usize + 2));
+    assert_eq!(
+        primitive.mesh_counts(),
+        (
+            2 + DEFAULT_SEGMENTS as usize * (DEFAULT_BANDS as usize - 1),
+            DEFAULT_SEGMENTS as usize * DEFAULT_BANDS as usize
+        )
+    );
     assert_eq!(session.project().revision().get(), 1, "one command is one revision");
 
     undo(&mut session, &mut editor);
@@ -1538,57 +1526,17 @@ fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
 }
 
 #[test]
-fn the_box_tool_draws_its_base_and_pulls_its_height() {
-    let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
-    let root = session.project().root().id();
-    let mut editor = Editor::new();
-    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-
-    editor.arm_primitive(PrimitiveKind::Cuboid, mm(200)).expect("arm the box tool");
-    assert_eq!(editor.box_tool(), Some(BoxOwner::Cuboid));
-    assert!(!editor.click_box([mm(600), mm(400)]).expect("the anchor"), "the first click only anchors");
-    editor.set_box_corner([mm(0), mm(0)]);
-    assert!(editor.click_box([mm(0), mm(0)]).expect("the base"), "the second click fixes the base");
-
-    let base = editor.box_draft().and_then(BoxDraft::base).expect("a base");
-    assert_eq!((base.width, base.depth), (mm(600), mm(400)), "the rectangle the maker drew");
-    editor.pull_box_height(mm(720)).expect("the pull");
-    assert_eq!(
-        editor.box_draft().and_then(BoxDraft::sizes),
-        Some([mm(600), mm(400), mm(720)]),
-        "the ghost is exactly the box the ✓ builds"
-    );
-
-    // The plane frame sits on the base rectangle's minimum corner, so the box's own zero is that
-    // corner and the height runs along the plane's normal.
-    let placement = Placement::IDENTITY.with_translation(mm(0), mm(0), mm(0)).expect("the base corner");
-    let id = editor.commit_box(&mut session, placement, text::Lang::En).expect("commit the box");
-    assert!(editor.box_tool().is_none(), "the gesture is over");
-    let object = session.project().object(id).expect("the new box");
-    assert_eq!(object.name(), "Box");
-    assert_eq!(object.placement(), placement, "the base corner is the node's origin");
-    assert_eq!(session.project().parent_of(id), Some(root));
-    let primitive = object.geometry().as_primitive().expect("the parameters are stored");
-    assert_eq!(primitive.bounds_micrometres(), ([0; 3], [600_000, 400_000, 720_000]));
-    assert_eq!(session.project().revision().get(), 1, "the whole gesture is one command");
-
-    undo(&mut session, &mut editor);
-    assert!(session.project().object(id).is_none(), "one undo removes the box");
-}
-
-#[test]
 fn a_box_draft_that_is_cancelled_writes_nothing() {
     let (project, _panel) = contour_panel_project();
     let session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_primitive(PrimitiveKind::Cuboid, mm(200)).expect("arm the box tool");
+    editor.arm_box();
     editor.click_box([mm(0), mm(0)]).expect("anchor");
     editor.click_box([mm(600), mm(400)]).expect("base");
     editor.pull_box_height(mm(720)).expect("pull");
     editor.cancel_box();
-    assert!(editor.box_tool().is_none());
+    assert!(editor.box_draft().is_none());
     assert_eq!(session.project().revision().get(), 0, "the draft never reached the document");
     assert!(!session.can_undo());
 }
@@ -1602,8 +1550,8 @@ fn empty_editor_session() -> Session {
 /// Draw the box whose base runs from `[600, 560]` to the plane origin and whose height is 720 mm.
 fn draw_the_frame_box(editor: &mut Editor) {
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_box(BoxOwner::Product);
-    assert_eq!(editor.box_tool(), Some(BoxOwner::Product), "the frame cell arms the box tool");
+    editor.arm_box();
+    assert!(editor.box_draft().is_some(), "the frame cell arms the box tool");
     assert!(!editor.click_box([mm(600), mm(560)]).expect("the anchor"), "the first click only anchors");
     assert!(editor.click_box([mm(0), mm(0)]).expect("the base"), "the second click fixes the base");
     editor.pull_box_height(mm(720)).expect("the pull");
@@ -1622,7 +1570,7 @@ fn the_frame_tool_draws_the_box_the_ghost_shows_and_creates_it() {
     );
 
     let id = editor.commit_box(&mut session, Placement::IDENTITY, text::Lang::En).expect("commit");
-    assert!(editor.box_tool().is_none(), "the gesture is over");
+    assert!(editor.box_draft().is_none(), "the gesture is over");
     let frame = session.project().container(id).expect("the frame");
     assert!(frame.is_product(), "a drawn frame is a product, not a plain container");
     assert_eq!(frame.envelope().map(|envelope| envelope.components()), Some([mm(600), mm(560), mm(720)]));
@@ -1641,11 +1589,11 @@ fn the_ribbons_drawn_frame_method_arms_the_box_tool() {
     let outcome = editor
         .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrame], text::Lang::En)
         .expect("the drawn method arms");
-    assert_eq!(editor.box_tool(), Some(BoxOwner::Product), "the box tool draws a frame");
+    assert!(editor.box_draft().is_some(), "the box tool draws a frame");
     assert!(!outcome.open_product_card, "the drawn method opens no card");
     assert_eq!(session.project().revision().get(), 0, "arming writes nothing");
     editor.cancel_box();
-    assert!(editor.box_tool().is_none(), "Escape drops the draft");
+    assert!(editor.box_draft().is_none(), "Escape drops the draft");
     assert_eq!(session.project().revision().get(), 0);
 }
 
@@ -2051,11 +1999,11 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
     editor.start_drawing(DrawTool::Line);
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the post");
     assert!(editor.drawing().is_none(), "a fill replaces the running draft");
-    editor.arm_primitive(PrimitiveKind::Cuboid, Length::from_millimetres(100).expect("size")).expect("arm the box");
-    assert!(editor.fill_arm().is_none(), "a primitive replaces the fill");
-    assert!(editor.box_tool().is_some());
+    editor.arm_box();
+    assert!(editor.fill_arm().is_none(), "the frame tool replaces the fill");
+    assert!(editor.box_draft().is_some());
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Shape, crate::Lang::En).expect("arm the post again");
-    assert!(editor.box_tool().is_none(), "the fill replaces the box tool");
+    assert!(editor.box_draft().is_none(), "the fill replaces the frame tool");
     assert_eq!(editor.fill_arm().map(|arm| arm.mode), Some(FillMode::Shape), "the mode switches with the method");
     editor.cancel_fill();
     assert!(editor.fill_arm().is_none());
