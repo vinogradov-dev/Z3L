@@ -40,9 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-## Next
-- `[ ]` **R1** draft: the pre-release rename gives the product name one home before anything is released
+- `[~]` **R1** draft: the pre-release rename gives the product name one home before anything is released
   Why: This task is not in the queue and no session starts it. It runs only when the owner
    commands a release, and that command also names the product, which is the one input the
    entry cannot supply. Until then the entry keeps its place at the end of `## Next`, so the
@@ -70,6 +68,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    cannot miss a copy. Measured on a scratch copy of this tree: 1140 tests pass, clippy clean,
    `layers: ok`, 960 changed lines and no behaviour change. `cargo xtask ci` is green.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
+
+## Bugs
+## Next
 - `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
   Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is
    declared as a planned method (`icon: None, run: None`), so it draws a blank row that runs

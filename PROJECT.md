@@ -4,6 +4,14 @@
 
 FurniCraft is a native, free and open-source 3D editor for parametric cabinet furniture. The user describes a product the way a furniture maker thinks about it — overall dimensions, panels, materials, edge banding and hardware — and the program builds an accurate 3D model that later becomes drawings, cutting lists and CNC programs. It is built for the craft, not for the cloud: a fast Rust binary with `wgpu` graphics and `egui` UI, with interaction quality close to Blender, and no web technologies anywhere in the product.
 
+## Philosophy
+
+The program believes one thing about furniture — that it is a countable product and not a picture —
+and follows three laws: `Local` (every part is measured from its own zero, exactly), `Literal` (the
+document is the only truth, and it is plain data) and `Lasting` (nothing is lost, and the tool outlives
+the program). The product is named **Z3L**: a zero and three laws. The full statement, the laws'
+evidence in the code and the readings of the name are in [`docs/philosophy.md`](docs/philosophy.md).
+
 ## Scope
 
 **In scope, in order of arrival:**

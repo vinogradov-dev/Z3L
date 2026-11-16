@@ -2,7 +2,7 @@
 
 FurniCraft is a free, open-source, native 3D editor for **cabinet furniture**, written in **Rust only**. The user sets dimensions, panels, materials and hardware; the editor builds a parametric 3D model and, later, drawings and CNC programs. The quality bar for interaction is Blender: smooth, native, predictable. Read `BRIEF.md` for the owner's goals and constraints, and `PROJECT.md` for the product and the crate map.
 
-The application is a native binary: `wgpu` for graphics, `egui`/`eframe` for UI. **No Electron, Tauri, webview, JavaScript or TypeScript — never**, not as a dependency, build step or packaging target. The product name is always **FurniCraft** in user-facing text (`FurniCraft` in prose, `furnicraft-*` in machine names).
+The application is a native binary: `wgpu` for graphics, `egui`/`eframe` for UI. **No Electron, Tauri, webview, JavaScript or TypeScript — never**, not as a dependency, build step or packaging target. The product name is always **Z3L** in user-facing text, and it is read from one constant per surface rather than written into a sentence twice (`docs/philosophy.md`, ADR 0135).
 
 This file is the constitution. Where a task or a habit conflicts with it, this file wins: ask the owner instead of bending a rule.
 
@@ -429,6 +429,7 @@ New tasks are developed on the `dev` branch; `main` holds only verified, merge-r
 - `ATTRIBUTION.md` — vendored and bundled third-party components, their licenses and modifications.
 - `assets/icons/STYLE_GUIDE.md` — icon visual language; read only when drawing or editing an icon
   (`assets/README.md` holds the file format, `assets/icons/AUDIT.md` the measured state of the set).
+- `docs/philosophy.md` — what the program believes: the thesis, the three laws (`Local`, `Literal`, `Lasting`) and the readings of the name. Read before a decision the rules do not cover.
 - `docs/decisions/` — architecture decision records: one short file per decision, with the reason and the consequences.
 - `docs/domain/classes.md` — the semantic class registry: encoding, traits and lifecycle; `docs/domain/products.md` — the product, its authored envelope and the workspace rules; `docs/domain/order-export.md` — the published order-package contract other programs read.
 - `plan/STATUS.md` — the `STATE` line, where the project stands and what comes next; rewritten at the end of every task, never appended to.
