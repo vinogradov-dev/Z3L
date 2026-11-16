@@ -62,6 +62,95 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
    twice another, and the ball is looked at once in the live window at the default size.
   `files: crates/mesh/src/primitive.rs`
+- `[ ]` **X56** an edit rebuilds the world box of every mesh, vertex by vertex
+  Why: Observation: one edit anywhere costs the whole scene. Measured in a headless probe
+   (app/src/frame_tests.rs, dev profile with opt-level 2, 5 000 root spheres of 32 x 16): 27 /
+   109 / 285 ms of CPU on every revision move at 500 / 2 000 / 5 000 objects, and the numbers
+   are identical whether zero or one mesh was rebuilt (evaluate_warm equals one_changed in the
+   probe recorded in plan/debt.md). Expectation: an edit costs its changed nodes plus one walk
+   of the tree, not the vertex count of the whole scene. Suspected cause, measured:
+   Bounds::include_mesh in app/src/scene_build.rs transforms every vertex of every mesh to find
+   its world box, and collect_panel and collect_object call it twice — once into the subtree's
+   all box and once into solid; a 32 x 16 sphere is 896 vertices, so 5 000 of them are 9 M
+   transforms per rebuild, while 5 000 boxes of 8 vertices cost only 24 ms, which is the walk
+   itself (about 5 us per node).
+  Shape: Compute a local AABB once per mesh (geom::MeshData or the mesh cache entry) and turn
+   its eight corners into the world box in one pass per drawable, feeding all and solid from
+   the same box, so a rebuild stops looking at vertices. If the eight-corner box is too loose
+   for a rotated object — it is the box of the rotated box — keep the tight world box on the
+   cache entry keyed by (mesh, placement) and copy it when the node did not move. The container
+   level bounds still come from the children, and the frame-all bounds stay conservative by the
+   same rule.
+  Done: A headless test builds 5 000 spheres, moves one and asserts the rebuild transforms no
+   vertex and stays under 50 ms on this machine; the bounds still contain every drawable and
+   match the per-vertex bounds at the default scene; the [perf] entry in plan/debt.md is
+   re-measured with the new numbers.
+  `files: app/src/scene_build.rs,crates/geom/src/lib.rs,crates/mesh/src/lib.rs`
+- `[ ]` **X57** an edit re-uploads every GPU buffer and the whole edge list
+  Why: Observation: an edit re-uploads the whole scene. ViewportRenderer::upload
+   (crates/render/src/lib.rs) creates a vertex and an index buffer for every drawable of the
+   frame on each rebuild, and edge_geometry (crates/render/src/geometry.rs) rebuilds one
+   flattened line list over every mesh edge; the grid, the polylines, the product envelopes and
+   the contact shadows are recreated too. A rebuild happens on every revision move, so changing
+   one panel's thickness in a cabinet of 5 000 objects recreates 5 000 buffers and re-uploads
+   millions of triangles and their edges. Measured CPU per edit is 27 / 109 / 285 ms at 500 / 2
+   000 / 5 000 spheres, and the GPU side is not measured at all today because the headless
+   probe has no adapter. Expectation: a rebuild uploads only the drawables whose mesh handle or
+   transform changed, and the edge list grows and shrinks by the same difference.
+  Shape: Key the GPU buffers by what they were built from — the mesh Arc pointer plus the world
+   transform (or by node id and the transform pair) — so an unchanged drawable keeps its
+   buffers and only the changed ones are recreated; keep one buffer per unique mesh and a
+   per-drawable transform where the transform can stop being baked into the vertices. Build the
+   edge list per mesh and concatenate the slices for the frame instead of regenerating line
+   vertices for every edge on every upload. Free the buffers of drawables that left the frame.
+   Full detail lives in the two [perf] entries of plan/debt.md.
+  Done: A test with two scenes that differ in one drawable asserts that the upload creates one
+   new vertex and one new index buffer, and that the untouched drawables keep the same wgpu
+   buffer handles; the edge list of an unchanged drawable is not rebuilt; the [perf] entry in
+   plan/debt.md is re-measured in the live window.
+  `files: crates/render/src/lib.rs,crates/render/src/geometry.rs,app/src/document.rs`
+- `[ ]` **X58** the viewport draws every object in the scene, on screen or not
+  Why: Observation: the viewport draws every drawable of the frame, on screen or not.
+   draw_order is built as the whole index range (crates/render/src/lib.rs), the draw loop walks
+   it, and the edge pass is one flattened list of every mesh edge in the scene; nothing tests a
+   drawable against the camera's frustum. A cabinet with a wall of 5 000 objects therefore pays
+   for all of them in every frame — triangles, edges and stencil passes — even when the view
+   holds one shelf, which is what an orbit or a zoom on a dense scene feels like. Measured in
+   the headless probe: 500 / 2 000 / 5 000 spheres are 0.48 M / 1.9 M / 4.8 M triangles and 9.5
+   ms of an empty frame at the top count, so the GPU cost is already the dominant term and it
+   is spent on invisible geometry.
+  Shape: Keep a world AABB per drawable in the frame (the same box X56 caches, so the two tasks
+   share one value) and skip a drawable whose box lies outside the camera's frustum before it
+   enters draw_order and the edge list. The draw order stays the same for what survives, and
+   the stencil slot and the centres are indexed by the same drawable, so the culling is one
+   filter over the frame's own data and not a second pass. Frustum planes come from the camera
+   the renderer already reads.
+  Done: A test with the camera inside a dense scene asserts that only the drawables whose world
+   box meets the frustum are drawn and their edges are kept, that a drawable partially behind
+   the eye is not dropped, and that framing the whole scene draws every drawable again; the
+   count of drawn drawables is exposed for the test.
+  `files: crates/render/src/lib.rs,crates/scene/src/lib.rs`
+- `[ ]` **X59** a click ray-casts every triangle of every object in the scene
+  Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
+   (crates/scene/src/ray.rs) loops over the whole index buffer of the drawable and transforms
+   every vertex it touches, and pick_scene (app/src/mesh_pick.rs) calls it for every drawable
+   of the frame, so the work is O(total triangles) per click with no early reject. Measured in
+   the headless probe: 16 / 64 / 161 ms per pick at 500 / 2 000 / 5 000 spheres (0.48 M / 1.9 M
+   / 4.8 M triangles); 5 000 boxes pick in 0.2 / 0.8 / 2.2 ms because they are cheap. A click
+   that takes 160 ms reads as a frozen window, and the press that opens the rubber band tests
+   every object as well (pick_surface and the band's start). Expectation: a click costs a small
+   multiple of the objects, not of their triangles.
+  Shape: Reject first: give every drawable its world AABB (the value X56 and X58 cache) and
+   intersect the ray with it before touching vertices; the box test is eight comparisons and
+   drops almost every object of a dense scene at the first step. Then, for the drawables that
+   survive, keep the current per-triangle loop until a measurement says otherwise — a BVH over
+   the frame's triangles is the next step and needs a build cost the cache can pay once per
+   mesh. The band's start test and pick_surface go through the same narrowing.
+  Done: A test builds a dense scene and asserts a pick over empty space touches no triangle (a
+   counter is exposed for the test), and that a pick over the model returns the same id as
+   before; the measured pick time at 5 000 spheres drops below 20 ms in the probe and the
+   [perf] entry in plan/debt.md is re-measured.
+  `files: crates/scene/src/ray.rs,app/src/mesh_pick.rs`
 
 ## Next
 - `[ ]` **V6** there is no cone primitive
@@ -78,8 +167,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
-
 ## Done
+
+- `[x]` **K5** the program cannot open a scene named on its command line
+  Why: Observation: `z3l cabinet.z3l` prints «`cabinet.z3l` is not a command; run `z3l --help`»
+   and the window opens only with no argument at all, so a double click on a scene in a file
+   manager, a script or a debug session that wants one saved scene needs a manual Open through
+   Home first — a 5 000-sphere stress scene cannot be handed to the editor at all. Expectation:
+   one scene path as the argument opens that scene in a tab, exactly as the File menu's Open
+   does, and a path that cannot be read leaves the window open on the readable sentence instead
+   of exiting. Suspected cause: cli::parse recognises no argument, --help and export only, and
+   main passes nothing to run_window.
+  Shape: One new command: Command::Scene(PathBuf) for a first word that ends in .z3l. Whether
+   the file exists is the opener's business, so a typo reaches the window's error line instead
+   of an exit; a second path or a word that is not a .z3l stays a usage error, and USAGE names
+   the form. main::run_window takes the path and calls the existing App::open_tab after
+   App::new, reporting a failure through App::failed so the window stays open; nothing else
+   about opening changes, because the tab, the recent list and the catalogue are the same path
+   the menu uses.
+  Done: z3l <scene.z3l> opens that file as the active tab; a missing or malformed scene keeps
+   the window open and shows the sentence in the status bar; z3l, z3l --help and z3l export are
+   unchanged; parse tests cover one path, one missing .z3l, a second path and a bare word.
+  `files: app/src/cli.rs,app/src/main.rs` — `adec943`
 
 - `[x]` **V5** a sphere has one click and one method
   Why: A sphere is put down in one click and sized in the card: there is no first point, no
