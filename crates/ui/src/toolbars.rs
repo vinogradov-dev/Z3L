@@ -1576,12 +1576,26 @@ mod tests {
         );
 
         // A method the build does not have yet still draws its row and runs nothing.
-        let line = tool("sketch.create.line");
-        let rows = method_rows(line, &Toolbars::new(), full_context(), Lang::En);
-        assert_eq!(rows.len(), 2, "the line's own method and the one still planned");
-        assert_eq!(rows[1].method.id, "sketch.create.line.angle");
+        let offset = tool("sketch.modify.offset");
+        let rows = method_rows(offset, &Toolbars::new(), full_context(), Lang::En);
+        assert_eq!(rows.len(), 3, "the tool's own method and the two still planned");
+        assert_eq!(rows[1].method.id, "sketch.modify.offset.distance");
         assert!(!rows[1].enabled, "a planned method is not enabled");
         assert!(rows[1].action.is_none(), "a planned method runs nothing");
+        assert!(rows.iter().filter(|row| row.method.id != "sketch.modify.offset").all(|row| !row.enabled));
+
+        // The line's own second method is the typed pair, and it runs (X53).
+        let line = tool("sketch.create.line");
+        let rows = method_rows(line, &Toolbars::new(), full_context(), Lang::En);
+        assert_eq!(rows.len(), 2, "the line's own method and the pair of numbers");
+        assert_eq!(rows[1].method.id, "sketch.create.line.angle");
+        assert_eq!(rows[1].method.label, Message::ToolLineAngle, "the row names the typed entry");
+        assert!(rows[1].enabled, "the by-angle method runs");
+        assert_eq!(
+            rows[1].action,
+            Some(ToolAction::Draw { tool: DrawTool::LineByAngle, sides: DEFAULT_POLYGON_SIDES }),
+            "the by-angle row starts its own tool"
+        );
     }
 
     #[test]

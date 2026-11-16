@@ -55,6 +55,13 @@ pub enum DrawIntent {
 pub enum DrawTool {
     /// Two points make one open line.
     Line,
+    /// A start point, then a length and an angle typed in the plates, make the same one open line.
+    ///
+    /// The measurement is the line's own: the second point is a length and an angle read from the
+    /// first one with the half-turn rule of ADR 0134. The method is a tool of its own only because
+    /// the ribbon files one kind in one cell — the line list names the typed pair beside the pair of
+    /// clicks — and the figure it commits is a line, named as one.
+    LineByAngle,
     /// Two or more points make an open chain, or a closed ring on request. Tab switches each
     /// segment between a straight line and an arc.
     #[default]
@@ -107,6 +114,7 @@ impl DrawTool {
     pub const fn points(self) -> Option<usize> {
         match self {
             Self::Line
+            | Self::LineByAngle
             | Self::Rectangle
             | Self::RectangleFromCenter
             | Self::Circle
@@ -155,7 +163,7 @@ impl DrawTool {
     /// the object the draft becomes carries the shape's own name.
     pub const fn label(self) -> Message {
         match self {
-            Self::Line => Message::ToolLine,
+            Self::Line | Self::LineByAngle => Message::ToolLine,
             Self::Polyline => Message::ToolPolyline,
             Self::Arc => Message::ToolArc,
             Self::ArcFromCenter => Message::ToolArcFromCentre,
@@ -589,7 +597,8 @@ impl DrawDraft {
             return Err(DrawDraftError::TooFewPoints { need, got: points.len() });
         }
         match self.tool {
-            DrawTool::Line => Path::polyline(points, false).map_err(DrawDraftError::from),
+            // The by-angle method places the same two points, so it commits the same line.
+            DrawTool::Line | DrawTool::LineByAngle => Path::polyline(points, false).map_err(DrawDraftError::from),
             DrawTool::Arc => {
                 let (Some(&start), Some(&through), Some(&end)) = (points.first(), points.get(1), points.get(2)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });

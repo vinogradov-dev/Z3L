@@ -323,6 +323,7 @@ macro_rules! family_of {
 
 icons!(Contour, "contour", Draw, contour {
     LINE => "line",
+    LINE_ANGLE => "line-angle",
     POLYLINE => "polyline",
     ARC => "arc",
     ARC_CENTRE => "arc-centre",
@@ -1213,7 +1214,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 114);
+        assert_eq!(seen.len(), 115);
     }
 
     #[test]

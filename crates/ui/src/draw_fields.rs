@@ -591,7 +591,8 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
     };
     let last = draft.last_end().map(plane_point).unwrap_or(first);
     let (anchor, shape, turn) = match draft.tool() {
-        DrawTool::Line | DrawTool::Polyline => (last, Shape::Segment, 0.0),
+        // A line, however its pair is named, is a length and an angle from its start.
+        DrawTool::Line | DrawTool::LineByAngle | DrawTool::Polyline => (last, Shape::Segment, 0.0),
         // The chord of a three-point arc runs from its start, so the angle has a fixed reference
         // and the chord can be drawn as a construction line.
         DrawTool::Arc => (first, Shape::Segment, 0.0),
@@ -745,6 +746,7 @@ mod tests {
     use egui::pos2;
 
     use super::*;
+    use crate::DrawDraftError;
     use model::ContourSegment;
 
     fn millimetres(x: i64, y: i64) -> DVec2 {
@@ -806,6 +808,7 @@ mod tests {
         // The first point of every tool is the point itself.
         for tool in [
             DrawTool::Line,
+            DrawTool::LineByAngle,
             DrawTool::Polyline,
             DrawTool::Arc,
             DrawTool::ArcFromCenter,
@@ -831,6 +834,7 @@ mod tests {
         type Case = (DrawTool, Vec<(i64, i64)>, Vec<FieldParam>);
         let cases: Vec<Case> = vec![
             (DrawTool::Line, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            (DrawTool::LineByAngle, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::Polyline, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::Arc, vec![(0, 0), (100, 50)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::ArcFromCenter, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
@@ -1117,6 +1121,36 @@ mod tests {
         assert_eq!(state.point, [Length::ZERO, Length::from_micrometres(100_000)]);
         assert_eq!(state.construction, Some([DVec2::ZERO, millimetres(100, 0)]), "the chord is the guide");
         assert!(state.reference.is_none(), "a radius has no angle to read");
+    }
+
+    #[test]
+    fn the_by_angle_line_commits_the_segment_its_plates_name() {
+        // The row the line list calls *By angle* is the line read from two numbers: the start is
+        // clicked, the pair is typed, and the committed figure is one open line of that length and
+        // that direction, whatever the pointer is doing (X53).
+        let start = [mm(0), mm(0)];
+        let mut draft = draft(DrawTool::LineByAngle, &[(0, 0)]);
+        let fields = FieldSet::with_typed(segment_rows(), &[(FieldParam::Length, 600.0), (FieldParam::Angle, 30.0)])
+            .expect("two plates");
+        let state = PointState::placed(&draft, millimetres(123, 456), &fields).expect("a point");
+        draft.push(state.point).expect("the typed point");
+        assert!(draft.is_complete());
+        assert_eq!(draft.tool(), DrawTool::LineByAngle);
+
+        let path = draft.to_path().expect("one line");
+        assert!(!path.is_closed(), "a line is open");
+        let segments = path.segments().collect::<Vec<_>>();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start().expect("a start"), start);
+        assert_eq!(segments[0].end().expect("an end"), state.point);
+        assert_eq!(
+            (draft.push([mm(1), mm(1)]), draft.close()),
+            (
+                Err(DrawDraftError::Complete { tool: DrawTool::LineByAngle }),
+                Err(DrawDraftError::NotClosable { tool: DrawTool::LineByAngle })
+            ),
+            "the pair completes the line and it never closes"
+        );
     }
 
     #[test]

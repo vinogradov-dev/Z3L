@@ -226,6 +226,7 @@ impl ToolSpec {
 pub const fn method_id(tool: DrawTool) -> &'static str {
     match tool {
         DrawTool::Line => "sketch.create.line",
+        DrawTool::LineByAngle => "sketch.create.line.angle",
         DrawTool::Polyline => "sketch.create.polyline",
         DrawTool::Arc => "sketch.create.arc",
         DrawTool::ArcFromCenter => "sketch.create.arc.centre",
@@ -389,8 +390,8 @@ const SKETCH: [GroupSpec; 7] = [
                 variants: &[VariantSpec {
                     id: "sketch.create.line.angle",
                     label: Message::ToolLineAngle,
-                    icon: None,
-                    run: None,
+                    icon: Some(icons::contour::LINE_ANGLE),
+                    run: Some(ToolKind::Draw(DrawTool::LineByAngle)),
                 }],
             },
             ToolSpec {
@@ -1092,7 +1093,16 @@ mod tests {
     #[test]
     fn every_drawing_tool_names_the_method_the_map_gives_it() {
         // The key of a drawing tool is filed under the method id the tool draws, so the two maps —
-        // the tool's kind and the method's id — must name the same pair (U96).
+        // the tool's kind and the method's id — must name the same pair (U96). The tie is read from
+        // the map first, so a method a cell's list starts and no key owns — the line by its angle is
+        // one — is held to the same table (X53).
+        for (_, spec) in every_tool() {
+            for method in spec.methods() {
+                if let Some(ToolKind::Draw(tool)) = method.run {
+                    assert_eq!(method_id(tool), method.id, "`{}` answers another id", method.id);
+                }
+            }
+        }
         for tool in crate::toolbars::CONTOUR_TOOLS {
             let id = method_id(tool);
             let method = every_tool()
@@ -1193,6 +1203,7 @@ mod tests {
             ToolKind::Primitive(PrimitiveKind::Cylinder),
             ToolKind::Primitive(PrimitiveKind::Sphere),
             ToolKind::Draw(DrawTool::Line),
+            ToolKind::Draw(DrawTool::LineByAngle),
             ToolKind::Draw(DrawTool::Polyline),
             ToolKind::Draw(DrawTool::Arc),
             ToolKind::Draw(DrawTool::ArcFromCenter),
