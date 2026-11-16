@@ -42,21 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
-  Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is
-   declared as a planned method (`icon: None, run: None`), so it draws a blank row that runs
-   nothing. The owner tried it and it did nothing.
-  Shape: Build it as a real method: a `DrawTool::CircleTangent` that takes two picked line
-   targets and a radius (or takes three clicks — two on the lines and a point), computes the
-   centre in the wedge the two lines make, and commits one circle through the same
-   `object.path.create` path as the other circle methods. Add
-   `assets/icons/contour/circle-tangent.svg` to the guide (two lines tangent to a circle, draw
-   ink) and its row in `assets/README.md`; declare the tool in `spec.rs` with its fields in
-   `draw_fields.rs` and its stage table test.
-  Done: The method draws its glyph, appears enabled in the circle list, builds one tangent
-   circle from two picked lines, and a test places it against a known pair of lines; the icon
-   passes the footprint and coverage test.
-  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour`
 - `[ ]` **X53** the line list has a by-angle row that draws nothing
   Why: The line list offers «by angle» with no glyph and no action: the row is declared as a
    planned method (`icon: None, run: None`), so it draws blank and runs nothing. The owner
@@ -163,6 +148,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
+  Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is
+   declared as a planned method (`icon: None, run: None`), so it draws a blank row that runs
+   nothing. The owner tried it and it did nothing.
+  Shape: Build it as a real method: a `DrawTool::CircleTangent` that takes two picked line
+   targets and a radius (or takes three clicks — two on the lines and a point), computes the
+   centre in the wedge the two lines make, and commits one circle through the same
+   `object.path.create` path as the other circle methods. Add
+   `assets/icons/contour/circle-tangent.svg` to the guide (two lines tangent to a circle, draw
+   ink) and its row in `assets/README.md`; declare the tool in `spec.rs` with its fields in
+   `draw_fields.rs` and its stage table test.
+  Done: The method draws its glyph, appears enabled in the circle list, builds one tangent
+   circle from two picked lines, and a test places it against a known pair of lines; the icon
+   passes the footprint and coverage test.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour` — `0883152`
 
 - `[x]` **U105** the header carries the product wordmark, drawn from one asset
   Why: The header draws the name as a text label beside an 18-point placeholder mark whose
