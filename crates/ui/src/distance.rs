@@ -30,7 +30,8 @@ use egui::{Id, Key, Modifiers, Pos2, Rect, Ui};
 
 use text::Message;
 
-use crate::tool_card::{ToolOutcome, ToolParam, ToolRow, ToolView};
+use crate::FieldLabel;
+use crate::tool_card::{ToolCommit, ToolOutcome, ToolParam, ToolRow, ToolView};
 
 /// One of the two opposite directions of the free axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -385,8 +386,8 @@ impl Distances {
                 ToolRow {
                     param: side.param(),
                     label: Some(match side {
-                        Side::Low => Message::ToolGapLow,
-                        Side::High => Message::ToolGapHigh,
+                        Side::Low => FieldLabel::Word(Message::ToolGapLow),
+                        Side::High => FieldLabel::Word(Message::ToolGapHigh),
                     }),
                     value: self.value(side).unwrap_or(0.0),
                     unit: "mm",
@@ -511,7 +512,7 @@ impl DistanceFields {
         if request.is_none() && ui.memory(|memory| memory.focused()).is_none() {
             request = state.active();
         }
-        let mut view = ToolView { title, rows: state.rows(), actions: false };
+        let mut view = ToolView { title, rows: state.rows(), commit: ToolCommit::Gesture };
         let (reported, rect) =
             crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
         outcome.rect = Some(rect);

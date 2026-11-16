@@ -1860,9 +1860,91 @@ fn a_pull_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree
     let chrome = harness.settle();
     let document = harness.app.tabs.active();
     let card = document.tool_card_rect().expect("the pull draws its card");
-    let in_card = texts_inside(&harness, card);
+    let in_card = texts_over(&harness, card);
     assert!(in_card.iter().any(|text| text == "40"), "the card shows the pulled height: {in_card:?}");
     assert_the_card_and_the_inspector_agree(&harness, &chrome);
+}
+
+/// A harness holding one extruded body with its pull open at `height`, and the body's id.
+fn pulling(name: &str, height: units::Length) -> (Harness, Id) {
+    let (session, body) = one_body();
+    let mut harness = Harness::with_session(name, session);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(body));
+        document.extrude_gizmo.start(body, height);
+    }
+    harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);
+    harness.settle();
+    (harness, body)
+}
+
+/// Every text the last frame drew over `rect`, by where its middle landed.
+///
+/// A focused field paints its number through a text edit, whose glyph rectangle can overhang the
+/// card by a point or two, so a test that asks what a card *shows* reads the words over it rather
+/// than the shapes wholly inside it.
+fn texts_over(harness: &Harness, rect: egui::Rect) -> Vec<String> {
+    harness.drawn_rects.iter().filter(|(at, _)| rect.contains(at.center())).map(|(_, text)| text.clone()).collect()
+}
+
+/// The height the document holds for an extruded body.
+fn body_height(harness: &Harness, body: Id) -> Option<units::Length> {
+    harness
+        .app
+        .tabs
+        .active()
+        .session
+        .project()
+        .object(body)
+        .and_then(|node| node.geometry().as_constructive())
+        .and_then(model::Constructive::height)
+}
+
+#[test]
+fn the_extrusion_card_is_one_lettered_field_with_no_tick_or_cross() {
+    // U104: the owner wants the pull's plate to be a number, not a dialog. `H` names it, no unit
+    // repeats it, no word sits above it, and the gesture's own keys are its commit and its cancel —
+    // so the card draws no ✓ and no ✕ and the field is the only control it holds.
+    let (harness, _) = pulling("frame-tool-card-pull-lettered", testkit::millimetres(40));
+    let card = harness.app.tabs.active().tool_card_rect().expect("the pull draws its card");
+    let mut texts = texts_over(&harness, card);
+    texts.sort();
+    assert_eq!(texts, ["40", "H"], "one field, lettered and without a unit or a title");
+    let buttons: Vec<&str> =
+        harness.faces.iter().filter(|(_, rect)| card.contains_rect(*rect)).map(|(name, _)| name.as_str()).collect();
+    assert!(buttons.is_empty(), "the card offers no tick and no cross: {buttons:?}");
+}
+
+#[test]
+fn the_extrusion_field_commits_with_enter_and_cancels_with_escape() {
+    // The field is the only control, so the keys are the whole commit path: Enter writes the height
+    // once and Escape drops the pull without touching the document.
+    let (mut harness, body) = pulling("frame-tool-card-pull-enter", testkit::millimetres(40));
+    let revision = harness.revision();
+    harness.run(vec![egui::Event::Text("55".to_owned())]);
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Enter commits the pull");
+    assert_eq!(body_height(&harness, body), Some(testkit::millimetres(55)), "at the typed height");
+    assert_eq!(
+        document.session.project().revision(),
+        revision.checked_next().expect("a revision"),
+        "one command, not one per frame"
+    );
+    assert!(document.session.can_undo(), "and one undo entry");
+
+    let (mut harness, body) = pulling("frame-tool-card-pull-escape", testkit::millimetres(40));
+    let document = harness.app.tabs.active();
+    let committed = body_height(&harness, body);
+    let revision = document.session.project().revision();
+    harness.run(vec![egui::Event::Text("55".to_owned())]);
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Escape cancels the pull");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+    assert_eq!(body_height(&harness, body), committed, "the body keeps the height the document holds");
 }
 
 #[test]
@@ -3258,4 +3340,113 @@ fn switching_a_sketch_tool_mid_draft_starts_a_clean_stage() {
     assert_plates_apart(&plates, scene, "an arc after the ruler");
     assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "the arc starts at a point");
     assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "the arc starts at a point");
+}
+
+/// The screen rectangle the frame's whole model covers, projected from its own vertices.
+///
+/// A test aims a band at the model the way the person does — by looking at it — instead of repeating
+/// where the camera put it.
+fn model_screen_rect(harness: &Harness) -> egui::Rect {
+    let document = harness.app.tabs.active();
+    let frame = document.frame();
+    let scene = harness.scene();
+    let mut rect = egui::Rect::NOTHING;
+    for drawable in frame.drawables() {
+        for position in drawable.mesh.positions.iter() {
+            let world = drawable.world_transform.transform_point3(geom::DVec3::new(
+                f64::from(position[0]),
+                f64::from(position[1]),
+                f64::from(position[2]),
+            ));
+            if let Some(point) = gizmo_math::screen_point(frame.camera, scene, world) {
+                rect = rect.union(egui::Rect::from_min_max(point, point));
+            }
+        }
+    }
+    rect
+}
+
+/// A point of the scene with nothing drawn under it and no chrome over it.
+///
+/// The sample scene is fitted into the view with a margin, so the points just outside the model's
+/// own screen rectangle are empty space; which of the four the floating panels leave free is the
+/// frame's business, so the search asks the chrome instead of repeating a layout.
+fn free_scene_point(harness: &mut Harness, model: egui::Rect) -> egui::Pos2 {
+    let chrome = harness.settle();
+    let scene = harness.scene();
+    let offset = 40.0;
+    let candidates = [
+        egui::pos2(model.left() - offset, model.bottom() + offset),
+        egui::pos2(model.right() + offset, model.bottom() + offset),
+        egui::pos2(model.left() - offset, model.top() - offset),
+        egui::pos2(model.right() + offset, model.top() - offset),
+    ];
+    for candidate in candidates {
+        if !scene.contains(candidate) || chrome.covers(candidate) {
+            continue;
+        }
+        let document = harness.app.tabs.active();
+        if crate::mesh_pick::pick_surface(scene, document.frame(), candidate).is_none() {
+            return candidate;
+        }
+    }
+    panic!("the sample scene leaves no empty corner")
+}
+
+#[test]
+fn a_band_is_drawn_only_while_the_pointer_drags_on_empty_space() {
+    // U103: a press on the scene with nothing under it can become a rubber band, and nothing else
+    // can. The band is drawn between the press and the release and never after it, a press on the
+    // model is still a pick, and the release is what selects.
+    let mut harness = Harness::new("frame-rubber-band");
+    harness.settle();
+    let model = model_screen_rect(&harness);
+    let empty = free_scene_point(&mut harness, model);
+    // The corner holds no shape, so a click there is the plain click that takes nothing.
+    harness.click(empty, egui::PointerButton::Primary);
+    assert!(harness.selected().is_empty(), "the empty corner takes nothing");
+    assert!(harness.app.tabs.active().rubber_band().is_none(), "a click leaves no band behind");
+
+    // A press on the model picks it, and the drag that follows draws no band.
+    harness.click(harness.scene().center(), egui::PointerButton::Primary);
+    let picked = harness.selected();
+    assert_eq!(picked.len(), 1, "the middle of the scene holds one object");
+    let on_model = harness.node_point(picked[0]);
+    harness.press_at(on_model, egui::PointerButton::Primary);
+    harness.run(vec![egui::Event::PointerMoved(on_model + egui::vec2(40.0, 20.0))]);
+    assert!(harness.app.tabs.active().rubber_band().is_none(), "a drag from the model is not a band");
+    harness.release_at(on_model + egui::vec2(40.0, 20.0), egui::PointerButton::Primary);
+    harness.settle();
+
+    // A drag on empty space draws the band around the whole model, and the release selects with it.
+    let model = model_screen_rect(&harness);
+    let from = egui::pos2(model.left() - 60.0, model.bottom() + 60.0);
+    let to = egui::pos2(model.right() + 60.0, model.top() - 60.0);
+    let chrome = harness.settle();
+    assert!(!chrome.covers(from) && !chrome.covers(to), "both corners of the band are the scene");
+    let revision = harness.revision();
+    harness.press_at(from, egui::PointerButton::Primary);
+    harness.run(vec![egui::Event::PointerMoved(to)]);
+    let band = harness.app.tabs.active().rubber_band().expect("the drag draws the band");
+    assert_eq!(band.from, from, "the band starts where the press landed");
+    assert_eq!(band.to, to, "and follows the pointer");
+    assert!(harness.selected().is_empty() || harness.selected() == picked, "drawing a band selects nothing yet");
+    harness.release_at(to, egui::PointerButton::Primary);
+    harness.settle();
+    assert!(harness.app.tabs.active().rubber_band().is_none(), "the released band is gone");
+    let taken = harness.selected();
+    assert!(taken.contains(&picked[0]), "a window around the model takes what a click on it takes");
+    assert!(taken.len() > 1, "and the sample scene gives the band several objects");
+    assert_eq!(harness.revision(), revision, "selecting is view state, never a document edit");
+
+    // Escape drops a live band: the release that follows selects nothing and closes no level.
+    let level = harness.selected();
+    harness.press_at(from, egui::PointerButton::Primary);
+    harness.run(vec![egui::Event::PointerMoved(to)]);
+    assert!(harness.app.tabs.active().rubber_band().is_some(), "the band is live before the key");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().rubber_band().is_none(), "Escape drops the band");
+    harness.release_at(to, egui::PointerButton::Primary);
+    harness.settle();
+    assert_eq!(harness.selected(), level, "the dropped band selects nothing and changes no level");
 }

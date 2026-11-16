@@ -118,6 +118,11 @@ pub(crate) struct FieldOutcome {
     pub response: Response,
     /// The field holds a number the document should take now.
     pub commit: bool,
+    /// Enter committed the field: the card's tool applies what it now holds.
+    ///
+    /// Read after the field drew, so the number Enter just made is the number the command writes
+    /// (M71, U104).
+    pub submit: bool,
     /// The undo scope the commit belongs to, while the edit is in flight.
     pub scope: Option<EditScope>,
     /// Escape abandoned the edit: the caller restores the document from this scope.
@@ -265,6 +270,7 @@ impl<'a, N: Numeric> Scrub<'a, N> {
         let focused = ui.memory(|memory| memory.has_focus(id));
         let mut commit = false;
         let mut cancel = false;
+        let mut submit = false;
         let mut report = None;
 
         // The focus can leave a field without this widget seeing the frame that took it — a Tab
@@ -366,6 +372,9 @@ impl<'a, N: Numeric> Scrub<'a, N> {
                 state.error = None;
                 cancel = true;
             } else if enter || due || (lost && pending) {
+                // Enter is the gesture's commit as well as the text's: the Escape above abandoned
+                // the edit, so a field that took Enter reports its number as final.
+                submit = enter;
                 let text = typed.borrow().text.clone();
                 match parse(&text).and_then(|parsed| clamped(parsed, &range).ok_or(Message::NumberInvalid)) {
                     Ok(parsed) => {
@@ -488,7 +497,7 @@ impl<'a, N: Numeric> Scrub<'a, N> {
             response.mark_changed();
         }
         response.widget_info(|| egui::WidgetInfo::drag_value(ui.is_enabled(), value.to_f64()));
-        FieldOutcome { response, commit, scope, cancelled, error: report }
+        FieldOutcome { response, commit, submit, scope, cancelled, error: report }
     }
 }
 

@@ -35,6 +35,7 @@ use crate::view_flags::ViewFlags;
 
 use self::creation::PendingPrimitive;
 pub use self::fill::FillArm;
+pub use self::selection::{BandRule, BandView, SelectionBand};
 
 mod cards;
 mod contour;

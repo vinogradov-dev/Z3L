@@ -148,6 +148,25 @@ pub const HELPER_STROKE: f32 = 1.5;
 /// the quietest weight; a heavier line covers the form it is there to help measure.
 pub const HELPER_CROSSHAIR_STROKE: f32 = 1.0;
 
+/// The width of the rubber band's outline, in points.
+///
+/// A point, like a crosshair: the band is a rectangle over the model, and its fill is what makes the
+/// covered area read, so the stroke only has to close it.
+pub const BAND_STROKE: f32 = 1.0;
+
+/// One dash and the gap after it, in points, for a crossing band's outline.
+///
+/// The solid outline and the dashed one are how the two rules of a band differ before the release:
+/// a window encloses and draws solid, a crossing band touches and draws dashed (ADR 0137).
+pub const BAND_DASH: f32 = 4.0;
+pub const BAND_GAP: f32 = 3.0;
+
+/// The alpha of the band's fill, out of 255.
+///
+/// Low enough that a board under the band keeps its own colour and high enough that a rectangle over
+/// an empty workspace still reads as covered.
+const BAND_FILL_ALPHA: u8 = 26;
+
 /// The width of the bracket of the level that is open, in points.
 ///
 /// Half a point over [`HELPER_STROKE`]: opening a level is what decides what the next click does, so
@@ -657,6 +676,22 @@ pub fn warn(ui: &egui::Ui) -> Color32 {
 /// [`cursor_inks`] (ADR 0121).
 pub fn helper(ui: &egui::Ui) -> Color32 {
     helper_ink(warn(ui), ui.visuals().dark_mode)
+}
+
+/// The two inks of the rubber band: the outline first, then the fill under it (ADR 0137).
+///
+/// The band is a selection gesture, so it wears the scene's selection cyan rather than the guide
+/// amber: the objects the release takes are highlighted in that same ink, and one colour says the
+/// band and its result are one thing. The fill is that ink at [`BAND_FILL_ALPHA`], so a board under
+/// the band keeps its own colour instead of being painted over.
+///
+/// The pair is a function of the scene's constant, not of the palette, because the selected
+/// furniture is drawn by the renderer, and a band in a themed ink would not match it (ADR 0111).
+pub fn selection_band() -> (Color32, Color32) {
+    let ink = scene::SELECTION_LINE_COLOR;
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let (red, green, blue) = (channel(ink[0]), channel(ink[1]), channel(ink[2]));
+    (Color32::from_rgb(red, green, blue), Color32::from_rgba_unmultiplied(red, green, blue, BAND_FILL_ALPHA))
 }
 
 /// How far [`helper`] is lifted away from the warning amber, in percent.

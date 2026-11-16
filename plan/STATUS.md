@@ -1,21 +1,21 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=803e74a updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=29a3d47 updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
-- M7 — objects and the scene file, after M6. `Container` is the only container kind, every node
+- M7 — objects and the scene file, after M6. `Container` is the only container kind and every node
 carries typed properties, `FurnType` a six-digit tree (0034–0035). `Contour` is a closed ring of
 stable-id segments (0040, schema 13) with the tolerance joint (0072); `Path` is the chain
 `to_contour` turns into a ring, a drawn figure carries a `PathShape` tag (0073), an extrusion owns
 its path (0074) and a primitive its parameters (0054); a figure shows its grips, a corner moves
 freely or along the picked segment (0075), an extrusion takes its height from a wireframe prism
-(X19); S5's frame rule reached a drawing, a group and a panel (0082, 0083); cameras and lights are
-scene objects (0036). ADR 0105 makes the three stances one flat frame turned, X35 stands the fill
-post in it, N11 bevels a panel end by an angle about its outline edge (0107, schema 24); C4 adds a
-circle by diameter and an arc by radius (0130).
+(X19); S5's frame rule reached a drawing, a group and a panel (0082, 0083), and cameras and lights
+are scene objects (0036). ADR 0105 makes the three stances one flat frame turned, X35 stands the
+fill post in it, N11 bevels a panel end about its outline edge (0107, schema 24); C4 adds a circle
+by diameter and an arc by radius (0130).
 - S7 audited the design rules and filed S8–S22 under `plan/refactor.md`: S8–S13 split `geom` (0084),
 S14–S17 `panel_cmds`, the camera, ray and pipelines, S18–S19 the document rules and `Editor` (50),
 S20–S22 the drawing draft and the chrome (2608 -> 2037), U45 the scene (0081); F4 is in questions.
@@ -35,27 +35,28 @@ pole view a canonical up (0057), U59 names the six views, U46 drew every declare
 - U38–U42 and the X-fixes landed the visual pass: `theme.rs` owns two palettes and the type scale
 (0063, 0069), `header.rs` returns a `HeaderAction` (0064), U39 the ribbon (0066), U40 the folded
 side panels and the bottom-centre cluster, U41 *Settings*, `settings.json` and *Home* (0068), U47
-the `Ctrl+K` palette, U42 the one/two/four-view split with an orientation widget, U60 a tree,
-cameras and active view per layout (0079), U61/U62/U51 framing, expand and the floating ribbon
-(0080). U43/U63 gave each view its style (0070), X10 the edges mean the form, U44 a shadow under a
-standing object (0071), X11 closed a ring by an arc (0072), X12 a tool switch replaces the draft,
-X23 every *Close* commits. U65 gave every number one 76 x 22 field, right-aligned with its unit
-outside the string and one undo entry per drag (0092); U88 draws the work cursor in the settings
-size, X41 confines it to the work area, X42 puts that paint under the chrome (0121–0123).
+the `Ctrl+K` palette, U42 the split with an orientation widget, U60 a tree, cameras and active view
+per layout (0079), U61/U62/U51 framing, expand and the floating ribbon (0080); U43/U63 each view's
+style (0070), X10 the edges mean the form, U44 a shadow under a standing object (0071), X11 a ring
+closed by an arc (0072), X12 a tool switch replaces the draft, X23 every *Close* commits; U65 the
+one 76 x 22 field with its unit outside and one undo entry per drag (0092); U88 the work cursor in
+the settings size, X41 the work area, X42 that paint under the chrome (0121–0123).
 - `crates/export` writes the order package — a manifest and twelve flat tables — and `z3l export`
 runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
+- U103 draws a rubber band on empty scene space: the drag direction picks the rule — right or down
+encloses, left or up touches — and the release selects whole objects (0137).
 - ADR 0117 makes one const table the capability inventory every surface filters and the gate checks;
 0118 names the atom and U98 is the first — the ruler measures with two clicks and writes nothing,
-0119 the tool card, U94–U99 file that work.
+0119 the tool card, U104 its one lettered `H` field, U94–U99 file that work.
 - Faber's architecture is recorded (0028–0032) but not implemented. `state-contract` (L0) is the
 whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init` (P4–P7, P9, 0085);
 `xtask` keeps the layering rules and `ci` (P8), the gate follows every `files:` hint, a closed
-entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` keeps the log `/time-review` reads;
+entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` logs what `/time-review` reads;
 `dev` → `main`; X43 puts one plate layout and the plane's reference in place (0132, 0133).
 
 ## Next
 
-Nothing is scheduled: U103 takes the rubber band, on the selection the members now build.
+Nothing is scheduled: 3 open tasks wait in `## Next`.
 
 ## Index
 

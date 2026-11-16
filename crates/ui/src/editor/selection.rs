@@ -8,19 +8,149 @@
 //! the order or takes it out again, and Ctrl removes it and nothing else. The tree row and the
 //! viewport read the same modifiers through that type, so the two surfaces cannot disagree.
 //!
-//! Refuses nothing: an empty click replaces with nothing and `exit_level` with no open level above
-//! the selection does nothing, so a gesture the scene cannot honour leaves the state unchanged.
+//! A drag on empty space draws a [`SelectionBand`] instead of a click. The direction of the drag
+//! decides its rule — a band dragged right or down takes what it encloses, one dragged left or up
+//! takes everything it touches (ADR 0137) — and the release applies that rule to the scene the
+//! viewport last uploaded, through the same container resolution a click uses. The band reads the
+//! projected silhouette of every shape, so what it takes is what the person saw it cover.
+//!
+//! Refuses nothing: an empty click replaces with nothing, a band that covers nothing replaces with
+//! nothing, and `exit_level` with no open level above the selection does nothing, so a gesture the
+//! scene cannot honour leaves the state unchanged.
 //!
 //! Changes when: a gesture selects, adds to the selection, or opens and closes a container.
+//!
+//! [ADR 0137]: ../../../docs/decisions/0137-a-rubber-band-selects-by-the-direction-it-is-dragged.md
 
 use std::collections::HashSet;
 
+use egui::{Pos2, Rect, Shape, Stroke};
 use engine::Session;
+use geom::DVec2;
 use model::{Container, Id, Project};
+use scene::{Camera, NdcRect, SceneFrame};
 
 use super::Editor;
 use crate::scene_tree::Pick;
 use crate::target::{child_containing, resolve_viewport_pick};
+use crate::theme;
+
+/// A rubber band: the two corners a selection drag spans, in screen points.
+///
+/// It is view state, not document state: it exists while the pointer is down and is gone by the
+/// frame after the release (ADR 0029). The press corner is kept, not only the rectangle, because a
+/// window and a crossing band cover the same rectangle and differ only in which way it was drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectionBand {
+    /// Where the press landed, in screen points.
+    pub from: Pos2,
+    /// Where the pointer is now, in screen points.
+    pub to: Pos2,
+}
+
+impl SelectionBand {
+    /// The band between two corners.
+    pub const fn new(from: Pos2, to: Pos2) -> Self {
+        Self { from, to }
+    }
+
+    /// The same band ending at `to`.
+    pub const fn with_to(self, to: Pos2) -> Self {
+        Self { to, ..self }
+    }
+
+    /// The rectangle the two corners span, whichever way round the drag went.
+    pub fn rect(self) -> Rect {
+        Rect::from_two_pos(self.from, self.to)
+    }
+
+    /// The rule the release applies, decided by the direction of the drag alone.
+    ///
+    /// The dominant axis is the one the drag mostly travelled, and along it the forward way is
+    /// rightward or downward: that band encloses what it covers and draws a solid outline, the other
+    /// way draws dashed and takes what it touches. A diagonal is read along its own dominant axis, so
+    /// the answer never depends on which component happened to be a hair larger than a tie.
+    pub fn rule(self) -> BandRule {
+        let delta = self.to - self.from;
+        let forward = if delta.x.abs() >= delta.y.abs() { delta.x >= 0.0 } else { delta.y >= 0.0 };
+        if forward { BandRule::Window } else { BandRule::Crossing }
+    }
+
+    /// Paints the band over the viewport image, clipped to the view it was drawn in.
+    ///
+    /// It is chrome paint on the scene layer, so the work cursor is drawn over it and every panel,
+    /// card and menu masks it (ADR 0123). A window draws a solid outline and a crossing band a
+    /// dashed one, both in the selection ink, so which rule the release will apply is visible before
+    /// it acts.
+    pub fn paint(self, ui: &egui::Ui, viewport: Rect) {
+        let rect = self.rect().intersect(viewport);
+        if !rect.is_positive() {
+            return;
+        }
+        let (ink, fill) = theme::selection_band();
+        let painter = ui.painter().with_clip_rect(viewport);
+        painter.rect_filled(rect, 0.0, fill);
+        let outline = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
+        let stroke = Stroke::new(theme::BAND_STROKE, ink);
+        match self.rule() {
+            BandRule::Window => {
+                painter.add(Shape::line(outline.to_vec(), stroke));
+            }
+            BandRule::Crossing => {
+                painter.extend(Shape::dashed_line(&outline, stroke, theme::BAND_DASH, theme::BAND_GAP));
+            }
+        }
+    }
+}
+
+/// What a band's release takes (ADR 0137).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BandRule {
+    /// Everything the band encloses: a drag to the right or downward.
+    Window,
+    /// Everything the band touches: a drag to the left or upward.
+    Crossing,
+}
+
+/// One view of the frame: the camera it is drawn through and the rectangle it occupies.
+///
+/// The band tests the frame the viewport last uploaded, so it covers the shapes the person saw and
+/// not the document as it stands a frame later (ADR 0053).
+#[derive(Clone, Copy)]
+pub struct BandView<'a> {
+    /// The uploaded scene.
+    pub scene: &'a SceneFrame,
+    /// The view's camera.
+    pub camera: Camera,
+    /// The view's rectangle, in screen points.
+    pub viewport: Rect,
+}
+
+impl BandView<'_> {
+    /// The band as the scene measures it: normalized device coordinates of this view.
+    fn ndc(self, band: SelectionBand) -> NdcRect {
+        let corner = |point: Pos2| {
+            let ndc = |along: f32, extent: f32, flip: bool| {
+                let extent = f64::from(extent);
+                if extent <= 0.0 {
+                    return 0.0;
+                }
+                let fraction = f64::from(along) / extent;
+                if flip { 1.0 - 2.0 * fraction } else { 2.0 * fraction - 1.0 }
+            };
+            DVec2::new(
+                ndc(point.x - self.viewport.left(), self.viewport.width(), false),
+                ndc(point.y - self.viewport.top(), self.viewport.height(), true),
+            )
+        };
+        NdcRect::from_corners(corner(band.from), corner(band.to))
+    }
+
+    /// The view's width over its height, the aspect the camera projects with.
+    fn aspect(self) -> f64 {
+        f64::from(self.viewport.width()) / f64::from(self.viewport.height())
+    }
+}
 
 impl Editor {
     /// The primary selected node, if any.
@@ -82,6 +212,77 @@ impl Editor {
             None if pick == Pick::Replace => self.selection.clear(),
             None => {}
         }
+    }
+
+    /// Selects every object the band covers, honouring the rule its direction chose.
+    ///
+    /// The frame is the uploaded scene, so the band reads the geometry the person saw, and each
+    /// shape it covers is resolved through the open levels exactly as a click would be: a closed
+    /// cabinet is one object, and an open product exposes its parts. A closed container is covered
+    /// when every shape it draws is, which is what "the band encloses this cabinet" means; a
+    /// crossing band takes it when any shape it draws reaches the band (ADR 0022, ADR 0137).
+    ///
+    /// A plain band replaces the selection — a band over nothing clears it, like a click on empty
+    /// space — Shift adds every member it takes, and Ctrl removes them. A band never toggles a
+    /// member the way a Shift-click does: a release is one gesture over a set, not one node.
+    pub fn select_band(&mut self, session: &Session, view: BandView<'_>, band: SelectionBand, pick: Pick) {
+        self.initialized = true;
+        if !view.viewport.is_positive() {
+            return;
+        }
+        let project = session.project();
+        let open_product = session.active_product();
+        let rule = band.rule();
+        // One entry per object: whether every shape it draws was enclosed, and whether any reached
+        // the band. The order is the frame's, so the same band always builds the same selection.
+        let mut objects: Vec<(Id, bool, bool)> = Vec::new();
+        for (shape, coverage) in view.scene.band_hits(view.camera, view.aspect(), view.ndc(band)) {
+            let Some(node) = resolve_viewport_pick(project, &self.open, open_product, shape) else {
+                continue;
+            };
+            let index = match objects.iter().position(|(id, ..)| *id == node) {
+                Some(index) => index,
+                None => {
+                    objects.push((node, true, false));
+                    objects.len() - 1
+                }
+            };
+            let Some(entry) = objects.get_mut(index) else {
+                continue;
+            };
+            match coverage {
+                scene::BandCoverage::Inside => entry.2 = true,
+                scene::BandCoverage::Touched => {
+                    entry.1 = false;
+                    entry.2 = true;
+                }
+                // A shape the band does not reach is not enclosed either, which is what keeps a
+                // window around one board of a closed cabinet from taking the whole cabinet.
+                scene::BandCoverage::Missed => entry.1 = false,
+            }
+        }
+        let taken: Vec<Id> = objects
+            .into_iter()
+            .filter(|(_, enclosed, reached)| match rule {
+                BandRule::Window => *enclosed,
+                BandRule::Crossing => *reached,
+            })
+            .map(|(id, ..)| id)
+            .collect();
+        let selection = match pick {
+            Pick::Replace => taken,
+            Pick::Add => {
+                let mut selection = self.selection.ids().to_vec();
+                for id in taken {
+                    if !selection.contains(&id) {
+                        selection.push(id);
+                    }
+                }
+                selection
+            }
+            Pick::Remove => self.selection.ids().iter().copied().filter(|id| !taken.contains(id)).collect(),
+        };
+        self.selection.replace_all(selection);
     }
 
     /// Selects a node the shell already resolved, with the modifier its click carried.

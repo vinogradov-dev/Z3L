@@ -33,6 +33,12 @@ the value to the pointer.
 **No dialog.** A parameter the person may change while the model is visible is never a modal window,
 and a tool with one primary action does not grow a second one in its card.
 
+**The card is a number, not a dialog.** A tool whose value the hand is already committing in the scene
+draws that value alone: a symbol in front of the number (`H`), no unit repeating what the symbol says
+and no button pair, because the gesture's own Enter and Escape are the commit and the cancel. The
+sketch plate's rule — a symbol names the quantity, so the plate carries no unit — reaches the card
+here, and the field is the only control that takes the keyboard (U104).
+
 ## Consequences
 
 - A new tool declares its parameters once and gets both surfaces; a tool that shows nothing at the
@@ -43,6 +49,9 @@ and a tool with one primary action does not grow a second one in its card.
   in the card and the inspector.
 - The exact-distance fields become the first instance of the card's anatomy rather than a private
   overlay, so `distance.rs` and the card share one layout and one commit path.
+- A card asks for the keyboard on the two frames its area settles: `egui` builds a widget after it is
+  asked for the focus, so the request of the frame a new card appears is lost, and asking longer
+  would hold the keys against the person's next click.
 
 ## Related
 
