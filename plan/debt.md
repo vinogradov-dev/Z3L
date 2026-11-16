@@ -276,5 +276,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   14 / 44 / 124 ms cold, 0.9 / 5.2 / 24 ms per edit, 0.2 / 0.8 / 2.2 ms per pick, so the per-node
   overhead of the frame walk is about 5 µs and the rest is per vertex. The two cheapest fixes: cache
   each mesh's local AABB and transform eight corners once (or keep the world box keyed by placement),
-  and give each cached mesh a flat index buffer instead of one `Vec` per face. An incremental frame and
-  a picking BVH are the larger steps already named above.
+  and let the mesher write one flat index list while it builds instead of filling `model::Mesh`'s
+  `Vec<Vec<u32>>` and flattening it afterwards. An incremental frame and a picking BVH are the larger
+  steps, now filed as X56–X59.

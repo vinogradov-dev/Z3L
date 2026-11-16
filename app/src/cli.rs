@@ -1,8 +1,10 @@
-//! The command line: `z3l export` writes an order package without opening a window (K3).
+//! The command line: `z3l export` writes an order package without a window, `z3l <scene>` opens one.
 //!
 //! A package is useless if producing it needs a window and a person, so the subcommand is read and
 //! performed in [`main`](crate::main) before eframe creates a surface: a headless job over saved
-//! files gets the same writer the editor will use, with no GPU, no UI and no second binary.
+//! files gets the same writer the editor will use, with no GPU, no UI and no second binary. A scene
+//! named on the line is the editor's own Open, so a double click in a file manager and a script that
+//! hands the program a saved file need no click through Home.
 //!
 //! The parsing, the export and the error are one value each, so the test drives the whole job and
 //! no window is ever constructed: [`parse`] turns the argument list into one [`Command`], [`export`]
@@ -28,6 +30,7 @@ pub const EXIT_USAGE: i32 = 2;
 /// The help text, printed by `z3l --help` and `z3l export --help`.
 pub const USAGE: &str = "\
 usage: z3l                 open the editor
+       z3l <scene.z3l>     open the editor on that scene
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
 
@@ -43,6 +46,11 @@ export writes an order package from a saved scene without opening a window:
 pub enum Command {
     /// Arguments name no command: open the editor, which is what a double click does.
     Window,
+    /// Open the editor on a scene: the same tab the File menu's *Open* makes.
+    ///
+    /// Whether the file exists is the opener's business, so a mistyped name reaches the status bar
+    /// as a sentence instead of ending the process with a usage code.
+    Scene(PathBuf),
     /// Print this text and exit.
     Help(&'static str),
     /// Write an order package and exit.
@@ -87,7 +95,7 @@ impl Format {
 pub enum CliError {
     /// The argument list names no command or misses a value.
     Usage(String),
-    /// The scene file cannot be read or parsed.
+    /// The scene file a headless command read cannot be parsed.
     Scene(SceneFileError),
     /// The default catalogue a new session starts from cannot be built.
     Catalog(String),
@@ -118,8 +126,28 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         Some("-h" | "--help" | "help") => Ok(Command::Help(USAGE)),
         Some("export") => export_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
+        // One scene path opens the editor on it; the extension is the claim, because a path that
+        // does not read yet is the opener's error and not a command-line one.
+        Some(other) if is_scene_path(other) => scene_path(args),
         Some(other) => Err(CliError::Usage(format!("`{other}` is not a command; run `z3l --help`"))),
     }
+}
+
+/// Whether a word names a scene file.
+fn is_scene_path(word: &str) -> bool {
+    std::path::Path::new(word).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("z3l"))
+}
+
+/// Reads the whole line of a window run: exactly one scene path and nothing else.
+fn scene_path(args: &[String]) -> Result<Command, CliError> {
+    let mut words = args.iter();
+    let Some(scene) = words.next().map(PathBuf::from) else {
+        return Err(CliError::Usage("the window opens one scene".to_owned()));
+    };
+    if let Some(extra) = words.next() {
+        return Err(CliError::Usage(format!("the window opens one scene, so `{extra}` has no place")));
+    }
+    Ok(Command::Scene(scene))
 }
 
 /// Reads the words after `export`.
@@ -202,6 +230,7 @@ pub fn export(args: &ExportArgs) -> Result<Vec<String>, CliError> {
 pub fn run(command: &Command) -> Option<i32> {
     match command {
         Command::Window => None,
+        Command::Scene(_) => None,
         Command::Help(text) => Some(print_stdout(text)),
         Command::Export(args) => Some(match export(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
@@ -391,6 +420,29 @@ mod tests {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
         }
         assert_eq!(run(&Command::Window), None, "only the window command asks the caller to open one");
+    }
+
+    #[test]
+    fn one_scene_path_asks_for_the_window_on_that_scene() {
+        // A double click in a file manager and a script hand the window one saved file: the
+        // extension is the claim, so a path that does not exist yet still reaches the opener, which
+        // is the surface that can say why it did not open.
+        let scene = PathBuf::from("/tmp/cabinet.z3l");
+        assert_eq!(parse(&words(&[&scene.display().to_string()])).expect("one path opens it"), Command::Scene(scene));
+        assert_eq!(
+            parse(&words(&["/tmp/absent.z3l"])).expect("a missing scene is the opener's error"),
+            Command::Scene(PathBuf::from("/tmp/absent.z3l"))
+        );
+        assert_eq!(
+            parse(&words(&["CABINET.Z3L"])).expect("the extension is not case sensitive"),
+            Command::Scene(PathBuf::from("CABINET.Z3L"))
+        );
+        assert_eq!(run(&parse(&words(&["/tmp/cabinet.z3l"])).expect("one path")), None, "the window opens it");
+
+        let error = parse(&words(&["a.z3l", "b.z3l"])).expect_err("the window holds one scene");
+        assert!(error.to_string().contains("b.z3l"), "the extra word is named: {error}");
+        let error = parse(&words(&["cabinet.obj"])).expect_err("another format is not a command");
+        assert!(error.to_string().contains("--help"), "{error}");
     }
 
     fn read_text(path: &Path) -> String {
