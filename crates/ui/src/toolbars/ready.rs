@@ -6,7 +6,7 @@
 //! explains itself. It also holds the one rule the button and the draft agree on: when a running
 //! chain can be closed.
 
-use model::{FillMode, Id, PrimitiveKind};
+use model::{FillMode, Id};
 use text::{Lang, Message};
 
 use super::spec::{ToolKind, ToolSpec};
@@ -43,6 +43,15 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(strip_label(draw).text(lang), shortcut_label(draw)),
             action: Some(ToolAction::Draw { tool: draw, sides: state.polygon_sides() }),
         },
+        // A body cell draws the base with the sketch's own method and the shell pulls its height
+        // afterwards, so the hint names the figure to draw rather than a click that would place it
+        // (ADR 0138).
+        ToolKind::Body(draw) => Ready {
+            enabled: true,
+            armed: is_armed(active, kind),
+            hint: Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
+            action: Some(ToolAction::DrawBody { tool: draw }),
+        },
         ToolKind::CloseDraft => {
             // Close needs a running draft that can close, cancel needs any running draft; both are
             // drawn so the pair never vanishes between clicks and the hint says why one is off.
@@ -64,19 +73,15 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             );
             Ready { enabled: running, armed: false, hint, action: running.then_some(ToolAction::CancelDrawing) }
         }
-        ToolKind::Primitive(primitive) => {
-            let armed = is_armed(active, ToolKind::Primitive(primitive));
-            // A box is drawn: its base is a rectangle on the plane and its height a pull, so the
-            // hint names the first step rather than a click that would place it (ADR 0101).
-            let hint = match primitive {
-                PrimitiveKind::Cuboid => Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
-                PrimitiveKind::Cylinder | PrimitiveKind::Sphere => {
-                    Message::PrimitiveClickPlane.with(lang, [tool.label.text(lang)])
-                }
-            };
-            let action = ToolAction::CreatePrimitive { kind: primitive, size: state.primitive_size() };
-            Ready { enabled: true, armed, hint, action: Some(action) }
-        }
+        // A primitive cell draws the round the shape is built around, exactly as a body cell draws
+        // its profile: the sphere's centre and radius reach the document from the plates, not from a
+        // typed size and a bare click (ADR 0139).
+        ToolKind::Primitive { kind: primitive, tool: draw } => Ready {
+            enabled: true,
+            armed: is_armed(active, kind),
+            hint: Message::PrimitiveDrawRound.with(lang, [tool.label.text(lang)]),
+            action: Some(ToolAction::DrawPrimitive { kind: primitive, tool: draw }),
+        },
         ToolKind::Extrude => {
             // Only a closed path encloses a ring, so the button is off for anything else and the
             // hint names what is missing: a selection, a path, or a closed chain. The height is a

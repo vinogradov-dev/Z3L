@@ -1,13 +1,16 @@
 //! Parametric primitives: the shape parameters a mesh is derived from.
 //!
-//! A primitive stores what the user can still change — a width, a depth, a height, a radius, the
-//! number of sides and latitude bands — and never the mesh. The mesh is derived for the viewport and
-//! for `object.collapse`, so raising a radius rebuilds one object rather than rewriting its vertices
-//! ([ADR 0054]). A box keeps six faces at three independent sides; the face count is a parameter of
-//! the curved primitives ([ADR 0101]).
+//! A primitive stores what the user can still change — a radius, the number of sides and latitude
+//! bands — and never the mesh. The mesh is derived for the viewport and for `object.collapse`, so
+//! raising a radius rebuilds one object rather than rewriting its vertices ([ADR 0054]). A box or a
+//! cylinder is not a primitive: it is a drawn profile swept on Z, stored as a constructive body
+//! ([ADR 0138]). The sphere stays a parameter set, but it is *placed* by drawing the circle it is
+//! built around: the drawn centre becomes its origin and the drawn radius its stored number
+//! ([ADR 0139]).
 //!
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
-//! [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
+//! [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
+//! [ADR 0139]: ../docs/decisions/0139-a-sphere-is-drawn-around-its-centre.md
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -41,13 +44,14 @@ pub const MIN_BANDS: u32 = 2;
 pub const MAX_BANDS: u32 = 128;
 
 /// The primitive shapes the editor can build.
+///
+/// A box and a cylinder are constructive bodies a maker draws ([ADR 0138]); the sphere is the shape
+/// whose numbers still build it, and the cone joins it when it is modelled.
+///
+/// [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrimitiveKind {
-    /// A box with three independent sides, anchored at its base minimum corner.
-    Cuboid,
-    /// An upright cylinder centred on the object's local origin.
-    Cylinder,
     /// A sphere centred on the object's local origin.
     Sphere,
 }
@@ -56,8 +60,6 @@ impl PrimitiveKind {
     /// The shape name shown to the user.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Cuboid => "Box",
-            Self::Cylinder => "Cylinder",
             Self::Sphere => "Sphere",
         }
     }
@@ -65,8 +67,6 @@ impl PrimitiveKind {
     /// The lower-case shape name used in the scene tree.
     pub const fn shape_name(self) -> &'static str {
         match self {
-            Self::Cuboid => "box",
-            Self::Cylinder => "cylinder",
             Self::Sphere => "sphere",
         }
     }
@@ -131,117 +131,6 @@ fn validate_bands(bands: u32) -> Result<(), PrimitiveError> {
     Ok(())
 }
 
-/// Serialized form of [`Cuboid`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CuboidWire {
-    width: Length,
-    depth: Length,
-    height: Length,
-}
-
-/// A box with three independent sides, anchored at its base minimum corner.
-///
-/// The local zero is the corner of the base rectangle, so the box occupies
-/// `[0..width] × [0..depth] × [0..height]` in its own frame — the same anchor a panel has and the
-/// space a product frame reserves (ADR 0083, ADR 0101).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "CuboidWire")]
-pub struct Cuboid {
-    width: Length,
-    depth: Length,
-    height: Length,
-}
-
-impl Cuboid {
-    /// Validates the three sides and stores them.
-    pub fn new(width: Length, depth: Length, height: Length) -> Result<Self, PrimitiveError> {
-        validate_length(width)?;
-        validate_length(depth)?;
-        validate_length(height)?;
-        Ok(Self { width, depth, height })
-    }
-
-    /// The side along local X.
-    pub const fn width(&self) -> Length {
-        self.width
-    }
-
-    /// The side along local Y.
-    pub const fn depth(&self) -> Length {
-        self.depth
-    }
-
-    /// The side along local Z.
-    pub const fn height(&self) -> Length {
-        self.height
-    }
-
-    /// The three sides as primitives build them.
-    pub const fn sides(&self) -> [Length; 3] {
-        [self.width, self.depth, self.height]
-    }
-}
-
-impl TryFrom<CuboidWire> for Cuboid {
-    type Error = PrimitiveError;
-
-    fn try_from(wire: CuboidWire) -> Result<Self, Self::Error> {
-        Self::new(wire.width, wire.depth, wire.height)
-    }
-}
-
-/// Serialized form of [`Cylinder`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CylinderWire {
-    radius: Length,
-    height: Length,
-    segments: u32,
-}
-
-/// An upright cylinder centred on the local origin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "CylinderWire")]
-pub struct Cylinder {
-    radius: Length,
-    height: Length,
-    segments: u32,
-}
-
-impl Cylinder {
-    /// Validates the dimensions and the side count, then stores them.
-    pub fn new(radius: Length, height: Length, segments: u32) -> Result<Self, PrimitiveError> {
-        validate_length(radius)?;
-        validate_length(height)?;
-        validate_segments(segments)?;
-        Ok(Self { radius, height, segments })
-    }
-
-    /// The radius in the local XY plane.
-    pub const fn radius(&self) -> Length {
-        self.radius
-    }
-
-    /// The full height along local Z.
-    pub const fn height(&self) -> Length {
-        self.height
-    }
-
-    /// Sides around the tube.
-    pub const fn segments(&self) -> u32 {
-        self.segments
-    }
-}
-
-impl TryFrom<CylinderWire> for Cylinder {
-    type Error = PrimitiveError;
-
-    fn try_from(wire: CylinderWire) -> Result<Self, Self::Error> {
-        Self::new(wire.radius, wire.height, wire.segments)
-    }
-}
-
 /// Serialized form of [`Sphere`]; validation happens in its `TryFrom` implementation.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -300,25 +189,11 @@ impl TryFrom<SphereWire> for Sphere {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Primitive {
-    /// A box with three independent sides.
-    Cuboid(Cuboid),
-    /// An upright cylinder.
-    Cylinder(Cylinder),
     /// A sphere built from latitude bands.
     Sphere(Sphere),
 }
 
 impl Primitive {
-    /// A box with the given width, depth and height, anchored at its base minimum corner.
-    pub fn cuboid(width: Length, depth: Length, height: Length) -> Result<Self, PrimitiveError> {
-        Ok(Self::Cuboid(Cuboid::new(width, depth, height)?))
-    }
-
-    /// A cylinder with the given radius, height and side count.
-    pub fn cylinder(radius: Length, height: Length, segments: u32) -> Result<Self, PrimitiveError> {
-        Ok(Self::Cylinder(Cylinder::new(radius, height, segments)?))
-    }
-
     /// A sphere with the given radius, side count and latitude bands.
     pub fn sphere(radius: Length, segments: u32, bands: u32) -> Result<Self, PrimitiveError> {
         Ok(Self::Sphere(Sphere::new(radius, segments, bands)?))
@@ -326,17 +201,13 @@ impl Primitive {
 
     /// Builds the default primitive of one kind from the creation size.
     ///
-    /// The size is the full extent: the side of a cubic box, or the diameter of a cylinder or
-    /// sphere. Cylinder height equals the size, and both curved shapes use the default
-    /// tessellation. A box drawn with a base rectangle and a height is built by its own
-    /// constructor, because one extent cannot name three sides; this one is the equal-sided box the
-    /// size still describes.
+    /// The size is the full extent, which for the sphere is its diameter; the sphere uses the
+    /// default tessellation. A drawn sphere bypasses this constructor: its radius is the circle the
+    /// maker drew, so [`Primitive::sphere`] takes the number directly (ADR 0139).
     pub fn from_kind(kind: PrimitiveKind, size: Length) -> Result<Self, PrimitiveError> {
         validate_length(size)?;
         let radius = Length::from_micrometres(size.micrometres() / 2);
         match kind {
-            PrimitiveKind::Cuboid => Self::cuboid(size, size, size),
-            PrimitiveKind::Cylinder => Self::cylinder(radius, size, DEFAULT_SEGMENTS),
             PrimitiveKind::Sphere => Self::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
         }
     }
@@ -344,8 +215,6 @@ impl Primitive {
     /// Which shape this primitive is.
     pub const fn kind(&self) -> PrimitiveKind {
         match self {
-            Self::Cuboid(_) => PrimitiveKind::Cuboid,
-            Self::Cylinder(_) => PrimitiveKind::Cylinder,
             Self::Sphere(_) => PrimitiveKind::Sphere,
         }
     }
@@ -358,12 +227,9 @@ impl Primitive {
     /// The number of polygon faces the derived mesh has.
     ///
     /// It is computed from the parameters, so the card can show a face count without building the
-    /// mesh: a box has six, a cylinder one quad per side plus two caps, and a sphere one face per
-    /// side and band.
+    /// mesh: a sphere has one face per side and band.
     pub const fn face_count(&self) -> usize {
         match self {
-            Self::Cuboid(_) => 6,
-            Self::Cylinder(cylinder) => cylinder.segments as usize + 2,
             Self::Sphere(sphere) => sphere.segments as usize * sphere.bands as usize,
         }
     }
@@ -371,8 +237,6 @@ impl Primitive {
     /// The number of vertices the derived mesh has.
     pub const fn vertex_count(&self) -> usize {
         match self {
-            Self::Cuboid(_) => 8,
-            Self::Cylinder(cylinder) => cylinder.segments as usize * 2,
             Self::Sphere(sphere) => 2 + sphere.segments as usize * (sphere.bands as usize - 1),
         }
     }
@@ -384,18 +248,10 @@ impl Primitive {
 
     /// The local bounding box of the derived mesh, in micrometres.
     ///
-    /// It is analytic, so the tree and the pivot do not need the evaluated mesh. A box starts at the
-    /// local zero and a curved shape is centred on it.
+    /// It is analytic, so the tree and the pivot do not need the evaluated mesh. A sphere is centred
+    /// on the local zero.
     pub const fn bounds_micrometres(&self) -> ([i64; 3], [i64; 3]) {
         match self {
-            Self::Cuboid(cuboid) => {
-                ([0; 3], [cuboid.width.micrometres(), cuboid.depth.micrometres(), cuboid.height.micrometres()])
-            }
-            Self::Cylinder(cylinder) => {
-                let radius = cylinder.radius.micrometres();
-                let half = cylinder.height.micrometres() / 2;
-                ([-radius, -radius, -half], [radius, radius, half])
-            }
             Self::Sphere(sphere) => {
                 let radius = sphere.radius.micrometres();
                 ([-radius; 3], [radius; 3])
@@ -411,50 +267,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_creation_size_builds_the_default_shape() {
+    fn the_creation_size_builds_the_default_sphere() {
         let size = millimetres(100);
-        let cuboid = Primitive::from_kind(PrimitiveKind::Cuboid, size).expect("box");
-        assert_eq!(cuboid, Primitive::cuboid(size, size, size).expect("box"));
-
-        let cylinder = Primitive::from_kind(PrimitiveKind::Cylinder, size).expect("cylinder");
-        let Primitive::Cylinder(cylinder) = cylinder else { panic!("a cylinder") };
-        assert_eq!(cylinder.radius(), millimetres(50), "the diameter is the creation size");
-        assert_eq!(cylinder.height(), size);
-        assert_eq!(cylinder.segments(), DEFAULT_SEGMENTS);
-
-        let sphere = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere");
-        let Primitive::Sphere(sphere) = sphere else { panic!("a sphere") };
-        assert_eq!(sphere.radius(), millimetres(50));
+        let Primitive::Sphere(sphere) = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere");
+        assert_eq!(sphere.radius(), millimetres(50), "the diameter is the creation size");
         assert_eq!(sphere.segments(), DEFAULT_SEGMENTS);
         assert_eq!(sphere.bands(), DEFAULT_BANDS);
     }
 
     #[test]
-    fn a_box_keeps_three_independent_sides_from_its_base_corner() {
-        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
-        let Primitive::Cuboid(box_) = &cuboid else { panic!("a box") };
-        assert_eq!(box_.sides(), [millimetres(600), millimetres(400), millimetres(720)]);
-        assert_eq!(cuboid.mesh_counts(), (8, 6), "a box keeps eight corners and six faces");
-        assert_eq!(
-            cuboid.bounds_micrometres(),
-            ([0; 3], [600_000, 400_000, 720_000]),
-            "the local zero is the corner of the base rectangle"
-        );
-    }
-
-    #[test]
     fn counts_and_bounds_follow_the_parameters() {
-        let cuboid = Primitive::cuboid(millimetres(100), millimetres(100), millimetres(100)).expect("box");
-        assert_eq!(cuboid.mesh_counts(), (8, 6));
-        assert_eq!(cuboid.bounds_micrometres(), ([0; 3], [100_000; 3]));
-
-        let cylinder = Primitive::cylinder(millimetres(20), millimetres(100), 12).expect("cylinder");
-        assert_eq!(cylinder.mesh_counts(), (24, 14));
-        assert_eq!(cylinder.bounds_micrometres(), ([-20_000, -20_000, -50_000], [20_000, 20_000, 50_000]));
-
         let sphere = Primitive::sphere(millimetres(30), 8, 4).expect("sphere");
         assert_eq!(sphere.mesh_counts(), (2 + 8 * 3, 8 * 4));
         assert_eq!(sphere.bounds_micrometres(), ([-30_000; 3], [30_000; 3]));
+        assert_eq!(sphere.kind(), PrimitiveKind::Sphere);
+        assert_eq!(sphere.shape_name(), "sphere");
     }
 
     #[test]
@@ -464,19 +291,13 @@ mod tests {
             Length::from_micrometres(1),
             MAX_PRIMITIVE_SIZE.checked_add(Length::from_micrometres(1)).expect("sum"),
         ] {
-            let error = Primitive::cuboid(value, millimetres(100), millimetres(100)).expect_err("a bad width");
-            assert!(matches!(error, PrimitiveError::InvalidLength { .. }), "error was {error:?}");
-            let error = Primitive::cuboid(millimetres(100), millimetres(100), value).expect_err("a bad height");
+            let error = Primitive::sphere(value, DEFAULT_SEGMENTS, DEFAULT_BANDS).expect_err("a bad radius");
             assert!(matches!(error, PrimitiveError::InvalidLength { .. }), "error was {error:?}");
         }
     }
 
     #[test]
     fn a_bad_tessellation_is_rejected() {
-        assert_eq!(
-            Primitive::cylinder(millimetres(10), millimetres(10), 2),
-            Err(PrimitiveError::SegmentCount { count: 2, min: MIN_SEGMENTS, max: MAX_SEGMENTS })
-        );
         assert_eq!(
             Primitive::sphere(millimetres(10), MAX_SEGMENTS + 1, DEFAULT_BANDS),
             Err(PrimitiveError::SegmentCount { count: MAX_SEGMENTS + 1, min: MIN_SEGMENTS, max: MAX_SEGMENTS })
@@ -495,20 +316,18 @@ mod tests {
         assert!(!text.contains("\"kind\""), "the geometry tag is not repeated: {text}");
         let decoded: Primitive = serde_json::from_str(&text).expect("deserialize");
         assert_eq!(decoded, sphere);
-
-        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box");
-        let text = serde_json::to_string(&cuboid).expect("serialize");
-        assert!(text.contains("\"shape\":\"cuboid\""), "a box is tagged cuboid: {text}");
-        let decoded: Primitive = serde_json::from_str(&text).expect("deserialize");
-        assert_eq!(decoded, cuboid);
     }
 
     #[test]
-    fn a_box_with_a_missing_side_is_not_a_shape() {
-        let text = r#"{"shape":"cuboid","width":600000,"depth":400000}"#;
-        assert!(serde_json::from_str::<Primitive>(text).is_err(), "three sides are required");
-        let text = r#"{"shape":"cube","edge":100000}"#;
-        assert!(serde_json::from_str::<Primitive>(text).is_err(), "the cube shape is gone with schema 22");
+    fn a_retired_box_or_cylinder_shape_is_not_a_primitive() {
+        // A box and a cylinder are drawn profiles now (ADR 0138), so schema 25 refuses the shapes
+        // the retired parameters used to build instead of converting them silently (ADR 0096).
+        let box_text = r#"{"shape":"cuboid","width":600000,"depth":400000,"height":720000}"#;
+        assert!(serde_json::from_str::<Primitive>(box_text).is_err(), "there is no cuboid primitive");
+        let cylinder_text = r#"{"shape":"cylinder","radius":50000,"height":100000,"segments":32}"#;
+        assert!(serde_json::from_str::<Primitive>(cylinder_text).is_err(), "there is no cylinder primitive");
+        let cube_text = r#"{"shape":"cube","edge":100000}"#;
+        assert!(serde_json::from_str::<Primitive>(cube_text).is_err(), "the cube shape is gone with schema 22");
     }
 
     #[test]

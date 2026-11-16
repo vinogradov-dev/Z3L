@@ -340,7 +340,7 @@ mod tests {
     }
 
     fn view() -> ToolView {
-        ToolView::height(Message::BoxHeight, 120.0, 1.0..=10_000.0, 3)
+        ToolView::height(Message::FrameHeight, 120.0, 1.0..=10_000.0, 3)
     }
 
     /// Draws one card frame at `pointer` and returns what it asked for and the rectangle it took.
@@ -402,7 +402,7 @@ mod tests {
         let (outcome, rect, texts) = run(Vec::new(), Pos2::new(200.0, 200.0), 1.0);
         assert_eq!(outcome, ToolOutcome::default(), "drawing the card applies nothing");
         assert!(rect.width() > 0.0, "the card took a rectangle");
-        assert!(texts.iter().any(|text| text == "Box height"), "the tool's name is on the card: {texts:?}");
+        assert!(texts.iter().any(|text| text == "Frame height"), "the tool's name is on the card: {texts:?}");
         assert!(texts.iter().any(|text| text == "120"), "the number is in the field: {texts:?}");
         assert!(texts.iter().any(|text| text == "mm"), "the unit is outside the box: {texts:?}");
     }

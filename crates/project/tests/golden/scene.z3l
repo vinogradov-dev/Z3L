@@ -2,7 +2,7 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 24,
+    "schema_version": 25,
     "revision": 4,
     "next_id": 11,
     "root": {

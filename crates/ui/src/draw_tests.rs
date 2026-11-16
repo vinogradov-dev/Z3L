@@ -715,6 +715,9 @@ fn every_tool_states_its_point_count_and_name() {
         (DrawTool::PolygonApothem, Some(2), false, false, "Polygon"),
         (DrawTool::PolygonByEdge, Some(2), false, false, "Polygon"),
         (DrawTool::RectangleTilted, Some(3), false, false, "Rectangle"),
+        (DrawTool::Sphere, Some(2), false, false, "Sphere"),
+        (DrawTool::SphereDiameter, Some(2), false, false, "Sphere"),
+        (DrawTool::SphereThreePoints, Some(3), false, false, "Sphere"),
     ];
     for (tool, need, closes, open_ended, label) in cases {
         assert_eq!(tool.points(), need, "{}", tool.label().text(Lang::En));
@@ -808,4 +811,43 @@ fn a_drawing_draft_shows_its_reason_to_a_user() {
     assert!(!DrawDraftError::DuplicatePoint.to_string().is_empty());
     assert!(!DrawDraftError::PointOutOfRange.to_string().is_empty());
     assert!(!DrawDraftError::AlreadyClosed.to_string().is_empty());
+}
+
+#[test]
+fn every_sphere_method_builds_one_round_from_its_own_clicks() {
+    // A sphere is the circle it is built around (ADR 0139), so each method must produce the same
+    // centre and radius from the clicks its own grammar takes: the centre and a rim point, the same
+    // pair typed as a diameter, and the circumcircle of three points.
+    let centre = [millimetres(100), millimetres(50)];
+    let rim = [millimetres(140), millimetres(50)];
+    for tool in [DrawTool::Sphere, DrawTool::SphereDiameter] {
+        let mut draft = DrawDraft::new(tool);
+        assert!(!draft.is_finished(), "{tool:?}: one click is only the centre");
+        draft.push(centre).expect("the centre");
+        assert!(draft.preview(rim).expect("a preview").is_some(), "{tool:?}: the round previews");
+        draft.push(rim).expect("the rim");
+        assert!(draft.is_finished(), "{tool:?}: the second click finishes the figure");
+        let path = draft.to_path().expect("the round the sphere is built around");
+        assert!(path.is_closed(), "{tool:?}: the figure closes itself");
+        assert_eq!(
+            path.circle_center_radius(),
+            Some((centre, millimetres(40))),
+            "{tool:?}: the centre and the rim's distance"
+        );
+    }
+
+    // Three points on one rim: (0, 0), (100, 0) and (50, 50) lie on the circle about (50, 0) with a
+    // radius of 50, so the sphere through them has that radius (a known set, not a measured one).
+    let mut through = DrawDraft::new(DrawTool::SphereThreePoints);
+    for point in
+        [[millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)], [millimetres(50), millimetres(50)]]
+    {
+        through.push(point).expect("a rim point");
+    }
+    assert!(through.is_finished(), "the third point finishes the figure");
+    assert_eq!(
+        through.to_path().expect("the circumcircle").circle_center_radius(),
+        Some(([millimetres(50), millimetres(0)], millimetres(50))),
+        "the radius is the circumradius of the three points"
+    );
 }

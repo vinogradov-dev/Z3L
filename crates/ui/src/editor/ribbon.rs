@@ -2,9 +2,9 @@
 //!
 //! The ribbon draws from one `RibbonContext` and reports what it asked for; the drawing, the
 //! creation and the extrusion the buttons start are commands, while the view actions and the close
-//! of a draft belong to the shell that owns the view camera and the work plane (ADR 0052). The
-//! primitive size, the side count and the extrude height are typed session defaults, so the last
-//! value a tool used carries into the next one.
+//! of a draft belong to the shell that owns the view camera and the work plane (ADR 0052). The side
+//! count and the extrude height are typed session defaults, so the last value a tool used carries
+//! into the next one; a primitive's size is drawn rather than typed (ADR 0139).
 //!
 //! Refuses a panel or an assembly creation without a catalogue entry and an extrusion of an open
 //! path; a refused action is the command's sentence and leaves the default untouched.
@@ -14,13 +14,12 @@
 use egui::Ui;
 
 use engine::object_cmds::{OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_EXTRUDE_ID};
-use engine::{ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
+use engine::{EditScope, ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
 use model::{Id, Path};
 use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
-use crate::box_tool::BoxOwner;
 use crate::command::{dispatch, json};
 use crate::toolbars::{self, ToolAction};
 
@@ -47,8 +46,7 @@ impl Editor {
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
-            self.pending_primitive.map(|pending| pending.kind),
-            self.box_tool(),
+            self.box_draft().is_some(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
             self.void_armed(),
@@ -91,8 +89,16 @@ impl Editor {
                     self.start_drawing_with(tool, sides);
                     outcome.started_drawing = true;
                 }
+                ToolAction::DrawBody { tool } => {
+                    self.start_body_drawing(tool);
+                    outcome.started_drawing = true;
+                }
+                ToolAction::DrawPrimitive { tool, .. } => {
+                    self.start_primitive_drawing(tool)?;
+                    outcome.started_drawing = true;
+                }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
-                ToolAction::DrawProductFrame => self.arm_box(BoxOwner::Product),
+                ToolAction::DrawProductFrame => self.arm_box(),
                 ToolAction::DrawPanelContour => {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;
@@ -122,7 +128,6 @@ impl Editor {
                     }
                 }
                 ToolAction::CreateAssembly => self.create_assembly(session, target)?,
-                ToolAction::CreatePrimitive { kind, size } => self.arm_primitive(kind, size)?,
                 ToolAction::CreateCamera => self.create_camera(session, target)?,
                 ToolAction::CreateLight => self.create_light(session, target)?,
                 ToolAction::ExtrudePath { object, height } => {
@@ -163,6 +168,22 @@ impl Editor {
         height: Length,
         lang: Lang,
     ) -> Result<(), String> {
+        self.extrude_path_in(None, session, object, height, lang)
+    }
+
+    /// Extrudes a drawn profile into its body as one step of an open edit scope (ADR 0138).
+    ///
+    /// The body a cell drew goes through the same command, in the scope its profile was created in,
+    /// so the ring and the body are one undo entry. `None` is the ribbon's plain extrusion, which is
+    /// its own entry.
+    pub fn extrude_path_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        height: Length,
+        lang: Lang,
+    ) -> Result<(), String> {
         session
             .project()
             .object_path(object)
@@ -170,7 +191,12 @@ impl Editor {
             .to_contour()
             .map_err(|error| Message::ExtrudeRefused.with(lang, [error]))?;
         let params = json(&ObjectPathExtrude { object, height })?;
-        dispatch(session, OBJECT_PATH_EXTRUDE_ID, &params)?;
+        match scope {
+            Some(scope) => {
+                session.dispatch_in(scope, OBJECT_PATH_EXTRUDE_ID, &params).map_err(|error| error.to_string())?
+            }
+            None => dispatch(session, OBJECT_PATH_EXTRUDE_ID, &params)?,
+        };
         self.end_contour_edit();
         self.select_node(Some(object));
         Ok(())

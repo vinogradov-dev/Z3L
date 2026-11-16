@@ -1023,11 +1023,25 @@ impl Document {
     /// Commits the live drawing on the work plane and ends the tool.
     ///
     /// The plane is the one the draft started on, so a commit does not depend on where the camera
-    /// has orbited since. A refused path leaves the draft live and reports why.
+    /// has orbited since. A refused path leaves the draft live and reports why. A body cell's profile
+    /// is not finished here: the shell starts the height pull on the path it just committed, in the
+    /// same edit scope, so the box or cylinder is built on Z by the one gesture (ADR 0138).
     pub(crate) fn commit_drawing(&mut self, lang: Lang) -> Result<(), String> {
         let placement = self.drawing_placement()?;
-        self.editor.commit_drawing(&mut self.session, placement, lang)?;
-        self.end_drawing()
+        let drawn = self.editor.commit_drawing(&mut self.session, placement, lang)?;
+        let profile = (drawn.intent == ui::DrawIntent::Body)
+            .then_some(drawn)
+            .and_then(|drawn| Some((drawn.object, drawn.scope?)));
+        self.end_drawing()?;
+        if let Some((object, scope)) = profile {
+            // The ring is in the document and the height pull grows its body from it; the preview
+            // shows the body at the typed height before the pointer moves (ADR 0138).
+            self.extrude_gizmo.start_profile(object, scope, self.editor.extrude_height());
+            if let Err(error) = self.preview_extrude(object, self.editor.extrude_height()) {
+                self.last_error = Some(error);
+            }
+        }
+        Ok(())
     }
 
     /// Closes the running ring and commits it in one step.
@@ -1103,10 +1117,10 @@ impl Document {
     ///
     /// A drag only previews the height: the overlay shows the body the pull would produce and the
     /// document is not written. A click finishes the pull, and finishing is the one command.
-    fn apply_extrude_event(&mut self, event: ExtrudeEvent) -> Result<(), String> {
+    fn apply_extrude_event(&mut self, event: ExtrudeEvent, lang: text::Lang) -> Result<(), String> {
         match event {
             ExtrudeEvent::Preview { object, height } => self.preview_extrude(object, height),
-            ExtrudeEvent::Finish { object, height } => self.finish_extrude(object, height),
+            ExtrudeEvent::Finish { object, height } => self.finish_extrude(object, height, lang),
         }
     }
 
@@ -1127,10 +1141,18 @@ impl Document {
 
     /// Writes the pull's height once and drops the preview.
     ///
+    /// A body already in the document takes the height alone. A profile the body cells drew has none:
+    /// the ✓ is the command that builds its body from the ring the pull grew, and it joins the edit
+    /// scope the profile was created in so the whole gesture is one undo entry (ADR 0138).
+    ///
     /// Idempotent by construction: after the first call the pull is gone, so a second ✓ — a double
     /// click, a key and a button in one frame — has no object to write and dispatches nothing.
-    pub(crate) fn finish_extrude(&mut self, object: Id, height: Length) -> Result<(), String> {
-        if extrude_writes(self.extrude_gizmo.committed(), height) {
+    pub(crate) fn finish_extrude(&mut self, object: Id, height: Length, lang: text::Lang) -> Result<(), String> {
+        if self.extrude_gizmo.is_growing() {
+            let scope = self.extrude_gizmo.scope();
+            self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
+            self.session.end_edit();
+        } else if extrude_writes(self.extrude_gizmo.committed(), height) {
             self.editor.set_extrude_height(&mut self.session, object, height)?;
         }
         self.extrude_gizmo.cancel();
@@ -1140,11 +1162,19 @@ impl Document {
 
     /// Drops the pull and its preview, leaving the body at the height the document holds.
     ///
-    /// This is the ✕ and the Escape of the command bar: nothing was written, so restoring the
-    /// pre-command state is dropping the overlay and evaluating the document again.
+    /// This is the ✕ and the Escape of the command bar: for a body nothing was written, so restoring
+    /// the pre-command state is dropping the overlay and evaluating the document again. For a profile
+    /// the gesture did write the ring, so the pull's edit scope is rolled back and the profile goes
+    /// with it — a cancelled create leaves no trace (ADR 0138).
     pub(crate) fn cancel_extrude(&mut self) {
         if !self.extrude_gizmo.is_active() {
             return;
+        }
+        if let Some(scope) = self.extrude_gizmo.scope() {
+            // The gesture created the profile it was pulling, so rolling the scope back leaves no
+            // node for the selection to name.
+            self.session.cancel_edit(scope);
+            self.editor.select_node(None);
         }
         self.extrude_gizmo.cancel();
         self.session.clear_preview();
@@ -1153,8 +1183,8 @@ impl Document {
         }
     }
 
-    /// The single box the grips act on: the selection, when it is exactly one box — a cuboid
-    /// primitive or a product frame, which own the same three lengths (ADR 0101).
+    /// The single frame the grips act on: the selection, when it is exactly one product frame,
+    /// which owns the three lengths the grips move (ADR 0101).
     fn grip_target(&self) -> Option<Id> {
         let selected = self.editor.selected_nodes();
         let [only] = selected else {
@@ -1745,20 +1775,15 @@ impl Document {
 
     /// The view of the tool whose parameters are dragged at the hand, if one is running.
     ///
-    /// The box's height and the pull's height are the two tools this surface draws; a niche's gaps
-    /// are drawn by `update_fill` from the same [`Distances`], and every tool reaches the inspector
-    /// through [`Self::tool_view`].
+    /// The frame's reserved height and the pull's height are the two tools this surface draws; a
+    /// niche's gaps are drawn by `update_fill` from the same [`Distances`], and every tool reaches
+    /// the inspector through [`Self::tool_view`].
     fn height_view(&self) -> Option<ToolView> {
         if let Some(draft) = self.editor.box_draft().copied().filter(BoxDraft::is_pulling) {
             let maximum = box_gizmo::MAX_SIDE_MM as f64;
-            // A frame's pull is the height it reserves, not a solid's edge: the card says which box
-            // it is sizing (ADR 0101).
-            let title = match self.editor.box_tool() {
-                Some(ui::BoxOwner::Product) => Message::FrameHeight,
-                Some(ui::BoxOwner::Cuboid) | None => Message::BoxHeight,
-            };
+            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101).
             let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
-            return Some(ToolView::height(title, draft.height().millimetres_f64(), range, 3));
+            return Some(ToolView::height(Message::FrameHeight, draft.height().millimetres_f64(), range, 3));
         }
         self.extrude_gizmo.object()?;
         let height = self.extrude_gizmo.height()?;
@@ -1827,7 +1852,7 @@ impl Document {
                         self.last_error = Some(error);
                     }
                 } else if let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                    && let Err(error) = self.finish_extrude(object, height)
+                    && let Err(error) = self.finish_extrude(object, height, ui::language(ctx))
                 {
                     self.last_error = Some(error);
                 }
@@ -2072,10 +2097,6 @@ impl Document {
         // A drawing tool owns it too: the left button places points, not selections. A click on the
         // chrome is never a point, so the tool waits for a click on the scene.
         let drawing = interactive && !pointer_on_chrome && self.editor.drawing().is_some();
-        // An armed primitive owns the next click: it places a cylinder or a sphere, it does not
-        // select. The box tool owns a whole gesture instead: two clicks for the base, one for the
-        // height (ADR 0101).
-        let placing = interactive && !pointer_on_chrome && self.editor.pending_primitive().is_some();
         let boxing = interactive && !pointer_on_chrome && self.editor.box_draft().is_some();
         // The pull arrow is the live gesture after an extrusion. A contour edit, a draft, a
         // placement or a sub-object mode takes the pointer from it, so the arrow never competes
@@ -2083,7 +2104,6 @@ impl Document {
         if self.extrude_gizmo.is_active()
             && (contour_editing
                 || drawing
-                || placing
                 || boxing
                 || self.editor.mesh_edit().is_some()
                 || self.editor.fill_arm().is_some()
@@ -2113,18 +2133,16 @@ impl Document {
         let navigating = navigation.is_some()
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
             && !measuring
             && !voiding;
-        let mesh_object =
-            if !interactive || contour_editing || drawing || placing || pulling || filling || measuring || voiding {
-                None
-            } else {
-                self.editor.mesh_edit().map(|edit| edit.object())
-            };
+        let mesh_object = if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding {
+            None
+        } else {
+            self.editor.mesh_edit().map(|edit| edit.object())
+        };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -2255,35 +2273,12 @@ impl Document {
             // one `object.extrude.height.set`, so the whole adjustment is a single undo entry.
             match self.extrude_gizmo.update(ui, &response, rect, self.scene.camera, self.session.project()) {
                 Ok(Some(event)) => {
-                    if let Err(error) = self.apply_extrude_event(event) {
+                    if let Err(error) = self.apply_extrude_event(event, ui::language(ui.ctx())) {
                         self.last_error = Some(error);
                     }
                 }
                 Ok(None) => {}
                 Err(error) => self.last_error = Some(error),
-            }
-        }
-
-        if placing {
-            // The armed cube lands where the user clicks: the plane point is its origin and the
-            // plane's own rotation keeps its local axes on the plane.
-            if response.clicked_by(egui::PointerButton::Primary)
-                && !pointer_over_widget
-                && !pointer_on_chrome
-                && let Some(pointer) = response.interact_pointer_pos()
-            {
-                let plane = WorkPlane::from_camera(self.scene.camera);
-                let placement =
-                    plane.pointer_point(self.scene.camera, rect, pointer).and_then(|local| plane.placement_at(local));
-                match placement.map(|placement| self.editor.place_primitive(&mut self.session, placement)) {
-                    Some(Ok(_)) => {
-                        if let Err(error) = self.refresh() {
-                            self.last_error = Some(error);
-                        }
-                    }
-                    Some(Err(error)) => self.last_error = Some(error),
-                    None => self.last_error = Some("The work plane has no point under the cursor.".to_owned()),
-                }
             }
         }
 
@@ -2296,7 +2291,6 @@ impl Document {
         let gripping = interactive
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
@@ -2342,7 +2336,6 @@ impl Document {
         let update: Result<Option<PlacementCommit>, String> = if !interactive
             || contour_editing
             || drawing
-            || placing
             || boxing
             || pulling
             || filling
@@ -2398,7 +2391,6 @@ impl Document {
         };
         let consumed_click = if contour_editing
             || drawing
-            || placing
             || boxing
             || pulling
             || filling
@@ -2505,7 +2497,6 @@ impl Document {
             && !pointer_over_gizmo
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
@@ -2546,7 +2537,6 @@ impl Document {
         if interactive
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !measuring
@@ -2573,7 +2563,6 @@ impl Document {
 
         if !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !measuring
@@ -3246,10 +3235,6 @@ impl Document {
                     None => {}
                 }
             }
-        } else if self.editor.pending_primitive().is_some() {
-            if escape && !ui.ctx().text_edit_focused() {
-                self.editor.cancel_primitive();
-            }
         } else if self.editor.box_draft().is_some() || self.box_grips.is_dragging() {
             // Escape drops the base, the pull or the grip drag; the grip's edit scope is rolled
             // back, so a cancelled resize leaves no trace at all.
@@ -3272,7 +3257,7 @@ impl Document {
             } else if enter
                 && !ui.ctx().text_edit_focused()
                 && let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                && let Err(error) = self.finish_extrude(object, height)
+                && let Err(error) = self.finish_extrude(object, height, ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);
             }
@@ -3529,13 +3514,24 @@ fn extrude_writes(committed: Option<Length>, height: Length) -> bool {
 /// ✓ would store: the same path, the same features and the same evaluator (M71).
 fn previewed_body(project: &Project, object: Id, height: Length) -> Result<Geometry, String> {
     let node = project.object(object).ok_or_else(|| format!("{object:?} is not in the scene"))?;
-    let mut body = node
-        .geometry()
-        .as_constructive()
-        .cloned()
-        .ok_or_else(|| format!("{} is not a constructive body", node.name()))?;
-    body.set_height(height).map_err(|error| error.to_string())?;
-    Ok(Geometry::Constructive(body))
+    match node.geometry() {
+        Geometry::Path(path) => {
+            // A profile has no height yet, so the preview is the body the ✓ would build from it
+            // (ADR 0138).
+            model::Constructive::extrude(path.clone(), height)
+                .map(Geometry::Constructive)
+                .map_err(|error| error.to_string())
+        }
+        _ => {
+            let mut body = node
+                .geometry()
+                .as_constructive()
+                .cloned()
+                .ok_or_else(|| format!("{} is not a constructive body", node.name()))?;
+            body.set_height(height).map_err(|error| error.to_string())?;
+            Ok(Geometry::Constructive(body))
+        }
+    }
 }
 
 /// World placements a drag previews for cameras and lights.
@@ -3641,10 +3637,10 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
 
 /// Whether `node` offers the three-length grips when it is the only selection.
 ///
-/// A cuboid part owns its three lengths (ADR 0101) and is always grabbable. A product frame owns an
-/// envelope, and those handles belong to the piece being worked in: a closed product is one object in
-/// the scene, not a box being sized, and selecting it must not open handles that write
-/// `product.envelope.set` (ADR 0098, X47).
+/// A product frame owns an envelope, and those handles belong to the piece being worked in: a closed
+/// product is one object in the scene, not a box being sized, and selecting it must not open handles
+/// that write `product.envelope.set` (ADR 0098, X47). A solid box is a drawn profile, so its handles
+/// are the contour's corner grips (ADR 0138).
 fn offers_grips(project: &Project, node: Id, active_product: Option<Id>) -> bool {
     if project.container(node).is_some_and(|container| container.is_product()) {
         return active_product == Some(node);

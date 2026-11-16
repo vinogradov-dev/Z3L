@@ -1,23 +1,21 @@
-//! The box tool: the base rectangle, the pulled height and the grips of a selected box.
+//! The frame tool: the base rectangle, the pulled height and the grips of a selected frame.
 //!
-//! A box is drawn the way the extrusion is (ADR 0101): the first click anchors the base rectangle
-//! on the active work plane, the second fixes it, the pointer then pulls the height along the plane's
-//! normal, and the click after that — or the command bar's ✓ — commits one `object.primitive.create`.
-//! Nothing reaches the document before the commit, so Escape costs nothing, and the wireframe prism
-//! the pointer pulls is shell paint: an overlay entry is keyed by the id of a node the document
-//! holds, and a box that does not exist yet has none (ADR 0093, ADR 0104).
+//! A product frame reserves a box and is drawn the way the extrusion is (ADR 0101): the first click
+//! anchors the base rectangle on the active work plane, the second fixes it, the pointer then pulls
+//! the height along the plane's normal, and the click after that — or the command bar's ✓ — commits
+//! one `product.create`. Nothing reaches the document before the commit, so Escape costs nothing, and
+//! the wireframe prism the pointer pulls is shell paint: an overlay entry is keyed by the id of a node
+//! the document holds, and a frame that does not exist yet has none (ADR 0093, ADR 0104).
 //!
-//! The same three lengths have a second owner: a product frame reserves a box and stores it as its
-//! envelope (ADR 0097), so the grips read and write either field — a cuboid's parameters or an
-//! envelope — through the owner's own command, and neither owner has a private editor.
+//! A solid box is not drawn here: it is a profile swept on Z, so its body is an extrusion and its
+//! grips are the contour's corner grips (ADR 0138).
 //!
-//! A selected box shows grips: its corners move both horizontal sides together and the six face
-//! centres move one side each. A solid box shows the four corners of the base rectangle it was drawn
-//! from; a frame shows all eight, because a cabinet is tall and its top corners are the ones at eye
-//! level. A grip moves in 1 mm steps, and dragging a minimum side also moves the placement, so the
-//! opposite side stays where it is in the world — the compensation a panel's corner and an origin
-//! rebase use (ADR 0082, ADR 0088). A drag writes through the session's edit scope, so the whole
-//! gesture is one undo entry (ADR 0092).
+//! A selected frame shows eight corner grips and six faces: its corners move both horizontal sides
+//! together and the face centres move one side each. It shows all eight corners, because a cabinet is
+//! tall and its top corners are the ones at eye level. A grip moves in 1 mm steps, and dragging a
+//! minimum side also moves the placement, so the opposite side stays where it is in the world — the
+//! compensation a panel's corner and an origin rebase use (ADR 0082, ADR 0088). A drag writes through
+//! the session's edit scope, so the whole gesture is one undo entry (ADR 0092).
 //!
 //! [ADR 0082]: ../docs/decisions/0082-the-local-zero-is-the-creation-anchor.md
 //! [ADR 0088]: ../docs/decisions/0088-the-origin-is-authored-once-and-rebased-explicitly.md
@@ -28,13 +26,12 @@
 
 use eframe::egui::{self, Color32, FontId, Pos2, Response, Stroke, Ui};
 use engine::node_cmds::NODE_PLACEMENT_SET_ID;
-use engine::object_cmds::OBJECT_PRIMITIVE_REPLACE_ID;
 use engine::product_cmds::{PRODUCT_ENVELOPE_SET_ID, ProductEnvelopeSet};
-use engine::{EditScope, NodePlacementSet, ObjectPrimitiveReplace, Session};
+use engine::{EditScope, NodePlacementSet, Session};
 use geom::{DVec2, DVec3};
-use model::{Envelope, Id, Placement, Primitive, Project};
+use model::{Envelope, Id, Placement, Project};
 use scene::Camera;
-use ui::{BoxDraft, BoxOwner, Editor};
+use ui::{BoxDraft, Editor};
 use units::Length;
 
 use crate::gizmo_math::{ACTIVE_COLOR, WorkPlane, ray_plane, ray_to, screen_point};
@@ -240,10 +237,10 @@ fn paint_size(painter: &egui::Painter, pointer: Pos2, label: &str) {
     painter.galley(rect.min + padding, galley, SIZE_COLOR);
 }
 
-/// Commits the box gesture as one command and clears the draft.
+/// Commits the frame gesture as one command and clears the draft.
 ///
-/// The draft's owner picks the command: a solid becomes an `object.primitive.create` and a frame a
-/// `product.create` at the scene root (ADR 0101). `lang` names a frame the way the card would.
+/// The draft becomes a `product.create` at the scene root (ADR 0101). `lang` names the frame the way
+/// the card would.
 pub(crate) fn commit_box(
     session: &mut Session,
     editor: &mut Editor,
@@ -308,14 +305,11 @@ pub(crate) enum BoxGrip {
     },
 }
 
-/// A selected box read from the document: the node, the field its sides live in, its frames and its
-/// three sides.
+/// A selected frame read from the document: the node, its frames and its three sides.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BoxBody {
-    /// The node whose field the grips edit.
+    /// The node whose envelope the grips edit.
     node: Id,
-    /// Which field that is: a primitive's parameters or a product's envelope.
-    owner: BoxOwner,
     /// The node's placement in its parent frame, the one a compensation rewrites.
     placement: Placement,
     /// The node's placement in the world, the one the pointer is projected into.
@@ -330,18 +324,12 @@ pub(crate) fn is_box(project: &Project, node: Id) -> bool {
 }
 
 impl BoxBody {
-    /// Reads a box, or `None` when the node is neither a cuboid primitive nor a product frame.
+    /// Reads a frame, or `None` when the node is not a product with an envelope.
     pub(crate) fn read(project: &Project, node: Id) -> Option<Self> {
         let world = project.world_placement(node)?;
-        if let Some(object) = project.object(node)
-            && let Some(Primitive::Cuboid(cuboid)) = object.geometry().as_primitive()
-        {
-            let sides = cuboid.sides();
-            return Some(Self { node, owner: BoxOwner::Cuboid, placement: object.placement(), world, sides });
-        }
         let container = project.container(node).filter(|container| container.is_product())?;
         let sides = container.envelope()?.components();
-        Some(Self { node, owner: BoxOwner::Product, placement: container.placement(), world, sides })
+        Some(Self { node, placement: container.placement(), world, sides })
     }
 
     /// The local point of a grip handle, in millimetres.
@@ -370,21 +358,16 @@ impl BoxBody {
         self.local_point(grip).map(|local| self.world.transform_point(local))
     }
 
-    /// Every grip a selected box shows: its corners and its six faces.
+    /// Every grip a selected frame shows: its eight corners and its six faces.
     pub(crate) fn grips(&self) -> Vec<BoxGrip> {
-        // A solid box was drawn from its base rectangle, so the four corners of that rectangle are
-        // the handles that turn it. A frame reserves a tall space whose top corners are the ones at
-        // eye level, so it carries all eight; each corner drags in its own horizontal plane and
-        // changes the same two sides (docs/domain/products.md §9).
-        let tops: &[bool] = match self.owner {
-            BoxOwner::Cuboid => &[false],
-            BoxOwner::Product => &[false, true],
-        };
-        let mut grips = Vec::with_capacity(tops.len() * 4 + 6);
-        for top in tops {
+        // A frame reserves a tall space whose top corners are the ones at eye level, so it carries
+        // all eight; each corner drags in its own horizontal plane and changes the same two sides
+        // (docs/domain/products.md §9).
+        let mut grips = Vec::with_capacity(8 + 6);
+        for top in [false, true] {
             for min_x in [true, false] {
                 for min_y in [true, false] {
-                    grips.push(BoxGrip::Corner { min_x, min_y, top: *top });
+                    grips.push(BoxGrip::Corner { min_x, min_y, top });
                 }
             }
         }
@@ -397,11 +380,9 @@ impl BoxBody {
     }
 }
 
-/// The field one grip drag writes, chosen by who owns the box.
+/// The field one grip drag writes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum BoxChange {
-    /// A cuboid's geometry parameters.
-    Primitive(Primitive),
     /// A product's authored envelope.
     Envelope(Envelope),
 }
@@ -565,10 +546,7 @@ impl BoxGrips {
             return None;
         }
         let [width, depth, height] = sides;
-        let change = match body.owner {
-            BoxOwner::Cuboid => BoxChange::Primitive(Primitive::cuboid(width, depth, height).ok()?),
-            BoxOwner::Product => BoxChange::Envelope(Envelope::new(width, depth, height).ok()?),
-        };
+        let change = BoxChange::Envelope(Envelope::new(width, depth, height).ok()?);
         let placement = if shift.length_squared() > 0.0 {
             let moved = body.placement.transform_vector(shift);
             Placement::new(body.placement.translation() + moved, body.placement.rotation()).ok()
@@ -631,16 +609,10 @@ fn dragged_side(current: Length, coordinate_mm: f64, min: bool) -> Option<(Lengt
 
 /// Applies one grip edit through the session's edit scope, so the drag is one undo entry.
 ///
-/// The owner picks the command: a cuboid writes `object.primitive.replace` and a frame
-/// `product.envelope.set`, and a moved zero writes `node.placement.set` for both. Both commands run
-/// in the drag's scope, so undo returns the whole gesture (ADR 0092).
+/// The envelope writes `product.envelope.set`, and a moved zero writes `node.placement.set`. Both
+/// commands run in the drag's scope, so undo returns the whole gesture (ADR 0092).
 pub(crate) fn apply_grip_edit(session: &mut Session, edit: GripEdit, scope: EditScope) -> Result<(), String> {
     match edit.change {
-        BoxChange::Primitive(primitive) => {
-            let params = serde_json::to_value(ObjectPrimitiveReplace { object: edit.node, primitive })
-                .map_err(|error| format!("could not encode the primitive parameters: {error}"))?;
-            session.dispatch_in(scope, OBJECT_PRIMITIVE_REPLACE_ID, &params).map_err(|error| error.to_string())?;
-        }
         BoxChange::Envelope(envelope) => {
             let params = serde_json::to_value(ProductEnvelopeSet { node: edit.node, envelope })
                 .map_err(|error| format!("could not encode the envelope: {error}"))?;
@@ -659,8 +631,7 @@ pub(crate) fn apply_grip_edit(session: &mut Session, edit: GripEdit, scope: Edit
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use model::Geometry;
-    use testkit::{millimetres, sample_catalog, sample_product_project, sample_project};
+    use testkit::{millimetres, sample_catalog, sample_product_project};
 
     use super::*;
 
@@ -668,45 +639,11 @@ mod tests {
         egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))
     }
 
-    fn box_project() -> (Project, Id) {
-        let mut project = sample_project();
-        let root = project.root().id();
-        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
-        let id = project.add_object(root, "Box", Placement::IDENTITY, Geometry::Primitive(cuboid)).expect("add");
-        (project, id)
-    }
-
-    /// The sides of a grip edit, whichever field owns them.
+    /// The sides a grip edit writes into the frame's envelope.
     fn edited_sides(edit: &GripEdit) -> [f64; 3] {
         match &edit.change {
-            BoxChange::Primitive(primitive) => match primitive {
-                Primitive::Cuboid(cuboid) => cuboid.sides().map(Length::millimetres_f64),
-                other => panic!("a grip edit of a box must stay a box: {other:?}"),
-            },
             BoxChange::Envelope(envelope) => envelope.components().map(Length::millimetres_f64),
         }
-    }
-
-    #[test]
-    fn a_selected_box_shows_four_base_corners_and_six_faces() {
-        let (project, id) = box_project();
-        let body = BoxBody::read(&project, id).expect("a box body");
-        assert_eq!(body.grips().len(), 10, "four base corners and six faces");
-        assert_eq!(body.grip_point(BoxGrip::Corner { min_x: true, min_y: true, top: false }), Some(DVec3::ZERO));
-        assert_eq!(
-            body.grip_point(BoxGrip::Corner { min_x: false, min_y: false, top: false }),
-            Some(DVec3::new(600.0, 400.0, 0.0)),
-            "the far corner of the base rectangle, not the top one"
-        );
-        assert!(
-            !body.grips().iter().any(|grip| matches!(grip, BoxGrip::Corner { top: true, .. })),
-            "a solid box shows no top corner, even though its geometry has one"
-        );
-        assert_eq!(
-            body.grip_point(BoxGrip::Face { side: BoxSide::Height, max: true }),
-            Some(DVec3::new(300.0, 200.0, 720.0)),
-            "the centre of the top face"
-        );
     }
 
     #[test]
@@ -714,9 +651,23 @@ mod tests {
         let (project, id) = sample_product_project();
         let body = BoxBody::read(&project, id).expect("a frame body");
         assert_eq!(body.grips().len(), 14, "eight corners and six faces");
-        let far_top = body.grip_point(BoxGrip::Corner { min_x: false, min_y: false, top: true }).expect("a top corner");
-        assert_eq!(far_top, DVec3::new(600.0, 560.0, 720.0), "the far corner at the top of the reserved box");
-        // A node that is neither a product nor a cuboid has no box.
+        assert_eq!(body.grip_point(BoxGrip::Corner { min_x: true, min_y: true, top: false }), Some(DVec3::ZERO));
+        assert_eq!(
+            body.grip_point(BoxGrip::Corner { min_x: false, min_y: false, top: true }),
+            Some(DVec3::new(600.0, 560.0, 720.0)),
+            "the far corner at the top of the reserved box"
+        );
+        assert_eq!(
+            body.grip_point(BoxGrip::Face { side: BoxSide::Height, max: true }),
+            Some(DVec3::new(300.0, 280.0, 720.0)),
+            "the centre of the top face"
+        );
+    }
+
+    #[test]
+    fn a_node_that_reserves_nothing_shows_no_grips() {
+        let (project, _id) = sample_product_project();
+        // A node that is not a product has no envelope.
         let root = project.root().id();
         assert!(!is_box(&project, root), "the root reserves nothing");
         assert!(BoxBody::read(&project, Id::new(99).expect("id")).is_none(), "an id the document does not hold");
@@ -758,7 +709,7 @@ mod tests {
     #[test]
     fn the_committed_frame_is_the_ghost_the_maker_saw() {
         let mut editor = Editor::new();
-        editor.arm_box(BoxOwner::Cuboid);
+        editor.arm_box();
         editor.click_box([millimetres(600), millimetres(400)]).expect("anchor");
         editor.click_box([millimetres(0), millimetres(0)]).expect("base");
         editor.pull_box_height(millimetres(720)).expect("pull");
@@ -769,30 +720,8 @@ mod tests {
     }
 
     #[test]
-    fn a_grip_drag_writes_one_undo_entry() {
-        let (project, id) = box_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
-        let before = session.project().revision().get();
-        let scope = session.edit_scope();
-        let first = Primitive::cuboid(millimetres(650), millimetres(400), millimetres(720)).expect("box");
-        let last = Primitive::cuboid(millimetres(700), millimetres(400), millimetres(720)).expect("box");
-        let edit =
-            |primitive: Primitive| GripEdit { node: id, change: BoxChange::Primitive(primitive), placement: None };
-        apply_grip_edit(&mut session, edit(first), scope).expect("first");
-        apply_grip_edit(&mut session, edit(last.clone()), scope).expect("last");
-        session.end_edit();
-        assert_eq!(session.project().revision().get(), before + 2, "each frame is one command, both in one entry");
-        assert_eq!(session.project().object_primitive(id), Ok(&last));
-        session.undo().expect("one undo returns the whole drag");
-        assert_eq!(
-            session.project().object_primitive(id),
-            Ok(&Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box"))
-        );
-    }
-
-    #[test]
     fn a_corner_grip_moves_two_sides_and_a_face_grip_one() {
-        let (project, id) = box_project();
+        let (project, id) = sample_product_project();
         let mut session = Session::with_catalog(project, sample_catalog());
         let project = session.project().clone();
         let camera = Camera::new(DVec3::new(300.0, 200.0, 360.0), 3_000.0).expect("camera");
@@ -811,49 +740,30 @@ mod tests {
         // The far corner of the base: both horizontal sides follow it.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: false }, scope };
         let edit =
-            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 500.0, 0.0))).expect("an edit");
-        close(&edit, [700.0, 500.0, 720.0]);
-        assert_eq!(edit.placement, None, "a maximum corner does not move the box's zero");
+            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0))).expect("an edit");
+        close(&edit, [700.0, 660.0, 720.0]);
+        assert_eq!(edit.placement, None, "a maximum corner does not move the frame's zero");
 
         // One face centre: one side follows it, the other two stay.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Width, max: true }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 200.0, 360.0)))
+            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 280.0, 360.0)))
             .expect("an edit");
-        close(&edit, [700.0, 400.0, 720.0]);
+        close(&edit, [700.0, 560.0, 720.0]);
         assert_eq!(edit.placement, None);
 
         // The floor moves down: the height grows and the box's zero moves with the floor.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: false }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 200.0, -100.0)))
+            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 280.0, -100.0)))
             .expect("an edit");
-        close(&edit, [600.0, 400.0, 820.0]);
+        close(&edit, [600.0, 560.0, 820.0]);
         let placement = edit.placement.expect("the floor moved, so the zero did too");
         assert!(
             (placement.translation() - DVec3::new(0.0, 0.0, -100.0)).length() <= 5.0,
             "the zero followed the floor down, was {:?}",
             placement.translation()
         );
-    }
-
-    #[test]
-    fn a_minimum_face_drag_keeps_the_opposite_face_still_in_the_world() {
-        let (project, id) = box_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
-        let scope = session.edit_scope();
-        // Drag the min-X face 100 mm to the left: the side grows to 700 and the zero moves 100 mm
-        // in the box's own frame, so the far face does not move.
-        let primitive = Primitive::cuboid(millimetres(700), millimetres(400), millimetres(720)).expect("box");
-        let (_, shift) = dragged_side(millimetres(600), -100.0, true).expect("a wider box");
-        let placement = Placement::new(DVec3::new(shift, 0.0, 0.0), default_rotation()).expect("placement");
-        let change = BoxChange::Primitive(primitive);
-        apply_grip_edit(&mut session, GripEdit { node: id, change, placement: Some(placement) }, scope)
-            .expect("the drag");
-        session.end_edit();
-        let world = session.project().world_placement(id).expect("world placement");
-        let far = world.transform_point(DVec3::new(700.0, 0.0, 0.0));
-        assert!((far - DVec3::new(600.0, 0.0, 0.0)).length() < 1.0e-9, "the far face stayed put, was {far:?}");
     }
 
     /// The envelope a frame stores, in whole millimetres.

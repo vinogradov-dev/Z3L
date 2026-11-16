@@ -1,12 +1,13 @@
 //! The selected geometry object card.
 //!
 //! An object is a leaf with one geometry payload. A mesh object is edited directly and has no
-//! feature history. A primitive object shows its parameters — three sides of a box, a radius, a
-//! height, the number of sides and bands — because they are the source of truth and the mesh is
-//! derived ([ADR 0054]). A constructive object shows its contour instead: the contour and the feature
-//! height are the source of truth, and `object.collapse` bakes it into an editable mesh
-//! ([ADR 0037]). A path object shows its flat drawing: it has no mesh and no feature height until
-//! it becomes a contour or is extruded.
+//! feature history. A primitive object shows its parameters — a radius, the number of sides and
+//! bands — because they are the source of truth and the mesh is derived ([ADR 0054]). A constructive
+//! object shows its contour instead: the ring, the figure's own dimensions and the extrusion height
+//! are the source of truth, and `object.collapse` bakes it into an editable mesh ([ADR 0037]). A
+//! path object shows its flat drawing: it has no mesh and no feature height until it becomes a
+//! contour or is extruded. A body the Model tab drew is a constructive object, so the box a maker
+//! drew as a rectangle edits its profile here and its height on the same card (ADR 0138).
 //!
 //! The card has one reading order and no headers ([ADR 0116]): a head that says which object this
 //! is and what it measures, the fields the selected kind can be edited by, one row of actions and
@@ -29,10 +30,12 @@ use core::ops::RangeInclusive;
 use egui::{RichText, TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
 use engine::object_cmds::{
-    OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID,
+    OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_REPLACE_ID,
+    OBJECT_PRIMITIVE_REPLACE_ID,
 };
 use engine::{
-    EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectPathReplace, ObjectPrimitiveReplace, Session,
+    EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet, ObjectPathReplace,
+    ObjectPrimitiveReplace, Session,
 };
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
@@ -71,6 +74,7 @@ pub(crate) struct ObjectCard {
     contour_draft: Option<ContourDraft>,
     primitive_draft: Option<PrimitiveDraft>,
     figure_draft: Option<FigureDraft>,
+    height_draft: Option<HeightDraft>,
     confirm_collapse: bool,
     error: Option<String>,
 }
@@ -109,15 +113,25 @@ struct PrimitiveDraft {
     fields: PrimitiveFields,
 }
 
+/// The extrusion height of a constructive body, and the height it was read from.
+///
+/// A body's profile has its own dimensions (a rectangle's sides, a circle's radius) and this is the
+/// third number it was swept by, so the card can change the box a body cell drew without starting the
+/// pull again. `base` detects an edit made elsewhere — by undo, a grip or the pull — the same way the
+/// other drafts do.
+#[derive(Clone, Copy, Debug)]
+struct HeightDraft {
+    object: Id,
+    base: Length,
+    millimetres: f64,
+}
+
 /// The parameter fields as the numbers the shared field edits, one per editable dimension.
 ///
 /// The lengths are millimetres and the counts whole numbers, because that is what a scrub moves;
 /// the document keeps [`Length`], and the card converts at the command edge.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct PrimitiveFields {
-    width: f64,
-    depth: f64,
-    height: f64,
     radius: f64,
     segments: u32,
     bands: u32,
@@ -127,16 +141,6 @@ impl PrimitiveFields {
     fn read(primitive: &Primitive) -> Self {
         let mut fields = Self::default();
         match primitive {
-            Primitive::Cuboid(cuboid) => {
-                fields.width = cuboid.width().millimetres_f64();
-                fields.depth = cuboid.depth().millimetres_f64();
-                fields.height = cuboid.height().millimetres_f64();
-            }
-            Primitive::Cylinder(cylinder) => {
-                fields.radius = cylinder.radius().millimetres_f64();
-                fields.height = cylinder.height().millimetres_f64();
-                fields.segments = cylinder.segments();
-            }
             Primitive::Sphere(sphere) => {
                 fields.radius = sphere.radius().millimetres_f64();
                 fields.segments = sphere.segments();
@@ -155,22 +159,14 @@ impl PrimitiveDraft {
     /// The primitive the fields describe, or a readable reason they do not.
     ///
     /// The shape comes from `base`, so a field that belongs to another shape is never invented: a
-    /// box has only its three sides and a sphere has no height.
+    /// sphere has a radius, its sides and its bands, and the box and cylinder fields left with the
+    /// shapes the body cells draw (ADR 0138).
     fn parse(&self, lang: Lang) -> Result<Primitive, String> {
         let length = |value: f64| {
             scrub::millimetres(value)
                 .ok_or_else(|| Message::PrimitiveRefused.with(lang, [Message::LengthErrorOutOfRange.text(lang)]))
         };
         let primitive = match &self.base {
-            Primitive::Cuboid(_) => {
-                let width = length(self.fields.width)?;
-                let depth = length(self.fields.depth)?;
-                let height = length(self.fields.height)?;
-                Primitive::cuboid(width, depth, height)
-            }
-            Primitive::Cylinder(_) => {
-                Primitive::cylinder(length(self.fields.radius)?, length(self.fields.height)?, self.fields.segments)
-            }
             Primitive::Sphere(_) => {
                 Primitive::sphere(length(self.fields.radius)?, self.fields.segments, self.fields.bands)
             }
@@ -407,8 +403,6 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
 /// The interface's name for a primitive shape.
 fn primitive_kind_label(kind: model::PrimitiveKind) -> Message {
     match kind {
-        model::PrimitiveKind::Cuboid => Message::ToolBox,
-        model::PrimitiveKind::Cylinder => Message::ToolCylinder,
         model::PrimitiveKind::Sphere => Message::ToolSphere,
     }
 }
@@ -527,6 +521,7 @@ impl ObjectCard {
             self.primitive_draft = None;
         }
         self.sync_figure_draft(object_id, &summary);
+        self.sync_height_draft(object_id, &summary);
 
         // One reading order, top to bottom: which object this is and what it measures, the numbers
         // this kind of geometry can be edited by, one row of actions, and the detail of a mode that
@@ -534,6 +529,7 @@ impl ObjectCard {
         // hides the fields a person came for.
         let (rename, name_error) = self.head(ui, &summary, single_selection);
         let (figure_result, figure_report) = self.figure_fields(ui, &summary, contour_editing, fresh);
+        let (height_result, height_report) = self.height_field(ui, &summary, contour_editing, fresh);
         // The viewport owns the working copy while the mode is live; a number replacement or a
         // collapse would silently make that copy stale.
         let (primitive_result, primitive_report) = self.primitive_fields(ui, &summary, fresh);
@@ -549,10 +545,15 @@ impl ObjectCard {
         let (collapse, cancel) = (row.collapse, row.cancel);
 
         // A field that refused its typed text kept its number: the box is red, the card says why.
-        if let Some(message) = figure_report.refused.or(primitive_report.refused) {
+        if let Some(message) = figure_report.refused.or(primitive_report.refused).or(height_report.refused) {
             self.error = Some(message.text(lang).to_owned());
         }
-        for scope in figure_report.cancelled.iter().chain(primitive_report.cancelled.iter()) {
+        for scope in figure_report
+            .cancelled
+            .iter()
+            .chain(primitive_report.cancelled.iter())
+            .chain(height_report.cancelled.iter())
+        {
             session.cancel_edit(*scope);
         }
         if let Some(error) = name_error {
@@ -588,6 +589,14 @@ impl ObjectCard {
                     self.error = Some(error);
                     self.primitive_draft = None;
                 }
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
+        if let Some(result) = height_result {
+            match result.and_then(|height| replace_body_height(session, object_id, height, height_report.scope)) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
             }
             ui.ctx().request_repaint();
             return action;
@@ -719,8 +728,11 @@ impl ObjectCard {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
             }
             FigureKind::Rectangle => {
+                // A body's base rectangle is the plan of a solid, so its second side is a depth and
+                // the height below is the sweep; a flat drawing keeps the two sides it measures.
+                let second = if summary.height.is_some() { Message::FieldDepth } else { Message::FieldHeight };
                 report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
+                report.absorb(length_row(ui, second.text(lang), &mut draft.fields.height, fresh));
             }
             FigureKind::Polygon => {
                 report.absorb(count_row(
@@ -743,10 +755,52 @@ impl ObjectCard {
         (Some(draft.parse(lang)), report)
     }
 
+    /// Keeps the height draft in step with the extrusion the document holds.
+    fn sync_height_draft(&mut self, object: Id, summary: &ObjectSummary) {
+        let Some(height) = summary.height else {
+            self.height_draft = None;
+            return;
+        };
+        if self.height_draft.is_none_or(|draft| draft.object != object || draft.base != height) {
+            self.height_draft = Some(HeightDraft { object, base: height, millimetres: height.millimetres_f64() });
+        }
+    }
+
+    /// Draws the extrusion height of a constructive body; returns the parsed height when it committed.
+    ///
+    /// The profile's numbers sit above and this is the Z of the sweep: the third dimension a body has
+    /// and the one number the ring cannot describe, so the box a body cell drew keeps every side
+    /// editable on the card (ADR 0138). While the viewport owns the working copy the field is dead,
+    /// because a height written under a live pull would move the body the user is still dragging.
+    fn height_field(
+        &mut self,
+        ui: &mut Ui,
+        summary: &ObjectSummary,
+        contour_editing: bool,
+        fresh: EditScope,
+    ) -> (Option<Result<Length, String>>, FieldReport) {
+        let mut report = FieldReport::default();
+        if summary.height.is_none() {
+            return (None, report);
+        }
+        let lang = crate::language(ui.ctx());
+        let Some(draft) = self.height_draft.as_mut() else {
+            return (None, report);
+        };
+        ui.add_enabled_ui(!contour_editing, |ui| {
+            report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.millimetres, fresh));
+        });
+        if !report.committed {
+            return (None, report);
+        }
+        let height = scrub::millimetres(draft.millimetres);
+        (Some(height.ok_or_else(|| Message::LengthErrorOutOfRange.text(lang).to_owned())), report)
+    }
+
     /// Draws the primitive parameters; returns the parsed primitive when a field handed its number over.
     ///
-    /// Only the fields the shape has are shown: a box its width, depth and height, a cylinder a
-    /// radius, a height and its sides, a sphere a radius, its sides and its bands.
+    /// Only the fields the shape has are shown: the sphere has a radius, its sides and its bands, and
+    /// it is the last shape that is still a parameter set (ADR 0138).
     fn primitive_fields(
         &mut self,
         ui: &mut Ui,
@@ -763,22 +817,6 @@ impl ObjectCard {
         };
         ui.separator();
         match primitive {
-            Primitive::Cuboid(_) => {
-                report.absorb(length_row(ui, Message::FieldWidth.text(lang), &mut draft.fields.width, fresh));
-                report.absorb(length_row(ui, Message::FieldDepth.text(lang), &mut draft.fields.depth, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
-            }
-            Primitive::Cylinder(_) => {
-                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
-                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
-                report.absorb(count_row(
-                    ui,
-                    Message::FieldSides.text(lang),
-                    &mut draft.fields.segments,
-                    MIN_SEGMENTS..=MAX_SEGMENTS,
-                    fresh,
-                ));
-            }
             Primitive::Sphere(_) => {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
                 report.absorb(count_row(
@@ -1152,6 +1190,17 @@ fn replace_path(session: &mut Session, object: Id, path: Path, scope: Option<Edi
     }
 }
 
+/// Sets the extrusion height of a constructive body, folding the edit into its field's scope.
+fn replace_body_height(
+    session: &mut Session,
+    object: Id,
+    height: Length,
+    scope: Option<EditScope>,
+) -> Result<(), String> {
+    let params = json(&ObjectExtrudeHeightSet { object, height })?;
+    apply_object_edit(session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params, scope)
+}
+
 fn replace_primitive(
     session: &mut Session,
     object: Id,
@@ -1292,43 +1341,14 @@ mod tests {
 
     #[test]
     fn the_primitive_fields_read_and_parse_the_stored_parameters() {
-        let cases = [
-            Primitive::cuboid(
-                Length::from_millimetres(600).expect("width"),
-                Length::from_millimetres(400).expect("depth"),
-                Length::from_millimetres(720).expect("height"),
-            )
-            .expect("box"),
-            Primitive::cylinder(
-                Length::from_millimetres(25).expect("radius"),
-                Length::from_millimetres(80).expect("height"),
-                20,
-            )
-            .expect("cylinder"),
-            Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere"),
-        ];
-        for primitive in cases {
-            let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
-            assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
-            assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
-        }
+        let primitive = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
+        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
+        assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
+        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
     }
 
     #[test]
     fn the_primitive_fields_refuse_a_value_the_document_cannot_hold() {
-        let box_ = Primitive::cuboid(
-            Length::from_millimetres(100).expect("width"),
-            Length::from_millimetres(100).expect("depth"),
-            Length::from_millimetres(100).expect("height"),
-        )
-        .expect("box");
-        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &box_);
-        draft.fields.width = 0.0;
-        assert!(draft.parse(Lang::En).is_err(), "a zero side is not a solid");
-        draft.fields.width = 100.0;
-        draft.fields.depth = 2_000_000.0;
-        assert!(draft.parse(Lang::En).is_err(), "a two-hundred-kilometre side is past the document's cap");
-
         let sphere = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
         let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &sphere);
         draft.fields.segments = 2;
@@ -1340,20 +1360,10 @@ mod tests {
 
     #[test]
     fn applying_new_parameters_is_one_command_and_keeps_the_id() {
-        let original = Primitive::cuboid(
-            Length::from_millimetres(600).expect("width"),
-            Length::from_millimetres(400).expect("depth"),
-            Length::from_millimetres(720).expect("height"),
-        )
-        .expect("box");
+        let original = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
         let (mut session, id) = primitive_session(original.clone());
         let before = session.project().revision();
-        let wider = Primitive::cuboid(
-            Length::from_millimetres(700).expect("width"),
-            Length::from_millimetres(400).expect("depth"),
-            Length::from_millimetres(720).expect("height"),
-        )
-        .expect("box");
+        let wider = Primitive::sphere(Length::from_millimetres(70).expect("radius"), 24, 12).expect("sphere");
         replace_primitive(&mut session, id, wider.clone(), None).expect("replace the parameters");
         assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision per commit");
         assert_eq!(session.project().object_primitive(id), Ok(&wider));
@@ -1365,23 +1375,17 @@ mod tests {
 
     #[test]
     fn a_dragged_primitive_field_is_one_undo_entry() {
-        let box_ = |width: f64| {
-            Primitive::cuboid(
-                scrub::millimetres(width).expect("a length"),
-                Length::from_millimetres(400).expect("depth"),
-                Length::from_millimetres(720).expect("height"),
-            )
-            .expect("box")
-        };
-        let original = box_(600.0);
+        let ball =
+            |radius: f64| Primitive::sphere(scrub::millimetres(radius).expect("a length"), 24, 12).expect("sphere");
+        let original = ball(40.0);
         let (mut session, id) = primitive_session(original.clone());
         let scope = session.edit_scope();
-        for width in [620.0, 640.0, 660.0] {
-            replace_primitive(&mut session, id, box_(width), Some(scope))
+        for radius in [42.0, 44.0, 46.0] {
+            replace_primitive(&mut session, id, ball(radius), Some(scope))
                 .expect("the field writes while the hand moves");
         }
         session.end_edit();
-        assert_eq!(session.project().object_primitive(id), Ok(&box_(660.0)));
+        assert_eq!(session.project().object_primitive(id), Ok(&ball(46.0)));
         session.undo().expect("undo the drag");
         assert_eq!(session.project().object_primitive(id), Ok(&original), "one undo returns the whole drag");
     }
@@ -1521,6 +1525,24 @@ mod tests {
         assert!(collapse_object(&mut session, id).is_err(), "a mesh object cannot collapse again");
         session.undo().expect("undo");
         assert!(session.project().object(id).expect("object").geometry().as_constructive().is_some());
+    }
+
+    #[test]
+    fn a_body_card_reads_its_extrusion_height_and_writes_it_back() {
+        let (mut session, id) = constructive_session();
+        let texts = drew_card(&mut session, id);
+        assert!(texts.iter().any(|text| text == "18"), "the sweep is a field of its own: {texts:?}");
+
+        // The field commits through `object.extrude.height.set`, the command the pull's check runs,
+        // so a box drawn by a body cell keeps its height editable after the gesture (ADR 0138).
+        let before = session.project().revision();
+        replace_body_height(&mut session, id, millimetres(40), None).expect("set the height");
+        let body = session.project().object(id).expect("object").geometry().as_constructive().expect("body").clone();
+        assert_eq!(body.height(), Some(millimetres(40)));
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one command, one entry");
+        session.undo().expect("undo");
+        let body = session.project().object(id).expect("object").geometry().as_constructive().expect("body");
+        assert_eq!(body.height(), Some(millimetres(18)), "undo restores the pulled height");
     }
 
     #[test]
@@ -1771,11 +1793,11 @@ mod tests {
         assert!(!drew(&mesh, "Collapse"), "a mesh is already a mesh: {mesh:?}");
         assert!(!drew(&mesh, "Width"), "and it stores no parameter to type: {mesh:?}");
 
-        let cuboid = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box");
-        let (mut primitive, id) = primitive_session(cuboid);
+        let sphere = Primitive::sphere(millimetres(400), 24, 12).expect("sphere");
+        let (mut primitive, id) = primitive_session(sphere);
         let primitive = drew_card(&mut primitive, id);
-        for field in ["Width", "Depth", "Height"] {
-            assert_eq!(count_exactly(&primitive, field), 1, "a box has one `{field}` field: {primitive:?}");
+        for field in ["Radius", "Sides", "Bands"] {
+            assert_eq!(count_exactly(&primitive, field), 1, "a sphere has one `{field}` field: {primitive:?}");
         }
         assert!(drew(&primitive, "Collapse to mesh"), "a primitive can be baked into a mesh: {primitive:?}");
         assert!(
@@ -1797,8 +1819,10 @@ mod tests {
         assert!(drew(&figure, "Collapse to mesh"), "and can be baked: {figure:?}");
         assert!(!drew(&figure, "Edit mesh"), "but not before it is baked: {figure:?}");
         assert!(!drew(&figure, "Apply contour"), "a tagged figure is edited by its fields: {figure:?}");
-        for field in ["Width", "Height"] {
-            assert_eq!(count_exactly(&figure, field), 1, "a rectangle has one `{field}` field: {figure:?}");
+        // The base rectangle of a body is its plan and the height is the sweep, so the three sides a
+        // box cell used to show are the three fields it shows now (ADR 0138).
+        for field in ["Width", "Depth", "Height"] {
+            assert_eq!(count_exactly(&figure, field), 1, "a body has one `{field}` field: {figure:?}");
         }
 
         let (mut ring, id) = constructive_session();
@@ -1832,12 +1856,12 @@ mod tests {
 
     #[test]
     fn the_primitive_card_draws_numbers_and_their_units_and_no_apply() {
-        let primitive = Primitive::cylinder(millimetres(25), millimetres(80), 20).expect("the card has fields for it");
+        let primitive = Primitive::sphere(millimetres(25), 20, 8).expect("the card has fields for it");
         let (mut session, id) = primitive_session(primitive);
         let texts = drew_card(&mut session, id);
         assert!(texts.iter().any(|text| text == "25"), "the radius is the field's own number: {texts:?}");
-        assert!(texts.iter().any(|text| text == "80"), "the height too: {texts:?}");
-        assert!(texts.iter().any(|text| text == "20"), "and the side count: {texts:?}");
+        assert!(texts.iter().any(|text| text == "20"), "the side count too: {texts:?}");
+        assert!(texts.iter().any(|text| text == "8"), "and the bands: {texts:?}");
         assert!(texts.iter().any(|text| text == "mm"), "the unit is drawn outside the box: {texts:?}");
         assert!(
             !texts.iter().any(|text| text.contains("Apply")),

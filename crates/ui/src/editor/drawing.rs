@@ -2,10 +2,11 @@
 //!
 //! The draft is view state until its one commit: `crate::draw::DrawDraft` collects the
 //! clicks, and `commit_drawing` turns the finished chain into one command — `object.path.create`
-//! for a sketch tool, or `panel.create` carrying the closed ring as its outline when the *Panel from
-//! contour* cell armed the draft (ADR 0114). The shell measures the work plane, so a commit receives
+//! for a sketch tool, `panel.create` carrying the closed ring as its outline when the *Panel from
+//! contour* cell armed the draft (ADR 0114), or a path the shell extrudes at once when a body cell
+//! drew a profile (ADR 0138). The shell measures the work plane, so a commit receives
 //! the *world* frame and converts it to the parent's frame here. A committed path hands the new node
-//! to the contour edit mode.
+//! to the contour edit mode, a body's profile to the height pull instead.
 //!
 //! Refuses to commit with no draft via `DrawDraftError`, a panel draft whose ring is still open, and
 //! returns the command's own sentence when the document rejects the ring; a refused close reopens
@@ -14,13 +15,40 @@
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
 use engine::Session;
-use model::{Panel, PanelOutline, Placement};
+use model::{
+    DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
+};
 use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
 use crate::contour_edit::ContourTarget;
+use model::PathShape;
+
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
+
+/// The name a drawn body commits under: the cell the profile belongs to, not the tool.
+///
+/// A rectangle is a box and a circle is a cylinder whatever method drew them, so the node says what
+/// the body is; any other ring keeps the drawing's own name (ADR 0138).
+fn body_name(profile: &model::Path, lang: Lang) -> String {
+    match profile.shape() {
+        Some(PathShape::Rectangle) => Message::ToolBox.text(lang).to_owned(),
+        Some(PathShape::Circle) => Message::ToolCylinder.text(lang).to_owned(),
+        _ => Message::DrawingName.with(lang, [Message::GroupBodies.text(lang)]),
+    }
+}
+
+/// The primitive a drawn figure becomes: the kind its cell places, sized by the figure's own radius.
+///
+/// A sphere stores the radius, the side count and the latitude bands, and the drawn circle supplies
+/// the first of them; the tessellation is the model's default, which the card then edits (ADR 0054,
+/// 0139).
+fn drawn_primitive(kind: PrimitiveKind, radius: Length) -> Result<Primitive, PrimitiveError> {
+    match kind {
+        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
+    }
+}
 
 impl Editor {
     /// The live drawing draft, when a drawing tool is building a chain.
@@ -52,6 +80,30 @@ impl Editor {
         self.drawing_intent = DrawIntent::Panel;
     }
 
+    /// Arms the profile of a solid body: the figure a body cell draws before its height is pulled.
+    ///
+    /// The box and cylinder cells offer the sketch grammar's own rectangle and circle tools
+    /// (ADR 0138), so the draft is the sketch draft and the figure is a closed ring; the commit
+    /// stores that ring as a path and the shell pulls its height, which turns the node into the body.
+    /// Only a tool that closes its figure can be a profile, so an open chain never reaches the pull.
+    pub fn start_body_drawing(&mut self, tool: DrawTool) {
+        self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Body;
+    }
+
+    /// Arms a primitive's placement: the circle a sphere is built around (ADR 0139).
+    ///
+    /// The sphere cell carries the sketch's own circle methods, so the draft is the sketch draft and
+    /// the figure is a closed circle; the commit stores no path — the circle's centre is the
+    /// primitive's origin and its radius is the primitive's own number. A tool that places no
+    /// primitive is refused rather than started as a figure, because a map row is data.
+    pub fn start_primitive_drawing(&mut self, tool: DrawTool) -> Result<(), String> {
+        let kind = tool.primitive_kind().ok_or_else(|| format!("The {} tool places no primitive.", tool.label()))?;
+        self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Primitive(kind);
+        Ok(())
+    }
+
     /// Starts an empty drawing draft with `tool` and the regular polygon's side count.
     ///
     /// A running draft is replaced, because it wrote nothing and undo gains no half figure
@@ -62,7 +114,6 @@ impl Editor {
     pub fn start_drawing_with(&mut self, tool: DrawTool, sides: u32) {
         self.mesh_edit = None;
         self.contour_edit = None;
-        self.pending_primitive = None;
         self.box_draft = None;
         self.fill = None;
         self.measure = None;
@@ -116,7 +167,8 @@ impl Editor {
         self.drawing.as_mut().is_some_and(DrawDraft::undo)
     }
 
-    /// Commits the running draft as one node: a path object, or the panel cut to its ring.
+    /// Commits the running draft as one node: a path object, the panel cut to its ring, a body's
+    /// profile or the primitive the figure is built around.
     ///
     /// The drawing lands in the armed container, or at the scene root like every other creation
     /// tool. `placement` is the work plane's *world* frame, the one the shell can measure; the
@@ -124,8 +176,11 @@ impl Editor {
     /// inverse first. The command then moves the chain so its creation pivot is the node's local
     /// zero. A path becomes the selection and immediately enters contour edit mode with its grips, so
     /// the figure the user just drew can be reshaped without a second click; a panel is selected and
-    /// needs none, because its ring is edited through its card. Escape or Enter leaves that mode. A
-    /// refused commit leaves the draft and the selection untouched.
+    /// needs none, because its ring is edited through its card. A body's profile is selected and left
+    /// to the shell, which pulls its height in the same edit scope; Escape during that pull takes the
+    /// profile back. A primitive is selected at once: its figure is not stored, so the drawn circle's
+    /// centre and radius live on as the node's placement and its parameter (ADR 0139). Escape or
+    /// Enter leaves the contour mode. A refused commit leaves the draft and the selection untouched.
     pub fn commit_drawing(
         &mut self,
         session: &mut Session,
@@ -139,9 +194,24 @@ impl Editor {
         let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
         let tool = draft.tool();
         let intent = self.drawing_intent;
+        // A body is swept from a profile, so an open chain is refused before anything is written:
+        // the shell's pull has no ring to extrude. The cells offer only closing tools, so this
+        // guards a caller rather than a gesture.
+        if intent == DrawIntent::Body && !draft.to_path().is_ok_and(|path| path.is_closed()) {
+            return Err(Message::BodyProfileOpen.text(lang).to_owned());
+        }
+        // A body's ring and the body itself are one gesture, so the profile enters the document in
+        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138).
+        let scope = (intent == DrawIntent::Body).then(|| session.edit_scope());
         let object = match intent {
-            DrawIntent::Path => draft.commit(session, parent, placement, lang)?,
+            DrawIntent::Path => draft.commit_in(None, session, parent, placement, None, lang)?,
+            DrawIntent::Body => {
+                let profile = draft.to_path().map_err(|error| error.to_string())?;
+                let name = body_name(&profile, lang);
+                draft.commit_in(scope, session, parent, placement, Some(&name), lang)?
+            }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
+            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind)?,
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;
@@ -155,7 +225,7 @@ impl Editor {
             // mode.
             self.start_contour_edit(session.project(), ContourTarget::Path(object));
         }
-        Ok(DrawnNode { object, tool, intent })
+        Ok(DrawnNode { object, tool, intent, scope })
     }
 
     /// Commits the running ring as one panel, the board the user drew.
@@ -190,6 +260,34 @@ impl Editor {
             placement,
             None,
         )
+    }
+
+    /// Commits the figure a primitive cell drew as one `object.primitive.create`.
+    ///
+    /// The figure is the circle the primitive is built around: its centre becomes the node's origin
+    /// — the plane's own rotation keeps the primitive's axes on the work plane — and its radius
+    /// becomes the sphere's radius (ADR 0139). The drawn circle is not stored, so the node is a
+    /// parameter set from the first frame and its card edits the radius, the side count and the
+    /// bands. `placement` is the work plane's frame relative to the parent; a primitive is centred
+    /// on its local zero, so the centre is composed onto that frame.
+    fn commit_primitive(
+        &mut self,
+        draft: &DrawDraft,
+        session: &mut Session,
+        parent: model::Id,
+        placement: Placement,
+        kind: PrimitiveKind,
+    ) -> Result<model::Id, String> {
+        let path = draft.to_path().map_err(|error| error.to_string())?;
+        let (centre, radius) = path
+            .circle_center_radius()
+            .ok_or_else(|| "The drawn figure is not a round, so it builds no primitive.".to_owned())?;
+        let primitive = drawn_primitive(kind, radius).map_err(|error| error.to_string())?;
+        let offset = Placement::IDENTITY
+            .with_translation(centre[0], centre[1], Length::ZERO)
+            .map_err(|error| error.to_string())?;
+        let placement = Placement::compose(placement, offset).map_err(|error| error.to_string())?;
+        self.create_primitive_node(session, parent, primitive, placement)
     }
 
     /// Closes the running ring and commits it as one node.

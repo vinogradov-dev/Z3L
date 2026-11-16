@@ -1,16 +1,15 @@
-//! Creation: the armed container, the armed primitive, the box tool and the five `create` commands.
+//! Creation: the armed container, the frame tool and the five `create` commands.
 //!
 //! Every creation lands in the container armed here, or at the scene root when nothing is armed
-//! (ADR 0056). A cylinder or a sphere is armed rather than created, because its placement is the
-//! next work-plane click; the arm is resolved at the click, so clearing or moving it changes where
-//! the primitive lands. A box is drawn instead: the ribbon starts a draft whose base rectangle and
-//! pulled height become one `object.primitive.create` (ADR 0101). A create command's node becomes
-//! the selection.
+//! (ADR 0056). A product frame is drawn: the ribbon starts a draft whose base rectangle and pulled
+//! height become one `product.create` (ADR 0101). A solid body is a profile drawn in the sketch and
+//! swept on Z (ADR 0138), and a sphere is the circle drawn in the sketch whose centre and radius
+//! become its parameters (ADR 0139), so neither waits for a bare work-plane click. A create command's
+//! node becomes the selection.
 //!
-//! Refuses an arm for the root or for a node that cannot own children, a primitive size that is not
-//! positive, and a panel creation without a panel material in the catalogue; each reason is a
-//! sentence for the user. An arm whose container left the document is dropped by
-//! `retain_creation_parent`.
+//! Refuses an arm for the root or for a node that cannot own children, and a panel creation without a
+//! panel material in the catalogue; each reason is a sentence for the user. An arm whose container
+//! left the document is dropped by `retain_creation_parent`.
 //!
 //! Changes when: a creation tool, its command or the rule that places it changes.
 
@@ -19,7 +18,7 @@ use engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID;
 use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
 use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
-use engine::{AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, PrimitiveKind, Session};
+use engine::{AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
     Placement, Primitive, Project,
@@ -28,19 +27,10 @@ use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
-use crate::box_tool::{BoxDraft, BoxDraftError, BoxOwner};
+use crate::box_tool::{BoxDraft, BoxDraftError};
 use crate::command::{dispatch, json};
 use crate::product_card::ProductDraft;
 use crate::target::creation_target;
-
-/// A primitive waiting for its work-plane click.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct PendingPrimitive {
-    /// Which primitive to build.
-    pub(super) kind: PrimitiveKind,
-    /// Full extent: an edge, a diameter and a height, or a diameter.
-    pub(super) size: Length,
-}
 
 impl Editor {
     /// The container armed to receive the next created nodes, if any.
@@ -195,36 +185,14 @@ impl Editor {
         Ok(())
     }
 
-    /// Arms a primitive tool: a click places a cylinder or a sphere, a box starts its base.
+    /// Arms the frame tool: the next clicks draw its base rectangle and pull its height.
     ///
-    /// The panel asks for a click instead of creating at the origin: the tool is a placement, and a
-    /// stale primitive at the world origin is never what the user wanted. Arming leaves the other
-    /// pointer modes, because the next click creates rather than selects. The parent is resolved at
-    /// the click, so clearing or moving the arm changes where the primitive lands. A box has three
-    /// independent sides, so one extent cannot describe it: the tool draws its base and pulls its
-    /// height instead (ADR 0101).
-    pub(super) fn arm_primitive(&mut self, kind: PrimitiveKind, size: Length) -> Result<(), String> {
-        if kind == PrimitiveKind::Cuboid {
-            self.arm_box(BoxOwner::Cuboid);
-            return Ok(());
-        }
-        if size.micrometres() <= 0 {
-            return Err("The primitive size must be positive.".to_owned());
-        }
+    /// A frame reserves a box of three independent sides, so it is drawn rather than placed by one
+    /// click from one extent (ADR 0101). Arming drops the other pointer modes but writes nothing; a
+    /// solid body is not drawn here, because it is a profile swept on Z (ADR 0138).
+    pub fn arm_box(&mut self) {
         self.leave_pointer_modes();
-        self.pending_primitive = Some(PendingPrimitive { kind, size });
-        Ok(())
-    }
-
-    /// Arms the box tool for one owner: the next clicks draw its base rectangle and pull its height.
-    ///
-    /// A box has three independent sides, so it is drawn rather than placed by one click from one
-    /// extent (ADR 0101). The owner is the field the ✓ will write — a cuboid's primitive or a
-    /// product's envelope — so one gesture serves both and the shell reads the draft, not the tool.
-    /// Arming drops the other pointer modes but writes nothing.
-    pub fn arm_box(&mut self, owner: BoxOwner) {
-        self.leave_pointer_modes();
-        self.box_draft = Some(BoxDraft::new(owner));
+        self.box_draft = Some(BoxDraft::new());
     }
 
     /// Drops every pointer mode a creation tool replaces.
@@ -238,23 +206,12 @@ impl Editor {
         // with the arm: a report row never names a space the pointer left (ADR 0118).
         self.void_armed = false;
         self.void.clear();
-        self.pending_primitive = None;
         self.box_draft = None;
-    }
-
-    /// The primitive waiting for a work-plane click: its kind and size.
-    pub fn pending_primitive(&self) -> Option<(PrimitiveKind, Length)> {
-        self.pending_primitive.map(|pending| (pending.kind, pending.size))
     }
 
     /// The box being drawn, when the box tool is armed or its height is being pulled.
     pub fn box_draft(&self) -> Option<&BoxDraft> {
         self.box_draft.as_ref()
-    }
-
-    /// The owner the box tool would write, while its draft lives; this is what arms the ribbon cell.
-    pub fn box_tool(&self) -> Option<BoxOwner> {
-        self.box_draft.as_ref().map(BoxDraft::owner)
     }
 
     /// The corner the live base rectangle runs to.
@@ -279,34 +236,13 @@ impl Editor {
         self.box_draft = None;
     }
 
-    /// Drops an armed primitive without creating anything.
-    pub fn cancel_primitive(&mut self) {
-        self.pending_primitive = None;
-        self.box_draft = None;
-    }
-
-    /// Creates the armed primitive in the creation target and selects it.
+    /// Creates the frame the draft describes through one command.
     ///
-    /// `placement` is the work plane's *world* frame, the one the shell can measure; the command
-    /// stores a placement relative to the parent, so this converts it with the parent's inverse
-    /// first, exactly like [`Self::commit_drawing`]. A primitive's mesh is centred on its local
-    /// zero with a zero pivot, so the stored translation is the clicked point in the parent frame.
-    pub fn place_primitive(&mut self, session: &mut Session, placement: Placement) -> Result<Id, String> {
-        let pending = self.pending_primitive.ok_or_else(|| "No primitive is waiting for a click.".to_owned())?;
-        let parent = self.creation_target(session.project());
-        let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-        self.create_primitive(session, parent, pending.kind, pending.size, placement)?;
-        self.pending_primitive = None;
-        self.selection.primary().ok_or_else(|| "The primitive command created no node.".to_owned())
-    }
-
-    /// Creates the box the draft describes through one command, chosen by its owner.
-    ///
-    /// `placement` is the work plane's *world* frame with its origin on the base rectangle's
-    /// minimum corner, so the box's own zero is that corner; the command stores the placement
-    /// relative to the parent. A solid goes to `object.primitive.create`; a frame goes to
-    /// `product.create` at the scene root with the placeholder class, exactly as the card's create
-    /// does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo entry.
+    /// `placement` is the work plane's *world* frame with its origin on the base rectangle's minimum
+    /// corner, so the frame's own zero is that corner; the command stores the placement relative to
+    /// the root. The frame goes to `product.create` with the placeholder class, exactly as the card's
+    /// create does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo
+    /// entry.
     pub fn commit_box(&mut self, session: &mut Session, placement: Placement, lang: Lang) -> Result<Id, String> {
         let Some(draft) = self.box_draft else {
             return Err(BoxDraftError::NoBase.to_string());
@@ -314,22 +250,10 @@ impl Editor {
         let Some([width, depth, height]) = draft.sizes() else {
             return Err(BoxDraftError::NoBase.to_string());
         };
-        match draft.owner() {
-            BoxOwner::Cuboid => {
-                let primitive = Primitive::cuboid(width, depth, height).map_err(|error| error.to_string())?;
-                let parent = self.creation_target(session.project());
-                let placement =
-                    session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-                self.create_primitive_node(session, parent, primitive, placement)?;
-            }
-            BoxOwner::Product => {
-                // A frame is a top-level piece: its parent is the root whatever container is armed.
-                let parent = session.project().root().id();
-                let placement =
-                    session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-                self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
-            }
-        }
+        // A frame is a top-level piece: its parent is the root whatever container is armed.
+        let parent = session.project().root().id();
+        let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
+        self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
         self.box_draft = None;
         self.selection.primary().ok_or_else(|| "The box command created no node.".to_owned())
     }
@@ -366,31 +290,22 @@ impl Editor {
     }
 
     /// Dispatches `object.primitive.create` for one validated primitive at `placement`.
-    fn create_primitive_node(
+    ///
+    /// The drawn sphere's commit is the caller: the click that placed a primitive by one gesture
+    /// retired with the arm, because a sphere is now drawn around its centre (ADR 0139).
+    pub(super) fn create_primitive_node(
         &mut self,
         session: &mut Session,
         parent: Id,
         primitive: Primitive,
         placement: Placement,
-    ) -> Result<(), String> {
+    ) -> Result<Id, String> {
         let name = primitive.kind().label();
         let params = json(&ObjectPrimitiveCreate { parent, name: name.to_owned(), primitive, placement })?;
         let outcome = dispatch(session, OBJECT_PRIMITIVE_CREATE_ID, &params)?;
-        self.select_created(outcome.created_id());
-        Ok(())
-    }
-
-    /// Dispatches `object.primitive.create` for one primitive at `placement`.
-    fn create_primitive(
-        &mut self,
-        session: &mut Session,
-        parent: Id,
-        kind: PrimitiveKind,
-        size: Length,
-        placement: Placement,
-    ) -> Result<(), String> {
-        let primitive = Primitive::from_kind(kind, size).map_err(|error| error.to_string())?;
-        self.create_primitive_node(session, parent, primitive, placement)
+        let created = outcome.created_id();
+        self.select_created(created);
+        created.ok_or_else(|| "The primitive command created no node.".to_owned())
     }
 
     /// Dispatches `camera.create`.

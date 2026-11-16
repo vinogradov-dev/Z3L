@@ -528,12 +528,13 @@ mod tests {
 
     use super::*;
 
-    /// A box 600 x 400 x 720 mm at the scene root.
-    fn box_params(session: &Session) -> Value {
-        let primitive = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
+    /// A sphere 100 mm across at the scene root.
+    fn sphere_params(session: &Session) -> Value {
+        let size = Length::from_millimetres(100).expect("size");
+        let primitive = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere");
         serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
-            name: "Box".to_owned(),
+            name: "Sphere".to_owned(),
             primitive,
             placement: Placement::IDENTITY,
         })
@@ -543,16 +544,17 @@ mod tests {
     #[test]
     fn dispatch_stores_the_recipe_in_one_revision() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
-        let params = box_params(&session);
+        let params = sphere_params(&session);
 
-        let outcome = session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &params).expect("create box");
+        let outcome = session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &params).expect("create sphere");
 
         let id = outcome.created_id().expect("the command returns the new object id");
         assert_eq!(session.project().revision().get(), 1);
         let object = session.project().object(id).expect("object");
-        assert_eq!(object.name(), "Box");
+        assert_eq!(object.name(), "Sphere");
+        let size = Length::from_millimetres(100).expect("size");
         let primitive = object.geometry().as_primitive().expect("a parametric payload");
-        assert_eq!(primitive, &Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box"));
+        assert_eq!(primitive, &Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere"));
         assert!(object.geometry().as_mesh().is_none(), "the mesh is derived, not stored");
         assert!(session.can_undo());
 
@@ -566,11 +568,7 @@ mod tests {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         assert_eq!(session.active_product(), None, "a primitive is a scene object, not a furniture part");
         let size = Length::from_millimetres(100).expect("length");
-        let cases = [
-            (Primitive::from_kind(PrimitiveKind::Cuboid, size).expect("box"), ([0; 3], [100_000; 3])),
-            (Primitive::from_kind(PrimitiveKind::Cylinder, size).expect("cylinder"), ([-50_000; 3], [50_000; 3])),
-            (Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere"), ([-50_000; 3], [50_000; 3])),
-        ];
+        let cases = [(Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere"), ([-50_000; 3], [50_000; 3]))];
         for (primitive, bounds) in cases {
             let kind = primitive.kind();
             let params = serde_json::to_value(ObjectPrimitiveCreate {
@@ -587,16 +585,7 @@ mod tests {
             assert_eq!(stored, &primitive, "{kind:?} keeps its parameters");
             assert_eq!(stored.bounds_micrometres(), bounds, "{kind:?} bounds");
         }
-        assert_eq!(session.project().revision().get(), 3, "one command per primitive");
-        assert_eq!(
-            Primitive::from_kind(PrimitiveKind::Cuboid, size).expect("box").mesh_counts(),
-            (8, 6),
-            "a box keeps eight corners and six faces"
-        );
-        assert_eq!(
-            Primitive::from_kind(PrimitiveKind::Cylinder, size).expect("cylinder").mesh_counts(),
-            (DEFAULT_SEGMENTS as usize * 2, DEFAULT_SEGMENTS as usize + 2)
-        );
+        assert_eq!(session.project().revision().get(), 1, "one command per primitive");
         assert_eq!(
             Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere").mesh_counts(),
             (
@@ -613,11 +602,11 @@ mod tests {
         // The parameters are hostile JSON, not a value this build can build: a shape asks for a
         // side outside the document's limit and the command refuses to read it at all.
         for size in [0, 1, too_large.micrometres()] {
-            let mut params = box_params(&session);
-            params["primitive"]["width"] = Value::from(size);
+            let mut params = sphere_params(&session);
+            params["primitive"]["radius"] = Value::from(size);
             let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_CREATE_ID).expect("registered");
-            assert!(!spec.enabled(&session, &params), "width {size} is not creatable");
-            assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &params).is_err(), "width {size} is refused");
+            assert!(!spec.enabled(&session, &params), "radius {size} is not creatable");
+            assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &params).is_err(), "radius {size} is refused");
         }
         assert_eq!(session.project().revision(), Revision::ZERO);
         assert!(!session.can_undo());
@@ -626,7 +615,7 @@ mod tests {
     #[test]
     fn a_blank_name_is_rejected_without_mutating() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
-        let mut value = box_params(&session);
+        let mut value = sphere_params(&session);
         value["name"] = Value::from("  ");
         assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &value).is_err());
         assert_eq!(session.project().revision(), Revision::ZERO);
@@ -635,7 +624,7 @@ mod tests {
     #[test]
     fn an_unknown_parent_is_rejected_without_mutating() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
-        let mut value = box_params(&session);
+        let mut value = sphere_params(&session);
         value["parent"] = Value::from(99);
         assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &value).is_err());
         assert_eq!(session.project().revision(), Revision::ZERO);
@@ -645,11 +634,12 @@ mod tests {
     fn replacing_the_parameters_is_one_revision_and_one_undo() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let id = session
-            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &box_params(&session))
+            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &sphere_params(&session))
             .expect("create")
             .created_id()
             .expect("id");
-        let original = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("a box");
+        let size = Length::from_millimetres(100).expect("size");
+        let original = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere");
         assert_eq!(session.project().object_primitive(id), Ok(&original));
 
         let smoother = Primitive::sphere(Length::from_millimetres(60).expect("radius"), 24, 12).expect("sphere");
@@ -661,7 +651,7 @@ mod tests {
         session.dispatch(OBJECT_PRIMITIVE_REPLACE_ID, &value).expect("replace the parameters");
         assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision per edit");
         let object = session.project().object(id).expect("object");
-        assert_eq!(object.name(), "Box", "only the parameters change");
+        assert_eq!(object.name(), "Sphere", "only the parameters change");
         assert_eq!(object.geometry().as_primitive(), Some(&smoother));
 
         session.undo().expect("one undo restores the parameters");
@@ -715,7 +705,7 @@ mod tests {
         let before = session.project().revision();
         let value = serde_json::to_value(ObjectPrimitiveReplace {
             object: id,
-            primitive: Primitive::cuboid(millimetres(20), millimetres(20), millimetres(20)).expect("a box"),
+            primitive: Primitive::sphere(millimetres(20), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("a sphere"),
         })
         .expect("params");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
@@ -916,15 +906,15 @@ mod tests {
         assert_eq!(session.project().revision(), Revision::ZERO);
         assert!(!session.can_undo());
 
-        let box_ = session
-            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &box_params(&session))
-            .expect("a box to compare kinds")
+        let sphere = session
+            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &sphere_params(&session))
+            .expect("a sphere to compare kinds")
             .created_id()
             .expect("id");
-        let value = serde_json::to_value(ObjectContourReplace { object: box_, path: rectangle(10, 10).into() })
+        let value = serde_json::to_value(ObjectContourReplace { object: sphere, path: rectangle(10, 10).into() })
             .expect("params");
         assert!(session.dispatch(OBJECT_CONTOUR_REPLACE_ID, &value).is_err());
-        let value = serde_json::to_value(ObjectCollapse { object: box_ }).expect("params");
+        let value = serde_json::to_value(ObjectCollapse { object: sphere }).expect("params");
         session.dispatch(OBJECT_COLLAPSE_ID, &value).expect("a primitive collapses to its derived mesh");
         assert!(session.dispatch(OBJECT_COLLAPSE_ID, &value).is_err(), "a baked mesh cannot collapse again");
 
@@ -1331,18 +1321,18 @@ mod tests {
     #[test]
     fn a_path_replace_on_a_mesh_object_is_refused_without_mutating() {
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
-        let box_ = session
-            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &box_params(&session))
-            .expect("a box")
+        let sphere = session
+            .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &sphere_params(&session))
+            .expect("a sphere")
             .created_id()
             .expect("id");
         let value =
-            serde_json::to_value(ObjectPathReplace { object: box_, path: l_path(100) }).expect("params serialize");
+            serde_json::to_value(ObjectPathReplace { object: sphere, path: l_path(100) }).expect("params serialize");
         let spec = CommandRegistry::new().get(OBJECT_PATH_REPLACE_ID).expect("registered");
         assert!(!spec.enabled(&session, &value));
         assert!(session.dispatch(OBJECT_PATH_REPLACE_ID, &value).is_err());
 
-        assert_eq!(session.project().revision().get(), 1, "the box's own revision is the only one");
-        assert!(session.project().object_path(box_).is_err(), "a mesh object stores no drawing");
+        assert_eq!(session.project().revision().get(), 1, "the sphere's own revision is the only one");
+        assert!(session.project().object_path(sphere).is_err(), "a primitive object stores no drawing");
     }
 }

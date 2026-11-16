@@ -1,11 +1,11 @@
 //! Builds the polygon mesh of a parametric primitive.
 //!
 //! The parameters are document data in integer micrometres; this module is the boundary where the
-//! ring trigonometry runs in floating point and the result is rounded back to lengths. A box keeps
-//! six quads at its base corner, a cylinder one quad per side plus two polygonal caps, and a sphere
-//! latitude bands joined by triangles at the poles.
+//! ring trigonometry runs in floating point and the result is rounded back to lengths. The sphere is
+//! latitude bands joined by triangles at the poles; a box or a cylinder is a drawn profile swept by
+//! `crates/param`, not a parameter set (ADR 0138).
 
-use model::{Cuboid, Cylinder, Mesh, Primitive, Sphere};
+use model::{Mesh, Primitive, Sphere};
 use units::Length;
 
 use crate::MeshError;
@@ -32,44 +32,8 @@ fn index(value: usize) -> Result<u32, MeshError> {
 /// Builds the document mesh of one primitive.
 pub(crate) fn build_primitive_mesh(primitive: &Primitive) -> Result<Mesh, MeshError> {
     match primitive {
-        Primitive::Cuboid(cuboid) => cuboid_mesh(cuboid),
-        Primitive::Cylinder(cylinder) => cylinder_mesh(cylinder),
         Primitive::Sphere(sphere) => sphere_mesh(sphere),
     }
-}
-
-/// A box between the local zero and its three sides: the base corner is the anchor.
-fn cuboid_mesh(cuboid: &Cuboid) -> Result<Mesh, MeshError> {
-    let [width, depth, height] = cuboid.sides();
-    Mesh::cuboid([Length::ZERO; 3], [width, depth, height]).map_err(|error| MeshError::Invalid(error.to_string()))
-}
-
-/// A capped tube: one quad per side and one polygon per cap.
-fn cylinder_mesh(cylinder: &Cylinder) -> Result<Mesh, MeshError> {
-    let segments = cylinder.segments() as usize;
-    let radius = cylinder.radius().micrometres() as f64;
-    let half_height = cylinder.height().micrometres() / 2;
-    let mut positions = Vec::with_capacity(segments * 2);
-    for z in [-half_height, half_height] {
-        for segment in 0..segments {
-            let (sin, cos) = ring_angle(segment, segments);
-            positions.push([coordinate(cos * radius)?, coordinate(sin * radius)?, Length::from_micrometres(z)]);
-        }
-    }
-    let mut faces = Vec::with_capacity(segments + 2);
-    for segment in 0..segments {
-        let next = (segment + 1) % segments;
-        let bottom = index(segment)?;
-        let bottom_next = index(next)?;
-        let top = index(segments + segment)?;
-        let top_next = index(segments + next)?;
-        faces.push(vec![bottom, bottom_next, top_next, top]);
-    }
-    let bottom = (0..segments).rev().map(index).collect::<Result<Vec<_>, _>>()?;
-    let top = (segments..segments * 2).map(index).collect::<Result<Vec<_>, _>>()?;
-    faces.push(bottom);
-    faces.push(top);
-    Ok(Mesh::new(positions, faces)?)
 }
 
 /// A closed banded surface with one vertex at each pole.
@@ -157,17 +121,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cylinder_is_a_capped_tube_of_the_stored_dimensions() {
-        let primitive = Primitive::cylinder(millimetres(30), millimetres(100), 12).expect("cylinder");
-        let mesh = build_primitive_mesh(&primitive).expect("mesh");
-        assert_eq!(mesh.positions().len(), primitive.vertex_count());
-        assert_eq!(mesh.faces().len(), primitive.face_count());
-        assert_eq!(mesh.faces().last().map(Vec::len), Some(12), "the top cap is one polygon");
-        assert_eq!(mesh.bounds_micrometres(), ([-30_000, -30_000, -50_000], [30_000, 30_000, 50_000]));
-        assert_outward(&mesh);
-    }
-
-    #[test]
     fn a_sphere_is_a_closed_banded_surface_of_the_stored_radius() {
         let primitive = Primitive::sphere(millimetres(50), 16, 8).expect("sphere");
         let mesh = build_primitive_mesh(&primitive).expect("mesh");
@@ -195,17 +148,5 @@ mod tests {
         let fine = build_primitive_mesh(&fine).expect("fine mesh");
         assert_ne!(coarse.positions().len(), fine.positions().len());
         assert_ne!(coarse.faces().len(), fine.faces().len());
-    }
-
-    #[test]
-    fn a_box_starts_at_its_base_corner_with_its_three_sides() {
-        let primitive = Primitive::cuboid(millimetres(600), millimetres(400), millimetres(720)).expect("box");
-        let mesh = build_primitive_mesh(&primitive).expect("mesh");
-        assert_eq!(
-            mesh,
-            Mesh::cuboid([Length::ZERO; 3], [millimetres(600), millimetres(400), millimetres(720)])
-                .expect("the same box")
-        );
-        assert_eq!(mesh.bounds_micrometres(), ([0; 3], [600_000, 400_000, 720_000]));
     }
 }

@@ -44,7 +44,6 @@ use text::{Lang, Message};
 use units::Length;
 
 use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
-use crate::box_tool::BoxOwner;
 use crate::draw::{DrawIntent, DrawTool};
 use crate::icons::{self, Icon};
 use crate::theme::{RIBBON_CAPTION_HEIGHT, RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT, RIBBON_RULE, RIBBON_TAB_HEIGHT};
@@ -59,10 +58,6 @@ pub use self::state::Toolbars;
 
 use self::ready::{projection_icon, ready};
 
-/// Full extent of a new primitive, in millimetres; the size a cylinder or a sphere starts at and
-/// the equal-sided box a one-extent creation builds.
-pub const DEFAULT_PRIMITIVE_SIZE_MM: i64 = 200;
-
 /// Height of a new extrusion, in millimetres; also the height the next extrusion starts at.
 pub const DEFAULT_EXTRUDE_HEIGHT_MM: i64 = 100;
 
@@ -76,6 +71,15 @@ pub enum ToolAction {
         tool: DrawTool,
         /// The side count the polygon tool uses.
         sides: u32,
+    },
+    /// Starts a drawing tool whose closed figure becomes the profile of a solid body.
+    ///
+    /// One `object.path.create` puts the profile in the document and the shell then pulls its
+    /// height in the same edit scope, so the ring and the body are one gesture and one undo entry
+    /// (ADR 0138).
+    DrawBody {
+        /// Which rectangle or circle method draws the profile.
+        tool: DrawTool,
     },
     /// Opens the product-frame card; the card dispatches `product.create`.
     CreateProductCard,
@@ -93,12 +97,16 @@ pub enum ToolAction {
     },
     /// Creates an assembly at the scene root.
     CreateAssembly,
-    /// Creates a primitive at the scene root once the work plane is clicked.
-    CreatePrimitive {
-        /// Which primitive to build.
+    /// Draws a primitive's placement: the circle the shape is built around.
+    ///
+    /// The sphere cell carries the sketch's own circle methods, so the button hands the editor a
+    /// drawing tool and no size: the plates carry the numbers and the commit stores the primitive
+    /// (ADR 0139).
+    DrawPrimitive {
+        /// Which primitive the drawn figure builds.
         kind: PrimitiveKind,
-        /// Full extent of the primitive.
-        size: Length,
+        /// Which circle method draws the figure.
+        tool: DrawTool,
     },
     /// Extrudes the selected closed path into a body.
     ExtrudePath {
@@ -151,13 +159,18 @@ pub const CONTOUR_TOOLS: [DrawTool; 10] = [
 /// The tool that owns the next pointer events, drawn as pressed on the strip.
 ///
 /// Only the arming tools have a state to show: a drawing tool holds the pointer until the chain is
-/// committed, a primitive waits for its work-plane click and a box waits for its base rectangle. A
-/// one-shot creation — a panel, an assembly, a camera or a light — runs and forgets, so it is never
-/// armed.
+/// committed — and a primitive's round and a body's profile are drafts too — while a box waits for its
+/// base rectangle. A one-shot creation — a panel, an assembly, a camera or a light — runs and
+/// forgets, so it is never armed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolActivity {
     /// A drawing tool is building a chain.
     Draw(DrawTool),
+    /// A drawing tool is building the profile of a solid body.
+    ///
+    /// The draft is the sketch draft; only what its commit becomes differs, so the pressed cell is the
+    /// body cell and not the sketch tool whose glyph the draft borrows (ADR 0138).
+    Body(DrawTool),
     /// A drawing tool is building the outline of one panel.
     ///
     /// The draft is the same; only what its close becomes differs, so the pressed cell is the contour
@@ -183,27 +196,26 @@ pub enum ToolActivity {
 /// The activity whose button is pressed, from what the editor holds.
 ///
 /// The arguments are the sources of an armed tool, not a decision: a running draft names its tool
-/// and what it will become, a pending primitive names its kind, a box draft names the field it will
-/// write and a fill arm names its class. None outranks another because the editor never holds two at
-/// once.
+/// and what it will become, a box draft names the field it will write and a fill arm names its
+/// class. None outranks another because the editor never holds two at once.
 pub fn tool_activity(
     drawing: Option<(DrawTool, DrawIntent)>,
-    primitive: Option<PrimitiveKind>,
-    box_owner: Option<BoxOwner>,
+    frame: bool,
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
 ) -> Option<ToolActivity> {
-    match (drawing, primitive, box_owner, fill, measure, niche) {
-        (Some((tool, DrawIntent::Path)), _, _, _, _, _) => Some(ToolActivity::Draw(tool)),
-        (Some((_, DrawIntent::Panel)), _, _, _, _, _) => Some(ToolActivity::PanelContour),
-        (None, Some(kind), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
-        (None, None, Some(BoxOwner::Cuboid), _, _, _) => Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
-        (None, None, Some(BoxOwner::Product), _, _, _) => Some(ToolActivity::ProductFrame),
-        (None, None, None, Some((class, mode)), _, _) => Some(ToolActivity::Fill { class, mode }),
-        (None, None, None, None, true, _) => Some(ToolActivity::Measure),
-        (None, None, None, None, false, true) => Some(ToolActivity::Void),
-        (None, None, None, None, false, false) => None,
+    match (drawing, frame, fill, measure, niche) {
+        (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
+        (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
+        // A primitive's placement is a draft like any other, so the pressed cell is the sphere's.
+        (Some((_, DrawIntent::Primitive(kind))), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
+        (None, true, _, _, _) => Some(ToolActivity::ProductFrame),
+        (None, false, Some((class, mode)), _, _) => Some(ToolActivity::Fill { class, mode }),
+        (None, false, None, true, _) => Some(ToolActivity::Measure),
+        (None, false, None, false, true) => Some(ToolActivity::Void),
+        (None, false, None, false, false) => None,
     }
 }
 
@@ -214,8 +226,9 @@ pub fn tool_activity(
 fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
     match (activity, kind) {
         (Some(ToolActivity::Draw(armed)), ToolKind::Draw(tool)) => armed == tool,
+        (Some(ToolActivity::Body(armed)), ToolKind::Body(tool)) => armed == tool,
         (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
-        (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive(kind)) => armed == kind,
+        (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive { kind, .. }) => armed == kind,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
         // pressed state and the cell shows it through the list (U74).
         (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw) => true,
@@ -683,7 +696,11 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 Some(ready) if !ready.enabled => ready.hint.clone(),
                 // A fill's own hint names the tool and then the method — «Post: Largest rectangle» —
                 // because the two fills are two cells whose methods would otherwise read the same.
-                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. })) => ready.hint.clone(),
+                // A body cell's method says what it builds — «Box: draw its base on the work plane»
+                // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
+                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. } | ToolKind::Body(_))) => {
+                    ready.hint.clone()
+                }
                 // Every other tool names the method alone: the glyph already says which tool it is.
                 Some(_) => icons::tool_hint(method.label.text(lang), method.shortcut),
             };
@@ -899,9 +916,10 @@ mod tests {
                 "model",
                 &[
                     "Box: draw its base on the work plane",
-                    "Cylinder: click the work plane",
+                    // The sphere cell lists its methods, so the cell itself names the pinned one.
+                    "Centre and radius",
+                    "Cylinder: draw its base on the work plane",
                     "Select a closed path first",
-                    "Sphere: click the work plane",
                 ],
             ),
             (
@@ -1118,56 +1136,46 @@ mod tests {
         let post = ClassCode::VERTICAL_PANEL;
         let path = DrawIntent::Path;
         let panel = DrawIntent::Panel;
+        let sphere = DrawIntent::Primitive(PrimitiveKind::Sphere);
         let cases = [
-            (None, None, None, None, false, false, None),
-            (Some((DrawTool::Line, path)), None, None, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
-            (Some((DrawTool::Polyline, panel)), None, None, None, false, false, Some(ToolActivity::PanelContour)),
+            (None, false, None, false, false, None),
+            (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
             (
+                Some((DrawTool::Rectangle, DrawIntent::Body)),
+                false,
                 None,
-                Some(PrimitiveKind::Sphere),
-                None,
+                false,
+                false,
+                Some(ToolActivity::Body(DrawTool::Rectangle)),
+            ),
+            (Some((DrawTool::Polyline, panel)), false, None, false, false, Some(ToolActivity::PanelContour)),
+            // A sphere is a draft too: the round it draws presses the sphere's own cell.
+            (
+                Some((DrawTool::Sphere, sphere)),
+                false,
                 None,
                 false,
                 false,
                 Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
             ),
+            (None, true, None, false, false, Some(ToolActivity::ProductFrame)),
             (
                 None,
-                None,
-                Some(BoxOwner::Cuboid),
-                None,
                 false,
-                false,
-                Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)),
-            ),
-            (None, None, Some(BoxOwner::Product), None, false, false, Some(ToolActivity::ProductFrame)),
-            (
-                None,
-                None,
-                None,
                 Some((post, FillMode::Fit)),
                 false,
                 false,
                 Some(ToolActivity::Fill { class: post, mode: FillMode::Fit }),
             ),
-            (None, None, None, None, true, false, Some(ToolActivity::Measure)),
-            (None, None, None, None, false, true, Some(ToolActivity::Void)),
-            (
-                Some((DrawTool::Arc, path)),
-                Some(PrimitiveKind::Sphere),
-                None,
-                None,
-                false,
-                true,
-                Some(ToolActivity::Draw(DrawTool::Arc)),
-            ),
+            (None, false, None, true, false, Some(ToolActivity::Measure)),
+            (None, false, None, false, true, Some(ToolActivity::Void)),
+            (Some((DrawTool::Arc, path)), false, None, false, true, Some(ToolActivity::Draw(DrawTool::Arc))),
         ];
-        for (drawing, primitive, box_owner, fill, measure, niche, expected) in cases {
+        for (drawing, frame, fill, measure, niche, expected) in cases {
             assert_eq!(
-                tool_activity(drawing, primitive, box_owner, fill, measure, niche),
+                tool_activity(drawing, frame, fill, measure, niche),
                 expected,
-                "drawing={drawing:?} primitive={primitive:?} box={box_owner:?} fill={fill:?} \
-                 measure={measure} niche={niche}"
+                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche}"
             );
         }
     }
@@ -1181,12 +1189,33 @@ mod tests {
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::PanelContour, false),
             (Some(ToolActivity::PanelContour), ToolKind::PanelContour, true),
             (Some(ToolActivity::PanelContour), ToolKind::Draw(DrawTool::Polyline), false),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Cuboid), true),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Primitive(PrimitiveKind::Sphere), false),
-            (Some(ToolActivity::Primitive(PrimitiveKind::Cuboid)), ToolKind::Light, false),
+            (
+                Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
+                ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
+                true,
+            ),
+            (
+                Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
+                ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
+                true,
+            ),
+            (
+                Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
+                ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
+                true,
+            ),
+            (Some(ToolActivity::Body(DrawTool::Rectangle)), ToolKind::Body(DrawTool::Rectangle), true),
+            (Some(ToolActivity::Body(DrawTool::Rectangle)), ToolKind::Body(DrawTool::Circle), false),
+            (Some(ToolActivity::Body(DrawTool::Circle)), ToolKind::Draw(DrawTool::Circle), false),
+            (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Draw(DrawTool::Circle), false),
+            (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Light, false),
             (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw, true),
             (Some(ToolActivity::ProductFrame), ToolKind::Product, false),
-            (Some(ToolActivity::ProductFrame), ToolKind::Primitive(PrimitiveKind::Cuboid), false),
+            (
+                Some(ToolActivity::ProductFrame),
+                ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
+                false,
+            ),
             (Some(ToolActivity::Measure), ToolKind::Measure, true),
             (Some(ToolActivity::Measure), ToolKind::FrameAll, false),
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Measure, false),
@@ -1292,12 +1321,10 @@ mod tests {
 
     #[test]
     fn the_ribbon_starts_on_the_typed_defaults() {
-        // The three numbers a tool needs are typed session defaults (U76): always valid, never text.
+        // The numbers a tool needs are typed session defaults (U76): always valid, never text. A
+        // primitve's size is no longer one of them, because the round it is built around is drawn
+        // (ADR 0139).
         let state = Toolbars::new();
-        assert_eq!(
-            state.primitive_size(),
-            Length::from_millimetres(DEFAULT_PRIMITIVE_SIZE_MM).expect("the default size is a length")
-        );
         assert_eq!(
             state.extrude_height(),
             Length::from_millimetres(DEFAULT_EXTRUDE_HEIGHT_MM).expect("the default height is a length")
@@ -1306,19 +1333,40 @@ mod tests {
     }
 
     #[test]
-    fn a_primitive_cell_runs_at_the_default_size() {
-        let tool = tool("model.primitives.cuboid");
+    fn the_sphere_cell_draws_its_round_with_the_pinned_method() {
+        let tool = tool("model.primitives.sphere");
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (actions, _) = click_cell(&mut state, tool, main_point());
         assert_eq!(
             actions,
-            vec![ToolAction::CreatePrimitive {
-                kind: PrimitiveKind::Cuboid,
-                size: Length::from_millimetres(DEFAULT_PRIMITIVE_SIZE_MM).expect("the default size is a length"),
-            }],
-            "the cell hands the command the typed default"
+            vec![ToolAction::DrawPrimitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere }],
+            "the cell hands the editor the circle method and no size"
         );
+        // A pinned method is what a click and the tool's key run, exactly as for a body cell.
+        let pinned = BTreeMap::from([(tool.id.to_owned(), "model.primitives.sphere.three-points".to_owned())]);
+        state.set_pinned_variants(pinned);
+        let (actions, _) = click_cell(&mut state, tool, main_point());
+        assert_eq!(
+            actions,
+            vec![ToolAction::DrawPrimitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints }],
+            "the pinned method draws the round"
+        );
+    }
+
+    #[test]
+    fn a_body_cell_starts_the_sketch_method_that_draws_its_profile() {
+        // A box and a cylinder are drawn, so their cells hand the editor a drawing tool and no size:
+        // the profile's own plates carry the numbers (ADR 0138).
+        let box_cell = tool("model.primitives.cuboid");
+        let mut state = Toolbars::new();
+        state.set_tab(tab("model"));
+        let (actions, _) = click_cell(&mut state, box_cell, main_point());
+        assert_eq!(actions, vec![ToolAction::DrawBody { tool: DrawTool::Rectangle }], "the box draws its base");
+
+        let cylinder_cell = tool("model.primitives.cylinder");
+        let (actions, _) = click_cell(&mut state, cylinder_cell, main_point());
+        assert_eq!(actions, vec![ToolAction::DrawBody { tool: DrawTool::Circle }], "the cylinder draws its rim");
     }
 
     #[test]
@@ -1354,12 +1402,12 @@ mod tests {
     }
 
     #[test]
-    fn the_three_primitive_buttons_are_filled() {
+    fn the_three_primitive_buttons_say_what_they_draw() {
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (_, labels, actions) = draw(&mut state, full_context());
         for label in
-            ["Box: draw its base on the work plane", "Cylinder: click the work plane", "Sphere: click the work plane"]
+            ["Box: draw its base on the work plane", "Cylinder: draw its base on the work plane", "Centre and radius"]
         {
             assert!(labels.iter().any(|text| text.contains(label)), "{label} is missing: {labels:?}");
         }

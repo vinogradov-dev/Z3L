@@ -425,7 +425,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     // Two points on the work plane, and the height the pointer pulls above the base.
     let corners = {
         let document = app.tabs.active_mut();
-        document.editor.arm_box(ui::BoxOwner::Cuboid);
+        document.editor.arm_box();
         let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
         let camera = document.camera();
         let project = document.session.project();
@@ -491,89 +491,6 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the box tool is in {}", path.display());
-}
-
-/// Draws a selected box with its ten grips into one picture.
-///
-/// The grips are the three-side editor (ADR 0101): four base corners move two sides and six face
-/// centres one, so the shot proves their placement, size and tone against the shaded box.
-#[test]
-#[ignore = "needs a GPU adapter; writes target/ui-shots/box-grips.png"]
-fn the_box_grips_are_painted_offscreen() {
-    let render_state = match render_state() {
-        Ok(render_state) => render_state,
-        Err(reason) => {
-            println!("{reason}");
-            return;
-        }
-    };
-    let ctx = egui::Context::default();
-    let workspace = testkit::scratch_dir("ui-shots").join("box-grips-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
-    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
-        .expect("the application builds");
-    // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
-    // tab a fresh workspace happens to open.
-    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
-        app.tabs.active_mut().editor.set_ribbon_tab(tab);
-    }
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
-    let _ = settle(&mut app, &ctx, &render_state, screen);
-    {
-        let document = app.tabs.active_mut();
-        let root = document.session.project().root().id();
-        let params = serde_json::to_value(engine::ObjectPrimitiveCreate {
-            parent: root,
-            name: "Box".to_owned(),
-            primitive: model::Primitive::cuboid(
-                testkit::millimetres(600),
-                testkit::millimetres(400),
-                testkit::millimetres(720),
-            )
-            .expect("a box"),
-            placement: model::Placement::IDENTITY,
-        })
-        .expect("params");
-        let box_id = document
-            .session
-            .dispatch(engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID, &params)
-            .expect("the box is created")
-            .created_id()
-            .expect("an id");
-        document.editor.select_node(Some(box_id));
-        document.upload_scene().expect("the frame follows the new node");
-    }
-    let mut jobs = Vec::new();
-    for _ in 0..SETTLE_FRAMES {
-        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
-            app.frame(ui);
-        });
-        let mut delta = std::mem::take(&mut output.textures_delta);
-        {
-            let mut renderer = render_state.renderer.write();
-            for (id, images) in &delta.set {
-                for image in images {
-                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
-                }
-            }
-            for id in &delta.free {
-                renderer.free_texture(id);
-            }
-        }
-        delta.clear();
-        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
-    }
-    let pixels_per_point = ctx.pixels_per_point();
-    let size =
-        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
-    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
-    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
-    let path = directory.join("box-grips.png");
-    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
-    app.tabs.active_mut().release_target();
-    let picture = Picture { width: size[0], height: size[1], rgba };
-    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
-    println!("the box grips are in {}", path.display());
 }
 
 /// Draws a selected product frame with its fourteen grips into one picture.
@@ -1171,9 +1088,9 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
     let root = project.root().id();
     let panel = project.root().children().first().map(model::Node::id).ok_or("no panel to select")?;
     let mm = testkit::millimetres;
-    let cuboid = Primitive::cuboid(mm(600), mm(400), mm(720)).map_err(|error| error.to_string())?;
+    let sphere = Primitive::sphere(mm(400), 24, 12).map_err(|error| error.to_string())?;
     let object = project
-        .add_object(root, "Box", Placement::IDENTITY, Geometry::Primitive(cuboid))
+        .add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(sphere))
         .map_err(|error| error.to_string())?;
     Ok((engine::Session::with_catalog(project, testkit::sample_catalog()), [panel, object, frame]))
 }

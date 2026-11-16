@@ -36,7 +36,6 @@ struct StatusInfo {
     drawing: Option<(DrawTool, usize, bool, bool)>,
     /// Why the pointer cannot extend the live draft, if it cannot.
     preview_error: Option<String>,
-    primitive: Option<(engine::PrimitiveKind, Length)>,
     /// The armed ruler: the step it waits for and the length it shows, if it has one.
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
@@ -219,7 +218,6 @@ enum StatusAction {
     CloseDraft,
     FinishDraft,
     CancelDraft,
-    CancelPrimitive,
     ClearCreationParent,
     EndNavigation,
 }
@@ -319,19 +317,6 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
             None
         };
         return (action, None);
-    }
-    // A live pull arrow is drawn and finished by the viewport's own command bar: the bar owns the
-    // height field, the check and the cross, so the status bar names no second Apply (M71).
-    if let Some((kind, size)) = info.primitive {
-        let name = match kind {
-            engine::PrimitiveKind::Cuboid => Message::ToolBox,
-            engine::PrimitiveKind::Cylinder => Message::ToolCylinder,
-            engine::PrimitiveKind::Sphere => Message::ToolSphere,
-        };
-        ui.label(Message::PrimitiveStatus.with(lang, [name.text(lang), &size.to_string()]));
-        let cancel = ui.button(Message::CancelEsc.text(lang)).clicked();
-        hint(ui, Message::PrimitivePlaceHint.text(lang));
-        return (cancel.then_some(StatusAction::CancelPrimitive), None);
     }
     if let Some((stage, _)) = info.measure {
         // The left zone says the step and the centre zone the number: the person reads one line
@@ -605,7 +590,6 @@ impl Document {
                 .drawing()
                 .map(|draft| (draft.tool(), draft.len(), draft.is_closed(), draft.arc_mode())),
             preview_error: self.draw_gizmo.preview_error().map(str::to_owned),
-            primitive: self.editor.pending_primitive(),
             measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
             // The report row reads the same atom the fill ghost and the part are built from, never a
             // second measurement of the space under the pointer (ADR 0118).
@@ -653,7 +637,6 @@ impl Document {
                 }
             }
             StatusAction::CancelDraft => self.cancel_drawing(),
-            StatusAction::CancelPrimitive => self.editor.cancel_primitive(),
             StatusAction::ClearCreationParent => self.editor.clear_creation_parent(),
             StatusAction::EndNavigation => {}
         }
@@ -679,7 +662,6 @@ mod tests {
             contour: None,
             drawing: None,
             preview_error: None,
-            primitive: None,
             measure: None,
             void: None,
             grid: true,

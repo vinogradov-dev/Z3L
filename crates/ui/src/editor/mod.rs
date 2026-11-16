@@ -33,7 +33,6 @@ use crate::scene_tree::Selection;
 use crate::toolbars;
 use crate::view_flags::ViewFlags;
 
-use self::creation::PendingPrimitive;
 pub use self::fill::FillArm;
 pub use self::selection::{BandRule, BandView, SelectionBand};
 
@@ -66,9 +65,9 @@ pub struct Editor {
     mesh_edit: Option<MeshEdit>,
     contour_edit: Option<ContourEdit>,
     drawing: Option<DrawDraft>,
-    /// What the running draft will become: a path of its own, or a board cut to its ring.
+    /// What the running draft will become: a path of its own, a board cut to its ring, a body's
+    /// profile or a drawn primitive.
     drawing_intent: DrawIntent,
-    pending_primitive: Option<PendingPrimitive>,
     /// The base rectangle and the height of a box being drawn, before its one command.
     box_draft: Option<BoxDraft>,
     /// The class the next click fills a niche with, when the empty-space tool is armed.
