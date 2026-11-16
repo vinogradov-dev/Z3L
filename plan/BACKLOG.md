@@ -44,26 +44,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 - `[ ]` **X54** a click on a widget over the scene commits the running draft's next point
   Why: Observation: with a line tool armed and waiting for its next point — the segment after a
    straight line's start, a point of an arc — a click meant for something other than the scene
-   fixes that point: the line's length is set and the line commits, and the arc takes its second
-   point. The owner names the surfaces: the axes widget in the view's top-right corner, and any
-   of the two panels, with the size fixed at the place he pressed. Expectation: a press belongs
-   to the surface it lands on — a widget, a popover or a menu changes the view or the selection
-   and leaves the draft exactly as it was, and only a press whose position is the scene places a
-   draft point. Measured on 2026-11-16 with a headless frame run: no press on the ribbon band,
-   the header, the panels, the status bar, the view cluster, its popovers, the draft menu, the
-   file menu or the Settings window places a point — each is an `egui::Area` or `Window` whose
-   root senses a click, and egui gives the press to the topmost widget that senses one — while a
-   press one point outside a floating surface's rectangle is already a scene press that commits
-   the line; the panels leave an `INSET` (8 pt) margin inside the window and around their rounded
-   corners, and that margin, the gap between the axes widget and the inspector, and the strip
-   under the cluster all belong to the scene. Suspected cause: the draft reads its click from the
-   viewport response (`draw_gizmo::update`, `response.clicked_by(Primary)`) and
-   `pointer_on_chrome` is the only gate; it is a bare rectangle test (`Chrome::covers`) with no
-   margin, so a press that misses a surface by one point is the scene's. `plan/notes/X54.md`
-   holds the surfaces, the rectangles and the numbers; `Z3L_TRACE=1` on the running binary
-   prints the frame's opinion of every press, so the next session pins the exact position before
-   it changes anything.
-  `files: app/src/document.rs,app/src/view_cluster.rs,crates/ui/src/draw_menu.rs,app/src/frame_tests.rs`
+   fixes the plate: the length is set and the line commits at it, the arc takes its second
+   point there. The owner names the surfaces: the axes widget in the view's top-right corner,
+   and any of the two panels. Reproduced on 2026-11-16 in a headless frame test: a line with
+   its start placed, the pointer 200 × 37 points right of it, a press on the left panel, then a
+   hover 400 points further on — the length plate hands over the rounded text of its live value
+   (772.3 for a live 772.3341245859851) when it loses the keyboard, locks `Length = 772.3`, and
+   the length stays there wherever the pointer goes. Expectation: a press outside the plates
+   takes nothing from them — the point being placed keeps following the pointer, and only a
+   number the person typed, or the Enter key, becomes a promise. Suspected cause, measured:
+   `Scrub` commits its text whenever the field loses the focus (`crates/ui/src/scrub.rs`, the
+   `enter || lost || due` branch, `commit = parsed != old`), and the text is not the value but
+   `number_text(old, decimals)` — one decimal for every parameter but `Sides`
+   (`FieldParam::decimals`) — so a live value almost never round-trips and a blur is a commit;
+   `FieldSet::show` turns every non-zero commit into a lock, and the plate takes the keyboard
+   by itself because `FieldSet::new` requests it. The press does reach the widget it was aimed
+   at: the trace of a real run shows the axes widget swallowing the click (`on_chrome=false`,
+   `clicked_p=false`) while the plate behind it hands its number over.
+  `files: crates/ui/src/scrub.rs,crates/ui/src/point_fields.rs,app/src/draw_gizmo.rs,app/src/frame_tests.rs`
 
 ## Next
 - `[ ]` **U102** a selection cannot be added to or removed from
