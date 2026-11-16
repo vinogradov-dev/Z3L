@@ -42,24 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
-  Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a
-   primitive does not know the sketch grammar: a rectangle cannot be built from its centre, its
-   edge or its diagonals, and a circle cannot be built by a diameter or by three points
-   although both figures exist for a flat contour. The owner asked for one grammar: the profile
-   is drawn as a flat contour with every method the sketch offers, then the body is built on Z.
-  Shape: Compose the primitive out of the two things that already exist. The base is an
-   ordinary `DrawDraft` on the work plane — the rectangle tools for a box, the circle tools for
-   a cylinder — committed to a profile (a `Path` in the local plane); the height is the pull
-   the extrusion already reads, with the same H field. The primitive stores its profile and
-   height instead of three sides (schema bump under ADR 0096), `crates/param` builds the same
-   solid from the profile, and the primitive parameter card edits the profile through the
-   contour editor. The box gesture stays for a product envelope, which is not a primitive.
-  Done: A box is drawn as a rectangle by any of the four rectangle methods and a cylinder as a
-   circle by any of the three circle methods, each with its own plates; the body is built on Z
-   from the profile; the card edits the profile; a test builds each method and asserts the
-   resulting solid matches the old parameter shape.
-  `files: crates/model/src/primitive.rs,crates/ui/src/draw.rs,app/src/document.rs,crates/ui/src/toolbars/spec.rs`
 - `[ ]` **V5** a sphere has one click and one method
   Why: A sphere is put down in one click and sized in the card: there is no first point, no
    phantom and no second gesture, and it has one method. The owner asked for a step-by-step
@@ -92,6 +74,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
+  Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a
+   primitive does not know the sketch grammar: a rectangle cannot be built from its centre, its
+   edge or its diagonals, and a circle cannot be built by a diameter or by three points
+   although both figures exist for a flat contour. The owner asked for one grammar: the profile
+   is drawn as a flat contour with every method the sketch offers, then the body is built on Z.
+  Shape: Compose the primitive out of the two things that already exist. The base is an
+   ordinary `DrawDraft` on the work plane — the rectangle tools for a box, the circle tools for
+   a cylinder — committed to a profile (a `Path` in the local plane); the height is the pull
+   the extrusion already reads, with the same H field. The primitive stores its profile and
+   height instead of three sides (schema bump under ADR 0096), `crates/param` builds the same
+   solid from the profile, and the primitive parameter card edits the profile through the
+   contour editor. The box gesture stays for a product envelope, which is not a primitive.
+  Done: A box is drawn as a rectangle by any of the four rectangle methods and a cylinder as a
+   circle by any of the three circle methods, each with its own plates; the body is built on Z
+   from the profile; the card edits the profile; a test builds each method and asserts the
+   resulting solid matches the old parameter shape.
+  `files: crates/model/src/primitive.rs,crates/ui/src/draw.rs,app/src/document.rs,crates/ui/src/toolbars/spec.rs` — `6768efb`
 
 - `[x]` **U104** the extrusion card offers create and cancel beside its height
   Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
