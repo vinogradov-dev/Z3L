@@ -1429,6 +1429,26 @@ mod tests {
     }
 
     #[test]
+    fn every_rectangle_side_midpoint_keeps_the_opposite_side() {
+        // A ring runs counter-clockwise from the minimum corner, so sides 0 and 3 touch that
+        // corner and sides 1 and 2 stand away from it. Every one of the four drags must leave the
+        // opposite side where it is and change only its own extent: a parity test alone reads
+        // sides 2 and 3 as mirrored and collapses the rectangle.
+        let rectangle = Path::rectangle(point(0, 0), point(100, 50)).expect("rectangle");
+        let cases = [
+            (0_usize, point(50, -80), ([0, -80_000], [100_000, 50_000])),
+            (1, point(180, 25), ([0, 0], [180_000, 50_000])),
+            (2, point(50, 90), ([0, 0], [100_000, 90_000])),
+            (3, point(-40, 25), ([-40_000, 0], [100_000, 50_000])),
+        ];
+        for (side, to, expected) in cases {
+            let moved = rectangle.move_rectangle_midpoint(side, to).expect("a midpoint drag");
+            assert_eq!(moved.bounds_micrometres(), expected, "side {side}");
+            assert_eq!(moved.shape(), Some(crate::PathShape::Rectangle), "side {side} stays a rectangle");
+        }
+    }
+
+    #[test]
     fn a_circle_corner_keeps_the_figure_round() {
         let circle = Path::circle(point(10, 20), millimetres(40)).expect("circle");
         let moved =
