@@ -4,14 +4,16 @@
 //! **construction line** is the chord that is being measured — an arc's start to its end, a node's
 //! old position to the one under the pointer — and it is the guide amber, dashed, at the weight of
 //! a guide (ADR 0111). The **reference line** is the zero the angle is read from and the sweep that
-//! shows it: a dot line from the anchor along +X at the radius of the segment, and an arc of that
-//! same radius up to the direction under the pointer. It is the thinnest mark in the scene, drawn as
-//! two dots — light inside dark — because it lies over an arbitrary board and no themed colour reads
-//! on all of them (ADR 0127).
+//! shows it: a dotted line from the anchor along the X end at the radius of the segment, and the arc
+//! of that same radius up to the direction under the pointer. It is drawn as two dots — light inside
+//! dark — because it lies over an arbitrary board and no themed colour reads on all of them
+//! (ADR 0127); the dot is large enough to find, because the reference is the only thing a sketch
+//! shows before its first click (ADR 0133).
 //!
 //! The module takes screen points: the tool maps its work plane and camera to the screen, so the
 //! guides never see a camera, a plane or a document, and a stroke is a rule in points rather than a
-//! world size (ADR 0111).
+//! world size (ADR 0111). The reference arrives as projected polylines rather than as an angle and a
+//! screen radius, so a plane seen at an angle draws the ellipse it really is (ADR 0133).
 //!
 //! Changes when: a guide gains a kind, or its weight, dash or dot pattern changes.
 
@@ -25,15 +27,6 @@ const CONSTRUCTION_DASH: f32 = 6.0;
 /// The gap after one dash of a construction line, in points.
 const CONSTRUCTION_GAP: f32 = 4.0;
 
-/// The shortest arc worth sampling, in points of length.
-const ARC_STEP: f32 = 4.0;
-
-/// The fewest segments an angular arc is sampled into.
-const ARC_MIN_STEPS: usize = 8;
-
-/// The most segments an angular arc is sampled into.
-const ARC_MAX_STEPS: usize = 96;
-
 /// Paints the construction line between two screen points: the chord being measured.
 ///
 /// The line is the guide amber and dashed, so it reads as the program's own help rather than as a
@@ -43,59 +36,26 @@ pub fn construction(ui: &Ui, painter: &Painter, from: Pos2, to: Pos2) {
     painter.extend(Shape::dashed_line(&[from, to], stroke, CONSTRUCTION_DASH, CONSTRUCTION_GAP));
 }
 
-/// Paints the reference line at `anchor`: the +X axis of `radius` and the arc up to `angle`.
+/// Paints the reference line: the axis from the anchor and the sweep that shows the angle.
 ///
-/// `angle` is in radians from +X, counter-clockwise, and the screen's y axis points down, so the arc
-/// turns upward for a positive angle. A radius or an angle that is not finite, a radius at or under
-/// zero and an angle of zero draw nothing: the reference has nothing to show until the pointer is
-/// off the axis.
-pub fn reference(painter: &Painter, anchor: Pos2, radius: f32, angle: f32) {
-    reference_between(painter, anchor, radius, 0.0, angle);
-}
-
-/// Paints the reference line from the X end at `from` to the direction at `to`, both in radians.
+/// Both polylines are the work plane's points already projected by the caller, so the axis follows
+/// the projection of its own direction and the sweep follows the projected circle — an ellipse in
+/// perspective or axonometric view — instead of a screen-space circle struck from the anchor
+/// (ADR 0133). The sweep's direction is read from the nearer end of the X axis (ADR 0128); the
+/// caller passes the short way round.
 ///
-/// An angle is read from the nearer end of the X axis (ADR 0128), so the axis is not always `+X`:
-/// the caller says which end it chose, and the arc sweeps between the two directions the short way
-/// because the difference the caller passes is already the signed sweep.
-pub fn reference_between(painter: &Painter, anchor: Pos2, radius: f32, from: f32, to: f32) {
-    if !anchor.x.is_finite() || !anchor.y.is_finite() || !radius.is_finite() || radius <= 0.0 {
-        return;
-    }
+/// A path with fewer than two finite points draws nothing: there is no direction to show yet.
+pub fn reference(painter: &Painter, axis: &[Pos2], sweep: &[Pos2]) {
     let (dark, light) = theme::reference_inks();
-    let axis = [anchor, Pos2::new(anchor.x + radius * from.cos(), anchor.y - radius * from.sin())];
-    dots(painter, &axis, dark, light);
-    if to.is_finite() && (to - from).abs() > f32::EPSILON {
-        let arc = arc_points(anchor, radius, from, to);
-        dots(painter, &arc, dark, light);
-    }
-}
-
-/// The screen points of an angular arc: `from` and `to` in radians from +X, counter-clockwise.
-///
-/// The sampling follows the arc's length, so a short sweep of a small radius is a few segments and a
-/// full turn of a long one is [`ARC_MAX_STEPS`]; a dot line needs the points to be close enough to
-/// follow the curve, not to be smooth geometry.
-pub fn arc_points(anchor: Pos2, radius: f32, from: f32, to: f32) -> Vec<Pos2> {
-    if !radius.is_finite() || radius <= 0.0 || !from.is_finite() || !to.is_finite() {
-        return Vec::new();
-    }
-    let sweep = to - from;
-    if sweep.abs() <= f32::EPSILON {
-        return Vec::new();
-    }
-    let steps = ((radius * sweep.abs() / ARC_STEP).ceil() as usize).clamp(ARC_MIN_STEPS, ARC_MAX_STEPS);
-    let mut points = Vec::with_capacity(steps.saturating_add(1));
-    for step in 0..=steps {
-        let fraction = step as f32 / steps as f32;
-        let angle = from + sweep * fraction;
-        points.push(Pos2::new(anchor.x + radius * angle.cos(), anchor.y - radius * angle.sin()));
-    }
-    points
+    dots(painter, axis, dark, light);
+    dots(painter, sweep, dark, light);
 }
 
 /// Paints one two-tone dot line: the dark dots first, then the light centre inside them.
 fn dots(painter: &Painter, path: &[Pos2], dark: Color32, light: Color32) {
+    if path.len() < 2 || path.iter().any(|point| !point.x.is_finite() || !point.y.is_finite()) {
+        return;
+    }
     painter.extend(Shape::dotted_line(path, dark, theme::REFERENCE_SPACING, theme::REFERENCE_DOT));
     painter.extend(Shape::dotted_line(path, light, theme::REFERENCE_SPACING, theme::REFERENCE_DOT_LIGHT));
 }
@@ -131,13 +91,21 @@ mod tests {
     }
 
     #[test]
-    fn the_axis_starts_at_the_anchor_and_reaches_the_radius() {
+    fn the_reference_draws_the_projected_paths_it_is_given() {
+        // The tool projects every sample of the plane's axis and sweep, so the guide is those two
+        // polylines and nothing else: no angle and no screen radius reach this module (ADR 0133).
         let ctx = egui::Context::default();
         let anchor = pos2(200.0, 300.0);
-        let radius = 120.0;
+        let axis = [anchor, pos2(320.0, 300.0)];
+        let quarter: Vec<Pos2> = (0..=90)
+            .map(|step| {
+                let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 90.0;
+                pos2(anchor.x + 120.0 * angle.cos(), anchor.y - 120.0 * angle.sin())
+            })
+            .collect();
         let mut shapes = Vec::new();
         let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
-            reference(ui.painter(), anchor, radius, 0.0);
+            reference(ui.painter(), &axis, &quarter);
         });
         shapes.extend(output.shapes.clone());
         output.drop_without_applying_deltas();
@@ -148,70 +116,33 @@ mod tests {
             "the axis starts at the anchor"
         );
         let reach = dots.iter().map(|(centre, _, _)| centre.x).fold(anchor.x, f32::max);
-        assert!(reach >= anchor.x + radius - theme::REFERENCE_SPACING, "the axis reaches the radius: {reach}");
+        assert!(reach >= anchor.x + 120.0 - theme::REFERENCE_SPACING, "the axis reaches its end: {reach}");
+        assert!(
+            dots.iter().any(|(centre, _, _)| centre.y < anchor.y - 100.0),
+            "the sweep follows the projected quarter turn: {dots:?}"
+        );
         assert!(dots.iter().all(|(_, _, radius)| *radius <= theme::REFERENCE_DOT), "no dot is a line");
         assert!(dots.iter().any(|(_, fill, _)| *fill == light), "the light centre is inside the dark dot");
     }
 
     #[test]
-    fn a_direction_draws_the_arc_it_sweeps() {
-        let anchor = pos2(100.0, 200.0);
-        let quarter = std::f32::consts::FRAC_PI_2;
-        let points = arc_points(anchor, 50.0, 0.0, quarter);
-        let first = points.first().copied().expect("the arc starts");
-        let last = points.last().copied().expect("the arc ends");
-        assert!((first - pos2(150.0, 200.0)).length() < 1e-3, "the arc starts on +X: {first:?}");
-        assert!((last - pos2(100.0, 150.0)).length() < 1e-3, "a counter-clockwise quarter turns up: {last:?}");
-        assert!(points.len() >= ARC_MIN_STEPS, "a short arc is still sampled");
-    }
-
-    #[test]
-    fn the_reference_reads_from_the_end_the_angle_names() {
-        // The nearer end of the X axis is not always +X: the axis is dotted along −X and the arc
-        // still takes the short way, so a segment in the left half-plane is measured from there.
-        let ctx = egui::Context::default();
-        let anchor = pos2(400.0, 300.0);
-        let mut shapes = Vec::new();
-        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
-            reference_between(ui.painter(), anchor, 60.0, std::f32::consts::PI, 2.0 * std::f32::consts::FRAC_PI_3);
-        });
-        shapes.extend(output.shapes.clone());
-        output.drop_without_applying_deltas();
-        let dots = circles(&shapes);
-        let reach = dots.iter().map(|(centre, _, _)| centre.x).fold(anchor.x, f32::min);
-        assert!(reach <= anchor.x - 60.0 + theme::REFERENCE_SPACING, "the axis runs along minus X: {reach}");
-        assert!(
-            dots.iter().any(|(centre, _, _)| centre.y < anchor.y - 40.0),
-            "the arc turns down from −X to the segment below it: {dots:?}"
-        );
-    }
-
-    #[test]
-    fn a_hostile_reference_draws_nothing() {
+    fn a_reference_path_with_no_direction_draws_nothing() {
         let ctx = egui::Context::default();
         let anchor = pos2(200.0, 300.0);
-        for (radius, angle) in [(0.0, 1.0), (-5.0, 1.0), (f32::NAN, 1.0), (f32::INFINITY, 0.0)] {
+        let cases: [(&[Pos2], &[Pos2]); 3] = [
+            (&[], &[]),
+            (&[anchor], &[anchor]),
+            (&[anchor, pos2(f32::NAN, 300.0)], &[anchor, pos2(200.0, f32::INFINITY)]),
+        ];
+        for (axis, sweep) in cases {
             let mut shapes = Vec::new();
             let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
-                reference(ui.painter(), anchor, radius, angle);
+                reference(ui.painter(), axis, sweep);
             });
             shapes.extend(output.shapes.clone());
             output.drop_without_applying_deltas();
-            assert!(circles(&shapes).is_empty(), "radius {radius}, angle {angle} draws nothing");
+            assert!(circles(&shapes).is_empty(), "{axis:?} / {sweep:?} draws nothing");
         }
-        // A hostile angle still has a sound axis: the direction is unknown, so only the axis shows.
-        let mut shapes = Vec::new();
-        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
-            reference(ui.painter(), anchor, 40.0, f32::NAN);
-        });
-        shapes.extend(output.shapes.clone());
-        output.drop_without_applying_deltas();
-        let dots = circles(&shapes);
-        assert!(!dots.is_empty(), "the axis is drawn");
-        assert!(
-            dots.iter().all(|(centre, _, _)| (centre.y - anchor.y).abs() < 1e-3),
-            "no arc is drawn for an unknown angle: {dots:?}"
-        );
     }
 
     #[test]

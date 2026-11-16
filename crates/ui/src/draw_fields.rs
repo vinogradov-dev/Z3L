@@ -108,7 +108,9 @@ pub struct PointRow {
 /// The reference guide: the X end the angle is read from and the sweep to the pointer.
 ///
 /// The radius of both the axis and the arc is the length of the segment being placed, so the guide
-/// is the same size as the thing it measures (ADR 0127).
+/// is the same size as the thing it measures (ADR 0127). The guide is geometry of the work plane,
+/// not of the screen: [`Reference::samples`] gives the points the tool projects with its camera, so
+/// a plane seen at an angle draws the ellipse it really is (ADR 0133).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reference {
     /// The point the axis starts at, in work-plane millimetres.
@@ -119,6 +121,48 @@ pub struct Reference {
     pub from: f64,
     /// The direction being placed, in radians from +X, counter-clockwise.
     pub to: f64,
+}
+
+impl Reference {
+    /// The axis and the sweep as work-plane points: the axis is its two ends, the sweep is a
+    /// polyline of one sample per degree of the short turn.
+    ///
+    /// The samples are in the plane, so a caller that projects each of them sees the axis point the
+    /// way the view turns it and the arc as the ellipse the plane projects to. One sample per degree
+    /// follows any projected curve at a screen size the viewport can show.
+    pub fn samples(self) -> (Vec<DVec2>, Vec<DVec2>) {
+        if !self.anchor.is_finite()
+            || !self.radius.is_finite()
+            || self.radius <= 0.0
+            || !self.from.is_finite()
+            || !self.to.is_finite()
+        {
+            return (Vec::new(), Vec::new());
+        }
+        let reach = |angle: f64| self.anchor + DVec2::new(angle.cos(), angle.sin()) * self.radius;
+        let sweep = self.to - self.from;
+        let steps = sweep_steps(sweep);
+        let mut arc = Vec::with_capacity(steps.saturating_add(1));
+        for step in 0..=steps {
+            let fraction = step as f64 / steps as f64;
+            arc.push(reach(self.from + sweep * fraction));
+        }
+        (vec![self.anchor, reach(self.from)], arc)
+    }
+}
+
+/// How many segments a sweep is sampled into: one per degree, bounded at both ends.
+fn sweep_steps(sweep: f64) -> usize {
+    const MIN_STEPS: usize = 8;
+    const MAX_STEPS: usize = 360;
+    if !sweep.is_finite() {
+        return MIN_STEPS;
+    }
+    let degrees = sweep.abs().to_degrees();
+    if !degrees.is_finite() {
+        return MIN_STEPS;
+    }
+    (degrees.ceil() as usize).clamp(MIN_STEPS, MAX_STEPS)
 }
 
 /// The point the next click would place, with the plates and guides that name it.
@@ -965,6 +1009,37 @@ mod tests {
         assert_eq!(reference.radius, 50.0, "the arc follows the typed distance");
         assert!((reference.from - std::f64::consts::PI).abs() < 1e-9, "120 degrees reads from -X");
         assert_eq!(state.construction, Some([DVec2::ZERO, state.at]), "the chord runs to the placed point");
+    }
+
+    #[test]
+    fn the_reference_is_sampled_on_the_work_plane() {
+        // The guide's geometry is the plane's: an axis of one radius and a sweep sampled along the
+        // circle, so every point a caller projects lies on the figure the view has to draw (ADR 0133).
+        let reference =
+            Reference { anchor: DVec2::new(10.0, -20.0), radius: 120.0, from: 0.0, to: core::f64::consts::FRAC_PI_2 };
+        let (axis, arc) = reference.samples();
+        assert_eq!(axis[0], reference.anchor, "the axis starts at the anchor");
+        assert!((axis[1] - DVec2::new(130.0, -20.0)).length() < 1e-9, "the axis reaches one radius along +X");
+        assert_eq!(arc.len(), 91, "a quarter turn is sampled once per degree");
+        for point in &arc {
+            assert!(((*point - reference.anchor).length() - 120.0).abs() < 1e-9, "{point:?} is on the circle");
+        }
+        let first = arc.first().copied().expect("the sweep starts");
+        let last = arc.last().copied().expect("the sweep ends");
+        assert!((first - axis[1]).length() < 1e-9, "the sweep starts on the X end");
+        assert!((last - DVec2::new(10.0, 100.0)).length() < 1e-9, "a quarter turn ends one radius up");
+
+        // A hostile reference draws nothing rather than a non-finite path.
+        for hostile in [
+            Reference { from: f64::NAN, ..reference },
+            Reference { to: f64::INFINITY, ..reference },
+            Reference { radius: 0.0, ..reference },
+            Reference { anchor: DVec2::new(f64::NAN, 0.0), ..reference },
+        ] {
+            let (axis, arc) = hostile.samples();
+            assert!(axis.is_empty(), "a hostile reference draws no axis: {hostile:?}");
+            assert!(arc.is_empty(), "a hostile reference draws no sweep: {hostile:?}");
+        }
     }
 
     #[test]

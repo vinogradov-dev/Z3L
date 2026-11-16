@@ -23,7 +23,8 @@ use furnicraft_ui::{DrawDraft, Editor, FieldParam, FieldSet, PointState, field_r
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{
-    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, screen_point, snap_point,
+    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, reference_screen, screen_point,
+    snap_point,
 };
 
 /// Pointer distance inside which a draft end captures the pointer, in points.
@@ -162,6 +163,17 @@ impl DrawGizmo {
     #[cfg(test)]
     pub(crate) const fn field_rect(&self) -> Option<egui::Rect> {
         self.field_rect
+    }
+
+    /// Every plate of the point being placed, with the parameter it edits, after the last draw.
+    ///
+    /// A test reads the layout the person sees: which rows were drawn and where each one sits.
+    #[cfg(test)]
+    pub(crate) fn plate_rects(&self) -> Vec<(FieldParam, egui::Rect)> {
+        let Some(fields) = self.fields.as_ref() else {
+            return Vec::new();
+        };
+        fields.rows().iter().filter_map(|row| fields.plate_rect(row.param).map(|rect| (row.param, rect))).collect()
     }
 
     /// Whether `point` lies on one of the plates, which are chrome and never the scene.
@@ -466,9 +478,9 @@ fn project(plane: WorkPlane, camera: Camera, rect: egui::Rect, point: DVec2) -> 
 
 /// Paints the two guides of the point being placed: the chord and the reference with its arc.
 ///
-/// The guides are screen paint, so their weight is a rule and not a world size (ADR 0111): the
-/// radius of the reference is measured on screen from the anchor to the segment's own length, and
-/// the arc sweeps the signed difference the point state gives.
+/// The guides are screen paint, so their weight is a rule and not a world size (ADR 0111), and every
+/// point of them is a work-plane point the camera projects: the reference's axis and sweep come from
+/// [`reference_screen`], so a tilted view draws the ellipse the plane's circle really is (ADR 0133).
 fn paint_guides(
     ui: &Ui,
     painter: &egui::Painter,
@@ -486,15 +498,8 @@ fn paint_guides(
     let Some(reference) = state.reference else {
         return;
     };
-    let Some(anchor) = project(reference.anchor) else {
-        return;
-    };
-    let edge = reference.anchor + DVec2::new(reference.from.cos(), reference.from.sin()) * reference.radius;
-    let Some(edge) = project(edge) else {
-        return;
-    };
-    let radius = (edge - anchor).length();
-    guides::reference_between(painter, anchor, radius, reference.from as f32, reference.to as f32);
+    let (axis, sweep) = reference_screen(reference, project);
+    guides::reference(painter, &axis, &sweep);
 }
 
 /// The snapped cursor point, in document units and on screen.

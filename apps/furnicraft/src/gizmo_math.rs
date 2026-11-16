@@ -413,6 +413,21 @@ pub(crate) fn screen_point(camera: Camera, viewport: egui::Rect, point: DVec3) -
     (x.is_finite() && y.is_finite()).then_some(Pos2::new(x, y))
 }
 
+/// The reference guide as screen polylines: the axis and the sweep sampled on the work plane and
+/// projected point by point.
+///
+/// A plane circle seen at an angle projects to an ellipse, so the guide's sweep is not a screen-space
+/// circle struck from the anchor with the plane's angles: both the sketch point and the latched
+/// corner come through here, and either projection is the plane's own figure (ADR 0133). Samples a
+/// camera cannot place are dropped; a path with fewer than two of them draws nothing.
+pub(crate) fn reference_screen(
+    reference: furnicraft_ui::Reference,
+    project: impl Fn(DVec2) -> Option<Pos2>,
+) -> (Vec<Pos2>, Vec<Pos2>) {
+    let (axis, sweep) = reference.samples();
+    (axis.into_iter().filter_map(&project).collect(), sweep.into_iter().filter_map(&project).collect())
+}
+
 /// Rounds a millimetre coordinate to a whole micrometre, or `None` when it is not representable.
 pub(crate) fn length_from_millimetres(value: f64) -> Option<Length> {
     let micrometres = value * 1_000.0;
@@ -1282,6 +1297,40 @@ mod tests {
         let pixel = screen_point(camera, viewport(), world).expect("the point is in front");
         let mapped = plane.pointer_point(camera, viewport(), pixel).expect("the ray meets the plane");
         assert!((mapped - DVec2::new(100.0, 50.0)).length() < 1.0e-3, "a perspective view lands on world XY");
+    }
+
+    #[test]
+    fn a_reference_is_projected_from_the_work_plane() {
+        // In perspective the work-plane circle projects to an ellipse and the plane's X direction
+        // leaves the screen's horizontal. A guide drawn from the plane's angles in screen space would
+        // be a circle struck from the anchor and an axis along the screen (ADR 0133).
+        let camera = Camera::default();
+        let plane = WorkPlane::from_camera(camera);
+        let rect = viewport();
+        let reference =
+            furnicraft_ui::Reference { anchor: DVec2::ZERO, radius: 200.0, from: 0.0, to: std::f64::consts::FRAC_PI_2 };
+        let project = |point| screen_point(camera, rect, plane.world(point));
+        let (axis, sweep) = reference_screen(reference, project);
+        assert_eq!(axis.len(), 2, "the axis is its two projected ends");
+        assert_eq!(sweep.len(), 91, "a quarter turn is one sample per degree");
+
+        // Every sample is the projection of a point of the plane's own circle.
+        let (_, samples) = reference.samples();
+        for (screen, plane_point) in sweep.iter().zip(samples) {
+            let expected = screen_point(camera, rect, plane.world(plane_point)).expect("a point in front");
+            assert!((*screen - expected).length() < 1e-6, "{screen:?} is the projection of {plane_point:?}");
+        }
+
+        // The screen radius changes along the sweep, so the arc is an ellipse and not a circle.
+        let anchor = axis[0];
+        let radii = sweep.iter().map(|point| (*point - anchor).length());
+        let (min, max) = radii.fold((f32::INFINITY, 0.0_f32), |(min, max), radius| (min.min(radius), max.max(radius)));
+        assert!(max / min > 1.05, "the plane circle projects to an ellipse: {min}..{max}");
+
+        // The plane's X direction leaves the screen's own horizontal.
+        let end = axis[1];
+        let screen_angle = (end.y - anchor.y).atan2(end.x - anchor.x);
+        assert!(screen_angle.abs() > 0.02, "the projected X axis is not the screen axis: {screen_angle}");
     }
 
     #[test]

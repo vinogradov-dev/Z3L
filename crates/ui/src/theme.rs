@@ -174,20 +174,23 @@ pub const fn cursor_inks() -> (Color32, Color32) {
 
 /// The radius of one dot of a reference line, in points.
 ///
-/// The reference line is the quietest mark the scene draws, so its dot is under a point across:
-/// thinner than the viewport crosshair, which is already the weight of a hairline (ADR 0127).
-pub const REFERENCE_DOT: f32 = 0.4;
+/// A dot is a mark, not a stroke: it has to be found on a dark board at a glance without reading as
+/// a line either. At 0.4 the light centre vanished in antialiasing and the dark rim left nothing on
+/// the workspace, so the pair grew to a dot and a half across (ADR 0133).
+pub const REFERENCE_DOT: f32 = 0.7;
 
 /// The radius of the light half of a reference dot, in points.
 ///
 /// The light dot sits inside the dark one, so the pair reads as one mark with a bright centre on a
-/// dark board and a dark rim on a light one.
-pub const REFERENCE_DOT_LIGHT: f32 = 0.22;
+/// dark board and a dark rim on a light one. It is over half of the dark dot, so the light half is
+/// a visible centre rather than a speck (ADR 0133).
+pub const REFERENCE_DOT_LIGHT: f32 = 0.38;
 
 /// The distance between two dots of a reference line, in points.
 ///
-/// A small step: the line has to read as a dotted direction, not as a dashed border (ADR 0127).
-pub const REFERENCE_SPACING: f32 = 3.0;
+/// A small step: the line has to read as a dotted direction, not as a dashed border, and the step
+/// leaves a gap between dots rather than a continuous mark (ADR 0127, 0133).
+pub const REFERENCE_SPACING: f32 = 4.0;
 
 /// The two inks of a reference line, dark first.
 ///
@@ -1044,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reference_pair_reads_on_every_surface_and_is_the_thinnest_mark() {
+    fn a_reference_pair_reads_on_every_surface_and_stays_quiet() {
         let (dark, light) = reference_inks();
         assert_ne!(dark, light, "the pair is two inks, not one");
         for preset in ThemePreset::ALL {
@@ -1064,10 +1067,13 @@ mod tests {
                 }
             }
         }
-        // The light dot sits inside the dark one, and the dark dot is under half of the quietest
-        // guide stroke, so the reference is the thinnest mark the scene draws (ADR 0127).
+        // The light dot sits inside the dark one and is over half of it, so the bright centre is
+        // visible; the dot's diameter is under a guide stroke, so the reference is still quieter than
+        // the bracket the program draws (ADR 0133).
         const { assert!(REFERENCE_DOT_LIGHT < REFERENCE_DOT) };
-        const { assert!(REFERENCE_DOT * 2.0 < HELPER_CROSSHAIR_STROKE) };
+        const { assert!(REFERENCE_DOT * 0.5 < REFERENCE_DOT_LIGHT) };
+        const { assert!(REFERENCE_DOT * 2.0 < HELPER_STROKE) };
+        const { assert!(REFERENCE_SPACING > REFERENCE_DOT * 2.0) };
     }
 
     #[test]

@@ -22,7 +22,7 @@
 
 use core::ops::RangeInclusive;
 
-use egui::{Align2, Context, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke};
+use egui::{Align, Align2, Context, CornerRadius, Id, Key, Margin, Modifiers, Pos2, Rect, RichText, Stroke, Vec2};
 use furnicraft_model::{MAX_CONTOUR_COORDINATE, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES};
 
 use crate::scrub::Scrub;
@@ -31,6 +31,16 @@ use crate::{Lang, Message, language};
 
 /// The clearance between a plate and the point it belongs to, in points.
 const PLATE_GAP: f32 = 16.0;
+
+/// The air kept between two plates of the same point, in points.
+const PLATE_SPACING: f32 = 4.0;
+
+/// The size assumed for a plate the last frame did not measure, in points.
+///
+/// The plate is a frame around the fixed 76 x 22 field plus its label and its unit. The estimate is
+/// larger than the widest plate a sketch declares, so the first frame of a new stage already keeps
+/// its rows apart; the measured rectangle takes over as soon as one frame has drawn them.
+const PLATE_ESTIMATE: Vec2 = Vec2::new(168.0, 32.0);
 
 /// The plate's opacity over the scene, in percent.
 const PLATE_OPACITY: u32 = 96;
@@ -351,9 +361,10 @@ impl FieldSet {
         let asking = self.request > 0;
         let mut focused = None;
         let mut union = Rect::NOTHING;
-        for index in 0..self.rows.len() {
+        let layout = self.plate_layout(viewport);
+        for (index, slot) in layout.into_iter().enumerate() {
             let request = asking && index == self.focus;
-            let Some(result) = self.row_plate(ctx, index, viewport, request, lang) else {
+            let Some(result) = self.row_plate(ctx, index, slot, request, lang) else {
                 continue;
             };
             if let Some(rect) = self.rects.get(index).copied() {
@@ -416,23 +427,65 @@ impl FieldSet {
         self.holding = false;
     }
 
+    /// Where every plate of the set sits, so no plate of one point covers another.
+    ///
+    /// A row starts at the corner its own anchor leaves free, exactly as a lone plate would. Two
+    /// numbers of one point can name the same anchor — X and Y of the first click do — or anchors
+    /// close enough for their plates to touch, so the rows are one layout: a row that collides with
+    /// a rectangle already placed moves away from the point past that rectangle until it clears.
+    /// The size is the rectangle the last frame measured; a stage that has not drawn yet uses
+    /// [`PLATE_ESTIMATE`], which is large enough for the widest plate, so even its first frame is
+    /// laid out without an overlap.
+    fn plate_layout(&self, viewport: Rect) -> Vec<PlateSlot> {
+        let mut placed: Vec<Rect> = Vec::with_capacity(self.rows.len());
+        let mut layout: Vec<PlateSlot> = Vec::with_capacity(self.rows.len());
+        for (index, row) in self.rows.iter().enumerate() {
+            let (align, mut position) = plate_corner(row.anchor, viewport);
+            let size =
+                self.rects.get(index).copied().filter(Rect::is_positive).map_or(PLATE_ESTIMATE, |rect| rect.size());
+            // The plates stack away from the point, in the direction `plate_corner` already leaves
+            // it by: down for an anchor in the upper half of the view, up for one in the lower.
+            let away = if align.y() == Align::Min { 1.0 } else { -1.0 };
+            let mut rect = align.anchor_size(position, size);
+            // Move past the rectangle that was hit rather than by a whole plate: the anchors can be
+            // offset by any amount, so one plate height can still leave a sliver of overlap. The
+            // guard ends the walk if the estimate and the scene disagree about a plate's size.
+            let mut guard = self.rows.len().saturating_mul(2).saturating_add(1);
+            while guard > 0 {
+                let Some(hit) = placed.iter().find(|other| rect.expand(PLATE_SPACING / 2.0).intersects(**other)) else {
+                    break;
+                };
+                let shift = if away > 0.0 {
+                    hit.bottom() + PLATE_SPACING - rect.top()
+                } else {
+                    hit.top() - PLATE_SPACING - rect.bottom()
+                };
+                position.y += shift;
+                rect = align.anchor_size(position, size);
+                guard = guard.saturating_sub(1);
+            }
+            placed.push(rect);
+            layout.push(PlateSlot { align, position, viewport });
+        }
+        layout
+    }
+
     /// Draws one plate and reports what its field said this frame.
     fn row_plate(
         &mut self,
         ctx: &Context,
         index: usize,
-        viewport: Rect,
+        slot: PlateSlot,
         request: bool,
         lang: Lang,
     ) -> Option<PlateResult> {
         let row = self.rows.get_mut(index)?;
-        let (align, position) = plate_corner(row.anchor, viewport);
         let mut result = None;
         let rect = egui::Area::new(Id::unique(("point-field", row.param)))
             .order(egui::Order::Middle)
-            .pivot(align)
-            .fixed_pos(position)
-            .constrain_to(viewport)
+            .pivot(slot.align)
+            .fixed_pos(slot.position)
+            .constrain_to(slot.viewport)
             .show(ctx, |ui| {
                 let fill = theme::at_opacity(theme::floating(ui), PLATE_OPACITY);
                 egui::Frame::new()
@@ -498,6 +551,17 @@ impl FieldSet {
         }
         Some(set)
     }
+}
+
+/// Where one plate of the set is drawn: its pivot, its corner and the view it must stay inside.
+#[derive(Clone, Copy, Debug)]
+struct PlateSlot {
+    /// The corner of the plate that `position` names.
+    align: Align2,
+    /// The screen point the named corner sits at.
+    position: Pos2,
+    /// The rectangle every plate is kept inside.
+    viewport: Rect,
 }
 
 /// What one plate's field said this frame.
@@ -671,5 +735,90 @@ mod tests {
                 "the plate keeps its clearance from {anchor:?}"
             );
         }
+    }
+
+    /// Every plate of `set` after a few frames, with the parameters that own them.
+    fn drawn_plates(ctx: &egui::Context, set: &mut FieldSet) -> Vec<(FieldParam, Rect)> {
+        for _ in 0..3 {
+            frame(ctx, set, Vec::new());
+        }
+        set.rows().iter().filter_map(|row| set.plate_rect(row.param).map(|rect| (row.param, rect))).collect()
+    }
+
+    /// Every declared row drew a plate, inside the view and clear of every other plate.
+    fn assert_plates_apart(set: &FieldSet, plates: &[(FieldParam, Rect)]) {
+        assert_eq!(plates.len(), set.rows().len(), "every declared row is drawn");
+        for (param, rect) in plates {
+            assert!(rect.is_positive(), "{param:?} is drawn: {rect:?}");
+            assert!(VIEWPORT.contains_rect(*rect), "{param:?} stays inside the view: {rect:?}");
+        }
+        for (index, (param, rect)) in plates.iter().enumerate() {
+            for (other, other_rect) in &plates[index + 1..] {
+                assert!(!rect.intersects(*other_rect), "{param:?} covers {other:?}: {rect:?} vs {other_rect:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_plates_of_one_point_never_cover_each_other() {
+        // The first click of every sketch tool is one point read as X and Y, so both rows name the
+        // same anchor. Every stage of every tool is a set of one to three rows whose anchors can
+        // also be close together — a segment's midpoint and its angle arc are one example. A set is
+        // one layout: a row that would collide stacks away from the point.
+        let cases: Vec<Vec<FieldRow>> = vec![
+            // The same anchor twice, which is X and Y of the first point.
+            [FieldParam::X, FieldParam::Y]
+                .into_iter()
+                .map(|param| FieldRow::for_param(param, 0.0, pos2(400.0, 300.0)))
+                .collect(),
+            // Two anchors 12 points apart: the length plate and the angle plate of a short segment.
+            vec![
+                FieldRow::for_param(FieldParam::Length, 300.0, pos2(400.0, 300.0)),
+                FieldRow::for_param(FieldParam::Angle, 30.0, pos2(412.0, 312.0)),
+            ],
+            // Three rows on one anchor: the radius, the rotation and the side count of a polygon.
+            [FieldParam::Radius, FieldParam::Rotation, FieldParam::Sides]
+                .into_iter()
+                .map(|param| FieldRow::for_param(param, 6.0, pos2(400.0, 300.0)))
+                .collect(),
+            // A stage at each corner of the view, where the plate has to stay on screen.
+            vec![
+                FieldRow::for_param(FieldParam::Width, 600.0, pos2(20.0, 20.0)),
+                FieldRow::for_param(FieldParam::Height, 400.0, pos2(28.0, 28.0)),
+            ],
+            vec![
+                FieldRow::for_param(FieldParam::Apothem, 100.0, pos2(780.0, 580.0)),
+                FieldRow::for_param(FieldParam::Rotation, 30.0, pos2(772.0, 572.0)),
+                FieldRow::for_param(FieldParam::Sides, 6.0, pos2(780.0, 580.0)),
+            ],
+        ];
+        let ctx = ctx();
+        for rows in cases {
+            let mut set = FieldSet::new(rows).expect("a point has plates");
+            let plates = drawn_plates(&ctx, &mut set);
+            assert_plates_apart(&set, &plates);
+        }
+    }
+
+    #[test]
+    fn the_first_frame_of_a_stage_already_keeps_its_plates_apart() {
+        // A new stage replaces the set, so no measured rectangle exists yet. The estimate is large
+        // enough that the very first frame the person sees is laid out, which is what stops X and Y
+        // from sharing one rectangle.
+        let rows = [FieldParam::X, FieldParam::Y]
+            .into_iter()
+            .map(|param| FieldRow::for_param(param, 0.0, pos2(400.0, 300.0)))
+            .collect();
+        let ctx = ctx();
+        let mut set = FieldSet::new(rows).expect("two plates");
+        // The first pass sizes an egui area, so the plate the person sees is the second frame's;
+        // the estimate is what that frame is laid out with, before any rectangle was measured.
+        frame(&ctx, &mut set, Vec::new());
+        frame(&ctx, &mut set, Vec::new());
+        let plates: Vec<(FieldParam, Rect)> =
+            set.rows().iter().filter_map(|row| set.plate_rect(row.param).map(|rect| (row.param, rect))).collect();
+        assert_plates_apart(&set, &plates);
+        assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "X is one of the two");
+        assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "Y is the other");
     }
 }
