@@ -15,7 +15,9 @@
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
 use engine::Session;
-use model::{Panel, PanelOutline, Placement};
+use model::{
+    DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
+};
 use text::{Lang, Message};
 use units::Length;
 
@@ -34,6 +36,17 @@ fn body_name(profile: &model::Path, lang: Lang) -> String {
         Some(PathShape::Rectangle) => Message::ToolBox.text(lang).to_owned(),
         Some(PathShape::Circle) => Message::ToolCylinder.text(lang).to_owned(),
         _ => Message::DrawingName.with(lang, [Message::GroupBodies.text(lang)]),
+    }
+}
+
+/// The primitive a drawn figure becomes: the kind its cell places, sized by the figure's own radius.
+///
+/// A sphere stores the radius, the side count and the latitude bands, and the drawn circle supplies
+/// the first of them; the tessellation is the model's default, which the card then edits (ADR 0054,
+/// 0139).
+fn drawn_primitive(kind: PrimitiveKind, radius: Length) -> Result<Primitive, PrimitiveError> {
+    match kind {
+        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
     }
 }
 
@@ -78,6 +91,19 @@ impl Editor {
         self.drawing_intent = DrawIntent::Body;
     }
 
+    /// Arms a primitive's placement: the circle a sphere is built around (ADR 0139).
+    ///
+    /// The sphere cell carries the sketch's own circle methods, so the draft is the sketch draft and
+    /// the figure is a closed circle; the commit stores no path — the circle's centre is the
+    /// primitive's origin and its radius is the primitive's own number. A tool that places no
+    /// primitive is refused rather than started as a figure, because a map row is data.
+    pub fn start_primitive_drawing(&mut self, tool: DrawTool) -> Result<(), String> {
+        let kind = tool.primitive_kind().ok_or_else(|| format!("The {} tool places no primitive.", tool.label()))?;
+        self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Primitive(kind);
+        Ok(())
+    }
+
     /// Starts an empty drawing draft with `tool` and the regular polygon's side count.
     ///
     /// A running draft is replaced, because it wrote nothing and undo gains no half figure
@@ -88,7 +114,6 @@ impl Editor {
     pub fn start_drawing_with(&mut self, tool: DrawTool, sides: u32) {
         self.mesh_edit = None;
         self.contour_edit = None;
-        self.pending_primitive = None;
         self.box_draft = None;
         self.fill = None;
         self.measure = None;
@@ -142,8 +167,8 @@ impl Editor {
         self.drawing.as_mut().is_some_and(DrawDraft::undo)
     }
 
-    /// Commits the running draft as one node: a path object, the panel cut to its ring, or a body's
-    /// profile.
+    /// Commits the running draft as one node: a path object, the panel cut to its ring, a body's
+    /// profile or the primitive the figure is built around.
     ///
     /// The drawing lands in the armed container, or at the scene root like every other creation
     /// tool. `placement` is the work plane's *world* frame, the one the shell can measure; the
@@ -153,8 +178,9 @@ impl Editor {
     /// the figure the user just drew can be reshaped without a second click; a panel is selected and
     /// needs none, because its ring is edited through its card. A body's profile is selected and left
     /// to the shell, which pulls its height in the same edit scope; Escape during that pull takes the
-    /// profile back. Escape or Enter leaves the contour mode. A refused commit leaves the draft and
-    /// the selection untouched.
+    /// profile back. A primitive is selected at once: its figure is not stored, so the drawn circle's
+    /// centre and radius live on as the node's placement and its parameter (ADR 0139). Escape or
+    /// Enter leaves the contour mode. A refused commit leaves the draft and the selection untouched.
     pub fn commit_drawing(
         &mut self,
         session: &mut Session,
@@ -185,6 +211,7 @@ impl Editor {
                 draft.commit_in(scope, session, parent, placement, Some(&name), lang)?
             }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
+            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind)?,
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;
@@ -233,6 +260,34 @@ impl Editor {
             placement,
             None,
         )
+    }
+
+    /// Commits the figure a primitive cell drew as one `object.primitive.create`.
+    ///
+    /// The figure is the circle the primitive is built around: its centre becomes the node's origin
+    /// — the plane's own rotation keeps the primitive's axes on the work plane — and its radius
+    /// becomes the sphere's radius (ADR 0139). The drawn circle is not stored, so the node is a
+    /// parameter set from the first frame and its card edits the radius, the side count and the
+    /// bands. `placement` is the work plane's frame relative to the parent; a primitive is centred
+    /// on its local zero, so the centre is composed onto that frame.
+    fn commit_primitive(
+        &mut self,
+        draft: &DrawDraft,
+        session: &mut Session,
+        parent: model::Id,
+        placement: Placement,
+        kind: PrimitiveKind,
+    ) -> Result<model::Id, String> {
+        let path = draft.to_path().map_err(|error| error.to_string())?;
+        let (centre, radius) = path
+            .circle_center_radius()
+            .ok_or_else(|| "The drawn figure is not a round, so it builds no primitive.".to_owned())?;
+        let primitive = drawn_primitive(kind, radius).map_err(|error| error.to_string())?;
+        let offset = Placement::IDENTITY
+            .with_translation(centre[0], centre[1], Length::ZERO)
+            .map_err(|error| error.to_string())?;
+        let placement = Placement::compose(placement, offset).map_err(|error| error.to_string())?;
+        self.create_primitive_node(session, parent, primitive, placement)
     }
 
     /// Closes the running ring and commits it as one node.

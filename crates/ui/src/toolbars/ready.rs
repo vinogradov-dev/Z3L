@@ -73,12 +73,15 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             );
             Ready { enabled: running, armed: false, hint, action: running.then_some(ToolAction::CancelDrawing) }
         }
-        ToolKind::Primitive(primitive) => {
-            let armed = is_armed(active, ToolKind::Primitive(primitive));
-            let hint = Message::PrimitiveClickPlane.with(lang, [tool.label.text(lang)]);
-            let action = ToolAction::CreatePrimitive { kind: primitive, size: state.primitive_size() };
-            Ready { enabled: true, armed, hint, action: Some(action) }
-        }
+        // A primitive cell draws the round the shape is built around, exactly as a body cell draws
+        // its profile: the sphere's centre and radius reach the document from the plates, not from a
+        // typed size and a bare click (ADR 0139).
+        ToolKind::Primitive { kind: primitive, tool: draw } => Ready {
+            enabled: true,
+            armed: is_armed(active, kind),
+            hint: Message::PrimitiveDrawRound.with(lang, [tool.label.text(lang)]),
+            action: Some(ToolAction::DrawPrimitive { kind: primitive, tool: draw }),
+        },
         ToolKind::Extrude => {
             // Only a closed path encloses a ring, so the button is off for anything else and the
             // hint names what is missing: a selection, a path, or a closed chain. The height is a

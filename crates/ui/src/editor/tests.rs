@@ -27,6 +27,17 @@ use testkit::{cube_mesh, millimetres, open_path, sample_catalog, sample_panel_th
 use units::Degrees;
 use units::Length;
 
+/// Draws a sphere the way its cell does: a centre, a rim point, then the commit.
+///
+/// The plane is the world XY frame, so the sphere's own origin is the centre in world millimetres
+/// and its radius is the distance to the rim point (ADR 0139).
+fn draw_sphere(editor: &mut Editor, session: &mut Session, centre: [Length; 2], rim: [Length; 2]) -> Id {
+    editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
+    editor.drawing_point(centre).expect("the centre");
+    editor.drawing_point(rim).expect("a rim point");
+    editor.commit_drawing(session, Placement::IDENTITY, crate::Lang::En).expect("the sphere commits").object
+}
+
 fn cube_project() -> (Project, Id) {
     let mut project = sample_project();
     let root = project.root().id();
@@ -323,16 +334,16 @@ fn another_tool_replaces_the_running_draft_and_writes_nothing() {
     editor.drawing_point([Length::from_millimetres(600).expect("x"), Length::ZERO]).expect("end");
     assert_eq!(editor.drawing().map(DrawDraft::len), Some(1));
     editor
-        .arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size"))
-        .expect("arm the sphere, which a drawing tool must drop");
-    assert!(editor.pending_primitive().is_some(), "the sphere owns the next click");
+        .start_primitive_drawing(DrawTool::Sphere)
+        .expect("the sphere cell draws a round, which a drawing tool must drop");
+    assert_eq!(editor.drawing_intent(), DrawIntent::Primitive(PrimitiveKind::Sphere), "the sphere owns the draft");
 
     editor.start_drawing(DrawTool::Rectangle);
     let draft = editor.drawing().expect("the rectangle tool is live");
     assert_eq!(draft.tool(), DrawTool::Rectangle);
     assert!(draft.points().is_empty(), "the new tool starts with an empty draft");
     assert!(draft.segments().is_empty(), "the old chain is gone");
-    assert!(editor.pending_primitive().is_none(), "a drawing tool drops an armed primitive");
+    assert_eq!(editor.drawing_intent(), DrawIntent::Path, "a sketch tool drops the sphere's intent");
     assert_eq!(session.project().revision(), revision, "the switch writes nothing");
     assert!(!session.can_undo(), "no half figure entered the undo history");
 }
@@ -668,8 +679,12 @@ fn free_creation_tools_land_at_the_root_beside_a_selected_nested_assembly() {
     assert_eq!(session.project().parent_of(created_assembly), Some(root), "an assembly lands at the root");
 
     editor.select_node(Some(inner));
-    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm a sphere");
-    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the sphere");
+    let created_primitive = draw_sphere(
+        &mut editor,
+        &mut session,
+        [Length::ZERO, Length::ZERO],
+        [Length::from_millimetres(100).expect("radius"), Length::ZERO],
+    );
     assert_eq!(session.project().parent_of(created_primitive), Some(root), "a primitive lands at the root");
 
     editor.select_node(Some(inner));
@@ -734,8 +749,12 @@ fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
     );
     assert_eq!(editor.creation_target(session.project()), assembly, "a refused arm changes nothing");
 
-    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm a sphere");
-    let created_primitive = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place the sphere");
+    let created_primitive = draw_sphere(
+        &mut editor,
+        &mut session,
+        [Length::ZERO, Length::ZERO],
+        [Length::from_millimetres(100).expect("radius"), Length::ZERO],
+    );
     assert_eq!(session.project().parent_of(created_primitive), Some(assembly), "the primitive lands in the arm");
 }
 
@@ -816,38 +835,39 @@ fn an_open_polyline_commits_as_drawn() {
 }
 
 #[test]
-fn arming_a_sphere_waits_for_a_click_and_places_it_there() {
+fn a_sphere_is_drawn_as_its_round_and_keeps_the_radius() {
+    // The sphere cell opens the sketch's circle method, so the first click is the centre and the
+    // second the rim; the commit stores no path, because the circle's centre and radius are the
+    // primitive's placement and its own number (ADR 0139).
     let (project, panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
-    let size = Length::from_millimetres(300).expect("size");
-    editor.arm_primitive(PrimitiveKind::Sphere, size).expect("arm the sphere");
-    assert_eq!(editor.pending_primitive(), Some((PrimitiveKind::Sphere, size)));
-    assert!(editor.drawing().is_none(), "an armed primitive leaves a drawing");
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
 
-    let placement = Placement::IDENTITY
-        .with_translation(
-            Length::from_millimetres(100).expect("x"),
-            Length::from_millimetres(50).expect("y"),
-            Length::ZERO,
-        )
-        .expect("placement");
-    let id = editor.place_primitive(&mut session, placement).expect("place the sphere");
-    assert!(editor.pending_primitive().is_none(), "one click places one primitive");
-    assert_eq!(editor.selected_node(), Some(id));
-    let object = session.project().object(id).expect("object");
-    assert_eq!(object.placement(), placement);
-    assert_eq!(session.project().revision().get(), 1);
-    assert!(session.project().panel(panel).is_some());
+    editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
+    assert_eq!(editor.drawing_intent(), DrawIntent::Primitive(PrimitiveKind::Sphere));
+    assert!(editor.drawing().is_some_and(|draft| draft.tool() == DrawTool::Sphere), "the draft draws a circle");
 
-    editor.arm_primitive(PrimitiveKind::Sphere, size).expect("arm again");
-    editor.cancel_primitive();
-    assert!(editor.pending_primitive().is_none());
-    assert_eq!(session.project().revision().get(), 1, "cancelling creates nothing");
+    editor.drawing_point([mm(100), mm(50)]).expect("the centre");
+    assert!(!editor.drawing().is_some_and(DrawDraft::is_finished), "one click is only the centre");
+    editor.drawing_point([mm(400), mm(50)]).expect("a rim point 300 mm away");
+    let drawn = editor.commit_drawing(&mut session, Placement::IDENTITY, crate::Lang::En).expect("the sphere commits");
+
+    assert!(editor.drawing().is_none(), "the figure became the primitive and is not stored as a path");
+    assert_eq!(editor.selected_node(), Some(drawn.object));
+    let object = session.project().object(drawn.object).expect("object");
+    assert_eq!(object.name(), "Sphere");
+    assert_eq!(object.placement().translation(), DVec3::new(100.0, 50.0, 0.0), "the centre is the origin");
+    let stored = object.geometry().as_primitive().expect("the parameters are stored");
+    assert_eq!(stored.kind(), PrimitiveKind::Sphere);
+    assert_eq!(stored.bounds_micrometres(), ([-300_000; 3], [300_000; 3]), "the radius is the drawn one");
+    assert!(session.project().object_path(drawn.object).is_err(), "no circle is left beside the sphere");
+    assert_eq!(session.project().revision().get(), 1, "one gesture is one command");
+    assert!(session.project().panel(panel).is_some(), "the rest of the document is untouched");
 }
 
 #[test]
-fn a_clicked_primitive_lands_on_the_pointer_at_the_root_and_in_a_turned_container() {
+fn a_drawn_sphere_lands_on_its_centre_at_the_root_and_in_a_turned_container() {
     let (project, _panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let root = session.project().root().id();
@@ -859,77 +879,90 @@ fn a_clicked_primitive_lands_on_the_pointer_at_the_root_and_in_a_turned_containe
         .with_rotation_euler(EulerAngles { z: Degrees::from_millidegrees(40_000), ..EulerAngles::default() })
         .expect("rotation");
     let parent = create_assembly_placed_under(&mut session, root, "Frame", parent_world);
-    let click = Placement::IDENTITY.with_translation(mm(200), mm(100), mm(900)).expect("the clicked point");
+    // The work plane the sphere is drawn on: lifted above the floor and turned about Z.
+    let plane = Placement::IDENTITY
+        .with_translation(mm(200), mm(100), mm(900))
+        .expect("translation")
+        .with_rotation_euler(EulerAngles { z: Degrees::from_millidegrees(90_000), ..EulerAngles::default() })
+        .expect("rotation");
+    let centre = [mm(30), mm(40)];
+    let rim = [mm(130), mm(40)];
 
     for armed in [None, Some(parent)] {
         let mut editor = Editor::new();
         if let Some(container) = armed {
             assert!(editor.arm_creation(session.project(), container), "the primitive lands in the container");
         }
-        editor.arm_primitive(PrimitiveKind::Sphere, mm(300)).expect("arm the sphere");
-
+        editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
+        editor.drawing_point(centre).expect("the centre");
+        editor.drawing_point(rim).expect("the rim");
         let before = session.project().revision();
-        let cube = editor.place_primitive(&mut session, click).expect("place the sphere");
+        let drawn = editor.commit_drawing(&mut session, plane, crate::Lang::En).expect("the sphere commits");
         let what = if armed.is_some() { "in the container" } else { "at the root" };
-        assert_eq!(
-            session.project().revision(),
-            before.checked_next().expect("revision"),
-            "{what}: one click is one change"
-        );
-        assert_eq!(session.project().parent_of(cube), Some(armed.unwrap_or(root)), "{what}: the parent");
-        assert_eq!(session.project().pivot_local(cube), Some(PivotLocal::ZERO), "{what}: the local zero is the pivot");
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "{what}: one command");
+        assert_eq!(session.project().parent_of(drawn.object), Some(armed.unwrap_or(root)), "{what}: the parent");
+        assert_eq!(session.project().pivot_local(drawn.object), Some(PivotLocal::ZERO), "{what}: the local zero");
 
-        let object = session.project().object(cube).expect("object");
+        let object = session.project().object(drawn.object).expect("object");
         let stored = object.geometry().as_primitive().expect("the parameters are stored");
-        let (min, max) = stored.bounds_micrometres();
-        assert_eq!(min, [-150_000; 3], "{what}: the mesh is centred on the local zero");
-        assert_eq!(max, [150_000; 3], "{what}: the mesh is symmetric about the local zero");
+        assert_eq!(stored.bounds_micrometres(), ([-100_000; 3], [100_000; 3]), "{what}: the rim's distance");
 
-        let world = session.project().world_placement(cube).expect("world placement");
+        let world = session.project().world_placement(drawn.object).expect("world placement");
+        // The plane's own rotation carries the centre into the world, so the sphere sits where the
+        // person clicked rather than at the plane's origin.
+        let expected = plane.transform_point(DVec3::new(30.0, 40.0, 0.0));
         assert!(
-            (world.translation() - click.translation()).length() < 1e-9,
-            "{what}: the clicked point is on the pointer, was {:?}",
+            (world.translation() - expected).length() < 1e-9,
+            "{what}: the centre is under the pointer, was {:?}",
             world.translation()
         );
-        assert!(world.rotation().dot(click.rotation()).abs() >= 1.0 - 1e-12, "{what}: the plane rotation");
+        assert!(world.rotation().dot(plane.rotation()).abs() >= 1.0 - 1e-12, "{what}: the plane rotation");
         if armed.is_none() {
-            assert_eq!(object.placement(), click, "at the root the stored placement is the world one");
+            assert_eq!(object.placement().translation(), world.translation(), "at the root the placement is world");
         } else {
-            assert!(!object.placement().same_transform(click), "the container stores a relative placement");
+            assert!(!object.placement().same_transform(plane), "the container stores a relative placement");
         }
 
-        session.undo().expect("one undo removes the primitive");
-        assert!(session.project().object(cube).is_none(), "{what}: the undo removed the primitive");
+        session.undo().expect("one undo removes the sphere");
+        assert!(session.project().object(drawn.object).is_none(), "{what}: the undo removed the sphere");
     }
     assert!(session.project().container(parent).is_some(), "the container is its own undo entry");
 }
 
 #[test]
-fn a_primitive_size_must_be_positive() {
+fn only_a_tool_that_places_a_primitive_starts_one() {
+    // A map row is data, so a tool the sphere cell does not carry is refused instead of starting a
+    // draft that would commit somewhere else.
     let mut editor = Editor::new();
-    assert!(editor.arm_primitive(PrimitiveKind::Sphere, Length::ZERO).is_err());
+    assert!(editor.start_primitive_drawing(DrawTool::Circle).is_err(), "a sketch circle places no sphere");
+    assert!(editor.drawing().is_none(), "a refused arm starts no draft");
+    assert_eq!(DrawTool::Sphere.primitive_kind(), Some(PrimitiveKind::Sphere));
+    assert_eq!(DrawTool::SphereDiameter.primitive_kind(), Some(PrimitiveKind::Sphere));
+    assert_eq!(DrawTool::SphereThreePoints.primitive_kind(), Some(PrimitiveKind::Sphere));
+    assert_eq!(DrawTool::Rectangle.primitive_kind(), None);
 }
 
 #[test]
-fn the_sphere_is_the_primitive_that_arms_a_click() {
-    let size = Length::from_millimetres(120).expect("size");
-    let kind = PrimitiveKind::Sphere;
+fn the_sphere_cell_writes_nothing_until_the_round_is_committed() {
+    let session = Session::with_catalog(sample_project(), sample_catalog());
     let mut editor = Editor::new();
-    editor.arm_primitive(kind, size).expect("arm");
-    assert_eq!(editor.pending_primitive(), Some((kind, size)));
-    assert!(
-        Session::with_catalog(sample_project(), sample_catalog()).project().object(Id::new(5).expect("id")).is_none(),
-        "arming alone creates nothing"
-    );
+    let revision = session.project().revision();
+    editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
+    editor.drawing_point([Length::ZERO, Length::ZERO]).expect("the centre");
+    assert_eq!(session.project().revision(), revision, "the round is view state");
+    assert!(!session.can_undo(), "no half figure entered the undo history");
+    editor.cancel_drawing();
+    assert!(editor.drawing().is_none(), "Escape drops the round");
+    assert_eq!(session.project().revision(), revision, "and leaves the document as it was");
 }
 
 #[test]
-fn placing_a_sphere_names_and_shapes_it() {
+fn a_drawn_sphere_names_and_shapes_itself() {
     let (project, _panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
-    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(100).expect("size")).expect("arm");
-    let id = editor.place_primitive(&mut session, Placement::IDENTITY).expect("place");
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+    let id = draw_sphere(&mut editor, &mut session, [mm(0), mm(0)], [mm(100), mm(0)]);
     let object = session.project().object(id).expect("object");
     assert_eq!(object.name(), "Sphere");
     let stored = object.geometry().as_primitive().expect("the parameters are stored");
@@ -937,7 +970,7 @@ fn placing_a_sphere_names_and_shapes_it() {
     assert_eq!(
         stored.vertex_count() as u32,
         2 + DEFAULT_SEGMENTS * (DEFAULT_BANDS - 1),
-        "the counts follow the parameters"
+        "the counts follow the default tessellation the card edits"
     );
     assert!(object.geometry().as_mesh().is_none(), "the mesh is derived");
 }
@@ -1081,8 +1114,8 @@ fn the_toolbar_creates_the_primitive_at_the_scene_root() {
     let mut editor = Editor::new();
     let root = Id::new(1).expect("root");
     editor.select_node(Some(root));
-    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(200).expect("size")).expect("arm");
-    editor.place_primitive(&mut session, Placement::IDENTITY).expect("sphere");
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+    draw_sphere(&mut editor, &mut session, [mm(0), mm(0)], [mm(200), mm(0)]);
     let sphere = editor.selected_node().expect("the new primitive is selected");
     assert!(session.project().object(sphere).is_some());
     assert!(session.project().panel(panel).is_some());
@@ -1504,8 +1537,8 @@ fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
     let mut session = Session::with_catalog(sample_project(), sample_catalog());
     let mut editor = Editor::new();
 
-    editor.arm_primitive(PrimitiveKind::Sphere, Length::from_millimetres(200).expect("size")).expect("arm");
-    editor.place_primitive(&mut session, Placement::IDENTITY).expect("create the sphere");
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+    draw_sphere(&mut editor, &mut session, [mm(0), mm(0)], [mm(200), mm(0)]);
 
     let id = editor.selected_node().expect("the new object is selected");
     let object = session.project().object(id).expect("object");
@@ -1648,8 +1681,7 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     body.drop_without_applying_deltas();
 
     editor.cancel_drawing();
-    let size = Length::from_millimetres(crate::toolbars::DEFAULT_PRIMITIVE_SIZE_MM).expect("size");
-    editor.arm_primitive(PrimitiveKind::Sphere, size).expect("arm");
+    editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
     let primitive = ctx.run_ui(Default::default(), |ui| {
         editor.show_ribbon(ui, &mut session, view).expect("ribbon");
     });

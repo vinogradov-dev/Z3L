@@ -16,7 +16,7 @@
 //! step, so Escape costs nothing.
 
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
-use geom::DVec2;
+use geom::{DVec2, DVec3};
 use model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path};
 use scene::Camera;
 use ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides};
@@ -33,11 +33,16 @@ const SNAP_RADIUS_POINTS: f32 = 10.0;
 const POINT_RADIUS: f32 = 3.5;
 /// Sampling tolerance for a painted preview, in millimetres.
 const PREVIEW_TOLERANCE_MM: f64 = 0.25;
+/// How many segments each meridian of the sphere phantom is sampled into.
+const PHANTOM_STEPS: usize = 48;
 
 /// Colour of the points already placed.
 const DRAFT_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
 /// Colour of the shape the next click would make.
 const PREVIEW_COLOR: Color32 = Color32::from_rgb(255, 220, 96);
+/// Colour of the phantom sphere the sphere tools stand on the plane: the preview's own ink, thin
+/// enough to read the scene through it.
+const PHANTOM_COLOR: Color32 = Color32::from_rgba_premultiplied(120, 100, 40, 110);
 /// Colour of a draft end that would close the chain.
 const CLOSE_COLOR: Color32 = Color32::from_rgb(120, 230, 140);
 
@@ -438,6 +443,14 @@ impl DrawGizmo {
             if let Some(path) = self.preview() {
                 paint_path(&painter, camera, rect, plane, path, Stroke::new(1.5, PREVIEW_COLOR));
             }
+            // A sphere is not a figure in the document yet, so the ball it will become stands on the
+            // plane as a phantom: the equator is the preview and two meridians make it read as a
+            // ball rather than as a circle (ADR 0139).
+            if draft.tool().primitive_kind().is_some()
+                && let Some(path) = self.preview()
+            {
+                paint_phantom(&painter, camera, rect, plane, path);
+            }
             for point in draft.points() {
                 paint_point(&painter, camera, rect, plane, *point, DRAFT_COLOR, POINT_RADIUS);
             }
@@ -613,6 +626,56 @@ fn plane_point(point: [Length; 2]) -> DVec2 {
     DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64())
 }
 
+/// Paints the two meridian rings of the phantom sphere a sphere tool stands on the plane.
+///
+/// The draft's own preview is the equator: the path it builds is the circle the ball is built
+/// around, so only the two great circles through the plane's normal are added here. Each sample is
+/// exactly `radius` from the centre, so the phantom is a ball of the number the plates name and not
+/// an ellipse that happens to look round from one viewpoint.
+fn paint_phantom(painter: &egui::Painter, camera: Camera, rect: egui::Rect, plane: WorkPlane, path: &Path) {
+    let Some((centre, radius)) = path.circle_center_radius() else {
+        return;
+    };
+    let radius = radius.millimetres_f64();
+    if !radius.is_finite() || radius <= 0.0 {
+        return;
+    }
+    for ring in phantom_rings(plane, plane_point(centre), radius) {
+        let mut screen = Vec::with_capacity(PHANTOM_STEPS.saturating_add(1));
+        for point in ring {
+            let Some(position) = screen_point(camera, rect, point) else {
+                continue;
+            };
+            screen.push(position);
+        }
+        if screen.len() >= 2 {
+            painter.add(Shape::line(screen, Stroke::new(1.2, PHANTOM_COLOR)));
+        }
+    }
+}
+
+/// The two great circles through the phantom sphere's poles, in world millimetres.
+///
+/// One ring turns about the plane's X axis and the other about its Y, so the pair crosses at the
+/// centre's normal and the ball reads as a ball from every viewpoint. Each ring repeats its first
+/// sample at the end, so it is drawn as one closed line.
+fn phantom_rings(plane: WorkPlane, centre: DVec2, radius: f64) -> [Vec<DVec3>; 2] {
+    let mut rings = [Vec::new(), Vec::new()];
+    for (index, axis) in [DVec2::X, DVec2::Y].into_iter().enumerate() {
+        let Some(ring) = rings.get_mut(index) else {
+            continue;
+        };
+        ring.reserve(PHANTOM_STEPS.saturating_add(1));
+        for step in 0..=PHANTOM_STEPS {
+            let angle = core::f64::consts::TAU * step as f64 / PHANTOM_STEPS as f64;
+            let (sin, cos) = angle.sin_cos();
+            let base = plane.world(centre + axis * (radius * cos));
+            ring.push(base + plane.normal() * (radius * sin));
+        }
+    }
+    rings
+}
+
 /// Paints one path as a screen-space polyline through its sampled points.
 fn paint_path(
     painter: &egui::Painter,
@@ -700,6 +763,33 @@ mod tests {
             draft.push([millimetres(*x), millimetres(*y)]).expect("a fresh point");
         }
         draft
+    }
+
+    #[test]
+    fn the_sphere_phantom_is_two_great_circles_of_the_drawn_radius() {
+        // The equator is the draft's own preview; the two meridians are what makes the ball read as
+        // a ball. Every sample must stand the drawn radius from the centre, and each ring must close
+        // on its first sample (ADR 0139).
+        let plane = WorkPlane::WORLD_XY;
+        let centre = DVec2::new(100.0, 50.0);
+        let radius = 40.0;
+        let origin = plane.world(centre);
+        let mut lifted = false;
+        for ring in phantom_rings(plane, centre, radius) {
+            assert_eq!(ring.len(), PHANTOM_STEPS + 1, "one sample per step and the closing one");
+            let (Some(first), Some(last)) = (ring.first(), ring.last()) else {
+                panic!("a ring has samples");
+            };
+            assert!((*first - *last).length() < 1e-9, "the last sample meets the first");
+            for point in &ring {
+                assert!(
+                    ((*point - origin).length() - radius).abs() < 1e-9,
+                    "{point:?} stands {radius} from the centre"
+                );
+                lifted |= (point.z - origin.z).abs() > radius * 0.9;
+            }
+        }
+        assert!(lifted, "the meridians leave the plane, so the phantom is a ball and not a circle");
     }
 
     #[test]

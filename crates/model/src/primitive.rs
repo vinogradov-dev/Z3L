@@ -4,10 +4,13 @@
 //! bands — and never the mesh. The mesh is derived for the viewport and for `object.collapse`, so
 //! raising a radius rebuilds one object rather than rewriting its vertices ([ADR 0054]). A box or a
 //! cylinder is not a primitive: it is a drawn profile swept on Z, stored as a constructive body
-//! ([ADR 0138]), so the sphere is the last shape whose numbers are a parameter set.
+//! ([ADR 0138]). The sphere stays a parameter set, but it is *placed* by drawing the circle it is
+//! built around: the drawn centre becomes its origin and the drawn radius its stored number
+//! ([ADR 0139]).
 //!
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 //! [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
+//! [ADR 0139]: ../docs/decisions/0139-a-sphere-is-drawn-around-its-centre.md
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -199,7 +202,8 @@ impl Primitive {
     /// Builds the default primitive of one kind from the creation size.
     ///
     /// The size is the full extent, which for the sphere is its diameter; the sphere uses the
-    /// default tessellation.
+    /// default tessellation. A drawn sphere bypasses this constructor: its radius is the circle the
+    /// maker drew, so [`Primitive::sphere`] takes the number directly (ADR 0139).
     pub fn from_kind(kind: PrimitiveKind, size: Length) -> Result<Self, PrimitiveError> {
         validate_length(size)?;
         let radius = Length::from_micrometres(size.micrometres() / 2);

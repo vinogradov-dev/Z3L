@@ -26,9 +26,9 @@ use crate::icons::{self, Icon};
 /// What a click on a tool runs.
 ///
 /// This is the only code a row carries: the map says where a tool sits and what it is called, this
-/// says what happens. The data of an action — a primitive's size, an extrusion's height, the selected
-/// path — is not stored here; the renderer reads it from the ribbon state and the context when the
-/// button is drawn, so a row is one constant for every document.
+/// says what happens. The data of an action — an extrusion's height, the selected path, the circle a
+/// primitive is built around — is not stored here; the renderer reads it from the ribbon state and
+/// the context when the button is drawn, so a row is one constant for every document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
     /// Starts one drawing method.
@@ -42,8 +42,6 @@ pub enum ToolKind {
     CloseDraft,
     /// Drops the running chain; the document never changed.
     CancelDraft,
-    /// Creates a primitive on the next work-plane click.
-    Primitive(PrimitiveKind),
     /// Extrudes the selected closed path into a body.
     Extrude,
     /// Opens the card that creates a product frame.
@@ -62,6 +60,17 @@ pub enum ToolKind {
     },
     /// Creates an assembly at the scene root.
     Assembly,
+    /// Draws a primitive's placement: the circle the shape is built around.
+    ///
+    /// The sphere cell carries the sketch's own circle methods, so a sphere is drawn around its
+    /// centre by every method a circle offers and its centre and radius become its parameters
+    /// (ADR 0139).
+    Primitive {
+        /// Which primitive the drawn figure builds.
+        kind: PrimitiveKind,
+        /// Which circle method draws the figure.
+        tool: DrawTool,
+    },
     /// Creates a camera at the scene root.
     Camera,
     /// Creates a light at the scene root.
@@ -244,6 +253,9 @@ pub const fn method_id(tool: DrawTool) -> &'static str {
         DrawTool::CircleDiameter => "sketch.create.circle.diameter",
         DrawTool::CircleThreePoints => "sketch.create.circle.three-points",
         DrawTool::CircleTangent => "sketch.create.circle.tangent",
+        DrawTool::Sphere => "model.primitives.sphere",
+        DrawTool::SphereDiameter => "model.primitives.sphere.diameter",
+        DrawTool::SphereThreePoints => "model.primitives.sphere.three-points",
         DrawTool::RegularPolygon => "sketch.create.polygon",
         DrawTool::PolygonApothem => "sketch.create.polygon.apothem",
         DrawTool::PolygonByEdge => "sketch.create.polygon.edge",
@@ -716,9 +728,25 @@ const MODEL: [GroupSpec; 5] = [
                 id: "model.primitives.sphere",
                 label: Message::ToolSphere,
                 icon: Some(icons::primitives::SPHERE),
-                run: Some(ToolKind::Primitive(PrimitiveKind::Sphere)),
-                method: None,
-                variants: &[],
+                run: Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere }),
+                method: Some(Message::ToolSphereCentreRadius),
+                variants: &[
+                    VariantSpec {
+                        id: "model.primitives.sphere.diameter",
+                        label: Message::ToolSphereCentreDiameter,
+                        icon: Some(icons::contour::CIRCLE_DIAMETER),
+                        run: Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter }),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.sphere.three-points",
+                        label: Message::ToolSphereThreePoints,
+                        icon: Some(icons::contour::CIRCLE_THREE_POINTS),
+                        run: Some(ToolKind::Primitive {
+                            kind: PrimitiveKind::Sphere,
+                            tool: DrawTool::SphereThreePoints,
+                        }),
+                    },
+                ],
             },
             planned("model.primitives.cone", Message::ToolCone),
             planned("model.primitives.pyramid", Message::ToolPyramid),
@@ -1229,6 +1257,56 @@ mod tests {
     }
 
     #[test]
+    fn the_sphere_cell_draws_its_three_rounds() {
+        // The sphere is drawn, not placed by one click: its cell carries the circle methods, and each
+        // method is one stage table entry with the plates of the circle it is built around (ADR 0139).
+        let sphere = tab("model")
+            .expect("the model tab")
+            .live_groups()
+            .flat_map(GroupSpec::live_tools)
+            .find(|tool| tool.id == "model.primitives.sphere")
+            .expect("the sphere cell");
+        assert_eq!(sphere.label.text(text::Lang::En), "Sphere");
+        assert_eq!(sphere.icon, Some(icons::primitives::SPHERE), "the cell keeps the sphere's own glyph");
+        let methods = sphere.methods().map(|method| (method.id, method.label, method.run)).collect::<Vec<_>>();
+        assert_eq!(
+            methods,
+            vec![
+                (
+                    "model.primitives.sphere",
+                    Message::ToolSphereCentreRadius,
+                    Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere })
+                ),
+                (
+                    "model.primitives.sphere.diameter",
+                    Message::ToolSphereCentreDiameter,
+                    Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter })
+                ),
+                (
+                    "model.primitives.sphere.three-points",
+                    Message::ToolSphereThreePoints,
+                    Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints })
+                ),
+            ],
+            "the centre, the diameter and three points draw the same ball"
+        );
+        assert_eq!(
+            (methods[0].1.text(text::Lang::En), methods[1].1.text(text::Lang::En)),
+            ("Centre and radius", "Centre and diameter")
+        );
+        assert_eq!(methods[2].1.text(text::Lang::En), "Through 3 points");
+        for (id, _, run) in methods {
+            let Some(ToolKind::Primitive { tool, .. }) = run else {
+                panic!("`{id}` places a primitive");
+            };
+            assert_eq!(method_id(tool), id, "`{id}` answers another id");
+        }
+        for method in sphere.methods() {
+            assert!(method.icon.is_some(), "`{}` draws its own glyph", method.id);
+        }
+    }
+
+    #[test]
     fn the_frame_cell_offers_the_card_and_the_drawn_method() {
         let frame = tab("furniture")
             .expect("furniture")
@@ -1271,7 +1349,9 @@ mod tests {
             ToolKind::Projection,
             ToolKind::GridSnap,
             ToolKind::Measure,
-            ToolKind::Primitive(PrimitiveKind::Sphere),
+            ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
+            ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
+            ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
             ToolKind::Body(DrawTool::Rectangle),
             ToolKind::Body(DrawTool::RectangleFromCenter),
             ToolKind::Body(DrawTool::RectangleFromCenterDirected),

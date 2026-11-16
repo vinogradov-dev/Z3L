@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use units::Length;
 
+use super::DEFAULT_EXTRUDE_HEIGHT_MM;
 use super::list;
 use super::spec::{self, GroupSpec, Method, TabSpec, ToolSpec};
-use super::{DEFAULT_EXTRUDE_HEIGHT_MM, DEFAULT_PRIMITIVE_SIZE_MM};
 use crate::draw::DEFAULT_POLYGON_SIDES;
 
 /// Whether the ribbon's body is open, which tab is active, the typed defaults it remembers, the
@@ -19,8 +19,6 @@ use crate::draw::DEFAULT_POLYGON_SIDES;
 pub struct Toolbars {
     open: bool,
     tab: &'static TabSpec,
-    /// The full extent of a new primitive, typed once at construction.
-    primitive_size: Length,
     /// The height the next extrusion starts at.
     extrude_height: Length,
     /// The side count a new regular polygon starts with.
@@ -37,7 +35,6 @@ impl Default for Toolbars {
         Self {
             open: true,
             tab: spec::fallback_tab().unwrap_or(&spec::TABS[0]),
-            primitive_size: Length::from_micrometres(DEFAULT_PRIMITIVE_SIZE_MM.saturating_mul(1_000)),
             extrude_height: Length::from_micrometres(DEFAULT_EXTRUDE_HEIGHT_MM.saturating_mul(1_000)),
             polygon_sides: DEFAULT_POLYGON_SIDES,
             pinned: BTreeMap::new(),
@@ -170,11 +167,6 @@ impl Toolbars {
 }
 
 impl Toolbars {
-    /// The full extent a new primitive is built at: the cube's edge, or a curved shape's diameter.
-    pub const fn primitive_size(&self) -> Length {
-        self.primitive_size
-    }
-
     /// The height the next extrusion starts at.
     pub const fn extrude_height(&self) -> Length {
         self.extrude_height

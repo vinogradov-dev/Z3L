@@ -142,8 +142,6 @@ messages! {
         "LMB add point  ·  Tab next field  ·  Enter places the point  ·  RMB line/arc  ·  Shift axis lock  ·  Alt ignores snaps  ·  Esc cancel",
         "ЛКМ добавить точку  ·  Tab следующее поле  ·  Enter ставит точку  ·  ПКМ линия/дуга  ·  Shift фиксация оси  ·  Alt игнорирует привязки  ·  Esc отмена"
     ],
-    PrimitiveStatus = ["Primitive · {} {}", "Примитив · {} {}"],
-    PrimitivePlaceHint = ["LMB place on the work plane  ·  Esc cancel", "ЛКМ разместить на рабочей плоскости  ·  Esc отмена"],
     MeasureFirstPoint = [
         "Measure · click the first point  ·  Esc leaves",
         "Измерение · щёлкните первую точку  ·  Esc выходит"
@@ -909,6 +907,9 @@ messages! {
     ToolBox = ["Box", "Блок"],
     ToolCylinder = ["Cylinder", "Цилиндр"],
     ToolSphere = ["Sphere", "Сфера"],
+    ToolSphereCentreRadius = ["Centre and radius", "Центр и радиус"],
+    ToolSphereCentreDiameter = ["Centre and diameter", "Центр и диаметр"],
+    ToolSphereThreePoints = ["Through 3 points", "Через 3 точки"],
     ToolCone = ["Cone", "Конус"],
     ToolPyramid = ["Pyramid", "Пирамида"],
     ToolUnion = ["Union", "Объединить"],
@@ -990,8 +991,8 @@ messages! {
     ExtrudeSelectedPath = ["Extrude the selected path", "Выдавить выбранный путь"],
     ExtrudePathOpen = ["The selected path is open; close it first", "Выбранный путь разомкнут; сначала замкните его"],
     ExtrudeNotPath = ["The selected object is not a path", "Выбранный объект не является путём"],
-    PrimitiveClickPlane = ["{}: click the work plane", "{}: щёлкните по рабочей плоскости"],
     PrimitiveDrawBase = ["{}: draw its base on the work plane", "{}: начертите основание на рабочей плоскости"],
+    PrimitiveDrawRound = ["{}: draw the round it is built around", "{}: начертите окружность, вокруг которой он строится"],
     BodyProfileOpen = ["A body is swept from a closed profile", "Тело выдавливается из замкнутого профиля"],
     FrameHeight = ["Frame height", "Высота каркаса"],
 

@@ -1371,6 +1371,63 @@ fn a_cylinder_is_drawn_by_any_circle_method_and_swept_on_z() {
     }
 }
 
+/// Starts a sphere cell's round and places the points of its stage, then commits it.
+///
+/// The cell and the sketch share one draft: `start_primitive_drawing` is what the sphere cell runs,
+/// and the points are the ones the stage declares (ADR 0139).
+fn draw_sphere(harness: &mut Harness, tool: DrawTool) -> Id {
+    let points = stage_samples(tool);
+    let document = harness.app.tabs.active_mut();
+    document.editor.start_primitive_drawing(tool).expect("the sphere cell draws a round");
+    assert_eq!(document.editor.drawing_intent(), DrawIntent::Primitive(model::PrimitiveKind::Sphere));
+    for point in points {
+        document.editor.drawing_point([mesh(point[0]), mesh(point[1])]).expect("a valid point of the round");
+    }
+    assert!(document.editor.drawing().is_some_and(ui::DrawDraft::is_finished), "{tool:?}: the round is complete");
+    document.commit_drawing(Lang::En).expect("the sphere commits");
+    document.editor.selected_node().expect("the new sphere is selected")
+}
+
+#[test]
+fn a_sphere_is_drawn_by_any_of_its_three_rounds() {
+    // The sphere cell carries three methods of one circle: the centre and a rim point, the same pair
+    // typed as a diameter, and three points whose circumcircle it wraps. Each one stores a sphere —
+    // the centre is its placement and the round its radius — in one command (ADR 0139).
+    for (tool, radius, centre) in [
+        (DrawTool::Sphere, 250.0, [0.0, 0.0]),
+        (DrawTool::SphereDiameter, 250.0, [0.0, 0.0]),
+        (DrawTool::SphereThreePoints, 125.0, [100.0, 75.0]),
+    ] {
+        let mut harness =
+            Harness::with_session("sphere-drawn", crate::scene_build::empty_session().expect("an empty session"));
+        harness.settle();
+        let before = harness.revision();
+        let object = draw_sphere(&mut harness, tool);
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        assert_eq!(project.revision().get(), before.get() + 1, "{tool:?}: one gesture is one command");
+        let node = project.object(object).expect("{tool:?}: the sphere is in the document");
+        assert_eq!(node.name(), "Sphere", "{tool:?}: the node is what the cell places");
+        let stored = node.geometry().as_primitive().expect("{tool:?}: the parameters are stored");
+        assert_eq!(stored.kind(), model::PrimitiveKind::Sphere, "{tool:?}: a sphere");
+        let ([min_x, min_y, min_z], [max_x, max_y, max_z]) = stored.bounds_micrometres();
+        let measured = (max_x - min_x) as f64 / 2_000.0;
+        assert!((measured - radius).abs() < 0.001, "{tool:?}: the radius is {radius}, got {measured}");
+        assert_eq!((min_y + max_y) as f64 / 2_000.0, 0.0, "{tool:?}: the ball is centred in its local frame");
+        assert_eq!((min_z + max_z) as f64 / 2_000.0, 0.0, "{tool:?}: the ball is centred in its local frame");
+        let world = project.world_placement(object).expect("{tool:?}: a world placement");
+        assert!(
+            (world.translation() - geom::DVec3::new(centre[0], centre[1], 0.0)).length() < 1e-9,
+            "{tool:?}: the round's centre is the origin, was {:?}",
+            world.translation()
+        );
+        // One undo takes the whole drawn sphere, because the round wrote nothing of its own.
+        let document = harness.app.tabs.active_mut();
+        document.session.undo().expect("undo the drawn sphere");
+        assert!(document.session.project().object(object).is_none(), "{tool:?}: one undo takes the sphere");
+    }
+}
+
 #[test]
 fn escape_during_the_height_pull_leaves_the_drawn_profile_behind() {
     // The profile is in the document for the length of the pull so the shaded preview can show the
@@ -1845,7 +1902,7 @@ fn the_square_marks_the_work_area_only() {
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a contour tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
-    // An armed primitive and a frame draft do the same.
+    // A frame draft does the same.
     harness.app.tabs.active_mut().editor.arm_box();
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a frame tool keeps the shell's square");
@@ -3259,6 +3316,11 @@ fn sketch_tools() -> [DrawTool; 17] {
     ]
 }
 
+/// The three rounds the sphere cell offers, which share the sketch's stages but not its intent.
+fn sphere_tools() -> [DrawTool; 3] {
+    [DrawTool::Sphere, DrawTool::SphereDiameter, DrawTool::SphereThreePoints]
+}
+
 /// Starts `tool` the way a ribbon cell does: a fresh draft and no pointer state from the old one.
 fn arm_sketch(harness: &mut Harness, tool: DrawTool) {
     harness.app.tabs.active_mut().editor.start_drawing_with(tool, 6);
@@ -3344,10 +3406,16 @@ fn every_sketch_stage_draws_every_plate_apart() {
     let scene = harness.scene();
     let hovers = sketch_hovers(scene);
     let samples = [[0_i64, 0_i64], [200, 0], [200, 150]];
-    for tool in sketch_tools() {
+    // The sphere's three rounds are stages of the same table, so their plates are read here too.
+    for tool in sketch_tools().into_iter().chain(sphere_tools()) {
         let need = tool.points().unwrap_or(3);
         for placed in 0..need {
-            arm_sketch(&mut harness, tool);
+            if tool.primitive_kind().is_some() {
+                harness.app.tabs.active_mut().editor.start_primitive_drawing(tool).expect("a sphere round");
+                harness.app.tabs.active_mut().draw_gizmo.reset();
+            } else {
+                arm_sketch(&mut harness, tool);
+            }
             for point in &samples[..placed] {
                 push_stage_point(&mut harness, *point);
             }

@@ -2097,10 +2097,6 @@ impl Document {
         // A drawing tool owns it too: the left button places points, not selections. A click on the
         // chrome is never a point, so the tool waits for a click on the scene.
         let drawing = interactive && !pointer_on_chrome && self.editor.drawing().is_some();
-        // An armed primitive owns the next click: it places the sphere, it does not select. The
-        // frame tool owns a whole gesture instead: two clicks for the base, one for the height
-        // (ADR 0101).
-        let placing = interactive && !pointer_on_chrome && self.editor.pending_primitive().is_some();
         let boxing = interactive && !pointer_on_chrome && self.editor.box_draft().is_some();
         // The pull arrow is the live gesture after an extrusion. A contour edit, a draft, a
         // placement or a sub-object mode takes the pointer from it, so the arrow never competes
@@ -2108,7 +2104,6 @@ impl Document {
         if self.extrude_gizmo.is_active()
             && (contour_editing
                 || drawing
-                || placing
                 || boxing
                 || self.editor.mesh_edit().is_some()
                 || self.editor.fill_arm().is_some()
@@ -2138,18 +2133,16 @@ impl Document {
         let navigating = navigation.is_some()
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
             && !measuring
             && !voiding;
-        let mesh_object =
-            if !interactive || contour_editing || drawing || placing || pulling || filling || measuring || voiding {
-                None
-            } else {
-                self.editor.mesh_edit().map(|edit| edit.object())
-            };
+        let mesh_object = if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding {
+            None
+        } else {
+            self.editor.mesh_edit().map(|edit| edit.object())
+        };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -2289,29 +2282,6 @@ impl Document {
             }
         }
 
-        if placing {
-            // The armed cube lands where the user clicks: the plane point is its origin and the
-            // plane's own rotation keeps its local axes on the plane.
-            if response.clicked_by(egui::PointerButton::Primary)
-                && !pointer_over_widget
-                && !pointer_on_chrome
-                && let Some(pointer) = response.interact_pointer_pos()
-            {
-                let plane = WorkPlane::from_camera(self.scene.camera);
-                let placement =
-                    plane.pointer_point(self.scene.camera, rect, pointer).and_then(|local| plane.placement_at(local));
-                match placement.map(|placement| self.editor.place_primitive(&mut self.session, placement)) {
-                    Some(Ok(_)) => {
-                        if let Err(error) = self.refresh() {
-                            self.last_error = Some(error);
-                        }
-                    }
-                    Some(Err(error)) => self.last_error = Some(error),
-                    None => self.last_error = Some("The work plane has no point under the cursor.".to_owned()),
-                }
-            }
-        }
-
         if boxing {
             self.update_box(ui, &response, rect);
         }
@@ -2321,7 +2291,6 @@ impl Document {
         let gripping = interactive
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
@@ -2367,7 +2336,6 @@ impl Document {
         let update: Result<Option<PlacementCommit>, String> = if !interactive
             || contour_editing
             || drawing
-            || placing
             || boxing
             || pulling
             || filling
@@ -2423,7 +2391,6 @@ impl Document {
         };
         let consumed_click = if contour_editing
             || drawing
-            || placing
             || boxing
             || pulling
             || filling
@@ -2530,7 +2497,6 @@ impl Document {
             && !pointer_over_gizmo
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !filling
@@ -2571,7 +2537,6 @@ impl Document {
         if interactive
             && !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !measuring
@@ -2598,7 +2563,6 @@ impl Document {
 
         if !contour_editing
             && !drawing
-            && !placing
             && !boxing
             && !pulling
             && !measuring
@@ -3270,10 +3234,6 @@ impl Document {
                     }
                     None => {}
                 }
-            }
-        } else if self.editor.pending_primitive().is_some() {
-            if escape && !ui.ctx().text_edit_focused() {
-                self.editor.cancel_primitive();
             }
         } else if self.editor.box_draft().is_some() || self.box_grips.is_dragging() {
             // Escape drops the base, the pull or the grip drag; the grip's edit scope is rolled

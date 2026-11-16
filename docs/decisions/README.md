@@ -144,6 +144,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0136](0136-the-wordmark-is-drawn-in-the-text-ink.md) | The header draws the wordmark in the text ink | Accepted |
 | [0137](0137-a-rubber-band-selects-by-the-direction-it-is-dragged.md) | A rubber band selects by the direction it is dragged | Accepted |
 | [0138](0138-a-solid-body-is-a-drawn-profile-swept-on-z.md) | A solid body is a drawn profile swept on Z | Accepted |
+| [0139](0139-a-sphere-is-drawn-around-its-centre.md) | A sphere is drawn around its centre | Accepted |
 
 ## Format
 

@@ -636,9 +636,13 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         }
         DrawTool::Circle => (first, Shape::Radius { turned: false }, 0.0),
         DrawTool::CircleDiameter => (first, Shape::Diameter, 0.0),
+        // A sphere is read exactly as the circle it is built around: the plate names the radius
+        // (or the diameter) of the round, and the phantom stands the ball on it (ADR 0139).
+        DrawTool::Sphere => (first, Shape::Radius { turned: false }, 0.0),
+        DrawTool::SphereDiameter => (first, Shape::Diameter, 0.0),
         // Every point of a three-point circle rings the same way: each is a distance and an angle
-        // from the one before it.
-        DrawTool::CircleThreePoints => (last, Shape::Segment, 0.0),
+        // from the one before it. A sphere through three points is the same ring.
+        DrawTool::CircleThreePoints | DrawTool::SphereThreePoints => (last, Shape::Segment, 0.0),
         // A circle tangent to two lines is clicked at the corner where they meet and then at one
         // point on each line: those two clicks name the lines the way a direction does, and the last
         // click names the centre of the ring.
@@ -824,6 +828,9 @@ mod tests {
             DrawTool::RegularPolygon,
             DrawTool::PolygonApothem,
             DrawTool::PolygonByEdge,
+            DrawTool::Sphere,
+            DrawTool::SphereDiameter,
+            DrawTool::SphereThreePoints,
         ] {
             let fresh = DrawDraft::with_sides(tool, 6);
             let state = PointState::live(&fresh, millimetres(50, 25)).expect("a first point");
@@ -868,6 +875,12 @@ mod tests {
                 vec![FieldParam::Apothem, FieldParam::Rotation, FieldParam::Sides],
             ),
             (DrawTool::PolygonByEdge, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle, FieldParam::Sides]),
+            // A sphere reads its round exactly as a circle does: the radius, the diameter, or a
+            // distance and an angle for each of the three points on its rim (ADR 0139).
+            (DrawTool::Sphere, vec![(0, 0)], vec![FieldParam::Radius]),
+            (DrawTool::SphereDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
+            (DrawTool::SphereThreePoints, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            (DrawTool::SphereThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
         ];
         for (tool, points, expected) in cases {
             let draft = draft(tool, &points);

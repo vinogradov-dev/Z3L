@@ -1046,6 +1046,26 @@ mod tests {
     }
 
     #[test]
+    fn a_circle_names_the_centre_and_radius_it_was_built_from() {
+        let center = [millimetres(100), millimetres(50)];
+        let path = Path::circle_through(center, [millimetres(140), millimetres(50)]).expect("a circle");
+        assert_eq!(path.circle_center_radius(), Some((center, millimetres(40))), "the pair the arcs store");
+        // A circle drawn through three points reads the same pair back, so a sphere built on it
+        // takes the circumradius rather than its bounds.
+        let through = Path::circle_three_points(
+            [millimetres(0), millimetres(0)],
+            [millimetres(100), millimetres(0)],
+            [millimetres(50), millimetres(50)],
+        )
+        .expect("a circle through three points");
+        assert_eq!(through.circle_center_radius(), Some(([millimetres(50), millimetres(0)], millimetres(50))));
+        // A rectangle is not a circle, and a chain that lost its tag claims nothing.
+        let rectangle = Path::rectangle([Length::ZERO; 2], [millimetres(10), millimetres(20)]).expect("a rectangle");
+        assert_eq!(rectangle.circle_center_radius(), None);
+        assert_eq!(path.clone().with_shape(None).circle_center_radius(), None, "the tag is the claim");
+    }
+
+    #[test]
     fn a_circle_needs_a_positive_radius() {
         assert!(matches!(
             Path::circle([Length::ZERO; 2], Length::ZERO),
@@ -2444,6 +2464,31 @@ impl Path {
     pub fn with_shape(mut self, shape: Option<PathShape>) -> Self {
         self.shape = shape;
         self
+    }
+
+    /// The centre and the radius of a path tagged as one circle, in whole micrometres.
+    ///
+    /// A circle is four quarter arcs that share a centre and a radius ([`PathShape::Circle`]), so
+    /// this reads the pair back out of the stored chain instead of measuring the bounds: a caller
+    /// that needs the figure's own radius — the sphere a drawn circle is the equator of — gets the
+    /// number the circle was built from. A path with no tag, or a chain whose arcs disagree, is not
+    /// one circle and answers `None`.
+    pub fn circle_center_radius(&self) -> Option<([Length; 2], Length)> {
+        if self.shape != Some(PathShape::Circle) {
+            return None;
+        }
+        let mut pair = None;
+        for entry in &self.entries {
+            let ContourSegment::Arc { center, radius, .. } = entry.segment() else {
+                return None;
+            };
+            match pair {
+                None => pair = Some((center, radius)),
+                Some((first_center, first_radius)) if first_center == center && first_radius == radius => {}
+                Some(_) => return None,
+            }
+        }
+        pair
     }
 
     /// A closed rectangle whose sides follow the axes, from two opposite corners.

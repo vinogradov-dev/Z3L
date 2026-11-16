@@ -2,9 +2,9 @@
 //!
 //! The ribbon draws from one `RibbonContext` and reports what it asked for; the drawing, the
 //! creation and the extrusion the buttons start are commands, while the view actions and the close
-//! of a draft belong to the shell that owns the view camera and the work plane (ADR 0052). The
-//! primitive size, the side count and the extrude height are typed session defaults, so the last
-//! value a tool used carries into the next one.
+//! of a draft belong to the shell that owns the view camera and the work plane (ADR 0052). The side
+//! count and the extrude height are typed session defaults, so the last value a tool used carries
+//! into the next one; a primitive's size is drawn rather than typed (ADR 0139).
 //!
 //! Refuses a panel or an assembly creation without a catalogue entry and an extrusion of an open
 //! path; a refused action is the command's sentence and leaves the default untouched.
@@ -46,7 +46,6 @@ impl Editor {
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
-            self.pending_primitive.map(|pending| pending.kind),
             self.box_draft().is_some(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
@@ -94,6 +93,10 @@ impl Editor {
                     self.start_body_drawing(tool);
                     outcome.started_drawing = true;
                 }
+                ToolAction::DrawPrimitive { tool, .. } => {
+                    self.start_primitive_drawing(tool)?;
+                    outcome.started_drawing = true;
+                }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
                 ToolAction::DrawProductFrame => self.arm_box(),
                 ToolAction::DrawPanelContour => {
@@ -125,7 +128,6 @@ impl Editor {
                     }
                 }
                 ToolAction::CreateAssembly => self.create_assembly(session, target)?,
-                ToolAction::CreatePrimitive { kind, size } => self.arm_primitive(kind, size)?,
                 ToolAction::CreateCamera => self.create_camera(session, target)?,
                 ToolAction::CreateLight => self.create_light(session, target)?,
                 ToolAction::ExtrudePath { object, height } => {

@@ -16,10 +16,16 @@
 //! the ring cap, a corner whose two lines lie on one line and a close that cannot form a path; each
 //! is a [`DrawDraftError`] and leaves the draft editable.
 //!
+//! What a commit becomes is the draft's intent, not the tool's: the same circle stages draw a sketch
+//! circle, a cylinder's rim or the round a sphere is built around, and `DrawIntent` names which. A
+//! sphere's figure is read back as a centre and a radius rather than stored, because its parameters
+//! are the sphere's own (ADR 0139).
+//!
 //! It does not choose the work plane, create the node or hold the editor's tool selection: the
 //! caller passes the plane's placement to [`DrawDraft::commit`].
 //!
-//! Changes when: a drawing tool, its point grammar or the closing rule changes.
+//! Changes when: a drawing tool, its point grammar, the closing rule or what a commit becomes
+//! changes.
 
 use core::f64::consts::PI;
 
@@ -28,7 +34,7 @@ use engine::{EditScope, ObjectPathCreate, Session};
 use geom::DVec2;
 use model::{
     ContourSegment, ContourSegmentError, Id, MAX_CONTOUR_COORDINATE, MAX_CONTOUR_SEGMENTS, MAX_POLYGON_SIDES,
-    MIN_POLYGON_SIDES, Path, PathError, Placement,
+    MIN_POLYGON_SIDES, Path, PathError, Placement, PrimitiveKind,
 };
 use text::{Lang, Message};
 use thiserror::Error;
@@ -38,10 +44,11 @@ use crate::command::{dispatch, json};
 
 /// What a committed draft becomes.
 ///
-/// One draft serves three cells: a sketch tool commits the figure as a path object of its own, the
-/// *Panel from contour* cell cuts a board to the same ring and leaves no path behind, and the box and
-/// cylinder cells draw a body's profile, which the shell then pulls into a solid (ADR 0138). The
-/// intent is view state, like the tool, and never reaches the document.
+/// One draft serves four cells: a sketch tool commits the figure as a path object of its own, the
+/// *Panel from contour* cell cuts a board to the same ring and leaves no path behind, the box and
+/// cylinder cells draw a body's profile, which the shell then pulls into a solid (ADR 0138), and a
+/// sphere cell draws the figure the sphere is built around (ADR 0139). The intent is view state, like
+/// the tool, and never reaches the document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DrawIntent {
     /// One `object.path.create`: the figure the user drew, editable as a path.
@@ -55,6 +62,12 @@ pub enum DrawIntent {
     /// height is accepted, so the drawn profile and the body it builds are one node and one undo
     /// entry (ADR 0138).
     Body,
+    /// One `object.primitive.create`: the figure is the round the primitive is built around.
+    ///
+    /// The drawn circle is not stored: its centre is the primitive's origin and its radius is the
+    /// primitive's own number, so the sphere a maker draws is a parameter set from the first frame
+    /// and its card edits the radius, the side count and the bands (ADR 0139).
+    Primitive(PrimitiveKind),
 }
 
 /// The tool a drawing draft is building with.
@@ -111,6 +124,20 @@ pub enum DrawTool {
     /// phase, and the rest of the ring follows counter-clockwise, so the polygon grows on the left of
     /// the edge the person drew.
     PolygonByEdge,
+    /// A centre and a rim point make one circle, and the sphere the figure is built around.
+    ///
+    /// The click is described exactly as a circle's, because the sphere a maker draws is the circle
+    /// turned about its own diameter: the plate names the radius and the phantom stands the ball on
+    /// the plane (ADR 0139). The circle itself is not stored — its radius becomes the primitive's.
+    Sphere,
+    /// A centre and a rim point make the same sphere, but the number the person types is the
+    /// diameter rather than the radius.
+    SphereDiameter,
+    /// Three points make the sphere whose equator is the circle through them.
+    ///
+    /// The points may be picked as tangencies on a face plane: the tangency places a point, so the
+    /// method takes three points and knows nothing about how each one was found.
+    SphereThreePoints,
 }
 
 impl DrawTool {
@@ -126,6 +153,8 @@ impl DrawTool {
             | Self::RectangleFromCenter
             | Self::Circle
             | Self::CircleDiameter
+            | Self::Sphere
+            | Self::SphereDiameter
             | Self::RegularPolygon
             | Self::PolygonApothem
             | Self::PolygonByEdge => Some(2),
@@ -133,6 +162,7 @@ impl DrawTool {
             | Self::ArcFromCenter
             | Self::ArcByRadius
             | Self::CircleThreePoints
+            | Self::SphereThreePoints
             | Self::RectangleFromCenterDirected
             | Self::RectangleTilted => Some(3),
             Self::CircleTangent => Some(4),
@@ -157,10 +187,25 @@ impl DrawTool {
                 | Self::CircleDiameter
                 | Self::CircleThreePoints
                 | Self::CircleTangent
+                | Self::Sphere
+                | Self::SphereDiameter
+                | Self::SphereThreePoints
                 | Self::RegularPolygon
                 | Self::PolygonApothem
                 | Self::PolygonByEdge
         )
+    }
+
+    /// The primitive this tool places, or `None` when it draws a figure rather than a parameter set.
+    ///
+    /// A sphere cell carries the circle methods, so the draft is the sketch draft and only what its
+    /// commit becomes differs; the kind is what the commit hands `object.primitive.create`
+    /// (ADR 0139).
+    pub const fn primitive_kind(self) -> Option<PrimitiveKind> {
+        match self {
+            Self::Sphere | Self::SphereDiameter | Self::SphereThreePoints => Some(PrimitiveKind::Sphere),
+            _ => None,
+        }
     }
 
     /// A short user-visible name.
@@ -182,6 +227,7 @@ impl DrawTool {
             Self::CircleDiameter => Message::ToolCircle,
             Self::CircleThreePoints => Message::ToolCircleThreePoints,
             Self::CircleTangent => Message::ToolCircle,
+            Self::Sphere | Self::SphereDiameter | Self::SphereThreePoints => Message::ToolSphere,
             Self::RegularPolygon => Message::ToolRegularPolygon,
             Self::PolygonApothem | Self::PolygonByEdge => Message::ToolRegularPolygon,
             Self::RectangleTilted => Message::ToolRectangle,
@@ -655,6 +701,20 @@ impl DrawDraft {
                 Path::circle_through(center, rim).map_err(DrawDraftError::from)
             }
             DrawTool::CircleThreePoints => {
+                let (Some(&first), Some(&second), Some(&third)) = (points.first(), points.get(1), points.get(2)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
+                };
+                Path::circle_three_points(first, second, third).map_err(DrawDraftError::from)
+            }
+            // A sphere is the round its figure encloses: the draft builds the circle a sketch click
+            // would, which gives the preview, the plates and the radius the commit reads.
+            DrawTool::Sphere | DrawTool::SphereDiameter => {
+                let (Some(&center), Some(&rim)) = (points.first(), points.get(1)) else {
+                    return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
+                };
+                Path::circle_through(center, rim).map_err(DrawDraftError::from)
+            }
+            DrawTool::SphereThreePoints => {
                 let (Some(&first), Some(&second), Some(&third)) = (points.first(), points.get(1), points.get(2)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
                 };
