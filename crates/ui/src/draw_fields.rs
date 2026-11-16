@@ -144,7 +144,7 @@ enum Shape {
     /// A length and an angle from the anchor.
     Segment,
     /// A direction from the anchor and nothing else: the point's distance is not a number the figure
-    /// reads, so only the angle is a plate (ADR 0128).
+    /// reads, so only the angle is a plate (ADR 0131).
     Direction,
     /// A rectangle's two sides from the anchor: `centred` when the anchor is its middle.
     Sides { centred: bool },
@@ -239,7 +239,7 @@ impl PointState {
                 };
                 // A direction is the one stage whose length the figure does not read: typing it would
                 // move a construction point and change nothing, so it has no plate and keeps the
-                // pointer's own distance (ADR 0128).
+                // pointer's own distance (ADR 0131).
                 let length = match stage.shape {
                     Shape::Sweep { radius } => radius,
                     Shape::Direction => offset.length(),
@@ -391,7 +391,7 @@ impl PointState {
         };
         // The side count belongs to the figure, not to the point: it is on every stage of a polygon and
         // its plate writes the draft, so the number of sides is one value however many clicks the
-        // method takes (ADR 0128).
+        // method takes (ADR 0131).
         if let Some(sides) = stage.sides {
             rows.push(PointRow { param: FieldParam::Sides, value: f64::from(sides), anchor: stage.anchor });
         }
@@ -487,7 +487,7 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         DrawTool::PolygonByEdge => (first, Shape::Segment, 0.0),
     };
     // The three polygon methods shape their ring on the same second stage: every one of them shows the
-    // side count there, so the count is live while the figure is being built (ADR 0128).
+    // side count there, so the count is live while the figure is being built (ADR 0131).
     let sides = match draft.tool() {
         DrawTool::RegularPolygon | DrawTool::PolygonApothem | DrawTool::PolygonByEdge => Some(draft.sides()),
         _ => None,
@@ -666,7 +666,7 @@ mod tests {
             (DrawTool::Rectangle, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
             (DrawTool::RectangleFromCenter, vec![(0, 0)], vec![FieldParam::Width, FieldParam::Height]),
             // A directed rectangle's second click only names an axis, so it takes the angle and not a
-            // length the figure would ignore (ADR 0128).
+            // length the figure would ignore (ADR 0131).
             (DrawTool::RectangleFromCenterDirected, vec![(0, 0)], vec![FieldParam::Angle]),
             (
                 DrawTool::RectangleFromCenterDirected,

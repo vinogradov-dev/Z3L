@@ -382,7 +382,7 @@ fn every_new_tool_builds_its_own_figure() {
 fn the_three_polygon_methods_build_the_same_ring() {
     // A hexagon with a 100 mm edge: one ring described three ways. The method is a construction, so
     // the stored figure is the same regular polygon whichever pair of points the person clicked
-    // (ADR 0128), and each method agrees with the model's own vertices to the micrometre a rounded
+    // (ADR 0131), and each method agrees with the model's own vertices to the micrometre a rounded
     // vertex costs.
     let mut by_edge = DrawDraft::with_sides(DrawTool::PolygonByEdge, 6);
     by_edge.push([millimetres(0), millimetres(0)]).expect("corner");
