@@ -1041,7 +1041,10 @@ fn main() -> eframe::Result {
     };
     match cli::run(&command) {
         Some(code) => exit_with(code),
-        None => run_window(),
+        None => match command {
+            cli::Command::Scene(path) => run_window(Some(path)),
+            _ => run_window(None),
+        },
     }
 }
 
@@ -1050,14 +1053,24 @@ fn exit_with(code: i32) -> ! {
     std::process::exit(code)
 }
 
-/// Opens the window and runs the editor.
-fn run_window() -> eframe::Result {
+/// Opens the window and runs the editor, on `startup`'s scene when the command line named one.
+///
+/// The scene opens through the same `open_tab` the File menu and the Home surface use, so a path
+/// named on the command line and a path picked in the window produce the same tab, the same recent
+/// entry and the same catalogue. A file that does not read is the tab's own error: the window stays
+/// open on the sentence and the person can open another scene.
+fn run_window(startup: Option<std::path::PathBuf>) -> eframe::Result {
     let options = native_options();
     eframe::run_native(
         theme::PRODUCT_NAME,
         options,
-        Box::new(|cc| {
-            let app = App::new(cc)?;
+        Box::new(move |cc| {
+            let mut app = App::new(cc)?;
+            if let Some(path) = startup
+                && let Err(error) = app.open_tab(&path)
+            {
+                app.failed(error);
+            }
             Ok(Box::new(app))
         }),
     )
