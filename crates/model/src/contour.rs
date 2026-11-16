@@ -1391,6 +1391,79 @@ mod tests {
     }
 
     #[test]
+    fn a_rectangle_from_an_edge_stands_on_it_and_refuses_a_flat_one() {
+        let mm = millimetres;
+        // An edge along +X with the height above it: the far corners sit one 50 mm above.
+        let path = Path::rectangle_from_edge([mm(100), mm(100)], [mm(400), mm(100)], [mm(250), mm(300)])
+            .expect("a rectangle on a horizontal edge");
+        assert_eq!(path.shape(), Some(PathShape::Rectangle));
+        assert_eq!(path.entries().len(), 4);
+        let corners = path
+            .entries()
+            .iter()
+            .map(|entry| entry.segment().start().expect("a corner"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            corners,
+            vec![
+                [mm(100), mm(100)],
+                [mm(400), mm(100)],
+                [mm(400), mm(300)],
+                [mm(100), mm(300)],
+            ],
+            "the edge is two sides, the height the other two, from the corner it names"
+        );
+        assert_eq!(path.bounds_micrometres(), ([100_000, 100_000], [400_000, 300_000]));
+
+        // The same edge with the pointer below it is the same board on the other half of the plane,
+        // still stored counter-clockwise from the corner: the ring turns left at every joint.
+        let below = Path::rectangle_from_edge([mm(100), mm(100)], [mm(400), mm(100)], [mm(250), mm(-100)])
+            .expect("a rectangle below its edge");
+        let corners = below
+            .entries()
+            .iter()
+            .map(|entry| entry.segment().start().expect("a corner"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            corners,
+            vec![
+                [mm(100), mm(100)],
+                [mm(400), mm(100)],
+                [mm(400), mm(-100)],
+                [mm(100), mm(-100)],
+            ]
+        );
+
+        // A slanted edge gives a slanted board whose sides are the edge and the height square to it.
+        let slanted = Path::rectangle_from_edge([mm(0), mm(0)], [mm(300), mm(400)], [mm(-400), mm(300)])
+            .expect("a rectangle on a slanted edge");
+        let length = |index: usize| {
+            let segment = slanted.entries().get(index).expect("a side").segment();
+            let (start, end) = (segment.start().expect("a start"), segment.end().expect("an end"));
+            ((end[0].micrometres() - start[0].micrometres()) as f64)
+                .hypot((end[1].micrometres() - start[1].micrometres()) as f64)
+                .round()
+        };
+        assert_eq!(length(0), 500_000.0, "the drawn edge is one side");
+        assert_eq!(length(1), 500_000.0, "the height is the distance from the edge's line");
+    }
+
+    #[test]
+    fn a_rectangle_from_an_edge_refuses_an_edge_or_a_height_of_no_size() {
+        let mm = millimetres;
+        assert_eq!(
+            Path::rectangle_from_edge([mm(0), mm(0)], [mm(0), mm(0)], [mm(0), mm(100)]),
+            Err(PathError::DegenerateRectangle),
+            "an edge of no length has no width"
+        );
+        assert_eq!(
+            Path::rectangle_from_edge([mm(0), mm(0)], [mm(100), mm(100)], [mm(40), mm(40)]),
+            Err(PathError::DegenerateRectangle),
+            "a pointer on the edge's own line encloses no area"
+        );
+    }
+
+    #[test]
     fn a_regular_polygon_refuses_a_side_count_outside_its_range() {
         let center = [millimetres(0), millimetres(0)];
         let rim = [millimetres(50), millimetres(0)];
@@ -2629,6 +2702,55 @@ impl Path {
             c + u * half_x + v * half_y,
             c - u * half_x + v * half_y,
         ];
+        let mut corners = Vec::with_capacity(4);
+        for point in points {
+            corners.push(point_to_document(point)?);
+        }
+        let mut segments = Vec::with_capacity(4);
+        for index in 0..4 {
+            let (Some(&start), Some(&end)) = (corners.get(index), corners.get((index + 1) % 4)) else {
+                return Err(PathError::DegenerateRectangle);
+            };
+            if start == end {
+                return Err(PathError::DegenerateRectangle);
+            }
+            segments.push(ContourSegment::line(start, end)?);
+        }
+        Self::new(segments, true).map(|path| path.with_shape(Some(PathShape::Rectangle)))
+    }
+
+    /// A closed rectangle standing on the edge `corner → end`, `side` naming the half it grows on.
+    ///
+    /// The edge is one side of the rectangle and sets its width; the height is the distance from the
+    /// edge's line to `side`, so a pointer anywhere on one half of the plane gives the same height.
+    /// The ring runs counter-clockwise from `corner`, like every rectangle, so the board lies on the
+    /// left of the edge it was drawn along. A zero-length edge, or a `side` on the edge's own line,
+    /// encloses no area and is refused.
+    pub fn rectangle_from_edge(
+        corner: [Length; 2],
+        end: [Length; 2],
+        side: [Length; 2],
+    ) -> Result<Self, PathError> {
+        check_point(corner)?;
+        check_point(end)?;
+        check_point(side)?;
+        let a = point_to_geometry(corner)?;
+        let b = point_to_geometry(end)?;
+        let edge = b - a;
+        let width = edge.length();
+        if !width.is_finite() || width <= 0.0 {
+            return Err(PathError::DegenerateRectangle);
+        }
+        let u = edge / width;
+        let left = DVec2::new(-u.y, u.x);
+        let height = (point_to_geometry(side)? - a).dot(left);
+        if !height.is_finite() || height.abs() < LENGTH_TOLERANCE_MM {
+            return Err(PathError::DegenerateRectangle);
+        }
+        // The normal points at the half `side` named, so the ring turns left at every corner and
+        // the stored winding is the counter-clockwise one a rectangle always has.
+        let up = left * height;
+        let points = [a, b, b + up, a + up];
         let mut corners = Vec::with_capacity(4);
         for point in points {
             corners.push(point_to_document(point)?);
