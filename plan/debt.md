@@ -264,3 +264,17 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   face-plane tangency the way the ruler's surface probe does (V5). The sphere's three-point method
   already takes any point and asks nothing about where it came from, so the missing piece is the snap
   itself — one surface probe shared with the ruler and a marker of its own.
+
+- `[perf]` Measured on 2026-11-16 in a headless run (`app/src/frame_tests.rs`, a throwaway probe, dev
+  profile with opt-level 2): a frame that changes nothing costs 1.7 / 4.2 / 9.5 ms at 500 / 2 000 /
+  5 000 root spheres, and that cost is the chrome (the scene tree draws a row per node), not the
+  geometry — an idle orbit writes uniforms only. One edit anywhere, however small, rebuilds the whole
+  frame: 27 / 109 / 285 ms at the same counts even when the cache hits every node, because
+  `Bounds::include_mesh` transforms every vertex of every mesh twice (`all` and `solid`) to get the
+  world box. Cold evaluation is 0.6 / 2.2 / 5.6 s, dominated by meshing (1.1 ms per 32 x 16 sphere).
+  Picking a click ray-casts every triangle: 16 / 64 / 161 ms. 5 000 boxes (6 vertices each) instead:
+  14 / 44 / 124 ms cold, 0.9 / 5.2 / 24 ms per edit, 0.2 / 0.8 / 2.2 ms per pick, so the per-node
+  overhead of the frame walk is about 5 µs and the rest is per vertex. The two cheapest fixes: cache
+  each mesh's local AABB and transform eight corners once (or keep the world box keyed by placement),
+  and give each cached mesh a flat index buffer instead of one `Vec` per face. An incremental frame and
+  a picking BVH are the larger steps already named above.
