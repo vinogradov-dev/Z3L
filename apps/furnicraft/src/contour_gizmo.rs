@@ -630,9 +630,11 @@ fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Op
         let label = draft.grip_label(grip)?;
         (kind, value, label, None)
     };
+    // No unit: the grip's symbol (`L`, `W`, `H`, `R`, `∠`) already says what the number is, and a
+    // field that floats over the figure stays as small as the number it holds.
     let (param, unit, range) = match value {
-        GripValue::Length(_) => (FieldParam::Length, "mm", 0.0..=1_000_000.0),
-        GripValue::Angle(_) => (FieldParam::Angle, "°", -360.0..=360.0),
+        GripValue::Length(_) => (FieldParam::Length, "", 0.0..=1_000_000.0),
+        GripValue::Angle(_) => (FieldParam::Angle, "", -360.0..=360.0),
     };
     let row = FieldRow::new(param, Some(FieldLabel::Symbol(label)), number_of(value), unit, range, 1, pointer);
     let fields = FieldSet::new(vec![row])?;

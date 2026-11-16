@@ -2908,6 +2908,20 @@ fn assert_plates_apart(plates: &[(FieldParam, egui::Rect)], scene: egui::Rect, c
     }
 }
 
+/// No plate reaches the pointer.
+///
+/// A field that settles under the cursor is a field the pointer has to fight: the sketch stops
+/// following the hand until the pointer leaves the plate again. The clearance the layout keeps is
+/// measured here, one point inside it, so a plate that merely touches the rim still passes.
+fn assert_plates_clear_of(plates: &[(FieldParam, egui::Rect)], pointer: egui::Pos2, context: &str) {
+    for (param, rect) in plates {
+        assert!(
+            !rect.expand(furnicraft_ui::CURSOR_CLEARANCE - 1.0).contains(pointer),
+            "{context}: {param:?} sits under the pointer: {rect:?} holds {pointer:?}"
+        );
+    }
+}
+
 #[test]
 fn every_sketch_stage_draws_every_plate_apart() {
     // The reclamation behind X43: the first point showed one plate because X and Y shared an anchor,
@@ -2931,6 +2945,7 @@ fn every_sketch_stage_draws_every_plate_apart() {
                 let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
                 let context = format!("{tool:?} after {placed} points at hover {index}");
                 assert_plates_apart(&plates, scene, &context);
+                assert_plates_clear_of(&plates, *hover, &context);
                 if placed == 0 {
                     assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "{context}: X is drawn");
                     assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "{context}: Y is drawn");
@@ -2951,6 +2966,7 @@ fn every_sketch_stage_draws_every_plate_apart() {
         let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
         let context = format!("a pending arc at hover {index}");
         assert_plates_apart(&plates, scene, &context);
+        assert_plates_clear_of(&plates, *hover, &context);
         assert!(plates.iter().any(|(param, _)| *param == FieldParam::Length), "{context}: the chord is read");
         assert!(plates.iter().any(|(param, _)| *param == FieldParam::Angle), "{context}: the angle is read");
     }
