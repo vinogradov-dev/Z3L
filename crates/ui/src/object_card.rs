@@ -1326,8 +1326,8 @@ mod tests {
         draft.fields.width = 0.0;
         assert!(draft.parse(Lang::En).is_err(), "a zero side is not a solid");
         draft.fields.width = 100.0;
-        draft.fields.depth = 20_000.0;
-        assert!(draft.parse(Lang::En).is_err(), "a twenty-metre side is past the document's cap");
+        draft.fields.depth = 2_000_000.0;
+        assert!(draft.parse(Lang::En).is_err(), "a two-hundred-kilometre side is past the document's cap");
 
         let sphere = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
         let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &sphere);

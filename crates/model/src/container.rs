@@ -28,8 +28,8 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    /// The largest side an envelope may have: 10 m, the panel dimension ceiling.
-    pub const MAX_SIDE: Length = Length::from_micrometres(10_000_000);
+    /// The largest side an envelope may have: 1000 m, the panel dimension ceiling.
+    pub const MAX_SIDE: Length = Length::from_micrometres(1_000_000_000);
 
     /// Builds an envelope from three exact side lengths.
     ///

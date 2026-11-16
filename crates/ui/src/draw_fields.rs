@@ -1045,7 +1045,7 @@ mod tests {
     #[test]
     fn a_hostile_pointer_places_nothing() {
         let line = draft(DrawTool::Line, &[(0, 0)]);
-        for pointer in [DVec2::new(f64::NAN, 0.0), DVec2::new(0.0, f64::INFINITY), millimetres(20_000, 0)] {
+        for pointer in [DVec2::new(f64::NAN, 0.0), DVec2::new(0.0, f64::INFINITY), millimetres(2_000_000, 0)] {
             assert!(PointState::live(&line, pointer).is_none(), "{pointer:?} places no point");
         }
     }

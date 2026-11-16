@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<PanelNominalSize>(&text).expect("deserialize panel size"), size);
 
         assert!(serde_json::from_str::<PanelNominalSize>(r#"{"length":0,"width":500000}"#).is_err());
-        assert!(serde_json::from_str::<PanelNominalSize>(r#"{"length":10000001,"width":500000}"#).is_err());
+        assert!(serde_json::from_str::<PanelNominalSize>(r#"{"length":1000000001,"width":500000}"#).is_err());
         assert!(
             serde_json::from_str::<PanelNominalSize>(r#"{"length":700000,"width":500000,"unexpected":1}"#).is_err()
         );
