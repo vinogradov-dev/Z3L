@@ -91,8 +91,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   implemented yet.
 - `[gizmo]` The rotate rings are world-aligned only; a local-axis mode is not implemented.
 - `[gizmo]` The pivot is edited only in the inspector; there is no viewport pivot-pick tool yet.
-- `[gizmo]` Move and Rotate act on the top-most selected nodes; the viewport has no Ctrl+click
-  multi-select yet, so a multi-selection comes from the scene tree.
 - `[gizmo]` The orientation widget is hidden in a viewport smaller than 124 pt wide plus margins
   (148 pt), or 148 pt tall plus margins; there is no menu fallback for the six views or the roll
   ring yet.

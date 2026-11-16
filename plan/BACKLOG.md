@@ -42,21 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U102** a selection cannot be added to or removed from
-  Why: A selection is one object: a click replaces it, and there is no way to add or remove
-   one. The owner asked for the CAD habit — Shift adds, Ctrl removes — and for the order of
-   selection to be remembered, because a loft through several sections needs to know which
-   profile came first.
-  Shape: Add a selection order and the two modifiers in the one place a viewport click and a
-   tree click both reach (`select_viewport_hit`, `Selection`). Shift on a click adds the picked
-   id at the end of the order (or removes it on a second click, the toggle a person expects);
-   Ctrl removes it and only it; a plain click replaces. Keep the order as view state in the
-   session, not in the document, and expose it read-only for the future loft. The tree and the
-   viewport must agree.
-  Done: Shift-click builds an ordered set, Ctrl-click removes one member, a plain click
-   replaces, and a test asserts the order survives a toggle of a member and is cleared by the
-   replacement; the scene draws the added members as selected.
-  `files: crates/ui/src/editor/selection.rs,app/src/document.rs,crates/engine/src/session.rs`
 - `[ ]` **U103** there is no rubber-band selection
   Why: There is no way to select several objects with the pointer: a press either picks one
    node or orbits. The owner asked for the AutoCAD rectangle — left-to-right and top-to-bottom
@@ -134,6 +119,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **U102** a selection cannot be added to or removed from
+  Why: A selection is one object: a click replaces it, and there is no way to add or remove
+   one. The owner asked for the CAD habit — Shift adds, Ctrl removes — and for the order of
+   selection to be remembered, because a loft through several sections needs to know which
+   profile came first.
+  Shape: Add a selection order and the two modifiers in the one place a viewport click and a
+   tree click both reach (`select_viewport_hit`, `Selection`). Shift on a click adds the picked
+   id at the end of the order (or removes it on a second click, the toggle a person expects);
+   Ctrl removes it and only it; a plain click replaces. Keep the order as view state in the
+   session, not in the document, and expose it read-only for the future loft. The tree and the
+   viewport must agree.
+  Done: Shift-click builds an ordered set, Ctrl-click removes one member, a plain click
+   replaces, and a test asserts the order survives a toggle of a member and is cleared by the
+   replacement; the scene draws the added members as selected.
+  `files: crates/ui/src/editor/selection.rs,app/src/document.rs,crates/engine/src/session.rs` — `803e74a`
 
 - `[x]` **X54** a click on a widget over the scene commits the running draft's next point
   Why: Observation: with a line tool armed and waiting for its next point — the segment after a

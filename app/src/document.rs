@@ -36,7 +36,8 @@ use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
     BoxDraft, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue,
-    MeshElement, Message, PaletteContext, Side, ToolAction, ToolOutcome, ToolParam, ToolView, ViewFlags, tool_card,
+    MeshElement, Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, ViewFlags,
+    tool_card,
 };
 use units::Length;
 
@@ -617,6 +618,15 @@ impl Document {
             true => Ok(()),
             false => self.upload_scene(),
         }
+    }
+
+    /// The nodes the frame last uploaded draws as selected, oldest selection first.
+    ///
+    /// It is the selection the outline was built from, so a test can tell a highlighted member
+    /// from a node that merely left the selection after the upload.
+    #[cfg(test)]
+    pub(crate) fn highlighted_nodes(&self) -> &[Id] {
+        &self.highlighted
     }
 
     /// Applies the viewport section of the workspace settings to this scene.
@@ -2469,6 +2479,9 @@ impl Document {
             && rect.width() > 0.0
             && rect.height() > 0.0
         {
+            // The two modifiers a click may carry: Shift adds to the selection, Ctrl removes one
+            // member, and the tree row reads the same pair, so both surfaces agree (U102).
+            let pick = Pick::from_modifiers(&ui.input(|input| input.modifiers));
             if let Some(object) = mesh_object {
                 let element = self.editor.mesh_edit().map(|edit| edit.element()).unwrap_or_default();
                 let additive = ui.input(|input| input.modifiers.shift || input.modifiers.ctrl);
@@ -2507,7 +2520,7 @@ impl Document {
             ) {
                 // A camera or light icon has no mesh to ray-pick; it selects the node itself, not the
                 // container above it.
-                self.editor.select_node(Some(id));
+                self.editor.pick_node(id, pick);
                 if let Err(error) = self.upload_scene() {
                     self.last_error = Some(error);
                 }
@@ -2524,7 +2537,7 @@ impl Document {
                         self.last_error = Some(error);
                     }
                 } else {
-                    self.editor.select_viewport_hit(self.session.project(), self.session.active_product(), hit);
+                    self.editor.select_viewport_hit(self.session.project(), self.session.active_product(), hit, pick);
                     if let Err(error) = self.upload_scene() {
                         self.last_error = Some(error);
                     }
