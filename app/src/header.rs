@@ -110,9 +110,10 @@ pub fn show(ui: &mut Ui, state: &HeaderState, file_menu: impl FnOnce(&mut Ui)) -
             ui,
             |ui| {
                 let mut action = None;
-                icons::mark(ui, 18.0, theme::accent(ui));
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new(theme::PRODUCT_NAME).strong().size(13.5));
+                let mark = icons::wordmark(ui, 14.0, theme::text(ui));
+                mark.on_hover_text(theme::PRODUCT_NAME)
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, theme::PRODUCT_NAME));
+                ui.add_space(8.0);
                 theme::divider_of_height(ui, theme::HEADER_CONTROL_HEIGHT);
 
                 if icon_button(ui, icons::view::HOME, Message::HeaderHome.text(lang), true, false).clicked() {
@@ -392,10 +393,50 @@ mod tests {
         }
     }
 
+    /// Every textured rectangle the header drew, so a test can see an image and not only text.
+    fn textured_rects(state: &HeaderState) -> Vec<egui::Rect> {
+        fn walk_textured(shape: &Shape, out: &mut Vec<egui::Rect>) {
+            match shape {
+                // A painter image is a textured mesh, not a rect: its bounds are its vertices'.
+                Shape::Mesh(mesh) => {
+                    let mut bounds = egui::Rect::NOTHING;
+                    for vertex in &mesh.vertices {
+                        bounds = bounds.union(egui::Rect::from_min_max(vertex.pos, vertex.pos));
+                    }
+                    if bounds.is_positive() {
+                        out.push(bounds);
+                    }
+                }
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk_textured(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let output = ctx.run_ui(Default::default(), |ui| {
+            show(ui, state, |_ui| {});
+        });
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            walk_textured(&clipped.shape, &mut out);
+        }
+        output.drop_without_applying_deltas();
+        out
+    }
+
     #[test]
-    fn the_header_names_the_product_and_every_open_file() {
-        let texts = drawn(&state(vec![tab(0, "cabinet.z3l", false, true), tab(1, "shelf.z3l", false, false)], false));
-        assert!(texts.iter().any(|text| text == theme::PRODUCT_NAME), "the mark carries the name: {texts:?}");
+    fn the_header_draws_the_wordmark_and_names_every_open_file() {
+        let header = state(vec![tab(0, "cabinet.z3l", false, true), tab(1, "shelf.z3l", false, false)], false);
+        let marks = textured_rects(&header);
+        assert!(
+            marks.iter().any(|rect| (rect.width() / rect.height() - icons::LOGO_ASPECT).abs() < 0.01),
+            "the header draws the wordmark at its own aspect: {marks:?}"
+        );
+        let texts = drawn(&header);
         assert!(texts.iter().any(|text| text == "cabinet.z3l"), "the first tab is drawn: {texts:?}");
         assert!(texts.iter().any(|text| text == "shelf.z3l"), "and so is the second: {texts:?}");
         assert!(!texts.iter().any(|text| text == "●"), "a clean scene has no unsaved marker: {texts:?}");

@@ -40,6 +40,26 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **U105** the header carries the product wordmark, drawn from one asset
+  Why: The header draws the name as a text label beside an 18-point placeholder mark whose
+   drawing is a generic board with two shelves. A text label is not a mark: it renders in
+   whatever face the platform picks, it cannot be sized or aligned to the row, and it repeats
+   in a system font what the product's own drawing says better. The placeholder also drew in
+   the accent, and the interface reserves that ink for action and selection.
+  Shape: The asset becomes the Z3L wordmark the owner kept — one ink, viewBox 0 0 42 16 — and
+   icons gains LOGO_ASPECT plus wordmark(ui, height, ink), which allocates the aspect's width
+   and rasterises through the existing asset cache. The header draws it in the text ink at the
+   row's height and keeps the name only as the hover and accessibility label; icons::mark goes,
+   because a square slot for a wide mark can only letterbox it. assets/README.md gains a
+   section saying this file is a mark and not an icon, and plan/map.md names it beside the
+   header row.
+  Done: The header draws the wordmark at the row's height in the text ink, and a test asserts
+   that a textured rect of the wordmark's aspect is drawn there; the name is still reachable as
+   a hover and accessibility label and the window title still reads PRODUCT_NAME; the asset is
+   one ink and the loader tints it; assets/README.md, plan/map.md and ADR 0136 record the rule;
+   cargo xtask ci is green.
+  `files: crates/ui/src/icons.rs, app/src/header.rs, assets/logo.svg, assets/README.md, plan/map.md, docs/decisions/0136-the-wordmark-is-drawn-in-the-text-ink.md`
+
 ## Bugs
 ## Next
 - `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing

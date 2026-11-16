@@ -32,6 +32,15 @@ at the pixel size it draws, so a second size would only drift from the first.
 `assets/icons/STYLE_GUIDE.md` is documentation, not an icon: the loader reads only
 `assets/icons/<theme>/*.svg`.
 
+## Brand mark
+
+`assets/logo.svg` is the product wordmark, and it is not an icon: no theme, no 24-unit grid, no role
+ink. It is one file with one white ink and `viewBox="2.2 2.2 36 12"` — 36 x 12 units, aspect 3 — so the
+loader multiplies it with whatever ink the surface asks for and `crates/ui/src/icons.rs` keeps the
+ratio in `LOGO_ASPECT`. A redraw changes this file and that constant, and nothing else. The rules
+below — the grid, the footprint, the role inks, the theme table — describe `assets/icons/` and do not
+apply here (ADR 0136).
+
 ## Naming
 
 - lowercase ASCII `kebab-case`, extension `.svg`; the file stem is the icon id.

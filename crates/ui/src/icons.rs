@@ -455,15 +455,21 @@ icons!(Window, "window", View, window {
     CLOSE => "close",
 });
 
-/// The product mark, drawn by the header next to the product name.
+/// The product wordmark, drawn by the header.
 ///
 /// It lives in `assets/logo.svg`, not in a theme: a mark is not an icon of a surface, and it keeps
 /// its own drawing even when a theme is renamed. Like an icon it is a white master that the theme
-/// multiplies, so one file serves every variant.
+/// multiplies, so one file serves every variant (ADR 0136).
 pub const LOGO: &[u8] = include_bytes!("../../../assets/logo.svg");
 
 /// The stable texture URI of [`LOGO`].
 pub const LOGO_URI: &str = "bytes://logo.svg";
+
+/// The wordmark's width over its height, from `assets/logo.svg`: 36 x 12 units.
+///
+/// The one place the ratio lives. A surface that wants the mark allocates by height and reads this,
+/// so redrawing the mark wider or narrower is a one-constant change plus the asset.
+pub const LOGO_ASPECT: f32 = 3.0;
 
 /// A square icon button at an explicit point size, for the header's own rhythm.
 ///
@@ -517,12 +523,14 @@ pub fn icon_button_sized(
     hinted(icon_widget_sized(ui, icon, cell, point_size, label, enabled, selected), label, enabled)
 }
 
-/// Paints the product mark as a square image in `color`.
+/// Paints the product wordmark at `height` points in `color`.
 ///
 /// The mark is not a button: it carries no action and takes no focus. It is rasterised through the
-/// same cache as an icon so a theme change re-tints it instead of loading a second file.
-pub fn mark(ui: &mut Ui, size: f32, color: Color32) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+/// same cache as an icon so a theme change re-tints it instead of loading a second file, and it is
+/// allocated by height, because a mark that is wider than it is tall loses its drawing in a square.
+pub fn wordmark(ui: &mut Ui, height: f32, color: Color32) -> Response {
+    let size = Vec2::new(height * LOGO_ASPECT, height);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     if ui.is_rect_visible(rect)
         && let Some(texture) = logo_texture(ui.ctx(), size, color)
     {
@@ -533,15 +541,17 @@ pub fn mark(ui: &mut Ui, size: f32, color: Color32) -> Response {
 }
 
 /// The rasterised mark at `size` points and `color`, cached like an icon.
-fn logo_texture(ctx: &egui::Context, point_size: f32, color: Color32) -> Option<TextureHandle> {
-    let px = pixel_size(point_size, ctx.pixels_per_point());
-    let id = egui::Id::unique(("z3l.logo", px, color.to_array()));
+fn logo_texture(ctx: &egui::Context, size: Vec2, color: Color32) -> Option<TextureHandle> {
+    let scale = ctx.pixels_per_point();
+    let width = pixel_size(size.x, scale);
+    let height = pixel_size(size.y, scale);
+    let id = egui::Id::unique(("z3l.logo", width, height, color.to_array()));
     if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
         return Some(texture);
     }
     let image = egui_extras::image::load_svg_bytes_with_size(
         LOGO,
-        egui::load::SizeHint::Size { width: px, height: px, maintain_aspect_ratio: false },
+        egui::load::SizeHint::Size { width, height, maintain_aspect_ratio: true },
         &Default::default(),
     )
     .ok()?;
@@ -1445,6 +1455,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_wordmark_keeps_its_aspect_and_tints_with_the_ink_it_is_given() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut sizes = Vec::new();
+        let mut tinted = Vec::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            for height in [14.0, 24.0] {
+                let mark = wordmark(ui, height, crate::theme::accent(ui));
+                sizes.push(mark.rect.size());
+                tinted.push(logo_texture(ui.ctx(), mark.rect.size(), crate::theme::accent(ui)).is_some());
+            }
+        });
+        output.drop_without_applying_deltas();
+        for size in &sizes {
+            let aspect = size.x / size.y;
+            assert!((aspect - LOGO_ASPECT).abs() < 0.01, "the mark is {aspect}:1, not {LOGO_ASPECT}:1");
+        }
+        assert_eq!(sizes[0], Vec2::new(14.0 * LOGO_ASPECT, 14.0), "the mark is allocated by its height");
+        assert_eq!(sizes[1], Vec2::new(24.0 * LOGO_ASPECT, 24.0), "and by nothing else");
+        assert!(tinted.iter().all(|ok| *ok), "every size rasterises from the same asset");
+    }
+
+    #[test]
+    fn the_logo_asset_is_one_white_ink() {
+        // `assets/README.md` says the mark is a white master the loader multiplies: a second ink in
+        // the file would survive the tint as a colour of its own and break every theme but one.
+        let text = std::str::from_utf8(LOGO).expect("the asset is UTF-8");
+        let colours: Vec<&str> =
+            text.match_indices('#').filter_map(|(at, _)| text.get(at..at.saturating_add(7))).collect();
+        assert!(!colours.is_empty(), "the mark carries an ink: {text}");
+        for colour in colours {
+            assert_eq!(colour.to_ascii_lowercase(), "#ffffff", "the mark carries one ink, and it is white");
+        }
+        assert!(!text.contains("url(#"), "the mark has no gradient or clip reference");
     }
 
     #[test]
