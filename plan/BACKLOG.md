@@ -42,22 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **V5** a sphere has one click and one method
-  Why: A sphere is put down in one click and sized in the card: there is no first point, no
-   phantom and no second gesture, and it has one method. The owner asked for a step-by-step
-   build (centre, then drag the radius with a phantom of the sphere) and for the three methods
-   a solid modeller offers: centre and diameter, and three points that may be picked as
-   tangencies on a face plane.
-  Shape: Make the sphere a drawn primitive like the others: stage one places the centre, stage
-   two drags the radius with a translucent phantom sphere and the R/Ø plate; the card keeps the
-   segment counts. Add the diameter method (the plate reads Ø, the sphere the same) and the
-   three-point method, which circumscribes the sphere through three points — each point may
-   come from a face-plane tangency snap, so the snap result is a point, not a new pick mode.
-   Methods live in `DrawTool` and the ribbon map like the circle methods.
-  Done: A sphere is built centre-then-radius with a phantom, by centre and diameter, and by
-   three points including tangency picks; each method is a stage table entry with its plates,
-   and a test asserts the radius each method produces against a known three-point set.
-  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/draw.rs,app/src/document.rs`
 - `[ ]` **V6** there is no cone primitive
   Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
    `assets/icons/primitives/cone.svg` is empty although U46 counted it as declared. The owner
@@ -74,6 +58,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **V5** a sphere has one click and one method
+  Why: A sphere is put down in one click and sized in the card: there is no first point, no
+   phantom and no second gesture, and it has one method. The owner asked for a step-by-step
+   build (centre, then drag the radius with a phantom of the sphere) and for the three methods
+   a solid modeller offers: centre and diameter, and three points that may be picked as
+   tangencies on a face plane.
+  Shape: Make the sphere a drawn primitive like the others: stage one places the centre, stage
+   two drags the radius with a translucent phantom sphere and the R/Ø plate; the card keeps the
+   segment counts. Add the diameter method (the plate reads Ø, the sphere the same) and the
+   three-point method, which circumscribes the sphere through three points — each point may
+   come from a face-plane tangency snap, so the snap result is a point, not a new pick mode.
+   Methods live in `DrawTool` and the ribbon map like the circle methods.
+  Done: A sphere is built centre-then-radius with a phantom, by centre and diameter, and by
+   three points including tangency picks; each method is a stage table entry with its plates,
+   and a test asserts the radius each method produces against a known three-point set.
+  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/draw.rs,app/src/document.rs` — `949cf7e`
 
 - `[x]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
   Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a

@@ -258,3 +258,9 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   defaults, one write per edit and a "Restore defaults" button — with the same tests this task added
   walking the merged table rather than the const. It waits for the owner's word and for a Settings
   section that can hold it (U96).
+
+- `[gizmo]` A drawing point is taken from the work plane only: the draw gizmo snaps to draft ends, the
+  grid and the axes, and never to a face the pointer aims at, so a sketch point cannot yet come from a
+  face-plane tangency the way the ruler's surface probe does (V5). The sphere's three-point method
+  already takes any point and asks nothing about where it came from, so the missing piece is the snap
+  itself — one surface probe shared with the ruler and a marker of its own.
