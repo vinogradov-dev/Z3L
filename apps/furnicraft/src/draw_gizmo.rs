@@ -791,6 +791,65 @@ mod tests {
     }
 
     #[test]
+    fn the_through_point_of_an_arc_paints_the_chord_its_length_plate_measures() {
+        // X51: on the arc's second click the arc itself cannot be drawn yet, so the length plate
+        // would name a distance with no line under it. The frame paints the chord from the start to
+        // the point this click places, and the plate on it reads that chord.
+        let arc = draft(DrawTool::Arc, &[(0, 0)]);
+        let camera = Camera::default();
+        let plane = WorkPlane::from_camera(camera);
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for pointer in [DVec2::new(300.0, 0.0), DVec2::new(180.0, 160.0), DVec2::new(-90.0, 210.0)] {
+            let state = PointState::live(&arc, pointer).expect("a through point");
+            let [from, to] = state.construction.expect("the chord is measured");
+            let start = project(plane, camera, rect, from).expect("the start projects");
+            let end = project(plane, camera, rect, to).expect("the point projects");
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                paint_guides(ui, ui.painter(), camera, rect, plane, &state);
+            });
+            let dashes = dashes(&output.shapes);
+            output.drop_without_applying_deltas();
+
+            assert!(dashes.len() >= 3, "{pointer:?}: the chord is a dashed line, not one stroke");
+            let span = end - start;
+            let length = span.length();
+            assert!(length > 1.0, "{pointer:?}: the chord is long enough to read on screen");
+            let along = |point: Pos2| (point - start).dot(span) / length;
+            let aside = |point: Pos2| (point - start - span * ((point - start).dot(span) / (length * length))).length();
+            for (a, b) in &dashes {
+                assert!(aside(*a) < 0.5 && aside(*b) < 0.5, "{pointer:?}: a dash leaves the chord: {a:?} {b:?}");
+                assert!(along(*a) >= -0.5, "{pointer:?}: a dash starts before the arc's start");
+            }
+            let reach = dashes.iter().map(|(_, b)| along(*b)).fold(0.0_f32, f32::max);
+            assert!(reach > length - 10.0, "{pointer:?}: the dashes reach {reach} of {length} on screen");
+
+            let plate = state.rows.iter().find(|row| row.param == FieldParam::Length).expect("a length plate");
+            assert!((plate.value - (to - from).length()).abs() < 1e-9, "{pointer:?}: the plate reads the chord");
+        }
+    }
+
+    /// Every dash a frame painted, as the segment it draws.
+    fn dashes(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Pos2, Pos2)> {
+        fn collect(shape: &Shape, out: &mut Vec<(Pos2, Pos2)>) {
+            match shape {
+                Shape::LineSegment { points, .. } => out.push((points[0], points[1])),
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            collect(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
     fn a_rejected_preview_keeps_the_last_valid_one() {
         let mut draft = DrawDraft::new(DrawTool::Arc);
         draft.push([millimetres(0), millimetres(0)]).expect("start");

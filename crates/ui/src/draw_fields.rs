@@ -451,6 +451,10 @@ impl PointState {
 ///
 /// An arc's chord is its start to the point being placed, and a pending arc's chord is the segment
 /// it will close: both are a second fixed point the person can see the number against (ADR 0127).
+///
+/// A three-point arc draws that chord on both of its clicks: the start anchors every stage, so the
+/// length plate measures a line from the very first point, and the arc that would stand under it
+/// does not exist yet when the through point is being placed (X51).
 fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
     let start = draft.points().first().map(|point| plane_point(*point))?;
     let end = draft.points().get(1).map(|point| plane_point(*point));
@@ -464,7 +468,9 @@ fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
         };
     }
     let chord = match draft.tool() {
-        DrawTool::Arc => draft.points().len() == 2,
+        // One click or two: the arc's start is the anchor of every stage, so the chord runs to the
+        // point this click would place in both of them.
+        DrawTool::Arc => !draft.points().is_empty(),
         DrawTool::Polyline => draft.pending_arc().is_some(),
         _ => false,
     };
@@ -981,6 +987,28 @@ mod tests {
         assert_eq!(state.construction, Some([DVec2::ZERO, millimetres(100, 0)]));
         // The chord is measured from the arc's start, not from its middle point.
         assert_eq!(state.reference.map(|reference| reference.anchor), Some(DVec2::ZERO));
+    }
+
+    #[test]
+    fn the_through_point_of_an_arc_is_drawn_as_the_chord_its_plate_measures() {
+        // X51: with one click placed the arc itself cannot be drawn yet, so the length plate would
+        // name a distance with no line under it. The chord from the start to the through point is
+        // the line the plate measures, so the guide and the number are one object.
+        let arc = draft(DrawTool::Arc, &[(0, 0)]);
+        for pointer in [millimetres(100, 0), millimetres(60, 80), millimetres(-40, 120), millimetres(0, -50)] {
+            let state = PointState::live(&arc, pointer).expect("a through point");
+            let [from, to] = state.construction.expect("the chord is drawn");
+            assert_eq!(from, DVec2::ZERO, "{pointer:?}: the chord starts at the arc's start");
+            assert!((to - state.at).length() < 1e-9, "{pointer:?}: it ends at the point this click places");
+            let length = (to - from).length();
+            let plate = state.rows.iter().find(|row| row.param == FieldParam::Length).expect("a length plate");
+            assert!((plate.value - length).abs() < 1e-9, "{pointer:?}: the plate reads the chord");
+            assert!(
+                (plate.anchor - (from + to) / 2.0).length() < 1e-9,
+                "{pointer:?}: the plate sits on the chord it measures"
+            );
+            assert!(state.reference.is_some(), "{pointer:?}: the angle is still read from the start");
+        }
     }
 
     #[test]
