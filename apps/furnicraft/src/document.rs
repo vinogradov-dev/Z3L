@@ -1132,7 +1132,7 @@ impl Document {
         let [only] = selected else {
             return None;
         };
-        crate::box_gizmo::is_box(self.session.project(), *only).then_some(*only)
+        offers_grips(self.session.project(), *only, self.session.active_product()).then_some(*only)
     }
 
     /// Reads one frame of the box gesture: the live base, the pulled height, and the click that
@@ -3522,6 +3522,19 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
     Ok(frame.with_drawable_mesh(preview.object, Arc::new(data)))
 }
 
+/// Whether `node` offers the three-length grips when it is the only selection.
+///
+/// A cuboid part owns its three lengths (ADR 0101) and is always grabbable. A product frame owns an
+/// envelope, and those handles belong to the piece being worked in: a closed product is one object in
+/// the scene, not a box being sized, and selecting it must not open handles that write
+/// `product.envelope.set` (ADR 0098, X47).
+fn offers_grips(project: &Project, node: Id, active_product: Option<Id>) -> bool {
+    if project.container(node).is_some_and(|container| container.is_product()) {
+        return active_product == Some(node);
+    }
+    crate::box_gizmo::is_box(project, node)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -3562,6 +3575,19 @@ mod tests {
         assert!((distances.low() - 300.0).abs() < 1.0e-9, "{:?}", distances.low());
         let pinned = distances.pinned_low().expect("the typed distance pins the low face");
         assert!((pinned - measure.start_low - 300.0).abs() < 1.0e-9, "the drag delta is the typed gap");
+    }
+
+    #[test]
+    fn a_closed_product_offers_no_size_grips_until_it_is_opened() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root_id = project.root().id();
+        let envelope = Envelope::new(millimetres(700), millimetres(560), millimetres(720)).expect("an envelope");
+        let product = project
+            .add_product(root_id, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a product");
+        assert!(!offers_grips(&project, product, None), "a closed piece is not a box being sized");
+        assert!(offers_grips(&project, product, Some(product)), "the open piece offers its envelope");
     }
 
     #[test]
