@@ -2213,6 +2213,74 @@ fn a_typed_number_outlives_the_pointer_and_escape_gives_the_keys_back() {
 }
 
 #[test]
+fn chrome_that_takes_the_keys_takes_nothing_from_the_live_point() {
+    // X54: a plate shows the live number rounded to its own decimal, and losing the keyboard is not
+    // a promise. A press on a panel or on the corner axes widget used to commit that rounding and
+    // lock the parameter, so the next point froze where the pointer happened to be when the person
+    // pressed the chrome. Both surfaces the owner named are pressed here, each on a fresh draft
+    // because a new stage is what puts the keyboard back in a plate.
+    let mut harness = Harness::new("frame-sketch-blur");
+    harness.settle();
+    let scene = harness.scene();
+    let start = scene.center() - egui::vec2(120.0, 60.0);
+    let near = scene.center() + egui::vec2(160.0, 96.0);
+    let elsewhere = scene.center() - egui::vec2(240.0, 150.0);
+    let arm = |harness: &mut Harness| {
+        harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Line);
+        harness.settle();
+        harness.click(start, egui::PointerButton::Primary);
+    };
+
+    // The corner axes widget: a press on the cube takes the keyboard and the view stays the one it
+    // already showed, so the number the plate was showing is left to the pointer.
+    arm(&mut harness);
+    let camera = harness.camera();
+    let widget = harness.app.shell.orientation_rect.expect("the axes widget draws in the corner");
+    a_press_leaves_the_live_length(&mut harness, near, elsewhere, widget.min + egui::vec2(2.0, 2.0), "the axes widget");
+    assert_eq!(harness.camera(), camera, "pressing the axes widget changed no view");
+
+    // The left panel: the press lands on its empty body, which is chrome.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    arm(&mut harness);
+    let chrome = harness.settle();
+    let tree = chrome.panels.left.expect("the scene tree is up");
+    let on_panel = egui::pos2(tree.center().x, tree.bottom() - 12.0);
+    a_press_leaves_the_live_length(&mut harness, near, elsewhere, on_panel, "the left panel");
+    assert_eq!(draft_points(&harness).len(), 1, "and no press placed a second point");
+}
+
+/// Measures the live length at two pointer places, presses `at`, and measures again.
+///
+/// The plate shows its number rounded, so the second reading is what the pointer names only while a
+/// press on chrome stays out of the numbers (X54).
+fn a_press_leaves_the_live_length(
+    harness: &mut Harness,
+    near: egui::Pos2,
+    elsewhere: egui::Pos2,
+    at: egui::Pos2,
+    surface: &str,
+) {
+    let length_at = |harness: &Harness| {
+        let from = draft_points(harness).last().copied().expect("the draft has a point to measure from");
+        offset(from, placed_point(harness)).length()
+    };
+    harness.hover(near);
+    let live = length_at(harness);
+    assert!((live * 10.0).round() / 10.0 != live, "{surface}: the live length must not round-trip: {live}");
+    harness.hover(elsewhere);
+    let promised = length_at(harness);
+    assert!((promised - live).abs() > 1.0, "{surface}: the two pointer places name two lengths: {live} and {promised}");
+    harness.hover(near);
+    harness.click(at, egui::PointerButton::Primary);
+    harness.hover(elsewhere);
+    let after = length_at(harness);
+    assert!(
+        (after - promised).abs() < 0.01,
+        "{surface}: the pointer still drives the point after the press: {promised} -> {after}"
+    );
+}
+
+#[test]
 fn the_polyline_segment_kind_comes_from_the_right_click_menu() {
     // Tab belongs to the plates now, so a polyline's line/arc switch moved to the right-click menu;
     // the menu is a chrome surface, so choosing a row never places a point behind it (ADR 0126,
