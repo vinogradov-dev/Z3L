@@ -108,7 +108,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    test covers every DrawTool and every stage of it, and a switch test covers tool changes
    after zero, one and two points, a pending arc and a non-drawing tool; cargo xtask ci is
    green.
-  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,apps/furnicraft/src/draw_gizmo.rs,apps/furnicraft/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `7f5517c`
+  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,apps/furnicraft/src/draw_gizmo.rs,apps/furnicraft/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `1657e1e`
 
 - `[x]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
   Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a
