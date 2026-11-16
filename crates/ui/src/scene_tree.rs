@@ -33,6 +33,36 @@ const TOGGLE_CELL: f32 = 34.0;
 /// The face size of a toggle whose asset is still an empty placeholder.
 const TOGGLE_TEXT_SIZE: f32 = 9.0;
 
+/// How one click changes the selection: the plain click and its two modifiers.
+///
+/// The list is a document-wide habit rather than a tree or a viewport one, so the tree and the
+/// viewport both read their modifiers here instead of each deciding what Ctrl means (U102).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pick {
+    /// A plain click: the selection becomes exactly the picked node.
+    #[default]
+    Replace,
+    /// Shift: the node joins the end of the order, or leaves when it is already selected.
+    Add,
+    /// Ctrl (⌘ on macOS, so the same finger on every platform): the node leaves and nothing else
+    /// changes. It wins when both modifiers are held, because it is the one that cannot be undone
+    /// by a slip of the other key.
+    Remove,
+}
+
+impl Pick {
+    /// Reads the modifiers a click reported.
+    pub fn from_modifiers(modifiers: &egui::Modifiers) -> Self {
+        if modifiers.ctrl || modifiers.command {
+            Self::Remove
+        } else if modifiers.shift {
+            Self::Add
+        } else {
+            Self::Replace
+        }
+    }
+}
+
 /// The selected document nodes, in click order. The last one is the primary selection.
 #[derive(Debug, Default)]
 pub(crate) struct Selection {
@@ -71,12 +101,29 @@ impl Selection {
         self.ids.clear();
     }
 
-    /// Adds the node to the selection, or removes it when it is already selected.
+    /// Adds the node at the end of the order, or removes it when it is already selected.
+    ///
+    /// The toggle is what Shift does: a second Shift-click on the same node takes it back out, so a
+    /// member added by mistake is one modifier away from leaving.
     pub(crate) fn toggle(&mut self, id: Id) {
         if let Some(index) = self.ids.iter().position(|selected| *selected == id) {
             self.ids.remove(index);
         } else {
             self.ids.push(id);
+        }
+    }
+
+    /// Removes the node and leaves every other member where it is.
+    pub(crate) fn remove(&mut self, id: Id) {
+        self.ids.retain(|selected| *selected != id);
+    }
+
+    /// Applies one click, with the modifier it carried, to the node it picked.
+    pub(crate) fn pick(&mut self, id: Id, pick: Pick) {
+        match pick {
+            Pick::Replace => self.replace(id),
+            Pick::Add => self.toggle(id),
+            Pick::Remove => self.remove(id),
         }
     }
 
@@ -324,13 +371,9 @@ fn show_panel(
     response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
 }
 
+/// Selects a row by the click it took, with the modifier the window reports for it.
 fn select(ui: &Ui, selection: &mut Selection, id: Id) {
-    let additive = ui.input(|input| input.modifiers.ctrl || input.modifiers.command || input.modifiers.shift);
-    if additive {
-        selection.toggle(id);
-    } else {
-        selection.replace(id);
-    }
+    selection.pick(id, Pick::from_modifiers(&ui.input(|input| input.modifiers)));
 }
 
 /// One row: its label on the left and the eye and padlock on the right.
@@ -643,6 +686,46 @@ mod tests {
         selection.clear();
         assert_eq!(selection.primary(), None);
         assert!(selection.ids().is_empty());
+    }
+
+    #[test]
+    fn a_click_applies_its_modifier_to_the_order() {
+        // U102: Shift adds at the end and takes the same node back out, Ctrl removes one member, and
+        // a plain click replaces the order. A loft through several profiles reads this list in the
+        // order the person built it, so an order that did not survive a toggle would be a wrong model.
+        let first = Id::new(2).expect("id");
+        let second = Id::new(3).expect("id");
+        let third = Id::new(4).expect("id");
+        let mut selection = Selection::default();
+
+        selection.pick(first, Pick::Replace);
+        selection.pick(second, Pick::Add);
+        selection.pick(third, Pick::Add);
+        assert_eq!(selection.ids(), &[first, second, third], "Shift appends in click order");
+        assert_eq!(selection.primary(), Some(third), "the last one added is the primary");
+
+        selection.pick(second, Pick::Add);
+        assert_eq!(selection.ids(), &[first, third], "a second Shift-click takes the member out");
+        assert_eq!(selection.primary(), Some(third), "and the order of the rest is kept");
+
+        selection.pick(first, Pick::Remove);
+        assert_eq!(selection.ids(), &[third], "Ctrl removes one member and leaves the rest alone");
+        selection.pick(first, Pick::Remove);
+        assert_eq!(selection.ids(), &[third], "removing a node that is not selected changes nothing");
+
+        selection.pick(first, Pick::Replace);
+        assert_eq!(selection.ids(), &[first], "a plain click replaces the order");
+    }
+
+    #[test]
+    fn the_modifiers_name_their_own_pick() {
+        use egui::Modifiers;
+        let both = Modifiers { shift: true, ..Modifiers::CTRL };
+        assert_eq!(Pick::from_modifiers(&Modifiers::NONE), Pick::Replace, "a plain click replaces");
+        assert_eq!(Pick::from_modifiers(&Modifiers::SHIFT), Pick::Add, "Shift adds");
+        assert_eq!(Pick::from_modifiers(&Modifiers::CTRL), Pick::Remove, "Ctrl removes");
+        assert_eq!(Pick::from_modifiers(&Modifiers::COMMAND), Pick::Remove, "⌘ removes where it is the modifier");
+        assert_eq!(Pick::from_modifiers(&both), Pick::Remove, "Ctrl wins when both are held");
     }
 
     #[test]

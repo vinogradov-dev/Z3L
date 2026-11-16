@@ -72,6 +72,7 @@ pub use mesh_edit::{MeshEdit, MeshElement};
 pub use node_actions::{MenuSource, NodeAction, Subject, ViewportMenu};
 pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use point_fields::{CURSOR_CLEARANCE, FieldAction, FieldEdit, FieldLabel, FieldParam, FieldRow, FieldSet};
+pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
 pub use tool_card::{ToolAction, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};

@@ -224,6 +224,11 @@ impl Harness {
         self.app.tabs.active().editor.selected_nodes().to_vec()
     }
 
+    /// The nodes the frame last uploaded draws as selected.
+    fn highlighted(&self) -> Vec<Id> {
+        self.app.tabs.active().highlighted_nodes().to_vec()
+    }
+
     /// Whether the last frame drew `text`.
     fn drew(&self, text: &str) -> bool {
         self.drawn.iter().any(|line| line.contains(text))
@@ -596,6 +601,69 @@ fn a_modal_owns_the_keys() {
     harness.press(egui::Key::Z, egui::Modifiers::CTRL);
     assert!(!harness.app.tabs.active().can_undo(), "the undo ran once the modal was gone");
     assert!(harness.app.tabs.active().can_redo(), "and one edit was one undo entry");
+}
+
+#[test]
+fn a_modifier_click_in_the_viewport_builds_the_selection_order() {
+    // U102: a viewport click reads the same two modifiers a tree row does — Shift appends the node
+    // the click resolved to and takes it back out on a second click, Ctrl removes one member, and a
+    // plain click replaces the order. The uploaded frame highlights every member, so an added node
+    // is drawn selected and not only remembered (ADR 0029: the selection is view state).
+    let mut harness = Harness::new("frame-selection-order");
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    let chrome = harness.settle();
+    let revision = harness.revision();
+
+    let (group, drawer, shelf, front) = {
+        let project = harness.app.tabs.active().session.project();
+        let mut panels = Vec::new();
+        collect_panels(project.root().children(), &mut panels);
+        let id_named = |name: &str| {
+            panels
+                .iter()
+                .find(|panel| panel.name() == name)
+                .map(|panel| panel.id())
+                .expect("the sample draws that panel")
+        };
+        let shelf = id_named("Loose shelf");
+        let front = id_named("Drawer front");
+        (
+            project.parent_of(shelf).expect("the shelf sits in the group"),
+            project.parent_of(front).expect("the front sits in the component"),
+            shelf,
+            front,
+        )
+    };
+    let shelf_point = harness.node_point(shelf);
+    let drawer_point = harness.node_point(front);
+    for at in [shelf_point, drawer_point] {
+        assert!(!chrome.covers(at), "the panel the test presses is in the scene, not under chrome: {at:?}");
+    }
+
+    harness.click(shelf_point, egui::PointerButton::Primary);
+    assert_eq!(harness.selected(), vec![group], "a plain click picks the closed group above the shelf");
+    harness.click_with(drawer_point, egui::Modifiers::SHIFT);
+    assert_eq!(harness.selected(), vec![group, drawer], "Shift appends the picked node");
+    assert_eq!(harness.highlighted(), vec![group, drawer], "and the frame draws both as selected");
+
+    harness.click_with(shelf_point, egui::Modifiers::SHIFT);
+    assert_eq!(harness.selected(), vec![drawer], "a second Shift-click on the same node toggles it out");
+
+    harness.click_with(drawer_point, egui::Modifiers::CTRL);
+    assert!(harness.selected().is_empty(), "Ctrl removes the one member and nothing else");
+    assert!(harness.highlighted().is_empty(), "the scene drops the highlight with it");
+
+    harness.click_with(shelf_point, egui::Modifiers::SHIFT);
+    harness.click_with(drawer_point, egui::Modifiers::SHIFT);
+    assert_eq!(harness.selected(), vec![group, drawer], "Shift builds the order again");
+    harness.click_with(drawer_point, egui::Modifiers::CTRL);
+    assert_eq!(harness.selected(), vec![group], "Ctrl takes one member and keeps the rest in order");
+
+    harness.click(drawer_point, egui::PointerButton::Primary);
+    assert_eq!(harness.selected(), vec![drawer], "a plain click replaces the order");
+    assert_eq!(harness.revision(), revision, "a selection writes no document");
+    assert!(!harness.app.tabs.active().can_undo(), "and no undo entry");
 }
 
 #[test]

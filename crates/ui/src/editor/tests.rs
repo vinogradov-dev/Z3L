@@ -10,6 +10,7 @@ use crate::contour_grips::ContourGrip;
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
 use crate::node_actions::NodeAction;
+use crate::scene_tree::Pick;
 use crate::toolbars::{ToolAction, spec};
 use engine::{PanelCreate, PrimitiveKind, Session};
 use model::Contour;
@@ -1267,7 +1268,7 @@ fn a_viewport_click_selects_the_outermost_closed_container() {
     let (project, group, _drawer, front) = grouped_project();
     let mut editor = Editor::new();
 
-    editor.select_viewport_hit(&project, None, Some(front));
+    editor.select_viewport_hit(&project, None, Some(front), Pick::Replace);
     assert_eq!(editor.selected_node(), Some(group));
     assert!(!editor.open.contains(&group));
 
@@ -1282,14 +1283,53 @@ fn a_viewport_click_selects_the_outermost_closed_container() {
             Placement::IDENTITY,
         )
         .expect("add top panel");
-    editor.select_viewport_hit(&project, None, Some(extra));
+    editor.select_viewport_hit(&project, None, Some(extra), Pick::Replace);
     assert_eq!(editor.selected_node(), Some(extra));
 
-    editor.select_viewport_hit(&project, None, None);
+    editor.select_viewport_hit(&project, None, None, Pick::Replace);
     assert_eq!(editor.selected_node(), None);
 
-    editor.select_viewport_hit(&project, None, Some(Id::new(999).expect("id")));
+    editor.select_viewport_hit(&project, None, Some(Id::new(999).expect("id")), Pick::Replace);
     assert_eq!(editor.selected_node(), None);
+}
+
+#[test]
+fn a_modified_viewport_click_builds_the_selection_order() {
+    // U102: the viewport reads the same two modifiers the tree row does. Shift appends the node the
+    // click resolved to — the closed container, not the board under the pointer — and a second
+    // Shift-click on the same board toggles that container back out; Ctrl removes one member.
+    let project = sample_project();
+    let shelf = Id::new(2).expect("the sample shelf");
+    let drawer = Id::new(3).expect("the sample drawer");
+    let front = Id::new(4).expect("the panel inside the drawer");
+    let mut editor = Editor::new();
+
+    editor.select_viewport_hit(&project, None, Some(shelf), Pick::Replace);
+    assert_eq!(editor.selected_nodes(), [shelf]);
+
+    editor.select_viewport_hit(&project, None, Some(front), Pick::Add);
+    assert_eq!(editor.selected_nodes(), [shelf, drawer], "Shift appends the container the click resolved to");
+    assert_eq!(editor.selected_node(), Some(drawer), "and the added node is the primary");
+
+    editor.select_viewport_hit(&project, None, Some(front), Pick::Add);
+    assert_eq!(editor.selected_nodes(), [shelf], "a second Shift-click on the same board toggles it out");
+
+    editor.select_viewport_hit(&project, None, Some(drawer), Pick::Remove);
+    assert_eq!(editor.selected_nodes(), [shelf], "Ctrl on a node that is not selected changes nothing");
+
+    editor.select_viewport_hit(&project, None, Some(front), Pick::Add);
+    editor.select_viewport_hit(&project, None, Some(drawer), Pick::Remove);
+    assert_eq!(editor.selected_nodes(), [shelf], "Ctrl removes one member and only it");
+
+    editor.select_viewport_hit(&project, None, Some(drawer), Pick::Replace);
+    editor.select_viewport_hit(&project, None, None, Pick::Add);
+    assert_eq!(editor.selected_nodes(), [drawer], "a modified click on empty space changes nothing");
+
+    editor.select_viewport_hit(&project, None, Some(shelf), Pick::Replace);
+    assert_eq!(editor.selected_nodes(), [shelf], "a plain click replaces the order");
+
+    editor.select_viewport_hit(&project, None, None, Pick::Replace);
+    assert!(editor.selected_nodes().is_empty(), "and a plain click on empty space clears it");
 }
 
 /// A project holding one product with a shelf inside it.
@@ -1457,7 +1497,7 @@ fn escape_leaves_the_open_product_and_a_loose_node_never_closes_it() {
     let mut editor = Editor::new();
 
     assert!(editor.enter_viewport_level(&mut session, Some(shelf)), "a click in the product opens it");
-    editor.select_viewport_hit(session.project(), session.active_product(), Some(shelf));
+    editor.select_viewport_hit(session.project(), session.active_product(), Some(shelf), Pick::Replace);
     assert_eq!(editor.selected_node(), Some(shelf), "an open product exposes its part to the click");
 
     let loose = Id::new(2).expect("the sample shelf beside the product");

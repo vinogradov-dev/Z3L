@@ -4,8 +4,12 @@
 //! the open set remembers which containers show their children. The rules that turn a viewport hit
 //! into a selected node live in `crate::target`; this module only applies them.
 //!
-//! Refuses nothing: an empty click clears the selection and `exit_level` with no open level
-//! above the selection does nothing, so a gesture the scene cannot honour leaves the state unchanged.
+//! A click carries a [`Pick`]: a plain one replaces the selection, Shift adds the node at the end of
+//! the order or takes it out again, and Ctrl removes it and nothing else. The tree row and the
+//! viewport read the same modifiers through that type, so the two surfaces cannot disagree.
+//!
+//! Refuses nothing: an empty click replaces with nothing and `exit_level` with no open level above
+//! the selection does nothing, so a gesture the scene cannot honour leaves the state unchanged.
 //!
 //! Changes when: a gesture selects, adds to the selection, or opens and closes a container.
 
@@ -15,6 +19,7 @@ use engine::Session;
 use model::{Container, Id, Project};
 
 use super::Editor;
+use crate::scene_tree::Pick;
 use crate::target::{child_containing, resolve_viewport_pick};
 
 impl Editor {
@@ -45,7 +50,7 @@ impl Editor {
 
     /// Replaces the selection with several nodes, in the given order; the last one is the primary.
     ///
-    /// The tree's shift-click builds the list one row at a time; a surface that knows the set up
+    /// The tree's Shift-click builds the list one row at a time; a surface that knows the set up
     /// front — a test, and later a marquee or the assistant — sets it here.
     pub fn select_nodes(&mut self, nodes: Vec<Id>) {
         self.initialized = true;
@@ -60,18 +65,32 @@ impl Editor {
         &self.open
     }
 
-    /// Selects the result of a viewport click on `hit`.
+    /// Selects the result of a viewport click on `hit`, honouring the modifier the click carried.
     ///
     /// The viewport returns the panel under the pointer; a closed container above it is selected
     /// instead, so a click picks the cabinet rather than one of its boards. `open_product` is the
-    /// product the session works in, which exposes its parts exactly as an open group does. A click
-    /// outside the scene clears the selection.
-    pub fn select_viewport_hit(&mut self, project: &Project, open_product: Option<Id>, hit: Option<Id>) {
+    /// product the session works in, which exposes its parts exactly as an open group does.
+    ///
+    /// A plain click on the scene replaces the selection and a plain click outside it clears it;
+    /// Shift adds the picked node at the end of the order (a second Shift-click takes it back out)
+    /// and Ctrl removes it alone. A modified click on empty space changes nothing, because there is
+    /// no node for the modifier to act on.
+    pub fn select_viewport_hit(&mut self, project: &Project, open_product: Option<Id>, hit: Option<Id>, pick: Pick) {
         self.initialized = true;
         match hit.and_then(|hit| resolve_viewport_pick(project, &self.open, open_product, hit)) {
-            Some(node) => self.selection.replace(node),
-            None => self.selection.clear(),
+            Some(node) => self.selection.pick(node, pick),
+            None if pick == Pick::Replace => self.selection.clear(),
+            None => {}
         }
+    }
+
+    /// Selects a node the shell already resolved, with the modifier its click carried.
+    ///
+    /// A camera or light glyph is picked as itself, without the container resolution a viewport hit
+    /// goes through, so the shell hands the node over and the rule for the modifier stays here.
+    pub fn pick_node(&mut self, node: Id, pick: Pick) {
+        self.initialized = true;
+        self.selection.pick(node, pick);
     }
 
     /// The subject a context menu opened at a viewport hit is about.
