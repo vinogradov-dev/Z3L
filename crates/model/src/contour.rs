@@ -1713,8 +1713,11 @@ mod tests {
 /// Largest number of segments in a constructive contour.
 pub const MAX_CONTOUR_SEGMENTS: usize = 256;
 
-/// Largest accepted contour coordinate and extrusion height: ten metres.
-pub const MAX_CONTOUR_COORDINATE: Length = Length::from_micrometres(10_000_000);
+/// Largest accepted contour coordinate and extrusion height: 1000 m.
+///
+/// Solid modellers let an envelope reach a kilometre; the document stores micrometres in an
+/// `i64`, so the ceiling is a rule rather than a storage limit.
+pub const MAX_CONTOUR_COORDINATE: Length = Length::from_micrometres(1_000_000_000);
 
 /// Serialized form of [`Contour`]; validation happens in its `TryFrom` implementation.
 #[derive(Clone, Serialize, Deserialize)]

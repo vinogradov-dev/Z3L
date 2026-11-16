@@ -31,6 +31,9 @@ use crate::scrub::{self, CommitPolicy, Scrub};
 use crate::section::section;
 use crate::theme;
 
+/// The largest panel size a field may name, in millimetres: the document's own ceiling.
+const MAX_SIZE_MM: f64 = furnicraft_model::Panel::MAX_LENGTH.micrometres() as f64 / 1_000.0;
+
 /// Persistent state of the panel card.
 #[derive(Debug, Default)]
 pub(crate) struct PanelCard {
@@ -290,7 +293,7 @@ impl PanelCard {
                             ui.add_enabled_ui(allowed, |ui| {
                                 let outcome = Scrub::new(value)
                                     .speed(0.5)
-                                    .range(1.0..=10_000.0)
+                                    .range(1.0..=MAX_SIZE_MM)
                                     .decimals(3)
                                     .unit("mm")
                                     .parse(scrub::parse_millimetres)

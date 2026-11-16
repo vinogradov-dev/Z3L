@@ -467,6 +467,22 @@ pub const LOGO_URI: &str = "bytes://logo.svg";
 
 /// A square icon button at an explicit point size, for the header's own rhythm.
 ///
+/// The tooltip of a control, whether or not it can run.
+///
+/// A disabled widget is never `hovered()`, so `on_hover_text` shows nothing over it and a greyed
+/// cell reads as a dead square; `on_disabled_hover_text` is the one that answers the pointer over a
+/// control that cannot be clicked. A tool always explains itself, and the hint is also its
+/// accessible name, so the answer is the same either way (X45).
+fn hinted(response: Response, hint: &str, enabled: bool) -> Response {
+    if hint.is_empty() {
+        response
+    } else if enabled {
+        response.on_hover_text(hint)
+    } else {
+        response.on_disabled_hover_text(hint)
+    }
+}
+
 /// The tool strip and the menus keep [`ICON_POINT_SIZE`]; a header row is taller, so its buttons ask
 /// for their size instead of inheriting the inline one.
 pub fn icon_button_at(
@@ -495,12 +511,10 @@ pub fn icon_button_sized(
     selected: bool,
 ) -> Response {
     if !icon.is_drawn() {
-        return ui
-            .add_enabled(enabled, Button::new(label).min_size(Vec2::splat(cell)).selected(selected))
-            .on_hover_text(label);
+        let response = ui.add_enabled(enabled, Button::new(label).min_size(Vec2::splat(cell)).selected(selected));
+        return hinted(response, label, enabled);
     }
-    let response = icon_widget_sized(ui, icon, cell, point_size, label, enabled, selected);
-    if label.is_empty() { response } else { response.on_hover_text(label) }
+    hinted(icon_widget_sized(ui, icon, cell, point_size, label, enabled, selected), label, enabled)
 }
 
 /// Paints the product mark as a square image in `color`.
@@ -544,8 +558,7 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
     if !icon.is_drawn() {
         return ui.button(label);
     }
-    let response = icon_widget(ui, icon, ICON_POINT_SIZE, label, true, false);
-    if label.is_empty() { response } else { response.on_hover_text(label) }
+    hinted(icon_widget(ui, icon, ICON_POINT_SIZE, label, true, false), label, true)
 }
 
 /// A tool button: a [`TOOL_ICON_POINT_SIZE`] icon with a hint that names the tool and its shortcut.
@@ -558,9 +571,9 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 pub fn tool_button(ui: &mut Ui, icon: Icon, label: &str, shortcut: Option<&str>, enabled: bool, on: bool) -> Response {
     let hint = tool_hint(label, shortcut);
     if !icon.is_drawn() {
-        return ui.add_enabled(enabled, Button::new(hint.clone()).selected(on)).on_hover_text(hint);
+        return hinted(ui.add_enabled(enabled, Button::new(hint.clone()).selected(on)), &hint, enabled);
     }
-    icon_widget(ui, icon, TOOL_ICON_POINT_SIZE, &hint, enabled, on).on_hover_text(hint)
+    hinted(icon_widget(ui, icon, TOOL_ICON_POINT_SIZE, &hint, enabled, on), &hint, enabled)
 }
 
 /// A tool button with a short face and a longer hint.
@@ -569,9 +582,9 @@ pub fn tool_button(ui: &mut Ui, icon: Icon, label: &str, shortcut: Option<&str>,
 /// tooltip keeps the full name. A drawn icon ignores the caption for its face and uses `hint` only.
 pub fn tool_button_labelled(ui: &mut Ui, icon: Icon, caption: &str, hint: &str, enabled: bool, on: bool) -> Response {
     if !icon.is_drawn() {
-        return ui.add_enabled(enabled, Button::new(caption).selected(on)).on_hover_text(hint);
+        return hinted(ui.add_enabled(enabled, Button::new(caption).selected(on)), hint, enabled);
     }
-    icon_widget(ui, icon, TOOL_ICON_POINT_SIZE, hint, enabled, on).on_hover_text(hint)
+    hinted(icon_widget(ui, icon, TOOL_ICON_POINT_SIZE, hint, enabled, on), hint, enabled)
 }
 
 /// A frameless icon button: the glyph alone at rest, a faint wash under the pointer or while pressed.
@@ -582,9 +595,8 @@ pub fn tool_button_labelled(ui: &mut Ui, icon: Icon, caption: &str, hint: &str, 
 /// leaves a blank click target.
 pub fn flat_icon_button(ui: &mut Ui, icon: Icon, cell: f32, point_size: f32, label: &str, enabled: bool) -> Response {
     if !icon.is_drawn() {
-        return ui
-            .add_enabled(enabled, Button::new(label).min_size(Vec2::splat(cell)).frame(false))
-            .on_hover_text(label);
+        let response = ui.add_enabled(enabled, Button::new(label).min_size(Vec2::splat(cell)).frame(false));
+        return hinted(response, label, enabled);
     }
     let response = ui
         .add_enabled_ui(enabled, |ui| {
@@ -594,7 +606,7 @@ pub fn flat_icon_button(ui: &mut Ui, icon: Icon, cell: f32, point_size: f32, lab
             response
         })
         .inner;
-    if label.is_empty() { response } else { response.on_hover_text(label) }
+    hinted(response, label, enabled)
 }
 
 /// The same flat button at an exact rectangle, for a surface that owns its own layout.
@@ -700,7 +712,7 @@ pub fn ribbon_cell(ui: &mut Ui, width: f32, icon: Icon, hint: &str, enabled: boo
             response
         })
         .inner;
-    if hint.is_empty() { response } else { response.on_hover_text(hint) }
+    hinted(response, hint, enabled)
 }
 
 /// The two faces of a split ribbon cell: the method a click runs and the caret that lists the rest.

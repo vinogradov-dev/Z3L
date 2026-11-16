@@ -19,11 +19,12 @@ use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
 use furnicraft_geom::DVec2;
 use furnicraft_model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path};
 use furnicraft_scene::Camera;
-use furnicraft_ui::{DrawDraft, Editor, FieldParam, FieldSet, PointState, field_row, guides};
+use furnicraft_ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides};
 use furnicraft_units::Length;
 
 use crate::gizmo_math::{
-    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, screen_point, snap_point,
+    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, reference_screen, screen_point,
+    snap_point,
 };
 
 /// Pointer distance inside which a draft end captures the pointer, in points.
@@ -106,8 +107,12 @@ pub(crate) struct DrawGizmo {
     preview_error: Option<String>,
     /// The plates that name the point being placed, one set per point.
     fields: Option<FieldSet>,
-    /// The stage the plates were built for: the number of points the draft holds.
-    stage: Option<usize>,
+    /// The stage the plates were built for: the tool and the number of points the draft holds.
+    ///
+    /// A stage is the pair, not the count alone: a tool change can keep the same point count, and
+    /// the plates (with their typed locks) belong to one tool's point, so the new tool must rebuild
+    /// them even when the shell did not reset this gizmo.
+    stage: Option<(DrawTool, usize)>,
     /// The snapped pointer of the last frame, before any typed number moved it.
     pointer: Option<DVec2>,
     /// The point being placed, with the plates and guides that name it.
@@ -162,6 +167,17 @@ impl DrawGizmo {
     #[cfg(test)]
     pub(crate) const fn field_rect(&self) -> Option<egui::Rect> {
         self.field_rect
+    }
+
+    /// Every plate of the point being placed, with the parameter it edits, after the last draw.
+    ///
+    /// A test reads the layout the person sees: which rows were drawn and where each one sits.
+    #[cfg(test)]
+    pub(crate) fn plate_rects(&self) -> Vec<(FieldParam, egui::Rect)> {
+        let Some(fields) = self.fields.as_ref() else {
+            return Vec::new();
+        };
+        fields.rows().iter().filter_map(|row| fields.plate_rect(row.param).map(|rect| (row.param, rect))).collect()
     }
 
     /// Whether `point` lies on one of the plates, which are chrome and never the scene.
@@ -331,7 +347,7 @@ impl DrawGizmo {
     /// numbers a tool asks for and resets the locks: a typed number is a promise for one point.
     /// Every other frame only moves the plates and refreshes the values the pointer produces.
     fn sync_fields(&mut self, draft: &DrawDraft, pointer: DVec2, plane: WorkPlane, camera: Camera, rect: egui::Rect) {
-        let stage = draft.points().len();
+        let stage = (draft.tool(), draft.points().len());
         let Some(state) = PointState::live(draft, pointer) else {
             return;
         };
@@ -466,9 +482,9 @@ fn project(plane: WorkPlane, camera: Camera, rect: egui::Rect, point: DVec2) -> 
 
 /// Paints the two guides of the point being placed: the chord and the reference with its arc.
 ///
-/// The guides are screen paint, so their weight is a rule and not a world size (ADR 0111): the
-/// radius of the reference is measured on screen from the anchor to the segment's own length, and
-/// the arc sweeps the signed difference the point state gives.
+/// The guides are screen paint, so their weight is a rule and not a world size (ADR 0111), and every
+/// point of them is a work-plane point the camera projects: the reference's axis and sweep come from
+/// [`reference_screen`], so a tilted view draws the ellipse the plane's circle really is (ADR 0133).
 fn paint_guides(
     ui: &Ui,
     painter: &egui::Painter,
@@ -486,15 +502,8 @@ fn paint_guides(
     let Some(reference) = state.reference else {
         return;
     };
-    let Some(anchor) = project(reference.anchor) else {
-        return;
-    };
-    let edge = reference.anchor + DVec2::new(reference.from.cos(), reference.from.sin()) * reference.radius;
-    let Some(edge) = project(edge) else {
-        return;
-    };
-    let radius = (edge - anchor).length();
-    guides::reference_between(painter, anchor, radius, reference.from as f32, reference.to as f32);
+    let (axis, sweep) = reference_screen(reference, project);
+    guides::reference(painter, &axis, &sweep);
 }
 
 /// The snapped cursor point, in document units and on screen.
@@ -779,6 +788,65 @@ mod tests {
         let mut closed = draft(DrawTool::Polyline, &[(0, 0), (600, 0), (600, 400)]);
         closed.close().expect("close the triangle");
         assert_eq!(click_action(&closed, [millimetres(10), millimetres(10)]), DrawClick::Ignore);
+    }
+
+    #[test]
+    fn the_through_point_of_an_arc_paints_the_chord_its_length_plate_measures() {
+        // X51: on the arc's second click the arc itself cannot be drawn yet, so the length plate
+        // would name a distance with no line under it. The frame paints the chord from the start to
+        // the point this click places, and the plate on it reads that chord.
+        let arc = draft(DrawTool::Arc, &[(0, 0)]);
+        let camera = Camera::default();
+        let plane = WorkPlane::from_camera(camera);
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for pointer in [DVec2::new(300.0, 0.0), DVec2::new(180.0, 160.0), DVec2::new(-90.0, 210.0)] {
+            let state = PointState::live(&arc, pointer).expect("a through point");
+            let [from, to] = state.construction.expect("the chord is measured");
+            let start = project(plane, camera, rect, from).expect("the start projects");
+            let end = project(plane, camera, rect, to).expect("the point projects");
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                paint_guides(ui, ui.painter(), camera, rect, plane, &state);
+            });
+            let dashes = dashes(&output.shapes);
+            output.drop_without_applying_deltas();
+
+            assert!(dashes.len() >= 3, "{pointer:?}: the chord is a dashed line, not one stroke");
+            let span = end - start;
+            let length = span.length();
+            assert!(length > 1.0, "{pointer:?}: the chord is long enough to read on screen");
+            let along = |point: Pos2| (point - start).dot(span) / length;
+            let aside = |point: Pos2| (point - start - span * ((point - start).dot(span) / (length * length))).length();
+            for (a, b) in &dashes {
+                assert!(aside(*a) < 0.5 && aside(*b) < 0.5, "{pointer:?}: a dash leaves the chord: {a:?} {b:?}");
+                assert!(along(*a) >= -0.5, "{pointer:?}: a dash starts before the arc's start");
+            }
+            let reach = dashes.iter().map(|(_, b)| along(*b)).fold(0.0_f32, f32::max);
+            assert!(reach > length - 10.0, "{pointer:?}: the dashes reach {reach} of {length} on screen");
+
+            let plate = state.rows.iter().find(|row| row.param == FieldParam::Length).expect("a length plate");
+            assert!((plate.value - (to - from).length()).abs() < 1e-9, "{pointer:?}: the plate reads the chord");
+        }
+    }
+
+    /// Every dash a frame painted, as the segment it draws.
+    fn dashes(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Pos2, Pos2)> {
+        fn collect(shape: &Shape, out: &mut Vec<(Pos2, Pos2)>) {
+            match shape {
+                Shape::LineSegment { points, .. } => out.push((points[0], points[1])),
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            collect(&clipped.shape, &mut out);
+        }
+        out
     }
 
     #[test]

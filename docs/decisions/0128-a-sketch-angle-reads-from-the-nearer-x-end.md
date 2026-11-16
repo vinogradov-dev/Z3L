@@ -1,6 +1,6 @@
 # 0128. A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate
 
-- Status: Accepted
+- Status: Accepted; the angle's end is superseded by 0134
 - Date: 2026-11-15
 
 ## Context

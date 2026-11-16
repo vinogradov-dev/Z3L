@@ -81,12 +81,15 @@ impl Path {
         };
         let center = point_to_geometry(frame.center)?;
         let requested = point_to_geometry(point)?;
-        // Side 0 (and 2) sits at `-half_extent` on the normal, side 1 (and 3) at `+half_extent`;
-        // the opposite side is the one that stays.
-        let opposite = if side.is_multiple_of(2) { half_extent } else { -half_extent };
+        // The four sides of the ring run counter-clockwise from the minimum corner: `0` is the
+        // negative second-axis side and `1` the positive first-axis one, `2` the positive
+        // second-axis side and `3` the negative first-axis one. Two sides of each axis therefore
+        // sit on opposite signs, and a parity test alone reads side 3 as if it sat where side 1
+        // does — which puts the dragged side and the frozen side at the same coordinate, so the
+        // rectangle collapses to the minimum extent on the first pointer move.
+        let starts_negative = matches!(side, 0 | 3);
+        let opposite = if starts_negative { half_extent } else { -half_extent };
         let moved = (requested - center).dot(normal);
-        // Whether the dragged side started on the negative side of the normal.
-        let starts_negative = side.is_multiple_of(2);
         let crossed = if starts_negative { moved > opposite } else { moved < opposite };
         let new_half = (moved - opposite).abs() * 0.5;
         let new_half = if crossed { MIN_RECTANGLE_HALF_EXTENT_MM } else { new_half.max(MIN_RECTANGLE_HALF_EXTENT_MM) };

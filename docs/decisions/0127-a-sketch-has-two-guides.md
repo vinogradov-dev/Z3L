@@ -1,6 +1,6 @@
 # 0127. A sketch has two guides: a construction line and a reference line
 
-- Status: Accepted
+- Status: Accepted; dot sizes superseded by 0133
 - Date: 2026-11-15
 
 ## Context

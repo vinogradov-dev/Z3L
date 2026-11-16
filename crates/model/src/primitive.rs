@@ -13,8 +13,8 @@ use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Largest accepted primitive dimension: ten metres, the same bound the panel rules use.
-pub const MAX_PRIMITIVE_SIZE: Length = Length::from_micrometres(10_000_000);
+/// Largest accepted primitive dimension: 1000 m, the same bound the panel rules use.
+pub const MAX_PRIMITIVE_SIZE: Length = Length::from_micrometres(1_000_000_000);
 
 /// Smallest accepted primitive dimension.
 ///

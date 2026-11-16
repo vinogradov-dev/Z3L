@@ -132,11 +132,14 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0124](0124-the-icon-language-is-v2.md) | The icon language is v2: a 24 grid, a 20 × 20 footprint and a seventh role | Accepted |
 | [0125](0125-an-accent-keeps-its-hue-distance-from-every-role-ink.md) | An accent keeps its hue distance from every role ink | Accepted |
 | [0126](0126-the-point-being-placed-shows-its-numbers-at-the-cursor.md) | The point being placed shows its numbers at the cursor, and one of them holds the keys | Accepted |
-| [0127](0127-a-sketch-has-two-guides.md) | A sketch has two guides: a construction line and a reference line | Accepted |
-| [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) | A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate | Accepted |
+| [0127](0127-a-sketch-has-two-guides.md) | A sketch has two guides: a construction line and a reference line | Accepted; dot sizes superseded by 0133 |
+| [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) | A sketch angle is read from the nearer end of the X axis, and Tab belongs to the plate | Accepted; end choice superseded by 0134 |
 | [0129](0129-a-move-is-latched-by-a-second-click.md) | A move is latched by a second click, and its delta is read from the old position | Accepted |
 | [0130](0130-an-arc-from-its-chord-and-radius-bows-away-from-the-pointer.md) | An arc from its chord and radius bows away from the pointer that named its centre | Accepted |
 | [0131](0131-a-stage-shows-the-numbers-its-figure-reads.md) | A stage shows the numbers its figure reads, and a figure's own number is on every stage | Accepted |
+| [0132](0132-the-plates-of-one-point-are-one-layout.md) | The plates of one point are one layout, so no plate hides another | Accepted |
+| [0133](0133-a-reference-lies-in-the-plane-and-reads.md) | A reference lies on the work plane and reads at a glance | Accepted |
+| [0134](0134-a-sketch-angle-changes-side-once-per-turn.md) | A sketch angle changes side once per turn, not twice | Accepted; supersedes the end choice of 0128 |
 
 ## Format
 

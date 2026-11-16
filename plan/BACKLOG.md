@@ -70,8 +70,273 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    cannot miss a copy. Measured on a scratch copy of this tree: 1140 tests pass, clippy clean,
    `layers: ok`, 960 changed lines and no behaviour change. `cargo xtask ci` is green.
   `files: plan/rename.md, crates/ui/src/theme.rs, crates/project/src/lib.rs`
+- `[ ]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
+  Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is
+   declared as a planned method (`icon: None, run: None`), so it draws a blank row that runs
+   nothing. The owner tried it and it did nothing.
+  Shape: Build it as a real method: a `DrawTool::CircleTangent` that takes two picked line
+   targets and a radius (or takes three clicks — two on the lines and a point), computes the
+   centre in the wedge the two lines make, and commits one circle through the same
+   `object.path.create` path as the other circle methods. Add
+   `assets/icons/contour/circle-tangent.svg` to the guide (two lines tangent to a circle, draw
+   ink) and its row in `assets/README.md`; declare the tool in `spec.rs` with its fields in
+   `draw_fields.rs` and its stage table test.
+  Done: The method draws its glyph, appears enabled in the circle list, builds one tangent
+   circle from two picked lines, and a test places it against a known pair of lines; the icon
+   passes the footprint and coverage test.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour`
+- `[ ]` **X53** the line list has a by-angle row that draws nothing
+  Why: The line list offers «by angle» with no glyph and no action: the row is declared as a
+   planned method (`icon: None, run: None`), so it draws blank and runs nothing. The owner
+   tried it and it did nothing.
+  Shape: Make it a real method: a start point, then an angle and a length typed in the plates
+   (the same length/angle pair a segment already reads), committed as one open `Path` of a
+   single line. The angle must be read with the rule ADR 0134 settles, and the stage declares
+   its two numbers so `every_shipped_tool_declares_its_numbers` covers it. Add
+   `assets/icons/contour/line-angle.svg` (a line at an angle to a dashed datum, draw ink plus
+   the reference ink for the datum) and its row in `assets/README.md`.
+  Done: The row draws a glyph, runs, places a line of the typed angle and length from the
+   clicked start, and a test asserts the committed segment; the icon passes the footprint and
+   coverage test.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour`
+- `[ ]` **U102** a selection cannot be added to or removed from
+  Why: A selection is one object: a click replaces it, and there is no way to add or remove
+   one. The owner asked for the CAD habit — Shift adds, Ctrl removes — and for the order of
+   selection to be remembered, because a loft through several sections needs to know which
+   profile came first.
+  Shape: Add a selection order and the two modifiers in the one place a viewport click and a
+   tree click both reach (`select_viewport_hit`, `Selection`). Shift on a click adds the picked
+   id at the end of the order (or removes it on a second click, the toggle a person expects);
+   Ctrl removes it and only it; a plain click replaces. Keep the order as view state in the
+   session, not in the document, and expose it read-only for the future loft. The tree and the
+   viewport must agree.
+  Done: Shift-click builds an ordered set, Ctrl-click removes one member, a plain click
+   replaces, and a test asserts the order survives a toggle of a member and is cleared by the
+   replacement; the scene draws the added members as selected.
+  `files: crates/ui/src/editor/selection.rs,apps/furnicraft/src/document.rs,crates/engine/src/session.rs`
+- `[ ]` **U103** there is no rubber-band selection
+  Why: There is no way to select several objects with the pointer: a press either picks one
+   node or orbits. The owner asked for the AutoCAD rectangle — left-to-right and top-to-bottom
+   takes what it encloses, right-to-left and bottom-to-top takes everything it touches.
+  Shape: Add a selection drag to the viewport: a press on empty space draws the rubber band,
+   the direction of the drag decides the rule (screen-space corner order, not the world), and
+   the release applies it through the selection API the Shift/Ctrl work introduces, so a band
+   can also add. The band is chrome paint under the work cursor, and a press with no travel
+   stays the plain click that orbits nothing. Picking must test the projected silhouette of
+   every scene object, not the mesh.
+  Done: A band dragged left-to-right selects only the objects it encloses, one dragged the
+   other way selects every object it touches, the rule follows the drag direction in a test
+   with objects inside and straddling the band, and the band draws only while the pointer drags
+   on empty space.
+  `files: apps/furnicraft/src/document.rs,crates/ui/src/editor/selection.rs`
+- `[ ]` **U104** the extrusion card offers create and cancel beside its height
+  Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
+   height. The owner wants the card to carry only the height — no units, no words, just H —
+   because the gesture already has the Enter and the Escape, and the card is a number, not a
+   dialog.
+  Shape: Drop the two buttons from the extrusion card and keep the one height field, labelled
+   `H` and drawn without a unit (the plate rule of the sketch fields). Enter commits and Escape
+   cancels exactly as they do now, and the card keeps its place beside the pointer. The field
+   becomes the only control that takes the keyboard.
+  Done: The card draws one H field and no tick or cross; a frame test asserts the card holds
+   exactly one field and that Enter commits while Escape cancels.
+  `files: apps/furnicraft/src/extrude_gizmo.rs`
+- `[ ]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
+  Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a
+   primitive does not know the sketch grammar: a rectangle cannot be built from its centre, its
+   edge or its diagonals, and a circle cannot be built by a diameter or by three points
+   although both figures exist for a flat contour. The owner asked for one grammar: the profile
+   is drawn as a flat contour with every method the sketch offers, then the body is built on Z.
+  Shape: Compose the primitive out of the two things that already exist. The base is an
+   ordinary `DrawDraft` on the work plane — the rectangle tools for a box, the circle tools for
+   a cylinder — committed to a profile (a `Path` in the local plane); the height is the pull
+   the extrusion already reads, with the same H field. The primitive stores its profile and
+   height instead of three sides (schema bump under ADR 0096), `crates/param` builds the same
+   solid from the profile, and the primitive parameter card edits the profile through the
+   contour editor. The box gesture stays for a product envelope, which is not a primitive.
+  Done: A box is drawn as a rectangle by any of the four rectangle methods and a cylinder as a
+   circle by any of the three circle methods, each with its own plates; the body is built on Z
+   from the profile; the card edits the profile; a test builds each method and asserts the
+   resulting solid matches the old parameter shape.
+  `files: crates/model/src/primitive.rs,crates/ui/src/draw.rs,apps/furnicraft/src/document.rs,crates/ui/src/toolbars/spec.rs`
+- `[ ]` **V5** a sphere has one click and one method
+  Why: A sphere is put down in one click and sized in the card: there is no first point, no
+   phantom and no second gesture, and it has one method. The owner asked for a step-by-step
+   build (centre, then drag the radius with a phantom of the sphere) and for the three methods
+   a solid modeller offers: centre and diameter, and three points that may be picked as
+   tangencies on a face plane.
+  Shape: Make the sphere a drawn primitive like the others: stage one places the centre, stage
+   two drags the radius with a translucent phantom sphere and the R/Ø plate; the card keeps the
+   segment counts. Add the diameter method (the plate reads Ø, the sphere the same) and the
+   three-point method, which circumscribes the sphere through three points — each point may
+   come from a face-plane tangency snap, so the snap result is a point, not a new pick mode.
+   Methods live in `DrawTool` and the ribbon map like the circle methods.
+  Done: A sphere is built centre-then-radius with a phantom, by centre and diameter, and by
+   three points including tangency picks; each method is a stage table entry with its plates,
+   and a test asserts the radius each method produces against a known three-point set.
+  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/draw.rs,apps/furnicraft/src/document.rs`
+- `[ ]` **V6** there is no cone primitive
+  Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
+   `assets/icons/primitives/cone.svg` is empty although U46 counted it as declared. The owner
+   needs a truncated cone for a leg or a turned blank, and a sharp one when the top radius is
+   zero.
+  Shape: Add `Primitive::Cone { base radius, top radius, height, segments }` with the same
+   validation as the other bodies, its parameter row in the card, and a draw method that takes
+   the base circle first (by the circle stages, once V4 lands) and then pulls the height, with
+   the top circle as a typed radius on the pull card (zero allowed). `crates/param` builds the
+   frustum, and zero top radius builds the apex without a degenerate cap.
+  Done: A cone is drawn from a base circle and a height, the card edits both radii and the
+   height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
+   volume and the sharp case; the icon is drawn and passes the icon test.
+  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **X51** the arc's second click reads a length it never draws
+  Why: While a three-point arc is being drawn, the second click shows a length plate whose
+   number is the chord from the start to the through point — a distance the figure does not
+   contain, drawn only as the dashed construction line. The owner could not tell what the
+   number measured: the arc itself is not drawn yet, so the plate names a length against a
+   figure that is not on screen.
+  shape: Decide what the second stage of Arc reads and draw the thing it measures. The owner's
+   words — «draw L1 at once so it is clear what the distance is» — suggest the chord is the
+   measurement and must be drawn as a real draft segment (solid draft ink from the start to the
+   placed point) rather than as the dashed construction guide, with the plate on its midpoint,
+   so the number and the line are one object. `PointState::construction` already carries the
+   pair; the change is in `paint_guides`, `DrawDraft::preview` and the plate anchor. Confirm
+   with the owner whether L1 names the first chord of the arc or the first plate of the set
+   before drawing.
+  Done: The second click of an arc draws the segment its length plate measures, in draft ink,
+   and the plate sits on it; a frame test asserts the drawn segment and the plate's value agree
+   at several pointer positions. The owner confirms the reading of L1.
+  `files: crates/ui/src/draw_fields.rs,apps/furnicraft/src/draw_gizmo.rs,crates/ui/src/guides.rs` — `17ae4b5`
+
+- `[x]` **X50** the reference arc changes side every 90 degrees
+  Why: The auxiliary arc and its plate flipped to the other end of the X axis at 90 and at 270
+   degrees, so a pointer crossing the vertical axis made the guide jump sides while the hand
+   was still drawing. The owner asked for the side to change only when the sweep passes 180
+   degrees.
+  Done: sketch_angle picks the end by the half-plane — +X for 0..=180, −X below — so the pair
+   changes side once per turn, and a direction at exactly 180 stays with +X. ADR 0134
+   supersedes the end choice of 0128 and states the cost; the plate and reference-arc tests are
+   rewritten to the new table.
+  `files: crates/ui/src/draw_fields.rs,docs/decisions/0134-a-sketch-angle-changes-side-once-per-turn.md` — `430d59b`
+
+- `[x]` **U101** a dimension is capped at ten metres
+  Why: Every dimension stopped at ten metres: MAX_CONTOUR_COORDINATE, the panel side, the
+   primitive size and the container envelope were each a 10 m literal, so a field refused what
+   a solid modeller accepts. The owner asked for a 1,000,000 mm ceiling, the SolidWorks one.
+  Done: The four ceilings are 1000 m in one table of constants, the panel card and the
+   primitive card take their field range from those constants instead of a literal, and the
+   three tests that measured the old cap measure the new one.
+  `files: crates/model/src/contour.rs,crates/model/src/panel/mod.rs,crates/model/src/primitive.rs,crates/model/src/container.rs` — `bdc7545`
+
+- `[x]` **U100** a sketch plate writes its unit and accepts any character
+  Why: The sketch plates carried their unit as a caption outside the box, which doubled the
+   width of a field whose symbol (L, W, H, R, Ø, ∠) already names the quantity, and the
+   editable text took any character and refused it only on commit. The owner asked for a
+   minimalist field that takes a number and nothing else.
+  Done: A sketch plate and a grip field draw no unit (the cards keep theirs), and the text
+   buffer keeps digits, one decimal point and a leading minus, reading a comma as the point. A
+   test holds the sanitiser and the coverage is a frame test.
+  `files: crates/ui/src/point_fields.rs,crates/ui/src/scrub.rs` — `923b5d7`
+
+- `[x]` **X49** a sketch plate stops under the pointer and the sketch stalls
+  Why: A plate could settle under the pointer and stop the hand steering the sketch. Two
+   causes: egui's constrain_to moved an area back inside the view at an edge after the layout
+   chose its corner, and the stacking rule that keeps two plates apart could push one onto the
+   pointer. The layout also did not know where the pointer was.
+  Done: The layout fits each plate itself — so the rectangle it reasons about is the one that
+   draws — and puts the pointer in the set of rectangles a plate may not cover: a plate the
+   pointer reaches steps to the other side of its anchor, and one pushed onto it steps past it.
+   The frame test measures the clearance at every stage of every tool and of a pending arc.
+  `files: crates/ui/src/point_fields.rs,apps/furnicraft/src/frame_tests.rs` — `923b5d7`
+
+- `[x]` **X48** the extrude icon is a cuboid and shows no operation
+  Why: The body-extrude glyph was a second cuboid: the same drawing the primitive cell uses,
+   with no source, no operation and no result, which is the formula assets/icons/STYLE_GUIDE.md
+   §2 asks for and the transition §8.3 describes. The owner asked for the familiar CAD sign — a
+   plane with an arrow rising from it — and for the guide rule to be checked.
+  Done: The icon is the flat profile lying on the work plane in the draw ink, the upward arrow
+   of the operation in the model ink and the extruded face above it, inside the footprint and
+   the 10–40 % coverage band. The guide already states OBJECT + ACTION METHOD + RESULT (§2,
+   §8.3) and the emphasis ladder (§5.1); the extrude file was the one that broke it, and no
+   other icon needed a redraw.
+  `files: assets/icons/bodies/extrude.svg` — `2ac0df8`
+
+- `[x]` **X47** a closed product offers envelope grips and can be resized
+  Why: Selecting a product that was not the piece being worked in showed the three-length
+   envelope grips, and a drag through them wrote product.envelope.set on a closed cabinet. A
+   closed product is one object in the scene, not a box being sized (ADR 0098).
+  Done: The grip target admits a product frame only while it is the open product and keeps
+   admitting any cuboid part; the rule is one function, offers_grips, with its own test.
+  `files: apps/furnicraft/src/document.rs` — `d335ddd`
+
+- `[x]` **X46** a furniture tool writes «open a product first» instead of its own name
+  Why: With the product closed, every furniture cell wrote «Open a product first» in place of
+   its own name and method, so the ribbon stopped saying which tool a dim cell is. The owner
+   asked for that phrase to go.
+  Done: The hint of a furniture cell names the tool and its method whether or not a product is
+   open, and only a missing material is still spelled out; the cell stays disabled. The two
+   toolbar tests assert the new wording.
+  `files: crates/ui/src/toolbars/ready.rs,crates/ui/src/toolbars.rs` — `f39d580`
+
+- `[x]` **X45** an inactive tool carries no tooltip
+  Why: A disabled cell showed no tooltip at all. Every icon helper built its widget inside
+   add_enabled_ui, and a widget inside a disabled ui is never hovered, so on_hover_text had
+   nothing to answer; a greyed tool read as a dead square with no name.
+  Done: A helper answers the pointer with on_disabled_hover_text when the control cannot run
+   and on_hover_text when it can, so the hint — the button's accessible name too — is always
+   there.
+  `files: crates/ui/src/icons.rs` — `f39d580`
+
+- `[x]` **X44** a rectangle side midpoint near the base corner collapses the figure
+  Why: The owner dragged the midpoint of a rectangle side near the base corner and the figure
+   collapsed to the minimum extent; the two sides away from that corner were fine.
+   move_rectangle_midpoint read a side's sign from its parity alone, so side 3 (the negative
+   first-axis side) and side 2 were treated as if they sat where sides 1 and 0 do: the dragged
+   side and the frozen side shared one coordinate and the first pointer move folded the
+   rectangle.
+  Done: The sign is a table keyed by the side, and every one of the four sides is dragged in a
+   test that asserts the frozen side stays and only the dragged extent changes.
+  `files: crates/model/src/contour_frames.rs,crates/model/src/contour_edit.rs` — `1c552ca`
+
+- `[x]` **X43** the sketch plates, the reference guide and the switch between tools
+  Why: The owner's reclamation against C1-C5. (1) The first point of every sketch tool shows
+   only the Y plate: the first stage reads the point itself as X and Y, both rows name the same
+   anchor, and plate_corner places each plate at that anchor alone, so the later plate covers
+   the earlier one. (2) Two plates overlap whenever their anchors land close: a segment's
+   length plate sits on the chord's midpoint and its angle plate on the arc, and at some
+   pointer positions the two rectangles intersect (screenshots 09-52-25, 09-55-03). Every plate
+   is placed independently. (3) The reference guide is almost invisible: its dot is 0.4 points
+   with a 0.22 light centre, and on a dark board the dark rim and the faint centre read as
+   nothing (REFERENCE_DOT, REFERENCE_DOT_LIGHT, ADR 0127). (4) The reference axis and its sweep
+   arc are drawn in screen space from the work-plane angles: guides::reference_between takes
+   from/to in radians and a screen radius and draws a circle in the view, so in a perspective
+   or axonometric view the arc is not the ellipse the plane really projects and the axis points
+   in the wrong screen direction. Both the sketch gizmo and the contour latch's guide share the
+   call.
+  Shape: Lay the plates of one point out as one set: resolve every row's rectangle before
+   drawing, using the plate size the last frame measured (a conservative estimate on the first
+   frame of a stage) and stack a row that collides with an already placed one away from its
+   anchor, so X and Y of the first point are two visible plates and no two plates ever cover
+   each other. Sample the reference on the work plane — the axis as two points, the sweep as a
+   polyline of one sample per degree — project every sample with the camera and hand the
+   projected polylines to guides::reference, so the guide lies in the plane in every
+   projection; the same change serves the latched corner move. Raise the reference dot and its
+   light centre and widen the dot pitch until the line reads on a dark board, keeping the fixed
+   two-tone pair of ADR 0121 and recording the new sizes in an ADR. Add frame tests that walk
+   every drawing tool and every stage, hover each stage at several viewport positions and
+   assert each declared row is drawn, inside the view and clear of the others, and that
+   switching tools or to another creation mode mid-draft starts a clean stage.
+  Done: No sketch stage hides a plate: the first point of every tool always draws X and Y
+   apart, and no two plates intersect at any hover position or viewport edge; the reference
+   axis and sweep are projected from the work plane in perspective and axonometric views,
+   verified against a screen-space circle; the reference dot reads on a dark board; a table
+   test covers every DrawTool and every stage of it, and a switch test covers tool changes
+   after zero, one and two points, a pending arc and a non-drawing tool; cargo xtask ci is
+   green.
+  `files: crates/ui/src/point_fields.rs,crates/ui/src/guides.rs,apps/furnicraft/src/draw_gizmo.rs,apps/furnicraft/src/contour_gizmo.rs,crates/ui/src/theme.rs` — `1657e1e`
 
 - `[x]` **C5** three ways to build a regular polygon and a rectangle on an angled base edge
   Why: The polygon cell offers one construction (inscribed, centre and rim) and declares a

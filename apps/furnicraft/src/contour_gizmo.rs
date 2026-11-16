@@ -24,7 +24,9 @@ use furnicraft_ui::{
 };
 use furnicraft_units::Length;
 
-use crate::gizmo_math::{ACTIVE_COLOR, distance_to_segment, length_from_millimetres, ray_plane, ray_to, screen_point};
+use crate::gizmo_math::{
+    ACTIVE_COLOR, distance_to_segment, length_from_millimetres, ray_plane, ray_to, reference_screen, screen_point,
+};
 
 /// Radius of an unselected grip handle, in points.
 const GRIP_RADIUS: f32 = 4.5;
@@ -628,9 +630,11 @@ fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Op
         let label = draft.grip_label(grip)?;
         (kind, value, label, None)
     };
+    // No unit: the grip's symbol (`L`, `W`, `H`, `R`, `∠`) already says what the number is, and a
+    // field that floats over the figure stays as small as the number it holds.
     let (param, unit, range) = match value {
-        GripValue::Length(_) => (FieldParam::Length, "mm", 0.0..=1_000_000.0),
-        GripValue::Angle(_) => (FieldParam::Angle, "°", -360.0..=360.0),
+        GripValue::Length(_) => (FieldParam::Length, "", 0.0..=1_000_000.0),
+        GripValue::Angle(_) => (FieldParam::Angle, "", -360.0..=360.0),
     };
     let row = FieldRow::new(param, Some(FieldLabel::Symbol(label)), number_of(value), unit, range, 1, pointer);
     let fields = FieldSet::new(vec![row])?;
@@ -962,11 +966,8 @@ fn paint_latch_guides(ui: &Ui, painter: &egui::Painter, view: Screen, latch: &Co
     let Some(reference) = latch.state.reference else {
         return;
     };
-    let edge = reference.anchor + DVec2::new(reference.from.cos(), reference.from.sin()) * reference.radius;
-    let Some(edge) = local_screen(view, edge) else {
-        return;
-    };
-    guides::reference_between(painter, from, (edge - from).length(), reference.from as f32, reference.to as f32);
+    let (axis, sweep) = reference_screen(reference, |point| local_screen(view, point));
+    guides::reference(painter, &axis, &sweep);
 }
 
 /// Keeps an arc corner on its circle, or returns a line corner unchanged.

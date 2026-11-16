@@ -322,6 +322,17 @@ impl<'a, N: Numeric> Scrub<'a, N> {
                     .margin(Margin::symmetric(5, 2))
                     .frame(egui::Frame::NONE),
             );
+            // A number field takes a number and nothing else. A character that cannot be part of
+            // one — a letter, a stray symbol, a second decimal point — never enters the buffer, so
+            // the field cannot show a string it would then refuse: the box is a number, and what
+            // was typed around it is not the user's problem to clean up.
+            if response.changed() {
+                let mut buffer = typed.borrow_mut();
+                let clean = numeric_text(&buffer.text);
+                if clean != buffer.text {
+                    buffer.text = clean;
+                }
+            }
             if response.gained_focus() {
                 let text = typed.borrow().text.clone();
                 select_all(ui, id, &text);
@@ -545,6 +556,28 @@ fn number_text(value: f64, decimals: usize) -> String {
 /// Reads a typed number, taking a comma for the decimal point.
 fn parse_number(text: &str) -> Result<f64, Message> {
     text.trim().replace(',', ".").parse::<f64>().ok().filter(|value| value.is_finite()).ok_or(Message::NumberInvalid)
+}
+
+/// The text a number field keeps: digits, one decimal point and a leading minus.
+///
+/// A comma becomes the point, because a keyboard that writes the decimal separator that way should
+/// not need a second thought. Everything else is dropped as it arrives, so the field never holds a
+/// character the parser would reject.
+fn numeric_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut point = false;
+    for (index, character) in text.chars().enumerate() {
+        match character {
+            '0'..='9' => out.push(character),
+            '.' | ',' if !point => {
+                out.push('.');
+                point = true;
+            }
+            '-' if index == 0 => out.push('-'),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Reads millimetres, refusing more precision than a micrometre stores.
@@ -1023,6 +1056,16 @@ mod tests {
         assert_eq!(parse_number("not a number"), Err(Message::NumberInvalid));
         assert_eq!(parse_number("1,5"), Ok(1.5));
         assert_eq!(parse_number(" 42 "), Ok(42.0));
+    }
+
+    #[test]
+    fn a_number_field_keeps_only_digits_one_point_and_a_leading_minus() {
+        assert_eq!(numeric_text("12a3"), "123");
+        assert_eq!(numeric_text("1,5"), "1.5", "a comma is the decimal point");
+        assert_eq!(numeric_text("1.2.3"), "1.23", "one decimal point");
+        assert_eq!(numeric_text("-40"), "-40");
+        assert_eq!(numeric_text("4-0"), "40", "a minus belongs in front of the number only");
+        assert_eq!(numeric_text("mm"), "");
     }
 
     #[test]

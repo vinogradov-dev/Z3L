@@ -132,10 +132,10 @@ pub struct Panel {
 }
 
 impl Panel {
-    /// Largest accepted nominal panel length or width: ten metres.
-    pub const MAX_LENGTH: Length = Length::from_micrometres(10_000_000);
-    /// Largest accepted nominal panel width: ten metres.
-    pub const MAX_WIDTH: Length = Length::from_micrometres(10_000_000);
+    /// Largest accepted nominal panel length or width: 1000 m, the document ceiling.
+    pub const MAX_LENGTH: Length = Length::from_micrometres(1_000_000_000);
+    /// Largest accepted nominal panel width: 1000 m, the document ceiling.
+    pub const MAX_WIDTH: Length = Length::from_micrometres(1_000_000_000);
     /// Largest accepted panel thickness: one metre.
     pub const MAX_THICKNESS: Length = Length::from_micrometres(1_000_000);
 
@@ -1171,10 +1171,10 @@ mod tests {
         let mut project = Project::new(root).expect("valid project");
         let revision = project.revision();
         let too_long = Contour::from_polygon(vec![
-            [millimetres(-10_000), millimetres(0)],
-            [millimetres(10_000), millimetres(0)],
-            [millimetres(10_000), millimetres(500)],
-            [millimetres(-10_000), millimetres(500)],
+            [millimetres(-600_000), millimetres(0)],
+            [millimetres(600_000), millimetres(0)],
+            [millimetres(600_000), millimetres(500)],
+            [millimetres(-600_000), millimetres(500)],
         ])
         .expect("a ring inside the coordinate limit but wider than a panel");
         assert!(project.set_panel_outline(panel_id, too_long).is_err(), "a ring wider than a panel is refused");

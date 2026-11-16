@@ -17,11 +17,11 @@
 //! the same with every lock of a [`FieldSet`] applied, so a typed length survives a snap and a
 //! typed `0` gives the number back to the pointer.
 //!
-//! **The smaller angle.** A segment's angle is read from the nearer end of the X axis: the right
-//! half-plane reads from +X, the left half-plane from −X, and the plate shows at most half a turn.
-//! The sweep is signed — positive counter-clockwise — so the guide arc always takes the short way.
-//! A typed number is a direction from +X, so a value above 180 flips the reference to −X, which is
-//! the same rule read the other way round (ADR 0128).
+//! **Half a turn per side.** A segment's angle is read from one end of the X axis: the upper
+//! half-plane reads from +X, the lower one from −X, so the plate shows at most half a turn and the
+//! guide arc keeps its side until the sweep passes 180 degrees (ADR 0134). The sweep is signed —
+//! positive counter-clockwise. A typed number is a direction from +X, so a value above 180 flips the
+//! reference to −X, which is the same rule read the other way round.
 //!
 //! It writes nothing: a draft is view state and the commit is one `object.path.create` elsewhere.
 //!
@@ -81,16 +81,20 @@ impl SketchAngle {
     }
 }
 
-/// The angle a direction shows: the smaller one, read from the nearer end of the X axis.
+/// The angle a direction shows: a sweep from one end of the X axis, never over half a turn.
 ///
-/// A zero vector has no direction and reads as `0` from `+X`, which is the one place a sketch
-/// falls back to a direction the pointer did not name.
+/// The end is chosen by the half-plane the direction lies in — the upper one reads from `+X`, the
+/// lower one from `−X` — so the auxiliary arc and its number keep one side until the sweep passes
+/// 180, and a pointer that wobbles across the vertical axis does not make the guide jump to the
+/// other end at 90 (ADR 0134). A zero vector has no direction and reads as `0` from `+X`, which is
+/// the one place a sketch falls back to a direction the pointer did not name.
 pub fn sketch_angle(vector: DVec2) -> SketchAngle {
     let degrees = vector.y.atan2(vector.x).to_degrees();
-    if degrees.abs() <= 90.0 {
+    if (0.0..=180.0).contains(&degrees) {
         SketchAngle { end: XEnd::Plus, sweep: degrees }
     } else {
-        SketchAngle { end: XEnd::Minus, sweep: if degrees > 0.0 { degrees - 180.0 } else { degrees + 180.0 } }
+        // Below `+X`: read from `−X`, which brings the angle back into (0, 180).
+        SketchAngle { end: XEnd::Minus, sweep: if degrees < 0.0 { degrees + 180.0 } else { degrees - 180.0 } }
     }
 }
 
@@ -108,7 +112,9 @@ pub struct PointRow {
 /// The reference guide: the X end the angle is read from and the sweep to the pointer.
 ///
 /// The radius of both the axis and the arc is the length of the segment being placed, so the guide
-/// is the same size as the thing it measures (ADR 0127).
+/// is the same size as the thing it measures (ADR 0127). The guide is geometry of the work plane,
+/// not of the screen: [`Reference::samples`] gives the points the tool projects with its camera, so
+/// a plane seen at an angle draws the ellipse it really is (ADR 0133).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reference {
     /// The point the axis starts at, in work-plane millimetres.
@@ -119,6 +125,48 @@ pub struct Reference {
     pub from: f64,
     /// The direction being placed, in radians from +X, counter-clockwise.
     pub to: f64,
+}
+
+impl Reference {
+    /// The axis and the sweep as work-plane points: the axis is its two ends, the sweep is a
+    /// polyline of one sample per degree of the short turn.
+    ///
+    /// The samples are in the plane, so a caller that projects each of them sees the axis point the
+    /// way the view turns it and the arc as the ellipse the plane projects to. One sample per degree
+    /// follows any projected curve at a screen size the viewport can show.
+    pub fn samples(self) -> (Vec<DVec2>, Vec<DVec2>) {
+        if !self.anchor.is_finite()
+            || !self.radius.is_finite()
+            || self.radius <= 0.0
+            || !self.from.is_finite()
+            || !self.to.is_finite()
+        {
+            return (Vec::new(), Vec::new());
+        }
+        let reach = |angle: f64| self.anchor + DVec2::new(angle.cos(), angle.sin()) * self.radius;
+        let sweep = self.to - self.from;
+        let steps = sweep_steps(sweep);
+        let mut arc = Vec::with_capacity(steps.saturating_add(1));
+        for step in 0..=steps {
+            let fraction = step as f64 / steps as f64;
+            arc.push(reach(self.from + sweep * fraction));
+        }
+        (vec![self.anchor, reach(self.from)], arc)
+    }
+}
+
+/// How many segments a sweep is sampled into: one per degree, bounded at both ends.
+fn sweep_steps(sweep: f64) -> usize {
+    const MIN_STEPS: usize = 8;
+    const MAX_STEPS: usize = 360;
+    if !sweep.is_finite() {
+        return MIN_STEPS;
+    }
+    let degrees = sweep.abs().to_degrees();
+    if !degrees.is_finite() {
+        return MIN_STEPS;
+    }
+    (degrees.ceil() as usize).clamp(MIN_STEPS, MAX_STEPS)
 }
 
 /// The point the next click would place, with the plates and guides that name it.
@@ -403,6 +451,10 @@ impl PointState {
 ///
 /// An arc's chord is its start to the point being placed, and a pending arc's chord is the segment
 /// it will close: both are a second fixed point the person can see the number against (ADR 0127).
+///
+/// A three-point arc draws that chord on both of its clicks: the start anchors every stage, so the
+/// length plate measures a line from the very first point, and the arc that would stand under it
+/// does not exist yet when the through point is being placed (X51).
 fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
     let start = draft.points().first().map(|point| plane_point(*point))?;
     let end = draft.points().get(1).map(|point| plane_point(*point));
@@ -416,7 +468,9 @@ fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
         };
     }
     let chord = match draft.tool() {
-        DrawTool::Arc => draft.points().len() == 2,
+        // One click or two: the arc's start is the anchor of every stage, so the chord runs to the
+        // point this click would place in both of them.
+        DrawTool::Arc => !draft.points().is_empty(),
         DrawTool::Polyline => draft.pending_arc().is_some(),
         _ => false,
     };
@@ -604,16 +658,18 @@ mod tests {
     }
 
     #[test]
-    fn the_angle_reads_from_the_nearer_end_of_the_x_axis() {
-        // One row per quadrant: the end the sweep is read from and the smaller angle it shows.
+    fn the_angle_keeps_one_side_until_the_sweep_passes_half_a_turn() {
+        // One row per quadrant: the end the sweep is read from and the angle it shows. The upper
+        // half of the plane always reads from +X and the lower from −X, so the guide and its number
+        // change side once per turn and not twice.
         let table = [
             (millimetres(100, 0), XEnd::Plus, 0.0),
             (millimetres(100, 100), XEnd::Plus, 45.0),
-            (millimetres(-100, 100), XEnd::Minus, 45.0),
-            (millimetres(-100, 0), XEnd::Minus, 0.0),
+            (millimetres(-100, 100), XEnd::Plus, 135.0),
+            (millimetres(-100, 0), XEnd::Plus, 180.0),
             (millimetres(-100, -100), XEnd::Minus, 45.0),
-            (millimetres(100, -100), XEnd::Plus, 45.0),
-            (millimetres(-100, 20), XEnd::Minus, 11.3),
+            (millimetres(100, -100), XEnd::Minus, 135.0),
+            (millimetres(-100, 20), XEnd::Plus, 168.7),
             (millimetres(-100, -20), XEnd::Minus, 11.3),
         ];
         for (vector, end, shown) in table {
@@ -697,9 +753,9 @@ mod tests {
     fn a_segment_shows_its_length_and_the_pointers_angle() {
         let line = draft(DrawTool::Line, &[(0, 0)]);
         assert_eq!(plates(&line, millimetres(600, 0)), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 0.0)]);
-        // A direction below the axis is the smaller angle from +X, so 30 and not 330.
+        // A direction below the axis reads from -X, so a point 30 degrees below +X shows 150.
         let below = DVec2::new(600.0 * 30f64.to_radians().cos(), -300.0);
-        assert_eq!(plates(&line, below), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 30.0)]);
+        assert_eq!(plates(&line, below), vec![(FieldParam::Length, 600.0), (FieldParam::Angle, 150.0)]);
         // The guide's radius is the segment's own length, and it starts at the anchor.
         let state = PointState::live(&line, millimetres(0, 600)).expect("a point");
         let reference = state.reference.expect("a segment has a reference");
@@ -934,6 +990,28 @@ mod tests {
     }
 
     #[test]
+    fn the_through_point_of_an_arc_is_drawn_as_the_chord_its_plate_measures() {
+        // X51: with one click placed the arc itself cannot be drawn yet, so the length plate would
+        // name a distance with no line under it. The chord from the start to the through point is
+        // the line the plate measures, so the guide and the number are one object.
+        let arc = draft(DrawTool::Arc, &[(0, 0)]);
+        for pointer in [millimetres(100, 0), millimetres(60, 80), millimetres(-40, 120), millimetres(0, -50)] {
+            let state = PointState::live(&arc, pointer).expect("a through point");
+            let [from, to] = state.construction.expect("the chord is drawn");
+            assert_eq!(from, DVec2::ZERO, "{pointer:?}: the chord starts at the arc's start");
+            assert!((to - state.at).length() < 1e-9, "{pointer:?}: it ends at the point this click places");
+            let length = (to - from).length();
+            let plate = state.rows.iter().find(|row| row.param == FieldParam::Length).expect("a length plate");
+            assert!((plate.value - length).abs() < 1e-9, "{pointer:?}: the plate reads the chord");
+            assert!(
+                (plate.anchor - (from + to) / 2.0).length() < 1e-9,
+                "{pointer:?}: the plate sits on the chord it measures"
+            );
+            assert!(state.reference.is_some(), "{pointer:?}: the angle is still read from the start");
+        }
+    }
+
+    #[test]
     fn a_moved_node_measures_the_delta_from_its_old_position() {
         // A node taken from (10, 20) to (110, 20): a 100 mm move along +X.
         let anchor = millimetres(10, 20);
@@ -960,17 +1038,49 @@ mod tests {
         let state = PointState::moved(DVec2::ZERO, millimetres(10, 10), Some(&fields)).expect("a moved point");
         let expected = DVec2::new(50.0 * 120f64.to_radians().cos(), 50.0 * 120f64.to_radians().sin());
         assert!((state.at - expected).length() < 1e-3, "{:?} is 50 mm at 120 degrees", state.at);
-        // An angle above 180 flips the reference to -X; 120 reads from -X the short way round.
+        // The reference keeps +X while the direction stays in the upper half of the plane, so 120
+        // is read from +X; only a direction below the axis flips the end to -X (ADR 0134).
         let reference = state.reference.expect("a reference");
         assert_eq!(reference.radius, 50.0, "the arc follows the typed distance");
-        assert!((reference.from - std::f64::consts::PI).abs() < 1e-9, "120 degrees reads from -X");
+        assert_eq!(reference.from, 0.0, "120 degrees reads from +X");
         assert_eq!(state.construction, Some([DVec2::ZERO, state.at]), "the chord runs to the placed point");
+    }
+
+    #[test]
+    fn the_reference_is_sampled_on_the_work_plane() {
+        // The guide's geometry is the plane's: an axis of one radius and a sweep sampled along the
+        // circle, so every point a caller projects lies on the figure the view has to draw (ADR 0133).
+        let reference =
+            Reference { anchor: DVec2::new(10.0, -20.0), radius: 120.0, from: 0.0, to: core::f64::consts::FRAC_PI_2 };
+        let (axis, arc) = reference.samples();
+        assert_eq!(axis[0], reference.anchor, "the axis starts at the anchor");
+        assert!((axis[1] - DVec2::new(130.0, -20.0)).length() < 1e-9, "the axis reaches one radius along +X");
+        assert_eq!(arc.len(), 91, "a quarter turn is sampled once per degree");
+        for point in &arc {
+            assert!(((*point - reference.anchor).length() - 120.0).abs() < 1e-9, "{point:?} is on the circle");
+        }
+        let first = arc.first().copied().expect("the sweep starts");
+        let last = arc.last().copied().expect("the sweep ends");
+        assert!((first - axis[1]).length() < 1e-9, "the sweep starts on the X end");
+        assert!((last - DVec2::new(10.0, 100.0)).length() < 1e-9, "a quarter turn ends one radius up");
+
+        // A hostile reference draws nothing rather than a non-finite path.
+        for hostile in [
+            Reference { from: f64::NAN, ..reference },
+            Reference { to: f64::INFINITY, ..reference },
+            Reference { radius: 0.0, ..reference },
+            Reference { anchor: DVec2::new(f64::NAN, 0.0), ..reference },
+        ] {
+            let (axis, arc) = hostile.samples();
+            assert!(axis.is_empty(), "a hostile reference draws no axis: {hostile:?}");
+            assert!(arc.is_empty(), "a hostile reference draws no sweep: {hostile:?}");
+        }
     }
 
     #[test]
     fn a_hostile_pointer_places_nothing() {
         let line = draft(DrawTool::Line, &[(0, 0)]);
-        for pointer in [DVec2::new(f64::NAN, 0.0), DVec2::new(0.0, f64::INFINITY), millimetres(20_000, 0)] {
+        for pointer in [DVec2::new(f64::NAN, 0.0), DVec2::new(0.0, f64::INFINITY), millimetres(2_000_000, 0)] {
             assert!(PointState::live(&line, pointer).is_none(), "{pointer:?} places no point");
         }
     }

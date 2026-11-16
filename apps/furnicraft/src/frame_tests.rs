@@ -19,8 +19,8 @@ use furnicraft_geom::DVec2;
 use furnicraft_model::{ClassCode, ContourSegment, Envelope, Id};
 use furnicraft_scene::Camera;
 use furnicraft_text::{Lang, Message};
-use furnicraft_ui::MeasureStage;
 use furnicraft_ui::settings::{MAX_HANDLE_POINTS, MAX_RING_PERCENT, MIN_HANDLE_POINTS, MIN_RING_PERCENT};
+use furnicraft_ui::{DrawIntent, DrawTool, FieldParam, MeasureStage};
 use furnicraft_units::Length;
 
 use super::*;
@@ -2828,4 +2828,253 @@ fn a_typed_distance_and_angle_move_the_latched_corner() {
         Length::from_micrometres((50.0 * radians.sin() * 1_000.0).round() as i64),
     ];
     assert!(same_point(stored, expected), "the typed distance and angle moved the corner: {stored:?}");
+}
+
+/// Every drawing tool the Sketch tab ships, in the order the ribbon declares them.
+fn sketch_tools() -> [DrawTool; 15] {
+    [
+        DrawTool::Line,
+        DrawTool::Polyline,
+        DrawTool::Arc,
+        DrawTool::ArcFromCenter,
+        DrawTool::ArcByRadius,
+        DrawTool::Rectangle,
+        DrawTool::RectangleFromCenter,
+        DrawTool::RectangleFromCenterDirected,
+        DrawTool::RectangleTilted,
+        DrawTool::Circle,
+        DrawTool::CircleDiameter,
+        DrawTool::CircleThreePoints,
+        DrawTool::RegularPolygon,
+        DrawTool::PolygonApothem,
+        DrawTool::PolygonByEdge,
+    ]
+}
+
+/// Starts `tool` the way a ribbon cell does: a fresh draft and no pointer state from the old one.
+fn arm_sketch(harness: &mut Harness, tool: DrawTool) {
+    harness.app.tabs.active_mut().editor.start_drawing_with(tool, 6);
+    harness.app.tabs.active_mut().draw_gizmo.reset();
+}
+
+/// The points a tool takes, chosen so every stage but the last can still be continued.
+///
+/// A second point of a rectangle must leave a height, while a third point of an arc must leave the
+/// two before it non-collinear, so the sequence follows the count the tool declares.
+fn stage_samples(tool: DrawTool) -> &'static [[i64; 2]] {
+    match tool.points() {
+        Some(3) => &[[0, 0], [200, 0], [200, 150]],
+        Some(_) => &[[0, 0], [200, 150]],
+        None => &[[0, 0], [200, 150], [0, 200]],
+    }
+}
+
+/// Places a point of a stage directly, so a test does not depend on where a click lands.
+fn push_stage_point(harness: &mut Harness, point: [i64; 2]) {
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .editor
+        .drawing_point([mesh(point[0]), mesh(point[1])])
+        .expect("a valid point of the stage");
+}
+
+/// The screen positions a stage is read at: the middle, both diagonals and the four corners.
+fn sketch_hovers(scene: egui::Rect) -> [egui::Pos2; 7] {
+    let inset = egui::vec2(40.0, 40.0);
+    [
+        scene.center(),
+        scene.center() + egui::vec2(scene.width() * 0.3, 0.0),
+        scene.center() + egui::vec2(0.0, scene.height() * 0.3),
+        scene.left_top() + inset,
+        scene.right_top() + egui::vec2(-inset.x, inset.y),
+        scene.left_bottom() + egui::vec2(inset.x, -inset.y),
+        scene.right_bottom() - inset,
+    ]
+}
+
+/// Every plate of the stage is drawn, stays inside the view and covers no other plate.
+fn assert_plates_apart(plates: &[(FieldParam, egui::Rect)], scene: egui::Rect, context: &str) {
+    assert!(!plates.is_empty(), "{context}: the stage shows its numbers");
+    for (param, rect) in plates {
+        assert!(rect.is_positive(), "{context}: {param:?} drew a plate: {rect:?}");
+        assert!(scene.contains_rect(*rect), "{context}: {param:?} stays in the view: {rect:?}");
+    }
+    for (index, (param, rect)) in plates.iter().enumerate() {
+        for (other, other_rect) in &plates[index + 1..] {
+            assert!(!rect.intersects(*other_rect), "{context}: {param:?} covers {other:?}: {rect:?} vs {other_rect:?}");
+        }
+    }
+}
+
+/// No plate reaches the pointer.
+///
+/// A field that settles under the cursor is a field the pointer has to fight: the sketch stops
+/// following the hand until the pointer leaves the plate again. The clearance the layout keeps is
+/// measured here, one point inside it, so a plate that merely touches the rim still passes.
+fn assert_plates_clear_of(plates: &[(FieldParam, egui::Rect)], pointer: egui::Pos2, context: &str) {
+    for (param, rect) in plates {
+        assert!(
+            !rect.expand(furnicraft_ui::CURSOR_CLEARANCE - 1.0).contains(pointer),
+            "{context}: {param:?} sits under the pointer: {rect:?} holds {pointer:?}"
+        );
+    }
+}
+
+#[test]
+fn every_sketch_stage_draws_every_plate_apart() {
+    // The reclamation behind X43: the first point showed one plate because X and Y shared an anchor,
+    // and a length and its angle covered each other when their anchors came close. Every tool and
+    // every stage it can measure is read at seven positions of the view; at each one the whole set
+    // is on screen, no plate covers another, and the first point always shows both coordinates.
+    let mut harness = Harness::new("frame-sketch-plates");
+    harness.settle();
+    let scene = harness.scene();
+    let hovers = sketch_hovers(scene);
+    let samples = [[0_i64, 0_i64], [200, 0], [200, 150]];
+    for tool in sketch_tools() {
+        let need = tool.points().unwrap_or(3);
+        for placed in 0..need {
+            arm_sketch(&mut harness, tool);
+            for point in &samples[..placed] {
+                push_stage_point(&mut harness, *point);
+            }
+            for (index, hover) in hovers.iter().enumerate() {
+                harness.hover(*hover);
+                let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
+                let context = format!("{tool:?} after {placed} points at hover {index}");
+                assert_plates_apart(&plates, scene, &context);
+                assert_plates_clear_of(&plates, *hover, &context);
+                if placed == 0 {
+                    assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "{context}: X is drawn");
+                    assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "{context}: Y is drawn");
+                }
+            }
+        }
+    }
+
+    // The polyline has a stage no other tool has: an arc armed at the chain's end, which the next
+    // click finishes. It measures the same length and angle from the stored end and must lay out.
+    arm_sketch(&mut harness, DrawTool::Polyline);
+    push_stage_point(&mut harness, [0, 0]);
+    push_stage_point(&mut harness, [200, 0]);
+    harness.app.tabs.active_mut().editor.set_drawing_arc_mode(true);
+    harness.app.tabs.active_mut().editor.drawing_arc_through([mesh(200), mesh(150)]).expect("an arc is armed");
+    for (index, hover) in hovers.iter().enumerate() {
+        harness.hover(*hover);
+        let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
+        let context = format!("a pending arc at hover {index}");
+        assert_plates_apart(&plates, scene, &context);
+        assert_plates_clear_of(&plates, *hover, &context);
+        assert!(plates.iter().any(|(param, _)| *param == FieldParam::Length), "{context}: the chord is read");
+        assert!(plates.iter().any(|(param, _)| *param == FieldParam::Angle), "{context}: the angle is read");
+    }
+}
+
+#[test]
+fn switching_a_sketch_tool_mid_draft_starts_a_clean_stage() {
+    // A tool change is one gesture, not "cancel, then start" (ADR 0076, X12): the draft, the arc
+    // mode, the typed locks and the plates of the old tool go with it, and the new tool's first
+    // point is its own X and Y. Every pair of neighbouring tools is switched after zero, one and
+    // two points, and the pending arc and the panel intent are checked on their own.
+    let mut harness = Harness::new("frame-sketch-switch");
+    harness.settle();
+    let scene = harness.scene();
+    let hover = scene.center() + egui::vec2(32.0, 24.0);
+    let tools = sketch_tools();
+    for (index, from) in tools.iter().enumerate() {
+        let to = tools[(index + 1) % tools.len()];
+        let need = from.points().unwrap_or(2);
+        let samples = stage_samples(*from);
+        for placed in 0..=need {
+            arm_sketch(&mut harness, *from);
+            for point in &samples[..placed] {
+                push_stage_point(&mut harness, *point);
+            }
+            arm_sketch(&mut harness, to);
+            harness.hover(hover);
+            let context = format!("{from:?} with {placed} points switched to {to:?}");
+            let draft = harness.app.tabs.active().editor.drawing().expect("the new tool runs");
+            assert_eq!(draft.tool(), to, "{context}: the new tool owns the draft");
+            assert!(draft.points().is_empty(), "{context}: no point of the old draft survives");
+            assert!(!draft.arc_mode(), "{context}: the old arc mode is gone");
+            assert!(draft.pending_arc().is_none(), "{context}: the old arc is gone");
+            assert_eq!(harness.app.tabs.active().editor.drawing_intent(), DrawIntent::Path, "{context}: a sketch");
+            let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
+            assert_plates_apart(&plates, scene, &context);
+            assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "{context}: X is the new point");
+            assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "{context}: Y is the new point");
+        }
+    }
+
+    // A tool change that bypasses the shell's pointer reset still rebuilds the plates: a typed lock
+    // promises one number of one point of one tool, so the new tool's first point is its own X and Y.
+    arm_sketch(&mut harness, DrawTool::Circle);
+    harness.hover(hover);
+    let expected = harness.app.tabs.active().draw_gizmo.point_preview().expect("the circle's first point");
+    arm_sketch(&mut harness, DrawTool::Line);
+    harness.hover(hover);
+    type_text(&mut harness, "999");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    harness.app.tabs.active_mut().editor.start_drawing_with(DrawTool::Circle, 6);
+    harness.hover(hover);
+    assert!(
+        harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.tool() == DrawTool::Circle),
+        "the circle owns the draft"
+    );
+    let previewed = harness.app.tabs.active().draw_gizmo.point_preview().expect("the circle's first point");
+    assert_eq!(previewed, expected, "the line's typed X does not reach the circle's first point");
+
+    // Choosing the same cell again restarts it, so a double click does not keep a half figure.
+    arm_sketch(&mut harness, DrawTool::Line);
+    push_stage_point(&mut harness, [0, 0]);
+    arm_sketch(&mut harness, DrawTool::Line);
+    harness.hover(hover);
+    assert!(
+        harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.points().is_empty()),
+        "the same tool starts from its first point"
+    );
+
+    // A pending arc is part of the old draft and cannot leak into the new tool.
+    arm_sketch(&mut harness, DrawTool::Polyline);
+    push_stage_point(&mut harness, [0, 0]);
+    push_stage_point(&mut harness, [200, 0]);
+    harness.app.tabs.active_mut().editor.set_drawing_arc_mode(true);
+    harness.app.tabs.active_mut().editor.drawing_arc_through([mesh(200), mesh(150)]).expect("an arc is armed");
+    assert!(harness.app.tabs.active().editor.drawing().is_some_and(|draft| draft.pending_arc().is_some()));
+    arm_sketch(&mut harness, DrawTool::Circle);
+    harness.hover(hover);
+    let draft = harness.app.tabs.active().editor.drawing().expect("the circle runs");
+    assert_eq!(draft.tool(), DrawTool::Circle, "the circle replaced the chain");
+    assert!(draft.pending_arc().is_none(), "the armed arc went with the chain");
+    assert!(!draft.arc_mode(), "a circle has no arc mode");
+
+    // The panel-from-contour intent is the draft's, so a sketch cell after it is a path again.
+    harness.app.tabs.active_mut().editor.start_panel_drawing();
+    push_stage_point(&mut harness, [0, 0]);
+    push_stage_point(&mut harness, [200, 0]);
+    assert_eq!(harness.app.tabs.active().editor.drawing_intent(), DrawIntent::Panel);
+    arm_sketch(&mut harness, DrawTool::Circle);
+    assert_eq!(
+        harness.app.tabs.active().editor.drawing_intent(),
+        DrawIntent::Path,
+        "a sketch cell never inherits the board intent"
+    );
+
+    // Another pointer mode leaves the drawing and its plates; a later sketch starts clean.
+    arm_sketch(&mut harness, DrawTool::Rectangle);
+    push_stage_point(&mut harness, [0, 0]);
+    harness.hover(hover);
+    assert!(!harness.app.tabs.active().draw_gizmo.plate_rects().is_empty(), "the rectangle shows its plates");
+    harness.app.tabs.active_mut().editor.arm_measure();
+    harness.hover(hover);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the ruler left the drawing");
+    assert!(harness.app.tabs.active().draw_gizmo.plate_rects().is_empty(), "and its plates went with it");
+    arm_sketch(&mut harness, DrawTool::Arc);
+    harness.hover(hover);
+    let plates = harness.app.tabs.active().draw_gizmo.plate_rects();
+    assert_plates_apart(&plates, scene, "an arc after the ruler");
+    assert!(plates.iter().any(|(param, _)| *param == FieldParam::X), "the arc starts at a point");
+    assert!(plates.iter().any(|(param, _)| *param == FieldParam::Y), "the arc starts at a point");
 }

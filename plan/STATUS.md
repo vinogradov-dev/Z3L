@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=4fdda6f updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=17ae4b5 updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -17,9 +17,8 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   one flat frame turned, X35 stands the fill post in it, N11 gives a panel end a bevel angle about
   its outline edge (0107, schema 24); C4 adds a circle by diameter, an arc by radius (0130).
 - S7 audited the design rules and filed S8–S22 under `plan/refactor.md`: S8–S13 split `geom` (0084),
-  S14–S17 `panel_cmds`, the camera and ray and the pipelines, S18–S19 the document rules and the
-  `Editor` (50 lines), S20–S22 the drawing draft and the chrome (2608 -> 2037), U45 the scene
-  (0081); F4 is in questions.
+  S14–S17 `panel_cmds`, the camera, ray and pipelines, S18–S19 the document rules and `Editor` (50),
+  S20–S22 the drawing draft and the chrome (2608 -> 2037), U45 the scene (0081); F4 is in questions.
 - U45 opens several scenes at once: a header tab per open file with its dirty marker and cross;
   *New* and *Open* open a tab (an open path activates it), *Save*, *Undo* and *Redo* act on the
   active one, a close with unsaved changes asks and the last leaves *Untitled*; history, selection,
@@ -53,10 +52,11 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
   `xtask` keeps the layering rules and `ci` (P8), the gate follows every `files:` hint, a closed
   entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` keeps the log `/time-review`
   reads; `dev` → `main`.
+- X43: one plate layout and a reference that lies in the plane (0132, 0133).
 
 ## Next
 
-Nothing is scheduled: 1 open task waits in `## Next`.
+Nothing is scheduled: 9 open tasks wait in `## Next`.
 
 ## Index
 
