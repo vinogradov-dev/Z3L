@@ -499,6 +499,13 @@ fn paint_guides(
     {
         guides::construction(ui, painter, from, to);
     }
+    // The lines a figure is built against are drawn with the same dashed guide, so the corner of a
+    // tangent circle reads as the two lines it is measured from.
+    for [from, to] in &state.legs {
+        if let (Some(from), Some(to)) = (project(*from), project(*to)) {
+            guides::construction(ui, painter, from, to);
+        }
+    }
     let Some(reference) = state.reference else {
         return;
     };
@@ -826,6 +833,50 @@ mod tests {
 
             let plate = state.rows.iter().find(|row| row.param == FieldParam::Length).expect("a length plate");
             assert!((plate.value - (to - from).length()).abs() < 1e-9, "{pointer:?}: the plate reads the chord");
+        }
+    }
+
+    #[test]
+    fn a_tangent_circle_paints_the_two_lines_it_is_built_against() {
+        // X52: the circle does not exist until its last click, so the lines the person is naming have
+        // to be on screen while they are clicked. Each is the same dashed guide a chord uses, drawn
+        // from the corner past the click that named it.
+        let corner = draft(DrawTool::CircleTangent, &[(0, 0)]);
+        let two = draft(DrawTool::CircleTangent, &[(0, 0), (300, 0)]);
+        let camera = Camera::default();
+        let plane = WorkPlane::from_camera(camera);
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for (case, figure, lines) in [("one line", corner, 1), ("two lines", two, 2)] {
+            let state = PointState::live(&figure, DVec2::new(0.0, 200.0)).expect("a point on the next line");
+            assert_eq!(state.legs.len(), lines, "{case}: the lines are drawn");
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                paint_guides(ui, ui.painter(), camera, rect, plane, &state);
+            });
+            let dashes = dashes(&output.shapes);
+            output.drop_without_applying_deltas();
+            assert!(dashes.len() >= 3, "{case}: a line is dashed, not one stroke");
+            let legs = state
+                .legs
+                .iter()
+                .filter_map(|[from, to]| {
+                    let from = project(plane, camera, rect, *from)?;
+                    let to = project(plane, camera, rect, *to)?;
+                    Some((from, to))
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(legs.len(), lines, "{case}: every line reaches the screen");
+            for (a, b) in &dashes {
+                let on_a_leg = legs.iter().any(|(from, to)| {
+                    let span = *to - *from;
+                    let length = span.length();
+                    let aside =
+                        |point: Pos2| (point - *from - span * ((point - *from).dot(span) / (length * length))).length();
+                    let along = |point: Pos2| (point - *from).dot(span) / length;
+                    aside(*a) < 0.5 && aside(*b) < 0.5 && along(*a) >= -0.5 && along(*b) <= length + 0.5
+                });
+                assert!(on_a_leg, "{case}: a dash leaves both lines: {a:?} {b:?}");
+            }
         }
     }
 

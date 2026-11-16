@@ -709,6 +709,7 @@ fn every_tool_states_its_point_count_and_name() {
         (DrawTool::Circle, Some(2), false, false, "Circle"),
         (DrawTool::CircleDiameter, Some(2), false, false, "Circle"),
         (DrawTool::CircleThreePoints, Some(3), false, false, "Circle through 3 points"),
+        (DrawTool::CircleTangent, Some(4), false, false, "Circle"),
         (DrawTool::RegularPolygon, Some(2), false, false, "Polygon"),
         (DrawTool::PolygonApothem, Some(2), false, false, "Polygon"),
         (DrawTool::PolygonByEdge, Some(2), false, false, "Polygon"),
@@ -724,6 +725,72 @@ fn every_tool_states_its_point_count_and_name() {
 }
 
 #[test]
+fn the_circle_tangent_tool_touches_both_lines_of_its_corner() {
+    // A right-angled corner and a centre 100 mm from each line: a 100 mm circle in the wedge the
+    // centre was placed in, touching both lines.
+    let mut draft = DrawDraft::new(DrawTool::CircleTangent);
+    draft.push([millimetres(0), millimetres(0)]).expect("the corner");
+    draft.push([millimetres(200), millimetres(0)]).expect("a point on the first line");
+    draft.push([millimetres(0), millimetres(200)]).expect("a point on the second line");
+    assert!(!draft.is_complete(), "the centre is still to be placed");
+    draft.push([millimetres(100), millimetres(100)]).expect("the centre");
+    assert!(draft.is_complete() && draft.is_finished());
+
+    let path = draft.to_path().expect("a tangent circle");
+    assert!(path.is_closed());
+    assert_eq!(path.entries().len(), 4, "a circle is four arcs");
+    let ContourSegment::Arc { center, radius, .. } = path.entries()[0].segment() else {
+        panic!("a circle is four arcs");
+    };
+    assert_eq!(center, [millimetres(100), millimetres(100)]);
+    assert_eq!(radius, millimetres(100), "the radius is the centre's distance to either line");
+}
+
+#[test]
+fn a_tangent_circle_is_built_in_the_wedge_the_centre_sits_in() {
+    // The same corner, and a centre on the other side of both lines: the circle touches the same two
+    // lines from the opposite wedge, so one tube of clicks names two figures by where it ends.
+    let mut draft = DrawDraft::new(DrawTool::CircleTangent);
+    draft.push([millimetres(0), millimetres(0)]).expect("the corner");
+    draft.push([millimetres(200), millimetres(0)]).expect("the first line");
+    draft.push([millimetres(0), millimetres(200)]).expect("the second line");
+    draft.push([millimetres(-100), millimetres(-100)]).expect("the opposite wedge");
+    let path = draft.to_path().expect("a tangent circle");
+    let ContourSegment::Arc { center, radius, .. } = path.entries()[0].segment() else {
+        panic!("a circle is four arcs");
+    };
+    assert_eq!(center, [millimetres(-100), millimetres(-100)]);
+    assert_eq!(radius, millimetres(100));
+}
+
+#[test]
+fn two_legs_on_one_line_are_a_corner_with_no_circle() {
+    // The third click lands on the line the first one already named, so there is no wedge and no
+    // circle: the click is refused with the reason and the three points stay, so the corner can be
+    // named again without starting over.
+    let mut draft = DrawDraft::new(DrawTool::CircleTangent);
+    draft.push([millimetres(0), millimetres(0)]).expect("the corner");
+    draft.push([millimetres(200), millimetres(0)]).expect("the first line");
+    draft.push([millimetres(400), millimetres(0)]).expect("the same line again");
+    assert_eq!(draft.preview([millimetres(100), millimetres(100)]), Err(DrawDraftError::NoWedge));
+    let error = draft.push([millimetres(100), millimetres(100)]).expect_err("one line has no wedge");
+    assert_eq!(error, DrawDraftError::NoWedge);
+    assert_eq!(draft.points().len(), 3, "the refused click wrote nothing");
+}
+
+#[test]
+fn a_figure_short_of_its_points_previews_nothing_instead_of_complaining() {
+    // The pointer of an unfinished fixed figure has nothing to show and nothing to warn about: the
+    // status line names a refusal only when a click would really be refused.
+    let mut arc = DrawDraft::new(DrawTool::Arc);
+    arc.push([millimetres(0), millimetres(0)]).expect("the start");
+    assert_eq!(arc.preview([millimetres(100), millimetres(0)]), Ok(None));
+    let mut tangent = DrawDraft::new(DrawTool::CircleTangent);
+    tangent.push([millimetres(0), millimetres(0)]).expect("the corner");
+    assert_eq!(tangent.preview([millimetres(200), millimetres(0)]), Ok(None));
+}
+
+#[test]
 fn a_drawing_draft_shows_its_reason_to_a_user() {
     assert_eq!(DrawDraftError::NotStarted.to_string(), "no drawing is in progress");
     assert_eq!(
@@ -732,6 +799,10 @@ fn a_drawing_draft_shows_its_reason_to_a_user() {
     );
     assert_eq!(DrawDraftError::Complete { tool: DrawTool::Arc }.to_string(), "the Arc tool is complete");
     assert_eq!(DrawDraftError::NotClosable { tool: DrawTool::Line }.to_string(), "the Line tool cannot be closed");
+    assert_eq!(
+        DrawDraftError::NoWedge.to_string(),
+        "the two lines of the corner are parallel, so no circle is tangent to both"
+    );
     assert!(!DrawDraftError::Full.to_string().is_empty());
     assert!(!DrawDraftError::DuplicatePoint.to_string().is_empty());
     assert!(!DrawDraftError::PointOutOfRange.to_string().is_empty());

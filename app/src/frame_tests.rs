@@ -2262,6 +2262,52 @@ fn a_typed_diameter_builds_a_circle_of_half_its_number() {
 }
 
 #[test]
+fn a_tangent_circle_is_built_from_its_corner_two_lines_and_a_radius() {
+    // X52: the circle cell's fourth method. The corner is typed as a point, each line as the
+    // direction of a click on it, and the radius as the last number, so the committed ring touches
+    // both lines whatever the pointer was over.
+    let mut harness = Harness::new("frame-sketch-tangent");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::CircleTangent);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    // A line is named by its direction alone: the distance the plate does not read stays the
+    // pointer's own and never reaches the figure.
+    type_text(&mut harness, "90");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    type_text(&mut harness, "180");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(draft_points(&harness).len(), 3, "the corner and one point on each line");
+    type_text(&mut harness, "50");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "Enter places the radius and commits");
+
+    let object = harness.selected().first().copied().expect("the circle is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the drawn figure is a path");
+    assert!(path.is_closed(), "a tangent circle is a ring");
+    let ContourSegment::Arc { center, radius, .. } = path.entries().first().expect("a circle is four arcs").segment()
+    else {
+        panic!("a circle is four arcs");
+    };
+    assert_eq!(radius, mesh(50), "the typed radius is the stored one");
+    assert_eq!(center, [Length::ZERO, Length::ZERO], "the command anchors a closed figure at its bounds centre");
+    // The corner is at 100, 100 on the work plane and the two lines run through it, so the centre is
+    // one radius to the side of each: the wedge it went into is the one the pointer was in.
+    let world = project.world_placement(object).expect("the circle has a world frame");
+    let at = world.transform_point(geom::DVec3::new(center[0].millimetres_f64(), center[1].millimetres_f64(), 0.0));
+    assert!(((at.x - 100.0).abs() - 50.0).abs() < 0.01, "the centre stands one radius off the vertical line: {at:?}");
+    assert!(((at.y - 100.0).abs() - 50.0).abs() < 0.01, "and one radius off the horizontal one: {at:?}");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one circle, one undo entry");
+}
+
+#[test]
 fn an_arc_from_a_typed_radius_takes_the_side_the_pointer_chose() {
     // C4: an arc from its start, end and radius. The two ends are typed, so the chord is exact; the
     // radius is typed and the pointer only names the side the centre sits on.
@@ -2785,7 +2831,7 @@ fn a_typed_distance_and_angle_move_the_latched_corner() {
 }
 
 /// Every drawing tool the Sketch tab ships, in the order the ribbon declares them.
-fn sketch_tools() -> [DrawTool; 15] {
+fn sketch_tools() -> [DrawTool; 16] {
     [
         DrawTool::Line,
         DrawTool::Polyline,
@@ -2799,6 +2845,7 @@ fn sketch_tools() -> [DrawTool; 15] {
         DrawTool::Circle,
         DrawTool::CircleDiameter,
         DrawTool::CircleThreePoints,
+        DrawTool::CircleTangent,
         DrawTool::RegularPolygon,
         DrawTool::PolygonApothem,
         DrawTool::PolygonByEdge,
@@ -2818,6 +2865,9 @@ fn arm_sketch(harness: &mut Harness, tool: DrawTool) {
 fn stage_samples(tool: DrawTool) -> &'static [[i64; 2]] {
     match tool.points() {
         Some(3) => &[[0, 0], [200, 0], [200, 150]],
+        // The corner, a point on each of its two lines, then a centre inside the wedge: every stage
+        // of a tangent circle leaves the next one something to be measured against.
+        Some(4) => &[[0, 0], [200, 0], [0, 200], [100, 100]],
         Some(_) => &[[0, 0], [200, 150]],
         None => &[[0, 0], [200, 150], [0, 200]],
     }

@@ -18,7 +18,7 @@ assets/icons/<theme>/<name>.svg
 
 | Theme | Icons | Shown by |
 |---|---|---|
-| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `arc-radius`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `rectangle-edge`, `circle`, `circle-diameter`, `circle-three-points`, `polygon`, `polygon-apothem`, `polygon-edge`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
+| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `arc-radius`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `rectangle-edge`, `circle`, `circle-diameter`, `circle-three-points`, `circle-tangent`, `polygon`, `polygon-apothem`, `polygon-edge`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
 | `primitives` | `cuboid`, `cylinder`, `sphere`, `cone` | The ribbon *Model* tab |
 | `bodies` | `extrude`, `revolve`, `sweep` | The ribbon *Model* tab |
 | `scene` | `product`, `panel`, `post`, `shelf`, `void`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |

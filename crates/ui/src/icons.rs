@@ -334,6 +334,7 @@ icons!(Contour, "contour", Draw, contour {
     CIRCLE => "circle",
     CIRCLE_DIAMETER => "circle-diameter",
     CIRCLE_THREE_POINTS => "circle-three-points",
+    CIRCLE_TANGENT => "circle-tangent",
     POLYGON => "polygon",
     POLYGON_APOTHEM => "polygon-apothem",
     POLYGON_EDGE => "polygon-edge",
@@ -1212,7 +1213,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 113);
+        assert_eq!(seen.len(), 114);
     }
 
     #[test]
