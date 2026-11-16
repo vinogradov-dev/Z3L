@@ -699,6 +699,7 @@ fn a_draft_finishes_when_its_tool_is_done() {
 fn every_tool_states_its_point_count_and_name() {
     let cases = [
         (DrawTool::Line, Some(2), false, false, "Line"),
+        (DrawTool::LineByAngle, Some(2), false, false, "Line"),
         (DrawTool::Polyline, None, true, true, "Polyline"),
         (DrawTool::Arc, Some(3), false, false, "Arc"),
         (DrawTool::ArcFromCenter, Some(3), false, false, "Arc from centre"),

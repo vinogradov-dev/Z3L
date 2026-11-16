@@ -42,20 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **X53** the line list has a by-angle row that draws nothing
-  Why: The line list offers «by angle» with no glyph and no action: the row is declared as a
-   planned method (`icon: None, run: None`), so it draws blank and runs nothing. The owner
-   tried it and it did nothing.
-  Shape: Make it a real method: a start point, then an angle and a length typed in the plates
-   (the same length/angle pair a segment already reads), committed as one open `Path` of a
-   single line. The angle must be read with the rule ADR 0134 settles, and the stage declares
-   its two numbers so `every_shipped_tool_declares_its_numbers` covers it. Add
-   `assets/icons/contour/line-angle.svg` (a line at an angle to a dashed datum, draw ink plus
-   the reference ink for the datum) and its row in `assets/README.md`.
-  Done: The row draws a glyph, runs, places a line of the typed angle and length from the
-   clicked start, and a test asserts the committed segment; the icon passes the footprint and
-   coverage test.
-  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour`
 - `[ ]` **U102** a selection cannot be added to or removed from
   Why: A selection is one object: a click replaces it, and there is no way to add or remove
    one. The owner asked for the CAD habit — Shift adds, Ctrl removes — and for the order of
@@ -148,6 +134,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **X53** the line list has a by-angle row that draws nothing
+  Why: The line list offers «by angle» with no glyph and no action: the row is declared as a
+   planned method (`icon: None, run: None`), so it draws blank and runs nothing. The owner
+   tried it and it did nothing.
+  Shape: Make it a real method: a start point, then an angle and a length typed in the plates
+   (the same length/angle pair a segment already reads), committed as one open `Path` of a
+   single line. The angle must be read with the rule ADR 0134 settles, and the stage declares
+   its two numbers so `every_shipped_tool_declares_its_numbers` covers it. Add
+   `assets/icons/contour/line-angle.svg` (a line at an angle to a dashed datum, draw ink plus
+   the reference ink for the datum) and its row in `assets/README.md`.
+  Done: The row draws a glyph, runs, places a line of the typed angle and length from the
+   clicked start, and a test asserts the committed segment; the icon passes the footprint and
+   coverage test.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs,crates/ui/src/icons.rs,assets/icons/contour` — `c7cd17d`
 
 - `[x]` **X52** the circle list has a tangent-to-two-lines row that draws nothing
   Why: The circle list offers «tangent to two lines» with no glyph and no action: the entry is

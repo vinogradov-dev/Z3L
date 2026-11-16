@@ -2138,6 +2138,46 @@ fn a_typed_length_and_angle_place_a_sketch_point_exactly() {
 }
 
 #[test]
+fn the_by_angle_line_is_placed_entirely_from_its_plates() {
+    // X53: the line list's second method is the typed pair. No click places anything: X and Y name
+    // the start, the length and the angle name the end, and Enter commits the one open line.
+    let mut harness = Harness::new("frame-sketch-line-angle");
+    harness.settle();
+    let before = harness.revision();
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::LineByAngle);
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "100");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let start = draft_points(&harness).first().copied().expect("the typed start point");
+    assert_eq!(start, [mesh(100), mesh(100)], "X and Y placed the start the person typed");
+
+    type_text(&mut harness, "600");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    type_text(&mut harness, "30");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the pair finishes the line and commits");
+
+    let object = harness.selected().first().copied().expect("the line is selected");
+    let project = harness.app.tabs.active().session.project();
+    let path = project.object_path(object).expect("the node is a path");
+    assert!(!path.is_closed(), "a line is open");
+    let segment = path.segments().next().expect("a line is one segment");
+    assert_eq!(path.entries().len(), 1, "one segment, not two");
+    let drawn = offset(segment.start().expect("a start"), segment.end().expect("an end"));
+    assert!((drawn.length() - 600.0).abs() < 0.002, "the typed length: {drawn:?}");
+    assert!((drawn.y.atan2(drawn.x).to_degrees() - 30.0).abs() < 0.01, "the typed angle: {drawn:?}");
+    // The command anchors an open path at its first point, so the placement is where it starts.
+    let world = project.world_placement(object).expect("the line has a world frame");
+    let at = world.transform_point(geom::DVec3::ZERO);
+    assert!((at - geom::DVec3::new(100.0, 100.0, 0.0)).length() < 0.01, "it starts at the typed point: {at:?}");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one line, one undo entry");
+}
+
+#[test]
 fn a_typed_number_outlives_the_pointer_and_escape_gives_the_keys_back() {
     // A typed number is a promise: the pointer and its snap cannot move it. Escape drops the promise
     // first and ends the tool second, so one key never means two things in one frame (ADR 0126).
@@ -2831,9 +2871,10 @@ fn a_typed_distance_and_angle_move_the_latched_corner() {
 }
 
 /// Every drawing tool the Sketch tab ships, in the order the ribbon declares them.
-fn sketch_tools() -> [DrawTool; 16] {
+fn sketch_tools() -> [DrawTool; 17] {
     [
         DrawTool::Line,
+        DrawTool::LineByAngle,
         DrawTool::Polyline,
         DrawTool::Arc,
         DrawTool::ArcFromCenter,
