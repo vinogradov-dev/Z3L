@@ -1,7 +1,7 @@
-//! `truck` adapter for the FurniCraft geometry kernel port.
+//! `truck` adapter for the Z3L geometry kernel port.
 //!
 //! This is the only crate allowed to depend on the third-party geometry engine. The rest of the
-//! workspace sees only `furnicraft-kernel` types and traits. Every call into `truck` is wrapped
+//! workspace sees only `kernel` types and traits. Every call into `truck` is wrapped
 //! in a panic guard: a kernel bug must become a typed error, never a crashed application.
 #![forbid(unsafe_code)]
 #![deny(
@@ -15,10 +15,8 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use furnicraft_geom::{DVec2, DVec3, Frame, MeshData};
-use furnicraft_kernel::{
-    BodyId, BooleanOp, KernelError, Measure, Profile, Result, SolidKernel, TessOptions, signed_area,
-};
+use geom::{DVec2, DVec3, Frame, MeshData};
+use kernel::{BodyId, BooleanOp, KernelError, Measure, Profile, Result, SolidKernel, TessOptions, signed_area};
 use truck_meshalgo::prelude::{MeshedShape, PolygonMesh, RobustMeshableShape, StandardVertex};
 use truck_modeling as tm;
 use truck_modeling::builder;

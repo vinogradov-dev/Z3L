@@ -22,7 +22,7 @@
 //! boxes the furniture move rule measures against (`super::surface`), so the tool that fills a
 //! niche and the tool that drags a piece cannot disagree about where a surface is.
 
-use furnicraft_geom::{DVec2, DVec3, Region};
+use geom::{DVec2, DVec3, Region};
 
 use super::surface::{FaceHit, SurfaceBox, SurfaceKind, surface_box};
 use crate::tree::object_bounds_mm;
@@ -812,8 +812,8 @@ fn quantised(value: f64) -> f64 {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_geom::{DQuat, DVec3};
-    use furnicraft_units::Degrees;
+    use geom::{DQuat, DVec3};
+    use units::Degrees;
 
     use crate::fixtures::*;
     use crate::*;
@@ -1149,7 +1149,7 @@ mod tests {
         // at the post instead of being refused (ADR 0109).
         let (mut project, piece) = empty_piece();
         let nominal = PanelNominalSize::new(millimetres(300), millimetres(560)).expect("a short post");
-        let rotation = furnicraft_geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
+        let rotation = geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
         let placement = Placement::new(DVec3::new(318.0, 0.0, 0.0), rotation).expect("a place");
         project.add_panel(piece, "Stub", nominal, None, millimetres(18), placement).expect("add a stub");
         let niche = project.niche(DVec3::new(150.0, 280.0, 200.0)).expect("the stub bounds the void");
@@ -1169,7 +1169,7 @@ mod tests {
             .with_translation(millimetres(0), millimetres(0), millimetres(702))
             .expect("a top placement");
         project.add_panel(piece, "Top", top, None, millimetres(18), placement).expect("add a top");
-        let wall = furnicraft_geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
+        let wall = geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
         for x in [18.0, 600.0] {
             let nominal = PanelNominalSize::new(millimetres(720), millimetres(400)).expect("a short wall");
             let placement = Placement::new(DVec3::new(x, 0.0, 0.0), wall).expect("a wall placement");

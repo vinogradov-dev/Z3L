@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/gotgenes/pi-packages/main/packages/pi-permission-system/schemas/permissions.schema.json",
+  "permission": {
+    "path": {
+      "*": "allow"
+    },
+    "write": {
+      "*": "allow"
+    },
+    "edit": {
+      "*": "allow"
+    },
+    "bash": {
+      "rm -rf /tmp/z3l*": "allow"
+    },
+    "external_directory": {
+      "/tmp": "allow",
+      "/tmp/*": "allow",
+      "~/.config/z3l": "allow",
+      "~/.config/z3l/*": "allow"
+    }
+  }
+}

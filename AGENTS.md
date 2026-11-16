@@ -1,8 +1,8 @@
 # AGENTS.md: guide for AI agents and contributors
 
-FurniCraft is a free, open-source, native 3D editor for **cabinet furniture**, written in **Rust only**. The user sets dimensions, panels, materials and hardware; the editor builds a parametric 3D model and, later, drawings and CNC programs. The quality bar for interaction is Blender: smooth, native, predictable. Read `BRIEF.md` for the owner's goals and constraints, and `PROJECT.md` for the product and the crate map.
+Z3L is a free, open-source, native 3D editor for **cabinet furniture**, written in **Rust only**. The user sets dimensions, panels, materials and hardware; the editor builds a parametric 3D model and, later, drawings and CNC programs. The quality bar for interaction is Blender: smooth, native, predictable. Read `BRIEF.md` for the owner's goals and constraints, and `PROJECT.md` for the product and the crate map.
 
-The application is a native binary: `wgpu` for graphics, `egui`/`eframe` for UI. **No Electron, Tauri, webview, JavaScript or TypeScript — never**, not as a dependency, build step or packaging target. The product name is always **FurniCraft** in user-facing text (`FurniCraft` in prose, `furnicraft-*` in machine names).
+The application is a native binary: `wgpu` for graphics, `egui`/`eframe` for UI. **No Electron, Tauri, webview, JavaScript or TypeScript — never**, not as a dependency, build step or packaging target. The product name is always **Z3L** in user-facing text, and it is read from one constant per surface rather than written into a sentence twice (`docs/philosophy.md`, ADR 0135).
 
 This file is the constitution. Where a task or a habit conflicts with it, this file wins: ask the owner instead of bending a rule.
 
@@ -71,7 +71,7 @@ where a feature lives.
 
 ### 1.3 Designing the interface
 
-Before changing anything under `crates/ui/` or the app chrome in `apps/furnicraft/src`, read
+Before changing anything under `crates/ui/` or the app chrome in `app/src`, read
 `.pi/skills/ui-design/SKILL.md`: it carries the procedure, the invariants and the review form. Its
 `references/checklist.md` is the rubric and `/ui-review` runs it over a diff. Two parts of that work
 have their own procedure: read `.pi/skills/place-capability/SKILL.md` when a command id or a place is
@@ -122,7 +122,7 @@ their tests is not started until the first link compiles. This is what prevents 
 - **Rust only.** No JS/TS, no scripting runtime, no code generation into other languages.
 - **Native.** Windows, Linux and macOS from one codebase. No webview shells, no browser as the primary target.
 - **Free and accessible.** Dependencies must be free and permissively licensed: MIT, Apache-2.0, BSD-2-Clause/3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0. GPL/AGPL or anything requiring an account, a paid tier or a foreign payment card is a stop-and-ask. Every new dependency needs one sentence of justification.
-- **Pure Rust dependencies.** FurniCraft does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates.
+- **Pure Rust dependencies.** Z3L does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates.
 - **Graphics:** `wgpu` (cross-platform, pure Rust). **UI:** `egui`/`eframe`. Do not add a second GUI toolkit or a second GPU abstraction.
 - **Performance is native, not "good enough for a demo".** Keep the frame path free of document scans and allocations; rebuild only what changed.
 - **Language:** code, comments, docs, commit messages — English. Discussion with the owner — Russian.
@@ -130,7 +130,7 @@ their tests is not started until the first link compiles. This is what prevents 
 ## 3. Crate map and layering
 
 ```text
-apps/furnicraft        L8  composition root: window, input, egui <-> wgpu, kernel adapter
+app                    L8  composition root: window, input, egui <-> wgpu, kernel adapter
 crates/ui              L7  egui panels and viewport, dispatches commands
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
@@ -148,6 +148,10 @@ state-contract         tool  plan gate, report, writer and CLI; a project import
 xtask                  the host's rules and the ci gate; no plan logic
 ```
 
+- **Crate names are bare, and a module may not hide one.** The crate is `model`, not `z3l-model`; a
+  publish, if it ever happens, is `package = "z3l-model"` in `Cargo.toml` and no `use` changes.
+  `cargo xtask layers` fails when a crate declares `mod <name>;` for a crate it depends on, because
+  `name::…` would then resolve to the module (ADR 0135, `plan/rename.md` §6).
 - **Layering is enforced** by `cargo xtask layers`. A crate may depend only on crates in **lower** layers, and the same table lists per-crate forbidden dependencies. A new crate must be registered in `xtask/src/main.rs` and in `PROJECT.md` in the same change.
 - `model` holds serializable data and its invariants only: no `wgpu`, no `egui`, no window, no file I/O, no geometry kernels.
 - `kernel` is our port: `model` and `param` never see a third-party kernel type. `kernel-truck` is the only crate allowed to depend on `truck`; the app constructs it and injects it into the session.
@@ -156,7 +160,7 @@ xtask                  the host's rules and the ci gate; no plan logic
 - `ui` never mutates the document directly: it dispatches commands and renders session state.
 - `scene` is data about a frame (what to draw), `render` is the driver that draws it. The document stores placements; cameras and viewports belong to the session or the shell.
 
-The assistant track (ADR 0028) adds `furnicraft-agent` at a new layer between `engine` and `ui`; `ui`, the shell and `testkit` move up one number in the same change. Do not create those crates or edit the layer map before the code lands.
+The assistant track (ADR 0028) adds `agent` at a new layer between `engine` and `ui`; `ui`, the shell and `testkit` move up one number in the same change. Do not create those crates or edit the layer map before the code lands.
 
 Editing anything under `vendor/` follows `vendor/AGENTS.md`: the upstream source is not ours to change.
 
@@ -164,7 +168,7 @@ Editing anything under `vendor/` follows `vendor/AGENTS.md`: the upstream source
 
 ### 4.1 Everything is a command
 
-Every user-visible change to the document is a command in `furnicraft-engine`: a stable string id, a label, parameters, an `enabled` check and a `run` that returns `Result`. The UI, and later a CLI/API, dispatch commands by id. Pure view state (camera, panel sizes, selection highlight) may live in the shell or the session, but anything that changes the document goes through a command — that is what makes undo/redo and future automation possible.
+Every user-visible change to the document is a command in `engine`: a stable string id, a label, parameters, an `enabled` check and a `run` that returns `Result`. The UI, and later a CLI/API, dispatch commands by id. Pure view state (camera, panel sizes, selection highlight) may live in the shell or the session, but anything that changes the document goes through a command — that is what makes undo/redo and future automation possible.
 
 ### 4.2 Data is data
 
@@ -172,9 +176,9 @@ The document is plain serializable data with stable ids. It does not know about 
 
 ### 4.3 Units are explicit
 
-Physical sizes are `furnicraft_units::Length`: integer **micrometres**. No bare `f64`/`f32` millimetres, centimetres or "units" in `model`, `param`, `mesh` inputs or command parameters. Floating point exists only at the geometry and rendering boundary (`furnicraft-geom`, `furnicraft-kernel`, `furnicraft-kernel-truck`, `furnicraft-render`); `param` converts `Length` to kernel millimetres at that edge. Formatting for humans and parsing from text go through `furnicraft-units`.
+Physical sizes are `units::Length`: integer **micrometres**. No bare `f64`/`f32` millimetres, centimetres or "units" in `model`, `param`, `mesh` inputs or command parameters. Floating point exists only at the geometry and rendering boundary (`geom`, `kernel`, `kernel-truck`, `render`); `param` converts `Length` to kernel millimetres at that edge. Formatting for humans and parsing from text go through `units`.
 
-Angles shown to the user are `furnicraft_units::Degrees`: integer **millidegrees**. A placement stores a unit quaternion as its only rotation; Euler angles are a presentation derived on read and never serialized. The inspector shows intrinsic XYZ Euler angles in degrees, and the rotate gizmo writes the quaternion directly (ADR 0024). Angle formatting and parsing go through `furnicraft-units`.
+Angles shown to the user are `units::Degrees`: integer **millidegrees**. A placement stores a unit quaternion as its only rotation; Euler angles are a presentation derived on read and never serialized. The inspector shows intrinsic XYZ Euler angles in degrees, and the rotate gizmo writes the quaternion directly (ADR 0024). Angle formatting and parsing go through `units`.
 
 ### 4.4 Never crash
 
@@ -205,7 +209,7 @@ Every change comes with tests. Domain invariants, unit conversions, command beha
 
 Prefer the standard library and the crates we already have. A new crate must be justified, licensed permissively, maintained, and pinned in the workspace. No dependency may pull in a web runtime, a second GUI toolkit or a second async runtime.
 
-FurniCraft is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources. Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
+Z3L is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources. Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
 
 ### 4.9 Do not invent the domain
 
@@ -229,7 +233,7 @@ second way into the document.
 
 - Every assistant action is a command, a query or a session view operation. No private mutation path,
   no direct `Project` write, no shell or filesystem tool by default.
-- The core (`furnicraft-agent`) has no network, no language-model SDK, no async runtime, no `egui`,
+- The core (`agent`) has no network, no language-model SDK, no async runtime, no `egui`,
   no `wgpu`. The model is an injected adapter; a scripted model must run a whole task in tests.
 - Disabled by default: no endpoint, no tools, no network call. Keys and conversations never enter the
   document, the repository or a log; the audit trail is a sidecar file.
@@ -266,12 +270,12 @@ runtime.
 | Language | Rust 2024 edition, MSRV 1.95 |
 | UI | `egui` + `eframe` (native, `wgpu` backend) |
 | Graphics | `wgpu` 30 (`egui-wgpu` 0.37 is pinned to the same major version) |
-| Geometry kernel | `truck` (Apache-2.0), behind the `furnicraft-kernel` port; only `furnicraft-kernel-truck` may use it |
-| Math | `glam`, re-exported through `furnicraft-geom` |
+| Geometry kernel | `truck` (Apache-2.0), behind the `kernel` port; only `kernel-truck` may use it |
+| Math | `glam`, re-exported through `geom` |
 | Serialization | `serde` (+ `serde_json` until a binary format exists) |
 | Errors | `thiserror` per crate |
 | Logging | `log` (the shell installs the sink) |
-| Tests | built-in test harness; `furnicraft-testkit` for fixtures |
+| Tests | built-in test harness; `testkit` for fixtures |
 
 `render` and `egui-wgpu` must agree on the `wgpu` major version, otherwise device/queue types do not match and the paint callback cannot be wired. Bump them together.
 
@@ -294,7 +298,7 @@ reference over 150, and when `AGENTS.md` §1.3 stops naming one of the interface
 name, a
 command id and a `<placeholder>` are prose, not a claim, and are not checked.
 
-`cargo xtask ui-rules` reads every shipped file under `crates/ui/src` and `apps/furnicraft/src`
+`cargo xtask ui-rules` reads every shipped file under `crates/ui/src` and `app/src`
 with `syn`, not as text, and fails with the file and the line when a feature module builds a colour
 literal — `Color32::from_rgb(…)` with literal channels, a named ink, a raw struct literal — outside
 `crates/ui/src/theme.rs` (the icon role inks are the second owner, ADR 0090), or creates an `egui`
@@ -429,6 +433,7 @@ New tasks are developed on the `dev` branch; `main` holds only verified, merge-r
 - `ATTRIBUTION.md` — vendored and bundled third-party components, their licenses and modifications.
 - `assets/icons/STYLE_GUIDE.md` — icon visual language; read only when drawing or editing an icon
   (`assets/README.md` holds the file format, `assets/icons/AUDIT.md` the measured state of the set).
+- `docs/philosophy.md` — what the program believes: the thesis, the three laws (`Local`, `Literal`, `Lasting`) and the readings of the name. Read before a decision the rules do not cover.
 - `docs/decisions/` — architecture decision records: one short file per decision, with the reason and the consequences.
 - `docs/domain/classes.md` — the semantic class registry: encoding, traits and lifecycle; `docs/domain/products.md` — the product, its authored envelope and the workspace rules; `docs/domain/order-export.md` — the published order-package contract other programs read.
 - `plan/STATUS.md` — the `STATE` line, where the project stands and what comes next; rewritten at the end of every task, never appended to.

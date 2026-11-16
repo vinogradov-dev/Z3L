@@ -1,7 +1,7 @@
 //! The workspace settings and their window.
 //!
 //! Settings are a view of the application, never a document surface: a change applies at once and
-//! never reaches the `.fcs`, and a scene opened on another machine carries none of it. The window is
+//! never reaches the `.z3l`, and a scene opened on another machine carries none of it. The window is
 //! the only editor of [`Settings`]; persistence belongs to the shell, which owns the config path and
 //! the atomic write (ADR 0068).
 //!
@@ -17,7 +17,7 @@ use egui::{Align, Context, Id, Layout, Modal, Ui};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use furnicraft_text::{Lang, Message};
+use text::{Lang, Message};
 
 use crate::display::{OpeningView, ShadingStyle, shading_label};
 use crate::scrub::Scrub;
@@ -121,7 +121,7 @@ impl ThemeChoice {
 
 /// The language the interface speaks, as the workspace stores it.
 ///
-/// A saved `.fcs` never carries this: the language belongs to the workspace, not to the scene, so
+/// A saved `.z3l` never carries this: the language belongs to the workspace, not to the scene, so
 /// the same file opens in whatever language the person looking at it chose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1009,7 +1009,7 @@ pub fn shortcut_table(lang: Lang) -> Vec<(String, String)> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Container, Id, Placement, Project};
+    use model::{Container, Id, Placement, Project};
 
     use super::*;
 
@@ -1038,7 +1038,7 @@ mod tests {
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
-            recent: vec![PathBuf::from("/tmp/cabinet.fcs"), PathBuf::from("/tmp/shelf.fcs")],
+            recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
                 open: false,
                 pinned_variants: BTreeMap::from([(
@@ -1076,11 +1076,11 @@ mod tests {
 
         // A hand-edited file cannot push a size past what the scrub field offers, and a broken
         // value costs one number, not the recent list or the rest of the workspace.
-        let json = r#"{"version":1,"gizmo":{"handle_points":0,"ring_percent":900},"recent":["/tmp/cabinet.fcs"]}"#;
+        let json = r#"{"version":1,"gizmo":{"handle_points":0,"ring_percent":900},"recent":["/tmp/cabinet.z3l"]}"#;
         let settings = Settings::from_json(json).expect("parse and repair");
         assert_eq!(settings.gizmo.handle_points, MIN_HANDLE_POINTS);
         assert_eq!(settings.gizmo.ring_percent, MAX_RING_PERCENT);
-        assert_eq!(settings.recent, vec![PathBuf::from("/tmp/cabinet.fcs")], "the rest of the file survives");
+        assert_eq!(settings.recent, vec![PathBuf::from("/tmp/cabinet.z3l")], "the rest of the file survives");
 
         let json = r#"{"version":1,"gizmo":{"handle_points":900,"ring_percent":0}}"#;
         let settings = Settings::from_json(json).expect("parse and repair");
@@ -1273,11 +1273,11 @@ mod tests {
 
     #[test]
     fn an_unknown_palette_is_repaired_and_reported() {
-        let json = r#"{"version":1,"appearance":{"palette":"p3_graphite","ui_scale":125},"recent":["/tmp/a.fcs"]}"#;
+        let json = r#"{"version":1,"appearance":{"palette":"p3_graphite","ui_scale":125},"recent":["/tmp/a.z3l"]}"#;
         let (settings, repairs) = Settings::read_json(json).expect("one unknown value is not a corrupt file");
         assert_eq!(settings.appearance.palette, theme::ThemePreset::GraphiteCopper, "P1 stands in");
         assert_eq!(settings.appearance.ui_scale, 125, "the rest of the file survives");
-        assert_eq!(settings.recent, vec![PathBuf::from("/tmp/a.fcs")]);
+        assert_eq!(settings.recent, vec![PathBuf::from("/tmp/a.z3l")]);
         assert_eq!(repairs, vec![Repair::UnknownPalette("p3_graphite".to_owned())]);
         assert_eq!(
             Settings::from_json(json).expect("the plain read").appearance.palette,
@@ -1293,11 +1293,11 @@ mod tests {
         for (old, renamed) in
             [("ink_azure", theme::ThemePreset::InkMagenta), ("slate_mint", theme::ThemePreset::SlateViolet)]
         {
-            let json = format!(r#"{{"version":1,"appearance":{{"palette":"{old}"}},"recent":["/tmp/a.fcs"]}}"#);
+            let json = format!(r#"{{"version":1,"appearance":{{"palette":"{old}"}},"recent":["/tmp/a.z3l"]}}"#);
             let (settings, repairs) = Settings::read_json(&json).expect("an old name is not a corrupt file");
             assert_eq!(settings.appearance.palette, renamed, "{old} still opens its look");
             assert!(repairs.is_empty(), "{old} is a name this build knows, not a repair: {repairs:?}");
-            assert_eq!(settings.recent, vec![PathBuf::from("/tmp/a.fcs")], "the rest of the file survives");
+            assert_eq!(settings.recent, vec![PathBuf::from("/tmp/a.z3l")], "the rest of the file survives");
             let saved = settings.to_json().expect("the workspace is written back");
             assert!(saved.contains(&format!("\"{}\"", renamed.stored_name())), "the save carries the current name");
             assert!(!saved.contains(old), "the save does not keep the old name");
@@ -1354,15 +1354,15 @@ mod tests {
     fn the_recent_list_is_newest_first_and_bounded() {
         let mut settings = Settings::default();
         for index in 0..(MAX_RECENT + 4) {
-            settings.remember(Path::new(&format!("/tmp/scene-{index}.fcs")));
+            settings.remember(Path::new(&format!("/tmp/scene-{index}.z3l")));
         }
         assert_eq!(settings.recent.len(), MAX_RECENT);
-        assert_eq!(settings.recent[0], PathBuf::from(format!("/tmp/scene-{}.fcs", MAX_RECENT + 3)));
+        assert_eq!(settings.recent[0], PathBuf::from(format!("/tmp/scene-{}.z3l", MAX_RECENT + 3)));
 
-        settings.remember(Path::new("/tmp/scene-5.fcs"));
+        settings.remember(Path::new("/tmp/scene-5.z3l"));
         assert_eq!(settings.recent.len(), MAX_RECENT, "remembering an old path does not grow the list");
-        assert_eq!(settings.recent[0], PathBuf::from("/tmp/scene-5.fcs"));
-        let count = settings.recent.iter().filter(|path| path.ends_with("scene-5.fcs")).count();
+        assert_eq!(settings.recent[0], PathBuf::from("/tmp/scene-5.z3l"));
+        let count = settings.recent.iter().filter(|path| path.ends_with("scene-5.z3l")).count();
         assert_eq!(count, 1, "an old path moves to the front instead of repeating");
     }
 
@@ -1383,7 +1383,7 @@ mod tests {
             "language",
             "icon_color",
         ] {
-            assert!(!document.contains(key), "`{key}` is workspace state and must stay out of the .fcs");
+            assert!(!document.contains(key), "`{key}` is workspace state and must stay out of the .z3l");
         }
     }
 

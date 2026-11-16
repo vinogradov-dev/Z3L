@@ -33,7 +33,7 @@ meaning unclassified — the width is proven, sorts, prefixes and costs nothing 
 first release.
 
 **The code identifies; the class carries the rules.** A registry row is `code`, `parent`, `slug`,
-`label_key`, `traits`, `since`, `retired`. The registry is a constant table in `furnicraft-model`,
+`label_key`, `traits`, `since`, `retired`. The registry is a constant table in `model`,
 validated by tests and checked against its document table; it is append-only. Inheritance is resolved
 once at compile time, so a lookup is a bit test and nothing walks parents at runtime.
 

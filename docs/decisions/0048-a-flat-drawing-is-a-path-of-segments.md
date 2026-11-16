@@ -45,7 +45,7 @@ A path also needs a payload of its own: `Mesh` is baked and editable but has no 
 - The drawing tools write a `Path` and the extrusion asks for a ring, so an unfinished or
   self-crossing drawing stays editable instead of being rejected at the first click.
 - A closed path can still fail `to_contour`; the error is readable and leaves the drawing intact.
-- The document gains a payload with no derived geometry, so `furnicraft-mesh` and the renderer learn
+- The document gains a payload with no derived geometry, so `mesh` and the renderer learn
   nothing new beyond the line primitive.
 - A later sketch feature — a fillet on a path corner, a constraint — extends the path value, not a
   second drawing type.

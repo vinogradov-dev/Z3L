@@ -5,7 +5,7 @@
 
 ## Context
 
-Every caption, hint, menu entry and refusal in `crates/ui` and `apps/furnicraft` was an inline
+Every caption, hint, menu entry and refusal in `crates/ui` and `app` was an inline
 English literal: about 730 of them. The owner wants the interface to speak Russian as well, and a
 language chosen in the workspace settings, not in a scene file. A second language is also the test
 of the surface: a string that is built by concatenation or hidden in a `thiserror` message cannot be
@@ -29,7 +29,7 @@ enumeration of messages.
 - **The language is workspace settings.** `Settings::appearance.language` is a `Language` enum in
   `settings.rs`, chosen in the *Settings* window and persisted with the rest of the workspace. The
   shell publishes it on the `egui` context once per frame, so a surface reads it without threading a
-  `Lang` through every signature; the `.fcs` never carries it.
+  `Lang` through every signature; the `.z3l` never carries it.
 - **A generated name is fixed in the language that created it.** `{} drawing`, `{} body`, a new
   panel, assembly, camera, light or group name is written into the document when it is created and
   never re-derived. Switching the language afterwards renames nothing.

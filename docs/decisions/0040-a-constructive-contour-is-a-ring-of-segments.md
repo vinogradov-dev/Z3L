@@ -20,8 +20,8 @@ points and writing those points back turns the curve into a staircase.
 - `Contour` is a ring of `ContourSegment` values: a line between two points, or an arc with a
   centre, a positive radius, a start angle and a signed sweep of at most one turn.
 - Everything stays in document units: micrometres and millidegrees. The segment type is the single
-  boundary where a contour becomes geometry millimetres; callers of `furnicraft-model` never see a
-  `furnicraft_geom` type ([0003](0003-length-is-integer-micrometres.md)).
+  boundary where a contour becomes geometry millimetres; callers of `model` never see a
+  `geom` type ([0003](0003-length-is-integer-micrometres.md)).
 - The ring must be closed — each end equals the next start after rounding to the micrometre — must
   enclose a non-zero area and must not cross itself. A line-only ring is measured and stored exactly
   in integers; a ring with arcs is measured from the exact arc integrals.

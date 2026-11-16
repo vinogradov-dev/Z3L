@@ -10,7 +10,7 @@
 //! field here reads only the horizontal delta of the drag (`crate::scrub`).
 
 use egui::{Response, Ui};
-use furnicraft_text::Message;
+use text::Message;
 
 use crate::scrub::Scrub;
 

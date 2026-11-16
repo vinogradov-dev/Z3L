@@ -25,7 +25,7 @@
 
 use std::collections::HashSet;
 
-use furnicraft_model::{Id, Project};
+use model::{Id, Project};
 
 /// The node a viewport click should select: the outermost closed container above the hit node.
 ///
@@ -90,9 +90,9 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use furnicraft_engine::PanelCreate;
-    use furnicraft_model::Placement;
-    use furnicraft_testkit::{millimetres, sample_product_project};
+    use engine::PanelCreate;
+    use model::Placement;
+    use testkit::{millimetres, sample_product_project};
 
     /// A product of 600 x 560 x 720 mm holding one shelf, and that shelf's id.
     fn product_with_a_shelf() -> (Project, Id, Id) {

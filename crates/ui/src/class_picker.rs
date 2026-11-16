@@ -14,8 +14,8 @@ use egui::{
     Align, Button, Key, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Stroke, TextEdit, Ui,
     Vec2,
 };
-use furnicraft_model::{ClassCode, ClassRow};
-use furnicraft_text::{Lang, Message};
+use model::{ClassCode, ClassRow};
+use text::{Lang, Message};
 
 use crate::theme;
 
@@ -220,7 +220,7 @@ fn visible_rows<'a>(rows: &'a [ClassRow], query: &str, lang: Lang) -> Vec<Family
 /// Returns each class with the text a row draws (its code and label) and its depth for indenting:
 /// `1` for a type and `2` for a variant.
 pub(crate) fn product_rows(query: &str, lang: Lang) -> Vec<(ClassCode, String, u8)> {
-    product_rows_in(furnicraft_model::registry(), query, lang)
+    product_rows_in(model::registry(), query, lang)
 }
 
 fn product_rows_in(rows: &[ClassRow], query: &str, lang: Lang) -> Vec<(ClassCode, String, u8)> {
@@ -278,8 +278,8 @@ fn frame(ui: &Ui) -> egui::Frame {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Extent, Level, Measure, Mount, Nesting, OperationSet, Supply, TraitSet};
-    use furnicraft_text::Message;
+    use model::{Extent, Level, Measure, Mount, Nesting, OperationSet, Supply, TraitSet};
+    use text::Message;
 
     use super::*;
 
@@ -298,7 +298,7 @@ mod tests {
     fn a_label_a_slug_and_an_alias_all_find_the_same_row() {
         for query in ["полка", "полочка", "shelf", "horizontal-panel", "горизонтальная панель"]
         {
-            let rows = listed(furnicraft_model::registry(), query, Lang::Ru);
+            let rows = listed(model::registry(), query, Lang::Ru);
             assert!(
                 rows.iter().any(|row| row.code() == shelf().value()),
                 "`{query}` does not find the horizontal panel: {:?}",
@@ -309,12 +309,12 @@ mod tests {
 
     #[test]
     fn a_family_name_brings_its_classes_and_a_type_brings_its_variants() {
-        let storage = listed(furnicraft_model::registry(), "Хранение", Lang::Ru);
+        let storage = listed(model::registry(), "Хранение", Lang::Ru);
         assert!(storage.iter().any(|row| row.slug() == "base-cabinet"));
         assert!(storage.iter().any(|row| row.slug() == "horizontal-panel"));
         assert!(!storage.iter().any(|row| row.slug() == "chair"));
 
-        let cup_hinge = listed(furnicraft_model::registry(), "cup hinge", Lang::En);
+        let cup_hinge = listed(model::registry(), "cup hinge", Lang::En);
         assert!(cup_hinge.iter().any(|row| row.slug() == "cup-hinge"));
         assert!(cup_hinge.iter().any(|row| row.slug() == "cup-hinge-overlay"));
     }
@@ -364,7 +364,7 @@ mod tests {
         for _ in 0..2 {
             let output = ctx.run_ui(screen.clone(), |ui| {
                 let anchor = ui.add(Button::new("Class"));
-                let chosen = picker.show(ui, &anchor, ClassCode::UNCLASSIFIED, furnicraft_model::registry());
+                let chosen = picker.show(ui, &anchor, ClassCode::UNCLASSIFIED, model::registry());
                 assert!(chosen.is_none(), "drawing the picker assigns nothing");
             });
             texts = drawn_text(&output.shapes);
@@ -401,7 +401,7 @@ mod tests {
             };
             let output = ctx.run_ui(input, |ui| {
                 let anchor = ui.add(Button::new("Class"));
-                let chosen = picker.show(ui, &anchor, ClassCode::UNCLASSIFIED, furnicraft_model::registry());
+                let chosen = picker.show(ui, &anchor, ClassCode::UNCLASSIFIED, model::registry());
                 assert!(chosen.is_none());
             });
             output.drop_without_applying_deltas();

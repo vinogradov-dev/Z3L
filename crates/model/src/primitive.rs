@@ -9,9 +9,9 @@
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 //! [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 /// Largest accepted primitive dimension: 1000 m, the same bound the panel rules use.
 pub const MAX_PRIMITIVE_SIZE: Length = Length::from_micrometres(1_000_000_000);

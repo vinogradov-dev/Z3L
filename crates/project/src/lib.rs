@@ -1,9 +1,9 @@
 //! The scene file: an envelope around the document, and its atomic writer.
 //!
-//! A saved scene is UTF-8 JSON with the extension `.fcs`. The envelope owns the format identity
+//! A saved scene is UTF-8 JSON with the extension in [`EXTENSION`]. The envelope owns the format identity
 //! and its version, carries the serialized [`Project`] as its only payload, and preserves
 //! top-level sections it does not understand so an older build never destroys a newer build's
-//! data. The document keeps its own schema version in [`furnicraft_model`], and that version is the
+//! data. The document keeps its own schema version in [`model`], and that version is the
 //! only one this build reads: a file from any other build is a readable error, never a migration.
 //!
 //! The crate is deliberately below `engine` and `ui`: saving and loading are file operations on
@@ -28,13 +28,23 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use furnicraft_model::Project;
+use model::Project;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 /// The value of the envelope's `format` field.
-pub const FORMAT: &str = "furnicraft.scene";
+///
+/// It names a contract rather than a brand: the only job of this string is to reject a foreign JSON
+/// before a document is parsed, and an `owner.thing` spelling keeps that check strong through any
+/// rename of the product (ADR 0135).
+pub const FORMAT: &str = "furniture.scene";
+
+/// The file extension a scene file carries, without the dot.
+///
+/// This one follows the product, because it is what a person reads in a file manager and what the
+/// open dialog filters by.
+pub const EXTENSION: &str = "z3l";
 
 /// The envelope version this build writes and understands.
 pub const FORMAT_VERSION: u32 = 1;
@@ -212,7 +222,7 @@ impl SceneFile {
     }
 }
 
-/// The sibling path a save writes before renaming: `<name>.fcs.tmp`.
+/// The sibling path a save writes before renaming: `<name>.<extension>.tmp`.
 fn temp_path(path: &Path) -> Result<PathBuf, SceneFileError> {
     let Some(name) = path.file_name() else {
         return Err(SceneFileError::Write {

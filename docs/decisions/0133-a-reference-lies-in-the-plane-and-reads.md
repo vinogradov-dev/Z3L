@@ -57,8 +57,8 @@ enough to read.**
 - `crates/ui/src/draw_fields.rs` — `Reference::samples`, `sweep_steps`.
 - `crates/ui/src/guides.rs` — `reference`, `dots`.
 - `crates/ui/src/theme.rs` — `REFERENCE_DOT`, `REFERENCE_DOT_LIGHT`, `REFERENCE_SPACING`.
-- `apps/furnicraft/src/draw_gizmo.rs` — `paint_guides`, `reference_screen`.
-- `apps/furnicraft/src/contour_gizmo.rs` — `paint_latch_guides`, `reference_screen`.
+- `app/src/draw_gizmo.rs` — `paint_guides`, `reference_screen`.
+- `app/src/contour_gizmo.rs` — `paint_latch_guides`, `reference_screen`.
 - ADR [0127](0127-a-sketch-has-two-guides.md) — the two guides and the pair this record resizes;
   ADR [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) — the fixed ink pair;
   ADR [0128](0128-a-sketch-angle-reads-from-the-nearer-x-end.md) — the end the sweep is read from.

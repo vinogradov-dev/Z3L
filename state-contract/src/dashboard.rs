@@ -245,7 +245,7 @@ mod tests {
                            - `[x]` **A2** ring of segments — `0833b4c`\n";
     const NOTE: &str = "task: D1\ngoal: a contour panel\n\nsteps:\n  [x] outline enum\n  [ ] banding by ring\n\n\
                         now: `nominal_contour` in `crates/model/src/panel_contour.rs`\nblocked: nothing\n\
-                        run: cargo test -p furnicraft-model --lib\nresume: read `Panel::geometry_for_with`\n";
+                        run: cargo test -p model --lib\nresume: read `Panel::geometry_for_with`\n";
 
     /// A scratch project directory with the given plan files.
     fn project(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {

@@ -1,5 +1,5 @@
 [package]
-name = "furnicraft-render"
+name = "render"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,8 @@ workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
-furnicraft-geom = { workspace = true }
-furnicraft-scene = { workspace = true }
+geom = { workspace = true }
+scene = { workspace = true }
 thiserror = { workspace = true }
 wgpu = { workspace = true }
 
@@ -19,7 +19,7 @@ wgpu = { workspace = true }
 # Parses and validates `scene.wgsl` in tests; already in the tree through `wgpu`.
 naga = { version = "30", features = ["wgsl-in"] }
 # Tests build a polyline, which carries a document id; already in the tree through `scene`.
-furnicraft-model = { workspace = true }
+model = { workspace = true }
 # The ignored pixel test renders the product envelope offscreen and writes it next to the UI shots.
-furnicraft-testkit = { workspace = true }
+testkit = { workspace = true }
 pollster = { workspace = true }

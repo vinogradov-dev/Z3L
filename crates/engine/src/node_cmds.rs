@@ -10,18 +10,18 @@
 
 use std::collections::HashSet;
 
-use furnicraft_model::{
+use model::{
     Catalog, ClassCode, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange, PropertyValue,
     SYSTEM_CLASS,
 };
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use units::Length;
 
 use crate::class_rules::NodeRules;
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the component container creation command.
 pub const ASSEMBLY_CREATE_ID: &str = "assembly.create";

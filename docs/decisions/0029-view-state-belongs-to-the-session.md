@@ -5,7 +5,7 @@
 
 ## Context
 
-`PROJECT.md` already places selection and view state in `furnicraft-engine`'s session, but the code
+`PROJECT.md` already places selection and view state in `engine`'s session, but the code
 keeps the selection and the open containers in `ui::Editor` and the camera in the app shell. That
 works for one window with one person at the keyboard.
 
@@ -46,4 +46,4 @@ answer about a scene the user is not looking at.
 - [0036](0036-cameras-and-lights-are-scene-objects.md) keeps navigation in the session but makes
   camera and light **objects** document data.
 - `AGENTS.md` §4.10 (space and views), §4.1 (everything is a command).
-- `PROJECT.md` › Crate map, `furnicraft-engine` row.
+- `PROJECT.md` › Crate map, `engine` row.

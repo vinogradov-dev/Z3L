@@ -60,7 +60,7 @@ names; the slug is never stored in a document and never compared.
 
 ## 3. The registry row
 
-The registry is a constant table in `furnicraft-model`; it is not a database and not a file the
+The registry is a constant table in `model`; it is not a database and not a file the
 program loads at run time.
 
 | Field | Meaning |
@@ -68,7 +68,7 @@ program loads at run time.
 | `code` | the six-digit identity. Assigned once, never reused, never renumbered |
 | `parent` | derived from the digits; a test asserts that the parent sits one level up — a type's parent is its family heading, a variant's parent is its type row |
 | `slug` | mnemonic for people, export tables and generated program names |
-| `label_key` | the translation key in `furnicraft-text`; names are data, not code |
+| `label_key` | the translation key in `text`; names are data, not code |
 | `aliases` | search synonyms (`полка`, `полочка`), never used for matching a document |
 | `traits` | the behaviour set below; the only thing algorithms read |
 | `since` | the release that introduced the row, for the registry changelog |
@@ -267,7 +267,7 @@ rather than the article differ.
 ## 7. The registry
 
 The table in this section is the registry's content for version 1. It becomes a constant table in
-`furnicraft-model`, and a test compares it with this document row for row, so the prose cannot drift
+`model`, and a test compares it with this document row for row, so the prose cannot drift
 from what the program knows. A change here is a registry change and carries a changelog entry; once
 shipped, a code is immortal (§8).
 

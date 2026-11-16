@@ -1,6 +1,6 @@
 # Order package
 
-Status: domain specification. This document is the published contract between FurniCraft and the
+Status: domain specification. This document is the published contract between Z3L and the
 programs that read an order: reports, drawings, cutting lists, CNC. It defines the package layout,
 its tables and columns, the number rules, what the package resolves for the reader, and how the
 contract is versioned.
@@ -12,7 +12,7 @@ Related decisions: [0095](../decisions/0095-the-order-package-is-a-published-sna
 ## 1. What a package is
 
 A one-way snapshot of one order, written to be read by software we do not control. It is **not** a
-second document format: FurniCraft never reads a package back, and the scene file (`.fcs`) remains the
+second document format: Z3L never reads a package back, and the scene file (`.z3l`) remains the
 only import format. It is also **not** a dump of our internal structures — that is what makes reports
 break when a program changes. A package is a contract: it promises a small, boring, stable set of
 flat tables, and every change to them follows §7.
@@ -52,8 +52,8 @@ mail. Both forms carry the same manifest.
 The program writes a package from a saved scene, with no window and no GPU:
 
 ```sh
-furnicraft export cabinet.fcs --out cabinet-2026-11-12.fcpkg                       # the directory
-furnicraft export cabinet.fcs --out cabinet-2026-11-12.json --format single         # one file
+z3l export cabinet.z3l --out cabinet-2026-11-12.fcpkg                       # the directory
+z3l export cabinet.z3l --out cabinet-2026-11-12.json --format single         # one file
 ```
 
 `--no-timestamp` leaves `exported_at` out, so two exports of one revision are byte-identical and a
@@ -71,11 +71,11 @@ lists the tables in the order the directory uses.
 
 ```json
 {
-  "format": "furnicraft.order",
+  "format": "furniture.order",
   "version": 1,
   "app": "0.1.0",
   "exported_at": "2026-11-12T21:40:00Z",
-  "document": { "file": "cabinet.fcs", "revision": 41, "hash": "3f9c…" },
+  "document": { "file": "cabinet.z3l", "revision": 41, "hash": "3f9c…" },
   "order": { "number": "2026-114", "version": 3 },
   "units": { "length": "um", "angle": "mdeg", "area": "mm2", "rotation_scale": 1000000000 },
   "rules": { "kerf_um": 4000, "trim_um": 10000 },
@@ -287,7 +287,7 @@ never a chosen strategy.
 ## 8. Reading it
 
 Any language: parse `manifest.json`, then read one JSON object per line from each `*.jsonl`. In
-Python, for example (documentation only — no Python is shipped or executed by FurniCraft):
+Python, for example (documentation only — no Python is shipped or executed by Z3L):
 
 ```python
 import json, pathlib

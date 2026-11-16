@@ -35,7 +35,7 @@ guide draws is the same signed sweep the plate shows.**
 **Tab is the plate's key, and the polyline's segment kind moves to the right-click menu.**
 
 - Tab moves the keyboard between the plates and never changes the figure; the drawing tool no longer
-  reads it (`handle_keys` in `apps/furnicraft/src/document.rs`).
+  reads it (`handle_keys` in `app/src/document.rs`).
 - A right click on a running polyline opens `crates/ui/src/draw_menu.rs`: the next segment is
   straight or an arc, and the chain can finish from the same menu. A fixed tool keeps the CAD habit
   of finishing on the right button.

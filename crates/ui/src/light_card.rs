@@ -9,11 +9,11 @@
 //! [ADR 0039]: ../docs/decisions/0039-point-lights-use-watts-and-inverse-square-falloff.md
 
 use egui::{TextEdit, Ui};
-use furnicraft_engine::node_cmds::NODE_RENAME_ID;
-use furnicraft_engine::scene_cmds::LIGHT_PARAMS_SET_ID;
-use furnicraft_engine::{EditScope, LightParamsSet, NodeRename, Session};
-use furnicraft_model::{Id, LightKind, LightNode};
-use furnicraft_text::{Lang, Message};
+use engine::node_cmds::NODE_RENAME_ID;
+use engine::scene_cmds::LIGHT_PARAMS_SET_ID;
+use engine::{EditScope, LightParamsSet, NodeRename, Session};
+use model::{Id, LightKind, LightNode};
+use text::{Lang, Message};
 
 use crate::command::{dispatch, json};
 use crate::scrub::{CommitPolicy, Scrub};
@@ -226,10 +226,10 @@ fn apply_params(session: &mut Session, request: LightParamsSet, scope: Option<Ed
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::LightCreate;
-    use furnicraft_engine::scene_cmds::LIGHT_CREATE_ID;
-    use furnicraft_model::Placement;
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use engine::LightCreate;
+    use engine::scene_cmds::LIGHT_CREATE_ID;
+    use model::Placement;
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 

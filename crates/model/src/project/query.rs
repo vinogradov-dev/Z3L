@@ -3,7 +3,7 @@
 //! A query never mutates the document and never allocates more than the answer needs. The same
 //! lookups feed the UI, reports and commands, so every caller agrees on what a node is.
 
-use furnicraft_geom::{DQuat, DVec3};
+use geom::{DQuat, DVec3};
 
 use crate::project::Project;
 use crate::tree::{find_container, find_node, find_panel_with_depth, find_parent, object_bounds_mm, panel_bounds};
@@ -502,8 +502,8 @@ fn overlaps(min: DVec3, max: DVec3, other: &ProductBox) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use furnicraft_geom::{DQuat, DVec3};
-    use furnicraft_units::{Degrees, Length};
+    use geom::{DQuat, DVec3};
+    use units::{Degrees, Length};
 
     use crate::fixtures::*;
     use crate::*;

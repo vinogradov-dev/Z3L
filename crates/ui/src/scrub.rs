@@ -29,8 +29,8 @@ use egui::{
     Align2, CursorIcon, FontId, Id, Key, Margin, Response, RichText, Sense, Stroke, StrokeKind, TextEdit, TextStyle,
     Ui, Widget, pos2, vec2,
 };
-use furnicraft_engine::EditScope;
-use furnicraft_text::Message;
+use engine::EditScope;
+use text::Message;
 
 use crate::theme;
 
@@ -582,9 +582,7 @@ fn numeric_text(text: &str) -> String {
 
 /// Reads millimetres, refusing more precision than a micrometre stores.
 pub(crate) fn parse_millimetres(text: &str) -> Result<f64, Message> {
-    furnicraft_units::Length::parse_millimetres(text)
-        .map(furnicraft_units::Length::millimetres_f64)
-        .map_err(crate::length_error)
+    units::Length::parse_millimetres(text).map(units::Length::millimetres_f64).map_err(crate::length_error)
 }
 
 /// A number of millimetres as a length, rounded to the micrometre the document stores.
@@ -592,7 +590,7 @@ pub(crate) fn parse_millimetres(text: &str) -> Result<f64, Message> {
 /// A field works in `f64` because that is what a drag produces; the value becomes a [`Length`] here,
 /// once, at the boundary. A value that cannot be a length — infinite, or past a kilometre — is `None`
 /// instead of a silently clamped length.
-pub(crate) fn millimetres(value: f64) -> Option<furnicraft_units::Length> {
+pub(crate) fn millimetres(value: f64) -> Option<units::Length> {
     if !value.is_finite() || value.abs() > 1_000_000.0 {
         return None;
     }
@@ -600,11 +598,11 @@ pub(crate) fn millimetres(value: f64) -> Option<furnicraft_units::Length> {
     if !micrometres.is_finite() || micrometres < i64::MIN as f64 || micrometres > i64::MAX as f64 {
         return None;
     }
-    Some(furnicraft_units::Length::from_micrometres(micrometres as i64))
+    Some(units::Length::from_micrometres(micrometres as i64))
 }
 
 /// A number of degrees as an angle, rounded to the millidegree the document stores.
-pub(crate) fn degrees(value: f64) -> Option<furnicraft_units::Degrees> {
+pub(crate) fn degrees(value: f64) -> Option<units::Degrees> {
     if !value.is_finite() {
         return None;
     }
@@ -612,14 +610,12 @@ pub(crate) fn degrees(value: f64) -> Option<furnicraft_units::Degrees> {
     if !millidegrees.is_finite() || millidegrees < i64::MIN as f64 || millidegrees > i64::MAX as f64 {
         return None;
     }
-    Some(furnicraft_units::Degrees::from_millidegrees(millidegrees as i64))
+    Some(units::Degrees::from_millidegrees(millidegrees as i64))
 }
 
 /// Reads degrees, refusing more precision than a millidegree stores.
 pub(crate) fn parse_degrees(text: &str) -> Result<f64, Message> {
-    furnicraft_units::Degrees::parse_degrees(text)
-        .map(furnicraft_units::Degrees::degrees_f64)
-        .map_err(crate::degrees_error)
+    units::Degrees::parse_degrees(text).map(units::Degrees::degrees_f64).map_err(crate::degrees_error)
 }
 
 /// Rounds a dragged value the same way the field shows it.
@@ -709,7 +705,7 @@ mod tests {
     /// Draws a field pinned to `rect` and returns what it reported this frame.
     fn draw_field(
         ui: &mut egui::Ui,
-        session: &mut furnicraft_engine::Session,
+        session: &mut engine::Session,
         rect: Rect,
         value: &mut u32,
         policy: CommitPolicy,
@@ -723,8 +719,8 @@ mod tests {
         outcome.expect("the field draws itself")
     }
 
-    fn edit_session() -> furnicraft_engine::Session {
-        furnicraft_engine::Session::new(furnicraft_testkit::sample_project())
+    fn edit_session() -> engine::Session {
+        engine::Session::new(testkit::sample_project())
     }
 
     #[test]

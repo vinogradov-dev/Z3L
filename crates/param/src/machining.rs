@@ -1,7 +1,7 @@
 //! The machining pipeline: a panel's operations compile to effects on one plan.
 //!
 //! A [`Machining`] record says what an operation is; it never says what it does to the body. The
-//! compiler reads the record's [`MachiningDescriptor`](furnicraft_model::MachiningDescriptor) and
+//! compiler reads the record's [`MachiningDescriptor`](model::MachiningDescriptor) and
 //! turns it into [`OpEffect`]s: a region removed before extrusion, a tool body subtracted or added
 //! after it, or an attachment that leaves the solid alone. [`PanelPlan`] folds those effects in list
 //! order and builds the one [`SolidPlan`] the kernel evaluates.
@@ -10,10 +10,10 @@
 //! this crate. The compiler is the only place that turns a kind into geometry, so the panel builder
 //! never matches on a kind.
 
-use furnicraft_geom::{Frame, Region, subtract_regions};
-use furnicraft_kernel::BooleanOp;
-use furnicraft_model::{EdgeRef, Machining, MachiningParams, MachiningStage, Panel, PanelGeometry};
-use furnicraft_units::Length;
+use geom::{Frame, Region, subtract_regions};
+use kernel::BooleanOp;
+use model::{EdgeRef, Machining, MachiningParams, MachiningStage, Panel, PanelGeometry};
+use units::Length;
 
 use crate::profile;
 use crate::solid::{PlanBuilder, PlanStep, SolidPlan};
@@ -203,15 +203,15 @@ impl PanelPlan {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_geom::{DVec2, DVec3, Rect, Region};
-    use furnicraft_kernel::{Profile, SolidKernel};
-    use furnicraft_kernel_truck::TruckKernel;
-    use furnicraft_model::{
+    use geom::{DVec2, DVec3, Rect, Region};
+    use kernel::{Profile, SolidKernel};
+    use kernel_truck::TruckKernel;
+    use model::{
         Container, Cutout, CutoutDepth, CutoutShape, EdgeBevel, EdgeId, EdgeRef, FaceSide, Id, MachiningAnchor,
         MachiningId, PanelNominalSize, PanelRect, Placement, Project, RectEdge,
     };
 
-    use furnicraft_testkit::millimetres;
+    use testkit::millimetres;
 
     use crate::{TOOL_OVERSHOOT_MM, extrusion_plan};
 
@@ -230,11 +230,9 @@ mod tests {
             .add_panel(project.root().id(), "End", nominal, None, millimetres(18), Placement::IDENTITY)
             .expect("add panel");
         for (edge, millidegrees) in bevels {
-            let bevel = EdgeBevel::new(
-                EdgeRef::Rect { edge: edge.id() },
-                furnicraft_units::Degrees::from_millidegrees(*millidegrees),
-            )
-            .expect("bevel");
+            let bevel =
+                EdgeBevel::new(EdgeRef::Rect { edge: edge.id() }, units::Degrees::from_millidegrees(*millidegrees))
+                    .expect("bevel");
             project.set_panel_bevel(panel_id, bevel).expect("set bevel");
         }
         project.panel(panel_id).expect("panel").clone()

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use furnicraft_units::Length;
+use units::Length;
 
 use super::list;
 use super::spec::{self, GroupSpec, Method, TabSpec, ToolSpec};

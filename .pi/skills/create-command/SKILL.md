@@ -1,6 +1,6 @@
 ---
 name: create-command
-description: "Add a new user-visible command to FurniCraft end to end: stable id, typed params, engine mutation, undo/redo, UI dispatch by id, tests, docs and the final gate. Use when adding, renaming or changing any editor action that mutates the document."
+description: "Add a new user-visible command to Z3L end to end: stable id, typed params, engine mutation, undo/redo, UI dispatch by id, tests, docs and the final gate. Use when adding, renaming or changing any editor action that mutates the document."
 license: MIT
 compatibility: pi
 metadata:
@@ -8,7 +8,7 @@ metadata:
   workflow: engine
 ---
 
-# Add a command to FurniCraft
+# Add a command to Z3L
 
 Every user-visible change to the document is a command (AGENTS.md §4.1). This skill is the checklist for adding one without breaking layering, undo or the "never crash" rule.
 
@@ -23,7 +23,7 @@ Every user-visible change to the document is a command (AGENTS.md §4.1). This s
 
 1. Read `AGENTS.md` §4 (golden rules) and the crate map in §3; read the relevant part of `PROJECT.md`.
 2. If the change touches more than one file, present a plan and wait for approval (AGENTS.md §8).
-3. Find the crate the command belongs to: commands live in `furnicraft-engine` (L6). They may use `model`, `param` and `mesh`, and must not use `wgpu` or `egui`.
+3. Find the crate the command belongs to: commands live in `engine` (L6). They may use `model`, `param` and `mesh`, and must not use `wgpu` or `egui`.
 4. Check that the command is not already there under another id; reuse beats duplication.
 
 ## Steps
@@ -52,7 +52,7 @@ Write down:
 
 ### 3. Define the parameters
 
-- Physical sizes are `furnicraft_units::Length` (integer micrometres). Never `f32`/`f64` millimetres, never unit-less numbers (AGENTS.md §4.3).
+- Physical sizes are `units::Length` (integer micrometres). Never `f32`/`f64` millimetres, never unit-less numbers (AGENTS.md §4.3).
 - Use enums and newtypes instead of string magic and booleans with unclear meaning.
 - Optional fields get `#[serde(default)]` so saved macros, tests and older callers keep working.
 - Validate ranges (positive thickness, non-empty name, panel within sane limits) and cap anything that sizes an allocation. A 10 km panel or 4 billion facets is an `Err`, not an OOM (AGENTS.md §4.4).
@@ -87,7 +87,7 @@ At minimum, in the engine crate:
 - **undo/redo** — one undo restores the prior document byte-equivalently; redo re-applies;
 - **serde round-trip** — params survive serialization if they are persisted.
 
-Tests must not need a GPU or a window. Use `furnicraft-testkit` fixtures rather than hand-built documents where possible.
+Tests must not need a GPU or a window. Use `testkit` fixtures rather than hand-built documents where possible.
 
 ### 8. Update the documentation
 

@@ -4,8 +4,8 @@
 //! The cards never compose placements or turn a point themselves; they print what the model
 //! already derived.
 
-use furnicraft_model::{Id, PivotLocal, Project};
-use furnicraft_units::Length;
+use model::{Id, PivotLocal, Project};
+use units::Length;
 
 /// Formats three exact lengths as one inspector value.
 pub(crate) fn point(point: [Length; 3]) -> String {
@@ -34,10 +34,10 @@ pub(crate) fn world_pivot(project: &Project, node: Id) -> Option<String> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::node_cmds::NODE_PLACEMENT_SET_ID;
-    use furnicraft_engine::{NodePlacementSet, Session};
-    use furnicraft_model::{Id, PivotLocal, Placement};
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use engine::node_cmds::NODE_PLACEMENT_SET_ID;
+    use engine::{NodePlacementSet, Session};
+    use model::{Id, PivotLocal, Placement};
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 
@@ -78,8 +78,8 @@ mod tests {
             Length::from_micrometres(-2_500),
             Length::from_micrometres(3_000),
         );
-        let params = serde_json::to_value(furnicraft_engine::NodePivotSet { node: drawer, pivot }).expect("params");
-        session.dispatch(furnicraft_engine::node_cmds::NODE_PIVOT_SET_ID, &params).expect("set pivot");
+        let params = serde_json::to_value(engine::NodePivotSet { node: drawer, pivot }).expect("params");
+        session.dispatch(engine::node_cmds::NODE_PIVOT_SET_ID, &params).expect("set pivot");
 
         assert_eq!(world_pivot(session.project(), drawer).as_deref(), Some("102.5 mm  1.5 mm  3 mm"));
     }
@@ -93,8 +93,8 @@ mod tests {
             Length::from_micrometres(-2_500),
             Length::from_micrometres(3_000),
         );
-        let params = serde_json::to_value(furnicraft_engine::NodePivotSet { node: drawer, pivot }).expect("params");
-        session.dispatch(furnicraft_engine::node_cmds::NODE_PIVOT_SET_ID, &params).expect("set pivot");
+        let params = serde_json::to_value(engine::NodePivotSet { node: drawer, pivot }).expect("params");
+        session.dispatch(engine::node_cmds::NODE_PIVOT_SET_ID, &params).expect("set pivot");
 
         // A further 90° turn about the pivot, expressed in the parent frame: the same placement the
         // rotate gizmo would dispatch. The drawer already turns 90°, so the composed turn is 180°.

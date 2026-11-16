@@ -26,14 +26,14 @@
     clippy::unreachable
 )]
 
-use furnicraft_geom::{ContourError, DVec2, DVec3, Frame, RegionError, Segment};
-use furnicraft_kernel::{BodyId, BooleanOp, KernelError, Profile, SolidKernel};
-use furnicraft_model::{
+use geom::{ContourError, DVec2, DVec3, Frame, RegionError, Segment};
+use kernel::{BodyId, BooleanOp, KernelError, Profile, SolidKernel};
+use model::{
     BandingSpec, ContourSegmentId, Cutout, CutoutDepth, CutoutShape, EdgeBanding, EdgeBevel, EdgeId, EdgeRef, FaceSide,
     MachiningId, MachiningStage, Panel, PanelContourError, PanelGeometry, SegmentSource, VertexId,
 };
-use furnicraft_units::Length;
 use thiserror::Error;
+use units::Length;
 
 mod constructive;
 mod machining;
@@ -72,10 +72,10 @@ pub enum ParamError {
     ContourSampling(#[from] ContourError),
     /// The contour of a constructive object is invalid.
     #[error("a document contour is invalid: {0}")]
-    DocumentContour(#[from] furnicraft_model::ContourError),
+    DocumentContour(#[from] model::ContourError),
     /// The path of a constructive object is not a ring.
     #[error("a constructive path is not a ring: {0}")]
-    ConstructivePath(#[from] furnicraft_model::PathError),
+    ConstructivePath(#[from] model::PathError),
     /// A rectangle a profile would be built from has no positive extent.
     #[error(transparent)]
     Region(#[from] RegionError),
@@ -124,10 +124,10 @@ pub enum ParamError {
 /// Checks that a contour can become a renderable extrusion, without building the mesh.
 ///
 /// The cap of a single extrusion is one document face and its vertices are the sampled ring, so a
-/// contour that samples to more points than [`furnicraft_model::MAX_FACE_VERTICES`] can never be
+/// contour that samples to more points than [`model::MAX_FACE_VERTICES`] can never be
 /// drawn. A command that stores a ring calls this before it mutates the document, so an object
 /// never ends up with a contour that evaluates to nothing.
-pub fn validate_extrusion_contour(contour: &furnicraft_model::Contour) -> Result<(), ParamError> {
+pub fn validate_extrusion_contour(contour: &model::Contour) -> Result<(), ParamError> {
     profile::profile_of_document_contour(contour).map(|_| ())
 }
 
@@ -758,16 +758,16 @@ pub(crate) fn build_cutout_tool(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_geom::{Arc, DVec2};
-    use furnicraft_kernel::{BooleanOp, Measure, TessOptions};
-    use furnicraft_kernel_truck::TruckKernel;
-    use furnicraft_model::{
+    use geom::{Arc, DVec2};
+    use kernel::{BooleanOp, Measure, TessOptions};
+    use kernel_truck::TruckKernel;
+    use model::{
         Constructive, Container, Contour, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow,
         EdgeId, Id, MaterialId, Mesh, PanelNominalSize, PanelRect, Placement, Project, RectCorner, RectEdge,
         RingBanding,
     };
-    use furnicraft_testkit::millimetres;
-    use furnicraft_units::Length;
+    use testkit::millimetres;
+    use units::Length;
 
     use super::*;
 
@@ -781,7 +781,7 @@ mod tests {
     }
 
     impl SolidKernel for RecordingKernel {
-        fn extrude(&mut self, profile: &Profile, frame: &Frame, height: f64) -> furnicraft_kernel::Result<BodyId> {
+        fn extrude(&mut self, profile: &Profile, frame: &Frame, height: f64) -> kernel::Result<BodyId> {
             self.profile = Some(profile.clone());
             self.profiles.push(profile.clone());
             self.frame = Some(*frame);
@@ -792,19 +792,15 @@ mod tests {
             Ok(BodyId::from_raw(7))
         }
 
-        fn boolean(&mut self, _op: BooleanOp, target: BodyId, _tool: BodyId) -> furnicraft_kernel::Result<BodyId> {
+        fn boolean(&mut self, _op: BooleanOp, target: BodyId, _tool: BodyId) -> kernel::Result<BodyId> {
             Ok(target)
         }
 
-        fn tessellate(
-            &self,
-            _body: BodyId,
-            _options: &TessOptions,
-        ) -> furnicraft_kernel::Result<furnicraft_geom::MeshData> {
+        fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> kernel::Result<geom::MeshData> {
             Err(KernelError::Unsupported("recording kernel does not implement tessellation"))
         }
 
-        fn measure(&self, _body: BodyId) -> furnicraft_kernel::Result<Measure> {
+        fn measure(&self, _body: BodyId) -> kernel::Result<Measure> {
             Err(KernelError::Unsupported("recording kernel does not implement measurement"))
         }
 
@@ -2011,8 +2007,8 @@ mod tests {
     fn a_contour_with_a_round_corner_extrudes_with_the_disc_area() {
         // A quarter disc of radius 100 mm: the arc sweeps 90 degrees about the origin and two lines
         // close the ring along the axes, so the area is pi r^2 / 4.
-        use furnicraft_model::ContourSegment;
-        use furnicraft_units::Degrees;
+        use model::ContourSegment;
+        use units::Degrees;
 
         let arc = ContourSegment::arc(
             [Length::ZERO, Length::ZERO],
@@ -2042,8 +2038,8 @@ mod tests {
     fn a_ring_closed_by_a_rounded_arc_end_still_extrudes() {
         // The same ring the drawing tools now accept: a two-line chain closed by a 600 mm arc whose
         // derived end misses the first point by 5 µm. It reaches a contour and a solid (ADR 0072).
-        use furnicraft_model::{ContourSegment, Path};
-        use furnicraft_units::Degrees;
+        use model::{ContourSegment, Path};
+        use units::Degrees;
 
         let arc = ContourSegment::arc(
             [Length::ZERO, Length::ZERO],

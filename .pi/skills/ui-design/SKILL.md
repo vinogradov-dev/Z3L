@@ -1,6 +1,6 @@
 ---
 name: ui-design
-description: "Design and review FurniCraft's interface: a panel, dialog, toolbar cell, ribbon, popover, tool card, palette, icon, colour, spacing, wording, cursor, drag or keyboard behaviour. Use before changing anything under crates/ui or the app chrome in apps/furnicraft/src, and when judging whether a screen works for a furniture maker."
+description: "Design and review Z3L's interface: a panel, dialog, toolbar cell, ribbon, popover, tool card, palette, icon, colour, spacing, wording, cursor, drag or keyboard behaviour. Use before changing anything under crates/ui or the app chrome in app/src, and when judging whether a screen works for a furniture maker."
 license: MIT
 compatibility: pi
 metadata:
@@ -8,7 +8,7 @@ metadata:
   workflow: ui-design
 ---
 
-# Design the FurniCraft interface
+# Design the Z3L interface
 
 The user is a furniture maker, not a designer: they measure panels, fit hardware and drill holes.
 The interface must feel like a native professional tool — dense, quiet, predictable — and it must

@@ -13,7 +13,7 @@ disappears.
 
 ## Decision
 
-`furnicraft-model` defines `MaterialId`, `PanelMaterial`, `EdgeBandingMaterial` and `Catalog` as plain
+`model` defines `MaterialId`, `PanelMaterial`, `EdgeBandingMaterial` and `Catalog` as plain
 serializable data. `MaterialId` is a non-zero `u64` newtype, separate from the document `Id` and not
 allocated from `Project`'s id space; ids are stable within the catalogue and never reused.
 

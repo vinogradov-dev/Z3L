@@ -5,8 +5,8 @@
 //! six quads at its base corner, a cylinder one quad per side plus two polygonal caps, and a sphere
 //! latitude bands joined by triangles at the poles.
 
-use furnicraft_model::{Cuboid, Cylinder, Mesh, Primitive, Sphere};
-use furnicraft_units::Length;
+use model::{Cuboid, Cylinder, Mesh, Primitive, Sphere};
+use units::Length;
 
 use crate::MeshError;
 
@@ -120,8 +120,8 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use furnicraft_model::{DEFAULT_BANDS, DEFAULT_SEGMENTS};
-    use furnicraft_testkit::millimetres;
+    use model::{DEFAULT_BANDS, DEFAULT_SEGMENTS};
+    use testkit::millimetres;
 
     /// Newell's normal of a polygon.
     fn normal(mesh: &Mesh, face: &[u32]) -> [f64; 3] {

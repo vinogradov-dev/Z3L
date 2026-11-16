@@ -7,19 +7,19 @@
 U41 adds a Settings window (theme, accent, UI scale, viewport defaults, ribbon opacity, shortcuts)
 and a Home start surface (new, open, recent files, the empty template). All of that is *how the
 program looks and starts*, not part of the cabinet. The document already has a versioned, atomic
-envelope in `furnicraft-project`; the UI scale, an accent colour or a recent-file list inside a
-`.fcs` would travel to another machine with the furniture, make two users of the same file fight
+envelope in `project`; the UI scale, an accent colour or a recent-file list inside a
+`.z3l` would travel to another machine with the furniture, make two users of the same file fight
 over their window, and put presentation into every undo/revision path.
 
 ## Decision
 The workspace is one JSON file at the operating system's config directory
-(`%APPDATA%\FurniCraft`, `~/Library/Application Support/FurniCraft`,
-`$XDG_CONFIG_HOME/furnicraft` or `~/.config/furnicraft`), named `settings.json`.
+(`%APPDATA%\Z3L`, `~/Library/Application Support/Z3L`,
+`$XDG_CONFIG_HOME/z3l` or `~/.config/z3l`), named `settings.json`.
 
 - The data model (`Settings`, `Appearance`, `ViewportSettings`, `RibbonSettings`, `ThemeChoice`,
-  the display enums) lives in `furnicraft-ui`; it is versioned (`SETTINGS_VERSION`) and every ranged
+  the display enums) lives in `ui`; it is versioned (`SETTINGS_VERSION`) and every ranged
   value is clamped on read.
-- Persistence lives in the shell (`apps/furnicraft/src/settings_store.rs`), because the UI crate does
+- Persistence lives in the shell (`app/src/settings_store.rs`), because the UI crate does
   no file I/O. The write follows the scene file's shape: a temporary sibling is flushed, synced and
   renamed over the target, so a crash cannot leave a half-written file.
 - A missing, unreadable or foreign-version file is not fatal: the loader returns the defaults and a

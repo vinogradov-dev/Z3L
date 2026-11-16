@@ -5,10 +5,10 @@
 //!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
-use furnicraft_units::{Degrees, Length};
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::{Degrees, Length};
 
 use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue};
 
@@ -258,7 +258,7 @@ mod tests {
     use crate::*;
 
     use crate::fixtures::*;
-    use furnicraft_geom::{DQuat, DVec3};
+    use geom::{DQuat, DVec3};
 
     #[test]
     fn camera_and_light_nodes_round_trip_in_the_document() {

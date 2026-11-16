@@ -13,8 +13,8 @@
 
 use std::collections::HashSet;
 
-use furnicraft_model::{Id, Mesh, Project};
-use furnicraft_text::Message;
+use model::{Id, Mesh, Project};
+use text::Message;
 
 /// Which mesh element a sub-object click selects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -183,16 +183,16 @@ pub(crate) fn is_editable_mesh(project: &Project, object: Id) -> bool {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Geometry, Placement};
-    use furnicraft_testkit::sample_project;
-    use furnicraft_units::Length;
+    use model::{Geometry, Placement};
+    use testkit::sample_project;
+    use units::Length;
 
     use super::*;
 
     fn cube_project() -> (Project, Id) {
         let mut project = sample_project();
         let root = project.root().id();
-        let mesh = furnicraft_testkit::cube_mesh(Length::from_millimetres(100).expect("length"));
+        let mesh = testkit::cube_mesh(Length::from_millimetres(100).expect("length"));
         let id = project.add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(mesh)).expect("object");
         (project, id)
     }

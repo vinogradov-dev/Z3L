@@ -5,9 +5,9 @@
 //! surfaces cannot offer different words for one choice.
 
 use crate::icons;
-use furnicraft_text::{Lang, Message};
+use text::{Lang, Message};
 
-pub use furnicraft_scene::ShadingStyle;
+pub use scene::ShadingStyle;
 
 /// The short face of a style, used while the toolbar icon is still a placeholder.
 pub const fn shading_caption(style: ShadingStyle, lang: Lang) -> &'static str {

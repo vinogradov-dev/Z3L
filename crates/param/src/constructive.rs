@@ -9,10 +9,10 @@
 //! whole micrometres at the last moment. The round trip is exact for a contour that was sampled
 //! from document units, which is why collapse does not move a vertex.
 
-use furnicraft_geom::{DVec3, Frame};
-use furnicraft_kernel::{BooleanOp, KernelError};
-use furnicraft_model::{Constructive, Mesh};
-use furnicraft_units::Length;
+use geom::{DVec3, Frame};
+use kernel::{BooleanOp, KernelError};
+use model::{Constructive, Mesh};
+use units::Length;
 
 use crate::solid::{self, Extrude, PlanBackend, PlanBuilder, SolidPlan};
 use crate::{ParamError, profile};
@@ -118,11 +118,11 @@ fn micrometres(value_mm: f64) -> Result<i64, KernelError> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_kernel::{Profile, SolidKernel};
-    use furnicraft_kernel_truck::TruckKernel;
-    use furnicraft_model::{Contour, Feature, Id, Panel, PanelNominalSize, Placement};
-    use furnicraft_testkit::millimetres;
-    use furnicraft_units::Length;
+    use kernel::{Profile, SolidKernel};
+    use kernel_truck::TruckKernel;
+    use model::{Contour, Feature, Id, Panel, PanelNominalSize, Placement};
+    use testkit::millimetres;
+    use units::Length;
 
     use super::*;
     use crate::build_panel;
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_history_with_more_than_one_feature_is_not_evaluated_silently() {
-        let extrude = furnicraft_model::Extrude::new(millimetres(5)).expect("extrude");
+        let extrude = model::Extrude::new(millimetres(5)).expect("extrude");
         let constructive = Constructive::new(
             rectangle(10, 10).into(),
             vec![Feature::Extrude(extrude.clone()), Feature::Extrude(extrude)],
@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     fn a_large_legal_ring_becomes_a_drawable_mesh() {
-        use furnicraft_model::ContourSegment;
-        use furnicraft_units::Degrees;
+        use model::ContourSegment;
+        use units::Degrees;
 
         let start = Degrees::from_millidegrees(0);
         let sweep = Degrees::from_millidegrees(350_000);
@@ -240,7 +240,7 @@ mod tests {
         let mesh = build_constructive_mesh(&constructive).expect("the band becomes a mesh");
         let cap = mesh.faces().first().expect("a bottom cap");
         assert!(cap.len() > 3, "the cap follows the contour");
-        assert!(cap.len() <= furnicraft_model::MAX_FACE_VERTICES, "one cap holds {} points", cap.len());
+        assert!(cap.len() <= model::MAX_FACE_VERTICES, "one cap holds {} points", cap.len());
         assert_eq!(mesh.faces().len(), cap.len().saturating_add(2), "two caps and one quad per profile edge");
         // The band is 350 degrees of an annulus 4 m to 5 m wide, 18 mm thick.
         let expected = 350.0_f64.to_radians() * (5_000.0_f64.powi(2) - 4_000.0_f64.powi(2)) / 2.0 * 18.0;

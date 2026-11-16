@@ -5,9 +5,9 @@
 //! one replacement, so a command validates the whole shape before the document changes.
 
 use egui::{ComboBox, Ui};
-use furnicraft_model::{Cutout, CutoutDepth, CutoutShape, Id, MachiningId, PanelRect};
-use furnicraft_text::Message;
-use furnicraft_units::Length;
+use model::{Cutout, CutoutDepth, CutoutShape, Id, MachiningId, PanelRect};
+use text::Message;
+use units::Length;
 
 use crate::contour_edit::ContourEntry;
 use crate::panel_card::{millimetre_field, positive_length, signed_length};

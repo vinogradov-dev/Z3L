@@ -13,10 +13,10 @@
 //!
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
-use furnicraft_engine::Session;
-use furnicraft_model::{Panel, PanelOutline, Placement};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use engine::Session;
+use model::{Panel, PanelOutline, Placement};
+use text::{Lang, Message};
+use units::Length;
 
 use super::Editor;
 use crate::contour_edit::ContourTarget;
@@ -169,10 +169,10 @@ impl Editor {
         &mut self,
         draft: &DrawDraft,
         session: &mut Session,
-        parent: furnicraft_model::Id,
+        parent: model::Id,
         placement: Placement,
         lang: Lang,
-    ) -> Result<furnicraft_model::Id, String> {
+    ) -> Result<model::Id, String> {
         if !draft.is_closed() {
             return Err(Message::PanelContourOpen.text(lang).to_owned());
         }

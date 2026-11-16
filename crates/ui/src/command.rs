@@ -1,6 +1,6 @@
 //! Small helpers shared by the editor panels for turning UI actions into engine commands.
 
-use furnicraft_engine::{CommandOutcome, Session};
+use engine::{CommandOutcome, Session};
 use serde::Serialize;
 use serde_json::Value;
 

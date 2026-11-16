@@ -27,20 +27,20 @@
 use core::ops::RangeInclusive;
 
 use egui::{RichText, TextEdit, Ui};
-use furnicraft_engine::node_cmds::NODE_RENAME_ID;
-use furnicraft_engine::object_cmds::{
+use engine::node_cmds::NODE_RENAME_ID;
+use engine::object_cmds::{
     OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID,
 };
-use furnicraft_engine::{
+use engine::{
     EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectPathReplace, ObjectPrimitiveReplace, Session,
 };
-use furnicraft_model::{
+use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
     MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_POLYGON_SIDES, MIN_PRIMITIVE_SIZE, MIN_SEGMENTS, Path, PathShape,
     Primitive, Project,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use text::{Lang, Message};
+use units::Length;
 
 use crate::command::{dispatch, json};
 use crate::mesh_edit::{MeshEdit, MeshElement};
@@ -229,7 +229,7 @@ struct FigureDraft {
 /// The figure fields as the numbers the shared field edits, one per dimension the figure has.
 ///
 /// The lengths are millimetres and the angle is degrees, because that is what a scrub moves; the
-/// document keeps [`Length`] and [`furnicraft_units::Degrees`], and the card converts once, when a
+/// document keeps [`Length`] and [`units::Degrees`], and the card converts once, when a
 /// field hands its number over.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct FigureFields {
@@ -405,11 +405,11 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
 }
 
 /// The interface's name for a primitive shape.
-fn primitive_kind_label(kind: furnicraft_model::PrimitiveKind) -> Message {
+fn primitive_kind_label(kind: model::PrimitiveKind) -> Message {
     match kind {
-        furnicraft_model::PrimitiveKind::Cuboid => Message::ToolBox,
-        furnicraft_model::PrimitiveKind::Cylinder => Message::ToolCylinder,
-        furnicraft_model::PrimitiveKind::Sphere => Message::ToolSphere,
+        model::PrimitiveKind::Cuboid => Message::ToolBox,
+        model::PrimitiveKind::Cylinder => Message::ToolCylinder,
+        model::PrimitiveKind::Sphere => Message::ToolSphere,
     }
 }
 
@@ -1097,8 +1097,8 @@ fn contour_corners(contour: &Contour) -> Option<Vec<[Length; 2]>> {
     contour
         .segments()
         .map(|segment| match segment {
-            furnicraft_model::ContourSegment::Line { start, .. } => Some(start),
-            furnicraft_model::ContourSegment::Arc { .. } => None,
+            model::ContourSegment::Line { start, .. } => Some(start),
+            model::ContourSegment::Arc { .. } => None,
         })
         .collect()
 }
@@ -1187,11 +1187,11 @@ fn collapse_object(session: &mut Session, object: Id) -> Result<(), String> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::ObjectExtrudeCreate;
-    use furnicraft_engine::object_cmds::OBJECT_EXTRUDE_CREATE_ID;
-    use furnicraft_model::{Constructive, Placement};
-    use furnicraft_testkit::{cube_mesh, millimetres, sample_catalog, sample_project};
-    use furnicraft_units::{Degrees, Length};
+    use engine::ObjectExtrudeCreate;
+    use engine::object_cmds::OBJECT_EXTRUDE_CREATE_ID;
+    use model::{Constructive, Placement};
+    use testkit::{cube_mesh, millimetres, sample_catalog, sample_project};
+    use units::{Degrees, Length};
 
     use super::*;
 
@@ -1212,7 +1212,7 @@ mod tests {
         rectangle(width, height).translated([millimetres(-width / 2), millimetres(-height / 2)]).expect("a moved ring")
     }
 
-    fn object_project() -> (furnicraft_model::Project, Id) {
+    fn object_project() -> (model::Project, Id) {
         let mut project = sample_project();
         let root = project.root().id();
         let mesh = cube_mesh(Length::from_millimetres(100).expect("length"));
@@ -1408,7 +1408,7 @@ mod tests {
 
     #[test]
     fn summary_reports_a_path_object_as_a_flat_drawing() {
-        use furnicraft_model::{ContourSegment, Path};
+        use model::{ContourSegment, Path};
 
         let mut project = sample_project();
         let root = project.root().id();
@@ -1464,8 +1464,8 @@ mod tests {
 
     #[test]
     fn a_contour_with_an_arc_has_no_corner_text() {
-        use furnicraft_model::ContourSegment;
-        use furnicraft_units::Degrees;
+        use model::ContourSegment;
+        use units::Degrees;
 
         let millimetres = |value: i64| Length::from_millimetres(value).expect("length");
         let arc = ContourSegment::arc(
@@ -1693,7 +1693,7 @@ mod tests {
 
     #[test]
     fn a_constructive_body_keeps_the_tag_of_the_figure_it_owns() {
-        use furnicraft_model::Constructive;
+        use model::Constructive;
 
         let path =
             Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(50)]).expect("rectangle");

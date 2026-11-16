@@ -5,11 +5,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use furnicraft_model::{Catalog, EdgeBandingMaterial, PanelMaterial, Project};
-use furnicraft_testkit::{
-    millimetres, sample_band_thickness, sample_band_width, sample_edge_material_id, sample_material_id,
-};
+use model::{Catalog, EdgeBandingMaterial, PanelMaterial, Project};
 use serde_json::Value;
+use testkit::{millimetres, sample_band_thickness, sample_band_width, sample_edge_material_id, sample_material_id};
 
 use crate::fixtures::fixture;
 use crate::table::Cell;
@@ -19,7 +17,7 @@ use crate::*;
 fn golden_options(project: &Project) -> ExportOptions {
     ExportOptions {
         timestamp: None,
-        document: DocumentMeta { file: Some("cabinet.fcs".to_owned()), revision: project.revision().get(), hash: None },
+        document: DocumentMeta { file: Some("cabinet.z3l".to_owned()), revision: project.revision().get(), hash: None },
         order: Some(OrderMeta { number: Some("2026-114".to_owned()), version: Some(1) }),
     }
 }
@@ -31,7 +29,7 @@ fn built() -> OrderPackage {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    furnicraft_testkit::scratch_dir(name)
+    testkit::scratch_dir(name)
 }
 
 fn golden_dir() -> PathBuf {
@@ -386,7 +384,7 @@ fn a_rule_takes_the_trim_from_both_sides() {
 #[test]
 fn the_package_matches_the_golden() {
     let package = built();
-    let update = std::env::var_os("FURNICRAFT_UPDATE_GOLDEN").is_some();
+    let update = std::env::var_os("Z3L_UPDATE_GOLDEN").is_some();
     let directory = if update { golden_dir() } else { scratch("golden") };
     package.write_dir(&directory).expect("the package is written");
     if update {

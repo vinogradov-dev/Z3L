@@ -5,10 +5,10 @@
 //! millimetres: every persisted length is a [`Length`] in micrometres and every angle is a
 //! [`Degrees`] in millidegrees.
 
-use furnicraft_geom::{DQuat, DVec3, EulerRot};
-use furnicraft_units::{Degrees, Length};
+use geom::{DQuat, DVec3, EulerRot};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::{Degrees, Length};
 
 /// Intrinsic XYZ Euler angles in degrees, the inspector's view of a placement rotation.
 ///

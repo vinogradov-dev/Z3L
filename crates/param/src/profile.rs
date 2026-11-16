@@ -9,9 +9,9 @@
 //! The document keeps micrometres; the conversion to millimetres happens in `model::Contour`, at
 //! the geometry boundary. This module never sees a kernel type from the document.
 
-use furnicraft_geom::{Contour, DVec2, Region, Segment};
-use furnicraft_kernel::Profile;
-use furnicraft_model::MAX_FACE_VERTICES;
+use geom::{Contour, DVec2, Region, Segment};
+use kernel::Profile;
+use model::MAX_FACE_VERTICES;
 
 use crate::ParamError;
 
@@ -39,7 +39,7 @@ pub(crate) fn region_of_contour(contour: &Contour) -> Result<Region, ParamError>
 }
 
 /// The region of a document contour, converted exactly.
-pub(crate) fn region_of_document_contour(contour: &furnicraft_model::Contour) -> Result<Region, ParamError> {
+pub(crate) fn region_of_document_contour(contour: &model::Contour) -> Result<Region, ParamError> {
     region_of_contour(&contour.to_geometry()?)
 }
 
@@ -154,7 +154,7 @@ pub(crate) fn profile_of_rectangle(width: f64, height: f64) -> Result<Profile, P
 /// The cap of a single extrusion is one document face and its vertices are the sampled ring. A
 /// command that stores a ring calls this before it mutates the document, so a legal ring always
 /// becomes an object that draws, and only a shape no chord can fit is refused.
-pub(crate) fn profile_of_document_contour(contour: &furnicraft_model::Contour) -> Result<Profile, ParamError> {
+pub(crate) fn profile_of_document_contour(contour: &model::Contour) -> Result<Profile, ParamError> {
     profile_of_region(&region_of_document_contour(contour)?)
 }
 
@@ -162,9 +162,9 @@ pub(crate) fn profile_of_document_contour(contour: &furnicraft_model::Contour) -
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Contour as DocumentContour, ContourSegment};
-    use furnicraft_testkit::millimetres;
-    use furnicraft_units::{Degrees, Length};
+    use model::{Contour as DocumentContour, ContourSegment};
+    use testkit::millimetres;
+    use units::{Degrees, Length};
 
     use super::*;
 
@@ -208,16 +208,16 @@ mod tests {
     #[test]
     fn a_region_keeps_its_holes_in_the_profile() {
         let outer = vec![
-            furnicraft_geom::DVec2::new(0.0, 0.0),
-            furnicraft_geom::DVec2::new(10.0, 0.0),
-            furnicraft_geom::DVec2::new(10.0, 10.0),
-            furnicraft_geom::DVec2::new(0.0, 10.0),
+            geom::DVec2::new(0.0, 0.0),
+            geom::DVec2::new(10.0, 0.0),
+            geom::DVec2::new(10.0, 10.0),
+            geom::DVec2::new(0.0, 10.0),
         ];
         let hole = vec![
-            furnicraft_geom::DVec2::new(2.0, 2.0),
-            furnicraft_geom::DVec2::new(4.0, 2.0),
-            furnicraft_geom::DVec2::new(4.0, 4.0),
-            furnicraft_geom::DVec2::new(2.0, 4.0),
+            geom::DVec2::new(2.0, 2.0),
+            geom::DVec2::new(4.0, 2.0),
+            geom::DVec2::new(4.0, 4.0),
+            geom::DVec2::new(2.0, 4.0),
         ];
         let region = Region::from_loops(outer, vec![hole]).expect("region with a hole");
         let profile = profile_of_region(&region).expect("profile");

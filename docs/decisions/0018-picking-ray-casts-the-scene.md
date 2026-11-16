@@ -13,7 +13,7 @@ transform.
 
 ## Decision
 
-- `furnicraft_scene` owns a validated `Ray` and `SceneFrame::pick`.
+- `scene` owns a validated `Ray` and `SceneFrame::pick`.
 - `Camera::ray_ndc` turns normalized device coordinates into a world ray, with the aspect ratio
   supplied by the viewport.
 - `pick` tests the triangles of every drawable in world space and returns the nearest document `Id`.

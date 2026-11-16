@@ -60,7 +60,7 @@ project may rename live in `plan/state.conf` (absent means the defaults):
 ```text
 runner = cargo xtask          # the command line a session runs
 decisions = docs/decisions    # where the architecture decisions live
-project = FurniCraft          # the name `agents` speaks about
+project = Z3L          # the name `agents` speaks about
 ```
 
 An unknown key is an error, so a typo cannot quietly keep a default.
@@ -117,7 +117,7 @@ the writer produces, and every letter an id starts with declared, or a sentence 
 `cargo xtask task phase`. `edit::set_phases` rewrites the paragraph whole, so the ids and the
 vocabulary that explains them cannot drift.
 
-`FurniCraft`'s `cargo xtask task add|start|set|step|note|close|reopen|take|defer|drop|phase` and `cargo xtask state
+`Z3L`'s `cargo xtask task add|start|set|step|note|close|reopen|take|defer|drop|phase` and `cargo xtask state
 set` are the reference host: they take `--dry-run`, print the diff, hold `plan/.lock` while they
 write and land each file through a temp file and a rename.
 
@@ -202,7 +202,7 @@ trait for a fake with a `head`, a commit list and an ancestor list.
 
 ## Used by
 
-FurniCraft — a native cabinet-furniture editor in Rust — is the first consumer: its `cargo xtask` is a
+Z3L — a native cabinet-furniture editor in Rust — is the first consumer: its `cargo xtask` is a
 table entry, and the only code it adds is its layer rules and its `ci` step list. Everything else —
 `plan`, `status`, `task`, `next`, `dashboard`, `docs`, `state` — comes from this crate.
 

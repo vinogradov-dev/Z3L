@@ -6,14 +6,14 @@
 //! placeholder when the caller names none. `product.envelope.set` edits the box and never a child
 //! size: the content bounds of the parts are derived when asked and never stored.
 
-use furnicraft_model::{Catalog, ClassCode, Envelope, Id, Placement, Project};
+use model::{Catalog, ClassCode, Envelope, Id, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::node_cmds::{parse, validate_name};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the product creation command.
 pub const PRODUCT_CREATE_ID: &str = "product.create";
@@ -125,8 +125,8 @@ fn product_envelope_set_run(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{ProjectError, Revision};
-    use furnicraft_testkit::{millimetres, sample_catalog, sample_project};
+    use model::{ProjectError, Revision};
+    use testkit::{millimetres, sample_catalog, sample_project};
 
     use crate::CommandRegistry;
 

@@ -18,7 +18,7 @@
 //!
 //! Changes when: what a buffer holds or how one frame's geometry reaches the device changes.
 
-use furnicraft_geom::DVec3;
+use geom::DVec3;
 use wgpu::util::DeviceExt as _;
 
 use crate::RenderError;

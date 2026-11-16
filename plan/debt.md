@@ -69,7 +69,7 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   background job a file to open, but there is no headless binary or query surface yet.
 - `[scene]` Save and load exist in the shell. Gaps: there is no prompt when the window closes with
   unsaved changes, Open warns inside the path dialog instead of asking for confirmation, there is no
-  recent-files list and no autosave. `apps/furnicraft` still starts from `sample_session()`; a new
+  recent-files list and no autosave. `app` still starts from `sample_session()`; a new
   empty scene is one menu click away.
 - `[scene]` A scene written by an earlier build is not migrated to the current frame: there are no
   releases and no user files yet (`plan/rename.md`), so an old pre-release document may load with a
@@ -157,10 +157,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   contour, leave the body without a pull. The shell reads the height from the command result, so
   another entry point needs the same signal before it can pull too.
 
-- `[design]` `apps/furnicraft/src/main.rs` `viewport` is one 635-line function. U45 moves it onto
+- `[design]` `app/src/main.rs` `viewport` is one 635-line function. U45 moves it onto
   `Document` with the rest of the scene-bound state, so the S7 audit filed no split; it is measured
   again and split there.
-- `[design]` `impl FurniCraftApp` is 1620 lines over 40 fields. U45 extracts about twenty fields into
+- `[design]` `impl Z3LApp` is 1620 lines over 40 fields. U45 extracts about twenty fields into
   `Document` and the viewport and file state into `tabs.rs`, so the audit filed only the two moves U45
   does not perform (S21 Home, S22 the chrome) and the impl is re-measured after U45.
 - `[design]` `ui/panel_card.rs` (989) and `ui/object_card.rs` (989) sit under B4's 1000-line ceiling

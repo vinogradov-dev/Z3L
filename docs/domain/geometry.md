@@ -255,13 +255,13 @@ in one viewport mode. Its state is view state, not document data
 
 ## 8. Evaluation
 
-- `furnicraft-param` compiles a constructive object into a domain-free `SolidPlan`: a base
+- `param` compiles a constructive object into a domain-free `SolidPlan`: a base
   extrusion followed by boolean steps. The plan is derived, never written to the file, and rebuilt
   when a feature changes ([0041](../decisions/0041-every-solid-compiles-to-one-solid-plan.md)).
 - A plan with one extrusion is evaluated analytically, because a linear extrusion is exact as
   polygons; that mesh is also what `object.collapse` bakes. A plan with a boolean goes through the
   geometry kernel port. Both paths share one evaluator, so collapse cannot drift from the viewport.
-- `furnicraft-mesh` owns the evaluation cache: one entry per node, keyed by the node id and the
+- `mesh` owns the evaluation cache: one entry per node, keyed by the node id and the
   inputs the mesh was derived from, tagged with the revision that built it. A rebuild walks the tree
   once and reuses every node whose inputs are unchanged, so a move, a rename or an edit elsewhere
   reuses the mesh and only changes the world transform. The derived mesh is never written to the file.
@@ -270,7 +270,7 @@ in one viewport mode. Its state is view state, not document data
   object's whole geometry payload, which for a primitive is its shape and parameter set. A catalogue
   material change reaches the cache through the resolved thickness and profile, so a material swap
   rebuilds the panels that use it.
-- A primitive is evaluated analytically in `furnicraft-mesh` (`evaluate_primitive`): the parameters
+- A primitive is evaluated analytically in `mesh` (`evaluate_primitive`): the parameters
   are document data, the ring trigonometry runs at the geometry boundary and the result is rounded
   back to lengths. The viewport and `object.collapse` call that one function.
 - Editing the contour, a feature parameter or a primitive parameter bumps the revision once; the next

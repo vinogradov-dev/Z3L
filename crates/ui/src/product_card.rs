@@ -15,9 +15,9 @@
 //! numeric defaults move.
 
 use egui::{Button, Key, Modal, RichText, ScrollArea, TextEdit, Vec2};
-use furnicraft_model::{ClassCode, Envelope};
-use furnicraft_text::Message;
-use furnicraft_units::Length;
+use model::{ClassCode, Envelope};
+use text::Message;
+use units::Length;
 
 use crate::theme;
 
@@ -211,7 +211,7 @@ impl ProductCard {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_text::Lang;
+    use text::Lang;
 
     use super::*;
 

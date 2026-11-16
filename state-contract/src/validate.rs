@@ -557,7 +557,8 @@ mod tests {
 
     const HEADER: &str = "STATE: milestone=M7 phase=A task=A3 state=idle base=32c659f updated=2026-10-30\n";
     /// A session note a fresh session can resume from.
-    const NOTE: &str = "task: A3\ngoal: edit arcs in the card\nnow: the arc arm in `object_card.rs`\nrun: cargo test -p furnicraft-ui\n";
+    const NOTE: &str =
+        "task: A3\ngoal: edit arcs in the card\nnow: the arc arm in `object_card.rs`\nrun: cargo test -p ui\n";
 
     fn backlog() -> &'static str {
         "## Now\n\n\
@@ -844,7 +845,7 @@ mod tests {
 
     #[test]
     fn a_readme_may_describe_the_product_but_not_the_state() {
-        let clean = "# FurniCraft\n\nA native editor. Build it with `cargo run -p furnicraft`.\n\
+        let clean = "# Z3L\n\nA native editor. Build it with `cargo run -p app`.\n\
                      The state lives in `plan/STATUS.md`.\n";
         assert!(readme_violations(clean).is_empty(), "a product README is fine");
 

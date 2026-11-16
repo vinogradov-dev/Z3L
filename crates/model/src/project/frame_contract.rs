@@ -7,13 +7,13 @@
 //! object's frame: a geometry edit and a move never touch the stored pivot, a move changes only the
 //! translation, and a turn about the pivot keeps `pivot_world` fixed (ADR 0026, ADR 0027).
 //!
-//! The creation commands in `furnicraft-engine` and the shell call these same model operations, so
+//! The creation commands in `engine` and the shell call these same model operations, so
 //! this module is the single contract they rely on.
 //!
 //! Changes when: the frame rule, the pivot rule or a creation command's anchor changes.
 
-use furnicraft_geom::{DQuat, DVec3};
-use furnicraft_units::Length;
+use geom::{DQuat, DVec3};
+use units::Length;
 
 use crate::fixtures::*;
 use crate::frame::children_center;

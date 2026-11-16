@@ -1,8 +1,8 @@
 //! Command metadata, the static registry and dispatch errors.
 
-use furnicraft_model::{Catalog, Id, Level, MachiningId, MaterialId, Project, ProjectError};
-use furnicraft_text::Message;
+use model::{Catalog, Id, Level, MachiningId, MaterialId, Project, ProjectError};
 use serde_json::Value;
+use text::Message;
 use thiserror::Error;
 
 use crate::class_rules::{self, ClassRefusal, CreationRefusal};
@@ -304,7 +304,7 @@ impl CommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use furnicraft_text::Lang;
+    use text::Lang;
 
     #[test]
     fn registry_exposes_panel_commands() {

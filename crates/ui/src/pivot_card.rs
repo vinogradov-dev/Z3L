@@ -11,10 +11,10 @@
 //! card never turns the point itself.
 
 use egui::{RichText, Ui};
-use furnicraft_engine::node_cmds::{NODE_PIVOT_CENTER_ID, NODE_PIVOT_SET_ID};
-use furnicraft_engine::{EditScope, NodePivotCenter, NodePivotSet, Session};
-use furnicraft_model::{Id, PivotLocal, Project};
-use furnicraft_text::{Lang, Message};
+use engine::node_cmds::{NODE_PIVOT_CENTER_ID, NODE_PIVOT_SET_ID};
+use engine::{EditScope, NodePivotCenter, NodePivotSet, Session};
+use model::{Id, PivotLocal, Project};
+use text::{Lang, Message};
 
 use crate::command::{dispatch, json};
 use crate::coords;
@@ -221,10 +221,10 @@ fn pivot_is_derived(project: &Project, node: Id) -> bool {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_engine::Session;
-    use furnicraft_model::PivotLocal;
-    use furnicraft_testkit::{sample_catalog, sample_project};
-    use furnicraft_units::Length;
+    use engine::Session;
+    use model::PivotLocal;
+    use testkit::{sample_catalog, sample_project};
+    use units::Length;
 
     use super::*;
 

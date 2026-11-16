@@ -18,8 +18,8 @@
 //! [ADR 0083]: ../docs/decisions/0083-a-panel-is-anchored-at-its-base-corner.md
 //! [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
 
-use furnicraft_units::Length;
 use thiserror::Error;
+use units::Length;
 
 /// The smallest height a pull leaves, in millimetres.
 pub const MIN_BOX_HEIGHT_MM: i64 = 1;
@@ -187,7 +187,7 @@ fn rectangle(first: [Length; 2], second: [Length; 2]) -> Option<BoxBase> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_testkit::millimetres;
+    use testkit::millimetres;
 
     use super::*;
 

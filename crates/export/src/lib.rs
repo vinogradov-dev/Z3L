@@ -5,7 +5,7 @@
 //! in the catalogue) and most of what a report needs is derivation (measured size with banding, area,
 //! banding length, the owning product). This crate resolves those numbers once, writes them as flat
 //! JSON Lines tables with an integer-only number contract, and embeds the catalogue and class rows
-//! the order uses. The scene file stays the only import format: FurniCraft never reads a package back.
+//! the order uses. The scene file stays the only import format: Z3L never reads a package back.
 //!
 //! The crate is a library with no window, no GPU and no file dialog, so a command line can write a
 //! package without opening the editor (K3) and the assistant can later use the same surface.

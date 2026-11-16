@@ -1,5 +1,5 @@
 [package]
-name = "furnicraft-kernel-truck"
+name = "kernel-truck"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-furnicraft-geom = { workspace = true }
-furnicraft-kernel = { workspace = true }
+geom = { workspace = true }
+kernel = { workspace = true }
 truck-meshalgo = { workspace = true }
 truck-modeling = { workspace = true }
 truck-shapeops = { workspace = true }

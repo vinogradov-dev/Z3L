@@ -5,7 +5,7 @@
 //! file behind (ADR 0096). Run it deliberately, then review the diff:
 //!
 //! ```sh
-//! cargo test -p furnicraft-project --test make_golden -- --ignored
+//! cargo test -p project --test make_golden -- --ignored
 //! ```
 //!
 //! Nothing in the normal test run touches the source tree, because the test is ignored by default.
@@ -15,14 +15,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use furnicraft_model::{
+use model::{
     CameraNode, CameraProjection, Constructive, Container, CutoutDepth, CutoutShape, EdgeBanding, EdgeBevel, EdgeId,
     EdgeRef, FaceSide, Geometry, Id, LightKind, LightNode, MaterialId, Object, Panel, PanelNominalSize, PanelRect,
     Path, Placement, Primitive, Project,
 };
-use furnicraft_project::SceneFile;
-use furnicraft_units::{Degrees, Length};
+use project::SceneFile;
 use serde_json::Value;
+use units::{Degrees, Length};
 
 fn millimetres(value: i64) -> Length {
     Length::from_millimetres(value).expect("whole millimetres fit a length")
@@ -127,7 +127,7 @@ fn scene() -> SceneFile {
     project.set_active_camera(Some(id(6))).expect("an active camera");
 
     let mut extra = BTreeMap::new();
-    extra.insert("generator".to_owned(), Value::String("furnicraft golden".to_owned()));
+    extra.insert("generator".to_owned(), Value::String("z3l golden".to_owned()));
     SceneFile::new(project).with_extra(extra)
 }
 
@@ -135,6 +135,6 @@ fn scene() -> SceneFile {
 #[ignore = "writes the checked-in golden; run it deliberately when the schema changes"]
 fn regenerate_the_golden_file() {
     let text = scene().to_json().expect("the scene serializes");
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/scene.fcs");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/scene.z3l");
     fs::write(&path, text).expect("write the golden file");
 }

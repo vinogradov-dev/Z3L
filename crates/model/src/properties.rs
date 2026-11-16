@@ -10,11 +10,11 @@
 
 use std::collections::BTreeMap;
 
-use furnicraft_units::{Degrees, Length};
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use units::{Degrees, Length};
 
 use crate::{ClassCode, Id};
 

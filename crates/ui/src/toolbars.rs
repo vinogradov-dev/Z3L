@@ -38,10 +38,10 @@
 use std::collections::BTreeMap;
 
 use egui::Ui;
-use furnicraft_engine::PrimitiveKind;
-use furnicraft_model::{ClassCode, FillMode, Id};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use engine::PrimitiveKind;
+use model::{ClassCode, FillMode, Id};
+use text::{Lang, Message};
+use units::Length;
 
 use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
 use crate::box_tool::BoxOwner;
@@ -268,7 +268,7 @@ pub const fn strip_label(tool: DrawTool) -> Message {
 
 /// The view state the ribbon reads from the shell: how the camera and the work plane are set.
 ///
-/// The ribbon is a UI surface in `furnicraft-ui`, but the projection, the grid snap and the framing
+/// The ribbon is a UI surface in `ui`, but the projection, the grid snap and the framing
 /// belong to the shell that owns the view camera and the drawing gizmo. They arrive as this small
 /// snapshot, and a click comes back as a [`RibbonViewAction`], so the ribbon neither reads nor
 /// writes the viewport.
@@ -1476,7 +1476,7 @@ mod tests {
     #[test]
     fn every_drawn_row_fits_the_narrowest_window() {
         // A split cell adds its caret column beside the cell (X36), so the body is wider than its cell
-        // count by one caret per listed tool. The narrowest window FurniCraft opens is 640 x 480, and
+        // count by one caret per listed tool. The narrowest window Z3L opens is 640 x 480, and
         // the ribbon has no scroll area by design (ADR 0091), so a row that outgrew the window would
         // be clipped and lose a tool.
         const MIN_WINDOW_WIDTH: f32 = 640.0;
@@ -1558,7 +1558,7 @@ mod tests {
             ],
             "the list is the map, in order, without a duplicate row"
         );
-        assert_eq!(rows.iter().map(|row| row.enabled).collect::<Vec<_>>(), [true, true, true, false]);
+        assert!(rows.iter().all(|row| row.enabled), "every circle method runs");
         assert_eq!(
             rows[0].method.label,
             Message::ToolCircleCentreRadius,
@@ -1569,7 +1569,19 @@ mod tests {
             rows[1].action,
             Some(ToolAction::Draw { tool: DrawTool::CircleDiameter, sides: DEFAULT_POLYGON_SIDES })
         );
-        assert!(rows[3].action.is_none(), "a planned method runs nothing");
+        assert_eq!(
+            rows[3].action,
+            Some(ToolAction::Draw { tool: DrawTool::CircleTangent, sides: DEFAULT_POLYGON_SIDES }),
+            "the tangent row runs the method it names"
+        );
+
+        // A method the build does not have yet still draws its row and runs nothing.
+        let line = tool("sketch.create.line");
+        let rows = method_rows(line, &Toolbars::new(), full_context(), Lang::En);
+        assert_eq!(rows.len(), 2, "the line's own method and the one still planned");
+        assert_eq!(rows[1].method.id, "sketch.create.line.angle");
+        assert!(!rows[1].enabled, "a planned method is not enabled");
+        assert!(rows[1].action.is_none(), "a planned method runs nothing");
     }
 
     #[test]
@@ -2052,11 +2064,11 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         crate::set_language(&ctx, Lang::En);
-        // Row 3 is a planned method, so an idle list draws no pin at all.
+        // The keyboard sits on the last row, so the resting list draws exactly one pin.
         let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 3 });
         let (_, idle) = warm_list(&ctx, screen, &mut slot);
         let base = count_images(&idle.shapes);
-        assert_eq!(base, 4, "the header's glyph and the three drawn methods, and no pin at rest");
+        assert_eq!(base, 6, "the header's glyph, the four methods and the keyboard row's pin");
         let idle_label = text_place(&idle.shapes, "Centre and radius");
         let idle_key = text_place(&idle.shapes, "Shift+C");
         // Hovering is resolved from the previous pass, so the pointer moves and the next frame paints.
@@ -2075,7 +2087,9 @@ mod tests {
         let (_, away) = list_paint(&ctx, screen, 8.0, &mut slot, vec![pointer_moved(egui::pos2(700.0, 500.0))]);
         away.drop_without_applying_deltas();
         let (_, keyed) = list_paint(&ctx, screen, 8.0, &mut slot, Vec::new());
-        assert_eq!(count_images(&keyed.shapes), base + 1, "the pin appears on the row the keyboard reached");
+        assert_eq!(count_images(&keyed.shapes), base, "the one pin moves with the keyboard instead of adding a second");
+        let reached = row_of(&keyed.shapes, "Circle through 3 points");
+        assert_eq!(fills_at(&keyed.shapes, reached).len(), 1, "the row the keyboard reached is washed");
         keyed.drop_without_applying_deltas();
     }
 
@@ -2092,7 +2106,7 @@ mod tests {
         let base = count_images(&idle.shapes);
         let row = row_of(&idle.shapes, "Circle through 3 points");
         idle.drop_without_applying_deltas();
-        assert_eq!(base, 4, "an idle list draws no pin");
+        assert_eq!(base, 6, "the header's glyph, the four methods and the keyboard row's pin");
 
         // One frame per step: the pointer reaches the row, then the pin at the row's right edge.
         let pin = egui::pos2(row.right() - list::ROW_INSET - list::PIN_COLUMN / 2.0, row.center().y);
@@ -2114,9 +2128,10 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         crate::set_language(&ctx, Lang::En);
-        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 3 });
+        // The keyboard sits on the diameter row, so the pinned first row carries no pin of its own.
+        let mut slot = Some(list::VariantList { tool: circle.id, highlighted: 1 });
         let (_, idle) = warm_list(&ctx, screen, &mut slot);
-        assert_eq!(count_images(&idle.shapes), 4, "an idle list draws no pin");
+        assert_eq!(count_images(&idle.shapes), 6, "the header's glyph, the four methods and the keyboard row's pin");
         let mut marked = fills_at(&idle.shapes, row_of(&idle.shapes, "Centre and radius"));
         assert_eq!(marked.len(), 2, "the pinned row keeps its fill and its accent bar");
         assert!(marked.iter().all(|fill| *fill != egui::Color32::TRANSPARENT), "the mark is painted");

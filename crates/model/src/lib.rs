@@ -1,9 +1,9 @@
-//! The FurniCraft document: the container tree, panels, machining, banding, materials and the scene
+//! The Z3L document: the container tree, panels, machining, banding, materials and the scene
 //! objects the user authors.
 //!
 //! Pure serializable data plus its invariants. No geometry kernel, no GPU, no UI, no file I/O. The
 //! crate root is a facade: each module owns one family of values or rules and its public items are
-//! re-exported here, so callers keep writing `furnicraft_model::Type`.
+//! re-exported here, so callers keep writing `model::Type`.
 #![forbid(unsafe_code)]
 #![deny(
     clippy::unwrap_used,
@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use furnicraft_units::Length;
+use units::Length;
 
 mod camera;
 mod catalog;

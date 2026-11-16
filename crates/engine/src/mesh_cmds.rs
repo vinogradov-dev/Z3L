@@ -7,15 +7,15 @@
 //!
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 
-use furnicraft_model::{Id, Project};
-use furnicraft_units::Length;
+use model::{Id, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use units::Length;
 
 use crate::class_rules::{Dimension, NodeRules};
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the mesh vertex move command.
 pub const MESH_VERTICES_MOVE_ID: &str = "mesh.vertices.move";
@@ -62,7 +62,7 @@ fn mesh_vertices_move_enabled(session: &Session, params: &Value) -> bool {
 
 fn mesh_vertices_move_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<MeshVerticesMove>(params)?;
@@ -119,9 +119,9 @@ fn parse<T: serde::de::DeserializeOwned>(params: &Value) -> Result<T, CommandErr
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Geometry, Placement};
-    use furnicraft_testkit::{cube_mesh, millimetres, sample_catalog, sample_project};
-    use furnicraft_units::Length;
+    use model::{Geometry, Placement};
+    use testkit::{cube_mesh, millimetres, sample_catalog, sample_project};
+    use units::Length;
 
     use super::*;
 
@@ -256,7 +256,7 @@ mod tests {
     }
     #[test]
     fn a_length_only_class_refuses_a_vertex_move_across_the_width() {
-        use furnicraft_model::{ClassCode, PropertyValue, SYSTEM_CLASS};
+        use model::{ClassCode, PropertyValue, SYSTEM_CLASS};
 
         let (mut session, object) = cube_session();
         let class: ClassCode = "70.01".parse().expect("the worktop code");

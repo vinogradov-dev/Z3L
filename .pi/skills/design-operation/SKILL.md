@@ -1,6 +1,6 @@
 ---
 name: design-operation
-description: "Design one FurniCraft operation end to end: the armed state machine, the preview before the commit, the typed number, the cancel, the single undo entry, the feedback budget, the cursor and the awkward cases. Use when a gesture, a drag, a mode or a tool appears or changes — a drawing tool, a gizmo, a previewing command, a scrub or a transient atom."
+description: "Design one Z3L operation end to end: the armed state machine, the preview before the commit, the typed number, the cancel, the single undo entry, the feedback budget, the cursor and the awkward cases. Use when a gesture, a drag, a mode or a tool appears or changes — a drawing tool, a gizmo, a previewing command, a scrub or a transient atom."
 license: MIT
 compatibility: pi
 metadata:
@@ -44,7 +44,7 @@ idle --arm--> armed --pointer--> collecting --commit--> idle
 ```
 
 - One owner holds the arm — `crates/ui/src/editor/` (`fill_arm`, `pending_primitive`, `box_draft`,
-  `drawing`) for the mode, the shell for the ephemeral draft (`apps/furnicraft/src/document.rs`,
+  `drawing`) for the mode, the shell for the ephemeral draft (`app/src/document.rs`,
   `handle_keys`).
 - The key path is ordered, and every step answers Escape: focused field, modal, running tool,
   container level, selection. A new tool joins that order; it does not add a parallel key reader.
@@ -61,7 +61,7 @@ idle --arm--> armed --pointer--> collecting --commit--> idle
   the same rows in the inspector; it writes nothing and reports the numbers and the button pressed
   this frame (ADR 0119).
 - Feedback starts on the press frame. A rebuild that overruns `SLOW_REBUILD` (250 ms, measured in
-  `apps/furnicraft/src/document.rs`) says so on the status bar before it finishes; it never blocks
+  `app/src/document.rs`) says so on the status bar before it finishes; it never blocks
   the frame and never runs on the UI thread once per pointer move.
 - A preview is not a second renderer: it travels as geometry through the same scene and the same
   pick, so what the person sees is what the commit produces.
@@ -105,7 +105,7 @@ idle --arm--> armed --pointer--> collecting --commit--> idle
 - A snapped point is visible as a marker and a guide before the click; a snap that only changes the
   result of the click is invisible and therefore a bug.
 - The status bar carries the words: the left zone says what to do next, the centre zone the live
-  value (`apps/furnicraft/src/status_bar.rs`).
+  value (`app/src/status_bar.rs`).
 
 ## The awkward cases
 
@@ -119,14 +119,14 @@ reached from a menu instead of the ribbon.
 
 | Operation | State | Files |
 |---|---|---|
-| Drawing draft (line, circle, arc, polyline) | `crates/ui/src/editor/` (`drawing`), `crates/ui/src/draw.rs` | `apps/furnicraft/src/draw_gizmo.rs`, keys in `handle_keys` |
-| Box draft (frame and cuboid) | `crates/ui/src/editor/` (`box_draft`) | `apps/furnicraft/src/box_gizmo.rs` |
-| Extrude pull | arm in the editor, preview in the session | `apps/furnicraft/src/extrude_gizmo.rs` |
-| Move and rotate gizmos | drag with a committed scope | `apps/furnicraft/src/translate_gizmo.rs`, `apps/furnicraft/src/rotate_gizmo.rs`, `apps/furnicraft/src/gizmo_math.rs` |
-| Contour grips and vertex drag | `crates/ui/src/contour_grips.rs` | `apps/furnicraft/src/contour_gizmo.rs`, `apps/furnicraft/src/vertex_gizmo.rs` |
-| Fill arm and primitive arm | `crates/ui/src/editor/` (`fill`, `creation`) | `apps/furnicraft/src/fill_gizmo.rs` |
+| Drawing draft (line, circle, arc, polyline) | `crates/ui/src/editor/` (`drawing`), `crates/ui/src/draw.rs` | `app/src/draw_gizmo.rs`, keys in `handle_keys` |
+| Box draft (frame and cuboid) | `crates/ui/src/editor/` (`box_draft`) | `app/src/box_gizmo.rs` |
+| Extrude pull | arm in the editor, preview in the session | `app/src/extrude_gizmo.rs` |
+| Move and rotate gizmos | drag with a committed scope | `app/src/translate_gizmo.rs`, `app/src/rotate_gizmo.rs`, `app/src/gizmo_math.rs` |
+| Contour grips and vertex drag | `crates/ui/src/contour_grips.rs` | `app/src/contour_gizmo.rs`, `app/src/vertex_gizmo.rs` |
+| Fill arm and primitive arm | `crates/ui/src/editor/` (`fill`, `creation`) | `app/src/fill_gizmo.rs` |
 | Exact distances | probe value, live field | `crates/ui/src/distance.rs` |
-| Work cursor | hover and arm | `apps/furnicraft/src/work_cursor.rs` |
+| Work cursor | hover and arm | `app/src/work_cursor.rs` |
 
 A new operation that shares one of these mechanisms uses it; it does not copy it (ADR 0118). If the
 mechanism is private in one tool and a second needs it, that is the atom to extract — and the row is

@@ -9,20 +9,20 @@
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 
-use furnicraft_mesh::{evaluate_constructive, evaluate_primitive};
-use furnicraft_model::{
+use mesh::{evaluate_constructive, evaluate_primitive};
+use model::{
     Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
     rebase_origin_at,
 };
-use furnicraft_param::validate_extrusion_contour;
-use furnicraft_units::Length;
+use param::validate_extrusion_contour;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use units::Length;
 
 use crate::commands::{CommandError, CommandOutcome, CommandSpec};
 use crate::node_cmds::{parse, validate_name};
 use crate::session::Session;
-use furnicraft_text::Message;
+use text::Message;
 
 /// Stable id of the primitive creation command.
 pub const OBJECT_PRIMITIVE_CREATE_ID: &str = "object.primitive.create";
@@ -37,7 +37,7 @@ pub const OBJECT_PRIMITIVE_REPLACE_ID: &str = "object.primitive.replace";
 pub const OBJECT_PRIMITIVE_REPLACE_LABEL: Message = Message::CmdReplacePrimitive;
 
 /// The primitive shapes the command can build, re-exported from the document payload.
-pub use furnicraft_model::{MAX_PRIMITIVE_SIZE, PrimitiveKind};
+pub use model::{MAX_PRIMITIVE_SIZE, PrimitiveKind};
 
 /// Parameters for `object.primitive.create`.
 ///
@@ -77,7 +77,7 @@ fn object_primitive_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_primitive_create_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveCreate>(params, OBJECT_PRIMITIVE_CREATE_ID)?;
@@ -113,7 +113,7 @@ fn object_primitive_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_primitive_replace_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveReplace>(params, OBJECT_PRIMITIVE_REPLACE_ID)?;
@@ -153,7 +153,7 @@ pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new(
 );
 
 fn valid_extrusion_height(height: Length) -> bool {
-    height.is_positive() && height.micrometres() <= furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres()
+    height.is_positive() && height.micrometres() <= model::MAX_CONTOUR_COORDINATE.micrometres()
 }
 
 fn object_extrude_create_enabled(session: &Session, params: &Value) -> bool {
@@ -168,7 +168,7 @@ fn object_extrude_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_extrude_create_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeCreate>(params, OBJECT_EXTRUDE_CREATE_ID)?;
@@ -178,7 +178,7 @@ fn object_extrude_create_run(
             command: OBJECT_EXTRUDE_CREATE_ID,
             message: format!(
                 "height must be positive and at most {} micrometres",
-                furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres()
+                model::MAX_CONTOUR_COORDINATE.micrometres()
             ),
         });
     }
@@ -234,7 +234,7 @@ fn object_contour_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_contour_replace_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectContourReplace>(params, OBJECT_CONTOUR_REPLACE_ID)?;
@@ -293,7 +293,7 @@ fn object_path_extrude_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_extrude_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathExtrude>(params, OBJECT_PATH_EXTRUDE_ID)?;
@@ -302,7 +302,7 @@ fn object_path_extrude_run(
             command: OBJECT_PATH_EXTRUDE_ID,
             message: format!(
                 "height must be positive and at most {} micrometres",
-                furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres()
+                model::MAX_CONTOUR_COORDINATE.micrometres()
             ),
         });
     }
@@ -353,7 +353,7 @@ fn object_extrude_height_set_enabled(session: &Session, params: &Value) -> bool 
 
 fn object_extrude_height_set_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeHeightSet>(params, OBJECT_EXTRUDE_HEIGHT_SET_ID)?;
@@ -362,7 +362,7 @@ fn object_extrude_height_set_run(
             command: OBJECT_EXTRUDE_HEIGHT_SET_ID,
             message: format!(
                 "height must be positive and at most {} micrometres",
-                furnicraft_model::MAX_CONTOUR_COORDINATE.micrometres()
+                model::MAX_CONTOUR_COORDINATE.micrometres()
             ),
         });
     }
@@ -408,7 +408,7 @@ fn object_path_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_create_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathCreate>(params, OBJECT_PATH_CREATE_ID)?;
@@ -452,7 +452,7 @@ fn object_path_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_replace_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathReplace>(params, OBJECT_PATH_REPLACE_ID)?;
@@ -492,7 +492,7 @@ fn object_collapse_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_collapse_run(
     project: &mut Project,
-    _catalog: &furnicraft_model::Catalog,
+    _catalog: &model::Catalog,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectCollapse>(params, OBJECT_COLLAPSE_ID)?;
@@ -520,9 +520,9 @@ fn object_collapse_run(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{ContourSegment, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
-    use furnicraft_testkit::{millimetres, open_path, sample_catalog, sample_project};
-    use furnicraft_units::Degrees;
+    use model::{ContourSegment, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
+    use testkit::{millimetres, open_path, sample_catalog, sample_project};
+    use units::Degrees;
 
     use crate::CommandRegistry;
 
@@ -682,7 +682,7 @@ mod tests {
         .expect("params serialize");
         let id = session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &value).expect("create").created_id().expect("id");
         let primitive = session.project().object_primitive(id).expect("the parameters").clone();
-        let evaluated = furnicraft_mesh::evaluate_primitive(&primitive).expect("evaluated mesh");
+        let evaluated = mesh::evaluate_primitive(&primitive).expect("evaluated mesh");
 
         let value = serde_json::to_value(ObjectCollapse { object: id }).expect("params");
         let spec = CommandRegistry::new().get(OBJECT_COLLAPSE_ID).expect("registered");
@@ -797,9 +797,9 @@ mod tests {
         // document limit.
         let object = session.project().object(id).expect("the band exists");
         let constructive = object.geometry().as_constructive().expect("a constructive object");
-        let mesh = furnicraft_param::build_constructive_mesh(constructive).expect("the band draws");
+        let mesh = param::build_constructive_mesh(constructive).expect("the band draws");
         let cap = mesh.faces().first().expect("a cap");
-        assert!(cap.len() > 3 && cap.len() <= furnicraft_model::MAX_FACE_VERTICES, "cap holds {}", cap.len());
+        assert!(cap.len() > 3 && cap.len() <= model::MAX_FACE_VERTICES, "cap holds {}", cap.len());
     }
 
     #[test]
@@ -900,7 +900,7 @@ mod tests {
             .as_constructive()
             .expect("a constructive payload")
             .clone();
-        let evaluated = furnicraft_mesh::evaluate_constructive(&constructive).expect("evaluated mesh");
+        let evaluated = mesh::evaluate_constructive(&constructive).expect("evaluated mesh");
 
         let value = serde_json::to_value(ObjectCollapse { object: id }).expect("params");
         session.dispatch(OBJECT_COLLAPSE_ID, &value).expect("collapse");

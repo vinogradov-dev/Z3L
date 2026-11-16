@@ -12,9 +12,9 @@
 
 use egui::collapsing_header::CollapsingState;
 use egui::{Align2, Color32, CornerRadius, FontId, RichText, Sense, Ui, Vec2};
-use furnicraft_engine::Session;
-use furnicraft_model::{Container, Id, Node, Panel, Project};
-use furnicraft_text::Message;
+use engine::Session;
+use model::{Container, Id, Node, Panel, Project};
+use text::Message;
 
 use crate::icons;
 use crate::node_actions::{self, MenuSource, NodeAction, Subject};
@@ -259,7 +259,7 @@ fn show_leaf(
 
 fn show_object(
     ui: &mut Ui,
-    object: &furnicraft_model::Object,
+    object: &model::Object,
     project: &Project,
     active: Option<Id>,
     selection: &mut Selection,
@@ -269,14 +269,14 @@ fn show_object(
     let id = object.id();
     let lang = crate::language(ui.ctx());
     let kind = match object.geometry() {
-        furnicraft_model::Geometry::Mesh(_) => Message::TreeBadgeMesh,
-        furnicraft_model::Geometry::Primitive(primitive) => match primitive.kind() {
-            furnicraft_model::PrimitiveKind::Cuboid => Message::TreeBadgeBox,
-            furnicraft_model::PrimitiveKind::Cylinder => Message::TreeBadgeCylinder,
-            furnicraft_model::PrimitiveKind::Sphere => Message::TreeBadgeSphere,
+        model::Geometry::Mesh(_) => Message::TreeBadgeMesh,
+        model::Geometry::Primitive(primitive) => match primitive.kind() {
+            model::PrimitiveKind::Cuboid => Message::TreeBadgeBox,
+            model::PrimitiveKind::Cylinder => Message::TreeBadgeCylinder,
+            model::PrimitiveKind::Sphere => Message::TreeBadgeSphere,
         },
-        furnicraft_model::Geometry::Constructive(_) => Message::TreeBadgeContour,
-        furnicraft_model::Geometry::Path(_) => Message::TreeBadgePath,
+        model::Geometry::Constructive(_) => Message::TreeBadgeContour,
+        model::Geometry::Path(_) => Message::TreeBadgePath,
     };
     let label = RichText::new(format!("{}  [{}]", object.name(), kind.text(lang)));
     let response = row(ui, id, label, selection.contains(id), flags, true);
@@ -458,8 +458,8 @@ fn first_panel_in(children: &[Node]) -> Option<Id> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{CameraProjection, Id, LightKind, Node, Panel, PanelNominalSize, Placement};
-    use furnicraft_testkit::{sample_catalog, sample_project};
+    use model::{CameraProjection, Id, LightKind, Node, Panel, PanelNominalSize, Placement};
+    use testkit::{sample_catalog, sample_project};
 
     use super::*;
 
@@ -522,12 +522,12 @@ mod tests {
             Id::new(id).expect("id"),
             format!("Panel {id}"),
             PanelNominalSize::new(
-                furnicraft_units::Length::from_millimetres(600).expect("length"),
-                furnicraft_units::Length::from_millimetres(400).expect("width"),
+                units::Length::from_millimetres(600).expect("length"),
+                units::Length::from_millimetres(400).expect("width"),
             )
             .expect("size"),
             None,
-            furnicraft_units::Length::from_millimetres(18).expect("thickness"),
+            units::Length::from_millimetres(18).expect("thickness"),
             Placement::IDENTITY,
         )
         .expect("panel")
@@ -579,9 +579,9 @@ mod tests {
 
     #[test]
     fn a_component_badge_shows_the_class_label_instead_of_its_digits() {
-        use furnicraft_engine::NodePropertySet;
-        use furnicraft_engine::node_cmds::NODE_PROPERTY_SET_ID;
-        use furnicraft_model::{PropertyValue, SYSTEM_CLASS};
+        use engine::NodePropertySet;
+        use engine::node_cmds::NODE_PROPERTY_SET_ID;
+        use model::{PropertyValue, SYSTEM_CLASS};
 
         let mut session = Session::with_catalog(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");

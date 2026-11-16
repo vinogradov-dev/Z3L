@@ -1,10 +1,10 @@
-//! Test fixtures and helpers shared by FurniCraft crates.
+//! Test fixtures and helpers shared by Z3L crates.
 //!
 //! Development-only: nothing in the product may depend on this crate.
 //!
 //! A helper lives here when more than one crate's tests need it. `millimetres`, `open_path`,
 //! `cube_mesh`, `sample_project` and `sample_product_project` are defined in
-//! `furnicraft_model::testing` and re-exported here, because that is the only crate that can define
+//! `model::testing` and re-exported here, because that is the only crate that can define
 //! them for both itself and everyone else (C7).
 #![forbid(unsafe_code)]
 #![deny(
@@ -19,16 +19,16 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use furnicraft_model::{
+use model::{
     Catalog, Currency, EdgeBandingMaterial, MaterialId, Money, PanelMaterial, PanelNominalSize, PanelRect, PanelStock,
     SheetSize,
 };
-use furnicraft_units::Length;
+use units::Length;
 
-/// The fixtures every crate's tests start from, defined once in `furnicraft_model::testing`
-/// (C7): a crate cannot re-export them back into `furnicraft-model`, because the dev-dependency
+/// The fixtures every crate's tests start from, defined once in `model::testing`
+/// (C7): a crate cannot re-export them back into `model`, because the dev-dependency
 /// cycle would compile the model twice and its types would not match.
-pub use furnicraft_model::testing::{cube_mesh, millimetres, open_path, sample_product_project, sample_project};
+pub use model::testing::{cube_mesh, millimetres, open_path, sample_product_project, sample_project};
 
 /// A unique, empty scratch directory under the session temp root.
 ///
@@ -37,7 +37,7 @@ pub use furnicraft_model::testing::{cube_mesh, millimetres, open_path, sample_pr
 /// removed and created again, so a test that died halfway never hands its leftovers to the next
 /// run. Failures are left to the test: a directory that cannot be made shows up as a missing file.
 pub fn scratch_dir(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!("furnicraft-test-{name}-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("z3l-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     let _ = std::fs::create_dir_all(&directory);
     directory

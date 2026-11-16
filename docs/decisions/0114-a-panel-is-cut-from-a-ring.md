@@ -68,7 +68,7 @@ is what the tool asks for — instead of the document's reach error.
 - `crates/ui/src/toolbars/spec.rs` — the `furniture.panels` group, `ToolKind::PanelContour`.
 - `crates/ui/src/toolbars/ready.rs` — the cell's enablement and its hint.
 - `crates/engine/src/panel_cmds/panel.rs` — `PanelCreate::outline`, `panel.contour.create`.
-- `apps/furnicraft/src/frame_tests.rs` — `the_contour_cell_cuts_a_panel_to_the_ring_the_pointer_drew`.
+- `app/src/frame_tests.rs` — `the_contour_cell_cuts_a_panel_to_the_ring_the_pointer_drew`.
 - ADR [0034](0034-nodes-carry-typed-properties.md), [0042](0042-a-contour-panel-keeps-its-ring-and-edits-a-working-copy.md),
   [0052](0052-a-drawing-commits-as-one-path-on-the-work-plane.md),
   [0083](0083-a-panel-is-anchored-at-its-base-corner.md),

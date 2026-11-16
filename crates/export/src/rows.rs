@@ -7,16 +7,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use furnicraft_geom::DVec3;
-use furnicraft_model::{
+use geom::DVec3;
+use model::{
     Catalog, ClassCode, Contour, ContourSegment, CutoutDepth, CutoutShape, Extent, FaceSide, Fill, Id, Level,
     MachiningParams, MaterialId, Measure, Mount, Nesting, Node, Opening, Panel, PanelGeometry, PanelMaterial,
     PanelNominalSize, PanelStock, Placement, Project, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT,
     SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION, Supply,
 };
-use furnicraft_text::Lang;
-use furnicraft_units::Length;
 use serde_json::{Value, json};
+use text::Lang;
+use units::Length;
 
 use crate::error::ExportError;
 use crate::manifest::{ROTATION_SCALE, RULES};
@@ -125,7 +125,7 @@ struct PanelFacts<'a> {
     class: ClassCode,
     thickness: Length,
     geometry: PanelGeometry,
-    segments: Vec<(furnicraft_geom::Segment, furnicraft_model::SegmentSource)>,
+    segments: Vec<(geom::Segment, model::SegmentSource)>,
     bands: Vec<BandFacts>,
     banding_total_um: i64,
 }
@@ -261,8 +261,7 @@ fn panel_facts<'a>(panel: &'a Panel, catalog: &Catalog) -> Result<PanelFacts<'a>
             .map_or_else(|| spec.last_known_thickness(), |material| material.thickness())
     })?;
     let (ring, sources) = panel.outline().ring_and_sources_for(panel.nominal_size())?;
-    let segments: Vec<(furnicraft_geom::Segment, furnicraft_model::SegmentSource)> =
-        ring.segments().iter().copied().zip(sources).collect();
+    let segments: Vec<(geom::Segment, model::SegmentSource)> = ring.segments().iter().copied().zip(sources).collect();
     let mut bands = Vec::new();
     for band in panel.edge_banding() {
         let (thickness, width) =
@@ -273,7 +272,7 @@ fn panel_facts<'a>(panel: &'a Panel, catalog: &Catalog) -> Result<PanelFacts<'a>
             thickness,
             width,
             included: band.included_in_size(),
-            length_um: segment_length(&segments, furnicraft_model::SegmentSource::Edge(band.edge())),
+            length_um: segment_length(&segments, model::SegmentSource::Edge(band.edge())),
         });
     }
     for band in panel.corner_banding() {
@@ -285,7 +284,7 @@ fn panel_facts<'a>(panel: &'a Panel, catalog: &Catalog) -> Result<PanelFacts<'a>
             thickness,
             width,
             included: band.included_in_size(),
-            length_um: segment_length(&segments, furnicraft_model::SegmentSource::Corner(band.corner())),
+            length_um: segment_length(&segments, model::SegmentSource::Corner(band.corner())),
         });
     }
     for band in panel.ring_banding() {
@@ -297,7 +296,7 @@ fn panel_facts<'a>(panel: &'a Panel, catalog: &Catalog) -> Result<PanelFacts<'a>
             thickness,
             width,
             included: band.included_in_size(),
-            length_um: segment_length(&segments, furnicraft_model::SegmentSource::Ring(band.segment())),
+            length_um: segment_length(&segments, model::SegmentSource::Ring(band.segment())),
         });
     }
     let banding_total_um = bands.iter().fold(0i64, |total, band| total.saturating_add(band.length_um));
@@ -320,10 +319,7 @@ fn edge_profile(catalog: &Catalog, material: MaterialId, fallback: Length, fallb
 }
 
 /// The nominal length of the segment a band covers, in micrometres.
-fn segment_length(
-    segments: &[(furnicraft_geom::Segment, furnicraft_model::SegmentSource)],
-    source: furnicraft_model::SegmentSource,
-) -> i64 {
+fn segment_length(segments: &[(geom::Segment, model::SegmentSource)], source: model::SegmentSource) -> i64 {
     segments
         .iter()
         .find(|(_, candidate)| *candidate == source)
@@ -494,16 +490,16 @@ fn node_row(id: Id, parent: u64, name: &str, placement: Placement, class: ClassC
 }
 
 /// One row of the contour table.
-fn contour_row(id: Id, seq: usize, segment: furnicraft_geom::Segment) -> Vec<Cell> {
+fn contour_row(id: Id, seq: usize, segment: geom::Segment) -> Vec<Cell> {
     let start = segment.start();
     let x = micrometres(start.x);
     let y = micrometres(start.y);
     let (kind, x2, y2, cx, cy, clockwise) = match segment {
-        furnicraft_geom::Segment::Line(_) => {
+        geom::Segment::Line(_) => {
             let end = segment.end();
             ("line", micrometres(end.x), micrometres(end.y), 0, 0, false)
         }
-        furnicraft_geom::Segment::Arc(arc) => {
+        geom::Segment::Arc(arc) => {
             let center = arc.center();
             ("arc", 0, 0, micrometres(center.x), micrometres(center.y), arc.sweep_angle() < 0.0)
         }
@@ -598,7 +594,7 @@ fn note_class(context: &mut Context, class: ClassCode) {
 }
 
 /// Records the user's properties of one node, skipping the reserved system keys.
-fn note_properties(context: &mut Context, properties: Option<&furnicraft_model::Properties>, id: Id) {
+fn note_properties(context: &mut Context, properties: Option<&model::Properties>, id: Id) {
     let Some(properties) = properties else {
         return;
     };
@@ -920,15 +916,15 @@ fn fill_text(fill: Fill) -> &'static str {
 }
 
 /// The name of one machining operation.
-fn operation_text(operation: furnicraft_model::Operation) -> &'static str {
+fn operation_text(operation: model::Operation) -> &'static str {
     match operation {
-        furnicraft_model::Operation::Contour => "contour",
-        furnicraft_model::Operation::EdgeBand => "edge-band",
-        furnicraft_model::Operation::Holes => "holes",
-        furnicraft_model::Operation::Grooves => "grooves",
-        furnicraft_model::Operation::CupBore => "cup-bore",
-        furnicraft_model::Operation::MountPattern => "mount-pattern",
-        furnicraft_model::Operation::Cutout => "cutout",
+        model::Operation::Contour => "contour",
+        model::Operation::EdgeBand => "edge-band",
+        model::Operation::Holes => "holes",
+        model::Operation::Grooves => "grooves",
+        model::Operation::CupBore => "cup-bore",
+        model::Operation::MountPattern => "mount-pattern",
+        model::Operation::Cutout => "cutout",
     }
 }
 

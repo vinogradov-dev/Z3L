@@ -1,15 +1,15 @@
 //! Test support: the fixtures every crate builds its tests from.
 //!
-//! Compiled for this crate's own tests and, through the `testing` feature, for `furnicraft-testkit`,
+//! Compiled for this crate's own tests and, through the `testing` feature, for `testkit`,
 //! which re-exports [`millimetres`], [`open_path`], [`cube_mesh`] and [`sample_project`]. It is the
-//! one place those four are defined (C7): a crate's tests may not reach back into `furnicraft-testkit`, because a
+//! one place those four are defined (C7): a crate's tests may not reach back into `testkit`, because a
 //! dev-dependency on a crate that already depends on this one would compile this crate a second time
 //! and every model type would come in two incompatible versions.
 //!
 //! Nothing here is product code; the feature is off in a release build.
 
 use crate::{ClassCode, Container, Envelope, Id, Mesh, Panel, PanelNominalSize, Path, Placement, Project};
-use furnicraft_units::Length;
+use units::Length;
 
 /// Whole millimetres as an exact length; the unit every fixture is written in.
 #[allow(clippy::expect_used)]

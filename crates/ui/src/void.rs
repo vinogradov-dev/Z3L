@@ -18,11 +18,11 @@
 //! Changes when: a second niche shape needs the corners rather than the box, or the cursor rule for
 //! the point inside the product changes.
 
-use furnicraft_geom::DVec3;
-use furnicraft_model::{Id, Niche, NicheRefusal, Project, SurfaceKind};
-use furnicraft_scene::Ray;
-use furnicraft_text::Message;
-use furnicraft_units::Length;
+use geom::DVec3;
+use model::{Id, Niche, NicheRefusal, Project, SurfaceKind};
+use scene::Ray;
+use text::Message;
+use units::Length;
 
 /// How far the pointer may move, in millimetres, before the void is measured again.
 pub const MEASURE_STEP_MM: f64 = 0.5;
@@ -241,9 +241,9 @@ mod tests {
 
     use std::f64::consts::FRAC_PI_2;
 
-    use furnicraft_geom::DQuat;
-    use furnicraft_model::{ClassCode, Container, Envelope, Placement};
-    use furnicraft_units::Length;
+    use geom::DQuat;
+    use model::{ClassCode, Container, Envelope, Placement};
+    use units::Length;
 
     use super::*;
 
@@ -328,8 +328,7 @@ mod tests {
         let wall = DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2);
         let rotation = DQuat::from_rotation_x(degrees.to_radians()) * wall;
         let placement = Placement::new(DVec3::new(0.0, through, 0.0), rotation).expect("a wall placement");
-        let nominal =
-            furnicraft_model::PanelNominalSize::new(millimetres(1600), millimetres(600)).expect("a wall size");
+        let nominal = model::PanelNominalSize::new(millimetres(1600), millimetres(600)).expect("a wall size");
         project.add_panel(product, "Wall", nominal, None, millimetres(18), placement).expect("add a wall");
     }
 
@@ -350,9 +349,9 @@ mod tests {
     fn a_turned_product_is_entered_through_its_own_box() {
         let (mut project, product) = piece();
         let turn = Placement::IDENTITY
-            .with_rotation_euler(furnicraft_model::EulerAngles {
-                z: furnicraft_units::Degrees::from_millidegrees(90_000),
-                ..furnicraft_model::EulerAngles::default()
+            .with_rotation_euler(model::EulerAngles {
+                z: units::Degrees::from_millidegrees(90_000),
+                ..model::EulerAngles::default()
             })
             .expect("a turn");
         project.set_node_placement(product, turn).expect("turn the piece");

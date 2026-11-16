@@ -8,9 +8,9 @@ use std::collections::HashSet;
 use std::fmt;
 use std::num::NonZeroU64;
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 use crate::Panel;
 

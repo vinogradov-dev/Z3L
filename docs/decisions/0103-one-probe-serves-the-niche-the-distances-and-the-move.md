@@ -17,7 +17,7 @@ returns a niche's **size, its coordinates in space and its shape** is therefore 
 
 ## Decision
 
-**One probe, in the model.** `furnicraft-model` answers, for a point and a direction, the distance to
+**One probe, in the model.** `model` answers, for a point and a direction, the distance to
 the first furniture surface and what it hit — a panel face, a hardware body, another product's shell,
 or the virtual face of the product's envelope. It is a pure query over the document: no session, no
 renderer, no allocation per call beyond the walk it needs.

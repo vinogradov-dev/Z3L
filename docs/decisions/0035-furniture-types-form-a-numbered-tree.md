@@ -16,7 +16,7 @@ shape can be validated, stored compactly and queried by subtree.
 A classifier from another program was available as an example. It mixes several independent
 questions into one code — family, shape, and even a second independent classification after a colon
 — so a query cannot rely on the digits alone and a report has to know special cases. Copying it
-would also bind FurniCraft to a foreign registry it does not control.
+would also bind Z3L to a foreign registry it does not control.
 
 ## Decision
 
@@ -43,8 +43,8 @@ would also bind FurniCraft to a foreign registry it does not control.
   the number and reports a diagnostic; it does not reject the file or drop the property.
 - **The registry starts small.** `docs/domain/furntypes.md` lists the groups and types this
   milestone supports. New codes are added there before a command or a report uses them.
-- **No compatibility with K3.** FurniCraft neither imports nor reproduces another program's codes
-  or tables. The six-digit scheme is local, and a FurniCraft file means only what FurniCraft's
+- **No compatibility with K3.** Z3L neither imports nor reproduces another program's codes
+  or tables. The six-digit scheme is local, and a Z3L file means only what Z3L's
   registry says.
 
 ## Consequences

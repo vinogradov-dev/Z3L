@@ -1,5 +1,5 @@
 [package]
-name = "furnicraft-model"
+name = "model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,14 +9,14 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-furnicraft-geom = { workspace = true }
-furnicraft-text = { workspace = true }
-furnicraft-units = { workspace = true }
+geom = { workspace = true }
+text = { workspace = true }
+units = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [features]
-# Test support: `furnicraft-testkit` re-exports `testing`'s fixtures and this crate's own tests use
+# Test support: `testkit` re-exports `testing`'s fixtures and this crate's own tests use
 # them, so the shared fixtures have one definition (S8). Off in a release build.
 testing = []

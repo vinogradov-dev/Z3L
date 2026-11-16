@@ -48,7 +48,7 @@ pub enum ContourGrip {
   pointer crosses to the other segment at a junction.
 - **A number follows the cursor.** Drag start opens a small field next to the pointer, prefilled
   with the grip's current value and labelled with its dimension. Enter parses it through
-  `furnicraft-units` and applies it through the same setter the drag uses, without leaving the edit
+  `units` and applies it through the same setter the drag uses, without leaving the edit
   mode; Escape puts the value the drag started from back. A refused number leaves the field open and
   the draft untouched.
 - **An arc curve offers its radius on hover.** The pointer over an arc creates a transient radius

@@ -17,7 +17,7 @@
 //!
 //! Changes when: a pass, a topology or a depth, blend or stencil rule changes.
 
-use furnicraft_scene::ShadingStyle;
+use scene::ShadingStyle;
 
 use crate::{COLOR_FORMAT, DEPTH_FORMAT, geometry::MeshVertex};
 
@@ -194,7 +194,7 @@ pub(crate) fn create_shadow_pipeline(
     shader: &wgpu::ShaderModule,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("FurniCraft contact shadow pipeline"),
+        label: Some("Z3L contact shadow pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,

@@ -18,7 +18,7 @@ assets/icons/<theme>/<name>.svg
 
 | Theme | Icons | Shown by |
 |---|---|---|
-| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `arc-radius`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `rectangle-edge`, `circle`, `circle-diameter`, `circle-three-points`, `polygon`, `polygon-apothem`, `polygon-edge`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
+| `contour` | `line`, `polyline`, `arc`, `arc-centre`, `arc-radius`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `rectangle-edge`, `circle`, `circle-diameter`, `circle-three-points`, `circle-tangent`, `polygon`, `polygon-apothem`, `polygon-edge`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
 | `primitives` | `cuboid`, `cylinder`, `sphere`, `cone` | The ribbon *Model* tab |
 | `bodies` | `extrude`, `revolve`, `sweep` | The ribbon *Model* tab |
 | `scene` | `product`, `panel`, `post`, `shelf`, `void`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |
@@ -31,6 +31,15 @@ at the pixel size it draws, so a second size would only drift from the first.
 
 `assets/icons/STYLE_GUIDE.md` is documentation, not an icon: the loader reads only
 `assets/icons/<theme>/*.svg`.
+
+## Brand mark
+
+`assets/logo.svg` is the product wordmark, and it is not an icon: no theme, no 24-unit grid, no role
+ink. It is one file with one white ink and `viewBox="2.2 2.2 36 12"` — 36 x 12 units, aspect 3 — so the
+loader multiplies it with whatever ink the surface asks for and `crates/ui/src/icons.rs` keeps the
+ratio in `LOGO_ASPECT`. A redraw changes this file and that constant, and nothing else. The rules
+below — the grid, the footprint, the role inks, the theme table — describe `assets/icons/` and do not
+apply here (ADR 0136).
 
 ## Naming
 
@@ -123,6 +132,6 @@ theme and the file name stay unchanged.
 
 ## Ownership
 
-The icons are drawn for FurniCraft and carry the project license, MIT OR Apache-2.0. Do not copy an
+The icons are drawn for Z3L and carry the project license, MIT OR Apache-2.0. Do not copy an
 icon set from another product (`AGENTS.md` §4.6): a third-party icon keeps its license file next to
 the asset and gets a row in `ATTRIBUTION.md` in the same change.

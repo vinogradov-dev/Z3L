@@ -17,8 +17,8 @@
 
 use egui::{CornerRadius, Margin, Order, Rect, Stroke};
 
-use furnicraft_model::{Container, Id, Project};
-use furnicraft_text::Message;
+use model::{Container, Id, Project};
+use text::Message;
 
 use crate::inventory::{self, NodeKind, Place};
 use crate::view_flags::ViewFlags;
@@ -434,8 +434,8 @@ impl ViewportMenu {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::testing::{sample_product_project, sample_project};
-    use furnicraft_model::{CameraProjection, Placement};
+    use model::testing::{sample_product_project, sample_project};
+    use model::{CameraProjection, Placement};
 
     use super::*;
 

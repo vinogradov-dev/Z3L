@@ -12,9 +12,9 @@
 use egui::{
     Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals, style::WidgetVisuals, style::Widgets, vec2,
 };
-use furnicraft_scene::SceneColors;
-use furnicraft_text::Message;
+use scene::SceneColors;
 use serde::{Deserialize, Serialize};
+use text::Message;
 
 /// The darkest chrome: the window frame around the panels.
 pub const CHROME: Color32 = Color32::from_rgb(0x14, 0x17, 0x1b);
@@ -224,7 +224,11 @@ pub const FLOATING_OFFSET: f32 = 12.0;
 pub const RADIUS: u8 = 4;
 
 /// The title of the window, and the word the header draws.
-pub const PRODUCT_NAME: &str = "FurniCraft";
+///
+/// The product is named for a zero and three laws — `Local`, `Literal`, `Lasting` — and the whole
+/// statement is in `docs/philosophy.md`. This constant is the only place the words live; the window
+/// title, the header and the error sentences read it (ADR 0135).
+pub const PRODUCT_NAME: &str = "Z3L";
 
 /// One theme variant: every chrome and text colour the window draws with.
 ///
@@ -672,7 +676,7 @@ fn helper_ink(warn: Color32, dark: bool) -> Color32 {
     mix(warn, if dark { Color32::WHITE } else { Color32::BLACK }, HELPER_LIFT)
 }
 
-/// Applies the dark FurniCraft visuals and spacing to `style`.
+/// Applies the dark Z3L visuals and spacing to `style`.
 pub fn apply(style: &mut egui::Style) {
     apply_with(style, DARK);
 }
@@ -1036,7 +1040,7 @@ mod tests {
                     (palette.accent, "the action accent"),
                     (palette.accent_fill, "the filled accent"),
                     (palette.danger, "the danger ink"),
-                    (ink_of(furnicraft_scene::SELECTION_LINE_COLOR), "the selection ink"),
+                    (ink_of(scene::SELECTION_LINE_COLOR), "the selection ink"),
                 ] {
                     assert_ne!(ink, other, "{name}: a guide is never {what}");
                 }

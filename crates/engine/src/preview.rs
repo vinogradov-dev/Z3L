@@ -10,12 +10,12 @@
 //! ✕ and Escape do.
 //!
 //! The overlay is view-side state that happens to live in the session: it moves no
-//! [`furnicraft_model::Project`] revision, leaves the history alone, never reaches a file and is
+//! [`model::Project`] revision, leaves the history alone, never reaches a file and is
 //! dropped with the session.
 
 use std::collections::BTreeMap;
 
-use furnicraft_model::{Geometry, Id};
+use model::{Geometry, Id};
 
 /// The node geometry a previewing operation shows in place of the document's.
 ///
@@ -77,14 +77,14 @@ impl Preview {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_model::{Constructive, Extrude, Feature, Geometry, Path, Placement};
-    use furnicraft_testkit::{millimetres, sample_project};
+    use model::{Constructive, Extrude, Feature, Geometry, Path, Placement};
+    use testkit::{millimetres, sample_project};
 
     use super::*;
     use crate::Session;
 
     /// A rectangle 100 × 50 mm extruded 100 mm at the scene root.
-    fn body(project: &mut furnicraft_model::Project, height: i64) -> (Id, Constructive) {
+    fn body(project: &mut model::Project, height: i64) -> (Id, Constructive) {
         let root = project.root().id();
         let path = Path::rectangle([millimetres(20), millimetres(10)], [millimetres(120), millimetres(60)])
             .expect("a rectangle");

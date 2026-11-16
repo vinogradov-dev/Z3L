@@ -31,7 +31,7 @@
 use egui::{
     Align, Color32, Layout, Popup, PopupCloseBehavior, RectAlign, Response, Sense, Stroke, Ui, UiBuilder, Vec2,
 };
-use furnicraft_text::{Lang, Message};
+use text::{Lang, Message};
 
 use super::ToolAction;
 use super::spec::{Method, ToolSpec};

@@ -16,9 +16,9 @@
 //!
 //! Every row is a constant, so the ribbon allocates nothing to read the map.
 
-use furnicraft_engine::PrimitiveKind;
-use furnicraft_model::{ClassCode, FillMode};
-use furnicraft_text::Message;
+use engine::PrimitiveKind;
+use model::{ClassCode, FillMode};
+use text::Message;
 
 use crate::draw::DrawTool;
 use crate::icons::{self, Icon};
@@ -237,6 +237,7 @@ pub const fn method_id(tool: DrawTool) -> &'static str {
         DrawTool::Circle => "sketch.create.circle",
         DrawTool::CircleDiameter => "sketch.create.circle.diameter",
         DrawTool::CircleThreePoints => "sketch.create.circle.three-points",
+        DrawTool::CircleTangent => "sketch.create.circle.tangent",
         DrawTool::RegularPolygon => "sketch.create.polygon",
         DrawTool::PolygonApothem => "sketch.create.polygon.apothem",
         DrawTool::PolygonByEdge => "sketch.create.polygon.edge",
@@ -449,8 +450,8 @@ const SKETCH: [GroupSpec; 7] = [
                     VariantSpec {
                         id: "sketch.create.circle.tangent",
                         label: Message::ToolCircleTangent,
-                        icon: None,
-                        run: None,
+                        icon: Some(icons::contour::CIRCLE_TANGENT),
+                        run: Some(ToolKind::Draw(DrawTool::CircleTangent)),
                     },
                 ],
             },
@@ -976,7 +977,7 @@ mod tests {
 
     #[test]
     fn the_five_tabs_are_the_approved_nouns_in_order() {
-        let names = tabs().iter().map(|tab| tab.label.text(furnicraft_text::Lang::En)).collect::<Vec<_>>();
+        let names = tabs().iter().map(|tab| tab.label.text(text::Lang::En)).collect::<Vec<_>>();
         assert_eq!(names, ["Sketch", "Model", "Furniture", "Scene", "View"]);
         assert_eq!(tabs()[0].id, "sketch");
         assert_eq!(tab("furniture").map(|tab| tab.id), Some("furniture"));
@@ -1111,8 +1112,8 @@ mod tests {
         // for a group the endpoint, the axis and the object snaps can join (U91).
         let view = tab("view").expect("the view tab");
         let snaps = view.groups.iter().find(|group| group.id == "view.snaps").expect("the snaps group");
-        assert_eq!(snaps.label.text(furnicraft_text::Lang::En), "Snaps");
-        assert_eq!(snaps.label.text(furnicraft_text::Lang::Ru), "Привязки");
+        assert_eq!(snaps.label.text(text::Lang::En), "Snaps");
+        assert_eq!(snaps.label.text(text::Lang::Ru), "Привязки");
         let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.key())).collect::<Vec<_>>();
         assert_eq!(tools, vec![("view.snaps.grid", Some(ToolKind::GridSnap), Some("G"))], "the G key and the cell");
         let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
@@ -1131,7 +1132,7 @@ mod tests {
         // message left the ribbon with schema 23 (ADR 0101).
         let model = tab("model").expect("the model tab");
         for tool in model.live_groups().flat_map(GroupSpec::live_tools) {
-            let label = tool.label.text(furnicraft_text::Lang::En);
+            let label = tool.label.text(text::Lang::En);
             assert!(!tool.id.contains("cube"), "{} is still a cube cell", tool.id);
             assert!(!label.contains("Cube"), "{} still says cube", tool.id);
         }
@@ -1141,7 +1142,7 @@ mod tests {
             .find(|tool| tool.run == Some(ToolKind::Primitive(PrimitiveKind::Cuboid)))
             .expect("the box cell");
         assert_eq!(box_tool.id, "model.primitives.cuboid");
-        assert_eq!(box_tool.label.text(furnicraft_text::Lang::En), "Box");
+        assert_eq!(box_tool.label.text(text::Lang::En), "Box");
         assert_eq!(box_tool.icon, Some(icons::primitives::CUBOID));
     }
 
@@ -1163,7 +1164,7 @@ mod tests {
             "the card is the tool's own method, the drawn box its second (ADR 0101)"
         );
         let drawn = frame.variants.first().expect("the drawn method");
-        assert_eq!(drawn.label.text(furnicraft_text::Lang::En), "Frame by drawing");
+        assert_eq!(drawn.label.text(text::Lang::En), "Frame by drawing");
         assert!(drawn.run.is_some(), "the split cell only offers a method that runs");
     }
 
@@ -1202,6 +1203,7 @@ mod tests {
             ToolKind::Draw(DrawTool::Circle),
             ToolKind::Draw(DrawTool::CircleDiameter),
             ToolKind::Draw(DrawTool::CircleThreePoints),
+            ToolKind::Draw(DrawTool::CircleTangent),
             ToolKind::Draw(DrawTool::RegularPolygon),
             ToolKind::Draw(DrawTool::PolygonApothem),
             ToolKind::Draw(DrawTool::PolygonByEdge),

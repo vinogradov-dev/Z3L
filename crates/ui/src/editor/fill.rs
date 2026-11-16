@@ -2,7 +2,7 @@
 //!
 //! A post and a shelf are the same gesture with a different class: the class's `fill` trait says
 //! which pair of the niche's sides the part takes (ADR 0099), the class names the part in the tree,
-//! and the shell measures the void with [`furnicraft_model::Project::niche`] (ADR 0103). The editor
+//! and the shell measures the void with [`model::Project::niche`] (ADR 0103). The editor
 //! only holds *which* class is armed, so the tool survives a document edit and never stores a
 //! measurement.
 //!
@@ -12,9 +12,9 @@
 //!
 //! Changes when: the fill gesture gains a class, a refusal or a second mode.
 
-use furnicraft_engine::Session;
-use furnicraft_model::{ClassCode, Fill, FillMode};
-use furnicraft_text::{Lang, Message};
+use engine::Session;
+use model::{ClassCode, Fill, FillMode};
+use text::{Lang, Message};
 
 use super::Editor;
 

@@ -15,7 +15,7 @@ title bar costs resize-from-edge handling on every platform), so the header draw
 minimize or maximize button. And the header must not become a second way into the document.
 
 ## Decision
-`apps/furnicraft/src/header.rs` draws one row and returns at most one `HeaderAction`
+`app/src/header.rs` draws one row and returns at most one `HeaderAction`
 (`Home`, `Undo`, `Redo`, `Save`, `Settings`, `CloseTab`). The application performs it. Nothing in the
 header touches `Project`, dispatches a command or reads the filesystem:
 

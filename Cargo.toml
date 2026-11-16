@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask", "state-contract"]
-# default-members = ["crates/*", "apps/furnicraft", "xtask", "state-contract"]
-default-members = ["crates/*", "apps/furnicraft"]
+members = ["crates/*", "app", "xtask", "state-contract"]
+# default-members = ["crates/*", "app", "xtask", "state-contract"]
+default-members = ["crates/*", "app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,21 +12,21 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 # internal
-furnicraft-units = { path = "crates/units" }
-furnicraft-text = { path = "crates/text" }
-furnicraft-geom = { path = "crates/geom" }
-furnicraft-kernel = { path = "crates/kernel" }
-furnicraft-model = { path = "crates/model" }
-furnicraft-kernel-truck = { path = "crates/kernel-truck" }
-furnicraft-param = { path = "crates/param" }
-furnicraft-mesh = { path = "crates/mesh" }
-furnicraft-project = { path = "crates/project" }
-furnicraft-export = { path = "crates/export" }
-furnicraft-scene = { path = "crates/scene" }
-furnicraft-render = { path = "crates/render" }
-furnicraft-engine = { path = "crates/engine" }
-furnicraft-ui = { path = "crates/ui" }
-furnicraft-testkit = { path = "crates/testkit" }
+units = { path = "crates/units" }
+text = { path = "crates/text" }
+geom = { path = "crates/geom" }
+kernel = { path = "crates/kernel" }
+model = { path = "crates/model" }
+kernel-truck = { path = "crates/kernel-truck" }
+param = { path = "crates/param" }
+mesh = { path = "crates/mesh" }
+project = { path = "crates/project" }
+export = { path = "crates/export" }
+scene = { path = "crates/scene" }
+render = { path = "crates/render" }
+engine = { path = "crates/engine" }
+ui = { path = "crates/ui" }
+testkit = { path = "crates/testkit" }
 
 # external
 bytemuck = { version = "1.25", features = ["derive"] }

@@ -18,7 +18,7 @@ negative coordinates or mirror in the document.
 
 ## Decision
 
-- `WorkPlane` is view state in the shell (`apps/furnicraft/src/gizmo_math.rs`); the document stores
+- `WorkPlane` is view state in the shell (`app/src/gizmo_math.rs`); the document stores
   none of it.
 - A work plane passes through the world origin and is one of world **XY**, **XZ** or **YZ**. Its
   basis is right-handed (`u × v = normal`), the normal points from the plane towards the viewer, and

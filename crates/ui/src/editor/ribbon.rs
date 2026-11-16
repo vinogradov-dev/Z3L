@@ -13,11 +13,11 @@
 
 use egui::Ui;
 
-use furnicraft_engine::object_cmds::{OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_EXTRUDE_ID};
-use furnicraft_engine::{ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
-use furnicraft_model::{Id, Path};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use engine::object_cmds::{OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_EXTRUDE_ID};
+use engine::{ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
+use model::{Id, Path};
+use text::{Lang, Message};
+use units::Length;
 
 use super::Editor;
 use crate::box_tool::BoxOwner;

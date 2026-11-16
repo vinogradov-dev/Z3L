@@ -1,9 +1,9 @@
 {
-  "format": "furnicraft.order",
+  "format": "furniture.order",
   "version": 1,
   "app": "0.1.0",
   "document": {
-    "file": "cabinet.fcs",
+    "file": "cabinet.z3l",
     "revision": 17
   },
   "order": {

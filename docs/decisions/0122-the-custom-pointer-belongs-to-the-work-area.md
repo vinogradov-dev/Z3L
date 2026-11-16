@@ -37,9 +37,9 @@ pointer decides the icon, and the scene rectangle decides whether the square exi
 
 ## References
 
-- `apps/furnicraft/src/work_cursor.rs` — `show`, `over_system_surface`, the scene clip.
-- `apps/furnicraft/src/main.rs` — `Shell::orientation_rect`, `draw_work_cursor`.
-- `apps/furnicraft/src/document.rs` — the scene rectangle and the corner widget's placement.
+- `app/src/work_cursor.rs` — `show`, `over_system_surface`, the scene clip.
+- `app/src/main.rs` — `Shell::orientation_rect`, `draw_work_cursor`.
+- `app/src/document.rs` — the scene rectangle and the corner widget's placement.
 - ADR [0121](0121-the-pointer-is-a-two-tone-square-above-the-chrome.md) — the outline and layer this
   record keeps, with its window-wide scope removed.
 - Plan: U88 (the first square), X40 (the wrong scope), X41 (the correction).

@@ -31,7 +31,7 @@ it straight back, so the key removes it at once. This is the skill's rule, and i
 **Delete asks about two or more.** A batch is removed in one step, so a row the person did not mean to
 take is easy to miss and one Ctrl+Z has to bring all of them back; the question says how many rows go
 and that undo is one step. The question is the one the window already owns — the unsaved-changes one
-in `apps/furnicraft/src/file_menu.rs` — widened rather than copied: `Confirm` now asks about a tab,
+in `app/src/file_menu.rs` — widened rather than copied: `Confirm` now asks about a tab,
 the window or a selection, answers with *Proceed* or *Cancel*, and the answer performs the gesture the
 question named. Three kinds of question in one host means one modal, one Escape and one place to
 change how a destructive answer reads.
@@ -61,16 +61,16 @@ rule, so the engine command never sees it.
 - The cost is one extra decision for a gesture the person may consider obvious: a person who selects
   two rows and presses Delete now presses two keys, not one. The owner asked for exactly that, and
   the escape hatch is that the answer is one click and the question is never asked for one row.
-- `cargo xtask ui-rules`'s owner row for `apps/furnicraft/src/file_menu.rs` now reads "the file
+- `cargo xtask ui-rules`'s owner row for `app/src/file_menu.rs` now reads "the file
   dialogs and the destructive question", because that module hosts all three questions.
 
 ## References
 
 - `crates/engine/src/node_cmds.rs` — `node.delete.many` and `delete_targets`.
 - `crates/model/src/project/node_cmds.rs` — `Project::remove_nodes`, the one-bump batch.
-- `apps/furnicraft/src/shortcuts.rs` — the `Delete` key, read only outside a text field and a modal.
-- `apps/furnicraft/src/document.rs` — `delete_request`, the rule the key follows.
-- `apps/furnicraft/src/file_menu.rs` — `Confirm::delete`, the question and its Escape.
+- `app/src/shortcuts.rs` — the `Delete` key, read only outside a text field and a modal.
+- `app/src/document.rs` — `delete_request`, the rule the key follows.
+- `app/src/file_menu.rs` — `Confirm::delete`, the question and its Escape.
 - ADR [0065](0065-locked-nodes-are-a-session-flag.md) — a lock is a guard on a gesture.
 - ADR [0076](0076-a-tool-owns-the-next-click.md) — a running gesture owns the next click; a modal
   owns the keys for the frame it is up.

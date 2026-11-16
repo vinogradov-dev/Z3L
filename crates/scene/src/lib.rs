@@ -29,8 +29,8 @@
 
 use std::sync::Arc;
 
-use furnicraft_geom::{DMat4, DQuat, DVec3, MeshData};
-use furnicraft_model::Id;
+use geom::{DMat4, DQuat, DVec3, MeshData};
+use model::Id;
 
 use crate::ray::{ray_hit_drawable, ray_hit_polyline, ray_hit_product_envelope};
 
@@ -54,7 +54,7 @@ pub const SELECTION_LINE_COLOR: [f32; 4] = [0.15, 0.85, 1.0, 1.0];
 /// How the renderer shades the drawables of a frame.
 ///
 /// The value is frame data, not document data: a viewport chooses it and the settings file remembers
-/// the default, but a `.fcs` never carries it (ADR 0029, ADR 0070). The renderer turns each style
+/// the default, but a `.z3l` never carries it (ADR 0029, ADR 0070). The renderer turns each style
 /// into pipelines; [`ShadingStyle`] only promises which passes are on, so a frame can be tested
 /// without a GPU.
 ///
@@ -186,7 +186,7 @@ pub struct SceneColors {
     ///
     /// A guide is the program's own geometry — the bracket of an open level, a work plane — so it
     /// is screen paint and never document data. The chrome side of the same ink is
-    /// `furnicraft_ui::theme::helper`; the two are one colour, pinned together by a test in `ui`,
+    /// `ui::theme::helper`; the two are one colour, pinned together by a test in `ui`,
     /// because `scene` cannot reach the palette (ADR 0111, sheet U83). The values are written as
     /// eight-bit steps divided by 255 so a reader can compare them with the palette without a
     /// rounding rule in between.
@@ -808,8 +808,8 @@ mod tests {
     use super::*;
     use std::f64::consts::{FRAC_PI_2, TAU};
 
-    use furnicraft_geom::DVec4;
-    use furnicraft_model::Id;
+    use geom::DVec4;
+    use model::Id;
 
     fn assert_close(actual: DVec3, expected: DVec3) {
         assert!((actual - expected).length() < 1.0e-9, "actual {actual:?}, expected {expected:?}");

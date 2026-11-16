@@ -13,8 +13,8 @@
 //! runs (ADR 0077), and *Close* closes and commits in one operation (ADR 0052).
 //!
 //! It refuses a repeat of the previous point, a coordinate outside the document range, a point past
-//! the ring cap and a close that cannot form a path; each is a [`DrawDraftError`] and leaves the
-//! draft editable.
+//! the ring cap, a corner whose two lines lie on one line and a close that cannot form a path; each
+//! is a [`DrawDraftError`] and leaves the draft editable.
 //!
 //! It does not choose the work plane, create the node or hold the editor's tool selection: the
 //! caller passes the plane's placement to [`DrawDraft::commit`].
@@ -23,16 +23,16 @@
 
 use core::f64::consts::PI;
 
-use furnicraft_engine::object_cmds::OBJECT_PATH_CREATE_ID;
-use furnicraft_engine::{ObjectPathCreate, Session};
-use furnicraft_geom::DVec2;
-use furnicraft_model::{
+use engine::object_cmds::OBJECT_PATH_CREATE_ID;
+use engine::{ObjectPathCreate, Session};
+use geom::DVec2;
+use model::{
     ContourSegment, ContourSegmentError, Id, MAX_CONTOUR_COORDINATE, MAX_CONTOUR_SEGMENTS, MAX_POLYGON_SIDES,
     MIN_POLYGON_SIDES, Path, PathError, Placement,
 };
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::Length;
+use text::{Lang, Message};
 use thiserror::Error;
+use units::Length;
 
 use crate::command::{dispatch, json};
 
@@ -82,6 +82,10 @@ pub enum DrawTool {
     CircleDiameter,
     /// Three points on the rim make one closed circle.
     CircleThreePoints,
+    /// A corner and one point on each of the two lines through it make one closed circle tangent to
+    /// both: a fourth click names its centre on the wedge's bisector, and the radius is the distance
+    /// from that centre to either line.
+    CircleTangent,
     /// A centre and a rim point make one closed regular polygon; the side count comes from the
     /// ribbon.
     RegularPolygon,
@@ -116,6 +120,7 @@ impl DrawTool {
             | Self::CircleThreePoints
             | Self::RectangleFromCenterDirected
             | Self::RectangleTilted => Some(3),
+            Self::CircleTangent => Some(4),
             Self::Polyline => None,
         }
     }
@@ -136,6 +141,7 @@ impl DrawTool {
                 | Self::Circle
                 | Self::CircleDiameter
                 | Self::CircleThreePoints
+                | Self::CircleTangent
                 | Self::RegularPolygon
                 | Self::PolygonApothem
                 | Self::PolygonByEdge
@@ -160,6 +166,7 @@ impl DrawTool {
             Self::Circle => Message::ToolCircle,
             Self::CircleDiameter => Message::ToolCircle,
             Self::CircleThreePoints => Message::ToolCircleThreePoints,
+            Self::CircleTangent => Message::ToolCircle,
             Self::RegularPolygon => Message::ToolRegularPolygon,
             Self::PolygonApothem | Self::PolygonByEdge => Message::ToolRegularPolygon,
             Self::RectangleTilted => Message::ToolRectangle,
@@ -524,7 +531,13 @@ impl DrawDraft {
         if self.last_end() == Some(next) {
             return Ok(None);
         }
-        self.path_with(Some(next), false).map(Some)
+        match self.path_with(Some(next), false) {
+            Ok(path) => Ok(Some(path)),
+            // A figure still short of its points is not a refusal: there is nothing to preview yet,
+            // and a warning on the status line would name a click the person has not made.
+            Err(DrawDraftError::TooFewPoints { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// The one segment that runs from the last stored end back to the first stored start.
@@ -630,6 +643,18 @@ impl DrawDraft {
                     return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
                 };
                 Path::circle_three_points(first, second, third).map_err(DrawDraftError::from)
+            }
+            // A circle tangent to two lines is still a circle: the corner and one point on each line
+            // fix the two lines, the fourth point is the centre the plates placed on the wedge's
+            // bisector, and the radius is that centre's distance to either line.
+            DrawTool::CircleTangent => {
+                let (Some(&corner), Some(&first), Some(&second), Some(&center)) =
+                    (points.first(), points.get(1), points.get(2), points.get(3))
+                else {
+                    return Err(DrawDraftError::TooFewPoints { need: 4, got: points.len() });
+                };
+                let (center, rim) = tangent_circle(corner, first, second, center)?;
+                Path::circle_through(center, rim).map_err(DrawDraftError::from)
             }
             DrawTool::RectangleTilted => {
                 let (Some(&corner), Some(&end), Some(&side)) = (points.first(), points.get(1), points.get(2)) else {
@@ -835,6 +860,50 @@ fn edge_rim(corner: [Length; 2], end: [Length; 2], sides: u32) -> Result<([Lengt
     Ok((center, rim_point))
 }
 
+/// The centre and a rim point of the circle tangent to the two lines of a corner.
+///
+/// The corner is the point both lines pass through, `first` and `second` name one line each, and
+/// `center` is the draft's own placed point on the wedge's bisector — the plates put it there, so a
+/// typed radius is read back out of it instead of being remembered beside the points. The radius is
+/// the perpendicular distance from that centre to the first line; the second line lies the same
+/// distance away, because the legs and the placed centre come from one wedge. The whole figure is
+/// whole micrometres, so the ring is a [`Path::circle_through`] of the placed centre and a rim point
+/// one radius away, and a stored circle may miss exact tangency by the rounding every figure takes.
+fn tangent_circle(
+    corner: [Length; 2],
+    first: [Length; 2],
+    second: [Length; 2],
+    center: [Length; 2],
+) -> Result<([Length; 2], [Length; 2]), DrawDraftError> {
+    let along = offset_from(corner, first);
+    let other = offset_from(corner, second);
+    if !wedge_between(along, other) {
+        return Err(DrawDraftError::NoWedge);
+    }
+    let span = along.length();
+    let to_center = offset_from(corner, center);
+    let cross = along.x * to_center.y - along.y * to_center.x;
+    // The legs are read in micrometres and the circle is built in the unit a placed point carries,
+    // so the perpendicular distance is divided back into millimetres once.
+    let radius = cross.abs() / span / 1_000.0;
+    let rim = point_from_millimetres(center, [radius, 0.0])?;
+    Ok((center, rim))
+}
+
+/// Whether two legs from one corner bound a wedge with an interior.
+///
+/// Two legs on one line — the same direction or the opposite one — have no bisector and no circle
+/// that touches both, which is the one input this figure cannot take. The floor is a millionth of the
+/// legs' own product, so a wedge narrower than any figure the document holds is one line.
+fn wedge_between(along: DVec2, other: DVec2) -> bool {
+    let spans = along.length() * other.length();
+    if !spans.is_finite() || spans <= 0.0 {
+        return false;
+    }
+    let sine = (along.x * other.y - along.y * other.x) / spans;
+    sine.is_finite() && sine.abs() > 1.0e-6
+}
+
 /// The vector from `from` to `to`, in millimetres.
 ///
 /// Both points are inside the document's range, so the difference fits a `f64` exactly enough to
@@ -905,6 +974,9 @@ pub enum DrawDraftError {
     /// The chain already has an arc waiting for the click that ends it.
     #[error("the arc is still waiting for its end point")]
     ArcInProgress,
+    /// The two legs of a corner lie on one line, so no circle can touch both.
+    #[error("the two lines of the corner are parallel, so no circle is tangent to both")]
+    NoWedge,
     /// A segment itself is invalid, for example two coincident ends.
     #[error(transparent)]
     Segment(#[from] ContourSegmentError),

@@ -13,7 +13,7 @@ open and save a scene without a session, and the shell owns the File menu.
 
 ## Decision
 
-- The scene envelope and its atomic writer are a dedicated crate, `furnicraft-project`, at layer 2
+- The scene envelope and its atomic writer are a dedicated crate, `project`, at layer 2
   beside `param` and the kernel adapter.
 - It depends on `model`, `serde`, `serde_json` and `thiserror` only. It never depends on `engine`,
   `ui`, `wgpu` or a window.

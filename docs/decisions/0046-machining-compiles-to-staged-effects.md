@@ -19,14 +19,14 @@ which anchors and depth modes they accept, and what parameters a new one starts 
 
 The static facts live in the document; the geometry lives in `param`.
 
-- `furnicraft-model` owns one static descriptor table, `MACHINING_DESCRIPTORS`, with one
+- `model` owns one static descriptor table, `MACHINING_DESCRIPTORS`, with one
   `MachiningDescriptor` per `MachiningKind`: kind, add-menu category, pipeline stage, capabilities
   and a default-parameters constructor. `MachiningParams::descriptor()` maps a value to its row.
   The table is not serialized: the file stores the kind tag and the build maps it back.
 - Capabilities are the rule the load path and the add command share: an operation that declares no
   edge anchor cannot be stored on one. `PanelError` and `ProjectError` name the refusal
   `MachiningAnchorUnsupported` instead of the cutout-specific `MachiningNeedsFace`.
-- `furnicraft-param` owns the compiler. `CompileMachining` matches a parameter kind exactly once and
+- `param` owns the compiler. `CompileMachining` matches a parameter kind exactly once and
   returns `CompiledMachining { stage, effects }`. `OpEffect` is `CutRegion(Region)`,
   `Subtract(SolidPlan)`, `Add(SolidPlan)` or `Attachment(EdgeRef)`.
 - `PanelPlan` folds the effects: a cut region subtracts from the core before extrusion, a subtract or

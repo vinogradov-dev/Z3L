@@ -1,5 +1,5 @@
 [package]
-name = "furnicraft-testkit"
+name = "testkit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-furnicraft-model = { workspace = true, features = ["testing"] }
-furnicraft-units = { workspace = true }
+model = { workspace = true, features = ["testing"] }
+units = { workspace = true }
 # The interface shots are pictures; `png` is already in the tree through `epaint` (U81).
 png = { workspace = true }

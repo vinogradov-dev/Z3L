@@ -21,11 +21,11 @@
 use std::collections::BTreeMap;
 
 use egui::{RichText, TextEdit, Ui};
-use furnicraft_engine::node_cmds::{NODE_PROPERTY_CLEAR_ID, NODE_PROPERTY_SET_ID};
-use furnicraft_engine::{EditScope, NodePropertyClear, NodePropertySet, Session};
-use furnicraft_model::{ClassCode, Id, PropertyValue, SYSTEM_CLASS, registry};
-use furnicraft_text::{Lang, Message};
-use furnicraft_units::{Degrees, Length};
+use engine::node_cmds::{NODE_PROPERTY_CLEAR_ID, NODE_PROPERTY_SET_ID};
+use engine::{EditScope, NodePropertyClear, NodePropertySet, Session};
+use model::{ClassCode, Id, PropertyValue, SYSTEM_CLASS, registry};
+use text::{Lang, Message};
+use units::{Degrees, Length};
 
 use crate::class_picker::ClassPicker;
 use crate::command::{dispatch, json};
@@ -423,9 +423,9 @@ fn committed(response: &egui::Response) -> bool {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use furnicraft_testkit::{sample_catalog, sample_project};
-    use furnicraft_text::Lang;
-    use furnicraft_units::Degrees;
+    use testkit::{sample_catalog, sample_project};
+    use text::Lang;
+    use units::Degrees;
 
     use super::*;
 

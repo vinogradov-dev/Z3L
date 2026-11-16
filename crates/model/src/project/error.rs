@@ -274,7 +274,7 @@ pub enum ProjectError {
     Contour(#[from] ContourError),
     /// A planar region cannot be built or combined.
     #[error(transparent)]
-    Region(#[from] furnicraft_geom::RegionError),
+    Region(#[from] geom::RegionError),
     /// Edge banding refers to an edge outside the rectangular v1 outline.
     #[error("edge banding on panel {panel} uses unsupported edge {edge}")]
     UnsupportedEdgeBanding {

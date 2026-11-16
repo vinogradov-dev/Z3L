@@ -10,7 +10,7 @@
 //!
 //! Changes when: sub-object editing gains, loses or renames an operation.
 
-use furnicraft_model::Project;
+use model::Project;
 
 use super::Editor;
 use crate::mesh_edit::{MeshEdit, MeshElement, is_editable_mesh};

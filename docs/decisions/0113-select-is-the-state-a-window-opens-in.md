@@ -32,7 +32,7 @@ click adds to the selection, a double click still enters a level, and a drag mov
 half-live gizmo — drawn, but refusing the press — would be the worst of the three: the person cannot
 tell an unarmed handle from a broken one.
 
-**The mode stays view state.** It is the window's, per run: no `.fcs` field, no undo entry, no
+**The mode stays view state.** It is the window's, per run: no `.z3l` field, no undo entry, no
 revision. It is not a document property because it mutates nothing, and it is not a session
 property because a tab switch in one window should not change the tool under the hand that is still
 holding it (ADR 0029).
@@ -54,10 +54,10 @@ holding it (ADR 0029).
 
 ## References
 
-- `apps/furnicraft/src/main.rs` — `TransformMode`, `Transform`, `Shell::mode`.
-- `apps/furnicraft/src/document.rs` — `Document::viewport`, the one frame that asks the mode.
-- `apps/furnicraft/src/status_bar.rs` — `transform_mode_ui`, the one control of three states.
-- `apps/furnicraft/src/frame_tests.rs` — the headless assertion that one press picks in `Select` and
+- `app/src/main.rs` — `TransformMode`, `Transform`, `Shell::mode`.
+- `app/src/document.rs` — `Document::viewport`, the one frame that asks the mode.
+- `app/src/status_bar.rs` — `transform_mode_ui`, the one control of three states.
+- `app/src/frame_tests.rs` — the headless assertion that one press picks in `Select` and
   moves in `Move`.
 - ADR [0029](0029-view-state-belongs-to-the-session.md) — view state, and why the mode is the
   window's.

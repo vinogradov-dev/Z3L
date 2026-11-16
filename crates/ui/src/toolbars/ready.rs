@@ -6,8 +6,8 @@
 //! explains itself. It also holds the one rule the button and the draft agree on: when a running
 //! chain can be closed.
 
-use furnicraft_model::{FillMode, Id, PrimitiveKind};
-use furnicraft_text::{Lang, Message};
+use model::{FillMode, Id, PrimitiveKind};
+use text::{Lang, Message};
 
 use super::spec::{ToolKind, ToolSpec};
 use super::state::Toolbars;

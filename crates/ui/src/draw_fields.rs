@@ -29,9 +29,9 @@
 
 use core::f64::consts::PI;
 
-use furnicraft_geom::DVec2;
-use furnicraft_model::MAX_CONTOUR_COORDINATE;
-use furnicraft_units::Length;
+use geom::DVec2;
+use model::MAX_CONTOUR_COORDINATE;
+use units::Length;
 
 use crate::draw::{DrawDraft, DrawTool};
 use crate::point_fields::{FieldParam, FieldRow, FieldSet};
@@ -180,6 +180,9 @@ pub struct PointState {
     pub rows: Vec<PointRow>,
     /// The chord being measured, when the figure has a second fixed point to measure from.
     pub construction: Option<[DVec2; 2]>,
+    /// The lines the figure is built against: the two lines of a corner, drawn past the clicks that
+    /// named them. Every other tool has none.
+    pub legs: Vec<[DVec2; 2]>,
     /// The X axis and the sweep the angle is read from.
     pub reference: Option<Reference>,
 }
@@ -207,6 +210,12 @@ enum Shape {
     Rise { base: f64 },
     /// A direction at a radius the earlier point fixed.
     Sweep { radius: f64 },
+    /// The centre of a circle tangent to two lines, named by the pointer on the wedge's bisector.
+    ///
+    /// `first` and `second` are the two legs from the corner the lines meet at, so the wedge the
+    /// pointer is in chooses its own bisector and the radius is the distance from the centre it
+    /// places to either line.
+    Tangent { first: DVec2, second: DVec2 },
 }
 
 /// What the next point of `draft` measures, and where it is measured from.
@@ -255,6 +264,7 @@ impl PointState {
         let stage = stage(draft, pointer)?;
         let mut state = Self::at_stage(stage, pointer, fields)?;
         state.construction = construction(draft, state.at);
+        state.legs = legs(draft, state.at);
         Some(state)
     }
 
@@ -436,6 +446,19 @@ impl PointState {
                 }
                 at
             }
+            // A circle tangent to two lines is read from the corner: the pointer names the centre on
+            // the bisector of the wedge it is in, and the plate names the radius, the distance from
+            // that centre to either line. The plate sits halfway from the centre to the point the
+            // circle touches, where the radius of any circle is read.
+            Shape::Tangent { first, second } => {
+                let reach = pointer - stage.anchor;
+                let wedge = Wedge::at(first, second, reach)?;
+                let radius = read(FieldParam::Radius, reach.dot(wedge.bisector) * wedge.half.sin());
+                let at = stage.anchor + wedge.bisector * (radius / wedge.half.sin());
+                let touch = stage.anchor + wedge.first * (radius / wedge.half.tan());
+                rows.push(PointRow { param: FieldParam::Radius, value: radius, anchor: at + (touch - at) / 2.0 });
+                at
+            }
         };
         // The side count belongs to the figure, not to the point: it is on every stage of a polygon and
         // its plate writes the draft, so the number of sides is one value however many clicks the
@@ -443,7 +466,7 @@ impl PointState {
         if let Some(sides) = stage.sides {
             rows.push(PointRow { param: FieldParam::Sides, value: f64::from(sides), anchor: stage.anchor });
         }
-        Some(Self { point: to_lengths(at)?, at, construction: None, rows, reference })
+        Some(Self { point: to_lengths(at)?, at, construction: None, legs: Vec::new(), rows, reference })
     }
 }
 
@@ -475,6 +498,88 @@ fn construction(draft: &DrawDraft, at: DVec2) -> Option<[DVec2; 2]> {
         _ => false,
     };
     chord.then_some([start, at])
+}
+
+/// The wedge two crossing lines bound on the pointer's side: the leg its sweep starts from, its
+/// bisector and half its angle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Wedge {
+    /// The unit direction of the bounding leg the sweep starts from.
+    first: DVec2,
+    /// The unit direction of the internal bisector.
+    bisector: DVec2,
+    /// Half the angle between the two bounds, in radians.
+    half: f64,
+}
+
+impl Wedge {
+    /// The wedge two crossing lines bound which holds `reach`, or `None` when the pointer names no
+    /// wedge.
+    ///
+    /// Two lines cross in four wedges and the pointer says which one the circle is built in: each leg
+    /// is signed to the pointer's side, and the pair whose counter-clockwise sweep holds the pointer
+    /// is the wedge. A pointer on the corner itself names no side, and two legs on one line leave no
+    /// wedge to hold anything.
+    fn at(first: DVec2, second: DVec2, reach: DVec2) -> Option<Self> {
+        let first = unit_or_x(first);
+        let second = unit_or_x(second);
+        if reach.length() <= 0.0 {
+            return None;
+        }
+        // A wedge is named by the pair of rays that bound it *and the order they are swept in*: a pair
+        // spans one wedge counter-clockwise and the rest of the turn the other way, so each pair is
+        // read in both orders and only the sweep under half a turn is a wedge.
+        for (sign_first, sign_second) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+            let start = first * sign_first;
+            let end = second * sign_second;
+            for (start, end) in [(start, end), (end, start)] {
+                let sweep = cross(start, end);
+                if sweep <= 0.0 || cross(start, reach) < 0.0 || cross(reach, end) < 0.0 {
+                    continue;
+                }
+                return Some(Self {
+                    first: start,
+                    bisector: unit_or_x(start + end),
+                    half: sweep.atan2(start.dot(end)) / 2.0,
+                });
+            }
+        }
+        None
+    }
+}
+
+/// The crossing product of two plane vectors: positive when `b` is counter-clockwise from `a`.
+fn cross(a: DVec2, b: DVec2) -> f64 {
+    a.x * b.y - a.y * b.x
+}
+
+/// The lines a figure is built against: the two lines of a tangent circle's corner.
+///
+/// They are the clicks the person has already placed plus, while the second line is being named, the
+/// direction under the pointer. Each runs past the point that named it, so the line reads as a line
+/// and the circle that follows can leave the wedge on either side of the click. Every other tool
+/// has none.
+fn legs(draft: &DrawDraft, at: DVec2) -> Vec<[DVec2; 2]> {
+    if draft.tool() != DrawTool::CircleTangent {
+        return Vec::new();
+    }
+    let points = draft.points();
+    let Some(corner) = points.first().copied().map(plane_point) else {
+        return Vec::new();
+    };
+    // Both lines are fixed once the corner and a point on each are placed; until then the line being
+    // named is the one the pointer is on.
+    let live = (points.len() < 3).then_some(at);
+    let mut rays = Vec::new();
+    for point in points.iter().skip(1).copied().map(plane_point).chain(live) {
+        let direction = point - corner;
+        let length = direction.length();
+        if !length.is_finite() || length <= 0.0 {
+            continue;
+        }
+        rays.push([corner, corner + direction / length * (length * 1.5)]);
+    }
+    rays
 }
 
 /// What the next point of `draft` measures, or `None` when the tool takes no further point.
@@ -533,6 +638,18 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         // Every point of a three-point circle rings the same way: each is a distance and an angle
         // from the one before it.
         DrawTool::CircleThreePoints => (last, Shape::Segment, 0.0),
+        // A circle tangent to two lines is clicked at the corner where they meet and then at one
+        // point on each line: those two clicks name the lines the way a direction does, and the last
+        // click names the centre of the ring.
+        DrawTool::CircleTangent => match (points.get(1), points.get(2)) {
+            (Some(&on_first), Some(&on_second)) => {
+                let corner = first;
+                let shape =
+                    Shape::Tangent { first: plane_point(on_first) - corner, second: plane_point(on_second) - corner };
+                (corner, shape, 0.0)
+            }
+            _ => (first, Shape::Direction, 0.0),
+        },
         DrawTool::RegularPolygon => (first, Shape::Radius { turned: true }, 0.0),
         // A circumscribed polygon is clicked on a side, so the pair is the apothem and a direction.
         DrawTool::PolygonApothem => (first, Shape::Apothem, 0.0),
@@ -628,7 +745,7 @@ mod tests {
     use egui::pos2;
 
     use super::*;
-    use furnicraft_model::ContourSegment;
+    use model::ContourSegment;
 
     fn millimetres(x: i64, y: i64) -> DVec2 {
         DVec2::new(x as f64, y as f64)
@@ -700,6 +817,7 @@ mod tests {
             DrawTool::Circle,
             DrawTool::CircleDiameter,
             DrawTool::CircleThreePoints,
+            DrawTool::CircleTangent,
             DrawTool::RegularPolygon,
             DrawTool::PolygonApothem,
             DrawTool::PolygonByEdge,
@@ -734,6 +852,11 @@ mod tests {
             (DrawTool::Circle, vec![(0, 0)], vec![FieldParam::Radius]),
             (DrawTool::CircleDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
             (DrawTool::CircleThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            // A tangent circle names each line by a point on it, and the last click only the radius:
+            // the corner and the two legs are already placed.
+            (DrawTool::CircleTangent, vec![(0, 0)], vec![FieldParam::Angle]),
+            (DrawTool::CircleTangent, vec![(0, 0), (200, 0)], vec![FieldParam::Angle]),
+            (DrawTool::CircleTangent, vec![(0, 0), (200, 0), (0, 200)], vec![FieldParam::Radius]),
             (DrawTool::RegularPolygon, vec![(0, 0)], vec![FieldParam::Radius, FieldParam::Rotation, FieldParam::Sides]),
             (
                 DrawTool::PolygonApothem,
@@ -933,6 +1056,55 @@ mod tests {
             panic!("a circle is four arcs");
         };
         assert_eq!(radius, Length::from_micrometres(100_000), "a 200 mm diameter is a 100 mm radius");
+    }
+
+    #[test]
+    fn a_tangent_circle_reads_the_radius_and_places_the_centre_on_the_bisector() {
+        // A 45 degree wedge with the pointer inside it: the radius is the pointer's distance to the
+        // first line, and the centre stands on the bisector far enough that both lines are that far
+        // away. The plate sits halfway from the centre to the point the circle touches.
+        let corner = draft(DrawTool::CircleTangent, &[(0, 0), (200, 0), (200, 200)]);
+        let state = PointState::live(&corner, DVec2::new(200.0, 100.0)).expect("a centre");
+        assert_eq!(params(&state), vec![FieldParam::Radius]);
+        let radius = state.rows[0].value;
+        assert!((radius - 85.36).abs() < 0.01, "the pointer stands 85.36 mm above the first line: {radius}");
+        let center = state.at;
+        assert!((center.y - radius).abs() < 0.01, "the first line is one radius away: {center:?}");
+        assert!(((center.x - center.y) / 2f64.sqrt() - radius).abs() < 0.01, "and so is the second: {center:?}");
+        let touch = DVec2::new(radius / (PI / 8.0).tan(), 0.0);
+        let plate = state.rows[0].anchor;
+        assert!(
+            (plate - (center + touch) / 2.0).length() < 1e-6,
+            "the plate is halfway from the centre to the point the circle touches: {plate:?}"
+        );
+
+        // A typed radius places the centre the same way, so the number survives the pointer.
+        let rows = vec![FieldRow::for_param(FieldParam::Radius, 0.0, pos2(0.0, 0.0))];
+        let fields = FieldSet::with_typed(rows, &[(FieldParam::Radius, 50.0)]).expect("one plate");
+        let placed = PointState::placed(&corner, DVec2::new(300.0, 100.0), &fields).expect("a placed centre");
+        assert!((placed.at.y - 50.0).abs() < 1e-6, "a 50 mm radius puts the centre 50 mm from the first line");
+        assert!(((placed.at.x - placed.at.y) / 2f64.sqrt() - 50.0).abs() < 1e-6, "and from the second");
+        assert_eq!(params(&placed), vec![FieldParam::Radius]);
+    }
+
+    #[test]
+    fn a_tangent_circle_draws_the_two_lines_it_is_built_against() {
+        // The corner and the line the pointer is naming, then both lines once each is clicked: the
+        // sketch shows what it measures against, and no other tool draws such a line.
+        let corner = draft(DrawTool::CircleTangent, &[(0, 0)]);
+        let state = PointState::live(&corner, millimetres(200, 100)).expect("a point on the first line");
+        assert_eq!(state.legs.len(), 1, "the line being named");
+        assert_eq!(state.legs[0][0], DVec2::ZERO, "a line starts at the corner");
+        assert!(state.legs[0][1].x > 200.0, "and runs past the click that named it");
+
+        let two = draft(DrawTool::CircleTangent, &[(0, 0), (200, 0)]);
+        let state = PointState::live(&two, millimetres(0, 300)).expect("a point on the second line");
+        assert_eq!(state.legs.len(), 2, "both lines are drawn");
+        assert_eq!(state.legs[1][0], DVec2::ZERO);
+        assert!((state.legs[1][1].y - 450.0).abs() < 1e-6);
+
+        let circle = draft(DrawTool::Circle, &[(100, 100)]);
+        assert!(PointState::live(&circle, millimetres(200, 100)).expect("a rim").legs.is_empty());
     }
 
     #[test]

@@ -98,7 +98,7 @@ Banding thickness is not panel thickness. If `width` is greater than the panel t
 6. Changing a property under the same `MaterialId` intentionally affects panels on the next load: for example, changing `nominal_thickness` changes the thickness of every panel that uses that material.
 7. Removing a `MaterialId` from the catalogue does not delete panels. The panel gets a "material missing" diagnostic and uses the last known thickness; see [Scene document](document.md).
 8. The catalogue does not substitute a missing material with a similar one and does not look up a replacement by name.
-9. Catalogue types and validation live in `furnicraft-model`; file I/O and JSON loading live in the application shell. `param` and `mesh` never read the catalogue.
+9. Catalogue types and validation live in `model`; file I/O and JSON loading live in the application shell. `param` and `mesh` never read the catalogue.
 
 ### 5.1. Mock file format
 

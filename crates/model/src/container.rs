@@ -4,9 +4,9 @@
 //! an explicit marker says so; an unmarked container is a group and can be flattened.
 //! The project root is a container too, with an immutable id and a zero pivot.
 
-use furnicraft_units::Length;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use units::Length;
 
 use crate::{
     ClassCode, Id, Node, PivotLocal, Placement, Properties, PropertyError, PropertyValue, SYSTEM_CLASS,
