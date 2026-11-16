@@ -42,18 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U104** the extrusion card offers create and cancel beside its height
-  Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
-   height. The owner wants the card to carry only the height — no units, no words, just H —
-   because the gesture already has the Enter and the Escape, and the card is a number, not a
-   dialog.
-  Shape: Drop the two buttons from the extrusion card and keep the one height field, labelled
-   `H` and drawn without a unit (the plate rule of the sketch fields). Enter commits and Escape
-   cancels exactly as they do now, and the card keeps its place beside the pointer. The field
-   becomes the only control that takes the keyboard.
-  Done: The card draws one H field and no tick or cross; a frame test asserts the card holds
-   exactly one field and that Enter commits while Escape cancels.
-  `files: app/src/extrude_gizmo.rs`
 - `[ ]` **V4** a box and a cylinder are drawn by their own gesture, not by the contour grammar
   Why: A box and a cylinder are drawn by their own box gesture, with their own rules, so a
    primitive does not know the sketch grammar: a rectangle cannot be built from its centre, its
@@ -104,6 +92,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 
 ## Done
+
+- `[x]` **U104** the extrusion card offers create and cancel beside its height
+  Why: The floating card of an extrusion offers a create tick and a cancel cross beside its
+   height. The owner wants the card to carry only the height — no units, no words, just H —
+   because the gesture already has the Enter and the Escape, and the card is a number, not a
+   dialog.
+  Shape: Drop the two buttons from the extrusion card and keep the one height field, labelled
+   `H` and drawn without a unit (the plate rule of the sketch fields). Enter commits and Escape
+   cancels exactly as they do now, and the card keeps its place beside the pointer. The field
+   becomes the only control that takes the keyboard.
+  Done: The card draws one H field and no tick or cross; a frame test asserts the card holds
+   exactly one field and that Enter commits while Escape cancels.
+  `files: app/src/extrude_gizmo.rs` — `29a3d47`
 
 - `[x]` **U103** there is no rubber-band selection
   Why: There is no way to select several objects with the pointer: a press either picks one

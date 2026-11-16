@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=f251903 updated=2026-11-16
+STATE: milestone=M7 phase=T task=- state=idle base=29a3d47 updated=2026-11-16
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -47,7 +47,7 @@ runs it: sheets, a price per line, kerf, trim and currency (K2–K4, 0120).
 encloses, left or up touches — and the release selects whole objects (0137).
 - ADR 0117 makes one const table the capability inventory every surface filters and the gate checks;
 0118 names the atom and U98 is the first — the ruler measures with two clicks and writes nothing,
-0119 the tool card, U94–U99 file that work.
+0119 the tool card, U104 its one lettered `H` field, U94–U99 file that work.
 - Faber's architecture is recorded (0028–0032) but not implemented. `state-contract` (L0) is the
 whole plan tool — gate, report, writer, dashboard, ADR index, `agents`/`init` (P4–P7, P9, 0085);
 `xtask` keeps the layering rules and `ci` (P8), the gate follows every `files:` hint, a closed
@@ -56,7 +56,7 @@ entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` logs what `/time
 
 ## Next
 
-Nothing is scheduled: 4 open tasks wait in `## Next`.
+Nothing is scheduled: 3 open tasks wait in `## Next`.
 
 ## Index
 
