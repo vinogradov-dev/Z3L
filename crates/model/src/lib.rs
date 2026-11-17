@@ -52,7 +52,7 @@ pub use catalog::{
 };
 pub use class::{
     CLASS_MAX_CODE, ClassCode, ClassCodeError, ClassPrefix, ClassRow, Extent, Fill, Level, Measure, Mount, Nesting,
-    Opening, Operation, OperationSet, Supply, TraitSet, registry,
+    Opening, Operation, OperationSet, Supply, TraitSet, presentation_rank, registry,
 };
 pub use container::{Container, Envelope, EnvelopeError};
 pub use contour::{

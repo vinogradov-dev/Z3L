@@ -1749,6 +1749,27 @@ pub fn registry() -> &'static [ClassRow] {
     REGISTRY
 }
 
+/// The families in the order the interface offers them: the order of the work, not of the digits.
+///
+/// The table stays ascending by code because a code is an identity and [`ClassCode::row`] binary
+/// searches the table (ADR 0094); this list is presentation only, so it may be reordered in any
+/// release without moving a code. A cabinet shop makes cases: the placeholder product is first
+/// because it is what a new product card carries, storage and the trim that goes with it next, then
+/// the surfaces and the lying, then what is bought, and seating last, because a chair or a sofa
+/// belongs to a scene rather than to a project.
+const PRESENTATION_ORDER: [u32; 8] = [800_000, 300_000, 700_000, 400_000, 200_000, 500_000, 600_000, 100_000];
+
+/// Where the family a code belongs to sits in the interface's order.
+///
+/// Both surfaces that list classes — the picker's tree and the product card — read the order from
+/// here, so it is stated once. A code whose family the list does not name (the unclassified sentinel,
+/// or a synthetic row in a test) ranks one past the last family, so it follows the ordered ones in
+/// code order instead of panicking.
+pub fn presentation_rank(code: ClassCode) -> usize {
+    let family = code.value() / 10_000 * 10_000;
+    PRESENTATION_ORDER.iter().position(|ordered| *ordered == family).unwrap_or(PRESENTATION_ORDER.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1802,6 +1823,29 @@ mod tests {
         assert!(placeholder.is_assignable());
         assert!(placeholder.is_product_class());
         assert!(!class("30.11").is_product_class(), "a shelf is a part, not a product");
+    }
+
+    #[test]
+    fn the_families_are_offered_in_the_order_of_the_work() {
+        let families = registry().iter().filter(|row| row.is_family()).collect::<Vec<_>>();
+        assert_eq!(families.len(), PRESENTATION_ORDER.len(), "every family has a place in the order");
+        let mut ranks = families
+            .iter()
+            .map(|row| ClassCode::from_code(row.code()).map_or(usize::MAX, presentation_rank))
+            .collect::<Vec<_>>();
+        ranks.sort_unstable();
+        ranks.dedup();
+        assert_eq!(ranks.len(), families.len(), "two families share a rank, so one is unreachable");
+        assert!(ranks.last() < Some(&PRESENTATION_ORDER.len()), "a shipped family ranks past the order");
+
+        assert_eq!(presentation_rank(ClassCode::GENERAL_PRODUCT), 0, "the placeholder comes first");
+        assert_eq!(presentation_rank(class("30.01.03")), 1, "a variant ranks with its family");
+        assert_eq!(presentation_rank(class("10.04")), PRESENTATION_ORDER.len() - 1, "a sofa is last");
+        assert_eq!(
+            presentation_rank(ClassCode::UNCLASSIFIED),
+            PRESENTATION_ORDER.len(),
+            "unclassified belongs to no family and follows them all"
+        );
     }
 
     #[test]
@@ -2067,7 +2111,7 @@ mod tests {
         let section = document_section();
         let start = section.find("The headings are listed").expect("the family paragraph");
         let paragraph = section[start..].split("\n\n").next().expect("a paragraph").replace('\n', " ");
-        let mut compared = 0;
+        let mut documented = Vec::new();
         for part in paragraph.split(" · ") {
             let fields = part.split('`').collect::<Vec<_>>();
             if fields.len() < 5 {
@@ -2086,12 +2130,17 @@ mod tests {
                 russian.trim_matches(|c| matches!(c, '«' | '»' | '.')),
                 "{code} Russian label"
             );
-            compared += 1;
+            documented.push(code);
         }
+        // The paragraph is written in the order the interface offers the families, so a reader meets
+        // the case a shop builds before the seating a scene props itself with.
+        let mut expected = registry().iter().filter(|row| row.is_family()).collect::<Vec<_>>();
+        expected
+            .sort_by_key(|row| ClassCode::from_code(row.code()).map_or(PRESENTATION_ORDER.len(), presentation_rank));
         assert_eq!(
-            compared,
-            registry().iter().filter(|row| row.is_family()).count(),
-            "a family is missing from the paragraph"
+            documented,
+            expected.iter().map(|row| ClassCode::from_code(row.code()).expect("a family code")).collect::<Vec<_>>(),
+            "the document lists the families in another order than the registry offers them"
         );
     }
 

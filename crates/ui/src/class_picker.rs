@@ -180,14 +180,29 @@ fn family_caption(ui: &mut Ui, family: &ClassRow, lang: Lang) {
     ui.label(RichText::new(format!("{code}   {}", family.label().text(lang))).strong().color(theme::text_dim(ui)));
 }
 
-/// The families and classes a query leaves visible, in registry order.
+/// The family headings of `rows` in the order the interface offers them.
 ///
-/// A family or a type that matches brings its children with it, so a person who types `Хранение`
-/// or `storage` still sees the cabinet rows; a class is listed only when it is assignable at all.
-/// A retired row is never listed, although it still renders where a document already stores it.
+/// A family the registry does not order — a synthetic table in a test, a heading filed before the
+/// order names it — follows the ordered ones in code order instead of failing.
+fn ordered_families(rows: &[ClassRow]) -> Vec<&ClassRow> {
+    let mut families = rows.iter().filter(|row| row.is_family()).collect::<Vec<_>>();
+    families.sort_by_key(|family| {
+        let rank = ClassCode::from_code(family.code()).map_or(usize::MAX, model::presentation_rank);
+        (rank, family.code())
+    });
+    families
+}
+
+/// The families and classes a query leaves visible, in the order the interface offers them.
+///
+/// The order is the order of the work, not of the digits: [`model::presentation_rank`] names it once
+/// for this tree and for the product card, so a shop meets its cabinet before its chair. A family or
+/// a type that matches brings its children with it, so a person who types `Хранение` or `storage`
+/// still sees the cabinet rows; a class is listed only when it is assignable at all. A retired row is
+/// never listed, although it still renders where a document already stores it.
 fn visible_rows<'a>(rows: &'a [ClassRow], query: &str, lang: Lang) -> Vec<FamilyRows<'a>> {
     let mut families = Vec::new();
-    for family in rows.iter().filter(|row| row.is_family()) {
+    for family in ordered_families(rows) {
         let Some(family_code) = ClassCode::from_code(family.code()) else { continue };
         let family_matches = matches(family, query, lang);
         let mut classes = Vec::new();
@@ -224,12 +239,13 @@ pub(crate) fn product_rows(query: &str, lang: Lang) -> Vec<(ClassCode, String, u
 }
 
 fn product_rows_in(rows: &[ClassRow], query: &str, lang: Lang) -> Vec<(ClassCode, String, u8)> {
-    let products = rows
+    let mut products = rows
         .iter()
         .filter(|row| row.is_assignable())
         .filter_map(|row| Some((ClassCode::from_code(row.code())?, row)))
         .filter(|(code, _row)| code.is_product_class())
         .collect::<Vec<_>>();
+    products.sort_by_key(|(code, _row)| (model::presentation_rank(*code), code.value()));
     let matching =
         products.iter().filter(|(_code, row)| matches(row, query, lang)).map(|(code, _row)| *code).collect::<Vec<_>>();
     let mut listed = Vec::new();
@@ -292,6 +308,29 @@ mod tests {
 
     fn shelf() -> ClassCode {
         "30.11".parse().expect("the horizontal panel code")
+    }
+
+    #[test]
+    fn the_tree_offers_the_general_family_first_and_seating_last() {
+        let families = visible_rows(model::registry(), "", Lang::En)
+            .into_iter()
+            .map(|family| family.family.slug())
+            .collect::<Vec<_>>();
+        assert_eq!(families.first(), Some(&"general"), "the placeholder product comes first: {families:?}");
+        assert_eq!(families.get(1), Some(&"storage"), "the case a shop builds comes second: {families:?}");
+        assert_eq!(families.last(), Some(&"seating"), "a chair belongs to a scene, so seating is last: {families:?}");
+    }
+
+    #[test]
+    fn the_product_list_starts_with_the_placeholder_and_ends_with_seating() {
+        let products = product_rows_in(model::registry(), "", Lang::En)
+            .into_iter()
+            .map(|(code, _text, _depth)| code)
+            .collect::<Vec<_>>();
+        assert_eq!(products.first(), Some(&ClassCode::GENERAL_PRODUCT), "a new product defaults to the placeholder");
+        let cabinet = products.iter().position(|code| code.slug() == Some("cabinet"));
+        let sitting = products.iter().position(|code| code.slug() == Some("chair"));
+        assert!(cabinet < sitting, "the cabinet is offered before the chair: {products:?}");
     }
 
     #[test]

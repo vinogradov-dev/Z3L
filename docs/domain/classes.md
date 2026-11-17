@@ -298,11 +298,16 @@ and an override is called out where it appears. Within every group, `TT = 90..99
 a workshop's local codes.
 
 A section is a **family**: its heading carries the code, the slug and the two labels, and every table
-row under it is an assignable class. The headings are listed here once so the tree is complete:
-`10` `seating` — Seating / «Места для сидения» · `20` `lying` — Lying / «Места для лежания» ·
-`30` `storage` — Storage / «Хранение» · `40` `surfaces` — Surfaces / «Поверхности» ·
-`50` `fittings` — Fittings / «Фурнитура» · `60` `appliances` — Appliances / «Бытовая техника» ·
-`70` `boards-trim` — Boards and trim / «Плиты и погонаж» · `80` `general` — General / «Общее».
+row under it is an assignable class. The headings are listed here once so the tree is complete, in the
+order the interface offers them — the order of the work, not of the digits (a code is an identity and
+never moves, so the list may be reordered in any release): the placeholder product first, because it
+is what a new product card carries; storage and the trim that goes with it next, because a case is
+what a cabinet shop makes; then the surfaces and the lying; then what is bought; and seating last,
+because a chair or a sofa belongs to a scene rather than to a project:
+`80` `general` — General / «Общее» · `30` `storage` — Storage / «Хранение» ·
+`70` `boards-trim` — Boards and trim / «Плиты и погонаж» · `40` `surfaces` — Surfaces / «Поверхности» ·
+`20` `lying` — Lying / «Места для лежания» · `50` `fittings` — Fittings / «Фурнитура» ·
+`60` `appliances` — Appliances / «Бытовая техника» · `10` `seating` — Seating / «Места для сидения».
 
 ### 7.1 Seating — `10`
 
