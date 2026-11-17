@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=adec943 updated=2026-11-17
+STATE: milestone=M7 phase=T task=- state=idle base=06ae440 updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -56,7 +56,7 @@ entry's ADR, the `STATE:` keys and a stale `base`; `/next-task` logs what `/time
 
 ## Next
 
-Nothing is scheduled: 6 open tasks wait in `## Next`.
+Nothing is scheduled: X56 is next — an edit rebuilds the world box of every mesh, vertex by vertex.
 
 ## Index
 

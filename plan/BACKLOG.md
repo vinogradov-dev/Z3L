@@ -41,27 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X55** a sphere reads sharp at its poles, as if the radial segments were missing there
-  Why: Observation: at the default 32 x 16 the ball reads sharp at both poles — the cap is a
-   fan of 32 long thin triangles and the edge pass draws the fan as a star, so the sphere looks
-   like it lacks radial segments at the ends. Expectation: at the default tessellation the ball
-   reads round at the poles, with a cap no wider than the band beside it, while the stored side
-   and band counts keep promising the same faces and vertices. Suspected cause, measured:
-   sphere_mesh in crates/mesh/src/primitive.rs spaces the latitude bands uniformly in z (z = -r
-   + 2 r band / bands), so with 16 bands the first ring has the radius sqrt(r^2 - (r -
-   2r/16)^2) = 0.484 r, and the pole is joined to that ring by one triangle per side; the
-   ShadedWithEdges pass paints those long edges verbatim. The counts themselves are right:
-   face_count is segments x bands and vertex_count is 2 + segments x (bands - 1).
-  Shape: Spacing only: distribute the bands by latitude angle instead of by z, z = r cos(pi
-   band / bands) and ring = r sin(pi band / bands), so every band spans one meridian step and
-   the pole cap is the first band (0.195 r at 16 bands). Keep the stored segments and bands and
-   the counts they promise, so the card, the schema and the mesh_counts test are untouched, and
-   the phantom (drawn from the radius alone) needs nothing.
-  Done: The default 32 x 16 sphere has its first ring r sin(pi/16) from the pole, every band
-   covers one equal meridian step within rounding, and the counts, bounds and outward normals
-   are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
-   twice another, and the ball is looked at once in the live window at the default size.
-  `files: crates/mesh/src/primitive.rs`
 - `[ ]` **X56** an edit rebuilds the world box of every mesh, vertex by vertex
   Why: Observation: one edit anywhere costs the whole scene. Measured in a headless probe
    (app/src/frame_tests.rs, dev profile with opt-level 2, 5 000 root spheres of 32 x 16): 27 /
@@ -195,6 +174,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    volume and the sharp case; the icon is drawn and passes the icon test.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 ## Done
+
+- `[x]` **X55** a sphere reads sharp at its poles, as if the radial segments were missing there
+  Why: Observation: at the default 32 x 16 the ball reads sharp at both poles — the cap is a
+   fan of 32 long thin triangles and the edge pass draws the fan as a star, so the sphere looks
+   like it lacks radial segments at the ends. Expectation: at the default tessellation the ball
+   reads round at the poles, with a cap no wider than the band beside it, while the stored side
+   and band counts keep promising the same faces and vertices. Suspected cause, measured:
+   sphere_mesh in crates/mesh/src/primitive.rs spaces the latitude bands uniformly in z (z = -r
+   + 2 r band / bands), so with 16 bands the first ring has the radius sqrt(r^2 - (r -
+   2r/16)^2) = 0.484 r, and the pole is joined to that ring by one triangle per side; the
+   ShadedWithEdges pass paints those long edges verbatim. The counts themselves are right:
+   face_count is segments x bands and vertex_count is 2 + segments x (bands - 1).
+  Shape: Spacing only: distribute the bands by latitude angle instead of by z, z = r cos(pi
+   band / bands) and ring = r sin(pi band / bands), so every band spans one meridian step and
+   the pole cap is the first band (0.195 r at 16 bands). Keep the stored segments and bands and
+   the counts they promise, so the card, the schema and the mesh_counts test are untouched, and
+   the phantom (drawn from the radius alone) needs nothing.
+  Done: The default 32 x 16 sphere has its first ring r sin(pi/16) from the pole, every band
+   covers one equal meridian step within rounding, and the counts, bounds and outward normals
+   are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
+   twice another, and the ball is looked at once in the live window at the default size.
+  `files: crates/mesh/src/primitive.rs` — `06ae440`
 
 - `[x]` **K5** the program cannot open a scene named on its command line
   Why: Observation: `z3l cabinet.z3l` prints «`cabinet.z3l` is not a command; run `z3l --help`»

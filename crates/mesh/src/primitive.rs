@@ -2,8 +2,10 @@
 //!
 //! The parameters are document data in integer micrometres; this module is the boundary where the
 //! ring trigonometry runs in floating point and the result is rounded back to lengths. The sphere is
-//! latitude bands joined by triangles at the poles; a box or a cylinder is a drawn profile swept by
-//! `crates/param`, not a parameter set (ADR 0138).
+//! latitude bands joined by triangles at the poles, spaced by equal steps of latitude rather than of
+//! `z`: uniform `z` crowds every band into the poles and leaves a cap as wide as half the radius
+//! (X55). A box or a cylinder is a drawn profile swept by `crates/param`, not a parameter set
+//! (ADR 0138).
 
 use model::{Mesh, Primitive, Sphere};
 use units::Length;
@@ -44,8 +46,10 @@ fn sphere_mesh(sphere: &Sphere) -> Result<Mesh, MeshError> {
     let mut positions = Vec::with_capacity(segments * (bands - 1) + 2);
     positions.push([Length::ZERO, Length::ZERO, coordinate(-radius)?]);
     for band in 1..bands {
-        let z = -radius + 2.0 * radius * band as f64 / bands as f64;
-        let ring = (radius * radius - z * z).max(0.0).sqrt();
+        let latitude = std::f64::consts::PI * band as f64 / bands as f64;
+        let (sin, cos) = latitude.sin_cos();
+        let z = -radius * cos;
+        let ring = radius * sin;
         for segment in 0..segments {
             let (sin, cos) = ring_angle(segment, segments);
             positions.push([coordinate(cos * ring)?, coordinate(sin * ring)?, coordinate(z)?]);
@@ -138,6 +142,53 @@ mod tests {
         let bands = DEFAULT_BANDS as usize;
         assert_eq!(mesh.positions().len(), 2 + segments * (bands - 1));
         assert_eq!(mesh.faces().len(), segments * bands);
+    }
+
+    /// One latitude ring's (distance from the axis, height) in micrometres, read from its first
+    /// vertex; every vertex of a ring shares both within rounding.
+    fn ring_section(mesh: &Mesh, band: usize, segments: usize) -> (f64, f64) {
+        let vertex = mesh.positions()[1 + (band - 1) * segments];
+        let radius = (vertex[0].micrometres() as f64).hypot(vertex[1].micrometres() as f64);
+        (radius, vertex[2].micrometres() as f64)
+    }
+
+    #[test]
+    fn the_pole_ring_sits_one_latitude_step_from_the_pole() {
+        let radius = 50_000.0;
+        let bands = DEFAULT_BANDS as usize;
+        let primitive = Primitive::sphere(millimetres(50), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("sphere");
+        let mesh = build_primitive_mesh(&primitive).expect("mesh");
+        let (ring, z) = ring_section(&mesh, 1, DEFAULT_SEGMENTS as usize);
+        let step = std::f64::consts::PI / bands as f64;
+        // Uniform `z` spacing left this ring at 0.484 r from the axis; one latitude step is 0.195 r.
+        assert!((ring - radius * step.sin()).abs() <= 1.5, "the pole ring radius is {ring}");
+        assert!((z + radius * step.cos()).abs() <= 1.0, "the pole ring height is {z}");
+    }
+
+    #[test]
+    fn the_latitude_bands_are_equal_meridian_steps() {
+        let radius = 50_000.0;
+        let segments = DEFAULT_SEGMENTS as usize;
+        let bands = DEFAULT_BANDS as usize;
+        let primitive = Primitive::sphere(millimetres(50), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("sphere");
+        let mesh = build_primitive_mesh(&primitive).expect("mesh");
+        // The meridian section from pole to pole: the two poles and a point per ring.
+        let mut section = vec![(0.0, -radius)];
+        for band in 1..bands {
+            section.push(ring_section(&mesh, band, segments));
+        }
+        section.push((0.0, radius));
+        let ideal = 2.0 * radius * (std::f64::consts::PI / (2.0 * bands as f64)).sin();
+        let mut spans = Vec::with_capacity(section.len() - 1);
+        for pair in section.windows(2) {
+            let (low, high) = (pair[0], pair[1]);
+            let span = (high.0 - low.0).hypot(high.1 - low.1);
+            assert!((span - ideal).abs() <= 1.5, "a band spans {span}, one meridian step is {ideal}");
+            spans.push(span);
+        }
+        let low = spans.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = spans.iter().copied().fold(0.0_f64, f64::max);
+        assert!(high <= 2.0 * low, "the widest band {high} is more than twice the narrowest {low}");
     }
 
     #[test]
