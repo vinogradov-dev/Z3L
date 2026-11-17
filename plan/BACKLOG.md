@@ -157,6 +157,40 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    buffers grew instead of the vertex count being cut, and that an upload past what the device
    accepts is the readable error; the [perf] entries in plan/debt.md are re-measured.
   `files: crates/render/src/geometry.rs,crates/render/src/lib.rs`
+- `[ ]` **X61** a fine sphere loses its meridians, so its poles read bald
+  Why: Observation: on a 50 mm ball, raising the side count removes longitudinal lines instead
+   of adding them, and the poles lose every meridian, so the cap draws as bare concentric rings
+   and reads bald. Measured on the mesh, 16 bands, counting display edges by direction: 32
+   sides gives 480 ring + 448 meridian edges, 64 gives 960 + 760, 128 gives 1920 + 512 and the
+   survivors sit only in the equatorial band (|z| <= 14.4 of 50 mm), while 160, 200 and 256
+   sides give 2400, 3000 and 3840 ring edges and no meridian at all. Expectation: the edge pass
+   draws the mesh it has, so a finer ball shows more meridians, never fewer, and the pole keeps
+   them up to the last band. Suspected cause, measured: mesh_edges in crates/mesh/src/lib.rs
+   keeps an edge only when the two faces across it turn by more than COPLANAR_COS, and that
+   constant is 0.999, which is acos 2.56 degrees. The margin is read from face normals, not
+   from the ideal geometry, and the normal of a latitude quad tilts with latitude: near the
+   pole the band is short and the quad is a long radial strip, so its normal is tilted and the
+   fold across a meridian edge falls under 2.56 degrees there first; the same ball's ring fold
+   is 180 / bands = 11.25 degrees at 16 bands, which is why only the meridians go. The margin
+   hides the longitudinal edges of any finely tessellated smooth body, not only a sphere's.
+   Measured while choosing a new value: 0.999999 (0.08 degrees) keeps every meridian of a 256 x
+   16 ball and still drops a quad's diagonal and a flat cap's subdivision, while 0.99999999
+   starts drawing the quads' diagonals as hatching.
+  Shape: One margin, lowered to what coplanar means for micrometre-rounded coordinates: about 1
+   - 1e-6, 0.08 degrees, instead of 0.999. The meaning of the test stays: a quad's diagonal and
+   every inner edge of a subdivided flat cap are dropped, a cube's ninety-degree fold and a
+   fine sphere's meridians are drawn. Say in the constant's doc comment that the margin guards
+   rounding noise and is not a display radius, and that a viewer-facing smooth ball keeps its
+   graticule. What is not in scope: no change to the triangulation, the pole fan or the
+   sphere's parameters, and no change to the 4 M line-vertex budget, which X60 owns; a 256 x 16
+   ball does grow from 3840 to 7936 display edges, so re-measure the [perf] entries in
+   plan/debt.md with X60 rather than here.
+  Done: A 50 mm 256 x 16 sphere's display edges hold a meridian at every band and a ring at
+   every latitude, and the default 32 x 16 wireframe is unchanged; a flat quad still shows its
+   four boundary edges and no diagonal, and a flat cap split into many triangles shows no inner
+   edge; the constant's doc says the margin covers rounding noise, not a display radius; cargo
+   xtask ci is green.
+  `files: crates/mesh/src/lib.rs`
 
 ## Next
 - `[ ]` **V6** there is no cone primitive
