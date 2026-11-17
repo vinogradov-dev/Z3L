@@ -43,18 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
-  Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:
-   340 and 320 were taken as axis spacing instead of clear openings, so the shelves landed on
-   the wrong side. The code has no single place that says which side Left is, so a reader
-   infers it from a mirrored picture.
-  Shape: A Side helper with Left, Right, Front and Back and their axes, tied by a test to
-   OpeningView::Left.direction(); a glossary paragraph in docs/domain/products.md fixing that a
-   spacing is a clear opening, that depth is measured with the fronts, and that left is +X seen
-   from the front.
-  Done: A test asserts that Side::Left equals OpeningView::Left.direction(), the glossary
-   states the three conventions, and cargo test -p model -p ui is green.
-  `files: crates/ui/src/display.rs,crates/model/src/,docs/domain/products.md`
 - `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
   Why: The assistant and the prototype expander both need the document without a window, and
    only export reaches the engine from the command line today. A generator that writes the
@@ -121,6 +109,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
 
 ## Done
+
+- `[x]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
+  Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:
+   340 and 320 were taken as axis spacing instead of clear openings, so the shelves landed on
+   the wrong side. The code has no single place that says which side Left is, so a reader
+   infers it from a mirrored picture.
+  Shape: A Side helper with Left, Right, Front and Back and their axes, tied by a test to
+   OpeningView::Left.direction(); a glossary paragraph in docs/domain/products.md fixing that a
+   spacing is a clear opening, that depth is measured with the fronts, and that left is +X seen
+   from the front.
+  Done: A test asserts that Side::Left equals OpeningView::Left.direction(), the glossary
+   states the three conventions, and cargo test -p model -p ui is green.
+  `files: crates/ui/src/display.rs,crates/model/src/,docs/domain/products.md` — `17aee02`
 
 - `[x]` **U109** the floor can be made see-through, and its shadow survives it
   Why: Owner, 2026-11-17: the floor should be see-through with a setting of its own, and the

@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U111 state=idle base=dd43b7a updated=2026-11-17
+STATE: milestone=M7 phase=T task=J1 state=idle base=17aee02 updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,8 +45,8 @@ waits for four decisions before its ADR.
 
 ## Next
 
-U111 is next: the drawing's words are fixed: a spacing is the clear opening, left is +X, and the
-depth includes the fronts
+J1 is next: the editor can be driven from the command line — list its commands, run a recipe, ask
+the scene a question
 
 ## Index
 
