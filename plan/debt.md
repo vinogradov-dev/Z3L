@@ -57,9 +57,11 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   triangle vertices.
 - `[perf]` The selection highlight re-uploads every mesh when the selection changes; an incremental
   colour update or a GPU id pass can replace it.
-- `[perf]` A rebuild reuses unchanged meshes, but `ViewportRenderer::upload` still recreates every GPU
-  buffer in the frame, even for drawables whose mesh handle did not change. A buffer cache keyed by
-  the mesh handle would make a one-panel edit upload one panel.
+- `[perf]` A drawable's world transform is still baked into its vertex and edge buffers, so a body
+  that moves re-uploads its vertices even though its mesh is unchanged (X57 keys a buffer by the
+  transform as well as the mesh). One buffer per unique mesh plus a per-drawable transform in a
+  storage buffer or an instance attribute would turn a move into a small write; a uniform slot per
+  drawable cannot hold a scene, because a uniform binding is capped at 64 KiB.
 - `[engine]` Command specs expose only an id and a label; there is no parameter schema for a model, a
   CLI or generated documentation.
 - `[engine]` History records one entry per command. A drag of a whole selection is one command, but a
@@ -278,3 +280,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   flat index list while it builds instead of filling `model::Mesh`'s `Vec<Vec<u32>>` and flattening
   it afterwards. An incremental frame, a picking BVH and the frustum test are the larger steps,
   filed as X57–X59; the world box of a turned round body is the box of its box, filed as X62.
+- `[perf]` The upload follows the same rule since X57 (`app/src/scene_build.rs`, the probe
+  `an_edit_uploads_one_drawable_and_not_the_scene`, real adapter, 1280 x 800 target, best of five):
+  at 500 / 2 000 spheres one edit costs 0.26 / 0.92 ms and an unchanged frame 0.17 / 0.89 ms, while
+  the whole edited frame into an empty renderer is 102 / 371 ms, which is what every edit cost
+  before. The frame-wide edge list with its 4 M line-vertex budget went with it: each drawable owns
+  its lines, so the 5 000-sphere stress scene draws every ball's wireframe, and a single drawable
+  past one buffer is a readable refusal instead of a cut (X60's entry still describes the old shape).

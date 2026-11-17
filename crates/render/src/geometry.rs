@@ -13,8 +13,9 @@
 //!
 //! Refuses: a malformed mesh, polyline or contact shadow is a [`RenderError`] naming the index of
 //! the offender, and every builder stays inside [`MAX_VERTICES`] instead of allocating what a
-//! hostile frame asks for. An edge, a centre or a colour that cannot be computed is skipped or
-//! falls back, because an edge is decoration and a frame must not fail for one.
+//! hostile frame asks for. An edge that cannot be computed is skipped, because an edge is decoration
+//! and a frame must not fail for one; an edge list past the budget is refused by name instead of
+//! truncated, because a wireframe that quietly stops is a wrong picture (X60).
 //!
 //! Does not create GPU objects, choose which view or style draws what, or store anything: the
 //! back-to-front order of translucent drawables and the stencil slot of each one are derived per
@@ -25,7 +26,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use geom::{DMat4, DVec3, MeshData};
-use scene::{ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
+use scene::{ContactShadow, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
 
 use crate::RenderError;
 use crate::pipelines::MAX_STENCIL_OWNERS;
@@ -76,88 +77,62 @@ pub(crate) struct MeshVertex {
     pub(crate) color: [f32; 4],
 }
 
-/// One drawable's contiguous run inside the flattened edge buffer.
+/// The world-space centre of a built drawable's bounds, used to order translucent objects.
 ///
-/// `stencil_reference` is the value its opaque faces wrote, so the hidden-edge pass can tell its own
-/// inside from the object in front of it. A drawable whose slot is zero owns no pixels and its
-/// hidden edges draw only over the background.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EdgeSlice {
-    pub(crate) first_vertex: u32,
-    pub(crate) vertex_count: u32,
-    pub(crate) stencil_reference: u32,
-}
-
-/// The world-space centre of a drawable's local bounds, used to order translucent objects.
-///
-/// A missing or non-finite position is ignored, and a mesh with none has no centre to sort by.
-pub(crate) fn mesh_centre(mesh: &MeshData, transform: DMat4) -> DVec3 {
+/// The box is measured from the vertices the upload has already built, so a drawable never
+/// transforms its positions a second time to learn where it is; a drawable with no vertex has no
+/// centre to sort by and sorts at the origin.
+pub(crate) fn vertices_centre(vertices: &[MeshVertex]) -> DVec3 {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
-    let mut seen = false;
-    for position in &mesh.positions {
-        let world = transform.transform_point3(vector(*position));
-        if !world.is_finite() {
-            continue;
-        }
-        min = min.min(world);
-        max = max.max(world);
-        seen = true;
+    for vertex in vertices {
+        let position = vector(vertex.position);
+        min = min.min(position);
+        max = max.max(position);
     }
-    if seen { (min + max) * 0.5 } else { DVec3::ZERO }
+    if min.is_finite() && max.is_finite() { (min + max) * 0.5 } else { DVec3::ZERO }
 }
 
-/// Flattens the edge list of every drawable into one line list in world space, and records where
-/// each drawable's run begins so the hidden-edge pass can address it by stencil reference.
+/// Flattens one drawable's edge list into world-space line-list vertices.
 ///
 /// The edge list is derived data that `crates/mesh` cached beside the mesh (ADR 0053), so this is a
-/// transform and a copy, never a search. `all_edges` selects the full triangulation instead of the
-/// form edges, for the diagnostic style. A malformed edge or a non-finite vertex is skipped: an edge
+/// transform and a copy, never a search. A malformed edge or a non-finite vertex is skipped: an edge
 /// is decoration and must never turn a whole frame into an error.
 ///
-/// The colour follows the background: light ink on the dark viewport, dark ink when a light theme
-/// brings a light clear colour, so the form stays readable in both palettes. The slice list is
-/// parallel to `drawables`, so a drawable with no lines still gets its own (empty) entry.
-pub(crate) fn edge_geometry(
-    drawables: &[Drawable],
-    all_edges: bool,
-    background: [f32; 4],
-) -> (Vec<MeshVertex>, Vec<EdgeSlice>) {
-    let color = edge_color(background);
-    let mut vertices = Vec::new();
-    let mut slices = Vec::with_capacity(drawables.len());
-    for (index, drawable) in drawables.iter().enumerate() {
-        let first_vertex = vertices.len();
-        let edges = if all_edges { drawable.all_edges.as_deref() } else { drawable.edges.as_deref() };
-        if let Some(edges) = edges
-            && drawable.world_transform.is_finite()
-        {
-            for edge in edges.as_chunks::<2>().0 {
-                let (Some(a), Some(b)) = (position_at(&drawable.mesh, edge[0]), position_at(&drawable.mesh, edge[1]))
-                else {
-                    continue;
-                };
-                let a = drawable.world_transform.transform_point3(a);
-                let b = drawable.world_transform.transform_point3(b);
-                if !a.is_finite() || !b.is_finite() {
-                    continue;
-                }
-                if vertices.len().saturating_add(2) > MAX_VERTICES {
-                    break;
-                }
-                push_line(&mut vertices, [a.x, a.y, a.z], [b.x, b.y, b.z], color);
-            }
-        }
-        let added = vertices.len().saturating_sub(first_vertex);
-        slices.push(EdgeSlice {
-            // A saturating cast keeps a hostile count from wrapping; the buffer budget already
-            // caps the real value.
-            first_vertex: u32::try_from(first_vertex).unwrap_or(u32::MAX),
-            vertex_count: u32::try_from(added).unwrap_or(u32::MAX),
-            stencil_reference: stencil_slot(index),
-        });
+/// One list per drawable, so an unchanged drawable's lines are never transformed again and the
+/// buffer belongs to the mesh instead of the frame (X57). A list that does not fit one buffer is
+/// refused by name: a truncated wireframe would silently hide part of an object (X60).
+///
+/// The colour is the ink the caller derived from the background, so a theme switch rebuilds the
+/// lines and leaves the faces alone.
+pub(crate) fn edge_vertices(
+    index: usize,
+    mesh: &MeshData,
+    edges: &[u32],
+    transform: DMat4,
+    color: [f32; 4],
+) -> Result<Vec<MeshVertex>, RenderError> {
+    // Two vertices per edge, checked against the budget before anything is allocated.
+    let pairs = edges.len() / 2;
+    if pairs.saturating_mul(2) > MAX_VERTICES {
+        return Err(RenderError::EdgeListTooLarge { index });
     }
-    (vertices, slices)
+    let mut vertices = Vec::with_capacity(pairs.saturating_mul(2));
+    if !transform.is_finite() {
+        return Ok(vertices);
+    }
+    for edge in edges.as_chunks::<2>().0 {
+        let (Some(a), Some(b)) = (position_at(mesh, edge[0]), position_at(mesh, edge[1])) else {
+            continue;
+        };
+        let a = transform.transform_point3(a);
+        let b = transform.transform_point3(b);
+        if !a.is_finite() || !b.is_finite() {
+            continue;
+        }
+        push_line(&mut vertices, [a.x, a.y, a.z], [b.x, b.y, b.z], color);
+    }
+    Ok(vertices)
 }
 
 /// The stencil value one drawable stamps, counted from one so zero keeps meaning "no surface".

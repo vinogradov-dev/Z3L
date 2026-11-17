@@ -146,7 +146,9 @@ impl Picture {
 }
 
 /// A device and a queue with no surface behind them, or the sentence that says why there is none.
-fn render_state() -> Result<egui_wgpu::RenderState, String> {
+///
+/// The upload probe in `scene_build` borrows the same device, so the shell creates one only here.
+pub(crate) fn render_state() -> Result<egui_wgpu::RenderState, String> {
     let configuration = egui_wgpu::WgpuConfiguration::default();
     let instance = wgpu::Instance::default();
     pollster::block_on(egui_wgpu::RenderState::create(

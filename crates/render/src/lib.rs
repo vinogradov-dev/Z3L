@@ -28,21 +28,27 @@
     clippy::unreachable
 )]
 
+mod cache;
 mod geometry;
 mod gpu;
 mod pipelines;
 
+use std::sync::Arc;
+
 use bytemuck::{Pod, Zeroable};
-use geom::DVec3;
-use scene::{Camera, ContactShadows, Lighting, MAX_POINT_LIGHTS, SceneFrame, ShadingStyle};
+use geom::{DMat4, DVec3, MeshData};
+use scene::{
+    Camera, ContactShadows, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope, SceneFrame, ShadingStyle,
+};
 use thiserror::Error;
 use wgpu::util::DeviceExt as _;
 
+use self::cache::{EdgeKey, FaceKey, Rebuilt, SlotCache};
 use self::geometry::{
-    EdgeSlice, edge_geometry, grid_vertices, mesh_centre, polyline_vertices, product_envelope_vertices, sanitize_color,
-    shadow_geometry, sort_back_to_front, stencil_slot, world_vertices,
+    edge_color, edge_vertices, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
+    shadow_geometry, sort_back_to_front, stencil_slot, vertices_centre, world_vertices,
 };
-use self::gpu::{GpuLineList, GpuMesh, GpuTriangles, clamp_size, line_list, triangle_list};
+use self::gpu::{GpuEdges, GpuLineList, GpuMesh, GpuTriangles, clamp_size, line_list, triangle_list};
 use self::pipelines::{
     create_line_pipeline, create_shadow_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state,
 };
@@ -125,6 +131,12 @@ pub enum RenderError {
     #[error("polyline {index} has too many points")]
     PolylineTooLarge {
         /// Position of the polyline in the frame.
+        index: usize,
+    },
+    /// A drawable's edge list needs more line vertices than one buffer holds.
+    #[error("drawable {index} has more edges than one buffer holds")]
+    EdgeListTooLarge {
+        /// Position of the drawable in the frame.
         index: usize,
     },
     /// A product envelope has a non-finite or non-positive size, or a malformed transform.
@@ -270,6 +282,20 @@ impl ViewSpec {
     }
 }
 
+/// The product envelopes and the two inks their dashes are drawn with.
+type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
+
+/// One drawable of the last upload: its buffers, and the stencil value its faces stamp.
+///
+/// The buffers may be shared with an earlier frame, because they are keyed by the mesh, the
+/// transform and the colour that built them (X57). The stencil slot is not shared: it is the
+/// drawable's place in this frame, and a drawable that moved down the list moves its slot.
+struct Drawn {
+    faces: Arc<GpuMesh>,
+    edges: Option<Arc<GpuEdges>>,
+    stencil_reference: u32,
+}
+
 /// An offscreen scene renderer for one viewport.
 ///
 /// The shell owns the window and the egui integration; this type owns the GPU scene resources and
@@ -286,25 +312,24 @@ pub struct ViewportRenderer {
     camera_bind_group: wgpu::BindGroup,
     /// The stride between two camera slots, which is the device's uniform offset alignment.
     camera_stride: u64,
-    drawables: Vec<GpuMesh>,
+    /// The drawables of the last upload, in frame order.
+    drawables: Vec<Drawn>,
     /// World-space centres parallel to `drawables`, in upload order.
     centres: Vec<DVec3>,
     /// A reusable index list, sorted back to front for each translucent view.
     draw_order: Vec<usize>,
-    /// The edges of every solid drawable, flattened into one line list.
-    edges: Option<GpuLineList>,
-    /// One slice of [`Self::edges`] per drawable, parallel to `drawables`, in upload order.
-    ///
-    /// The visible-edge style draws the whole buffer at once. The hidden-edge style needs each
-    /// drawable's own slice, because its stencil reference is what limits an inside edge to the
-    /// object it belongs to.
-    edge_slices: Vec<EdgeSlice>,
-    grid: Option<GpuLineList>,
-    polylines: Option<GpuLineList>,
-    /// The dashed boxes of the product envelopes, in one line buffer.
-    product_envelopes: Option<GpuLineList>,
-    /// The contact shadows of every floor-standing object, in one triangle buffer.
-    shadows: Option<GpuTriangles>,
+    /// Face buffers kept between uploads, keyed by the mesh, transform and colour they hold.
+    faces: SlotCache<FaceKey, GpuMesh>,
+    /// Edge buffers kept between uploads, keyed by the edge list, transform and ink they hold.
+    edge_slots: SlotCache<EdgeKey, GpuEdges>,
+    /// The grid's lines, rebuilt only when the grid changes.
+    grid: Rebuilt<GpuLineList, Grid>,
+    /// The frame's line chains, rebuilt only when the chains or the ink change.
+    polylines: Rebuilt<GpuLineList, (Vec<Polyline>, [f32; 4])>,
+    /// The dashed boxes of the product envelopes, rebuilt only when a box or an ink changes.
+    product_envelopes: Rebuilt<GpuLineList, EnvelopeInput>,
+    /// The contact shadows of every floor-standing object, rebuilt only when a footprint changes.
+    shadows: Rebuilt<GpuTriangles, Vec<scene::ContactShadow>>,
     targets: RenderTargets,
     size: [u32; 2],
 }
@@ -399,12 +424,12 @@ impl ViewportRenderer {
             drawables: Vec::new(),
             centres: Vec::new(),
             draw_order: Vec::new(),
-            edges: None,
-            edge_slices: Vec::new(),
-            grid: None,
-            polylines: None,
-            product_envelopes: None,
-            shadows: None,
+            faces: SlotCache::new(),
+            edge_slots: SlotCache::new(),
+            grid: Rebuilt::new(),
+            polylines: Rebuilt::new(),
+            product_envelopes: Rebuilt::new(),
+            shadows: Rebuilt::new(),
             targets,
             size,
         }
@@ -437,60 +462,73 @@ impl ViewportRenderer {
     /// Rebuilds the GPU geometry for a scene frame.
     ///
     /// Call this only when the document revision changes; camera movement does not need an upload.
+    ///
+    /// A drawable whose mesh, transform and colour are the same as the last upload keeps its
+    /// buffers, so an edit costs the drawables it changed and the walk of the frame, not the
+    /// scene. A frame that no longer names a drawable drops its buffers (X57).
     pub fn upload(&mut self, device: &wgpu::Device, frame: &SceneFrame) -> Result<(), RenderError> {
+        let ink = edge_color(frame.background);
+        self.faces.begin();
+        self.edge_slots.begin();
         let mut drawables = Vec::with_capacity(frame.drawables().len());
         for (index, drawable) in frame.drawables().iter().enumerate() {
-            let (vertices, indices) = world_vertices(index, &drawable.mesh, drawable.world_transform, drawable.color)?;
-            if vertices.is_empty() || indices.is_empty() {
-                return Err(RenderError::EmptyMesh { index });
-            }
-            let index_count = u32::try_from(indices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Z3L drawable vertices"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Z3L drawable indices"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-            let centre = mesh_centre(&drawable.mesh, drawable.world_transform);
-            drawables.push(GpuMesh {
-                vertex_buffer,
-                index_buffer,
-                index_count,
-                centre,
-                stencil_reference: stencil_slot(index),
-            });
+            let faces =
+                self.faces.slot(FaceKey::new(&drawable.mesh, drawable.world_transform, drawable.color), || {
+                    build_mesh(device, index, &drawable.mesh, drawable.world_transform, drawable.color)
+                })?;
+            // A drawable has no line pass when the list the current style reads is absent; the
+            // other list stays out of the key, so switching the diagnostic style builds the
+            // lines it needs and sweeps the ones it left.
+            let list = if frame.all_edges { drawable.all_edges.as_ref() } else { drawable.edges.as_ref() };
+            let edges = match list {
+                Some(list) => {
+                    let key = EdgeKey::new(&drawable.mesh, list, drawable.world_transform, ink);
+                    // The key owns the two `Arc`s the builders read, so the closure never holds a
+                    // borrow of the cache it is passed to.
+                    let mesh = Arc::clone(key.mesh());
+                    let list = Arc::clone(key.edges());
+                    Some(self.edge_slots.slot(key, || {
+                        let vertices = edge_vertices(index, &mesh, &list, drawable.world_transform, ink)?;
+                        GpuEdges::new(device, "Z3L drawable edges", vertices)
+                    })?)
+                }
+                None => None,
+            };
+            drawables.push(Drawn { faces, edges, stencil_reference: stencil_slot(index) });
         }
+        self.faces.sweep();
+        self.edge_slots.sweep();
 
-        let grid = line_list(device, "Z3L grid vertices", grid_vertices(&frame.grid))?;
-        let polylines = line_list(device, "Z3L path vertices", polyline_vertices(frame.polylines(), frame.line_ink)?)?;
-        let product_envelopes = line_list(
-            device,
-            "Z3L product envelope vertices",
-            product_envelope_vertices(
-                frame.product_envelopes(),
-                frame.product_envelope_active,
-                frame.product_envelope_inactive,
-            )?,
-        )?;
-        let (edge_vertices, edge_slices) = edge_geometry(frame.drawables(), frame.all_edges, frame.background);
-        let edges = line_list(device, "Z3L edge vertices", edge_vertices)?;
-        let (shadow_vertices, shadow_indices) = shadow_geometry(frame.shadows())?;
-        let shadows = triangle_list(device, "Z3L contact shadows", &shadow_vertices, &shadow_indices);
+        // A frame-level group is rebuilt only when its own input changed, so an edit that moves one
+        // panel leaves the grid, the chains, the envelopes and the shadows exactly as they were. The
+        // value itself is kept by the group; the draw pass reads it from there.
+        self.grid.get(&frame.grid, || line_list(device, "Z3L grid vertices", grid_vertices(&frame.grid)))?;
+        self.polylines.get(&(frame.polylines().to_vec(), frame.line_ink), || {
+            line_list(device, "Z3L path vertices", polyline_vertices(frame.polylines(), frame.line_ink)?)
+        })?;
+        let envelopes: EnvelopeInput =
+            (frame.product_envelopes().to_vec(), frame.product_envelope_active, frame.product_envelope_inactive);
+        self.product_envelopes.get(&envelopes, || {
+            line_list(
+                device,
+                "Z3L product envelope vertices",
+                product_envelope_vertices(
+                    frame.product_envelopes(),
+                    frame.product_envelope_active,
+                    frame.product_envelope_inactive,
+                )?,
+            )
+        })?;
+        self.shadows.get(&frame.shadows, || {
+            let (vertices, indices) = shadow_geometry(frame.shadows())?;
+            Ok(triangle_list(device, "Z3L contact shadows", &vertices, &indices))
+        })?;
 
-        let draw_order: Vec<usize> = (0..drawables.len()).collect();
+        self.centres.clear();
+        self.centres.extend(drawables.iter().map(|drawn| drawn.faces.centre));
+        self.draw_order.clear();
+        self.draw_order.extend(0..drawables.len());
         self.drawables = drawables;
-        self.centres = self.drawables.iter().map(|mesh| mesh.centre).collect();
-        self.draw_order = draw_order;
-        self.edges = edges;
-        self.edge_slices = edge_slices;
-        self.grid = grid;
-        self.polylines = polylines;
-        self.product_envelopes = product_envelopes;
-        self.shadows = shadows;
         Ok(())
     }
 
@@ -623,13 +661,13 @@ impl ViewportRenderer {
 
             if passes.opaque_faces && !self.drawables.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
-                for mesh in &self.drawables {
+                for drawn in &self.drawables {
                     // The reference is the slot this drawable stamps; the hidden-edge pass reads it
                     // back before drawing the same drawable's lines.
-                    pass.set_stencil_reference(mesh.stencil_reference);
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    pass.set_stencil_reference(drawn.stencil_reference);
+                    pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
+                    pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
                 }
             }
 
@@ -638,7 +676,7 @@ impl ViewportRenderer {
             // fraction of a millimetre higher. The pass is blended and writes no depth, so two
             // overlapping footprints simply tint each other.
             if frame.contact_shadows.draws()
-                && let Some(shadows) = &self.shadows
+                && let Some(shadows) = self.shadows.value()
             {
                 pass.set_pipeline(&self.shadow_pipeline);
                 pass.set_vertex_buffer(0, shadows.vertex_buffer.slice(..));
@@ -646,13 +684,13 @@ impl ViewportRenderer {
                 pass.draw_indexed(0..shadows.index_count, 0, 0..1);
             }
 
-            if self.grid.is_some() || self.polylines.is_some() {
+            if self.grid.value().is_some() || self.polylines.value().is_some() {
                 pass.set_pipeline(&self.line_pipeline);
-                if let Some(grid) = &self.grid {
+                if let Some(grid) = self.grid.value() {
                     pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
                     pass.draw(0..grid.vertex_count, 0..1);
                 }
-                if let Some(polylines) = &self.polylines {
+                if let Some(polylines) = self.polylines.value() {
                     pass.set_vertex_buffer(0, polylines.vertex_buffer.slice(..));
                     pass.draw(0..polylines.vertex_count, 0..1);
                 }
@@ -665,44 +703,51 @@ impl ViewportRenderer {
                 sort_back_to_front(&self.centres, camera.eye(), &mut self.draw_order);
                 pass.set_pipeline(&self.translucent_pipeline);
                 for &index in &self.draw_order {
-                    let Some(mesh) = self.drawables.get(index) else {
+                    let Some(drawn) = self.drawables.get(index) else {
                         continue;
                     };
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
+                    pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
                 }
             }
 
             // Edges last, so a line sits on top of the faces it belongs to. *Shaded with hidden
             // edges* uses the stencil-gated pass, *wireframe* reaches here with no faces before it.
             //
-            // A single flattened list is drawn once for the visible style. The hidden style needs
-            // the drawable's stencil slot as the reference value, so it walks the drawables and
-            // draws each drawable's own slice of the same buffer.
-            if passes.visible_edges
-                && let Some(edges) = &self.edges
-            {
+            // Every drawable owns its own line buffer (X57), so both styles walk the drawables: the
+            // visible one draws each list as it is, and the hidden one also names the drawable's
+            // stencil slot, which is what keeps an inside edge from showing through a neighbour.
+            if passes.visible_edges {
                 pass.set_pipeline(&self.edge_pipeline);
-                pass.set_vertex_buffer(0, edges.vertex_buffer.slice(..));
-                pass.draw(0..edges.vertex_count, 0..1);
-            } else if passes.through_edges
-                && let Some(edges) = &self.edges
-            {
-                pass.set_pipeline(&self.hidden_edge_pipeline);
-                pass.set_vertex_buffer(0, edges.vertex_buffer.slice(..));
-                for slice in &self.edge_slices {
-                    if slice.vertex_count == 0 {
+                for drawn in &self.drawables {
+                    let Some(edges) = drawn.edges.as_deref() else {
                         continue;
-                    }
-                    pass.set_stencil_reference(slice.stencil_reference);
-                    pass.draw(slice.first_vertex..slice.first_vertex + slice.vertex_count, 0..1);
+                    };
+                    let Some(buffer) = edges.vertex_buffer.as_ref() else {
+                        continue;
+                    };
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..edges.vertex_count, 0..1);
+                }
+            } else if passes.through_edges {
+                pass.set_pipeline(&self.hidden_edge_pipeline);
+                for drawn in &self.drawables {
+                    let Some(edges) = drawn.edges.as_deref() else {
+                        continue;
+                    };
+                    let Some(buffer) = edges.vertex_buffer.as_ref() else {
+                        continue;
+                    };
+                    pass.set_stencil_reference(drawn.stencil_reference);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..edges.vertex_count, 0..1);
                 }
             }
 
             // The product envelopes draw last, after every solid pass: a box is reserved space,
             // never a body, so its dashes write no depth and a panel in front still hides it.
-            if let Some(envelopes) = &self.product_envelopes {
+            if let Some(envelopes) = self.product_envelopes.value() {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, envelopes.vertex_buffer.slice(..));
                 pass.draw(0..envelopes.vertex_count, 0..1);
@@ -740,6 +785,32 @@ impl ViewportRenderer {
     }
 }
 
+/// Builds one drawable's vertex and index buffers from its mesh, world transform and colour.
+///
+/// The world-space centre of the built vertices travels with the buffers, because it is derived
+/// from the same data and a drawable that keeps its buffers never measures its box again.
+fn build_mesh(
+    device: &wgpu::Device,
+    index: usize,
+    mesh: &MeshData,
+    transform: DMat4,
+    color: [f32; 4],
+) -> Result<GpuMesh, RenderError> {
+    let (vertices, indices) = world_vertices(index, mesh, transform, color)?;
+    let index_count = u32::try_from(indices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Z3L drawable vertices"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Z3L drawable indices"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    Ok(GpuMesh { vertex_buffer, index_buffer, index_count, centre: vertices_centre(&vertices) })
+}
+
 /// The shadow colour and strength the fragment shader reads.
 ///
 /// A switch that is off, a zero strength or a hostile value collapses to zero alpha, so the pass
@@ -773,7 +844,8 @@ mod tests {
 
     use super::*;
     use crate::geometry::{
-        EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_CONTACT_SHADOWS, MAX_GRID_DIVISIONS, SHADOW_SEGMENTS, edge_color,
+        EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_CONTACT_SHADOWS, MAX_GRID_DIVISIONS, MAX_VERTICES, SHADOW_SEGMENTS,
+        edge_color,
     };
     use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, shadow_depth_state};
     use geom::{DMat4, MeshData};
@@ -1181,51 +1253,41 @@ mod tests {
     #[test]
     fn a_drawable_centre_is_the_world_space_centre_of_its_bounds() {
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let centre = mesh_centre(&triangle(), transform);
+        let (vertices, _) = world_vertices(0, &triangle(), transform, [1.0; 4]).expect("a valid mesh");
+        let centre = vertices_centre(&vertices);
         assert!((centre - DVec3::new(105.0, 25.0, 5.0)).length() < 1.0e-9);
+        assert_eq!(vertices_centre(&[]), DVec3::ZERO, "a drawable with no vertex sorts at the origin");
     }
 
     #[test]
     fn edges_become_world_space_lines_and_skip_malformed_entries() {
         let mut mesh = triangle();
         mesh.normals.clear();
-        let edges: Arc<[u32]> = Arc::from(vec![0, 1, 0, 9]);
+        let edges = [0, 1, 0, 9];
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let drawable = Drawable::new(Id::new(1).expect("id"), Arc::new(mesh), transform, [1.0; 4]).with_edges(edges);
+        let ink = edge_color(SceneFrame::default().background);
 
-        let (vertices, slices) = edge_geometry(&[drawable], false, SceneFrame::default().background);
+        let vertices = edge_vertices(0, &mesh, &edges, transform, ink).expect("a drawable's lines");
         assert_eq!(vertices.len(), 2, "the edge naming a missing vertex is skipped");
         assert_eq!(vertices[0].position, [100.0, 20.0, 5.0]);
         assert_eq!(vertices[1].position, [110.0, 20.0, 5.0]);
         assert_eq!(vertices[0].color, EDGE_COLOR_LIGHT, "the default viewport is dark, so the ink is light");
-        assert_eq!(slices, vec![EdgeSlice { first_vertex: 0, vertex_count: 2, stencil_reference: 1 }]);
+
+        // A half edge and a non-finite transform draw nothing, and neither is an error.
+        assert_eq!(edge_vertices(0, &mesh, &[0, 1, 2], DMat4::IDENTITY, ink).expect("a half edge").len(), 2);
+        let moved = DMat4::from_translation(DVec3::new(f64::NAN, 0.0, 0.0));
+        assert!(edge_vertices(0, &mesh, &edges, moved, ink).expect("a hostile transform").is_empty());
+        assert!(edge_vertices(0, &mesh, &[], DMat4::IDENTITY, ink).expect("no lines").is_empty());
     }
 
     #[test]
-    fn every_drawable_gets_a_slice_and_its_own_stencil_slot() {
-        let id = |value| Id::new(value).expect("id");
-        let with_edges = |value, edges: &[u32]| {
-            Drawable::new(id(value), Arc::new(triangle()), DMat4::IDENTITY, [1.0; 4])
-                .with_edges(Arc::from(edges.to_vec()))
-        };
-        // The middle drawable has no lines at all; the third and fourth do. The slice list must stay
-        // parallel to the drawables so a stencil reference never lands on a neighbour's lines.
-        let drawables = [
-            with_edges(1, &[0, 1, 1, 2]),
-            Drawable::new(id(2), Arc::new(triangle()), DMat4::IDENTITY, [1.0; 4]),
-            with_edges(3, &[2, 0]),
-        ];
-        let (vertices, slices) = edge_geometry(&drawables, false, SceneFrame::default().background);
-
-        assert_eq!(vertices.len(), 6, "two lines plus one line, the empty drawable adds none");
-        assert_eq!(slices.len(), 3);
+    fn an_edge_list_past_the_budget_is_refused_by_name() {
+        // One buffer holds `MAX_VERTICES` line vertices; a longer list would have to be cut, and a
+        // wireframe that quietly stops is a wrong picture (X60).
+        let edges = vec![0u32; MAX_VERTICES + 2];
         assert_eq!(
-            slices,
-            vec![
-                EdgeSlice { first_vertex: 0, vertex_count: 4, stencil_reference: 1 },
-                EdgeSlice { first_vertex: 4, vertex_count: 0, stencil_reference: 2 },
-                EdgeSlice { first_vertex: 4, vertex_count: 2, stencil_reference: 3 },
-            ]
+            edge_vertices(3, &triangle(), &edges, DMat4::IDENTITY, EDGE_COLOR_LIGHT),
+            Err(RenderError::EdgeListTooLarge { index: 3 })
         );
     }
 
@@ -1234,13 +1296,10 @@ mod tests {
         let mesh = triangle();
         let feature: Arc<[u32]> = Arc::from(vec![0, 1]);
         let all: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2, 2, 0]);
-        let id = Id::new(1).expect("id");
-        let drawable =
-            Drawable::new(id, Arc::new(mesh), DMat4::IDENTITY, [1.0; 4]).with_edges(feature).with_all_edges(all);
-        let background = SceneFrame::default().background;
+        let ink = EDGE_COLOR_LIGHT;
 
-        let form = edge_geometry(std::slice::from_ref(&drawable), false, background).0;
-        let every = edge_geometry(std::slice::from_ref(&drawable), true, background).0;
+        let form = edge_vertices(0, &mesh, &feature, DMat4::IDENTITY, ink).expect("the form edges");
+        let every = edge_vertices(0, &mesh, &all, DMat4::IDENTITY, ink).expect("every triangle edge");
         assert_eq!(form.len(), 2);
         assert_eq!(every.len(), 6);
     }
@@ -1258,6 +1317,79 @@ mod tests {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    /// A device with no adapter and no surface behind it.
+    ///
+    /// The noop backend builds real wgpu buffers without a GPU, so the upload cache is asserted in
+    /// a plain `cargo test` run: what the test compares is the buffer objects themselves, not a
+    /// counter this crate keeps about them.
+    fn noop_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::NOOP,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    #[test]
+    fn an_upload_keeps_the_buffers_of_the_drawables_it_did_not_touch() {
+        let Some((device, _queue)) = noop_device() else {
+            println!("this build has no noop backend to upload geometry with");
+            return;
+        };
+        let id = |value| Id::new(value).expect("id");
+        let mesh = Arc::new(triangle());
+        let edges: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2]);
+        let drawable =
+            |id, transform| Drawable::new(id, Arc::clone(&mesh), transform, [1.0; 4]).with_edges(Arc::clone(&edges));
+        let mut frame = SceneFrame::default();
+        frame.push(drawable(id(1), DMat4::IDENTITY));
+        frame.push(drawable(id(2), DMat4::from_translation(DVec3::new(100.0, 0.0, 0.0))));
+
+        let mut renderer = ViewportRenderer::new(&device, 320, 240);
+        renderer.upload(&device, &frame).expect("the first upload");
+        assert_eq!(renderer.faces.len(), 1, "both drawables share one mesh, so one vertex and index buffer pair");
+        assert_eq!(renderer.edge_slots.len(), 2, "the lines are baked with their transform");
+        let standing_faces = Arc::clone(&renderer.drawables[0].faces);
+        let standing_edges = Arc::clone(renderer.drawables[0].edges.as_ref().expect("the first drawable's lines"));
+        let moved_faces = Arc::clone(&renderer.drawables[1].faces);
+        let grid = Arc::clone(renderer.grid.value().expect("the default frame has a grid"));
+
+        // The same frame again, which is what a camera move or a theme change produces: no buffer
+        // is created and every drawable still draws the ones the first upload built.
+        renderer.upload(&device, &frame).expect("a second upload of the same frame");
+        assert!(Arc::ptr_eq(&standing_faces, &renderer.drawables[0].faces), "the faces keep their buffers");
+        assert!(
+            Arc::ptr_eq(&standing_edges, renderer.drawables[0].edges.as_ref().expect("the lines")),
+            "and so do the edge lines"
+        );
+        assert!(Arc::ptr_eq(&grid, renderer.grid.value().expect("the grid")), "the grid is not rebuilt either");
+
+        // One drawable moves: it gets new buffers, its neighbour keeps both of its own.
+        frame.drawables[1].world_transform = DMat4::from_translation(DVec3::new(0.0, 50.0, 0.0));
+        renderer.upload(&device, &frame).expect("the edited frame");
+        assert!(
+            Arc::ptr_eq(&standing_faces, &renderer.drawables[0].faces),
+            "an untouched drawable keeps the vertex and index buffer it was uploaded with"
+        );
+        assert!(
+            Arc::ptr_eq(&standing_edges, renderer.drawables[0].edges.as_ref().expect("the lines")),
+            "its edge list is not rebuilt either"
+        );
+        assert!(!Arc::ptr_eq(&moved_faces, &renderer.drawables[1].faces), "the moved drawable gets new buffers");
+        assert!(
+            Arc::ptr_eq(&grid, renderer.grid.value().expect("the grid")),
+            "an edit that moves a body rebuilds no frame-level buffer"
+        );
+
+        // A drawable that leaves the frame takes its buffers and its pinned mesh with it.
+        frame.drawables.pop();
+        renderer.upload(&device, &frame).expect("the frame without the moved drawable");
+        assert_eq!(renderer.drawables.len(), 1);
+        assert_eq!(renderer.faces.len(), 1, "the dropped drawable's buffers are freed");
+        assert_eq!(renderer.edge_slots.len(), 1);
     }
 
     /// Copies the renderer's colour target back, top row first and tightly packed.
@@ -1322,6 +1454,51 @@ mod tests {
                 pixel.iter().enumerate().all(|(channel, value)| (i32::from(*value) - expected[channel]).abs() <= 2)
             })
             .count()
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; the edge pass draws one buffer per drawable"]
+    fn the_edge_pass_draws_every_drawable_own_lines() {
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw the edge pass with");
+            return;
+        };
+        let id = |value| Id::new(value).expect("id");
+        // Two equal boxes far apart, each with the four edges of its front triangle, so a pixel
+        // count per half of the target says whether both drawables' own buffers were drawn.
+        let mut mesh = triangle();
+        mesh.positions = vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0], [0.0, 500.0, 0.0]];
+        let mesh = Arc::new(mesh);
+        let edges: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2, 2, 0]);
+        let drawable = |id, y| {
+            Drawable::new(id, Arc::clone(&mesh), DMat4::from_translation(DVec3::new(0.0, y, 0.0)), [0.3; 4])
+                .with_edges(Arc::clone(&edges))
+        };
+        // Looking straight down at the XY plane, so screen x is world x and each half of the target
+        // holds exactly one drawable.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+        let mut frame = SceneFrame {
+            camera,
+            shading: ShadingStyle::Wireframe,
+            grid: Grid { visible: false, ..Grid::default() },
+            ..SceneFrame::default()
+        };
+        frame.push(drawable(id(1), -700.0));
+        frame.push(drawable(id(2), 200.0));
+        // The readback is row-major, top row first, so the first half of the picture is the upper
+        // half of the view and holds the drawable at y = 200.
+
+        let mut renderer = ViewportRenderer::new(&device, 800, 400);
+        renderer.upload(&device, &frame).expect("the frame uploads");
+        renderer.render(&device, &queue, &frame);
+        let pixels = read_pixels(&renderer, &device, &queue);
+        let ink = crate::geometry::edge_color(frame.background);
+        let half = pixels.len() / 2;
+        let upper = pixels_of(&pixels[..half], ink);
+        let lower = pixels_of(&pixels[half..], ink);
+        assert_eq!(renderer.edge_slots.len(), 2, "each drawable owns one edge buffer");
+        assert!(upper > 20, "the upper drawable's own line buffer is drawn, {upper} pixels");
+        assert!(lower > 20, "and the lower drawable's is drawn too, from its own buffer: {lower} pixels");
     }
 
     #[test]
@@ -1418,7 +1595,9 @@ mod tests {
 
     #[test]
     fn an_aspect_ratio_is_per_view_not_per_target() {
-        let camera = Camera::default();
+        // Looking straight down at the XY plane, so screen x is world x and each half of the target
+        // holds exactly one drawable.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
         let whole = camera.view_projection(2.0);
         let half = camera.view_projection(1.0);
         assert_ne!(whole, half, "a narrow view must not borrow the target's aspect");
