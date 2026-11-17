@@ -34,7 +34,16 @@ pub(super) struct Ready {
 /// that say why not.
 pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: RibbonContext, lang: Lang) -> Ready {
     let RibbonContext {
-        has_panel_material, product_open, selected, selected_path, active, owns_view, grid, draft, ..
+        has_panel_material,
+        product_open,
+        selected,
+        selected_path,
+        active,
+        owns_view,
+        grid,
+        shadows,
+        draft,
+        ..
     } = context;
     match kind {
         ToolKind::Draw(draw) => Ready {
@@ -205,6 +214,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             armed: grid,
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleGrid),
+        },
+        ToolKind::Shadows => Ready {
+            // A view always has a shadow switch: no document, no selection and no material is
+            // involved, and the press draws pressed while the shadow is on (U107).
+            enabled: true,
+            armed: shadows,
+            hint: tool_hint(tool.label.text(lang), tool.key()),
+            action: Some(ToolAction::ToggleShadows),
         },
     }
 }

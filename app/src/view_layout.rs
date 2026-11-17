@@ -3,17 +3,18 @@
 //! One view is the default; the bar turns it into two vertical, two horizontal or four, and every
 //! border between two views is draggable. Any view can expand over the whole workspace and return,
 //! which changes only the rectangle it is given, never the tree. Each layout keeps its own tree,
-//! cameras, presets, display styles, split ratios and active leaf, so switching away and back
-//! restores exactly the workspace the user left (ADR 0079). Each leaf owns a camera, the preset it
-//! is in and the display style it draws with, and the active leaf is the only target of orbit, pan,
-//! zoom, the presets, the style buttons, selection and the gizmos.
+//! cameras, presets, display styles, shadow switches, split ratios and active leaf, so switching
+//! away and back restores exactly the workspace the user left (ADR 0079). Each leaf owns a camera,
+//! the preset it is in, the display style it draws with and whether it draws the ground shadow, and
+//! the active leaf is the only target of orbit, pan, zoom, the presets, the style and shadow
+//! buttons, selection and the gizmos.
 //!
 //! Everything here is view state: the trees, the ratios, the cameras and the active leaves never
 //! reach the document (ADR 0029). The regions are plain rectangles in points, so a test can tile them
 //! without a window or a GPU, and the shell turns each one into a scissored render pass.
 
 use eframe::egui;
-use scene::{Camera, SceneFrame};
+use scene::{Camera, ContactShadows, SceneFrame};
 use ui::display::{OpeningView, ShadingStyle};
 
 /// Smallest side a view may have, in points.
@@ -252,7 +253,8 @@ impl Node {
     }
 }
 
-/// One view: its own camera, the preset it is in and the display style it draws with.
+/// One view: its own camera, the preset it is in, the display style it draws with and whether it
+/// draws the ground shadow.
 #[derive(Clone, Debug)]
 pub(crate) struct Leaf {
     id: LeafId,
@@ -261,6 +263,11 @@ pub(crate) struct Leaf {
     preset: Option<OpeningView>,
     /// The display style this view draws with (ADR 0070).
     style: ShadingStyle,
+    /// Whether the ground shadow is drawn in this view (U107).
+    ///
+    /// The strength and the colour are the workspace's; only the switch is the view's, so one cell of
+    /// a split draws the shadow while its neighbour does not.
+    shadows: bool,
 }
 
 impl Leaf {
@@ -277,6 +284,16 @@ impl Leaf {
     /// Changes the display style of this view alone.
     pub(crate) fn set_style(&mut self, style: ShadingStyle) {
         self.style = style;
+    }
+
+    /// Whether this view draws the ground shadow.
+    pub(crate) const fn shadows(&self) -> bool {
+        self.shadows
+    }
+
+    /// Flips this view's ground-shadow switch.
+    pub(crate) fn toggle_shadows(&mut self) {
+        self.shadows = !self.shadows;
     }
 
     /// Points the leaf along a preset direction.
@@ -484,7 +501,7 @@ impl LayoutState {
         let mut state = Self { root: Node::Leaf(LeafId(1)), leaves: Vec::new(), active: LeafId(1), next: 1 };
         for index in 0..kind.leaves() {
             let id = state.allocate();
-            let mut leaf = Leaf { id, camera: fit, preset: None, style };
+            let mut leaf = Leaf { id, camera: fit, preset: None, style, shadows: ContactShadows::default().visible };
             leaf.apply_preset(kind.standard_view(index, opening));
             state.leaves.push(leaf);
         }
@@ -627,12 +644,24 @@ impl Layout {
         self.active_leaf_mut().set_style(style);
     }
 
-    /// Writes the active leaf's style into a frame's single-view fallback.
+    /// Whether the active leaf draws the ground shadow.
+    pub(crate) fn active_shadows(&self) -> bool {
+        self.active_leaf().shadows
+    }
+
+    /// Flips the ground-shadow switch of the active leaf alone (U107).
+    pub(crate) fn toggle_active_shadows(&mut self) {
+        self.active_leaf_mut().toggle_shadows();
+    }
+
+    /// Writes the display state the active leaf owns into a frame's single-view fallback.
     ///
-    /// A frame carries one style for the caller that draws it whole; the split workspace passes a
-    /// style per view instead (U63).
-    pub(crate) fn apply_frame_style(&self, frame: &mut SceneFrame) {
+    /// A frame carries one style and one shadow switch for the caller that draws it whole; the split
+    /// workspace passes a style and a resolved shadow per view instead (U63, U107). The frame's own
+    /// colour and strength stay where the workspace put them: only the switch follows the leaf.
+    pub(crate) fn apply_frame_display(&self, frame: &mut SceneFrame) {
         frame.shading = self.active_style();
+        frame.contact_shadows.visible = self.active_shadows();
     }
 
     /// Shows `kind`, restoring the state that layout last had.
@@ -1120,22 +1149,54 @@ mod tests {
 
     #[test]
     fn a_frame_fallback_follows_the_active_leaf_while_a_neighbour_keeps_its_style() {
-        // `SceneFrame::shading` is the single-view fallback; a split workspace passes a style per
-        // view, so the fallback follows whichever view the cluster is editing (U63).
+        // `SceneFrame::shading` and the frame's shadow switch are the single-view fallback; a split
+        // workspace passes a style and a resolved shadow per view, so the fallback follows whichever
+        // view the cluster is editing (U63, U107).
         let mut layout = layout(LayoutKind::TwoColumns);
         let ids: Vec<LeafId> = layout.current().leaves.iter().map(|leaf| leaf.id).collect();
         layout.leaf_mut(ids[0]).expect("first").set_style(ShadingStyle::Wireframe);
         layout.leaf_mut(ids[1]).expect("second").set_style(ShadingStyle::Translucent);
+        layout.leaf_mut(ids[1]).expect("second").toggle_shadows();
 
         let mut frame = SceneFrame::default();
         layout.set_active(ids[0]);
-        layout.apply_frame_style(&mut frame);
+        layout.apply_frame_display(&mut frame);
         assert_eq!(frame.shading, ShadingStyle::Wireframe);
+        assert!(frame.contact_shadows.visible, "the first view still draws its shadow");
 
         layout.set_active(ids[1]);
-        layout.apply_frame_style(&mut frame);
+        layout.apply_frame_display(&mut frame);
         assert_eq!(frame.shading, ShadingStyle::Translucent, "the fallback follows the active leaf");
+        assert!(!frame.contact_shadows.visible, "and so does the shadow switch");
         assert_eq!(layout.leaf(ids[0]).expect("first").style(), ShadingStyle::Wireframe, "the neighbour is untouched");
+    }
+
+    #[test]
+    fn two_views_keep_their_own_shadow_switch_and_only_the_active_one_changes() {
+        // The ground shadow is view state per leaf beside the style: the View tab's switch writes the
+        // active view alone, so one cell of a split draws a shadow and its neighbour does not (U107).
+        let mut layout = layout(LayoutKind::TwoColumns);
+        let ids: Vec<LeafId> = layout.current().leaves.iter().map(|leaf| leaf.id).collect();
+        assert!(layout.leaf(ids[0]).expect("first").shadows(), "a fresh view draws the shadow");
+        assert!(layout.leaf(ids[1]).expect("second").shadows());
+
+        layout.set_active(ids[1]);
+        layout.toggle_active_shadows();
+        assert!(!layout.leaf(ids[1]).expect("second").shadows());
+        assert!(layout.leaf(ids[0]).expect("first").shadows(), "the neighbour keeps drawing its own");
+        assert!(!layout.active_shadows(), "the View tab reads the active leaf");
+
+        // The switch travels with the rest of the layout state, like the style.
+        layout.set_kind(LayoutKind::Single);
+        layout.set_kind(LayoutKind::TwoColumns);
+        assert!(layout.leaf(ids[0]).expect("first").shadows());
+        assert!(!layout.leaf(ids[1]).expect("second").shadows());
+
+        // The frame keeps one strength for the workspace; the leaf only decides whether it draws.
+        let mut frame = SceneFrame::default();
+        frame.contact_shadows.strength = 0.7;
+        layout.apply_frame_display(&mut frame);
+        assert_eq!(frame.contact_shadows.strength, 0.7, "the switch never rewrites the strength");
     }
 
     #[test]

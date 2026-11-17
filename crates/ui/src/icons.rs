@@ -405,6 +405,7 @@ icons!(View, "view", View, view {
     XRAY => "xray",
     TRANSLUCENT => "translucent",
     SLIDERS => "sliders",
+    SHADOWS => "shadows",
     AXON => "axon",
     FRONT => "front",
     LEFT => "left",
@@ -1214,7 +1215,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 115);
+        assert_eq!(seen.len(), 116);
     }
 
     #[test]
@@ -1683,6 +1684,21 @@ mod tests {
         let has_label = drawn_text(&output.shapes).iter().any(|text| text == "Confirm");
         output.drop_without_applying_deltas();
         assert!(has_label);
+    }
+
+    #[test]
+    fn an_empty_shadow_icon_falls_back_to_the_cells_word() {
+        // U107: the View tab's shadow cell ships with its drawing, but the placeholder rule still
+        // holds — an empty file paints the first word of the hint instead of a blank click target.
+        let empty = Icon::new(Theme::View, Family::View, "shadows", "bytes://icons/view/shadows.svg", &[]);
+        assert!(!empty.is_drawn());
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            ribbon_cell(ui, crate::theme::RIBBON_CELL_WIDTH, empty, "Shadows  (S)", true, false);
+        });
+        let texts = drawn_text(&output.shapes);
+        output.drop_without_applying_deltas();
+        assert!(texts.iter().any(|text| text == "Shadows"), "the cell falls back to its word: {texts:?}");
     }
 
     /// Runs one icon button under `visuals` at `pixels_per_point` and returns the uploaded colours.

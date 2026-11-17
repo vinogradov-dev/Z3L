@@ -43,7 +43,7 @@ use model::{ClassCode, FillMode, Id};
 use text::{Lang, Message};
 use units::Length;
 
-use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec};
+use self::spec::{GroupSpec, TabSpec, ToolKind, ToolSpec, ValueKind, ValueSpec, value_of};
 use crate::draw::{DrawIntent, DrawTool};
 use crate::icons::{self, Icon};
 use crate::theme::{RIBBON_CAPTION_HEIGHT, RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT, RIBBON_RULE, RIBBON_TAB_HEIGHT};
@@ -129,6 +129,15 @@ pub enum ToolAction {
     ToggleProjection,
     /// Turns the work-plane grid snap on or off.
     ToggleGrid,
+    /// Turns the ground shadow of the active view on or off (U107).
+    ToggleShadows,
+    /// Sets the workspace's ground-shadow intensity, in percent (U107).
+    ShadowStrength {
+        /// The value the field holds after this frame.
+        percent: u32,
+        /// Whether the gesture ended, which is when the workspace file is written.
+        settled: bool,
+    },
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
     Measure,
     /// Arms the niche tool, or disarms it when it already is: the pointer names the empty space
@@ -293,6 +302,10 @@ pub struct RibbonView {
     pub owns_view: bool,
     /// The work-plane grid snap is on.
     pub grid: bool,
+    /// The active view draws the ground shadow (U107).
+    pub shadows: bool,
+    /// The workspace's ground-shadow intensity, in percent.
+    pub shadow_strength: u32,
 }
 
 /// What one ribbon click asked the shell's view to do.
@@ -304,6 +317,16 @@ pub enum RibbonViewAction {
     ToggleProjection,
     /// Turn the work-plane grid snap on or off.
     ToggleGrid,
+    /// Turn the active view's ground shadow on or off (U107).
+    ToggleShadows,
+    /// Set the workspace's ground-shadow intensity, in percent; `settled` says the gesture ended and
+    /// the value belongs in the workspace file (U107).
+    ShadowStrength {
+        /// The value the field holds.
+        percent: u32,
+        /// Whether the gesture ended.
+        settled: bool,
+    },
 }
 
 /// What drawing the ribbon changed: whether a tool started, and the one view action it asked for.
@@ -359,6 +382,11 @@ pub struct RibbonContext {
     pub owns_view: bool,
     /// Whether the work-plane grid snap is on.
     pub grid: bool,
+    /// Whether the active view draws the ground shadow (U107).
+    pub shadows: bool,
+    /// The workspace's ground-shadow intensity, in percent: the value the Display group's field
+    /// shows and edits (U107).
+    pub shadow_strength: u32,
     /// A running draft: its tool, how many points it has, and whether it is closed.
     pub draft: Option<(DrawTool, usize, bool)>,
 }
@@ -552,10 +580,52 @@ fn show_group(
             for tool in group.live_tools() {
                 list_rect = show_tool(ui, tool, state, context, actions, lang).or(list_rect);
             }
+            if let Some(value) = value_of(group.id) {
+                show_value(ui, value, context, actions, lang);
+            }
         });
         caption_band(ui, row.response.rect.width(), group.label.text(lang));
     });
     list_rect
+}
+
+/// The number a group draws beside its cells: the shared field with its unit outside (ADR 0092).
+///
+/// A value is not a tool (U76 keeps the ribbon's cells to tools), so it is drawn here rather than as
+/// a cell: the same numeric field the cards use, one per group, two cells wide so the row keeps its
+/// pitch. The frame follows every value of a drag; the workspace file is written on the frame the
+/// gesture ends, so one drag is one write (U107).
+fn show_value(ui: &mut Ui, value: &ValueSpec, context: RibbonContext, actions: &mut Vec<ToolAction>, lang: Lang) {
+    let mut percent = value_current(value.kind, context);
+    let hint = value.hint.text(lang).to_owned();
+    ui.add_space(crate::theme::STEP);
+    let outcome = crate::scrub::Scrub::new(&mut percent)
+        .range(value.range.clone())
+        .unit(value.unit)
+        .speed(value.speed)
+        .policy(crate::scrub::CommitPolicy::OnRelease)
+        .show(ui);
+    let response = outcome.response.on_hover_text(hint);
+    // A drag ends on a frame where the number did not move — the release is not a change — so the
+    // end of the gesture is read from the field's own commit, and that is what writes the workspace
+    // file. Every other frame of a gesture carries the value and leaves the file alone (U107).
+    if response.changed() || outcome.commit {
+        actions.push(value_action(value.kind, percent, outcome.commit));
+    }
+}
+
+/// The value a group's field shows before the user touches it.
+const fn value_current(kind: ValueKind, context: RibbonContext) -> u32 {
+    match kind {
+        ValueKind::ShadowStrength => context.shadow_strength,
+    }
+}
+
+/// What editing a value asks for.
+const fn value_action(kind: ValueKind, percent: u32, settled: bool) -> ToolAction {
+    match kind {
+        ValueKind::ShadowStrength => ToolAction::ShadowStrength { percent, settled },
+    }
 }
 
 /// The caption band under one group: the quiet strip with the group's name in capitals.
@@ -795,6 +865,8 @@ mod tests {
             perspective: true,
             owns_view: true,
             grid: true,
+            shadows: true,
+            shadow_strength: crate::settings::DEFAULT_SHADOW_STRENGTH,
             draft: None,
         }
     }
@@ -941,7 +1013,16 @@ mod tests {
                 ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
-            ("view", &["Frame all  (F)", "Grid snap  (G)", "Switch the projection  (O)"]),
+            (
+                "view",
+                &[
+                    "Frame all  (F)",
+                    "Grid snap  (G)",
+                    "How far the floor darkens under the shadow the key light casts.",
+                    "Shadows  (S)",
+                    "Switch the projection  (O)",
+                ],
+            ),
         ];
         for (id, hints) in expected {
             let mut state = Toolbars::new();
@@ -970,17 +1051,17 @@ mod tests {
     }
 
     #[test]
-    fn the_view_tab_captions_the_snap_group_and_no_display_group() {
+    fn the_view_tab_captions_the_snaps_group_and_the_display_group_that_owns_the_shadow() {
         // U91: the grid snap changes where a click lands, so it left *View › Display* for a caption
-        // of its own and a person reads where a snap lives. Display holds only planned tools now,
-        // so the ribbon captions no Display group (ADR 0066).
+        // of its own and a person reads where a snap lives. Display holds the shadow's switch and its
+        // one intensity, so it is captioned again (U107).
         for (lang, snaps, display) in [(Lang::En, "SNAPS", "DISPLAY"), (Lang::Ru, "ПРИВЯЗКИ", "ОТОБРАЖЕНИЕ")]
         {
             let mut state = Toolbars::new();
             state.set_tab(tab("view"));
             let (texts, _, _) = draw_in(&mut state, full_context(), lang);
             assert!(texts.iter().any(|text| text == snaps), "{snaps} captions the snaps group: {texts:?}");
-            assert!(!texts.iter().any(|text| text == display), "{display} is still captioned: {texts:?}");
+            assert!(texts.iter().any(|text| text == display), "{display} holds a live tool: {texts:?}");
         }
     }
 
@@ -1518,12 +1599,43 @@ mod tests {
     }
 
     #[test]
-    fn a_row_and_a_tab_count_tools_only() {
+    fn the_display_group_draws_the_shadow_switch_and_the_workspace_intensity() {
+        // U107: the switch and the one intensity sit in one group, and the field shows the workspace
+        // value the shell handed in rather than a number of its own.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let mut context = full_context();
+        context.shadows = true;
+        context.shadow_strength = 70;
+        let (texts, labels, actions) = draw(&mut state, context);
+        assert!(texts.iter().any(|text| text == "70"), "the field shows the workspace value: {texts:?}");
+        assert!(texts.iter().any(|text| text == "%"), "the unit sits outside the box: {texts:?}");
+        assert!(labels.iter().any(|label| label == "Shadows  (S)"), "the switch names itself and its key: {labels:?}");
+        assert!(actions.is_empty(), "drawing a value writes nothing");
+
+        // A press on the cell asks for the switch; the value travels with its own action.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let asked = ready(ToolKind::Shadows, tool("view.display.shadows"), &state, context, Lang::En);
+        assert_eq!(asked.action, Some(ToolAction::ToggleShadows));
+        assert!(asked.armed, "a shadow that is on draws pressed");
+        assert!(asked.enabled, "a view always has its switch");
+
+        context.shadows = false;
+        let off = ready(ToolKind::Shadows, tool("view.display.shadows"), &state, context, Lang::En);
+        assert!(!off.armed, "a shadow that is off draws quiet");
+    }
+
+    #[test]
+    fn a_row_counts_tools_only_and_a_tab_adds_the_field_its_group_draws() {
         for tab in spec::tabs() {
             let mut columns = 0;
             for group in tab.live_groups() {
                 assert_eq!(group.columns(), group.live_tools().count(), "{} counts more than its tools", group.id);
                 columns += group.columns();
+                if spec::value_of(group.id).is_some() {
+                    columns += spec::VALUE_COLUMNS;
+                }
             }
             assert_eq!(tab.columns(), columns, "{} disagrees with its groups", tab.id);
         }

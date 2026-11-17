@@ -61,6 +61,8 @@ impl Editor {
             perspective: view.perspective,
             owns_view: view.owns_view,
             grid: view.grid,
+            shadows: view.shadows,
+            shadow_strength: view.shadow_strength,
             draft,
         };
         let mut actions = Vec::new();
@@ -141,6 +143,10 @@ impl Editor {
                     outcome.view = Some(toolbars::RibbonViewAction::ToggleProjection);
                 }
                 ToolAction::ToggleGrid => outcome.view = Some(toolbars::RibbonViewAction::ToggleGrid),
+                ToolAction::ToggleShadows => outcome.view = Some(toolbars::RibbonViewAction::ToggleShadows),
+                ToolAction::ShadowStrength { percent, settled } => {
+                    outcome.view = Some(toolbars::RibbonViewAction::ShadowStrength { percent, settled });
+                }
             }
         }
         Ok(outcome)

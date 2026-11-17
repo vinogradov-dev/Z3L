@@ -599,8 +599,17 @@ impl App {
     /// image runs under it and a translucent ribbon blends with the furniture (U51, ADR 0080). The
     /// document draws it because the fold is the document's; the band it occupies is the window's.
     fn ribbon(&mut self, ui: &mut egui::Ui, design: egui::Rect) {
-        if self.tabs.active_mut().show_ribbon(ui, design, &mut self.shell, &self.settings) {
+        let ask = self.tabs.active_mut().show_ribbon(ui, design, &mut self.shell, &self.settings);
+        if ask.product_card {
             self.product_card.start();
+        }
+        if let Some((percent, settled)) = ask.shadow_strength {
+            // The intensity is one workspace value read at draw time, so the frame follows it in this
+            // very frame without an upload; the file is written once the gesture ends (U107).
+            self.settings.viewport.shadow_strength = percent.min(ui::settings::MAX_DISPLAY_STRENGTH);
+            if settled {
+                self.persist_settings();
+            }
         }
         self.sync_ribbon_fold();
         self.sync_pinned_variants();
@@ -861,9 +870,8 @@ impl App {
             let Self { tabs, shell, settings, .. } = self;
             // A scene whose last rebuild overran the budget says so before it runs, so the frame
             // that paints the message and the last good geometry is the frame before the work.
-            shell.rebuilding = tabs.active().busy(&settings.viewport, &shell.cluster, shell.colors);
-            if let Err(error) = tabs.active_mut().sync_scene(ui.ctx(), &settings.viewport, &shell.cluster, shell.colors)
-            {
+            shell.rebuilding = tabs.active().busy(&settings.viewport, shell.colors);
+            if let Err(error) = tabs.active_mut().sync_scene(ui.ctx(), &settings.viewport, shell.colors) {
                 shell.rebuilding = false;
                 tabs.active_mut().last_error = Some(error);
             }
@@ -904,6 +912,9 @@ impl App {
             }
             if shortcuts.grid_snap {
                 self.tabs.active_mut().toggle_draw_grid();
+            }
+            if shortcuts.shadows {
+                self.tabs.active_mut().toggle_shadows();
             }
             if shortcuts.measure {
                 self.tabs.active_mut().toggle_measure(ui.ctx());
@@ -1150,20 +1161,6 @@ mod tests {
         assert!(!cluster.osd_visible(), "the block is off until the switch is turned on (U42)");
         cluster.show_osd = true;
         assert!(cluster.osd_visible(), "the switch controls the on-screen display (U106)");
-    }
-
-    #[test]
-    fn the_display_settings_switch_controls_the_contact_shadow() {
-        let mut cluster = ViewCluster::default();
-        let default_strength = ui::settings::DEFAULT_SHADOW_STRENGTH;
-        assert!(cluster.shadow_settings(default_strength).draws(), "the soft ground shadow is on by default");
-        cluster.contact_shadows = false;
-        assert!(!cluster.shadow_settings(default_strength).visible, "the switch reaches the frame");
-        assert!(!cluster.shadow_settings(default_strength).draws());
-        cluster.contact_shadows = true;
-        assert!((cluster.shadow_settings(50).strength - 0.5).abs() < 1.0e-6);
-        assert!(!cluster.shadow_settings(0).draws(), "a zero strength draws nothing either");
-        assert!((cluster.shadow_settings(140).strength - 1.0).abs() < 1.0e-6, "a hand-edited strength is clamped");
     }
 
     #[test]

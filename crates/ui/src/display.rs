@@ -44,6 +44,22 @@ pub const fn shading_icon(style: ShadingStyle) -> icons::Icon {
     }
 }
 
+/// How far the ground shadow darkens the floor plate, from the workspace's whole percent.
+///
+/// One conversion for the frame's fallback and a view's own spec, so the two cannot disagree about
+/// what 55 % means; a hand-edited settings file that skipped `sanitize` is clamped here (U107).
+pub fn shadow_strength(strength_percent: u32) -> f32 {
+    strength_percent.min(crate::settings::MAX_DISPLAY_STRENGTH) as f32 / 100.0
+}
+
+/// The ground shadow one view draws with, from the workspace strength and the view's switch.
+///
+/// The strength is workspace data, the switch belongs to the view leaf (U107), and the colour comes
+/// from the frame's own default: this is what a per-view spec carries.
+pub fn contact_shadows(strength_percent: u32, visible: bool) -> scene::ContactShadows {
+    scene::ContactShadows { visible, strength: shadow_strength(strength_percent), ..scene::ContactShadows::default() }
+}
+
 /// The preset a viewport opens with.
 ///
 /// A preset only names an eye direction and, for the five standard views, the orthographic
@@ -116,6 +132,18 @@ impl OpeningView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shadow_is_the_workspace_strength_under_the_views_own_switch() {
+        // U107: one intensity for the whole workspace, one switch per view, and one conversion
+        // between the two so the frame's fallback and a view's spec cannot disagree.
+        let on = contact_shadows(55, true);
+        let off = contact_shadows(55, false);
+        assert!(on.visible && !off.visible, "the switch is the view's");
+        assert!((on.strength - 0.55).abs() < 1.0e-6 && on.strength == off.strength, "the intensity is not");
+        assert!(!contact_shadows(0, true).draws(), "a zero intensity draws nothing");
+        assert_eq!(contact_shadows(u32::MAX, true).strength, 1.0, "a hand-edited strength is clamped");
+    }
 
     #[test]
     fn every_preset_has_a_label_and_an_eye_direction() {

@@ -232,11 +232,15 @@ impl Default for SceneColors {
     }
 }
 
-/// The ground shadow's switch, strength and colour, beside the grid in a frame.
+/// The ground shadow's strength and colour, beside the grid in a frame.
 ///
 /// The shadow is the silhouette the key light casts on the floor plate, not a blob under each
 /// body: a body at any height casts one, and a body that is turned casts its own shape. A change is
 /// read at draw time like [`ShadingStyle`], so turning the shadow off costs no upload.
+///
+/// The switch is the view's (U107): the shell's view leaf carries it, the renderer resolves it into
+/// a per-view [`ContactShadows`], and so one cell of a split draws the shadow while its neighbour
+/// does not. The strength and the colour stay workspace data, one value for every view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContactShadows {
     /// Whether the pass draws at all.
@@ -589,7 +593,12 @@ pub struct SceneFrame {
     pub all_edges: bool,
     /// The floor grid.
     pub grid: Grid,
-    /// The ground shadow's switch, strength and colour.
+    /// The ground shadow's strength and colour, under the active view's switch.
+    ///
+    /// The strength and the colour are workspace data and the mask the renderer builds is derived
+    /// from them; the *switch* belongs to the view, so a split workspace can draw it in one cell and
+    /// not in the next (U107). This value is the fallback for a caller that draws the frame whole and
+    /// follows the active leaf, exactly like [`SceneFrame::shading`].
     pub contact_shadows: ContactShadows,
     /// The colour of the floor plate, in gamma space: the surface the shadow falls on.
     ///

@@ -254,10 +254,12 @@ impl ViewRegion {
     }
 }
 
-/// One view's camera, rectangle and display style.
+/// One view's camera, rectangle, display style and ground shadow.
 ///
 /// The style travels per view, so two neighbours in one workspace can draw the same scene with
-/// different passes while one texture and one edge buffer still serve them (ADR 0070).
+/// different passes while one texture and one edge buffer still serve them (ADR 0070). The shadow
+/// travels with it: its strength and colour are the workspace's, its switch is this view's, so one
+/// cell of a split may darken the floor while its neighbour does not (U107).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewSpec {
     /// The camera this view looks through.
@@ -266,6 +268,9 @@ pub struct ViewSpec {
     pub region: ViewRegion,
     /// The display style it draws with.
     pub shading: ShadingStyle,
+    /// The ground shadow it draws with: the workspace's colour and strength under this view's
+    /// switch. A change is read when the uniform is written, so it never costs an upload.
+    pub shadows: ContactShadows,
 }
 
 impl ViewSpec {
@@ -603,7 +608,7 @@ impl ViewportRenderer {
         lighting: &Lighting,
     ) {
         let region = ViewRegion { x: 0, y: 0, width: self.size[0], height: self.size[1] };
-        let view = ViewSpec { camera: frame.camera, region, shading: frame.shading };
+        let view = ViewSpec { camera: frame.camera, region, shading: frame.shading, shadows: frame.contact_shadows };
         self.render_views(device, queue, frame, lighting, &[view]);
     }
 
@@ -614,8 +619,10 @@ impl ViewportRenderer {
     /// attachment: the first clears the colour and depth, every other pass loads them, and each
     /// draws inside its own viewport and scissor so a view never writes over its neighbour.
     ///
-    /// Each view carries its own camera, rectangle and display style, so a split workspace draws a
-    /// neighbour with a different pass set without a second target or edge buffer.
+    /// Each view carries its own camera, rectangle, display style and shadow switch, so a split
+    /// workspace draws a neighbour with a different pass set and a different ground shadow without a
+    /// second target or edge buffer. The mask itself is built once, from the frame's own shadow
+    /// settings: it is geometry, and only the strength the plate reads is per view.
     ///
     /// Each view also culls: a drawable whose world box misses the view's volume is left out of
     /// every pass of that view, so faces and edges are dropped together (X58).
@@ -644,13 +651,7 @@ impl ViewportRenderer {
         for (index, view) in views.iter().enumerate() {
             let region = view.region;
             let aspect = f64::from(region.width.max(1)) / f64::from(region.height.max(1));
-            uniforms.push(self.camera_uniform(
-                view.camera,
-                lighting,
-                aspect,
-                &frame.contact_shadows,
-                frame.grid.extent_mm,
-            ));
+            uniforms.push(self.camera_uniform(view.camera, lighting, aspect, &view.shadows, frame.grid.extent_mm));
             offsets.push((index as u64 * self.camera_stride) as u32);
             let (x, y, width, height) = region.scissor(self.size[0], self.size[1]);
             debug_assert!(x.saturating_add(width) <= self.size[0] && y.saturating_add(height) <= self.size[1]);
@@ -1294,12 +1295,33 @@ mod tests {
         // different passes from the same uploaded geometry and edge buffer (U63).
         let region = ViewRegion { x: 0, y: 0, width: 100, height: 100 };
         let views = [
-            ViewSpec { camera: Camera::default(), region, shading: ShadingStyle::Wireframe },
-            ViewSpec { camera: Camera::default(), region, shading: ShadingStyle::Shaded },
+            ViewSpec {
+                camera: Camera::default(),
+                region,
+                shading: ShadingStyle::Wireframe,
+                shadows: ContactShadows::default(),
+            },
+            ViewSpec {
+                camera: Camera::default(),
+                region,
+                shading: ShadingStyle::Shaded,
+                shadows: ContactShadows::default(),
+            },
         ];
         assert_eq!(views[0].passes(), StylePasses::new(ShadingStyle::Wireframe));
         assert_eq!(views[1].passes(), StylePasses::new(ShadingStyle::Shaded));
         assert_ne!(views[0].passes(), views[1].passes(), "different styles turn on different passes");
+    }
+
+    #[test]
+    fn the_shadow_switch_is_per_view_and_its_strength_is_the_frame_s() {
+        // One cell of a split draws a shadow while its neighbour does not, from one workspace
+        // strength and one mask (U107): the difference is the `visible` flag alone.
+        let workspace = ContactShadows { strength: 0.55, ..ContactShadows::default() };
+        let on = ContactShadows { visible: true, ..workspace };
+        let off = ContactShadows { visible: false, ..workspace };
+        assert_eq!(shadow_uniform(&on, DVec3::Z)[3], 0.55, "the workspace strength reaches the plate");
+        assert_eq!(shadow_uniform(&off, DVec3::Z)[3], 0.0, "the other view keeps its own floor");
     }
 
     #[test]

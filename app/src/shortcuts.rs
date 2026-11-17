@@ -32,6 +32,8 @@ pub(crate) struct Shortcuts {
     pub(crate) projection: bool,
     /// Turn the drawing grid on or off; only a running draft or the ruler reads it.
     pub(crate) grid_snap: bool,
+    /// Turn the active view's ground shadow on or off (U107).
+    pub(crate) shadows: bool,
     /// Arm the ruler, or leave it when it is already armed.
     pub(crate) measure: bool,
     /// Arm the niche tool, or leave it when it is already armed.
@@ -63,6 +65,7 @@ impl Shortcuts {
             "view.projection.frame-all" => self.frame,
             "view.projection.toggle" => self.projection,
             "view.snaps.grid" => self.grid_snap,
+            "view.display.shadows" => self.shadows,
             "view.layout.maximize" => self.maximize,
             "sketch.measure.length" => self.measure,
             "furniture.panels.void" => self.niche,
@@ -82,6 +85,7 @@ impl Shortcuts {
             self.frame,
             self.projection,
             self.grid_snap,
+            self.shadows,
             self.measure,
             self.niche,
             self.maximize,
@@ -134,6 +138,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         frame: consume(input, "view.projection.frame-all"),
         projection: consume(input, "view.projection.toggle"),
         grid_snap: consume(input, "view.snaps.grid"),
+        shadows: consume(input, "view.display.shadows"),
         measure: consume(input, "sketch.measure.length"),
         niche: consume(input, "furniture.panels.void"),
         maximize: consume(input, "view.layout.maximize"),
