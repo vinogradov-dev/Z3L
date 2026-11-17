@@ -216,15 +216,20 @@ messages! {
     DisplaySettings = ["Display settings", "Настройки отображения"],
     ViewPreset = ["View preset", "Предустановка вида"],
     DisplayHeading = ["Display", "Отображение"],
-    ShowProjectionAngles = ["Show projection and angles", "Показывать проекцию и углы"],
-    ProjectionAnglesOn = [
-        "The orientation readout is drawn under the cube",
-        "Отсчёт ориентации рисуется под кубом"
+    ShowOnScreenDisplay = ["Show the on-screen display", "Показывать экранную информацию"],
+    OnScreenDisplayOn = [
+        "The corner block names the angles, the projection, the frame rate and the scene's cost",
+        "Блок в углу показывает углы, проекцию, частоту кадров и стоимость сцены"
     ],
-    ProjectionAnglesOff = [
-        "Draw the pitch, yaw, roll and the projection under the cube",
-        "Рисовать тангаж, рыскание, крен и проекцию под кубом"
+    OnScreenDisplayOff = [
+        "Draw the angles, the projection, the frame rate and the scene's cost in the free corner",
+        "Рисовать углы, проекцию, частоту кадров и стоимость сцены в свободном углу"
     ],
+    OsdRate = ["{} fps · {} ms", "{} кадр/с · {} мс"],
+    OsdScene = ["{} objects · {} triangles", "{} объектов · {} треугольников"],
+    OsdRebuild = ["rebuild {} ms", "перестроение {} мс"],
+    OsdUpload = ["upload {} ms", "выгрузка {} мс"],
+    OsdPick = ["pick {} ms", "выбор {} мс"],
     ShowOrientationWidget = ["Show the orientation cube", "Показывать куб ориентации"],
     OrientationWidgetOn = [
         "The corner cube, its home button and the projection toggle are drawn beside the panels",

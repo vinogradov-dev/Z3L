@@ -37,6 +37,8 @@ mod header;
 mod measure_gizmo;
 mod mesh_pick;
 mod open_frame;
+/// The on-screen display: the diagnostic block in the free corner (U106).
+mod osd;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;
@@ -1143,11 +1145,11 @@ mod tests {
     }
 
     #[test]
-    fn the_angle_switch_controls_the_readout() {
+    fn the_display_switch_controls_the_block() {
         let mut cluster = ViewCluster::default();
-        assert!(!cluster.angles_visible(), "the readout is off until the switch is turned on (U42)");
-        cluster.show_angles = true;
-        assert!(cluster.angles_visible(), "the switch controls the orientation readout");
+        assert!(!cluster.osd_visible(), "the block is off until the switch is turned on (U42)");
+        cluster.show_osd = true;
+        assert!(cluster.osd_visible(), "the switch controls the on-screen display (U106)");
     }
 
     #[test]

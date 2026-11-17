@@ -54,6 +54,7 @@ use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
 use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
+use crate::osd;
 use crate::rotate_gizmo::RotateGizmo;
 use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
 use crate::scene_gizmo;
@@ -276,6 +277,9 @@ pub(crate) struct Document {
     scene_product: Option<Id>,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
+    /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
+    /// upload and pick, each recorded where the work happens (U106).
+    osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
     /// The row of the tool card that takes the keyboard, consumed by the frame that draws it.
@@ -392,6 +396,7 @@ impl Document {
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
             rebuild: Rebuild::default(),
+            osd: osd::Meter::default(),
             tool_card_rect: None,
             tool_focus: None,
             tool_card_anchor: None,
@@ -848,7 +853,9 @@ impl Document {
         self.scene_preview = preview;
         self.scene_product = product;
         let uploaded = self.upload_scene();
-        self.rebuild.record(started.elapsed());
+        let elapsed = started.elapsed();
+        self.rebuild.record(elapsed);
+        self.osd.record_rebuild(elapsed);
         uploaded
     }
 
@@ -873,9 +880,11 @@ impl Document {
         // Keep the chains of the frame that is about to be uploaded, after every preview, so the
         // screen-space outline is drawn where the renderer draws the path.
         self.selected_chains = frame.polylines().iter().filter(|chain| geometry.contains(&chain.id)).cloned().collect();
+        let started = Instant::now();
         if let Some(target) = self.target.as_mut() {
             target.upload(&frame)?;
         }
+        self.osd.record_upload(started.elapsed());
         self.highlighted.clear();
         self.highlighted.extend_from_slice(selection);
         self.uploaded_preview = self.preview_key();
@@ -1191,6 +1200,36 @@ impl Document {
             return None;
         };
         offers_grips(self.session.project(), *only, self.session.active_product()).then_some(*only)
+    }
+
+    /// The scene object under `pointer` in `rect`, timed for the on-screen display.
+    ///
+    /// Every pick of the whole scene goes through here — a click, a right click and the press that
+    /// arms the rubber band — so the block reports what one pick of this scene costs instead of
+    /// what one call site happened to measure (U106).
+    fn pick_scene(&mut self, rect: egui::Rect, pointer: egui::Pos2) -> Option<Id> {
+        let started = Instant::now();
+        let hit = mesh_pick::pick_scene(rect, &self.scene, pointer);
+        self.osd.record_pick(started.elapsed());
+        hit
+    }
+
+    /// The shape under `pointer`, timed like [`Document::pick_scene`].
+    fn pick_surface(&mut self, rect: egui::Rect, pointer: egui::Pos2) -> Option<Id> {
+        let started = Instant::now();
+        let hit = mesh_pick::pick_surface(rect, &self.scene, pointer);
+        self.osd.record_pick(started.elapsed());
+        hit
+    }
+
+    /// Whether `pointer` rests on empty space: no scene glyph, no shape and no product envelope.
+    ///
+    /// A rubber band starts only there, and the two picks it asks are the expensive ones, so this
+    /// is the one question the press pays for and the block measures.
+    fn over_empty_space(&mut self, rect: egui::Rect, pointer: egui::Pos2, previewed: &[(Id, Placement)]) -> bool {
+        let glyph =
+            scene_gizmo::pick(self.scene.camera, rect, self.session.project(), pointer, previewed, self.editor.flags());
+        glyph.is_none() && self.pick_surface(rect, pointer).is_none()
     }
 
     /// Reads one frame of the rubber band: the press that arms it, the pointer that draws it and
@@ -1971,6 +2010,13 @@ impl Document {
         if !ui.is_rect_visible(area) {
             return;
         }
+        // One frame of the window is one line of the display: the rate is the interval egui
+        // measured, and while the block is on the shell asks for the next frame itself, because a
+        // rate read off a window that repaints only on input is the idle rate (U106).
+        self.osd.tick(ui.input(|input| input.stable_dt));
+        if shell.cluster.osd_visible() {
+            ui.ctx().request_repaint();
+        }
         // The render target covers the whole central area, including the bands under the floating
         // ribbon and the translucent panels, so the scene image runs under the chrome (M2). The
         // split views tile the scene rectangle, which depends on the ribbon band only: the panels
@@ -2066,7 +2112,7 @@ impl Document {
         let gizmo_rect = widget_placement(&shell.cluster, rect, chrome);
         // The shell's cursor keeps the corner widget on the system arrow: it is drawn on the scene
         // layer and is a widget, not the work area (X41).
-        shell.orientation_rect = gizmo_rect;
+        shell.orientation_rect = gizmo_rect.filter(|_| shell.cluster.widget_visible());
 
         let points_per_pixel = ui.ctx().pixels_per_point();
         let width = (area.width() * points_per_pixel).round().max(1.0) as u32;
@@ -2076,6 +2122,7 @@ impl Document {
         }
 
         let pointer_over_widget = !pointer_on_chrome
+            && shell.cluster.widget_visible()
             && response.hover_pos().is_some_and(|pointer| gizmo_rect.is_some_and(|widget| widget.contains(pointer)));
         // A border drag owns the pointer: the tools, the gizmos and picking all stay out of its way
         // until it is released, so a resize can never select an object or move an axis.
@@ -2509,18 +2556,7 @@ impl Document {
             && !self.box_grips.is_dragging()
             && !self.gizmo.is_dragging()
             && ui.input(|input| input.pointer.primary_pressed())
-            && response.interact_pointer_pos().is_some_and(|pointer| {
-                scene_gizmo::pick(
-                    self.scene.camera,
-                    rect,
-                    self.session.project(),
-                    pointer,
-                    &previewed,
-                    self.editor.flags(),
-                )
-                .is_none()
-                    && mesh_pick::pick_surface(rect, &self.scene, pointer).is_none()
-            });
+            && response.interact_pointer_pos().is_some_and(|pointer| self.over_empty_space(rect, pointer, &previewed));
         self.update_band(ui, &response, rect, band_starts);
         let clicked = interactive
             && !pointer_on_chrome
@@ -2552,8 +2588,11 @@ impl Document {
                 pointer,
                 &previewed,
                 self.editor.flags(),
-            )
-            .or_else(|| mesh_pick::pick_scene(rect, &self.scene, pointer));
+            );
+            let hit = match hit {
+                Some(id) => Some(id),
+                None => self.pick_scene(rect, pointer),
+            };
             let subject = self.editor.context_menu_subject(self.session.project(), self.session.active_product(), hit);
             // One popup at a time: the draft's menu names a segment kind, and this one names a node.
             self.draft_menu.close();
@@ -2620,7 +2659,7 @@ impl Document {
                     self.last_error = Some(error);
                 }
             } else {
-                let hit = mesh_pick::pick_scene(rect, &self.scene, pointer);
+                let hit = self.pick_scene(rect, pointer);
                 if response.double_clicked() {
                     // Opening a product repaints its envelope without a document revision, so the
                     // scene is rebuilt here instead of waiting a frame for the next sync.
@@ -2797,13 +2836,8 @@ impl Document {
         // the readout names the camera it draws with.
         if self.session.project().active_camera().is_none()
             && let Some(widget) = gizmo_rect
-            && let Some(action) = self.gizmo.show(
-                ui,
-                widget,
-                target_camera,
-                shell.cluster.angles_visible(),
-                settings.viewport.roll_step_degrees,
-            )
+            && shell.cluster.widget_visible()
+            && let Some(action) = self.gizmo.show(ui, widget, target_camera, settings.viewport.roll_step_degrees)
         {
             match action {
                 gizmo::GizmoAction::LookFrom(direction) => {
@@ -2820,6 +2854,17 @@ impl Document {
             }
             let target_camera = self.layout.leaf(target_leaf).map(|leaf| leaf.camera()).unwrap_or(target_camera);
             self.scene.camera = crate::scene_build::scene_camera(self.session.project(), target_camera);
+        }
+
+        // The on-screen display hangs below the corner widget, or in the corner itself while the
+        // cube is off: the block is a diagnostic a maker reads, so it does not go away with the
+        // widget it happens to sit under (U106). It is paint, so it takes no click.
+        if let Some(widget) = gizmo_rect
+            && shell.cluster.osd_visible()
+        {
+            let lines = osd::lines(self.scene.camera, ui::language(ui.ctx()), self.osd.stats(&self.scene));
+            let top = if shell.cluster.widget_visible() { widget.bottom() + osd::GAP } else { widget.top() };
+            osd::paint(ui, rect, widget.right(), top + osd::height(lines.len()), &lines);
         }
 
         // The cluster floats over the drawn viewport, so it is the last thing painted inside it. The
@@ -3428,7 +3473,7 @@ fn viewport_owns_view(project: &Project) -> bool {
 /// widget off, and the shell then draws no cube, no home and no projection button and leaves the
 /// click to the scene.
 fn widget_placement(cluster: &ViewCluster, view: egui::Rect, chrome: &Chrome) -> Option<egui::Rect> {
-    if cluster.widget_visible() { gizmo::widget_rect(view, chrome) } else { None }
+    if cluster.widget_visible() || cluster.osd_visible() { gizmo::widget_rect(view, chrome) } else { None }
 }
 
 /// The exact distances of one translate drag, measured once when the drag starts.

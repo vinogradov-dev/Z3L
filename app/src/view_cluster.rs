@@ -82,8 +82,9 @@ pub(crate) struct ViewCluster {
     pub(crate) settings_open: bool,
     /// Whether the split-view choices are open.
     pub(crate) layout_open: bool,
-    /// Whether the orientation widget draws the pitch/yaw/roll and projection readout (U42).
-    pub(crate) show_angles: bool,
+    /// Whether the corner draws the on-screen display: the angles, the projection, the frame rate
+    /// and the scene's cost (U42, U106).
+    pub(crate) show_osd: bool,
     /// Whether the corner orientation widget draws at all (U73).
     pub(crate) show_widget: bool,
     /// Whether the contact-shadow pass draws (U44).
@@ -96,7 +97,7 @@ impl Default for ViewCluster {
             navigation: None,
             settings_open: false,
             layout_open: false,
-            show_angles: false,
+            show_osd: false,
             show_widget: true,
             contact_shadows: true,
         }
@@ -104,9 +105,9 @@ impl Default for ViewCluster {
 }
 
 impl ViewCluster {
-    /// Whether the orientation widget draws its angle and projection readout.
-    pub(crate) fn angles_visible(&self) -> bool {
-        self.show_angles
+    /// Whether the corner draws its on-screen display.
+    pub(crate) fn osd_visible(&self) -> bool {
+        self.show_osd
     }
 
     /// Whether the corner orientation widget draws at all.
@@ -487,13 +488,13 @@ fn settings_popover(
             frame.show(ui, |ui| {
                 ui.set_width(230.0);
                 ui.label(egui::RichText::new(text::Message::DisplayHeading.text(ui::language(ui.ctx()))).strong());
-                let angles = ui
-                    .checkbox(&mut state.show_angles, text::Message::ShowProjectionAngles.text(ui::language(ui.ctx())));
-                angles.on_hover_text(
-                    if state.angles_visible() {
-                        text::Message::ProjectionAnglesOn
+                let osd =
+                    ui.checkbox(&mut state.show_osd, text::Message::ShowOnScreenDisplay.text(ui::language(ui.ctx())));
+                osd.on_hover_text(
+                    if state.osd_visible() {
+                        text::Message::OnScreenDisplayOn
                     } else {
-                        text::Message::ProjectionAnglesOff
+                        text::Message::OnScreenDisplayOff
                     }
                     .text(ui::language(ui.ctx())),
                 );
@@ -612,7 +613,7 @@ mod tests {
             !texts.iter().any(|text| text.contains("triangle edge")),
             "the diagnostic left the cluster with the strength sliders: {texts:?}"
         );
-        for switch in ["Show projection and angles", "Show the orientation cube", "Contact shadows"] {
+        for switch in ["Show the on-screen display", "Show the orientation cube", "Contact shadows"] {
             assert!(texts.iter().any(|text| text.contains(switch)), "the switch stays: {switch} in {texts:?}");
         }
     }

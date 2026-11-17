@@ -1849,6 +1849,35 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     assert!(document.session.project().panel(created).is_none(), "one undo removes the pinned part");
 }
 
+/// The on-screen display is one switch and one block: the corner names the camera and the scene's
+/// cost only while the switch is on, and the block outlives the cube above it (U106).
+#[test]
+fn the_display_block_hangs_in_the_corner_while_its_switch_is_on() {
+    let mut harness = Harness::new("osd_block");
+    let chrome = harness.settle();
+    let scene = harness.app.tabs.active().scene_rect().expect("the frame gave the views a rectangle");
+    assert!(crate::gizmo::widget_rect(scene, &chrome).is_some(), "the corner has room for the block");
+    assert!(
+        !harness.drawn.iter().any(|text| text.contains(" objects · ")),
+        "the block is off until the switch is turned on: {:?}",
+        harness.drawn
+    );
+
+    harness.app.shell.cluster.show_osd = true;
+    harness.settle();
+    let text = harness.drawn.join("\n");
+    assert!(text.contains("Pitch "), "the block names the camera the view draws with: {text}");
+    assert!(text.contains(" objects · "), "and what the frame costs to draw: {text}");
+    assert!(text.contains(" triangles"), "including the triangle count: {text}");
+
+    // The cube and the block are two switches: a maker who wants the corner free for the model can
+    // keep the numbers and drop the widget, which is the whole point of the second switch.
+    harness.app.shell.cluster.show_widget = false;
+    harness.settle();
+    let text = harness.drawn.join("\n");
+    assert!(text.contains("Pitch "), "the block stays when the cube goes: {text}");
+}
+
 #[test]
 fn the_square_marks_the_work_area_only() {
     // The owner's rule: the custom square is the pointer of the scene rectangle, and the system
