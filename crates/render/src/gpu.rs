@@ -1,8 +1,9 @@
 //! The device objects the renderer owns, one wrapper per buffer shape.
 //!
-//! Holds the three uploaded shapes — a drawable's indexed triangles, a line list, and the contact
-//! shadow pass's indexed triangles — plus the two helpers that create a buffer from vertices and
-//! the size clamp the offscreen target uses.
+//! Holds the uploaded shapes — a drawable's indexed triangles, a drawable's edge lines, a frame's
+//! line list, and the contact shadow pass's indexed triangles — plus the two helpers that create a
+//! buffer from vertices and the size clamp the offscreen target uses. What each shape is keyed by,
+//! and which of them an upload may keep, is `cache.rs`.
 //!
 //! Contract: each wrapper owns buffers that live as long as the object and reports the counts the
 //! draw call needs; a wrapper is either present and drawable or absent, never half-uploaded, so the
@@ -25,15 +26,36 @@ use crate::RenderError;
 use crate::geometry::MeshVertex;
 
 /// One drawable's uploaded triangles and the values the draw calls need.
+///
+/// The centre travels with the buffers because it is derived from the same world vertices; the
+/// stencil slot a drawable stamps is not here, because it is the drawable's place in the frame and
+/// a kept buffer may move.
 pub(crate) struct GpuMesh {
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) index_count: u32,
     /// World-space centre, used to order translucent objects back to front.
     pub(crate) centre: DVec3,
-    /// The stencil value an opaque face of this drawable stamps, and the only value its hidden
-    /// edges accept, so a node's inside never shows through the node in front of it.
-    pub(crate) stencil_reference: u32,
+}
+
+/// One drawable's edge lines.
+///
+/// A buffer belongs to the mesh, not to the frame, so an edit that leaves the drawable alone keeps
+/// its lines and a dense scene never rewrites one flattened list (X57).
+pub(crate) struct GpuEdges {
+    /// The line buffer, absent when no edge of the list could be drawn.
+    pub(crate) vertex_buffer: Option<wgpu::Buffer>,
+    pub(crate) vertex_count: u32,
+}
+
+impl GpuEdges {
+    /// Uploads `vertices` as one line list, or nothing when the list draws no line.
+    pub(crate) fn new(device: &wgpu::Device, label: &str, vertices: Vec<MeshVertex>) -> Result<Self, RenderError> {
+        Ok(match line_list(device, label, vertices)? {
+            Some(list) => Self { vertex_buffer: Some(list.vertex_buffer), vertex_count: list.vertex_count },
+            None => Self { vertex_buffer: None, vertex_count: 0 },
+        })
+    }
 }
 
 /// One line-list vertex buffer: the grid and the frame's polylines each own one.

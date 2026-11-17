@@ -1125,6 +1125,82 @@ mod tests {
         Session::with_catalog(project, default_catalog().expect("catalogue"))
     }
 
+    /// Measures what one edit costs the uploader: one drawable rebuilt, the rest kept (X57).
+    ///
+    /// The device is a real adapter, because creating a buffer is the driver's work; the frame comes
+    /// from the same fixture the evaluation probe uses. Ignored by default: it needs a GPU and
+    /// thousands of spheres, and `cargo test` touches neither.
+    #[test]
+    #[ignore = "needs a GPU adapter; measures the incremental upload"]
+    fn an_edit_uploads_one_drawable_and_not_the_scene() {
+        let Ok(render_state) = crate::ui_shots::render_state() else {
+            println!("this machine has no GPU adapter to upload the scene with");
+            return;
+        };
+        for count in [500, 2_000] {
+            let (cold, warm, edit, whole) = upload_costs(&render_state.device, count);
+            println!(
+                "upload at {count} drawables: cold {cold:?}, unchanged {warm:?}, one edit {edit:?}, whole {whole:?}"
+            );
+            assert!(edit * 20 < whole, "{count}: an edit uploads a fraction of the frame: {edit:?} of {whole:?}");
+            assert!(warm < edit, "{count}: an unchanged frame costs less than an edit: {warm:?} against {edit:?}");
+        }
+    }
+
+    /// One cold upload of a field of `count` spheres, an unchanged one, one edit, and the edit's
+    /// whole-frame upload, each measured on the real adapter.
+    fn upload_costs(
+        device: &eframe::wgpu::Device,
+        count: u64,
+    ) -> (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration) {
+        use std::time::{Duration, Instant};
+
+        use render::ViewportRenderer;
+
+        let mut session = sphere_field(count);
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let flags = ViewFlags::default();
+        let mut scene = evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the first scene").frame;
+        let moved = session.project().root().children().first().map(Node::id).expect("the field has a ball");
+        let mut renderer = ViewportRenderer::new(device, 1280, 800);
+
+        // The frame the last editor built, uploaded into an empty renderer, is what every edit cost
+        // before the cache: one vertex and index buffer per drawable and one flattened edge list.
+        let started = Instant::now();
+        renderer.upload(device, &scene).expect("the first upload");
+        let cold = started.elapsed();
+
+        // A second upload of the same frame, which is what a camera move or a theme change asks for.
+        let mut warm = Duration::MAX;
+        for _ in 0..5 {
+            let started = Instant::now();
+            renderer.upload(device, &scene).expect("an unchanged frame uploads");
+            warm = warm.min(started.elapsed());
+        }
+
+        // Five moves of one ball: each is one new vertex and index buffer pair and one edge buffer,
+        // and every other drawable keeps what it already had.
+        let mut edit = Duration::MAX;
+        for step in 0..5 {
+            let placement =
+                Placement::new(DVec3::new(0.0, 0.0, step as f64 * 10.0), DQuat::IDENTITY).expect("placement");
+            let params = serde_json::json!({ "node": moved, "placement": placement });
+            session.dispatch("node.placement.set", &params).expect("move one ball");
+            scene = evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the edited scene").frame;
+            let started = Instant::now();
+            renderer.upload(device, &scene).expect("the edited frame uploads");
+            edit = edit.min(started.elapsed());
+        }
+
+        // The same edited frame into an empty renderer: the cost the cache removed.
+        let mut fresh = ViewportRenderer::new(device, 1280, 800);
+        let started = Instant::now();
+        fresh.upload(device, &scene).expect("the whole frame uploads");
+        let whole = started.elapsed();
+        (cold, warm, edit, whole)
+    }
+
     /// The fastest of `runs` evaluations of one document, so a busy machine reports its best case
     /// instead of nothing.
     fn fastest_evaluation(

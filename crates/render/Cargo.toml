@@ -16,6 +16,10 @@ thiserror = { workspace = true }
 wgpu = { workspace = true }
 
 [dev-dependencies]
+# The noop backend builds a device without an adapter, so the upload cache's buffer identity is
+# asserted in `cargo test` instead of only on a machine with a GPU. It ships no native code and is
+# compiled only for tests.
+wgpu = { workspace = true, features = ["noop"] }
 # Parses and validates `scene.wgsl` in tests; already in the tree through `wgpu`.
 naga = { version = "30", features = ["wgsl-in"] }
 # Tests build a polyline, which carries a document id; already in the tree through `scene`.
