@@ -146,6 +146,10 @@ fn face_target(blend: Option<wgpu::BlendState>) -> Option<wgpu::ColorTargetState
 /// The grid, the paths and both edge passes share `vs_line`; only the depth and stencil state
 /// differs. Nothing nudges a line toward the camera here: the faces are biased instead, so a line
 /// wins against its own surface at any distance.
+///
+/// The lines are alpha-blended, which is what makes a display strength possible: the grid and the
+/// form outlines carry their strength in the ink's alpha and fade into the surface under them, so a
+/// strength of zero draws nothing while an opaque line (the selection, a path) is unchanged (U107).
 pub(crate) fn create_line_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -177,7 +181,7 @@ pub(crate) fn create_line_pipeline(
             module: shader,
             entry_point: Some("fs_line"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: std::slice::from_ref(&face_target(None)),
+            targets: std::slice::from_ref(&face_target(Some(wgpu::BlendState::ALPHA_BLENDING))),
         }),
         multiview_mask: None,
         cache: None,

@@ -44,11 +44,11 @@ pub const fn shading_icon(style: ShadingStyle) -> icons::Icon {
     }
 }
 
-/// How far the ground shadow darkens the floor plate, from the workspace's whole percent.
+/// A display strength as the frame reads it, from the workspace's whole percent.
 ///
-/// One conversion for the frame's fallback and a view's own spec, so the two cannot disagree about
-/// what 55 % means; a hand-edited settings file that skipped `sanitize` is clamped here (U107).
-pub fn shadow_strength(strength_percent: u32) -> f32 {
+/// One conversion for the grid, the form outlines and the ground shadow, so a hand-edited settings
+/// file that skipped `sanitize` is clamped in one place and 55 % means the same thing everywhere.
+pub fn display_strength(strength_percent: u32) -> f32 {
     strength_percent.min(crate::settings::MAX_DISPLAY_STRENGTH) as f32 / 100.0
 }
 
@@ -57,7 +57,7 @@ pub fn shadow_strength(strength_percent: u32) -> f32 {
 /// The strength is workspace data, the switch belongs to the view leaf (U107), and the colour comes
 /// from the frame's own default: this is what a per-view spec carries.
 pub fn contact_shadows(strength_percent: u32, visible: bool) -> scene::ContactShadows {
-    scene::ContactShadows { visible, strength: shadow_strength(strength_percent), ..scene::ContactShadows::default() }
+    scene::ContactShadows { visible, strength: display_strength(strength_percent), ..scene::ContactShadows::default() }
 }
 
 /// The preset a viewport opens with.
@@ -141,6 +141,8 @@ mod tests {
         let off = contact_shadows(55, false);
         assert!(on.visible && !off.visible, "the switch is the view's");
         assert!((on.strength - 0.55).abs() < 1.0e-6 && on.strength == off.strength, "the intensity is not");
+        assert_eq!(display_strength(0), 0.0, "a zero display strength draws nothing");
+        assert_eq!(display_strength(u32::MAX), 1.0, "a hand-edited percent is clamped");
         assert!(!contact_shadows(0, true).draws(), "a zero intensity draws nothing");
         assert_eq!(contact_shadows(u32::MAX, true).strength, 1.0, "a hand-edited strength is clamped");
     }

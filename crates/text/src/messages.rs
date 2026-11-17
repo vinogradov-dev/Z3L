@@ -257,8 +257,8 @@ messages! {
     ],
     DisplayConfigure = ["Configure…", "Настроить…"],
     DisplayConfigureHint = [
-        "Opens Settings › View for the floor grid and outline strengths.",
-        "Открывает «Настройки › Вид» для силы сетки пола и контуров."
+        "Opens Settings › View for the grid, outline and shadow strengths.",
+        "Открывает «Настройки › Вид» для силы сетки пола, контуров и тени."
     ],
     ResetDisplay = ["Reset display", "Сбросить отображение"],
     ResetDisplayHint = [

@@ -48,3 +48,9 @@ this file only when a task touches the question.
   `30.10`, which is what an under-drawer runner physically does. T2 follows the table and the model
   test now rejects a variant that *widens* its host instead. Confirm the reading, or restore the
   record's wording and give `50.03.03` the type's hosts back.
+- Where the shadow's intensity is edited. U107 put it beside the switch in the View tab's Display
+  group and took the slider out of Settings › View; the owner went looking in Settings, so X64 put
+  the slider back there as the one workspace value while the ribbon keeps its field (both read and
+  write the same number, so they cannot disagree). Decide whether one of the two goes and which:
+  the ribbon field keeps the amount beside the switch, the Settings slider gives it a label and the
+  page the other strengths live on.

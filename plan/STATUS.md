@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=85f1bfe updated=2026-11-17
+STATE: milestone=M7 phase=T task=X64 state=doing base=85f1bfe updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -39,8 +39,7 @@ layering rules and `ci` (P8); the plan gate follows every `files:` hint, a close
 
 ## Next
 
-Nothing is scheduled: L1 takes the shadow map into the panels: a shelf darkens the back panel and a
-niche reads
+X64 is next: the grid and outline display strengths reach nothing
 
 ## Index
 

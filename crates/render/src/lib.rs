@@ -520,7 +520,7 @@ impl ViewportRenderer {
     /// buffers, so an edit costs the drawables it changed and the walk of the frame, not the
     /// scene. A frame that no longer names a drawable drops its buffers (X57).
     pub fn upload(&mut self, device: &wgpu::Device, frame: &SceneFrame) -> Result<(), RenderError> {
-        let ink = edge_color(frame.background);
+        let ink = edge_color(frame.background, frame.edge_strength);
         self.faces.begin();
         self.edge_slots.begin();
         let mut drawables = Vec::with_capacity(frame.drawables().len());
@@ -1165,6 +1165,23 @@ mod tests {
     }
 
     #[test]
+    fn the_grid_strength_is_the_ink_s_opacity() {
+        // The display strength fades the grid instead of recolouring it: the hue is the theme's and
+        // the opacity is the workspace's, so a zero strength hides the lines (U64).
+        let grid = Grid { spacing_mm: 100.0, extent_mm: 200.0, major_every: 2, ..Grid::default() };
+        let faint = grid_vertices(&Grid { ink_strength: 0.25, ..grid });
+        let hidden = grid_vertices(&Grid { ink_strength: 0.0, ..grid });
+        assert_eq!(faint.len(), grid_vertices(&grid).len(), "a strength never changes the geometry");
+        for (faint, full) in faint.iter().zip(grid_vertices(&grid).iter()) {
+            assert_eq!(faint.color[..3], full.color[..3], "the ink keeps its hue");
+            assert!((faint.color[3] - 0.25).abs() < 1.0e-6, "the ink fades by the strength");
+        }
+        assert!(hidden.iter().all(|vertex| vertex.color[3] == 0.0), "a zero strength hides the grid");
+        let hostile = grid_vertices(&Grid { ink_strength: f32::NAN, ..grid });
+        assert!(hostile.iter().all(|vertex| vertex.color[3] > 0.0), "a hostile strength stays visible");
+    }
+
+    #[test]
     fn grid_values_are_clamped_to_a_bounded_line_count() {
         let grid = Grid { spacing_mm: 1.0, extent_mm: f64::MAX, major_every: 1, ..Grid::default() };
         let vertices = grid_vertices(&grid);
@@ -1408,7 +1425,7 @@ mod tests {
         mesh.normals.clear();
         let edges = [0, 1, 0, 9];
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let ink = edge_color(SceneFrame::default().background);
+        let ink = edge_color(SceneFrame::default().background, 1.0);
 
         let vertices = edge_vertices(0, &mesh, &edges, transform, ink).expect("a drawable's lines");
         assert_eq!(vertices.len(), 2, "the edge naming a missing vertex is skipped");
@@ -1470,9 +1487,14 @@ mod tests {
 
     #[test]
     fn edge_ink_follows_the_background() {
-        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0]), EDGE_COLOR_LIGHT, "a dark viewport needs light edges");
-        assert_eq!(edge_color([0.92, 0.92, 0.94, 1.0]), EDGE_COLOR_DARK, "a light viewport needs dark edges");
-        assert_eq!(edge_color([f32::NAN; 4]), EDGE_COLOR_DARK, "a hostile colour falls back to the light ink");
+        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 1.0), EDGE_COLOR_LIGHT, "a dark viewport needs light edges");
+        assert_eq!(edge_color([0.92, 0.92, 0.94, 1.0], 1.0), EDGE_COLOR_DARK, "a light viewport needs dark edges");
+        assert_eq!(edge_color([f32::NAN; 4], 1.0), EDGE_COLOR_DARK, "a hostile colour falls back to the light ink");
+        // The strength is the ink's opacity, so zero leaves the fill alone and a hostile value is
+        // opaque rather than invisible (U107).
+        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 0.4)[3], 0.4);
+        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 0.0)[3], 0.0);
+        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], f32::NAN)[3], 1.0);
     }
 
     /// A device and a queue with no surface behind them, or the sentence that says why there is
@@ -1656,7 +1678,7 @@ mod tests {
         renderer.upload(&device, &frame).expect("the frame uploads");
         renderer.render(&device, &queue, &frame);
         let pixels = read_pixels(&renderer, &device, &queue);
-        let ink = crate::geometry::edge_color(frame.background);
+        let ink = crate::geometry::edge_color(frame.background, frame.edge_strength);
         let half = pixels.len() / 2;
         let upper = pixels_of(&pixels[..half], ink);
         let lower = pixels_of(&pixels[half..], ink);

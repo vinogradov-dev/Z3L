@@ -130,6 +130,10 @@ struct Display {
     all_edges: bool,
     /// How far the ground shadow darkens the floor plate, from 0 to 1.
     shadow_strength: f32,
+    /// How much of the floor grid's inks shows, from 0 to 1.
+    grid_strength: f32,
+    /// How opaque the form-outline ink is, from 0 to 1.
+    edge_strength: f32,
     /// The background, grid and line ink of the theme variant the window draws with.
     colors: SceneColors,
 }
@@ -141,21 +145,38 @@ impl Display {
             grid: viewport.grid,
             grid_step_mm: viewport.grid_step_mm,
             all_edges: viewport.all_edges,
-            shadow_strength: ui::display::shadow_strength(viewport.shadow_strength),
+            shadow_strength: ui::display::display_strength(viewport.shadow_strength),
+            grid_strength: ui::display::display_strength(viewport.grid_strength),
+            edge_strength: ui::display::display_strength(viewport.edge_strength),
             colors,
         }
     }
 
     /// Writes the display state into a frame.
     ///
-    /// The shadow's strength is written alone: the switch is the view's, so the active leaf has
-    /// already put it in place and a whole-struct write here would overwrite it (U107).
+    /// The shadow's switch is not here: it is the view's, so the active leaf has already put it in
+    /// place and a whole-struct write here would overwrite it (U107). Its strength is, because the
+    /// intensity is one workspace value — and so are the grid's and the outline's, which the frame
+    /// carries as opacities the renderer reads when it builds the lines.
     fn apply(self, scene: &mut SceneFrame) {
         scene.grid.visible = self.grid;
         scene.grid.spacing_mm = f64::from(self.grid_step_mm.max(1));
+        scene.grid.ink_strength = self.grid_strength;
         scene.all_edges = self.all_edges;
+        scene.edge_strength = self.edge_strength;
         scene.contact_shadows.strength = self.shadow_strength;
         scene.apply_colors(self.colors);
+    }
+
+    /// Whether a repaint and an upload of the frame's own buffers must follow a change.
+    ///
+    /// The three strengths live in the colours and the inks the line buffers are built from, so a
+    /// change to one costs a re-upload of the grid and the outlines, not a re-evaluation of the
+    /// document (U64, U107).
+    fn repaints(self, previous: Self) -> bool {
+        self.colors != previous.colors
+            || self.grid_strength != previous.grid_strength
+            || self.edge_strength != previous.edge_strength
     }
 }
 
@@ -688,7 +709,7 @@ impl Document {
         let geometry_changed = settings.grid != before.grid
             || settings.grid_step_mm != before.grid_step_mm
             || settings.all_edges != before.all_edges
-            || self.display.colors != previous.colors;
+            || self.display.repaints(previous);
         if geometry_changed && let Err(error) = self.upload_scene() {
             self.last_error = Some(error);
         }
@@ -819,9 +840,11 @@ impl Document {
     ) -> Result<(), String> {
         let previous = self.display;
         self.display = Display::of(viewport, colors);
-        if self.display.colors != previous.colors {
-            // A theme switch touches only the frame's own colours, so the uploaded frame is repainted
-            // without evaluating a single node: the document revision does not move (X8).
+        if self.display.repaints(previous) {
+            // A theme switch or a display strength touches only the frame's own colours and inks, so
+            // the uploaded frame is repainted without evaluating a single node: the document revision
+            // does not move (X8, U64). The line buffers are keyed by those colours, so the upload
+            // rebuilds the grid and the outlines and keeps every face and mesh it already has.
             self.display.apply(&mut self.scene);
             return self.upload_scene();
         }
@@ -2743,7 +2766,7 @@ impl Document {
         // buffer. The edge list is not: switching between form edges and the full triangulation
         // reads a different cached list, so the last upload is replayed when the switch flips.
         self.layout.apply_frame_display(&mut self.scene);
-        self.scene.contact_shadows.strength = ui::display::shadow_strength(settings.viewport.shadow_strength);
+        self.scene.contact_shadows.strength = ui::display::display_strength(settings.viewport.shadow_strength);
         if self.scene.all_edges != settings.viewport.all_edges {
             self.scene.all_edges = settings.viewport.all_edges;
             if let Err(error) = self.upload_scene() {
@@ -3958,6 +3981,34 @@ mod tests {
             "a hidden widget draws no cube, no home and no projection button"
         );
         assert_eq!(session.project().revision(), revision, "a display switch is view state, never an edit");
+    }
+
+    #[test]
+    fn the_display_strengths_reach_the_frame_and_the_shadow_does_not_cost_an_upload() {
+        // U64: the grid and outline strengths are workspace values the renderer reads when it builds
+        // the line buffers, so a change to one repaints the frame; U107: the shadow's intensity is
+        // read from the view's uniform, so it never repaints anything.
+        let settings = ViewportSettings {
+            grid_strength: 25,
+            edge_strength: 0,
+            shadow_strength: 80,
+            ..ViewportSettings::default()
+        };
+        let display = Display::of(&settings, SceneColors::DARK);
+        let mut frame = SceneFrame::default();
+        display.apply(&mut frame);
+        assert!((frame.grid.ink_strength - 0.25).abs() < 1.0e-6, "the grid strength reaches the frame");
+        assert_eq!(frame.edge_strength, 0.0, "the outline strength reaches the frame");
+        assert!((frame.contact_shadows.strength - 0.8).abs() < 1.0e-6, "and the shadow's");
+
+        let quieter = Display::of(&ViewportSettings { grid_strength: 10, ..settings }, SceneColors::DARK);
+        assert!(quieter.repaints(display), "a grid strength repaints the frame's own lines");
+        let darker = Display::of(&ViewportSettings { edge_strength: 50, ..settings }, SceneColors::DARK);
+        assert!(darker.repaints(display), "so does an outline strength");
+        let dimmer = Display::of(&ViewportSettings { shadow_strength: 30, ..settings }, SceneColors::DARK);
+        assert!(!dimmer.repaints(display), "the shadow's intensity is a uniform, never an upload");
+        let same = Display::of(&settings, SceneColors::LIGHT);
+        assert!(same.repaints(display), "and a theme is the colours the lines are drawn with");
     }
 
     #[test]
