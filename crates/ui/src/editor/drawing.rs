@@ -14,7 +14,7 @@
 //!
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
-use engine::Session;
+use engine::{EditScope, Session};
 use model::{
     DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
 };
@@ -204,8 +204,14 @@ impl Editor {
             return Err(Message::BodyProfileOpen.text(lang).to_owned());
         }
         // A body's ring and the body itself are one gesture, so the profile enters the document in
-        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138).
-        let scope = (intent == DrawIntent::Body).then(|| session.edit_scope());
+        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138). A
+        // cone's base circle is not the whole shape either: its height and its top circle are chosen
+        // on the pull, so it enters the document in the scope that pull closes (ADR 0141).
+        let scope = match intent {
+            DrawIntent::Body => Some(session.edit_scope()),
+            DrawIntent::Primitive(PrimitiveKind::Cone) => Some(session.edit_scope()),
+            _ => None,
+        };
         let object = match intent {
             DrawIntent::Path => draft.commit_in(None, session, parent, placement, None, lang)?,
             DrawIntent::Body => {
@@ -214,7 +220,7 @@ impl Editor {
                 draft.commit_in(scope, session, parent, placement, Some(&name), lang)?
             }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
-            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind)?,
+            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind, scope)?,
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;
@@ -280,6 +286,7 @@ impl Editor {
         parent: model::Id,
         placement: Placement,
         kind: PrimitiveKind,
+        scope: Option<EditScope>,
     ) -> Result<model::Id, String> {
         let path = draft.to_path().map_err(|error| error.to_string())?;
         let (centre, radius) = path
@@ -290,7 +297,7 @@ impl Editor {
             .with_translation(centre[0], centre[1], Length::ZERO)
             .map_err(|error| error.to_string())?;
         let placement = Placement::compose(placement, offset).map_err(|error| error.to_string())?;
-        self.create_primitive_node(session, parent, primitive, placement)
+        self.create_primitive_node(session, parent, primitive, placement, scope)
     }
 
     /// Closes the running ring and commits it as one node.

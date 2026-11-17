@@ -256,6 +256,9 @@ pub const fn method_id(tool: DrawTool) -> &'static str {
         DrawTool::Sphere => "model.primitives.sphere",
         DrawTool::SphereDiameter => "model.primitives.sphere.diameter",
         DrawTool::SphereThreePoints => "model.primitives.sphere.three-points",
+        DrawTool::Cone => "model.primitives.cone",
+        DrawTool::ConeDiameter => "model.primitives.cone.diameter",
+        DrawTool::ConeThreePoints => "model.primitives.cone.three-points",
         DrawTool::RegularPolygon => "sketch.create.polygon",
         DrawTool::PolygonApothem => "sketch.create.polygon.apothem",
         DrawTool::PolygonByEdge => "sketch.create.polygon.edge",
@@ -729,17 +732,17 @@ const MODEL: [GroupSpec; 5] = [
                 label: Message::ToolSphere,
                 icon: Some(icons::primitives::SPHERE),
                 run: Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere }),
-                method: Some(Message::ToolSphereCentreRadius),
+                method: Some(Message::ToolCentreRadius),
                 variants: &[
                     VariantSpec {
                         id: "model.primitives.sphere.diameter",
-                        label: Message::ToolSphereCentreDiameter,
+                        label: Message::ToolCentreDiameter,
                         icon: Some(icons::contour::CIRCLE_DIAMETER),
                         run: Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter }),
                     },
                     VariantSpec {
                         id: "model.primitives.sphere.three-points",
-                        label: Message::ToolSphereThreePoints,
+                        label: Message::ToolThreePoints,
                         icon: Some(icons::contour::CIRCLE_THREE_POINTS),
                         run: Some(ToolKind::Primitive {
                             kind: PrimitiveKind::Sphere,
@@ -748,7 +751,27 @@ const MODEL: [GroupSpec; 5] = [
                     },
                 ],
             },
-            planned("model.primitives.cone", Message::ToolCone),
+            ToolSpec {
+                id: "model.primitives.cone",
+                label: Message::ToolCone,
+                icon: Some(icons::primitives::CONE),
+                run: Some(ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::Cone }),
+                method: Some(Message::ToolCentreRadius),
+                variants: &[
+                    VariantSpec {
+                        id: "model.primitives.cone.diameter",
+                        label: Message::ToolCentreDiameter,
+                        icon: Some(icons::contour::CIRCLE_DIAMETER),
+                        run: Some(ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::ConeDiameter }),
+                    },
+                    VariantSpec {
+                        id: "model.primitives.cone.three-points",
+                        label: Message::ToolThreePoints,
+                        icon: Some(icons::contour::CIRCLE_THREE_POINTS),
+                        run: Some(ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::ConeThreePoints }),
+                    },
+                ],
+            },
             planned("model.primitives.pyramid", Message::ToolPyramid),
         ],
     },
@@ -1145,7 +1168,13 @@ mod tests {
         );
         assert_eq!(
             live("model"),
-            ["model.create.extrude", "model.primitives.cuboid", "model.primitives.cylinder", "model.primitives.sphere",]
+            [
+                "model.create.extrude",
+                "model.primitives.cone",
+                "model.primitives.cuboid",
+                "model.primitives.cylinder",
+                "model.primitives.sphere",
+            ]
         );
         assert_eq!(
             live("furniture"),
@@ -1274,17 +1303,17 @@ mod tests {
             vec![
                 (
                     "model.primitives.sphere",
-                    Message::ToolSphereCentreRadius,
+                    Message::ToolCentreRadius,
                     Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere })
                 ),
                 (
                     "model.primitives.sphere.diameter",
-                    Message::ToolSphereCentreDiameter,
+                    Message::ToolCentreDiameter,
                     Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter })
                 ),
                 (
                     "model.primitives.sphere.three-points",
-                    Message::ToolSphereThreePoints,
+                    Message::ToolThreePoints,
                     Some(ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints })
                 ),
             ],
@@ -1352,6 +1381,9 @@ mod tests {
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
+            ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::Cone },
+            ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::ConeDiameter },
+            ToolKind::Primitive { kind: PrimitiveKind::Cone, tool: DrawTool::ConeThreePoints },
             ToolKind::Body(DrawTool::Rectangle),
             ToolKind::Body(DrawTool::RectangleFromCenter),
             ToolKind::Body(DrawTool::RectangleFromCenterDirected),
@@ -1401,8 +1433,8 @@ mod tests {
         let sketch = tab("sketch").expect("sketch");
         // Six creation tools, the ruler and the draft pair.
         assert_eq!(sketch.columns(), 9);
-        // The planned groups draw nothing, so the Model tab is the three primitives and the extrusion.
-        assert_eq!(tab("model").expect("model").columns(), 4);
+        // The planned groups draw nothing, so the Model tab is the four primitives and the extrusion.
+        assert_eq!(tab("model").expect("model").columns(), 5);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         assert_eq!(tab("view").expect("view").columns(), 3);

@@ -638,11 +638,13 @@ fn stage(draft: &DrawDraft, pointer: DVec2) -> Option<Stage> {
         DrawTool::CircleDiameter => (first, Shape::Diameter, 0.0),
         // A sphere is read exactly as the circle it is built around: the plate names the radius
         // (or the diameter) of the round, and the phantom stands the ball on it (ADR 0139).
-        DrawTool::Sphere => (first, Shape::Radius { turned: false }, 0.0),
-        DrawTool::SphereDiameter => (first, Shape::Diameter, 0.0),
+        DrawTool::Sphere | DrawTool::Cone => (first, Shape::Radius { turned: false }, 0.0),
+        DrawTool::SphereDiameter | DrawTool::ConeDiameter => (first, Shape::Diameter, 0.0),
         // Every point of a three-point circle rings the same way: each is a distance and an angle
-        // from the one before it. A sphere through three points is the same ring.
-        DrawTool::CircleThreePoints | DrawTool::SphereThreePoints => (last, Shape::Segment, 0.0),
+        // from the one before it. A sphere or a cone through three points is the same ring.
+        DrawTool::CircleThreePoints | DrawTool::SphereThreePoints | DrawTool::ConeThreePoints => {
+            (last, Shape::Segment, 0.0)
+        }
         // A circle tangent to two lines is clicked at the corner where they meet and then at one
         // point on each line: those two clicks name the lines the way a direction does, and the last
         // click names the centre of the ring.
@@ -831,6 +833,9 @@ mod tests {
             DrawTool::Sphere,
             DrawTool::SphereDiameter,
             DrawTool::SphereThreePoints,
+            DrawTool::Cone,
+            DrawTool::ConeDiameter,
+            DrawTool::ConeThreePoints,
         ] {
             let fresh = DrawDraft::with_sides(tool, 6);
             let state = PointState::live(&fresh, millimetres(50, 25)).expect("a first point");
@@ -881,6 +886,12 @@ mod tests {
             (DrawTool::SphereDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
             (DrawTool::SphereThreePoints, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
             (DrawTool::SphereThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            // A cone reads its base circle exactly as a sphere reads its equator; the height and the
+            // top circle are picked on the pull the commit hands over to (ADR 0141).
+            (DrawTool::Cone, vec![(0, 0)], vec![FieldParam::Radius]),
+            (DrawTool::ConeDiameter, vec![(0, 0)], vec![FieldParam::Diameter]),
+            (DrawTool::ConeThreePoints, vec![(0, 0)], vec![FieldParam::Length, FieldParam::Angle]),
+            (DrawTool::ConeThreePoints, vec![(0, 0), (100, 0)], vec![FieldParam::Length, FieldParam::Angle]),
         ];
         for (tool, points, expected) in cases {
             let draft = draft(tool, &points);

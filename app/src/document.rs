@@ -1041,12 +1041,24 @@ impl Document {
         let profile = (drawn.intent == ui::DrawIntent::Body)
             .then_some(drawn)
             .and_then(|drawn| Some((drawn.object, drawn.scope?)));
+        // A cone is drawn by its base and finished by its pull: the node is already in the document,
+        // sharp, at the ribbon's height, and the pull chooses both numbers in the scope of that
+        // create (ADR 0141).
+        let cone = matches!(drawn.intent, ui::DrawIntent::Primitive(model::PrimitiveKind::Cone))
+            .then_some(drawn)
+            .and_then(|drawn| Some((drawn.object, drawn.scope?)));
         self.end_drawing()?;
         if let Some((object, scope)) = profile {
             // The ring is in the document and the height pull grows its body from it; the preview
             // shows the body at the typed height before the pointer moves (ADR 0138).
             self.extrude_gizmo.start_profile(object, scope, self.editor.extrude_height());
-            if let Err(error) = self.preview_extrude(object, self.editor.extrude_height()) {
+            if let Err(error) = self.preview_extrude(object, self.editor.extrude_height(), None) {
+                self.last_error = Some(error);
+            }
+        } else if let Some((object, scope)) = cone {
+            let height = self.editor.extrude_height();
+            self.extrude_gizmo.start_cone(object, scope, height);
+            if let Err(error) = self.preview_extrude(object, height, Some(Length::ZERO)) {
                 self.last_error = Some(error);
             }
         }
@@ -1128,8 +1140,8 @@ impl Document {
     /// document is not written. A click finishes the pull, and finishing is the one command.
     fn apply_extrude_event(&mut self, event: ExtrudeEvent, lang: text::Lang) -> Result<(), String> {
         match event {
-            ExtrudeEvent::Preview { object, height } => self.preview_extrude(object, height),
-            ExtrudeEvent::Finish { object, height } => self.finish_extrude(object, height, lang),
+            ExtrudeEvent::Preview { object, height, top } => self.preview_extrude(object, height, top),
+            ExtrudeEvent::Finish { object, height, top } => self.finish_extrude(object, height, top, lang),
         }
     }
 
@@ -1138,12 +1150,13 @@ impl Document {
     /// The preview is the body itself at that height, evaluated from the same parameters the ✓
     /// would store, so the user sees the solid and not a stand-in for it. It moves no revision and
     /// leaves no undo entry (M71).
-    fn preview_extrude(&mut self, object: Id, height: Length) -> Result<(), String> {
-        // The pull's own height is the number its field shows, so a height typed into the card is
-        // adopted here: the next frame draws the field and the arrow at the number just committed
+    pub(crate) fn preview_extrude(&mut self, object: Id, height: Length, top: Option<Length>) -> Result<(), String> {
+        // The pull's own numbers are what its fields show, so a number typed into the card is
+        // adopted here: the next frame draws the field and the arrow at the value just committed
         // instead of snapping back to the dragged one.
         self.extrude_gizmo.set_height(height);
-        let geometry = previewed_body(self.session.project(), object, height)?;
+        self.extrude_gizmo.set_top(top);
+        let geometry = previewed_body(self.session.project(), object, height, top)?;
         self.session.set_preview_geometry(object, geometry);
         self.refresh()
     }
@@ -1156,10 +1169,23 @@ impl Document {
     ///
     /// Idempotent by construction: after the first call the pull is gone, so a second ✓ — a double
     /// click, a key and a button in one frame — has no object to write and dispatches nothing.
-    pub(crate) fn finish_extrude(&mut self, object: Id, height: Length, lang: text::Lang) -> Result<(), String> {
+    pub(crate) fn finish_extrude(
+        &mut self,
+        object: Id,
+        height: Length,
+        top: Option<Length>,
+        lang: text::Lang,
+    ) -> Result<(), String> {
         if self.extrude_gizmo.is_growing() {
             let scope = self.extrude_gizmo.scope();
             self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
+            self.session.end_edit();
+        } else if let Some(top) = top {
+            // A cone's ✓ writes both of its numbers into the scope the create opened, so the base
+            // and the taper are one entry and the ✓ applies once (ADR 0141).
+            let scope = self.extrude_gizmo.scope();
+            let primitive = cone_at(self.session.project(), object, height, top)?;
+            self.editor.replace_primitive_in(scope, &mut self.session, object, primitive)?;
             self.session.end_edit();
         } else if extrude_writes(self.extrude_gizmo.committed(), height) {
             self.editor.set_extrude_height(&mut self.session, object, height)?;
@@ -1826,11 +1852,12 @@ impl Document {
         }
         self.extrude_gizmo.object()?;
         let height = self.extrude_gizmo.height()?;
+        let top = self.extrude_gizmo.top();
         let maximum = (model::MAX_CONTOUR_COORDINATE.micrometres() / 1_000) as f64;
         let range = crate::extrude_gizmo::MIN_HEIGHT_MM..=maximum;
         // A pull's card is a number, not a dialog: `H` names it, no unit repeats it and the gesture's
         // own Enter and Escape commit and cancel, so the field is the only control it draws (U104).
-        Some(ToolView::lettered_height("H", height.millimetres_f64(), range, 3))
+        Some(ToolView::pull(height.millimetres_f64(), top.map(Length::millimetres_f64), range, 3))
     }
 
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
@@ -1838,7 +1865,7 @@ impl Document {
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
     /// the two gaps of a niche. Two surfaces read one draft, so they cannot show two numbers for one
     /// face.
-    fn tool_view(&self) -> Option<ToolView> {
+    pub(crate) fn tool_view(&self) -> Option<ToolView> {
         if let Some(height) = self.height_view() {
             return Some(height);
         }
@@ -1854,23 +1881,38 @@ impl Document {
     /// has one refusal whichever surface the maker typed it into. The ✓ and the ✕ are the shell's
     /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
     fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
+        let mut repull = false;
         for edit in &reported.edits {
-            if edit.param != ToolParam::Height {
-                continue;
-            }
             let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
                 continue;
             };
-            if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
-                if let Err(error) = self.editor.pull_box_height(next) {
-                    self.last_error = Some(error.to_string());
+            match edit.param {
+                ToolParam::Height => {
+                    if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                        if let Err(error) = self.editor.pull_box_height(next) {
+                            self.last_error = Some(error.to_string());
+                        }
+                    } else if self.extrude_gizmo.object().is_some() {
+                        self.extrude_gizmo.set_height(next);
+                        repull = true;
+                    }
                 }
-            } else if let Some(object) = self.extrude_gizmo.object()
-                && let Err(error) = self.preview_extrude(object, next)
-            {
-                self.last_error = Some(error);
+                // A cone's taper is the pull's second number: the same card, the same preview, so a
+                // typed radius shows the solid without a second gesture (ADR 0141).
+                ToolParam::TopRadius => {
+                    self.extrude_gizmo.set_top(Some(next));
+                    repull = true;
+                }
+                _ => continue,
             }
             ctx.request_repaint();
+        }
+        if repull
+            && let (Some(object), Some(height), top) =
+                (self.extrude_gizmo.object(), self.extrude_gizmo.height(), self.extrude_gizmo.top())
+            && let Err(error) = self.preview_extrude(object, height, top)
+        {
+            self.last_error = Some(error);
         }
         if (reported.edits.iter().any(|edit| edit.param != ToolParam::Height)
             || reported.lock.is_some()
@@ -1890,8 +1932,9 @@ impl Document {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
-                } else if let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                    && let Err(error) = self.finish_extrude(object, height, ui::language(ctx))
+                } else if let (Some(object), Some(height), top) =
+                    (self.extrude_gizmo.object(), self.extrude_gizmo.height(), self.extrude_gizmo.top())
+                    && let Err(error) = self.finish_extrude(object, height, top, ui::language(ctx))
                 {
                     self.last_error = Some(error);
                 }
@@ -3301,8 +3344,9 @@ impl Document {
                 self.cancel_extrude();
             } else if enter
                 && !ui.ctx().text_edit_focused()
-                && let (Some(object), Some(height)) = (self.extrude_gizmo.object(), self.extrude_gizmo.height())
-                && let Err(error) = self.finish_extrude(object, height, ui::language(ui.ctx()))
+                && let (Some(object), Some(height), top) =
+                    (self.extrude_gizmo.object(), self.extrude_gizmo.height(), self.extrude_gizmo.top())
+                && let Err(error) = self.finish_extrude(object, height, top, ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);
             }
@@ -3557,9 +3601,12 @@ fn extrude_writes(committed: Option<Length>, height: Length) -> bool {
 ///
 /// The preview is the stored body with one number changed, so the frame shows the exact solid the
 /// ✓ would store: the same path, the same features and the same evaluator (M71).
-fn previewed_body(project: &Project, object: Id, height: Length) -> Result<Geometry, String> {
+fn previewed_body(project: &Project, object: Id, height: Length, top: Option<Length>) -> Result<Geometry, String> {
     let node = project.object(object).ok_or_else(|| format!("{object:?} is not in the scene"))?;
     match node.geometry() {
+        Geometry::Primitive(model::Primitive::Cone(cone)) => {
+            cone_at(project, object, height, top.unwrap_or(cone.top_radius())).map(Geometry::Primitive)
+        }
         Geometry::Path(path) => {
             // A profile has no height yet, so the preview is the body the ✓ would build from it
             // (ADR 0138).
@@ -3577,6 +3624,18 @@ fn previewed_body(project: &Project, object: Id, height: Length) -> Result<Geome
             Ok(Geometry::Constructive(body))
         }
     }
+}
+
+/// The cone `object` would have at `height` and `top`.
+///
+/// The base radius and the side count are the drawn ones, so the pull changes exactly the two
+/// numbers it shows and a preview is the solid the ✓ would store (ADR 0141).
+fn cone_at(project: &Project, object: Id, height: Length, top: Length) -> Result<model::Primitive, String> {
+    let primitive = project.object_primitive(object).map_err(|error| error.to_string())?;
+    let model::Primitive::Cone(cone) = primitive else {
+        return Err(format!("{object:?} is not a cone"));
+    };
+    model::Primitive::cone(cone.base_radius(), top, height, cone.segments()).map_err(|error| error.to_string())
 }
 
 /// World placements a drag previews for cameras and lights.

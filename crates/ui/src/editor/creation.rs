@@ -14,11 +14,11 @@
 //! Changes when: a creation tool, its command or the rule that places it changes.
 
 use engine::node_cmds::ASSEMBLY_CREATE_ID;
-use engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID;
+use engine::object_cmds::{OBJECT_PRIMITIVE_CREATE_ID, OBJECT_PRIMITIVE_REPLACE_ID, ObjectPrimitiveReplace};
 use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
 use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
-use engine::{AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
+use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
     Placement, Primitive, Project,
@@ -28,7 +28,7 @@ use units::Length;
 
 use super::Editor;
 use crate::box_tool::{BoxDraft, BoxDraftError};
-use crate::command::{dispatch, json};
+use crate::command::{dispatch, dispatch_in, json};
 use crate::product_card::ProductDraft;
 use crate::target::creation_target;
 
@@ -298,21 +298,39 @@ impl Editor {
 
     /// Dispatches `object.primitive.create` for one validated primitive at `placement`.
     ///
-    /// The drawn sphere's commit is the caller: the click that placed a primitive by one gesture
-    /// retired with the arm, because a sphere is now drawn around its centre (ADR 0139).
+    /// The drawn sphere's and cone's commit is the caller: the click that placed a primitive by one
+    /// gesture retired with the arm, because both shapes are drawn and not placed (ADR 0139, 0141).
+    /// `scope` is the open gesture a cone's create belongs to; a sphere passes `None` and is its own
+    /// undo entry.
     pub(super) fn create_primitive_node(
         &mut self,
         session: &mut Session,
         parent: Id,
         primitive: Primitive,
         placement: Placement,
+        scope: Option<EditScope>,
     ) -> Result<Id, String> {
         let name = Self::free_name(session, parent, primitive.kind().label());
         let params = json(&ObjectPrimitiveCreate { parent, name, primitive, placement })?;
-        let outcome = dispatch(session, OBJECT_PRIMITIVE_CREATE_ID, &params)?;
+        let outcome = dispatch_in(scope, session, OBJECT_PRIMITIVE_CREATE_ID, &params)?;
         let created = outcome.created_id();
         self.select_created(created);
         created.ok_or_else(|| "The primitive command created no node.".to_owned())
+    }
+
+    /// Writes a primitive's parameters, in the open scope a gesture created it in.
+    ///
+    /// The cone's pull is the caller: the node entered the document in the scope, so the ✓ replaces
+    /// its numbers in the same entry and its ✕ takes the node back (ADR 0141).
+    pub fn replace_primitive_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        primitive: Primitive,
+    ) -> Result<(), String> {
+        let params = json(&ObjectPrimitiveReplace { object, primitive })?;
+        dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())
     }
 
     /// Dispatches `camera.create`.

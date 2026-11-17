@@ -45,7 +45,7 @@ use model::{
 use text::{Lang, Message};
 use units::Length;
 
-use crate::command::{dispatch, json};
+use crate::command::{dispatch, dispatch_in, json};
 use crate::mesh_edit::{MeshEdit, MeshElement};
 use crate::scrub::{self, CommitPolicy, Scrub};
 use crate::theme;
@@ -1229,10 +1229,10 @@ fn replace_path(session: &mut Session, object: Id, path: Path, scope: Option<Edi
     let body = session.project().object(object).is_some_and(|object| object.geometry().as_constructive().is_some());
     if body {
         let params = json(&ObjectContourReplace { object, path })?;
-        apply_object_edit(session, OBJECT_CONTOUR_REPLACE_ID, &params, scope)
+        dispatch_in(scope, session, OBJECT_CONTOUR_REPLACE_ID, &params).map(|_| ())
     } else {
         let params = json(&ObjectPathReplace { object, path })?;
-        apply_object_edit(session, OBJECT_PATH_REPLACE_ID, &params, scope)
+        dispatch_in(scope, session, OBJECT_PATH_REPLACE_ID, &params).map(|_| ())
     }
 }
 
@@ -1244,7 +1244,7 @@ fn replace_body_height(
     scope: Option<EditScope>,
 ) -> Result<(), String> {
     let params = json(&ObjectExtrudeHeightSet { object, height })?;
-    apply_object_edit(session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params, scope)
+    dispatch_in(scope, session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params).map(|_| ())
 }
 
 fn replace_primitive(
@@ -1254,23 +1254,7 @@ fn replace_primitive(
     scope: Option<EditScope>,
 ) -> Result<(), String> {
     let params = json(&ObjectPrimitiveReplace { object, primitive })?;
-    apply_object_edit(session, OBJECT_PRIMITIVE_REPLACE_ID, &params, scope)
-}
-
-/// Dispatches an object edit, folding it into `scope` when a field gesture is still running.
-///
-/// The field mints one scope per gesture, so a drag writes the document on every frame it commits
-/// and leaves one undo entry; without a scope the edit is a plain command of its own.
-fn apply_object_edit(
-    session: &mut Session,
-    id: &str,
-    params: &serde_json::Value,
-    scope: Option<EditScope>,
-) -> Result<(), String> {
-    match scope {
-        Some(scope) => session.dispatch_in(scope, id, params).map(|_| ()).map_err(|error| error.to_string()),
-        None => dispatch(session, id, params).map(|_| ()),
-    }
+    dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())
 }
 
 fn collapse_object(session: &mut Session, object: Id) -> Result<(), String> {

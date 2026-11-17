@@ -1299,7 +1299,7 @@ fn a_box_is_drawn_by_any_rectangle_method_and_swept_on_z() {
         let before = harness.revision();
         {
             let document = harness.app.tabs.active_mut();
-            document.finish_extrude(object, mesh(300), Lang::En).expect("the check sweeps the body");
+            document.finish_extrude(object, mesh(300), None, Lang::En).expect("the check sweeps the body");
         }
         let document = harness.app.tabs.active();
         let project = document.session.project();
@@ -1346,7 +1346,7 @@ fn a_cylinder_is_drawn_by_any_circle_method_and_swept_on_z() {
         let object = draw_body_profile(&mut harness, tool);
         {
             let document = harness.app.tabs.active_mut();
-            document.finish_extrude(object, mesh(300), Lang::En).expect("the check sweeps the body");
+            document.finish_extrude(object, mesh(300), None, Lang::En).expect("the check sweeps the body");
         }
         let document = harness.app.tabs.active();
         let project = document.session.project();
@@ -1386,6 +1386,112 @@ fn draw_sphere(harness: &mut Harness, tool: DrawTool) -> Id {
     assert!(document.editor.drawing().is_some_and(ui::DrawDraft::is_finished), "{tool:?}: the round is complete");
     document.commit_drawing(Lang::En).expect("the sphere commits");
     document.editor.selected_node().expect("the new sphere is selected")
+}
+
+/// Starts a cone cell's base round, places the points of its stage, and commits it.
+///
+/// The commit writes the cone sharp at the ribbon's height and hands the pointer to the pull, which
+/// is where its height and its top circle are chosen (ADR 0141).
+fn draw_cone(harness: &mut Harness, tool: DrawTool) -> Id {
+    let points = stage_samples(tool);
+    let document = harness.app.tabs.active_mut();
+    document.editor.start_primitive_drawing(tool).expect("the cone cell draws a base round");
+    assert_eq!(document.editor.drawing_intent(), DrawIntent::Primitive(model::PrimitiveKind::Cone));
+    for point in points {
+        document.editor.drawing_point([mesh(point[0]), mesh(point[1])]).expect("a valid point of the round");
+    }
+    assert!(document.editor.drawing().is_some_and(ui::DrawDraft::is_finished), "{tool:?}: the round is complete");
+    document.commit_drawing(Lang::En).expect("the cone's base commits");
+    document.editor.selected_node().expect("the new cone is selected")
+}
+
+#[test]
+fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
+    // The cone cell carries the sketch's circle methods for the round it stands on; the commit stores
+    // the shape sharp at the ribbon's height inside the pull's edit scope, and the ✓ writes the height
+    // and the taper as one entry (ADR 0141).
+    for (tool, base, centre) in [
+        (DrawTool::Cone, 250.0, [0.0, 0.0]),
+        (DrawTool::ConeDiameter, 250.0, [0.0, 0.0]),
+        (DrawTool::ConeThreePoints, 125.0, [100.0, 75.0]),
+    ] {
+        let mut harness =
+            Harness::with_session("cone-drawn", crate::scene_build::empty_session().expect("an empty session"));
+        harness.settle();
+        let before = harness.revision();
+        let object = draw_cone(&mut harness, tool);
+        {
+            let document = harness.app.tabs.active();
+            let project = document.session.project();
+            assert_eq!(project.revision().get(), before.get() + 1, "{tool:?}: the base is one command");
+            let node = project.object(object).expect("{tool:?}: the cone is in the document");
+            assert_eq!(node.name(), "Cone", "{tool:?}: the node is what the cell places");
+            let stored = node.geometry().as_primitive().expect("{tool:?}: the parameters are stored");
+            assert_eq!(stored.kind(), model::PrimitiveKind::Cone, "{tool:?}: a cone");
+            let model::Primitive::Cone(cone) = stored else {
+                panic!("{tool:?}: the shape is a cone");
+            };
+            let measured = cone.base_radius().millimetres_f64();
+            assert!((measured - base).abs() < 0.001, "{tool:?}: the base radius is {base}, got {measured}");
+            assert!(cone.is_sharp(), "{tool:?}: a fresh cone ends in the apex the card may taper");
+            assert_eq!(cone.height(), document.editor.extrude_height(), "{tool:?}: the ribbon's height");
+            let world = project.world_placement(object).expect("{tool:?}: a world placement");
+            assert!(
+                (world.translation() - geom::DVec3::new(centre[0], centre[1], 0.0)).length() < 1e-9,
+                "{tool:?}: the base circle's centre is the origin, was {:?}",
+                world.translation()
+            );
+        }
+        // The pull is already open on the node it created, and its two numbers are the card's.
+        let document = harness.app.tabs.active_mut();
+        assert!(document.extrude_gizmo.is_active(), "{tool:?}: the pull is open");
+        assert_eq!(document.extrude_gizmo.object(), Some(object));
+        assert_eq!(document.extrude_gizmo.top(), Some(Length::ZERO), "{tool:?}: the taper starts at the apex");
+        let view = document.tool_view().expect("{tool:?}: the pull draws a card");
+        assert_eq!(view.rows.len(), 2, "{tool:?}: the height and the top radius");
+        // Dragging previews the solid without writing it.
+        let revision = document.session.project().revision();
+        document.preview_extrude(object, mesh(300), Some(mesh(40))).expect("{tool:?}: the preview builds");
+        assert_eq!(document.session.project().revision(), revision, "{tool:?}: a preview writes nothing");
+        let preview = document.session.preview().geometry(object).expect("{tool:?}: a previewed solid");
+        let model::Geometry::Primitive(model::Primitive::Cone(previewed)) = preview else {
+            panic!("{tool:?}: the preview is a cone");
+        };
+        assert_eq!(previewed.height(), mesh(300));
+        assert_eq!(previewed.top_radius(), mesh(40));
+        // The ✓ writes both numbers into the scope the base opened: one undo takes the whole shape.
+        document.finish_extrude(object, mesh(300), Some(mesh(40)), Lang::En).expect("{tool:?}: the check stores");
+        let project = document.session.project();
+        let stored = project.object_primitive(object).expect("{tool:?}: still a cone");
+        let model::Primitive::Cone(cone) = stored else {
+            panic!("{tool:?}: the shape is a cone");
+        };
+        assert_eq!(cone.height(), mesh(300), "{tool:?}: the pulled height");
+        assert_eq!(cone.top_radius(), mesh(40), "{tool:?}: the typed top radius");
+        assert!(!document.extrude_gizmo.is_active(), "{tool:?}: the pull closes on the check");
+        document.session.undo().expect("undo the drawn cone");
+        assert!(
+            document.session.project().object(object).is_none(),
+            "{tool:?}: one undo takes the base circle and the taper"
+        );
+    }
+}
+
+#[test]
+fn a_cancelled_cone_pull_leaves_no_cone() {
+    // The base circle wrote the node inside the pull's scope, so Escape rolls that scope back: no
+    // node, no undo entry (ADR 0141).
+    let mut harness =
+        Harness::with_session("cone-cancelled", crate::scene_build::empty_session().expect("an empty session"));
+    harness.settle();
+    let object = draw_cone(&mut harness, DrawTool::Cone);
+    let document = harness.app.tabs.active_mut();
+    document.preview_extrude(object, mesh(500), Some(mesh(20))).expect("a preview");
+    document.cancel_extrude();
+    assert!(document.session.project().object(object).is_none(), "the cancelled cone is gone");
+    assert!(!document.extrude_gizmo.is_active(), "and the pull is closed");
+    assert_eq!(document.editor.selected_node(), None, "nothing is left to name");
+    assert!(!document.session.can_undo(), "the base circle it wrote is not an entry to undo");
 }
 
 #[test]

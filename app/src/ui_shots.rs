@@ -495,6 +495,69 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     println!("the box tool is in {}", path.display());
 }
 
+/// Draws a cone's base round and its pull card into one picture.
+///
+/// The cone cell draws the base circle and hands the pointer to the pull, whose card carries the
+/// height `H` beside the top radius `R` (ADR 0141). The picture answers two questions a rectangle
+/// cannot: whether the cone cell's glyph reads beside the box, cylinder and sphere in the *Model*
+/// row, and whether two lettered fields fit one plate at the hand.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/cone-pull.png"]
+fn the_cone_pull_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("cone-workspace.json");
+    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the application builds");
+    // The picture must show the Model tab the cone cell lives on, not the tab a fresh workspace opens.
+    if let Some(tab) = ui::toolbars::spec::tab("model") {
+        app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    // A base circle drawn by its centre and a rim point, which the cell commits as a sharp cone at
+    // the ribbon's height and hands to the pull.
+    let mm = testkit::millimetres;
+    let object = {
+        let document = app.tabs.active_mut();
+        document.editor.start_primitive_drawing(ui::DrawTool::Cone).expect("the cone cell draws a base round");
+        for point in [[0, 0], [250, 0]] {
+            document.editor.drawing_point([mm(point[0]), mm(point[1])]).expect("a point of the base circle");
+        }
+        document.commit_drawing(text::Lang::En).expect("the cone's base commits");
+        document.editor.selected_node().expect("the new cone is selected")
+    };
+    let pointer = screen.center();
+    for _ in 0..2 {
+        let _ = run_frame(&mut app, &ctx, &render_state, screen, vec![egui::Event::PointerMoved(pointer)]);
+    }
+    {
+        let document = app.tabs.active_mut();
+        document.preview_extrude(object, mm(400), Some(mm(90))).expect("the pulled cone previews");
+        assert!(document.tool_card_is_up(), "the pull draws its card");
+    }
+    let jobs = run_frame(&mut app, &ctx, &render_state, screen, vec![egui::Event::PointerMoved(pointer)]);
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("cone-pull.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the cone's pull is in {}", path.display());
+}
+
 /// Draws a selected product frame with its fourteen grips into one picture.
 ///
 /// A frame owns the same box editor as a solid (ADR 0101), with two differences the pixels have to

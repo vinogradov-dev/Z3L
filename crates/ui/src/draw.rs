@@ -17,9 +17,9 @@
 //! is a [`DrawDraftError`] and leaves the draft editable.
 //!
 //! What a commit becomes is the draft's intent, not the tool's: the same circle stages draw a sketch
-//! circle, a cylinder's rim or the round a sphere is built around, and `DrawIntent` names which. A
-//! sphere's figure is read back as a centre and a radius rather than stored, because its parameters
-//! are the sphere's own (ADR 0139).
+//! circle, a cylinder's rim, the round a sphere is built around or the base circle of a cone, and
+//! `DrawIntent` names which. A sphere's or a cone's figure is read back as a centre and a radius
+//! rather than stored, because their parameters are the shape's own (ADR 0139, 0141).
 //!
 //! It does not choose the work plane, create the node or hold the editor's tool selection: the
 //! caller passes the plane's placement to [`DrawDraft::commit`].
@@ -138,6 +138,16 @@ pub enum DrawTool {
     /// The points may be picked as tangencies on a face plane: the tangency places a point, so the
     /// method takes three points and knows nothing about how each one was found.
     SphereThreePoints,
+    /// A centre and a rim point make the base circle a cone stands on.
+    ///
+    /// The drawn round is the cone's base, not its outline: the body rises from it, and the height
+    /// and the top circle are chosen on the pull that follows the commit (ADR 0141).
+    Cone,
+    /// A centre and a rim point make the same base circle, but the number the person types is the
+    /// diameter rather than the radius.
+    ConeDiameter,
+    /// Three points make the base circle of a cone.
+    ConeThreePoints,
 }
 
 impl DrawTool {
@@ -155,6 +165,8 @@ impl DrawTool {
             | Self::CircleDiameter
             | Self::Sphere
             | Self::SphereDiameter
+            | Self::Cone
+            | Self::ConeDiameter
             | Self::RegularPolygon
             | Self::PolygonApothem
             | Self::PolygonByEdge => Some(2),
@@ -163,6 +175,7 @@ impl DrawTool {
             | Self::ArcByRadius
             | Self::CircleThreePoints
             | Self::SphereThreePoints
+            | Self::ConeThreePoints
             | Self::RectangleFromCenterDirected
             | Self::RectangleTilted => Some(3),
             Self::CircleTangent => Some(4),
@@ -190,6 +203,9 @@ impl DrawTool {
                 | Self::Sphere
                 | Self::SphereDiameter
                 | Self::SphereThreePoints
+                | Self::Cone
+                | Self::ConeDiameter
+                | Self::ConeThreePoints
                 | Self::RegularPolygon
                 | Self::PolygonApothem
                 | Self::PolygonByEdge
@@ -198,12 +214,13 @@ impl DrawTool {
 
     /// The primitive this tool places, or `None` when it draws a figure rather than a parameter set.
     ///
-    /// A sphere cell carries the circle methods, so the draft is the sketch draft and only what its
-    /// commit becomes differs; the kind is what the commit hands `object.primitive.create`
-    /// (ADR 0139).
+    /// A sphere or a cone cell carries the circle methods, so the draft is the sketch draft and only
+    /// what its commit becomes differs; the kind is what the commit hands `object.primitive.create`
+    /// (ADR 0139, 0141).
     pub const fn primitive_kind(self) -> Option<PrimitiveKind> {
         match self {
             Self::Sphere | Self::SphereDiameter | Self::SphereThreePoints => Some(PrimitiveKind::Sphere),
+            Self::Cone | Self::ConeDiameter | Self::ConeThreePoints => Some(PrimitiveKind::Cone),
             _ => None,
         }
     }
@@ -228,6 +245,7 @@ impl DrawTool {
             Self::CircleThreePoints => Message::ToolCircleThreePoints,
             Self::CircleTangent => Message::ToolCircle,
             Self::Sphere | Self::SphereDiameter | Self::SphereThreePoints => Message::ToolSphere,
+            Self::Cone | Self::ConeDiameter | Self::ConeThreePoints => Message::ToolCone,
             Self::RegularPolygon => Message::ToolRegularPolygon,
             Self::PolygonApothem | Self::PolygonByEdge => Message::ToolRegularPolygon,
             Self::RectangleTilted => Message::ToolRectangle,
@@ -706,15 +724,15 @@ impl DrawDraft {
                 };
                 Path::circle_three_points(first, second, third).map_err(DrawDraftError::from)
             }
-            // A sphere is the round its figure encloses: the draft builds the circle a sketch click
-            // would, which gives the preview, the plates and the radius the commit reads.
-            DrawTool::Sphere | DrawTool::SphereDiameter => {
+            // A sphere and a cone are the round their figure encloses: the draft builds the circle a
+            // sketch click would, which gives the preview, the plates and the radius the commit reads.
+            DrawTool::Sphere | DrawTool::SphereDiameter | DrawTool::Cone | DrawTool::ConeDiameter => {
                 let (Some(&center), Some(&rim)) = (points.first(), points.get(1)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 2, got: points.len() });
                 };
                 Path::circle_through(center, rim).map_err(DrawDraftError::from)
             }
-            DrawTool::SphereThreePoints => {
+            DrawTool::SphereThreePoints | DrawTool::ConeThreePoints => {
                 let (Some(&first), Some(&second), Some(&third)) = (points.first(), points.get(1), points.get(2)) else {
                     return Err(DrawDraftError::TooFewPoints { need: 3, got: points.len() });
                 };

@@ -75,7 +75,7 @@ impl Side {
         match param {
             ToolParam::LowGap => Some(Self::Low),
             ToolParam::HighGap => Some(Self::High),
-            ToolParam::Height => None,
+            ToolParam::Height | ToolParam::TopRadius => None,
         }
     }
 }
