@@ -40,6 +40,27 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **U110** the ribbon keeps the shadow switch alone, and its intensity lives in Settings
+  Why: Owner, 2026-11-17: «интенсивность оставить в настройках, в ленте оставить только
+   вкл/выкл тени». U107 put the amount beside the switch so one feature had one site; the owner
+   then could not find it there (X64 put the slider back in Settings › View beside the other
+   two strengths) and has now decided the split: the ribbon carries the per-view switch alone,
+   the workspace value is edited in Settings only.
+  Shape: Remove the ribbon's value machinery: spec's VALUES, GroupValue, ValueSpec, ValueKind,
+   value_of and VALUE_COLUMNS, toolbars' show_value, value_current, value_action, the
+   shadow_strength field of RibbonView and RibbonContext, ToolAction::ShadowStrength and
+   RibbonViewAction::ShadowStrength, scrub's width and COMPACT_FIELD_WIDTH, and the RibbonAsk
+   field Document::show_ribbon returns for it — which goes back to reporting the product card.
+   The shadow cell, its ToolKind, its key S, its inventory row and its artwork stay; the
+   settings slider is the only editor of the intensity, which is what the value's own row in
+   ViewportSettings already documents. A theme or strength repaint still goes through
+   Display::repaints (X64), so nothing about the frame changes.
+  Done: The View tab's Display group holds the Shadows switch and no number; the arrow keys and
+   the field's drags no longer exist in the ribbon; Settings › View still edits the intensity
+   and the reset restores it; a shot of the View tab shows the group without a field; cargo
+   xtask ci is green.
+  `files: crates/ui/src/toolbars.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/scrub.rs,crates/ui/src/editor/ribbon.rs,crates/ui/src/editor/tests.rs,app/src/document.rs,app/src/main.rs,plan/questions.md`
+
 ## Bugs
 ## Next
 - `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads

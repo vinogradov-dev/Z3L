@@ -7,7 +7,6 @@ use std::sync::Arc;
 use geom::{DMat4, DVec3, MeshData};
 use scene::{Camera, Drawable, SceneFrame};
 
-use crate::settings::DEFAULT_SHADOW_STRENGTH;
 use crate::toolbars::{RibbonView, RibbonViewAction};
 
 use crate::contour_edit::ContourTarget;
@@ -1665,9 +1664,9 @@ fn the_card_and_the_drawn_gesture_produce_the_same_document() {
 }
 
 #[test]
-fn the_display_group_asks_the_shell_for_the_shadow_switch_and_its_intensity() {
-    // U107: the switch is the view's and the intensity the workspace's, so both leave `ui` as view
-    // actions — a ribbon press writes no document and moves no revision.
+fn the_display_group_asks_the_shell_for_the_shadow_switch() {
+    // U107, U110: the switch is the view's, so it leaves `ui` as a view action — a ribbon press
+    // writes no document and moves no revision. The intensity is edited in Settings alone.
     let mut session = Session::with_catalog(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     let toggled = editor
@@ -1675,16 +1674,6 @@ fn the_display_group_asks_the_shell_for_the_shadow_switch_and_its_intensity() {
         .expect("the switch runs");
     assert_eq!(toggled.view, Some(RibbonViewAction::ToggleShadows));
     assert_eq!(session.project().revision().get(), 0, "a view switch writes no document");
-
-    let set = editor
-        .apply_ribbon_actions(
-            &mut session,
-            vec![ToolAction::ShadowStrength { percent: 70, settled: true }],
-            text::Lang::En,
-        )
-        .expect("the value runs");
-    assert_eq!(set.view, Some(RibbonViewAction::ShadowStrength { percent: 70, settled: true }));
-    assert_eq!(session.project().revision().get(), 0, "an intensity is workspace state");
 }
 
 #[test]
@@ -1693,13 +1682,7 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     let mut session = Session::with_catalog(project, sample_catalog());
     let mut editor = Editor::new();
     let ctx = egui::Context::default();
-    let view = RibbonView {
-        perspective: true,
-        owns_view: true,
-        grid: true,
-        shadows: true,
-        shadow_strength: DEFAULT_SHADOW_STRENGTH,
-    };
+    let view = RibbonView { perspective: true, owns_view: true, grid: true, shadows: true };
 
     let mut fill = None;
     let idle = ctx.run_ui(Default::default(), |ui| {

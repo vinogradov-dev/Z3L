@@ -599,17 +599,8 @@ impl App {
     /// image runs under it and a translucent ribbon blends with the furniture (U51, ADR 0080). The
     /// document draws it because the fold is the document's; the band it occupies is the window's.
     fn ribbon(&mut self, ui: &mut egui::Ui, design: egui::Rect) {
-        let ask = self.tabs.active_mut().show_ribbon(ui, design, &mut self.shell, &self.settings);
-        if ask.product_card {
+        if self.tabs.active_mut().show_ribbon(ui, design, &mut self.shell, &self.settings) {
             self.product_card.start();
-        }
-        if let Some((percent, settled)) = ask.shadow_strength {
-            // The intensity is one workspace value read at draw time, so the frame follows it in this
-            // very frame without an upload; the file is written once the gesture ends (U107).
-            self.settings.viewport.shadow_strength = percent.min(ui::settings::MAX_DISPLAY_STRENGTH);
-            if settled {
-                self.persist_settings();
-            }
         }
         self.sync_ribbon_fold();
         self.sync_pinned_variants();

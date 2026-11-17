@@ -762,8 +762,8 @@ pub const ROWS: &[Row] = &[
         icon: Some(crate::icons::scene::VOID),
     },
     // The ground shadow's switch is view state: it writes no document, leaves no undo entry and the
-    // renderer reads it per view (U107). Its intensity is one workspace value beside it, which the
-    // Display group's field edits.
+    // renderer reads it per view (U107). Its intensity is one workspace value with no command of its
+    // own — a field on the Settings page, not a capability (U110).
     Row {
         id: "view.display.shadows",
         label: Message::ToolShadows,
