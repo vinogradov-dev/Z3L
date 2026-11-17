@@ -41,29 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X57** an edit re-uploads every GPU buffer and the whole edge list
-  Why: Observation: an edit re-uploads the whole scene. ViewportRenderer::upload
-   (crates/render/src/lib.rs) creates a vertex and an index buffer for every drawable of the
-   frame on each rebuild, and edge_geometry (crates/render/src/geometry.rs) rebuilds one
-   flattened line list over every mesh edge; the grid, the polylines, the product envelopes and
-   the contact shadows are recreated too. A rebuild happens on every revision move, so changing
-   one panel's thickness in a cabinet of 5 000 objects recreates 5 000 buffers and re-uploads
-   millions of triangles and their edges. Measured CPU per edit is 27 / 109 / 285 ms at 500 / 2
-   000 / 5 000 spheres, and the GPU side is not measured at all today because the headless
-   probe has no adapter. Expectation: a rebuild uploads only the drawables whose mesh handle or
-   transform changed, and the edge list grows and shrinks by the same difference.
-  Shape: Key the GPU buffers by what they were built from — the mesh Arc pointer plus the world
-   transform (or by node id and the transform pair) — so an unchanged drawable keeps its
-   buffers and only the changed ones are recreated; keep one buffer per unique mesh and a
-   per-drawable transform where the transform can stop being baked into the vertices. Build the
-   edge list per mesh and concatenate the slices for the frame instead of regenerating line
-   vertices for every edge on every upload. Free the buffers of drawables that left the frame.
-   Full detail lives in the two [perf] entries of plan/debt.md.
-  Done: A test with two scenes that differ in one drawable asserts that the upload creates one
-   new vertex and one new index buffer, and that the untouched drawables keep the same wgpu
-   buffer handles; the edge list of an unchanged drawable is not rebuilt; the [perf] entry in
-   plan/debt.md is re-measured in the live window.
-  `files: crates/render/src/lib.rs,crates/render/src/geometry.rs,app/src/document.rs`
 - `[ ]` **X58** the viewport draws every object in the scene, on screen or not
   Why: Observation: the viewport draws every drawable of the frame, on screen or not.
    draw_order is built as the whole index range (crates/render/src/lib.rs), the draw loop walks
@@ -213,6 +190,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    volume and the sharp case; the icon is drawn and passes the icon test.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 ## Done
+
+- `[x]` **X57** an edit re-uploads every GPU buffer and the whole edge list
+  Why: Observation: an edit re-uploads the whole scene. ViewportRenderer::upload
+   (crates/render/src/lib.rs) creates a vertex and an index buffer for every drawable of the
+   frame on each rebuild, and edge_geometry (crates/render/src/geometry.rs) rebuilds one
+   flattened line list over every mesh edge; the grid, the polylines, the product envelopes and
+   the contact shadows are recreated too. A rebuild happens on every revision move, so changing
+   one panel's thickness in a cabinet of 5 000 objects recreates 5 000 buffers and re-uploads
+   millions of triangles and their edges. Measured CPU per edit is 27 / 109 / 285 ms at 500 / 2
+   000 / 5 000 spheres, and the GPU side is not measured at all today because the headless
+   probe has no adapter. Expectation: a rebuild uploads only the drawables whose mesh handle or
+   transform changed, and the edge list grows and shrinks by the same difference.
+  Shape: Key the GPU buffers by what they were built from — the mesh Arc pointer plus the world
+   transform (or by node id and the transform pair) — so an unchanged drawable keeps its
+   buffers and only the changed ones are recreated; keep one buffer per unique mesh and a
+   per-drawable transform where the transform can stop being baked into the vertices. Build the
+   edge list per mesh and concatenate the slices for the frame instead of regenerating line
+   vertices for every edge on every upload. Free the buffers of drawables that left the frame.
+   Full detail lives in the two [perf] entries of plan/debt.md.
+  Done: A test with two scenes that differ in one drawable asserts that the upload creates one
+   new vertex and one new index buffer, and that the untouched drawables keep the same wgpu
+   buffer handles; the edge list of an unchanged drawable is not rebuilt; the [perf] entry in
+   plan/debt.md is re-measured in the live window.
+  `files: crates/render/src/lib.rs,crates/render/src/geometry.rs,app/src/document.rs` — `35a6fb7`
 
 - `[x]` **X56** an edit rebuilds the world box of every mesh, vertex by vertex
   Why: Observation: one edit anywhere costs the whole scene. Measured in a headless probe
