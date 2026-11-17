@@ -41,27 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X59** a click ray-casts every triangle of every object in the scene
-  Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
-   (crates/scene/src/ray.rs) loops over the whole index buffer of the drawable and transforms
-   every vertex it touches, and pick_scene (app/src/mesh_pick.rs) calls it for every drawable
-   of the frame, so the work is O(total triangles) per click with no early reject. Measured in
-   the headless probe: 16 / 64 / 161 ms per pick at 500 / 2 000 / 5 000 spheres (0.48 M / 1.9 M
-   / 4.8 M triangles); 5 000 boxes pick in 0.2 / 0.8 / 2.2 ms because they are cheap. A click
-   that takes 160 ms reads as a frozen window, and the press that opens the rubber band tests
-   every object as well (pick_surface and the band's start). Expectation: a click costs a small
-   multiple of the objects, not of their triangles.
-  Shape: Reject first: give every drawable its world AABB (the value X56 and X58 cache) and
-   intersect the ray with it before touching vertices; the box test is eight comparisons and
-   drops almost every object of a dense scene at the first step. Then, for the drawables that
-   survive, keep the current per-triangle loop until a measurement says otherwise — a BVH over
-   the frame's triangles is the next step and needs a build cost the cache can pay once per
-   mesh. The band's start test and pick_surface go through the same narrowing.
-  Done: A test builds a dense scene and asserts a pick over empty space touches no triangle (a
-   counter is exposed for the test), and that a pick over the model returns the same id as
-   before; the measured pick time at 5 000 spheres drops below 20 ms in the probe and the
-   [perf] entry in plan/debt.md is re-measured.
-  `files: crates/scene/src/ray.rs,app/src/mesh_pick.rs`
 - `[ ]` **X61** a fine sphere loses its meridians, so its poles read bald
   Why: Observation: on a 50 mm ball, raising the side count removes longitudinal lines instead
    of adding them, and the poles lose every meridian, so the cap draws as bare concentric rings
@@ -127,6 +106,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
 ## Next
 ## Done
+
+- `[x]` **X59** a click ray-casts every triangle of every object in the scene
+  Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
+   (crates/scene/src/ray.rs) loops over the whole index buffer of the drawable and transforms
+   every vertex it touches, and pick_scene (app/src/mesh_pick.rs) calls it for every drawable
+   of the frame, so the work is O(total triangles) per click with no early reject. Measured in
+   the headless probe: 16 / 64 / 161 ms per pick at 500 / 2 000 / 5 000 spheres (0.48 M / 1.9 M
+   / 4.8 M triangles); 5 000 boxes pick in 0.2 / 0.8 / 2.2 ms because they are cheap. A click
+   that takes 160 ms reads as a frozen window, and the press that opens the rubber band tests
+   every object as well (pick_surface and the band's start). Expectation: a click costs a small
+   multiple of the objects, not of their triangles.
+  Shape: Reject first: give every drawable its world AABB (the value X56 and X58 cache) and
+   intersect the ray with it before touching vertices; the box test is eight comparisons and
+   drops almost every object of a dense scene at the first step. Then, for the drawables that
+   survive, keep the current per-triangle loop until a measurement says otherwise — a BVH over
+   the frame's triangles is the next step and needs a build cost the cache can pay once per
+   mesh. The band's start test and pick_surface go through the same narrowing.
+  Done: A test builds a dense scene and asserts a pick over empty space touches no triangle (a
+   counter is exposed for the test), and that a pick over the model returns the same id as
+   before; the measured pick time at 5 000 spheres drops below 20 ms in the probe and the
+   [perf] entry in plan/debt.md is re-measured.
+  `files: crates/scene/src/ray.rs,app/src/mesh_pick.rs` — `bb3ec52`
 
 - `[x]` **X58** the viewport draws every object in the scene, on screen or not
   Why: Observation: the viewport draws every drawable of the frame, on screen or not.
