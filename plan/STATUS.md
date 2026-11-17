@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=9167b0d updated=2026-11-17
+STATE: milestone=M7 phase=T task=- state=idle base=bb3ec52 updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -39,8 +39,8 @@ layering rules and `ci` (P8); the plan gate follows every `files:` hint, a close
 
 ## Next
 
-Nothing is scheduled: X59 is next among the filed defects: a click still ray-casts every triangle of
-every object; X61 and X62 wait behind it.
+Nothing is scheduled: X61 is next among the filed defects: a fine sphere loses its meridians, so its
+poles read bald; X62 waits behind it with the shadow of a turned round body.
 
 ## Index
 

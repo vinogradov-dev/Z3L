@@ -271,11 +271,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   (X56; the same edit cost 27 / 109 / 285 ms while the walk transformed every vertex twice).
   A frame that changes nothing still costs 1.7 / 4.2 / 9.5 ms in the window, and that cost is the
   chrome (the scene tree draws a row per node), not the geometry. Cold evaluation is 0.58 / 2.2 /
-  5.5 s, dominated by meshing (1.1 ms per 32 x 16 sphere). Picking a click still ray-casts every
-  triangle: 16 / 64 / 161 ms (X59). The remaining cheap fix in this area: let the mesher write one
-  flat index list while it builds instead of filling `model::Mesh`'s `Vec<Vec<u32>>` and flattening
-  it afterwards. An incremental frame, a picking BVH and the frustum test are the larger steps,
-  filed as X57–X59; the world box of a turned round body is the box of its box, filed as X62.
+  5.5 s, dominated by meshing (1.1 ms per 32 x 16 sphere). A click rejects an object by the box its
+  mesh cache measured and casts only what the ray reaches since X59, which re-measured this entry
+  (the probe `a_click_costs_the_objects_and_not_their_triangles`, best of five): 0.06 / 0.25 /
+  0.62 ms over empty space and 0.14 / 0.35 / 0.79 ms through the field at 500 / 2 000 / 5 000
+  objects, against 16 / 64 / 161 ms while the cast walked every triangle of the frame. The
+  remaining cheap fix in this area: let the mesher write one flat index list while it builds
+  instead of filling `model::Mesh`'s `Vec<Vec<u32>>` and flattening it afterwards. A picking BVH is
+  the larger step a measurement no longer asks for, and the world box of a turned round body is the
+  box of its box, filed as X62.
 - `[perf]` The upload follows the same rule since X57 (`app/src/scene_build.rs`, the probe
   `an_edit_uploads_one_drawable_and_not_the_scene`, real adapter, 1280 x 800 target, best of five):
   at 500 / 2 000 spheres one edit costs 0.26 / 0.92 ms and an unchanged frame 0.17 / 0.89 ms, while
