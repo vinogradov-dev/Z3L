@@ -41,30 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X56** an edit rebuilds the world box of every mesh, vertex by vertex
-  Why: Observation: one edit anywhere costs the whole scene. Measured in a headless probe
-   (app/src/frame_tests.rs, dev profile with opt-level 2, 5 000 root spheres of 32 x 16): 27 /
-   109 / 285 ms of CPU on every revision move at 500 / 2 000 / 5 000 objects, and the numbers
-   are identical whether zero or one mesh was rebuilt (evaluate_warm equals one_changed in the
-   probe recorded in plan/debt.md). Expectation: an edit costs its changed nodes plus one walk
-   of the tree, not the vertex count of the whole scene. Suspected cause, measured:
-   Bounds::include_mesh in app/src/scene_build.rs transforms every vertex of every mesh to find
-   its world box, and collect_panel and collect_object call it twice — once into the subtree's
-   all box and once into solid; a 32 x 16 sphere is 896 vertices, so 5 000 of them are 9 M
-   transforms per rebuild, while 5 000 boxes of 8 vertices cost only 24 ms, which is the walk
-   itself (about 5 us per node).
-  Shape: Compute a local AABB once per mesh (geom::MeshData or the mesh cache entry) and turn
-   its eight corners into the world box in one pass per drawable, feeding all and solid from
-   the same box, so a rebuild stops looking at vertices. If the eight-corner box is too loose
-   for a rotated object — it is the box of the rotated box — keep the tight world box on the
-   cache entry keyed by (mesh, placement) and copy it when the node did not move. The container
-   level bounds still come from the children, and the frame-all bounds stay conservative by the
-   same rule.
-  Done: A headless test builds 5 000 spheres, moves one and asserts the rebuild transforms no
-   vertex and stays under 50 ms on this machine; the bounds still contain every drawable and
-   match the per-vertex bounds at the default scene; the [perf] entry in plan/debt.md is
-   re-measured with the new numbers.
-  `files: app/src/scene_build.rs,crates/geom/src/lib.rs,crates/mesh/src/lib.rs`
 - `[ ]` **X57** an edit re-uploads every GPU buffer and the whole edge list
   Why: Observation: an edit re-uploads the whole scene. ViewportRenderer::upload
    (crates/render/src/lib.rs) creates a vertex and an index buffer for every drawable of the
@@ -191,6 +167,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    edge; the constant's doc says the margin covers rounding noise, not a display radius; cargo
    xtask ci is green.
   `files: crates/mesh/src/lib.rs`
+- `[ ]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
+  Why: Observation: a body that is neither axis-aligned nor a box gets a contact shadow of the
+   box of its box, or loses it. Every drawable's world box is now the eight corners of the
+   local box the mesh cache measured (X56), so a turned round or notched body reports the box
+   of the turned box: on a 50 mm ball turned 30 degrees about X the tight min.z stays at 0
+   because a ball is round, while the corner box dips to -34.15 mm, and
+   ContactShadow::from_bounds (crates/scene/src/lib.rs) refuses a body whose box is more than
+   FLOOR_TOLERANCE_MM (0.5 mm) off the floor, so the shadow disappears. A tilted body that
+   keeps one draws the ellipse of the looser box, up to 1.73x wider on the diagonal axis.
+   Axis-aligned bodies and any turned rectangle are unaffected, because a rectangle's extremes
+   are its corners, which is why the demo scene and every panel keep their shadows.
+   Expectation: a shadow follows the body's own footprint whatever its turn, and a body resting
+   on the floor always casts one. Suspected cause, measured: SubtreeBounds::include_solid in
+   app/src/scene_build.rs feeds the subtree's solid box from Aabb::transformed_by, and
+   transformed_by is the box of the eight turned corners rather than of the turned points (X56
+   traded tightness for a rebuild that transforms no vertex).
+  shape: Keep the tight world box per drawable beside the loose one, keyed by the world
+   placement it was measured for: a node whose composed placement did not move copies the box,
+   a node that moved transforms its vertices once (896 for a 32 x 16 sphere), so an edit still
+   costs its changed nodes. The box belongs to the drawable, not to the mesh, so the evaluation
+   carries it beside the mesh cache and the contact shadow reads it, while framing and the open
+   brackets keep the cheap corner box. An alternative that shrinks the work: give ContactShadow
+   a footprint of its own measured from the body's floor contact, which still needs the tight
+   box.
+  done: A test turns a 50 mm ball 30 degrees about X on the floor and asserts it casts a shadow
+   whose radii are within a percent of the unturned ball's; a body lifted clear of the floor
+   casts none; the X56 probe still reports that an ordinary edit measures no box from vertices;
+   and cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
 
 ## Next
 - `[ ]` **V6** there is no cone primitive
@@ -208,6 +213,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    volume and the sharp case; the icon is drawn and passes the icon test.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 ## Done
+
+- `[x]` **X56** an edit rebuilds the world box of every mesh, vertex by vertex
+  Why: Observation: one edit anywhere costs the whole scene. Measured in a headless probe
+   (app/src/frame_tests.rs, dev profile with opt-level 2, 5 000 root spheres of 32 x 16): 27 /
+   109 / 285 ms of CPU on every revision move at 500 / 2 000 / 5 000 objects, and the numbers
+   are identical whether zero or one mesh was rebuilt (evaluate_warm equals one_changed in the
+   probe recorded in plan/debt.md). Expectation: an edit costs its changed nodes plus one walk
+   of the tree, not the vertex count of the whole scene. Suspected cause, measured:
+   Bounds::include_mesh in app/src/scene_build.rs transforms every vertex of every mesh to find
+   its world box, and collect_panel and collect_object call it twice — once into the subtree's
+   all box and once into solid; a 32 x 16 sphere is 896 vertices, so 5 000 of them are 9 M
+   transforms per rebuild, while 5 000 boxes of 8 vertices cost only 24 ms, which is the walk
+   itself (about 5 us per node).
+  Shape: Compute a local AABB once per mesh (geom::MeshData or the mesh cache entry) and turn
+   its eight corners into the world box in one pass per drawable, feeding all and solid from
+   the same box, so a rebuild stops looking at vertices. If the eight-corner box is too loose
+   for a rotated object — it is the box of the rotated box — keep the tight world box on the
+   cache entry keyed by (mesh, placement) and copy it when the node did not move. The container
+   level bounds still come from the children, and the frame-all bounds stay conservative by the
+   same rule.
+  Done: A headless test builds 5 000 spheres, moves one and asserts the rebuild transforms no
+   vertex and stays under 50 ms on this machine; the bounds still contain every drawable and
+   match the per-vertex bounds at the default scene; the [perf] entry in plan/debt.md is
+   re-measured with the new numbers.
+  `files: app/src/scene_build.rs,crates/geom/src/lib.rs,crates/mesh/src/lib.rs` — `808ba22`
 
 - `[x]` **X55** a sphere reads sharp at its poles, as if the radial segments were missing there
   Why: Observation: at the default 32 x 16 the ball reads sharp at both poles — the cap is a
