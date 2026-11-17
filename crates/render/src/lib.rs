@@ -2,7 +2,8 @@
 //!
 //! Turns one scene frame into pixels: it owns the offscreen colour target, the depth and stencil
 //! attachment, the uploaded geometry and the passes that draw it. The pipeline state lives in
-//! `pipelines.rs`, the buffer wrappers in `gpu.rs` and the vertex builders in `geometry.rs`. It
+//! `pipelines.rs`, the buffer wrappers in `gpu.rs`, the vertex builders in `geometry.rs` and the
+//! floor plate with its shadow mask in `ground.rs`. It
 //! knows nothing about `egui` and never
 //! creates a window: the shell registers the colour texture with `egui_wgpu` and displays it as an
 //! image. Scene geometry is uploaded when the document changes; camera changes only rewrite a small
@@ -31,6 +32,7 @@
 mod cache;
 mod geometry;
 mod gpu;
+mod ground;
 mod pipelines;
 
 use std::sync::Arc;
@@ -47,12 +49,11 @@ use wgpu::util::DeviceExt as _;
 use self::cache::{EdgeKey, FaceKey, Rebuilt, SlotCache};
 use self::geometry::{
     edge_color, edge_vertices, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
-    shadow_geometry, sort_back_to_front, stencil_slot, vertices_centre, world_vertices,
+    sort_back_to_front, stencil_slot, vertices_centre, world_vertices,
 };
-use self::gpu::{GpuEdges, GpuLineList, GpuMesh, GpuTriangles, clamp_size, line_list, triangle_list};
-use self::pipelines::{
-    create_line_pipeline, create_shadow_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state,
-};
+use self::gpu::{GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
+use self::ground::{Ground, GroundKey, PlateKey};
+use self::pipelines::{create_line_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state};
 
 /// The offscreen colour format. `egui_wgpu::Renderer::register_native_texture` requires this
 /// exact format, and it is not an sRGB format, so the shader writes gamma-corrected values.
@@ -63,9 +64,14 @@ pub(crate) const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8U
 /// each pixel, which is what keeps the *hidden edges* style honest: a line shows through its own
 /// object and never through the object in front of it.
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+/// The ground mask's single-channel format: coverage, so one byte per texel is all it holds.
+pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// The most views one frame may split into; the camera uniform holds one slot per view.
 pub const MAX_VIEWS: usize = 4;
+
+/// The camera slot the ground mask reads, one past the last view.
+const GROUND_SLOT: u64 = MAX_VIEWS as u64;
 
 /// The passes one display style turns on, derived without a GPU.
 ///
@@ -152,20 +158,6 @@ pub enum RenderError {
         /// Position of the envelope in the frame.
         index: usize,
     },
-    /// A contact shadow has a non-finite centre or a degenerate radii pair.
-    #[error("contact shadow {index} is malformed")]
-    InvalidShadow {
-        /// Position of the shadow in the frame.
-        index: usize,
-    },
-    /// The frame carries more contact shadows than the renderer budgets.
-    #[error("{count} contact shadows exceed the renderer's budget of {max}")]
-    TooManyShadows {
-        /// Number of shadows in the frame.
-        count: usize,
-        /// The renderer's budget.
-        max: usize,
-    },
 }
 
 /// Uniform data shared by the mesh and grid pipelines.
@@ -184,8 +176,11 @@ struct CameraUniform {
     point_position: [[f32; 4]; MAX_POINT_LIGHTS],
     /// Linear RGB and, in `a`, the radiant power in watts.
     point_color: [[f32; 4]; MAX_POINT_LIGHTS],
-    /// Gamma-space RGB and, in `a`, the contact-shadow strength.
+    /// Gamma-space RGB and, in `a`, the ground-shadow strength.
     shadow: [f32; 4],
+    /// `x` the floor plate's half-size in millimetres, `y` and `z` one mask texel, `w` the penumbra
+    /// in texels. The plate, the mask and the blur read this one value.
+    shadow_plane: [f32; 4],
 }
 
 struct RenderTargets {
@@ -259,10 +254,12 @@ impl ViewRegion {
     }
 }
 
-/// One view's camera, rectangle and display style.
+/// One view's camera, rectangle, display style and ground shadow.
 ///
 /// The style travels per view, so two neighbours in one workspace can draw the same scene with
-/// different passes while one texture and one edge buffer still serve them (ADR 0070).
+/// different passes while one texture and one edge buffer still serve them (ADR 0070). The shadow
+/// travels with it: its strength and colour are the workspace's, its switch is this view's, so one
+/// cell of a split may darken the floor while its neighbour does not (U107).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewSpec {
     /// The camera this view looks through.
@@ -271,6 +268,9 @@ pub struct ViewSpec {
     pub region: ViewRegion,
     /// The display style it draws with.
     pub shading: ShadingStyle,
+    /// The ground shadow it draws with: the workspace's colour and strength under this view's
+    /// switch. A change is read when the uniform is written, so it never costs an upload.
+    pub shadows: ContactShadows,
 }
 
 impl ViewSpec {
@@ -293,10 +293,10 @@ type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
 /// drawable's place in this frame, and a drawable that moved down the list moves its slot. The box
 /// is the drawable's world extent, read from the frame's own value, so a view decides whether to
 /// draw it before it names a buffer (X58).
-struct Drawn {
-    faces: Arc<GpuMesh>,
+pub(crate) struct Drawn {
+    pub(crate) faces: Arc<GpuMesh>,
     edges: Option<Arc<GpuEdges>>,
-    stencil_reference: u32,
+    pub(crate) stencil_reference: u32,
     /// World-space box, or `None` when the frame never measured the drawable's extent.
     bounds: Option<Aabb>,
 }
@@ -311,8 +311,8 @@ pub struct ViewportRenderer {
     line_pipeline: wgpu::RenderPipeline,
     edge_pipeline: wgpu::RenderPipeline,
     hidden_edge_pipeline: wgpu::RenderPipeline,
-    /// The unlit, blended triangle pass that draws the contact shadows.
-    shadow_pipeline: wgpu::RenderPipeline,
+    /// The floor plate, the shadow mask the key light casts on it and the blur between them.
+    ground: Ground,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     /// The stride between two camera slots, which is the device's uniform offset alignment.
@@ -338,8 +338,8 @@ pub struct ViewportRenderer {
     polylines: Rebuilt<GpuLineList, (Vec<Polyline>, [f32; 4])>,
     /// The dashed boxes of the product envelopes, rebuilt only when a box or an ink changes.
     product_envelopes: Rebuilt<GpuLineList, EnvelopeInput>,
-    /// The contact shadows of every floor-standing object, rebuilt only when a footprint changes.
-    shadows: Rebuilt<GpuTriangles, Vec<scene::ContactShadow>>,
+    /// How many uploads the renderer has taken, which is what makes a mask stale.
+    generation: u64,
     targets: RenderTargets,
     size: [u32; 2],
 }
@@ -359,9 +359,11 @@ impl ViewportRenderer {
         let uniform_size = std::mem::size_of::<CameraUniform>() as u64;
         let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment).max(1);
         let camera_stride = uniform_size.next_multiple_of(alignment);
+        // One slot past the views is the ground's: the mask is built before any view and needs the
+        // light and the plate's size, which are the first two fields of the same uniform.
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Z3L camera uniform"),
-            size: camera_stride * MAX_VIEWS as u64,
+            size: camera_stride * (MAX_VIEWS as u64 + 1),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -419,7 +421,39 @@ impl ViewportRenderer {
             create_line_pipeline(device, &pipeline_layout, &shader, "Z3L edge pipeline", edge_depth_state(false));
         let hidden_edge_pipeline =
             create_line_pipeline(device, &pipeline_layout, &shader, "Z3L hidden edge pipeline", edge_depth_state(true));
-        let shadow_pipeline = create_shadow_pipeline(device, &pipeline_layout, &shader);
+        // The ground's own group: the mask it reads and the two blur steps it takes.
+        let mask_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Z3L ground mask layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let ground = Ground::new(device, &shader, &bind_group_layout, &mask_layout);
 
         Self {
             mesh_pipeline,
@@ -427,7 +461,7 @@ impl ViewportRenderer {
             line_pipeline,
             edge_pipeline,
             hidden_edge_pipeline,
-            shadow_pipeline,
+            ground,
             camera_buffer,
             camera_bind_group,
             camera_stride,
@@ -440,7 +474,7 @@ impl ViewportRenderer {
             grid: Rebuilt::new(),
             polylines: Rebuilt::new(),
             product_envelopes: Rebuilt::new(),
-            shadows: Rebuilt::new(),
+            generation: 0,
             targets,
             size,
         }
@@ -524,7 +558,7 @@ impl ViewportRenderer {
         self.edge_slots.sweep();
 
         // A frame-level group is rebuilt only when its own input changed, so an edit that moves one
-        // panel leaves the grid, the chains, the envelopes and the shadows exactly as they were. The
+        // panel leaves the grid, the chains, the envelopes and the plate exactly as they were. The
         // value itself is kept by the group; the draw pass reads it from there.
         self.grid.get(&frame.grid, || line_list(device, "Z3L grid vertices", grid_vertices(&frame.grid)))?;
         self.polylines.get(&(frame.polylines().to_vec(), frame.line_ink), || {
@@ -543,10 +577,8 @@ impl ViewportRenderer {
                 )?,
             )
         })?;
-        self.shadows.get(&frame.shadows, || {
-            let (vertices, indices) = shadow_geometry(frame.shadows())?;
-            Ok(triangle_list(device, "Z3L contact shadows", &vertices, &indices))
-        })?;
+        self.ground.plate(device, PlateKey { extent_mm: frame.grid.extent_mm as f32, color: frame.floor })?;
+        self.generation = self.generation.wrapping_add(1);
 
         self.centres.clear();
         self.centres.extend(drawables.iter().map(|drawn| drawn.faces.centre));
@@ -576,7 +608,7 @@ impl ViewportRenderer {
         lighting: &Lighting,
     ) {
         let region = ViewRegion { x: 0, y: 0, width: self.size[0], height: self.size[1] };
-        let view = ViewSpec { camera: frame.camera, region, shading: frame.shading };
+        let view = ViewSpec { camera: frame.camera, region, shading: frame.shading, shadows: frame.contact_shadows };
         self.render_views(device, queue, frame, lighting, &[view]);
     }
 
@@ -587,8 +619,10 @@ impl ViewportRenderer {
     /// attachment: the first clears the colour and depth, every other pass loads them, and each
     /// draws inside its own viewport and scissor so a view never writes over its neighbour.
     ///
-    /// Each view carries its own camera, rectangle and display style, so a split workspace draws a
-    /// neighbour with a different pass set without a second target or edge buffer.
+    /// Each view carries its own camera, rectangle, display style and shadow switch, so a split
+    /// workspace draws a neighbour with a different pass set and a different ground shadow without a
+    /// second target or edge buffer. The mask itself is built once, from the frame's own shadow
+    /// settings: it is geometry, and only the strength the plate reads is per view.
     ///
     /// Each view also culls: a drawable whose world box misses the view's volume is left out of
     /// every pass of that view, so faces and edges are dropped together (X58).
@@ -617,13 +651,30 @@ impl ViewportRenderer {
         for (index, view) in views.iter().enumerate() {
             let region = view.region;
             let aspect = f64::from(region.width.max(1)) / f64::from(region.height.max(1));
-            uniforms.push(self.camera_uniform(view.camera, lighting, aspect, &frame.contact_shadows));
+            uniforms.push(self.camera_uniform(view.camera, lighting, aspect, &view.shadows, frame.grid.extent_mm));
             offsets.push((index as u64 * self.camera_stride) as u32);
             let (x, y, width, height) = region.scissor(self.size[0], self.size[1]);
             debug_assert!(x.saturating_add(width) <= self.size[0] && y.saturating_add(height) <= self.size[1]);
         }
         for (index, uniform) in uniforms.iter().enumerate() {
             queue.write_buffer(&self.camera_buffer, index as u64 * self.camera_stride, bytemuck::bytes_of(uniform));
+        }
+
+        let ground = GroundKey::of(self.generation, lighting.key_direction, frame.grid.extent_mm);
+        if self.ground.is_stale(&ground) {
+            let ground_offset = (GROUND_SLOT * self.camera_stride) as u32;
+            queue.write_buffer(
+                &self.camera_buffer,
+                u64::from(ground_offset),
+                bytemuck::bytes_of(&self.camera_uniform(
+                    views.first().map_or(Camera::default(), |view| view.camera),
+                    lighting,
+                    1.0,
+                    &frame.contact_shadows,
+                    frame.grid.extent_mm,
+                )),
+            );
+            self.ground.update(device, queue, &ground, (&self.camera_bind_group, ground_offset), &self.drawables);
         }
 
         let mut encoder =
@@ -693,6 +744,17 @@ impl ViewportRenderer {
             pass.set_scissor_rect(x, y, width, height);
             pass.set_bind_group(0, &self.camera_bind_group, &[offset]);
 
+            // The ground first: an unlit plate on z = 0 that carries the shadow in its own fragment,
+            // so the shadow costs no pass of its own and no blended layer over the scene. It is drawn
+            // in every display style, because the floor is not part of the model.
+            if let Some(plate) = self.ground.plate_value() {
+                pass.set_pipeline(self.ground.plate_pipeline());
+                pass.set_bind_group(1, self.ground.plate_group(), &[]);
+                pass.set_vertex_buffer(0, plate.vertex_buffer.slice(..));
+                pass.set_index_buffer(plate.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..plate.index_count, 0, 0..1);
+            }
+
             if passes.opaque_faces && !self.visible.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
                 for &index in &self.visible {
@@ -706,19 +768,6 @@ impl ViewportRenderer {
                     pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
                 }
-            }
-
-            // Contact shadows lie on the floor: they draw after the opaque faces, so the depth
-            // buffer hides the part an object covers, and before the unlit grid lines, which sit a
-            // fraction of a millimetre higher. The pass is blended and writes no depth, so two
-            // overlapping footprints simply tint each other.
-            if frame.contact_shadows.draws()
-                && let Some(shadows) = self.shadows.value()
-            {
-                pass.set_pipeline(&self.shadow_pipeline);
-                pass.set_vertex_buffer(0, shadows.vertex_buffer.slice(..));
-                pass.set_index_buffer(shadows.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..shadows.index_count, 0, 0..1);
             }
 
             if self.grid.value().is_some() || self.polylines.value().is_some() {
@@ -809,6 +858,7 @@ impl ViewportRenderer {
         lighting: &Lighting,
         aspect: f64,
         shadows: &ContactShadows,
+        extent_mm: f64,
     ) -> CameraUniform {
         let eye = camera.eye();
         let light = lighting.key_direction.try_normalize().unwrap_or(DVec3::Z);
@@ -826,7 +876,13 @@ impl ViewportRenderer {
             point_count,
             point_position,
             point_color,
-            shadow: shadow_uniform(shadows),
+            shadow: shadow_uniform(shadows, light),
+            shadow_plane: [
+                extent_mm as f32,
+                1.0 / ground::MASK_SIZE as f32,
+                1.0 / ground::MASK_SIZE as f32,
+                ground::penumbra_texels(extent_mm),
+            ],
         }
     }
 }
@@ -859,12 +915,18 @@ fn build_mesh(
 
 /// The shadow colour and strength the fragment shader reads.
 ///
-/// A switch that is off, a zero strength or a hostile value collapses to zero alpha, so the pass
-/// blends nothing; the colour is kept so turning the strength back up needs no upload.
-fn shadow_uniform(shadows: &ContactShadows) -> [f32; 4] {
-    let strength = if shadows.draws() { shadows.strength.clamp(0.0, 1.0) } else { 0.0 };
+/// A switch that is off, a zero strength, a hostile value or a key light that shines from below the
+/// floor collapses to zero, so the plate keeps its own colour; the colour is kept so turning the
+/// strength back up needs no upload.
+fn shadow_uniform(shadows: &ContactShadows, light: DVec3) -> [f32; 4] {
+    let lit = light.z > MIN_SHADOW_SUN_Z;
+    let strength = if shadows.draws() && lit { shadows.strength.clamp(0.0, 1.0) } else { 0.0 };
     [shadows.color[0], shadows.color[1], shadows.color[2], strength]
 }
+
+/// The flattest key light that can still cast a floor shadow: below it the projection runs to
+/// infinity and the shadow would cover the whole plate.
+const MIN_SHADOW_SUN_Z: f64 = 0.06;
 
 /// Packs the point lights into the fixed uniform arrays, stopping at the frame budget.
 fn point_uniforms(lighting: &Lighting) -> ([u32; 4], [[f32; 4]; MAX_POINT_LIGHTS], [[f32; 4]; MAX_POINT_LIGHTS]) {
@@ -889,14 +951,13 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::geometry::{
-        EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_CONTACT_SHADOWS, MAX_GRID_DIVISIONS, MAX_VERTICES, SHADOW_SEGMENTS,
-        edge_color,
-    };
-    use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, shadow_depth_state};
+    use crate::geometry::{EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_GRID_DIVISIONS, MAX_VERTICES, edge_color};
+    use crate::geometry::{floor_indices, floor_vertices};
+    use crate::ground::{GroundKey, penumbra_texels};
+    use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, floor_depth_state};
     use geom::{DMat4, MeshData};
     use model::Id;
-    use scene::{ContactShadow, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
+    use scene::{Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
 
     fn triangle() -> MeshData {
         MeshData {
@@ -1116,58 +1177,73 @@ mod tests {
         assert!(grid_vertices(&grid).is_empty(), "a hidden grid must not build line geometry");
     }
 
-    fn contact_shadow() -> ContactShadow {
-        ContactShadow { id: Id::new(1).expect("id"), center: DVec3::new(10.0, 20.0, 0.01), radii: [100.0, 50.0] }
+    #[test]
+    fn the_floor_plate_is_one_quad_the_camera_sees_from_above() {
+        let vertices = floor_vertices(5000.0, SceneFrame::default().floor, 0.0);
+        assert_eq!(vertices.len(), 4, "four corners, one quad");
+        assert!(vertices.iter().all(|vertex| vertex.position[2] == 0.0), "the plate is the floor");
+        assert!(vertices.iter().all(|vertex| vertex.color == SceneFrame::default().floor));
+        let indices = floor_indices();
+        assert_eq!(indices.len(), 6, "two triangles");
+        // Seen from `+Z` the corners run counter-clockwise, so the plate's own side is the top: the
+        // pipeline culls a view from below, which would otherwise hide the cabinet behind the ground.
+        let corners = [vertices[0].position, vertices[1].position, vertices[2].position];
+        let cross = (corners[1][0] - corners[0][0]) * (corners[2][1] - corners[0][1])
+            - (corners[1][1] - corners[0][1]) * (corners[2][0] - corners[0][0]);
+        assert!(cross > 0.0, "the top of the plate faces `+Z`, which is the side a view from above sees");
+        assert!(floor_vertices(0.0, [1.0; 4], 0.0).is_empty(), "a ground with no area draws nothing");
+        assert!(floor_vertices(f64::NAN, [1.0; 4], 0.0).is_empty(), "a hostile size draws nothing");
     }
 
     #[test]
-    fn a_contact_shadow_becomes_one_radial_triangle_fan_on_the_floor() {
-        let shadow = contact_shadow();
-        let (vertices, indices) = shadow_geometry(&[shadow]).expect("a valid shadow");
-        assert_eq!(vertices.len(), SHADOW_SEGMENTS + 1, "a centre and one rim vertex per segment");
-        assert_eq!(indices.len(), SHADOW_SEGMENTS * 3, "one triangle per segment");
-        assert_eq!(vertices[0].position, [10.0, 20.0, 0.01], "the centre sits on the shadow plane");
-        assert_eq!(vertices[0].color[3], 1.0, "the centre is the opaque end of the falloff");
-        assert!(vertices[1..].iter().all(|vertex| vertex.color[3] == 0.0), "the rim fades to nothing");
-        for vertex in &vertices[1..] {
-            let x = (f64::from(vertex.position[0]) - 10.0) / 100.0;
-            let y = (f64::from(vertex.position[1]) - 20.0) / 50.0;
-            assert!(x * x + y * y <= 1.0 + 1.0e-5, "every rim vertex lies on the ellipse");
-        }
-        assert!(shadow_geometry(&[]).is_ok_and(|(vertices, indices)| vertices.is_empty() && indices.is_empty()));
+    fn the_floor_plate_writes_depth_on_the_same_bias_as_the_faces() {
+        let state = floor_depth_state();
+        assert_eq!(state.depth_write_enabled, Some(true), "a body has to be nearer than the ground");
+        assert_eq!(state.depth_compare, Some(wgpu::CompareFunction::Less));
+        assert_eq!(state.bias, FACE_DEPTH_BIAS, "a bottom outline still wins against the plate it lies on");
+        assert_eq!(state.stencil, wgpu::StencilState::default(), "the ground owns no stencil slot");
     }
 
     #[test]
-    fn a_malformed_contact_shadow_is_refused() {
-        let id = Id::new(2).expect("id");
-        let non_finite = ContactShadow { id, center: DVec3::new(f64::NAN, 0.0, 0.0), radii: [1.0, 1.0] };
-        assert_eq!(shadow_geometry(&[non_finite]), Err(RenderError::InvalidShadow { index: 0 }));
-        let degenerate = ContactShadow { id, center: DVec3::ZERO, radii: [0.0, 1.0] };
-        assert_eq!(shadow_geometry(&[degenerate]), Err(RenderError::InvalidShadow { index: 0 }));
-
-        let many = vec![contact_shadow(); MAX_CONTACT_SHADOWS + 1];
-        assert!(matches!(shadow_geometry(&many), Err(RenderError::TooManyShadows { .. })));
-    }
-
-    #[test]
-    fn the_shadow_pass_lies_on_the_floor_and_writes_no_depth() {
-        let state = shadow_depth_state();
-        assert_eq!(state.depth_write_enabled, Some(false), "a shadow never occludes the object above it");
-        assert_eq!(state.depth_compare, Some(wgpu::CompareFunction::LessEqual));
-        assert_eq!(state.stencil, wgpu::StencilState::default());
-        assert_eq!(state.bias, wgpu::DepthBiasState::default());
-    }
-
-    #[test]
-    fn the_shadow_switch_collapses_the_uniform_to_zero_alpha() {
+    fn the_shadow_switch_collapses_the_uniform_to_zero() {
         let shadows = ContactShadows::default();
-        let on = shadow_uniform(&shadows);
+        let light = DVec3::new(0.0, 0.0, 1.0);
+        let on = shadow_uniform(&shadows, light);
         assert!(on[3] > 0.0, "the default draws a shadow");
-        let off = shadow_uniform(&ContactShadows { visible: false, ..shadows });
-        assert_eq!(off[3], 0.0, "the switch blends nothing");
+        let off = shadow_uniform(&ContactShadows { visible: false, ..shadows }, light);
+        assert_eq!(off[3], 0.0, "the switch draws nothing");
         assert_eq!(off[..3], on[..3], "the colour survives the switch, so turning it back on costs no upload");
-        let faint = shadow_uniform(&ContactShadows { strength: 0.0, ..shadows });
+        let faint = shadow_uniform(&ContactShadows { strength: 0.0, ..shadows }, light);
         assert_eq!(faint[3], 0.0);
+    }
+
+    #[test]
+    fn a_sun_below_the_floor_casts_no_shadow() {
+        let shadows = ContactShadows::default();
+        assert_eq!(shadow_uniform(&shadows, DVec3::new(0.0, 0.0, -1.0))[3], 0.0, "a lamp under the floor lights it");
+        assert_eq!(shadow_uniform(&shadows, DVec3::new(0.9, 0.0, 0.02))[3], 0.0, "a sun on the horizon never sets");
+        assert!(shadow_uniform(&shadows, DVec3::new(0.0, 0.0, 1.0))[3] > 0.0);
+    }
+
+    #[test]
+    fn a_mask_is_stale_when_the_scene_or_the_light_moves_and_not_when_the_camera_does() {
+        let light = DVec3::new(-0.35, 0.55, 0.75);
+        let first = GroundKey::of(1, light, 5000.0);
+        assert_eq!(first, GroundKey::of(1, light, 5000.0), "the same frame keeps its mask");
+        assert_ne!(first, GroundKey::of(2, light, 5000.0), "an edit rebuilds it");
+        assert_ne!(first, GroundKey::of(1, DVec3::new(0.35, 0.55, 0.75), 5000.0), "a turned sun rebuilds it");
+        assert_ne!(first, GroundKey::of(1, light, 2500.0), "a resized ground rebuilds it");
+        // A direction that differs in the fifth decimal is the same light: a slider does not thrash.
+        assert_eq!(first, GroundKey::of(1, light * 1.00005, 5000.0));
+    }
+
+    #[test]
+    fn the_penumbra_is_a_world_size_and_not_a_zoom() {
+        let wide = penumbra_texels(5000.0);
+        let close = penumbra_texels(2500.0);
+        assert!((wide - 6.1).abs() < 0.3, "a ten-metre ground carries a sixty-millimetre penumbra, not a texel");
+        assert!(close > wide, "half the ground is twice as many texels for the same penumbra");
+        assert!(penumbra_texels(0.0).is_finite() && penumbra_texels(f64::NAN).is_finite());
     }
 
     #[test]
@@ -1219,12 +1295,33 @@ mod tests {
         // different passes from the same uploaded geometry and edge buffer (U63).
         let region = ViewRegion { x: 0, y: 0, width: 100, height: 100 };
         let views = [
-            ViewSpec { camera: Camera::default(), region, shading: ShadingStyle::Wireframe },
-            ViewSpec { camera: Camera::default(), region, shading: ShadingStyle::Shaded },
+            ViewSpec {
+                camera: Camera::default(),
+                region,
+                shading: ShadingStyle::Wireframe,
+                shadows: ContactShadows::default(),
+            },
+            ViewSpec {
+                camera: Camera::default(),
+                region,
+                shading: ShadingStyle::Shaded,
+                shadows: ContactShadows::default(),
+            },
         ];
         assert_eq!(views[0].passes(), StylePasses::new(ShadingStyle::Wireframe));
         assert_eq!(views[1].passes(), StylePasses::new(ShadingStyle::Shaded));
         assert_ne!(views[0].passes(), views[1].passes(), "different styles turn on different passes");
+    }
+
+    #[test]
+    fn the_shadow_switch_is_per_view_and_its_strength_is_the_frame_s() {
+        // One cell of a split draws a shadow while its neighbour does not, from one workspace
+        // strength and one mask (U107): the difference is the `visible` flag alone.
+        let workspace = ContactShadows { strength: 0.55, ..ContactShadows::default() };
+        let on = ContactShadows { visible: true, ..workspace };
+        let off = ContactShadows { visible: false, ..workspace };
+        assert_eq!(shadow_uniform(&on, DVec3::Z)[3], 0.55, "the workspace strength reaches the plate");
+        assert_eq!(shadow_uniform(&off, DVec3::Z)[3], 0.0, "the other view keeps its own floor");
     }
 
     #[test]

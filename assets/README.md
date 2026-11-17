@@ -22,7 +22,7 @@ assets/icons/<theme>/<name>.svg
 | `primitives` | `cuboid`, `cylinder`, `sphere`, `cone` | The ribbon *Model* tab |
 | `bodies` | `extrude`, `revolve`, `sweep` | The ribbon *Model* tab |
 | `scene` | `product`, `panel`, `post`, `shelf`, `void`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |
-| `view` | `orthographic`, `perspective`, `frame-all`, `maximize`, `restore`, `home`, `grid-snap`, `orbit`, `pan`, `zoom`, `layout`, `shaded`, `shaded-edges`, `wireframe`, `xray`, `translucent`, `sliders`, `axon`, `front`, `left`, `top`, `right`, `bottom` | The ribbon *View* tab, the floating viewport cluster, the header |
+| `view` | `orthographic`, `perspective`, `frame-all`, `maximize`, `restore`, `home`, `grid-snap`, `orbit`, `pan`, `zoom`, `layout`, `shaded`, `shaded-edges`, `wireframe`, `xray`, `translucent`, `sliders`, `shadows`, `axon`, `front`, `left`, `top`, `right`, `bottom` | The ribbon *View* tab, the floating viewport cluster, the header |
 | `actions` | `confirm`, `dismiss`, `cancel`, `undo`, `redo`, `delete`, `add`, `remove`, `duplicate`, `rename`, `copy`, `paste`, `file-new`, `file-open`, `file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `visible`, `hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`, `error`, `info`, `help`, `pin` | Menus, dialogs, strips, the command palette and the shortcut reference |
 | `window` | `minimize`, `maximize`, `restore`, `close` | The window row of the header; drawn only when the system frame is off |
 

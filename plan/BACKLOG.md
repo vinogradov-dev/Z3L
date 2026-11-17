@@ -41,37 +41,90 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
-  Why: Observation: a body that is neither axis-aligned nor a box gets a contact shadow of the
-   box of its box, or loses it. Every drawable's world box is now the eight corners of the
-   local box the mesh cache measured (X56), so a turned round or notched body reports the box
-   of the turned box: on a 50 mm ball turned 30 degrees about X the tight min.z stays at 0
-   because a ball is round, while the corner box dips to -34.15 mm, and
-   ContactShadow::from_bounds (crates/scene/src/lib.rs) refuses a body whose box is more than
-   FLOOR_TOLERANCE_MM (0.5 mm) off the floor, so the shadow disappears. A tilted body that
-   keeps one draws the ellipse of the looser box, up to 1.73x wider on the diagonal axis.
-   Axis-aligned bodies and any turned rectangle are unaffected, because a rectangle's extremes
-   are its corners, which is why the demo scene and every panel keep their shadows.
-   Expectation: a shadow follows the body's own footprint whatever its turn, and a body resting
-   on the floor always casts one. Suspected cause, measured: SubtreeBounds::include_solid in
-   app/src/scene_build.rs feeds the subtree's solid box from Aabb::transformed_by, and
-   transformed_by is the box of the eight turned corners rather than of the turned points (X56
-   traded tightness for a rebuild that transforms no vertex).
-  shape: Keep the tight world box per drawable beside the loose one, keyed by the world
-   placement it was measured for: a node whose composed placement did not move copies the box,
-   a node that moved transforms its vertices once (896 for a 32 x 16 sphere), so an edit still
-   costs its changed nodes. The box belongs to the drawable, not to the mesh, so the evaluation
-   carries it beside the mesh cache and the contact shadow reads it, while framing and the open
-   brackets keep the cheap corner box. An alternative that shrinks the work: give ContactShadow
-   a footprint of its own measured from the body's floor contact, which still needs the tight
-   box.
-  done: A test turns a 50 mm ball 30 degrees about X on the floor and asserts it casts a shadow
-   whose radii are within a percent of the unturned ball's; a body lifted clear of the floor
-   casts none; the X56 probe still reports that an ordinary edit measures no box from vertices;
-   and cargo xtask ci is green.
-  `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
 ## Next
+- `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
+  Why: The ground shadow says what stands on the floor and says nothing about the inside of a
+   cabinet: every joint between two surfaces is lit as if the two panels met at an infinite
+   plane, so a shelf, a niche and a drawer front read as flat paint. The products that convince
+   here — SketchUp, Rhino, Revit, Fusion — light the model from one shadow-casting sun and let
+   every surface receive it. Owner's decision, 2026-11-17: filed now, after the ground shadow
+   lands.
+  Shape: One depth map from the key light over the scene's box — 2048^2, rebuilt on the same
+   keys as the ground mask (a scene upload and a key-light turn) — sampled with PCF in
+   `fs_mesh`, so a face darkens where another face stands between it and the sun. Bias is the
+   whole design: a normal-offset bias keeps a panel from shadowing its own face, and the two
+   coplanar cases — a band on a panel face and a shelf flush with a side — decide the constant
+   and get a test each. The map reuses the scene's world-space baked vertex buffers, so it
+   costs one depth target and no new geometry, and it needs its own ADR because it is the first
+   pass that can cost a frame. Rejected for now: cascades (one cabinet is two metres), a second
+   authored sun (ADR 0036 keeps one key), and screen-space AO, which cannot darken a surface
+   that nothing covers.
+  Done: A shelf 300 mm inside an open cabinet darkens the back panel behind it, and stops
+   darkening it when the cabinet is opened to the sky; a lit box shows no acne on its own faces
+   and no gap under a band; the ground mask and the map agree on one light; a probe shows the
+   map does not rebuild while the camera orbits; the ADR is written and `cargo xtask ci` is
+   green.
+  `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs`
+
 ## Done
+
+- `[x]` **U107** a shadow is an attribute of the view, with one intensity control beside it
+  Why: The shadow is controlled in two places today: a checkbox in the viewport cluster's
+   display-settings popover and a strength slider in Settings › View, and the frame takes the
+   result globally, so two split views cannot disagree. The owner asks for the shadow to be a
+   view mode with its own intensity control, 2026-11-17.
+  Shape: A view owns its shading style; it now owns its shadow too. `Leaf` gains the switch
+   beside the style, `ViewSpec` carries the resolved `ContactShadows`, and the frame keeps
+   colour, strength and the mask as workspace data, so one split cell draws a shadow while its
+   neighbour does not. One control site: the View tab's display group holds a *Shadows* toggle
+   with its key and, beside it, the intensity slider that leaves Settings › View, reading and
+   writing the active view; the popover checkbox goes, because two controls for one value
+   disagree eventually. A sixth `ShadingStyle` is rejected: a shadow combines with every face
+   style, so the list would have to grow to ten. The switch, the key, the icon, the label in
+   both languages and the inventory row ship in one change (the place-capability procedure).
+  Done: The View tab row toggles the active split view and leaves its neighbour drawing what it
+   drew; the intensity reaches the frame without an upload; the removed popover control leaves
+   no orphan message, key or test; the icon is authored under `assets/icons`, has its README
+   row and its empty-file fallback test; `cargo xtask ui-rules`, `cargo xtask skills` and
+   `cargo xtask ci` are green.
+  `files: crates/scene/src/lib.rs,crates/render/src/lib.rs,crates/ui/src/display.rs,crates/ui/src/toolbars.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,crates/ui/src/inventory.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,crates/ui/src/icons.rs,app/src/view_layout.rs,app/src/view_cluster.rs,app/src/document.rs,app/src/main.rs,app/src/shortcuts.rs,app/src/ui_shots.rs,assets/icons,assets/README.md` — `85f1bfe`
+
+- `[x]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
+  Why: Measured 2026-11-17: `target/ui-shots/probe-shadow-on.png` and `probe-shadow-off.png`
+   are identical pixel for pixel, so the pass that shipped draws nothing a person can see.
+   Three independent reasons. (1) The ellipse is hidden by construction:
+   `SHADOW_FOOTPRINT_SCALE` keeps it inside the body's own footprint while the body stands on
+   the same plane, so the body covers all of it; the only pixels it ever owns are the ones seen
+   through the sub-millimetre gap `FLOOR_TOLERANCE_MM` allows, which is why lifting a body by 1
+   mm removes it and lifting it by 0.4 mm makes it appear. (2) It exists only for a body that
+   rests on the floor, and almost nothing in furniture does. (3) Black over a near-black
+   background is no shadow: at 1.6x the footprint and 100 % strength it is still invisible on
+   the dark theme, and only the light theme reads (`probe-light-on.png`); the same measurement
+   at the shipped 0.92 and 40 % shows nothing in either theme. The shape is the box of the
+   turned box, which is the defect the entry was filed for. Owner's decision, 2026-11-17: the
+   shadow is replaced rather than repaired.
+  Shape: Delete the ellipse and everything that derives it: `ContactShadow`,
+   `ContactShadow::from_bounds`, `SHADOW_FOOTPRINT_SCALE`, `FLOOR_TOLERANCE_MM`,
+   `SHADOW_GROUND_Z_MM`, `shadow_geometry`, `SHADOW_SEGMENTS`, `MAX_CONTACT_SHADOWS`, the
+   shadow pipeline and its depth state, the shadow-centre fixups in `SceneFrame`'s move and
+   turn, and `SubtreeBounds::solid` with them — a shadow that is no longer derived from a bound
+   is what closes this defect. In its place, three parts. (1) A floor plate: one unlit quad on
+   `z = 0` across the grid's extent, single-sided so a view from below does not lose the model
+   behind it, its colour a `SceneColors::floor` per variant (the dark one a few steps above the
+   background, because a shadow has to darken something). (2) The mask: the frame's drawables
+   projected along the key light onto that plane into one 2048^2 single-channel texture — a
+   coverage render with no depth compare, so it has no bias and no acne — blurred by two
+   separable passes to a 30–40 mm penumbra and sampled by the plate's fragment shader as `1 -
+   strength * mask`. (3) The rebuild: once per scene upload and once per key-light turn, never
+   per frame; the camera moving costs nothing. `ContactShadows` (switch, strength, colour)
+   stays as the frame's settings and keeps meaning what it says,
+  Done: A box standing on the floor casts a mask whose offset matches the key light's elevation
+   (a test on the projection, no GPU), so the shadow is never under the body; a body 1 mm above
+   the floor and a body 300 mm up both cast one; a turned 50 mm ball casts a disc and not a
+   box; orbitting the camera and moving the pointer rebuild nothing while an edit rebuilds the
+   mask once (a probe that counts rebuilds); the shadow reads in both themes, shown by a
+   picture in `target/ui-shots`; and `cargo xtask ci` is green.
+  `files: crates/scene/src/lib.rs,crates/render/src/lib.rs,crates/render/src/geometry.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/gpu.rs,crates/render/src/cache.rs,app/src/scene_build.rs,app/src/document.rs` — `52874fd`
 
 - `[x]` **X61** a fine sphere loses its meridians, so its poles read bald
   Why: Observation: on a 50 mm ball, raising the side count removes longitudinal lines instead

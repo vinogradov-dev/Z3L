@@ -70,10 +70,10 @@ impl NavigationMode {
 /// The cluster's view state.
 ///
 /// The cluster keeps the switches that change what the view draws from one frame to the next; the
-/// strengths of the floor grid, the outlines and the contact shadow are workspace defaults and live
+/// strengths of the floor grid, the outlines and the ground shadow are workspace defaults and live
 /// in `ui::settings::ViewportSettings`, which the cluster links to instead of drawing
-/// three sliders over the scene (U64). The display style is not here either: it belongs to the
-/// active leaf, so two views can differ (U63).
+/// three sliders over the scene (U64). The display style and the ground-shadow switch are not here
+/// either: both belong to the active leaf, so two views can differ (U63, U107).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ViewCluster {
     /// The navigation gesture armed for the next primary-button drag, or `None`.
@@ -87,20 +87,11 @@ pub(crate) struct ViewCluster {
     pub(crate) show_osd: bool,
     /// Whether the corner orientation widget draws at all (U73).
     pub(crate) show_widget: bool,
-    /// Whether the contact-shadow pass draws (U44).
-    pub(crate) contact_shadows: bool,
 }
 
 impl Default for ViewCluster {
     fn default() -> Self {
-        Self {
-            navigation: None,
-            settings_open: false,
-            layout_open: false,
-            show_osd: false,
-            show_widget: true,
-            contact_shadows: true,
-        }
+        Self { navigation: None, settings_open: false, layout_open: false, show_osd: false, show_widget: true }
     }
 }
 
@@ -113,19 +104,6 @@ impl ViewCluster {
     /// Whether the corner orientation widget draws at all.
     pub(crate) fn widget_visible(&self) -> bool {
         self.show_widget
-    }
-
-    /// The frame's contact-shadow settings from the cluster's switch and the workspace strength.
-    ///
-    /// A change is read at draw time, so the switch and the strength never re-upload geometry.
-    pub(crate) fn shadow_settings(&self, strength_percent: u32) -> scene::ContactShadows {
-        scene::ContactShadows {
-            visible: self.contact_shadows,
-            // A percentage read through an integer keeps the domain free of floats; the clamp
-            // guards a hand-edited settings file that skipped `sanitize`.
-            strength: (strength_percent.min(100) as f32 / 100.0).clamp(0.0, 1.0),
-            ..scene::ContactShadows::default()
-        }
     }
 }
 
@@ -521,8 +499,8 @@ fn settings_popover(
                 {
                     action = Some(ClusterAction::ToggleProjection);
                 }
-                ui.checkbox(&mut state.contact_shadows, text::Message::ContactShadows.text(ui::language(ui.ctx())))
-                    .on_hover_text(text::Message::ContactShadowsHint.text(ui::language(ui.ctx())));
+                // The ground shadow's switch is not here: it belongs to the view, so it is drawn
+                // once in the View tab's Display group, beside its intensity (U107).
                 ui.separator();
                 // The strengths are workspace defaults, not a scene opinion: the popover links to the
                 // one page that edits them instead of drawing three sliders over the model (U64).
@@ -613,8 +591,11 @@ mod tests {
             !texts.iter().any(|text| text.contains("triangle edge")),
             "the diagnostic left the cluster with the strength sliders: {texts:?}"
         );
-        for switch in ["Show the on-screen display", "Show the orientation cube", "Contact shadows"] {
-            assert!(texts.iter().any(|text| text.contains(switch)), "the switch stays: {switch} in {texts:?}");
-        }
+        // The shadow left for the View tab with its switch and its intensity (U107), and the
+        // triangle diagnostic left the cluster with the sliders (U64).
+        assert!(
+            !texts.iter().any(|text| text.contains("Contact shadows")),
+            "the shadow switch is the View tab's alone: {texts:?}"
+        );
     }
 }

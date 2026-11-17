@@ -31,7 +31,7 @@ use mesh::{EvaluationCache, object_mesh};
 use model::{Catalog, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
-use scene::{Camera, ContactShadows, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
+use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
@@ -101,11 +101,25 @@ const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
 
+/// What the ribbon asked the window for beyond the document's own view state.
+///
+/// The document owns the per-view switches, so it toggles them itself; the display intensity is
+/// workspace data, so it comes back here for the shell to keep and to write once the gesture ends
+/// (U107).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RibbonAsk {
+    /// The *Product frame* cell asked for its card, which the window owns (ADR 0100).
+    pub(crate) product_card: bool,
+    /// The shadow intensity the Display group set, in percent, and whether the gesture ended.
+    pub(crate) shadow_strength: Option<(u32, bool)>,
+}
+
 /// The display state the window owns and every frame of this tab is built with.
 ///
-/// The floor grid, the edge list, the contact-shadow pass and the colours of the active theme
+/// The floor grid, the edge list, the ground shadow's strength and the colours of the active theme
 /// variant are the window's (ADR 0029), so the shell hands them to the active document; a frame
 /// rebuilt by a command, a card or a shortcut then draws the same display state the viewport shows.
+/// The shadow's *switch* is the view's, so it is not here (U107).
 #[derive(Clone, Copy, Debug)]
 struct Display {
     /// Whether the floor grid draws.
@@ -114,30 +128,33 @@ struct Display {
     grid_step_mm: u32,
     /// Whether the edge pass draws the full triangulation instead of only the form edges.
     all_edges: bool,
-    /// The switch and the strength of the contact-shadow pass.
-    shadows: ContactShadows,
+    /// How far the ground shadow darkens the floor plate, from 0 to 1.
+    shadow_strength: f32,
     /// The background, grid and line ink of the theme variant the window draws with.
     colors: SceneColors,
 }
 
 impl Display {
     /// Reads the display state the window currently shows.
-    fn of(viewport: &ViewportSettings, cluster: &ViewCluster, colors: SceneColors) -> Self {
+    fn of(viewport: &ViewportSettings, colors: SceneColors) -> Self {
         Self {
             grid: viewport.grid,
             grid_step_mm: viewport.grid_step_mm,
             all_edges: viewport.all_edges,
-            shadows: cluster.shadow_settings(viewport.shadow_strength),
+            shadow_strength: ui::display::shadow_strength(viewport.shadow_strength),
             colors,
         }
     }
 
     /// Writes the display state into a frame.
+    ///
+    /// The shadow's strength is written alone: the switch is the view's, so the active leaf has
+    /// already put it in place and a whole-struct write here would overwrite it (U107).
     fn apply(self, scene: &mut SceneFrame) {
         scene.grid.visible = self.grid;
         scene.grid.spacing_mm = f64::from(self.grid_step_mm.max(1));
         scene.all_edges = self.all_edges;
-        scene.contact_shadows = self.shadows;
+        scene.contact_shadows.strength = self.shadow_strength;
         scene.apply_colors(self.colors);
     }
 }
@@ -374,9 +391,9 @@ impl Document {
         let level_bounds = evaluated.levels;
         let fit = home_camera(scene_bounds)?;
         let layout = Layout::new(fit, settings.viewport.opening_view, settings.viewport.style);
-        let display = Display::of(&settings.viewport, &shell.cluster, shell.colors);
+        let display = Display::of(&settings.viewport, shell.colors);
         let mut scene = evaluated.frame;
-        layout.apply_frame_style(&mut scene);
+        layout.apply_frame_display(&mut scene);
         display.apply(&mut scene);
         scene.camera = crate::scene_build::scene_camera(session.project(), layout.active_camera());
 
@@ -664,9 +681,9 @@ impl Document {
         shell: &Shell,
     ) {
         let previous = self.display;
-        self.display = Display::of(settings, &shell.cluster, shell.colors);
+        self.display = Display::of(settings, shell.colors);
         self.layout.set_active_style(settings.style);
-        self.layout.apply_frame_style(&mut self.scene);
+        self.layout.apply_frame_display(&mut self.scene);
         self.display.apply(&mut self.scene);
         let geometry_changed = settings.grid != before.grid
             || settings.grid_step_mm != before.grid_step_mm
@@ -775,13 +792,13 @@ impl Document {
     /// The shell asks before it syncs, so the frame that announces a heavy rebuild is the one that
     /// paints the message and the last good geometry, and the work runs on the frame after it. A
     /// cheap rebuild is never announced: it costs less than a frame and the message would be noise.
-    pub(crate) fn busy(&self, viewport: &ViewportSettings, cluster: &ViewCluster, colors: SceneColors) -> bool {
-        self.rebuild.busy(self.rebuild_pending(viewport, cluster, colors))
+    pub(crate) fn busy(&self, viewport: &ViewportSettings, colors: SceneColors) -> bool {
+        self.rebuild.busy(self.rebuild_pending(viewport, colors))
     }
 
     /// Whether the next [`Document::sync_scene`] will evaluate the scene.
-    fn rebuild_pending(&self, viewport: &ViewportSettings, cluster: &ViewCluster, colors: SceneColors) -> bool {
-        Display::of(viewport, cluster, colors).colors != self.display.colors
+    fn rebuild_pending(&self, viewport: &ViewportSettings, colors: SceneColors) -> bool {
+        Display::of(viewport, colors).colors != self.display.colors
             || self.session.project().revision() != self.scene_revision
             || self.editor.visibility_revision() != self.scene_visibility
             || self.session.preview_version() != self.scene_preview
@@ -798,18 +815,17 @@ impl Document {
         &mut self,
         ctx: &egui::Context,
         viewport: &ViewportSettings,
-        cluster: &ViewCluster,
         colors: SceneColors,
     ) -> Result<(), String> {
         let previous = self.display;
-        self.display = Display::of(viewport, cluster, colors);
+        self.display = Display::of(viewport, colors);
         if self.display.colors != previous.colors {
             // A theme switch touches only the frame's own colours, so the uploaded frame is repainted
             // without evaluating a single node: the document revision does not move (X8).
             self.display.apply(&mut self.scene);
             return self.upload_scene();
         }
-        let pending = self.rebuild_pending(viewport, cluster, colors);
+        let pending = self.rebuild_pending(viewport, colors);
         if self.rebuild.defer(pending) {
             ctx.request_repaint();
             return Ok(());
@@ -844,7 +860,7 @@ impl Document {
         self.scene_bounds = evaluated.bounds;
         self.level_bounds = evaluated.levels;
         let mut scene = evaluated.frame;
-        self.layout.apply_frame_style(&mut scene);
+        self.layout.apply_frame_display(&mut scene);
         self.display.apply(&mut scene);
         scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
         self.scene = scene;
@@ -2722,12 +2738,12 @@ impl Document {
             }
         }
 
-        // The style is frame data the renderer reads when it draws, so a button in the cluster
-        // changes the next frame without re-uploading a buffer. The edge list is not: switching
-        // between form edges and the full triangulation reads a different cached list, so the last
-        // upload is replayed when the switch flips.
-        self.layout.apply_frame_style(&mut self.scene);
-        self.scene.contact_shadows = shell.cluster.shadow_settings(settings.viewport.shadow_strength);
+        // The style and the shadow switch are frame data the renderer reads when it draws, so a
+        // button in the cluster or the View tab changes the next frame without re-uploading a
+        // buffer. The edge list is not: switching between form edges and the full triangulation
+        // reads a different cached list, so the last upload is replayed when the switch flips.
+        self.layout.apply_frame_display(&mut self.scene);
+        self.scene.contact_shadows.strength = ui::display::shadow_strength(settings.viewport.shadow_strength);
         if self.scene.all_edges != settings.viewport.all_edges {
             self.scene.all_edges = settings.viewport.all_edges;
             if let Err(error) = self.upload_scene() {
@@ -2761,6 +2777,10 @@ impl Document {
                             camera,
                             region: view_region(area, *view_rect, points_per_pixel),
                             shading: leaf.style(),
+                            // The strength and the colour are the workspace's; the switch is this
+                            // view's, so one cell of a split draws the shadow and its neighbour does
+                            // not (U107).
+                            shadows: ui::display::contact_shadows(settings.viewport.shadow_strength, leaf.shadows()),
                         })
                     })
                     .collect();
@@ -2936,7 +2956,7 @@ impl Document {
             Some(ClusterAction::SetStyle(style)) => {
                 self.layout.set_active_style(style);
                 // The style is frame data the renderer reads per view at draw time, so no upload.
-                self.layout.apply_frame_style(&mut self.scene);
+                self.layout.apply_frame_display(&mut self.scene);
             }
             Some(ClusterAction::OpenSettings) => shell.open_settings = true,
             None => {}
@@ -3168,15 +3188,16 @@ impl Document {
     /// The strip floats on the middle layer instead of taking height from the viewport, so the scene
     /// image runs under it and a translucent ribbon blends with the furniture (U51, ADR 0080). It is
     /// anchored to `design` — the window below the header — so resizing a side panel never reflows
-    /// it; the side panels are inset by [`Self::ribbon_inset`] instead. Returns whether the ribbon
-    /// asked for the product-frame card, which the window owns.
+    /// it; the side panels are inset by [`Self::ribbon_inset`] instead. Returns what the ribbon asked
+    /// the window for: the product-frame card it owns, and the display value that belongs to the
+    /// workspace settings.
     pub(crate) fn show_ribbon(
         &mut self,
         ui: &mut egui::Ui,
         design: egui::Rect,
         shell: &mut Shell,
         settings: &Settings,
-    ) -> bool {
+    ) -> RibbonAsk {
         let view = ui::RibbonView {
             perspective: matches!(
                 crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera()).projection(),
@@ -3184,6 +3205,10 @@ impl Document {
             ),
             owns_view: viewport_owns_view(self.session.project()),
             grid: self.draw_gizmo.grid(),
+            // The shadow switch is the active view's and its intensity the workspace's, so the
+            // Display group reads both without the ribbon owning either (U107).
+            shadows: self.layout.active_shadows(),
+            shadow_strength: settings.viewport.shadow_strength,
         };
         let mut outcome = None;
         // Whether the ruler or the niche owned the pointer before this frame, so a cell that armed
@@ -3214,9 +3239,9 @@ impl Document {
         // so the viewport reads a press or the pointer inside it as chrome, and the list's own cursor
         // is the one the frame shows (X37).
         shell.list_rect = outcome.as_ref().and_then(|outcome| outcome.list_rect);
-        let mut open_product_card = false;
+        let mut ask = RibbonAsk::default();
         if let Some(outcome) = outcome {
-            open_product_card = outcome.open_product_card;
+            ask.product_card = outcome.open_product_card;
             if outcome.started_drawing {
                 self.draw_gizmo.reset();
                 self.cancel_extrude();
@@ -3262,10 +3287,26 @@ impl Document {
                     self.toggle_view_projection();
                 }
                 Some(ui::RibbonViewAction::ToggleGrid) => self.draw_gizmo.toggle_grid(),
+                Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
+                Some(ui::RibbonViewAction::ShadowStrength { percent, settled }) => {
+                    // The value is the workspace's, so the window writes it; the frame already reads
+                    // the setting and never re-uploads for it (U107).
+                    ask.shadow_strength = Some((percent, settled));
+                }
                 None => {}
             }
         }
-        open_product_card
+        ask
+    }
+
+    /// Turns the ground shadow of the active view on or off (U107).
+    ///
+    /// The switch is the view's, so the neighbour keeps drawing what it drew; the frame's fallback
+    /// follows the active leaf and the per-view specs are built from each leaf at draw time, so the
+    /// change costs no upload.
+    pub(crate) fn toggle_shadows(&mut self) {
+        self.layout.toggle_active_shadows();
+        self.layout.apply_frame_display(&mut self.scene);
     }
 
     /// Reads the keys a running tool owns and leaves the rest to the shell.
@@ -3928,11 +3969,10 @@ mod tests {
             evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("evaluated scene");
         let revision = session.project().revision();
         let settings = ViewportSettings::default();
-        let cluster = ViewCluster::default();
         let mut dark = evaluated.frame.clone();
         let mut light = evaluated.frame;
-        Display::of(&settings, &cluster, SceneColors::DARK).apply(&mut dark);
-        Display::of(&settings, &cluster, SceneColors::LIGHT).apply(&mut light);
+        Display::of(&settings, SceneColors::DARK).apply(&mut dark);
+        Display::of(&settings, SceneColors::LIGHT).apply(&mut light);
 
         assert_eq!(dark.background, SceneColors::DARK.background);
         assert_eq!(light.background, SceneColors::LIGHT.background, "the viewport clears to the light chrome");
@@ -3944,6 +3984,35 @@ mod tests {
         assert_eq!(materials(&light), materials(&dark), "the furniture keeps its material colours");
         assert_eq!(dark.grid.visible, light.grid.visible, "the viewport's grid switch is not the theme's");
         assert_eq!(session.project().revision(), revision, "a variant is view state, never an edit");
+    }
+
+    #[test]
+    fn the_view_tabs_shadow_switch_leaves_the_neighbour_drawing_its_own() {
+        // U107: the ground shadow is an attribute of the view. The View tab's cell flips the active
+        // leaf alone, so a split workspace draws one cell with a shadow and the next without, and
+        // neither the document nor the workspace's intensity moves.
+        let session = crate::scene_build::demo_session().expect("the sample scene");
+        let revision = session.project().revision();
+        let settings = Settings::default();
+        let shell = Shell::default();
+        let mut document =
+            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        document.layout.set_kind(crate::view_layout::LayoutKind::TwoColumns);
+        let regions = document.layout.regions(area);
+        let (first, second) = (regions[0].0, regions[1].0);
+        assert!(document.layout.leaf(first).expect("first").shadows(), "a fresh split draws the shadow twice");
+
+        document.toggle_shadows();
+        assert!(!document.layout.leaf(first).expect("first").shadows(), "the active view lost its shadow");
+        assert!(document.layout.leaf(second).expect("second").shadows(), "its neighbour still draws one");
+        assert!(!document.frame().contact_shadows.visible, "the frame's fallback follows the active view");
+        assert!(document.frame().contact_shadows.strength > 0.0, "the switch never rewrites the intensity");
+
+        document.layout.set_active(second);
+        document.toggle_shadows();
+        assert!(!document.layout.leaf(second).expect("second").shadows());
+        assert_eq!(document.session.project().revision(), revision, "a view switch is never an edit");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 0071. A contact shadow is one transparent ground ellipse
 
-- Status: Accepted
+- Status: Superseded by 0142
 - Date: 2026-11-08
 
 ## Context

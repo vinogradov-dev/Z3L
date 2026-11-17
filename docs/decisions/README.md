@@ -75,7 +75,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0068](0068-the-workspace-lives-outside-the-document.md) | The workspace lives outside the document | Accepted |
 | [0069](0069-the-light-variant-is-a-second-palette.md) | The light variant is a second palette | Accepted |
 | [0070](0070-display-styles-are-frame-data.md) | Display styles are frame data | Accepted |
-| [0071](0071-a-contact-shadow-is-one-transparent-ground-ellipse.md) | A contact shadow is one transparent ground ellipse | Accepted |
+| [0071](0071-a-contact-shadow-is-one-transparent-ground-ellipse.md) | A contact shadow is one transparent ground ellipse | Superseded by 0142 |
 | [0072](0072-a-contour-joint-is-judged-with-the-drawing-tolerance.md) | A contour joint is judged with the drawing tolerance | Accepted |
 | [0073](0073-a-drawn-figure-remembers-its-shape.md) | A drawn figure remembers its shape | Accepted |
 | [0074](0074-an-extrusion-owns-the-path-it-grew-from.md) | An extrusion owns the path it grew from | Accepted |
@@ -147,6 +147,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0139](0139-a-sphere-is-drawn-around-its-centre.md) | A sphere is drawn around its centre | Accepted |
 | [0140](0140-the-corner-display-is-a-diagnostic-block-the-maker-can-read.md) | The corner display is a diagnostic block the maker can read | Accepted |
 | [0141](0141-a-cone-is-drawn-by-its-base-circle.md) | A cone is drawn by its base circle | Accepted |
+| [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071 |
 
 ## Format
 

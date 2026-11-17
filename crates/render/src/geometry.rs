@@ -1,6 +1,6 @@
 //! The vertex builders: frame data in, GPU-ready vertices out.
 //!
-//! A builder reads a frame (`Drawable`, `Polyline`, `Grid`, `ContactShadow`) and returns a
+//! A builder reads a frame (`Drawable`, `Polyline`, `Grid`) and returns a
 //! [`MeshVertex`] list — or a triangle list for the contact shadows — without a device, a queue or
 //! a buffer. `gpu.rs` owns the device objects and the renderer decides when to call a builder, so
 //! this module holds no wgpu type and can be tested without one.
@@ -26,7 +26,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use geom::{DMat4, DVec3, MeshData};
-use scene::{ContactShadow, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
+use scene::{Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
 
 use crate::RenderError;
 use crate::pipelines::MAX_STENCIL_OWNERS;
@@ -38,17 +38,14 @@ pub(crate) const MAX_VERTICES: usize = 4_000_000;
 /// Largest number of grid divisions on each side of the origin.
 pub(crate) const MAX_GRID_DIVISIONS: i64 = 512;
 
-/// Segments in one contact-shadow ellipse.
+/// The floor plate's four corners, in the order its two triangles read them.
 ///
-/// The falloff is interpolated across the fan, so a small count is already smooth; 48 keeps the
-/// edge round at a close zoom for 49 vertices per object.
-pub(crate) const SHADOW_SEGMENTS: usize = 48;
-
-/// Most contact shadows one frame may upload.
-///
-/// A shadow is a fan of [`SHADOW_SEGMENTS`] triangles; this cap is far above any furniture scene and
-/// keeps a hostile frame from allocating unbounded geometry.
-pub(crate) const MAX_CONTACT_SHADOWS: usize = 4096;
+/// Seen from `+Z` the winding runs counter-clockwise, which is what lets the plate's pipeline draw
+/// it from above and cull it from below: a view from under the floor keeps the model instead of
+/// losing it behind the ground.
+const FLOOR_CORNERS: [(f32, f32); 4] = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+/// The plate's two triangles, as indices into [`FLOOR_CORNERS`].
+const FLOOR_INDICES: [u32; 6] = [0, 1, 2, 0, 2, 3];
 
 /// One dash cycle of a product envelope, as a fraction of its longest side.
 ///
@@ -166,58 +163,29 @@ pub(crate) fn sort_back_to_front(centres: &[DVec3], eye: DVec3, order: &mut Vec<
     });
 }
 
-/// Builds one triangle fan per contact shadow on the ground plane.
+/// Builds the floor plate: one quad on `z = 0` across the square the grid draws.
 ///
-/// The centre vertex has full vertex alpha and the rim has none, so the fragment interpolates a
-/// radial falloff; the uniform multiplies it by the shadow strength, which is why the colour and
-/// the switch never reach this buffer. A malformed ellipse is an error instead of a silently
-/// missing shadow.
-pub(crate) fn shadow_geometry(shadows: &[ContactShadow]) -> Result<(Vec<MeshVertex>, Vec<u32>), RenderError> {
-    if shadows.len() > MAX_CONTACT_SHADOWS {
-        return Err(RenderError::TooManyShadows { count: shadows.len(), max: MAX_CONTACT_SHADOWS });
+/// The plate is the surface the ground shadow falls on, so it is the one piece of the frame that is
+/// neither lit nor a body: its colour arrives in the vertex colour, and the fragment shader mixes
+/// the shadow into it. It writes depth, because a body standing on the ground has to be nearer than
+/// the ground for the frame to read.
+///
+/// The corners are the grid's own square so the two never disagree, and the winding runs
+/// counter-clockwise seen from `+Z` so a view from below culls the plate.
+pub(crate) fn floor_vertices(extent_mm: f64, color: [f32; 4], z: f32) -> Vec<MeshVertex> {
+    if !extent_mm.is_finite() || extent_mm <= 0.0 || !color.iter().all(|channel| channel.is_finite()) {
+        return Vec::new();
     }
-    let vertices_per_shadow = SHADOW_SEGMENTS.saturating_add(1);
-    let indices_per_shadow = SHADOW_SEGMENTS.saturating_mul(3);
-    let vertex_count = shadows
-        .len()
-        .checked_mul(vertices_per_shadow)
-        .ok_or(RenderError::TooManyShadows { count: shadows.len(), max: MAX_CONTACT_SHADOWS })?;
-    let index_count = shadows
-        .len()
-        .checked_mul(indices_per_shadow)
-        .ok_or(RenderError::TooManyShadows { count: shadows.len(), max: MAX_CONTACT_SHADOWS })?;
-    if vertex_count > MAX_VERTICES || index_count > MAX_VERTICES {
-        return Err(RenderError::TooManyShadows { count: shadows.len(), max: MAX_CONTACT_SHADOWS });
-    }
-    let mut vertices = Vec::with_capacity(vertex_count);
-    let mut indices = Vec::with_capacity(index_count);
-    for (index, shadow) in shadows.iter().enumerate() {
-        let [radius_x, radius_y] = shadow.radii;
-        if !shadow.center.is_finite() || !radius_x.is_finite() || !radius_y.is_finite() {
-            return Err(RenderError::InvalidShadow { index });
-        }
-        if radius_x <= 0.0 || radius_y <= 0.0 {
-            return Err(RenderError::InvalidShadow { index });
-        }
-        let center = to_array(shadow.center);
-        let base = u32::try_from(vertices.len()).map_err(|_| RenderError::InvalidShadow { index })?;
-        vertices.push(MeshVertex { position: center, normal: [0.0, 0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
-        for step in 0..SHADOW_SEGMENTS {
-            let angle = std::f64::consts::TAU * (step as f64) / (SHADOW_SEGMENTS as f64);
-            let position = [
-                (shadow.center.x + radius_x * angle.cos()) as f32,
-                (shadow.center.y + radius_y * angle.sin()) as f32,
-                shadow.center.z as f32,
-            ];
-            vertices.push(MeshVertex { position, normal: [0.0, 0.0, 1.0], color: [1.0, 1.0, 1.0, 0.0] });
-        }
-        for step in 0..SHADOW_SEGMENTS {
-            let current = base + 1 + step as u32;
-            let next = base + 1 + ((step + 1) % SHADOW_SEGMENTS) as u32;
-            indices.extend_from_slice(&[base, current, next]);
-        }
-    }
-    Ok((vertices, indices))
+    let extent = extent_mm as f32;
+    FLOOR_CORNERS
+        .iter()
+        .map(|(x, y)| MeshVertex { position: [x * extent, y * extent, z], normal: [0.0, 0.0, 1.0], color })
+        .collect()
+}
+
+/// The floor plate's index list, in the winding [`floor_vertices`] builds.
+pub(crate) fn floor_indices() -> [u32; 6] {
+    FLOOR_INDICES
 }
 
 /// Flattens every frame polyline into one line-list vertex buffer.

@@ -240,14 +240,9 @@ messages! {
         "Скрыть куб в углу, кнопку «домой» и переключатель проекции; виды остаются доступны из кластера"
     ],
     AuthoredCameraOwns = ["An authored camera owns the projection", "Проекцию задаёт авторская камера"],
-    ContactShadows = ["Contact shadows", "Контактные тени"],
-    ContactShadowsHint = [
-        "A soft shadow under every object that rests on the floor.",
-        "Мягкая тень под каждым объектом, стоящим на полу."
-    ],
     GridStrength = ["Floor grid", "Сетка пола"],
     EdgesStrength = ["Outlines", "Контуры"],
-    ShadowStrength = ["Contact shadow", "Контактная тень"],
+    ShadowStrength = ["Shadow strength", "Сила тени"],
     GridStrengthHint = [
         "Brightness of the work-plane floor grid; 0 hides it.",
         "Яркость сетки пола; 0 скрывает её."
@@ -257,18 +252,18 @@ messages! {
         "Сила контурной обводки; 0 оставляет только заливку."
     ],
     ShadowStrengthHint = [
-        "Strength of the soft shadow under the objects that rest on the floor.",
-        "Сила мягкой тени под объектами, стоящими на полу."
+        "How far the floor darkens under the shadow the key light casts.",
+        "Насколько сильно тень от ключевого света затемняет пол."
     ],
     DisplayConfigure = ["Configure…", "Настроить…"],
     DisplayConfigureHint = [
-        "Opens Settings › View for the display strengths.",
-        "Открывает «Настройки › Вид» для силы отображения."
+        "Opens Settings › View for the floor grid and outline strengths.",
+        "Открывает «Настройки › Вид» для силы сетки пола и контуров."
     ],
     ResetDisplay = ["Reset display", "Сбросить отображение"],
     ResetDisplayHint = [
-        "Restores the floor grid, outline and contact shadow strengths to 60 / 70 / 40.",
-        "Возвращает силу сетки пола, контуров и контактной тени: 60 / 70 / 40."
+        "Restores the floor grid, outline and ground shadow strengths to 60 / 70 / 40.",
+        "Возвращает силу сетки пола, контуров и тени на полу: 60 / 70 / 40."
     ],
     SectionAdditional = ["Additional", "Дополнительно"],
     WorkPlane = ["Work plane · {}", "Рабочая плоскость · {}"],

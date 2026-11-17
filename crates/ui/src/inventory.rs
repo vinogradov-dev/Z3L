@@ -223,6 +223,9 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "view.projection.toggle", key: egui::Key::O, chord: Chord::Plain, label: "O" },
     Binding { id: "view.projection.frame-all", key: egui::Key::F, chord: Chord::Plain, label: "F" },
     Binding { id: "view.snaps.grid", key: egui::Key::G, chord: Chord::Plain, label: "G" },
+    // The ground shadow is a view mode, not a tool: its switch is drawn by the View tab's Display
+    // group and filed as an atom, because it writes no document (U107).
+    Binding { id: "view.display.shadows", key: egui::Key::S, chord: Chord::Plain, label: "S" },
     Binding { id: "sketch.create.line", key: egui::Key::L, chord: Chord::Plain, label: "L" },
     Binding { id: "sketch.create.polyline", key: egui::Key::P, chord: Chord::Plain, label: "P" },
     Binding { id: "sketch.create.arc", key: egui::Key::A, chord: Chord::Plain, label: "A" },
@@ -758,6 +761,16 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Container),
         icon: Some(crate::icons::scene::VOID),
     },
+    // The ground shadow's switch is view state: it writes no document, leaves no undo entry and the
+    // renderer reads it per view (U107). Its intensity is one workspace value beside it, which the
+    // Display group's field edits.
+    Row {
+        id: "view.display.shadows",
+        label: Message::ToolShadows,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::view::SHADOWS),
+    },
 ];
 
 /// The row a command id names, if the inventory knows it.
@@ -770,7 +783,7 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void"];
+pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "view.display.shadows"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {

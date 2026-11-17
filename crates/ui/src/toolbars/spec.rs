@@ -81,6 +81,8 @@ pub enum ToolKind {
     Projection,
     /// Turns the work-plane grid snap on or off.
     GridSnap,
+    /// Turns the ground shadow of the active view on or off (U107).
+    Shadows,
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
     /// Arms the niche tool: the pointer names the empty space inside the open product and writes
@@ -341,12 +343,15 @@ impl TabSpec {
         self.groups.iter().any(GroupSpec::is_live)
     }
 
-    /// The number of tool cells the tab's body takes, one per live tool of its groups.
+    /// The number of cells the tab's body takes: one per live tool, and the two a group's value
+    /// draws.
     ///
     /// A split cell adds its caret column beside its cell, so this is the pitch the row keeps and not
     /// its drawn width (X36).
     pub fn columns(&'static self) -> usize {
-        self.live_groups().map(GroupSpec::columns).sum()
+        self.live_groups()
+            .map(|group| group.columns() + if value_of(group.id).is_some() { VALUE_COLUMNS } else { 0 })
+            .sum()
     }
 
     /// The groups the body draws, in order; a group of only planned tools is skipped.
@@ -1007,7 +1012,17 @@ const VIEW: [GroupSpec; 5] = [
         tools: &[
             planned("view.display.style", Message::ToolStyle),
             planned("view.display.contours", Message::ToolContours),
-            planned("view.display.shadows", Message::ToolShadows),
+            // The shadow is a view mode: its switch sits in this group beside the intensity field
+            // the group draws, and one cell of a split may draw it while its neighbour does not
+            // (U107).
+            ToolSpec {
+                id: "view.display.shadows",
+                label: Message::ToolShadows,
+                icon: Some(icons::view::SHADOWS),
+                run: Some(ToolKind::Shadows),
+                method: None,
+                variants: &[],
+            },
             planned("view.display.section", Message::ToolSection),
         ],
     },
@@ -1047,6 +1062,67 @@ const VIEW: [GroupSpec; 5] = [
 /// A tool whose command does not exist yet: it holds its place and its name in the map.
 const fn planned(id: &'static str, label: Message) -> ToolSpec {
     ToolSpec { id, label, icon: None, run: None, method: None, variants: &[] }
+}
+
+/// A whole-number value a group draws beside its cells.
+///
+/// The map is *tools*, and a value is not one: it runs no command, has no method and leaves no undo
+/// entry — it is one number the workspace owns, and the caption over it says what it belongs to.
+/// So it sits in its own table instead of widening every [`GroupSpec`] with a field (U76, U107).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValueSpec {
+    /// What the number is, which is also how the drawing reads and writes it.
+    pub kind: ValueKind,
+    /// The words of its accessible name.
+    pub label: Message,
+    /// The sentence its tooltip carries, which says what the number does.
+    pub hint: Message,
+    /// The whole numbers the field offers.
+    pub range: core::ops::RangeInclusive<u32>,
+    /// How far one pixel of horizontal travel moves it.
+    pub speed: f64,
+    /// The unit, drawn dim outside the box (ADR 0092).
+    pub unit: &'static str,
+}
+
+/// The values a group can carry; the ribbon's drawing resolves each one to its field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    /// The workspace's ground-shadow intensity, in percent (U107).
+    ShadowStrength,
+}
+
+/// The width a group's value takes, in cells: the shared numeric field is exactly two cells wide.
+pub const VALUE_COLUMNS: usize = 2;
+
+/// One value and the group whose row draws it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupValue {
+    /// The id of the group it is drawn in, `tab.group`.
+    pub group: &'static str,
+    /// The value itself.
+    pub value: ValueSpec,
+}
+
+/// Every value a group's row draws beside its cells.
+///
+/// One row per group: a display value has no command of its own, so there is nowhere else to file it
+/// and no surface that could grow a second one (U107).
+pub static VALUES: &[GroupValue] = &[GroupValue {
+    group: "view.display",
+    value: ValueSpec {
+        kind: ValueKind::ShadowStrength,
+        label: Message::ShadowStrength,
+        hint: Message::ShadowStrengthHint,
+        range: 0..=crate::settings::MAX_DISPLAY_STRENGTH,
+        speed: 0.4,
+        unit: "%",
+    },
+}];
+
+/// The value `group` draws, if it owns one.
+pub fn value_of(group: &str) -> Option<&'static ValueSpec> {
+    VALUES.iter().find(|row| row.group == group).map(|row| &row.value)
 }
 
 #[cfg(test)]
@@ -1187,7 +1263,10 @@ mod tests {
             ]
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
-        assert_eq!(live("view"), ["view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]);
+        assert_eq!(
+            live("view"),
+            ["view.display.shadows", "view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]
+        );
     }
 
     #[test]
@@ -1231,9 +1310,38 @@ mod tests {
             display.tools.iter().all(|tool| tool.run != Some(ToolKind::GridSnap)),
             "the snap is still filed under Display"
         );
-        // Display holds no live tool yet, so the ribbon captions no Display group; the first live
-        // display tool re-opens the body of this test.
-        assert_eq!(display.columns(), 0);
+        // The Display group now holds the shadow's switch, and the one intensity it is drawn with
+        // (U107).
+        let shadows = display.tools.iter().find(|tool| tool.id == "view.display.shadows").expect("the shadow cell");
+        assert_eq!(shadows.run, Some(ToolKind::Shadows));
+        assert_eq!(shadows.icon, Some(icons::view::SHADOWS));
+        assert_eq!(display.columns(), 1, "the switch is the group's only cell so far");
+        let value = value_of(display.id).expect("the display group draws its intensity");
+        assert_eq!(value.kind, ValueKind::ShadowStrength);
+        assert_eq!(value.range, 0..=crate::settings::MAX_DISPLAY_STRENGTH);
+        assert_eq!(value.unit, "%");
+    }
+
+    #[test]
+    fn every_value_is_drawn_in_a_group_that_exists_and_is_live() {
+        // A value is drawn after its group's cells, so a row naming no group — or a group the ribbon
+        // skips because every tool in it is planned — would be a number nobody can see (U107).
+        for row in VALUES {
+            let group = tabs()
+                .iter()
+                .flat_map(|tab| tab.groups)
+                .find(|group| group.id == row.group)
+                .unwrap_or_else(|| panic!("`{}` names no group", row.group));
+            assert!(group.is_live(), "`{}` is drawn in a group the ribbon skips", row.group);
+            assert!(row.value.range.start() < row.value.range.end(), "`{}` offers no travel", row.group);
+            assert!(row.value.speed > 0.0, "`{}` cannot be scrubbed", row.group);
+            assert_eq!(
+                value_of(row.group).map(|value| value.kind),
+                Some(row.value.kind),
+                "`{}` answers another value",
+                row.group
+            );
+        }
     }
 
     #[test]
@@ -1377,6 +1485,7 @@ mod tests {
             ToolKind::FrameAll,
             ToolKind::Projection,
             ToolKind::GridSnap,
+            ToolKind::Shadows,
             ToolKind::Measure,
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
@@ -1437,12 +1546,15 @@ mod tests {
         assert_eq!(tab("model").expect("model").columns(), 5);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        assert_eq!(tab("view").expect("view").columns(), 3);
+        assert_eq!(tab("view").expect("view").columns(), 6);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
         assert_eq!(widest, 9, "the sketch tab is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
+        // The View tab's six cells are the projection pair, the shadow switch, its intensity field
+        // (two cells, U107) and the snap.
+        assert_eq!(tab("view").expect("view").columns(), 2 + 1 + VALUE_COLUMNS + 1);
     }
 
     #[test]

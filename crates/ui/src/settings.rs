@@ -77,7 +77,10 @@ pub const DEFAULT_GRID_STRENGTH: u32 = 60;
 /// The form-outline strength a fresh workspace opens with, in percent.
 pub const DEFAULT_EDGE_STRENGTH: u32 = 70;
 
-/// The contact-shadow strength a fresh workspace opens with, in percent.
+/// The ground-shadow strength a fresh workspace opens with, in percent.
+///
+/// The view's switch is beside it in the View tab's Display group, which is where the intensity is
+/// edited (U107); this is only the value a workspace starts with and the one the reset restores.
 pub const DEFAULT_SHADOW_STRENGTH: u32 = 40;
 
 /// How many recent files the workspace remembers.
@@ -278,7 +281,10 @@ pub struct ViewportSettings {
     pub grid_strength: u32,
     /// The strength of the form-outline pass, in percent; 0 leaves the fill only.
     pub edge_strength: u32,
-    /// The strength of the contact shadow under the objects, in percent.
+    /// How far the ground shadow darkens the floor plate, in percent (U107).
+    ///
+    /// One value for every view and a workspace default, because the shadow's *switch* is the view's
+    /// leaf and its intensity is a taste knob nobody wants four different answers to.
     pub shadow_strength: u32,
     /// Whether the edge pass draws every triangle edge, diagonals included.
     pub all_edges: bool,
@@ -930,11 +936,14 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64).
+    //
+    // The shadow's intensity is not here: its switch left for the View tab, and one value with one
+    // control belongs beside it, which is what the Display group draws (U107). The value is still a
+    // workspace default, so the reset below restores it with the other two.
     ui.label(egui::RichText::new(Message::DisplayHeading.text(lang)).strong());
     for (value, label, hint) in [
         (&mut settings.viewport.grid_strength, Message::GridStrength, Message::GridStrengthHint),
         (&mut settings.viewport.edge_strength, Message::EdgesStrength, Message::EdgesStrengthHint),
-        (&mut settings.viewport.shadow_strength, Message::ShadowStrength, Message::ShadowStrengthHint),
     ] {
         changed |= ui
             .add(egui::Slider::new(value, 0..=MAX_DISPLAY_STRENGTH).text(label.text(lang)))

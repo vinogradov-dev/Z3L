@@ -1167,6 +1167,80 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
 /// difference between the two outlines can be read from a rectangle. The four files are
 /// `band-window-dark.png`, `band-crossing-dark.png` and the light pair.
 #[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/shadows-*.png"]
+fn the_shadow_is_per_view_and_the_view_tab_carries_both_controls() {
+    // U107: the View tab's Display group holds the shadow's switch and its one intensity, and a
+    // split workspace darkens one cell's floor while the other keeps its own (ADR 0142).
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    // The 200 % cell is the one that shows whether the field and the glyph survive the scale.
+    for (name, variant, scale) in
+        [("dark", ThemeChoice::Dark, 100), ("light", ThemeChoice::Light, 100), ("dark-200", ThemeChoice::Dark, 200)]
+    {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("shadows-{name}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        settings.appearance.ui_scale = scale;
+        let session = crate::scene_build::demo_session().expect("the sample session builds");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        {
+            let document = app.tabs.active_mut();
+            document.set_ribbon_open(true);
+            document.editor.set_ribbon_tab(ui::toolbars::spec::tab("view").expect("the view tab exists"));
+        }
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("shadows-view-tab-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        println!("the {name} View tab's Display group is in {}", path.display());
+        if scale != 100 {
+            continue;
+        }
+
+        // The same view with the switch off, for the eye to compare with the picture above: the
+        // floor keeps its plate and loses the silhouette (U107).
+        app.tabs.active_mut().toggle_shadows();
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("shadows-off-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        println!("the {name} shadow switched off is in {}", path.display());
+
+        // Four cells of one workspace: the active front view draws no shadow while the top and the
+        // axonometric cells keep theirs, so the split is one switch per view, not one per window.
+        {
+            let document = app.tabs.active_mut();
+            document.toggle_shadows();
+            document.set_layout(crate::view_layout::LayoutKind::Quad);
+            document.toggle_shadows();
+        }
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("shadows-split-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the {name} four views with one shadow switched off are in {}", path.display());
+    }
+}
+
+#[test]
 #[ignore = "needs a GPU adapter; writes target/ui-shots/band-*.png"]
 fn the_rubber_band_is_painted_offscreen_in_both_themes() {
     let render_state = match render_state() {
