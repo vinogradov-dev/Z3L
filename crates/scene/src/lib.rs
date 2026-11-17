@@ -789,12 +789,18 @@ impl SceneFrame {
     ///
     /// A line chain has no thickness, so it is hit when the ray passes within
     /// [`LINE_PICK_RADIUS_POINTS`] points of a segment at that segment's depth; `viewport_height` is
-    /// the viewport's height in points. A path wins a tie with a solid it lies on. Malformed vertices,
-    /// indices and transforms are skipped.
+    /// the viewport's height in points. A path wins a tie with a solid it lies on. Malformed
+    /// vertices, indices and transforms are skipped.
+    ///
+    /// A drawable is cast only when the ray reaches the box its mesh cache measured, and not at all
+    /// when that box begins behind a nearer hit, so a click costs a small multiple of the frame's
+    /// objects rather than of its triangles (X59). A drawable whose box was never measured is cast
+    /// regardless.
     pub fn pick_surface(&self, ray: Ray, viewport_height: f64) -> Option<Id> {
         let mut nearest: Option<(f64, Id)> = None;
         for drawable in &self.drawables {
-            let Some(distance) = ray_hit_drawable(ray, drawable) else {
+            let limit = nearest.map_or(f64::INFINITY, |(best, _)| best);
+            let Some(distance) = ray_hit_drawable(ray, drawable, limit) else {
                 continue;
             };
             if nearest.is_none_or(|(best, _)| distance < best) {
@@ -1624,6 +1630,86 @@ mod tests {
             normals: Vec::new(),
             indices: vec![0, 1, 2, 0, 2, 3],
         })
+    }
+
+    /// A mesh of `count` triangles fanned around the unit square, so a test can tell one triangle
+    /// apart from a thousand in what a cast read.
+    fn fan_mesh(count: usize) -> Arc<MeshData> {
+        let mut positions = Vec::with_capacity(count + 1);
+        positions.push([0.5, 0.5, 0.0]);
+        let mut indices = Vec::with_capacity(count * 3);
+        for step in 0..count {
+            let angle = std::f64::consts::TAU * (step as f64 / count as f64);
+            positions.push([0.5 + 0.4 * angle.cos() as f32, 0.5 + 0.4 * angle.sin() as f32, 0.0]);
+            let first = u32::try_from(step + 1).expect("a small index");
+            let second = u32::try_from((step + 1) % count + 1).expect("a small index");
+            indices.extend_from_slice(&[0, first, second]);
+        }
+        Arc::new(MeshData { positions, normals: Vec::new(), indices })
+    }
+
+    /// A field of `count` drawables sharing one mesh, `step` millimetres apart along `-Z` below the
+    /// origin: the stack a ray from above crosses one after another.
+    fn stacked_field(count: usize, mesh: Arc<MeshData>, step: f64) -> SceneFrame {
+        let mut frame = SceneFrame::default();
+        for index in 0..count {
+            let id = Id::new(u64::try_from(index + 2).expect("a small id")).expect("id");
+            let transform = DMat4::from_translation(DVec3::new(0.0, 0.0, -step * index as f64));
+            frame.push(Drawable::with_box(id, mesh.clone(), transform, [1.0; 4], mesh.local_bounds()));
+        }
+        frame
+    }
+
+    #[test]
+    fn a_pick_over_empty_space_reads_no_triangle_of_a_dense_frame() {
+        let frame = stacked_field(2_000, fan_mesh(64), 10.0);
+        let mesh_triangles = frame.drawables()[0].mesh.triangle_count();
+        assert_eq!(mesh_triangles, 64, "the fixture builds the triangles the counter is compared with");
+
+        // A vertical ray a hundred millimetres beside the stack: every drawable's box lies to one
+        // side of it, so the frame answers without reading a vertex.
+        let beside = Ray::new(DVec3::new(100.0, 0.5, 10.0), -DVec3::Z).expect("ray");
+        crate::ray::reset_triangles_tested();
+        assert_eq!(frame.pick(beside, 600.0), None);
+        assert_eq!(crate::ray::triangles_tested(), 0, "2000 objects of {mesh_triangles} triangles each: none is cast");
+
+        // And a ray that misses from the front, so the rejection is not only the empty-space case.
+        let ahead = Ray::new(DVec3::new(0.5, 0.5, 10.0), DVec3::Z).expect("ray");
+        crate::ray::reset_triangles_tested();
+        assert_eq!(frame.pick(ahead, 600.0), None, "the stack is behind the ray");
+        assert_eq!(crate::ray::triangles_tested(), 0);
+    }
+
+    #[test]
+    fn a_pick_over_the_model_returns_the_same_id_and_skips_what_is_behind_it() {
+        let frame = stacked_field(2_000, fan_mesh(64), 10.0);
+        let nearest = frame.drawables()[0].id;
+
+        let from_above = Ray::new(DVec3::new(0.5, 0.5, 10.0), -DVec3::Z).expect("ray");
+        crate::ray::reset_triangles_tested();
+        assert_eq!(
+            frame.pick(from_above, 600.0),
+            Some(nearest),
+            "the top of the stack is the object the click points at"
+        );
+        assert_eq!(crate::ray::triangles_tested(), 64, "the objects behind the hit are rejected by their boxes");
+
+        // From below the same stack answers with the lowest object, so the narrowing never reorders.
+        let last = frame.drawables()[frame.drawables().len() - 1].id;
+        let from_below = Ray::new(DVec3::new(0.5, 0.5, -20_000.0), DVec3::Z).expect("ray");
+        assert_eq!(frame.pick(from_below, 600.0), Some(last));
+    }
+
+    #[test]
+    fn a_drawable_of_unknown_extent_is_still_cast() {
+        let id = Id::new(9).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push(Drawable::with_box(id, quad_mesh(), DMat4::IDENTITY, [1.0; 4], None));
+
+        let through = Ray::new(DVec3::new(0.5, 0.5, 10.0), -DVec3::Z).expect("ray");
+        assert_eq!(frame.pick(through, 600.0), Some(id), "no measured box means no rejection, not no drawable");
+        let beside = Ray::new(DVec3::new(2.0, 2.0, 10.0), -DVec3::Z).expect("ray");
+        assert_eq!(frame.pick(beside, 600.0), None);
     }
 
     #[test]

@@ -1203,6 +1203,55 @@ mod tests {
         (cold, warm, edit, whole)
     }
 
+    /// A click used to cost every triangle of every object: 16 / 64 / 161 ms at 500 / 2 000 /
+    /// 5 000 spheres (0.48 M / 1.9 M / 4.8 M triangles), because the cast walked the whole index
+    /// buffer of each drawable whether or not the ray could reach it. It now rejects a drawable by
+    /// the box its mesh cache measured, so a click costs a small multiple of the objects (X59).
+    #[test]
+    fn a_click_costs_the_objects_and_not_their_triangles() {
+        for count in [500, 2_000, 5_000] {
+            let session = sphere_field(count);
+            let mut kernel = TruckKernel::new();
+            let mut cache = EvaluationCache::new();
+            let frame = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None)
+                .expect("the stress scene")
+                .frame;
+            let triangles: usize = frame.drawables().iter().map(|drawable| drawable.mesh.triangle_count()).sum();
+
+            // A click through empty space is the case that used to walk everything: no box of the
+            // field is near the ray, so the whole frame answers without reading a vertex.
+            let empty = scene::Ray::new(DVec3::new(-1.0e6, -1.0e6, 1_000.0), -DVec3::Z).expect("ray");
+            // And a click into the field, which does cast the object it points at.
+            let model = frame.camera.ray_ndc(0.0, 0.0, 16.0 / 9.0);
+            let empty_cost = fastest_pick(&frame, empty);
+            let model_cost = fastest_pick(&frame, model);
+            println!(
+                "pick at {count} spheres, {triangles} triangles: empty {empty_cost:?}, on the model {model_cost:?}"
+            );
+            assert_eq!(frame.pick(empty, 600.0), None, "the empty click hits nothing");
+            assert!(frame.pick(model, 600.0).is_some(), "the model click hits a ball");
+            assert!(
+                empty_cost < std::time::Duration::from_millis(20),
+                "{count} objects answer an empty click in {empty_cost:?}"
+            );
+            assert!(
+                model_cost < std::time::Duration::from_millis(20),
+                "{count} objects answer a click on the model in {model_cost:?}"
+            );
+        }
+    }
+
+    /// The fastest of five picks of one frame with `ray`, so a busy machine reports its best case.
+    fn fastest_pick(frame: &SceneFrame, ray: scene::Ray) -> std::time::Duration {
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let _ = frame.pick(ray, 600.0);
+            best = best.min(started.elapsed());
+        }
+        best
+    }
+
     /// The fastest of `runs` evaluations of one document, so a busy machine reports its best case
     /// instead of nothing.
     fn fastest_evaluation(

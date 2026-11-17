@@ -15,12 +15,16 @@
 //! It refuses non-finite input, a zero-length direction, an index outside a mesh and a world
 //! transform that produces a non-finite vertex: each is skipped, never turned into a NaN distance.
 //!
+//! A cast reads a drawable's triangles only after the ray reached the box the mesh cache measured
+//! for it (X59): the box test is a handful of comparisons and drops every object a click cannot
+//! reach, so a cast costs a small multiple of the objects rather than of their triangles.
+//!
 //! It does not test containment, occlusion or self-intersection: a ray cast answers only what it
 //! crosses and how far. Picking a whole frame lives in [`crate::SceneFrame::pick`].
 //!
 //! Changes when: the ray primitive, a cast primitive or the pick tolerance changes.
 
-use geom::{DMat4, DVec3, MeshData};
+use geom::{Aabb, DMat4, DVec3, MeshData};
 
 use crate::camera::Camera;
 use crate::{Drawable, Polyline, ProductEnvelope};
@@ -30,6 +34,18 @@ use crate::{Drawable, Polyline, ProductEnvelope};
 /// A path is drawn one pixel wide, so a ray rarely crosses it exactly; this radius makes a click
 /// near the line select the path without making a whole viewport region its target.
 pub const LINE_PICK_RADIUS_POINTS: f64 = 6.0;
+
+// How many mesh triangles a cast has tested on this thread in a test build.
+//
+// A pick must reject a drawable by the box the mesh cache measured and never walk its triangles: a
+// frame of 5 000 spheres answers an empty-space click without touching one of 4.8 M triangles. The
+// probe asserts this, so a session that puts the whole-mesh loop back fails even on a machine fast
+// enough to hide it in the timing (X59).
+#[cfg(test)]
+thread_local! {
+    static TRIANGLES_TESTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A world-space ray used for picking.
 ///
 /// The direction is unit length. Construction returns `None` for non-finite input or a zero
@@ -105,30 +121,43 @@ pub(crate) fn ray_hit_product_envelope(ray: Ray, envelope: &ProductEnvelope) -> 
     if !origin.is_finite() || !direction.is_finite() {
         return None;
     }
-    ray_slab(origin, direction, size)
+    ray_slab(origin, direction, DVec3::ZERO, size)
 }
 
-/// The near distance where a local-space ray crosses the box `[0..size]`.
+/// The near distance where a ray crosses the box `min..max`, or `None` when it does not reach it.
+///
+/// This is the whole of a cast's first step: the box a mesh cache measured for a drawable is
+/// conservative, so a ray that misses it cannot cross a triangle the drawable holds (X56, X59).
 ///
 /// A direction parallel to an axis neither enters nor leaves through it, so the origin must already
 /// lie inside that slab; every other axis narrows the interval. The far plane behind the origin, or
-/// an empty interval, is no hit.
-fn ray_slab(origin: DVec3, direction: DVec3, size: DVec3) -> Option<f64> {
+/// an empty interval, is no hit. The distance is the entry point clamped to zero, so a ray that
+/// starts inside the box reports its origin instead of a negative value.
+pub(crate) fn ray_hit_box(ray: Ray, bounds: Aabb) -> Option<f64> {
+    ray_slab(ray.origin, ray.direction, bounds.min(), bounds.max())
+}
+
+fn ray_slab(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<f64> {
+    if !origin.is_finite() || !direction.is_finite() || !min.is_finite() || !max.is_finite() {
+        return None;
+    }
     // The inverse of a rotation puts a point that lies on a face a few floating-point steps
     // outside it; a micrometre of slack keeps an exact boundary inside the box.
     const SLACK_MM: f64 = 1.0e-6;
     let mut near = f64::NEG_INFINITY;
     let mut far = f64::INFINITY;
-    for (origin, direction, maximum) in
-        [(origin.x, direction.x, size.x), (origin.y, direction.y, size.y), (origin.z, direction.z, size.z)]
-    {
+    for (origin, direction, minimum, maximum) in [
+        (origin.x, direction.x, min.x, max.x),
+        (origin.y, direction.y, min.y, max.y),
+        (origin.z, direction.z, min.z, max.z),
+    ] {
         if direction.abs() < 1.0e-12 {
-            if origin < -SLACK_MM || origin > maximum + SLACK_MM {
+            if origin < minimum - SLACK_MM || origin > maximum + SLACK_MM {
                 return None;
             }
             continue;
         }
-        let first = -origin / direction;
+        let first = (minimum - origin) / direction;
         let second = (maximum - origin) / direction;
         let (entry, exit) = if first <= second { (first, second) } else { (second, first) };
         near = near.max(entry);
@@ -140,13 +169,27 @@ fn ray_slab(origin: DVec3, direction: DVec3, size: DVec3) -> Option<f64> {
     Some(near.max(0.0))
 }
 
-/// Distance along `ray` to the nearest triangle of `drawable`, if it crosses one.
+/// Distance along `ray` to the nearest triangle of `drawable`, if it crosses one before `limit`.
+///
+/// The drawable's world box is tested first, so a click through empty space never reads a vertex:
+/// only the objects the ray reaches are cast at all. `limit` is the nearest hit found so far (the
+/// caller's `f64::INFINITY` at the start): a box that begins behind it cannot hold a nearer
+/// triangle, and neither can the triangles inside it, so the whole drawable is skipped. A drawable
+/// whose extent was never measured is cast regardless — the box is a rejection test, not a filter.
 ///
 /// A malformed vertex, index or transform is skipped rather than ending the cast.
-pub(crate) fn ray_hit_drawable(ray: Ray, drawable: &Drawable) -> Option<f64> {
+pub(crate) fn ray_hit_drawable(ray: Ray, drawable: &Drawable, limit: f64) -> Option<f64> {
+    if let Some(bounds) = drawable.world_bounds() {
+        let entry = ray_hit_box(ray, bounds)?;
+        if entry >= limit {
+            return None;
+        }
+    }
     let mesh = &drawable.mesh;
     let mut nearest = f64::INFINITY;
     for triangle in mesh.indices.as_chunks::<3>().0 {
+        #[cfg(test)]
+        TRIANGLES_TESTED.with(|count| count.set(count.get().saturating_add(1)));
         let [i0, i1, i2] = *triangle;
         let (Some(v0), Some(v1), Some(v2)) = (
             world_vertex(mesh, i0, drawable.world_transform),
@@ -156,12 +199,24 @@ pub(crate) fn ray_hit_drawable(ray: Ray, drawable: &Drawable) -> Option<f64> {
             continue;
         };
         if let Some(distance) = ray_triangle(ray, v0, v1, v2)
-            && distance < nearest
+            && distance < nearest.min(limit)
         {
             nearest = distance;
         }
     }
     nearest.is_finite().then_some(nearest)
+}
+
+/// How many triangles the casts on this thread have tested since the counter was last reset.
+#[cfg(test)]
+pub(crate) fn triangles_tested() -> usize {
+    TRIANGLES_TESTED.with(std::cell::Cell::get)
+}
+
+/// Sets this thread's triangle counter back to zero.
+#[cfg(test)]
+pub(crate) fn reset_triangles_tested() {
+    TRIANGLES_TESTED.with(|count| count.set(0));
 }
 
 fn world_vertex(mesh: &MeshData, index: u32, transform: DMat4) -> Option<DVec3> {
@@ -261,4 +316,46 @@ pub fn ray_triangle(ray: Ray, v0: DVec3, v1: DVec3, v2: DVec3) -> Option<f64> {
     }
     let distance = edge2.dot(q) * inverse;
     (distance > 0.0).then_some(distance)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+
+    fn box_() -> Aabb {
+        Aabb::of_points([DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 10.0)]).expect("a box")
+    }
+
+    #[test]
+    fn a_box_reports_the_distance_where_the_ray_enters_it() {
+        let bounds = box_();
+        let through = Ray::new(DVec3::new(5.0, 5.0, 100.0), -DVec3::Z).expect("ray");
+        assert!((ray_hit_box(through, bounds).expect("the ray enters") - 90.0).abs() < 1.0e-9);
+
+        let inside = Ray::new(DVec3::new(5.0, 5.0, 5.0), -DVec3::Z).expect("ray");
+        assert_eq!(ray_hit_box(inside, bounds), Some(0.0), "a ray that starts inside enters at its origin");
+
+        let grazing = Ray::new(DVec3::new(10.0, 10.0, 100.0), -DVec3::Z).expect("ray");
+        assert!(ray_hit_box(grazing, bounds).is_some(), "a corner lies on the boundary, not outside it");
+    }
+
+    #[test]
+    fn a_box_the_ray_misses_or_leaves_behind_is_no_hit() {
+        let bounds = box_();
+        let beside = Ray::new(DVec3::new(50.0, 5.0, 100.0), -DVec3::Z).expect("ray");
+        assert_eq!(ray_hit_box(beside, bounds), None, "the box is to one side of the ray");
+
+        let behind = Ray::new(DVec3::new(5.0, 5.0, 100.0), DVec3::Z).expect("ray");
+        assert_eq!(ray_hit_box(behind, bounds), None, "the box is behind the origin");
+
+        let parallel = Ray::new(DVec3::new(5.0, 50.0, 100.0), -DVec3::Z).expect("ray");
+        assert_eq!(ray_hit_box(parallel, bounds), None, "a ray parallel to a face it never reaches is no hit");
+
+        // A parallel ray just outside the slab by a thousandth of a millimetre is still outside it:
+        // the slack on the boundary is a micrometre, not a tolerance a click can hide in.
+        let outside = Ray::new(DVec3::new(5.0, 10.001, 100.0), -DVec3::Z).expect("ray");
+        assert_eq!(ray_hit_box(outside, bounds), None);
+    }
 }
