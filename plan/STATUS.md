@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X58 state=doing base=00c8795 updated=2026-11-17
+STATE: milestone=M7 phase=T task=- state=idle base=9167b0d updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -39,7 +39,8 @@ layering rules and `ci` (P8); the plan gate follows every `files:` hint, a close
 
 ## Next
 
-X58 is next: the viewport draws every object in the scene, on screen or not
+Nothing is scheduled: X59 is next among the filed defects: a click still ray-casts every triangle of
+every object; X61 and X62 wait behind it.
 
 ## Index
 
