@@ -101,19 +101,6 @@ const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
 
-/// What the ribbon asked the window for beyond the document's own view state.
-///
-/// The document owns the per-view switches, so it toggles them itself; the display intensity is
-/// workspace data, so it comes back here for the shell to keep and to write once the gesture ends
-/// (U107).
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct RibbonAsk {
-    /// The *Product frame* cell asked for its card, which the window owns (ADR 0100).
-    pub(crate) product_card: bool,
-    /// The shadow intensity the Display group set, in percent, and whether the gesture ended.
-    pub(crate) shadow_strength: Option<(u32, bool)>,
-}
-
 /// The display state the window owns and every frame of this tab is built with.
 ///
 /// The floor grid, the edge list, the ground shadow's strength and the colours of the active theme
@@ -3211,16 +3198,15 @@ impl Document {
     /// The strip floats on the middle layer instead of taking height from the viewport, so the scene
     /// image runs under it and a translucent ribbon blends with the furniture (U51, ADR 0080). It is
     /// anchored to `design` — the window below the header — so resizing a side panel never reflows
-    /// it; the side panels are inset by [`Self::ribbon_inset`] instead. Returns what the ribbon asked
-    /// the window for: the product-frame card it owns, and the display value that belongs to the
-    /// workspace settings.
+    /// it; the side panels are inset by [`Self::ribbon_inset`] instead. Returns whether the ribbon
+    /// asked for the product-frame card, which the window owns.
     pub(crate) fn show_ribbon(
         &mut self,
         ui: &mut egui::Ui,
         design: egui::Rect,
         shell: &mut Shell,
         settings: &Settings,
-    ) -> RibbonAsk {
+    ) -> bool {
         let view = ui::RibbonView {
             perspective: matches!(
                 crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera()).projection(),
@@ -3228,10 +3214,9 @@ impl Document {
             ),
             owns_view: viewport_owns_view(self.session.project()),
             grid: self.draw_gizmo.grid(),
-            // The shadow switch is the active view's and its intensity the workspace's, so the
-            // Display group reads both without the ribbon owning either (U107).
+            // The shadow switch is the active view's; its intensity is the workspace's and has no
+            // control in the ribbon (U107, U110).
             shadows: self.layout.active_shadows(),
-            shadow_strength: settings.viewport.shadow_strength,
         };
         let mut outcome = None;
         // Whether the ruler or the niche owned the pointer before this frame, so a cell that armed
@@ -3262,9 +3247,9 @@ impl Document {
         // so the viewport reads a press or the pointer inside it as chrome, and the list's own cursor
         // is the one the frame shows (X37).
         shell.list_rect = outcome.as_ref().and_then(|outcome| outcome.list_rect);
-        let mut ask = RibbonAsk::default();
+        let mut open_product_card = false;
         if let Some(outcome) = outcome {
-            ask.product_card = outcome.open_product_card;
+            open_product_card = outcome.open_product_card;
             if outcome.started_drawing {
                 self.draw_gizmo.reset();
                 self.cancel_extrude();
@@ -3311,15 +3296,10 @@ impl Document {
                 }
                 Some(ui::RibbonViewAction::ToggleGrid) => self.draw_gizmo.toggle_grid(),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
-                Some(ui::RibbonViewAction::ShadowStrength { percent, settled }) => {
-                    // The value is the workspace's, so the window writes it; the frame already reads
-                    // the setting and never re-uploads for it (U107).
-                    ask.shadow_strength = Some((percent, settled));
-                }
                 None => {}
             }
         }
-        ask
+        open_product_card
     }
 
     /// Turns the ground shadow of the active view on or off (U107).

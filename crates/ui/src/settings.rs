@@ -936,8 +936,8 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64). The
-    // shadow's switch is the view's and sits in the View tab beside the same value (U107), so one
-    // number has one home here and one live field there — both read and write this setting.
+    // shadow's intensity is here alone: its *switch* is the view's, which is why the View tab draws
+    // the switch and no number (U107, U110).
     ui.label(egui::RichText::new(Message::DisplayHeading.text(lang)).strong());
     for (value, label, hint) in [
         (&mut settings.viewport.grid_strength, Message::GridStrength, Message::GridStrengthHint),
