@@ -188,6 +188,14 @@ mod tests {
     }
 
     #[test]
+    fn the_model_names_the_left_side_the_way_the_left_view_looks() {
+        // U111: the side names live in the model and the eye convention in the presets. This is the
+        // one place the two are compared, so the model cannot state a left the view disagrees with.
+        assert_eq!(model::Side::Left.axis().to_array(), OpeningView::Left.direction());
+        assert_eq!(model::Side::Front.axis().to_array(), OpeningView::Front.direction());
+    }
+
+    #[test]
     fn the_five_axis_views_are_standard_and_axonometric_is_not() {
         for view in OpeningView::ALL {
             assert_eq!(view.is_standard(), view != OpeningView::Axonometric);

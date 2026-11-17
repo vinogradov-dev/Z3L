@@ -40,6 +40,7 @@ mod primitive;
 mod project;
 mod properties;
 mod query;
+mod side;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod tree;
@@ -89,3 +90,4 @@ pub use properties::{
     SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION,
 };
 pub use query::{NodeQuery, PropertyPredicate, StructuralKind};
+pub use side::Side;

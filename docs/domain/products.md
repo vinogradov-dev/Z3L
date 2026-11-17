@@ -54,6 +54,22 @@ the product's own frame.
   face grip one, and the card three numbers. Each gesture is one undo entry. The grips show whenever
   the frame is selected, even when its dashed lines are hidden by the closed-with-parts state (0100).
 
+### 2.1 The words a dimension uses
+
+Three conventions decide every number on a wardrobe, and each one was guessed wrong once. `Side` in
+`crates/model/src/side.rs` carries the side names for the code, and a test in `crates/ui`
+ties `Side::Left` to `OpeningView::Left`, so a reader never infers a side from a mirrored picture.
+
+- **A spacing is the clear opening.** "A shelf at 340" and "shelves 320 apart" quote the clear
+  opening between two surfaces, not a step between centres and not a pitch. A count quoted with a
+  spacing is derived from the space, and the one cell that cannot hold a full opening absorbs the
+  remainder — an ordinary cell, never a squeezed spacing.
+- **The depth includes the fronts.** A depth is what the piece occupies in the room, so the fronts
+  are inside the number: an 800 × 560 × 2200 wardrobe has a 542 mm carcass and 560 mm overall.
+- **Left is `+X`.** The front view looks from `+Y` towards `-Y` with `+Z` up, so the side a viewer in
+  front of the piece sees on their left is `+X`; that is `Side::Left`, and `OpeningView::Left` looks
+  from it. A left door and a right door are named by the same rule.
+
 ## 3. Place in the tree
 
 - A product is the top node of its own assembly. Everything inside it — panels, facades, fittings,
