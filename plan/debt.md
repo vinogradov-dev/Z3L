@@ -138,10 +138,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[ui]` A creation tool lands at the scene root since X4; a node inside a container needs the
   explicit *Add child* arm of U31. Until then the only way is to create at the root and move the row
   in the tree.
-- `[ui]` The ribbon's *Model* tab wants a cone beside the box, cylinder and sphere, but
-  `PrimitiveKind` has no `Cone` and `crates/param` builds no cone solid, so the tab draws the three
-  primitives the document really has. A cone needs the model variant, the kernel plan and the drawn
-  `primitives/cone` asset in one change; drawing the icon alone would offer a tool that cannot build.
 - `[ui]` The regular polygon's `Sides` field has no refusal state: a value outside `3..=128` is
   clamped and a non-number falls back to six, while the field keeps the typed text. The tool builds
   a valid polygon instead of failing, but a typo is not named. A validated field can land with the

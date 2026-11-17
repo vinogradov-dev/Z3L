@@ -147,7 +147,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
 ## Next
-- `[ ]` **V6** there is no cone primitive
+## Done
+
+- `[x]` **V6** there is no cone primitive
   Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
    `assets/icons/primitives/cone.svg` is empty although U46 counted it as declared. The owner
    needs a truncated cone for a leg or a turned blank, and a sharp one when the top radius is
@@ -160,8 +162,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A cone is drawn from a base circle and a height, the card edits both radii and the
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
-  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
-## Done
+  `files: crates/model/src/primitive.rs,crates/mesh/src/primitive.rs,crates/ui/src/draw.rs,crates/ui/src/editor/drawing.rs,crates/ui/src/object_card.rs,crates/ui/src/toolbars/spec.rs,app/src/extrude_gizmo.rs,assets/icons/primitives/cone.svg` — `00c8795`
 
 - `[x]` **X63** identical created objects all carry the same name in the tree and the card
   Why: Observation: every created object is named after its shape alone (ui/editor/creation.rs:
