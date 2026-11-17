@@ -65,6 +65,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    map does not rebuild while the camera orbits; the ADR is written and `cargo xtask ci` is
    green.
   `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs`
+- `[ ]` **U109** the floor can be made see-through, and its shadow survives it
+  Why: Owner, 2026-11-17: the floor should be see-through with a setting of its own, and the
+   shadow must not suffer for it. U108 already made the plate write no depth, so a part under
+   the floor is drawn over it; what is still missing is the *tint*: the plate is opaque, so
+   below the floor you see the part instead of the part through the floor. The plate is drawn
+   first in the view pass today (ADR 0142 keeps it there so the shadow costs no pass of its
+   own), so blending it over what stands under it is an order change, not a colour change.
+  Shape: A workspace value beside the other display strengths:
+   `ViewportSettings::floor_opacity` in whole percent, sanitized, reset by *Reset display* and
+   round-tripped by the settings test, with its MIN/MAX and one `Message` in both languages. It
+   reaches the frame as frame data (`SceneFrame::floor_opacity`, read at draw time) and the
+   renderer writes it into the per-view camera uniform the plate already reads — one more `f32`
+   slot, because `shadow_plane` is full — so a drag costs no upload. The plate moves after the
+   opaque and translucent bodies and before the edges, with `ALPHA_BLENDING` and still no depth
+   write (U108), so it tints what stands under it and never hides it; the grid keeps the order
+   U108 gave it. The shadow keeps its strength: the fragment mixes the mask into the plate's
+   colour and the plate's alpha is `max(floor_opacity, cover * shadow_strength)`, so a shadowed
+   patch of floor stays as dark as it was at 100 % and a transparent floor cannot erase its own
+   shadow. At 0 % the plate and its shadow are gone, because a shadow needs a surface to darken
+   — the field's hint says so. An ADR is required: it changes two consequences of ADR 0142 (the
+   plate's place in the pass and an opaque plate), and it records the `max()` rule and why the
+   shadow is not a separate blended layer.
+  Done: At 100 % the floor looks exactly as it does today; at 40 % a shelf standing at -500 mm
+   is seen through the floor's tint and the shadow beside it is as dark as at 100 %; a change
+   of the value re-uploads nothing; the value survives a restart and Reset display restores it;
+   a shot pair at 100 % and 40 % with a part under the floor and a shadow on it; the ADR is
+   written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs`
 
 ## Done
 
