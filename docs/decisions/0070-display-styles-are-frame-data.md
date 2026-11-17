@@ -33,12 +33,14 @@ could only be tested by looking at a window.
   `NodeGeometry` beside the mesh under the same derivation inputs (ADR 0053). `Drawable` carries the
   shared `Arc<[u32]>`; the renderer transforms and flattens it, never searches.
 - That list holds **form edges only**: an edge used by one triangle is a boundary, and an edge shared
-  by two triangles is kept only when the surface turns across it by more than about 2.6°. A quad's
+  by two triangles is kept only when the surface turns across it by more than about 0.08°. A quad's
   triangulation diagonal and every other coplanar seam are dropped, so a box shows twelve edges and a
   triangular body shows its nine, not the wireframe of its triangles. The comparison is on the
   absolute normal dot product, so a coplanar pair emitted with opposite winding counts as flat too.
-  The full triangulation is a second list beside it, drawn only when the *show every triangle edge*
-  switch is on, which is a diagnostic view state and never a style.
+  The margin guards rounding noise in micrometre-rounded vertex positions, not a display radius: a
+  wider one (2.6°) erased the meridians of a finely tessellated ball near its poles and left the cap
+  drawn as bare rings. The full triangulation is a second list beside it, drawn only when the *show
+  every triangle edge* switch is on, which is a diagnostic view state and never a style.
 - The edge pass is a `LineList` draw after the face pass. wgpu rejects `DepthBiasState` on a line
   topology, so the bias lives on the **faces**: the opaque triangle pipeline pushes them away from the
   camera by a constant depth unit, and the unbias line then wins the comparison. A constant depth bias

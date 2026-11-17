@@ -145,19 +145,28 @@ pub fn object_mesh(mesh: &Mesh) -> Result<MeshData, MeshError> {
 }
 
 /// Two triangles sharing an edge lie on one surface when their normals differ by less than about
-/// 2.6 degrees. A quad's diagonal is exactly coplanar; a cube's edge turns by 90 degrees.
+/// 0.08 degrees. A quad's diagonal is exactly coplanar; a cube's edge turns by 90 degrees.
+///
+/// The margin guards rounding noise, not a display radius: a face normal is computed from positions
+/// that are micrometres rounded to `f32` millimetres, so two triangles of one flat face disagree by
+/// a few millionths of a degree rather than by zero. It must stay below the smallest fold a mesher
+/// produces on a body the user calls curved, so that a finely tessellated ball keeps its
+/// graticule: at 256 sides the meridian fold between two adjacent strips falls to about 0.001
+/// degrees, and an opaque margin of 2.6 degrees erased every meridian of a fine ball and left its
+/// poles bald while the latitude rings survived.
 ///
 /// The comparison is on the absolute dot product: a tessellator may emit a coplanar pair with
 /// opposite winding, and a fold of 180 degrees has no thickness to draw an edge on either.
-const COPLANAR_COS: f64 = 0.999;
+const COPLANAR_COS: f64 = 0.999_999;
 
 /// The display edges of a mesh: boundary and crease edges, two vertex indices per edge.
 ///
 /// Vertices are matched by their position quantised to one micrometre, so a flat-shaded mesh that
 /// stores one vertex per face still finds the edge a neighbouring triangle shares. An edge used by
 /// one triangle is a boundary and is kept. An edge shared by two triangles is kept only when the
-/// surface turns across it: a quad's diagonal and every other coplanar triangulation edge is
-/// dropped, while a cube's twelve edges survive. A degenerate triangle, a missing index and a
+/// surface turns across it by more than the coplanar margin allows: a quad's diagonal and every
+/// other coplanar triangulation edge is dropped, while a cube's twelve edges and a smooth body's
+/// finer graticule survive. A degenerate triangle, a missing index and a
 /// non-finite position contribute nothing, so the list is always safe to draw as a line list.
 ///
 /// The list is derived beside the mesh and cached with it under the same inputs (ADR 0053), so the
@@ -941,6 +950,108 @@ mod tests {
 
         let all = mesh_all_edges(&mesh);
         assert_eq!(all.len() / 2, 5, "the diagnostic list still carries the diagonal");
+    }
+
+    /// A flat cap cut into a grid of coplanar triangles: the form edges are the outline only.
+    #[test]
+    fn a_subdivided_flat_cap_shows_no_inner_edge() {
+        let side = 4usize;
+        let step = 10.0_f32;
+        let mut positions = Vec::with_capacity(side * side);
+        for row in 0..side {
+            for column in 0..side {
+                positions.push([column as f32 * step, row as f32 * step, 0.0]);
+            }
+        }
+        let vertex = |row: usize, column: usize| (row * side + column) as u32;
+        let mut indices = Vec::new();
+        for row in 0..side - 1 {
+            for column in 0..side - 1 {
+                let (a, b) = (vertex(row, column), vertex(row, column + 1));
+                let (c, d) = (vertex(row + 1, column + 1), vertex(row + 1, column));
+                indices.extend([a, b, c, a, c, d]);
+            }
+        }
+        let mesh = MeshData { positions, normals: Vec::new(), indices };
+        let outline = 4 * (side as u32 - 1);
+        assert_eq!(mesh_edges(&mesh).len() / 2, outline as usize, "a flat cap shows its outline and no inner edge");
+        // The diagnostic list keeps every triangulation edge: one diagonal per cell, plus the grid.
+        let grid = 2 * (side as u32 - 1) * side as u32 + (side as u32 - 1) * (side as u32 - 1);
+        assert_eq!(mesh_all_edges(&mesh).len() / 2, grid as usize);
+    }
+
+    /// The display edges of a sphere mesh, sorted the way a person reads the graticule: latitude
+    /// rings by height, the two pole-cap fans, and the meridian strips between two neighbouring
+    /// rings.
+    struct Graticule {
+        rings: std::collections::BTreeMap<i64, usize>,
+        poles: usize,
+        strips: std::collections::BTreeMap<(i64, i64), usize>,
+    }
+
+    fn graticule(mesh: &MeshData) -> Graticule {
+        let key = |value: f32| (f64::from(value) * 1000.0).round() as i64;
+        let is_pole = |point: &[f32; 3]| key(point[0]) == 0 && key(point[1]) == 0;
+        let mut graticule = Graticule { rings: Default::default(), poles: 0, strips: Default::default() };
+        for pair in mesh_edges(mesh).as_chunks::<2>().0 {
+            let (Some(a), Some(b)) = (mesh.positions.get(pair[0] as usize), mesh.positions.get(pair[1] as usize))
+            else {
+                continue;
+            };
+            if key(a[2]) == key(b[2]) {
+                *graticule.rings.entry(key(a[2])).or_default() += 1;
+            } else if is_pole(a) || is_pole(b) {
+                graticule.poles += 1;
+            } else {
+                let low = key(a[2]).min(key(b[2]));
+                let high = key(a[2]).max(key(b[2]));
+                *graticule.strips.entry((low, high)).or_default() += 1;
+            }
+        }
+        graticule
+    }
+
+    #[test]
+    fn a_fine_sphere_keeps_a_meridian_at_every_band_and_a_ring_at_every_latitude() {
+        // The observed defect: raising the side count removed meridians instead of adding them, so
+        // a 50 mm ball read bald at the poles from about 160 sides. The margin used to be 2.6
+        // degrees, which is wider than the meridian fold of a finely tessellated smooth surface.
+        let segments = 256usize;
+        let bands = 16usize;
+        let primitive = Primitive::sphere(millimetres(50), segments as u32, bands as u32).expect("a 50 mm ball");
+        let mesh = primitive_mesh(&primitive).expect("render mesh");
+        let graticule = graticule(&mesh);
+        assert_eq!(graticule.rings.len(), bands - 1, "one latitude ring at every band boundary");
+        assert!(
+            graticule.rings.values().all(|count| *count == segments),
+            "every ring runs all the way round: {:?}",
+            graticule.rings
+        );
+        assert_eq!(graticule.strips.len(), bands - 2, "a meridian strip between every pair of rings");
+        assert!(
+            graticule.strips.values().all(|count| *count == segments),
+            "every meridian strip runs pole to pole: {:?}",
+            graticule.strips
+        );
+        assert_eq!(graticule.poles, 2 * segments, "each pole keeps the fan that draws its meridians");
+    }
+
+    #[test]
+    fn the_default_sphere_wireframe_is_still_the_whole_graticule() {
+        let segments = model::DEFAULT_SEGMENTS as usize;
+        let bands = model::DEFAULT_BANDS as usize;
+        let primitive = Primitive::sphere(millimetres(50), model::DEFAULT_SEGMENTS, model::DEFAULT_BANDS)
+            .expect("the default ball");
+        let mesh = primitive_mesh(&primitive).expect("render mesh");
+        let graticule = graticule(&mesh);
+        assert_eq!(graticule.rings.len(), bands - 1);
+        assert!(graticule.rings.values().all(|count| *count == segments));
+        assert_eq!(graticule.strips.len(), bands - 2);
+        assert!(graticule.strips.values().all(|count| *count == segments));
+        assert_eq!(graticule.poles, 2 * segments);
+        // 15 rings, 14 strips and 2 pole fans of 32 edges each; the ring and strip edges are what
+        // the old margin already drew, the pole fan is the part it erased.
+        assert_eq!(mesh_edges(&mesh).len() / 2, (2 * bands - 1) * segments);
     }
 
     #[test]
