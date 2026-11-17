@@ -1292,6 +1292,27 @@ mod tests {
     }
 
     #[test]
+    fn every_drawable_of_a_dense_frame_keeps_all_of_its_edges() {
+        // X60: one flattened list over the whole frame cut the wireframe at 4 M vertices, so a
+        // 5 000-sphere scene drew edges on about 1 400 balls. A buffer per drawable makes the budget
+        // a per-buffer limit, so a frame past it keeps every drawable's lines.
+        let mesh = triangle();
+        let edges: Vec<u32> = (0..2_880).map(|index| (index % 3) as u32).collect();
+        let transform = DMat4::IDENTITY;
+        let drawables = 1_500;
+        let mut total = 0usize;
+        for _ in 0..drawables {
+            let vertices = edge_vertices(0, &mesh, &edges, transform, EDGE_COLOR_LIGHT).expect("a drawable's lines");
+            assert_eq!(vertices.len(), 2_880, "the list is never cut short");
+            total += vertices.len();
+        }
+        assert!(
+            total > MAX_VERTICES,
+            "the frame holds {total} line vertices, past the {MAX_VERTICES} one buffer takes"
+        );
+    }
+
+    #[test]
     fn the_all_edges_style_reads_the_full_triangulation_list() {
         let mesh = triangle();
         let feature: Arc<[u32]> = Arc::from(vec![0, 1]);
