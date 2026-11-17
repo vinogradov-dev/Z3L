@@ -704,6 +704,22 @@ fn free_creation_tools_land_at_the_root_beside_a_selected_nested_assembly() {
 }
 
 #[test]
+fn identical_created_objects_take_numbers_of_their_own() {
+    // Three spheres in one root: the tree, the card and the undo history read their names, so the
+    // second and the third cannot be the first one's (X63).
+    let (project, _panel) = contour_panel_project();
+    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut editor = Editor::new();
+    let radius = Length::from_millimetres(100).expect("radius");
+    let mut names = Vec::new();
+    for _ in 0..3 {
+        let id = draw_sphere(&mut editor, &mut session, [Length::ZERO, Length::ZERO], [radius, Length::ZERO]);
+        names.push(session.project().node(id).map(|node| node.name().to_owned()).expect("the sphere is a node"));
+    }
+    assert_eq!(names, ["Sphere", "Sphere 2", "Sphere 3"], "a sphere names itself and its number: {names:?}");
+}
+
+#[test]
 fn a_panel_at_the_root_is_refused_because_no_product_is_open() {
     let (project, panel) = contour_panel_project();
     let mut session = Session::with_catalog(project, sample_catalog());
