@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=ad54f85 updated=2026-11-17
+STATE: milestone=M7 phase=T task=- state=idle base=b03823d updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -39,7 +39,7 @@ layering rules and `ci` (P8); the plan gate follows every `files:` hint, a close
 
 ## Next
 
-Nothing is scheduled: U109 makes the floor see-through while its shadow survives it
+Nothing is scheduled: the backlog holds no open task.
 
 ## Index
 

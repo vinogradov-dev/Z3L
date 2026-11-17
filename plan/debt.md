@@ -298,3 +298,9 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   (`target/ui-shots/wireframe-ink.png`). Both go away with the same change: a line ink and alpha in
   the per-pass uniform (a third dynamic offset beside the camera and ground slots), so a style and a
   strength become draw-time values instead of buffer keys.
+- `[render]` The floor plate writes no depth (U108), so a body under an opaque floor is hidden by the
+  plate's blend while its form outlines still draw: at 100 % opacity an underground part reads as a
+  wireframe ghost instead of nothing (`target/ui-shots/floor-opacity-100.png`, U109). Either the
+  plate writes depth when it is opaque — which gives up the U108 pass-through the see-through floor
+  replaced — or the edge pass learns the plate as a second occluder, which wants the plate's depth in
+  a buffer a line can test against.

@@ -42,7 +42,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U109** the floor can be made see-through, and its shadow survives it
+## Done
+
+- `[x]` **U109** the floor can be made see-through, and its shadow survives it
   Why: Owner, 2026-11-17: the floor should be see-through with a setting of its own, and the
    shadow must not suffer for it. U108 already made the plate write no depth, so a part under
    the floor is drawn over it; what is still missing is the *tint*: the plate is opaque, so
@@ -69,9 +71,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    of the value re-uploads nothing; the value survives a restart and Reset display restores it;
    a shot pair at 100 % and 40 % with a part under the floor and a shadow on it; the ADR is
    written and docs/decisions/README.md lists it; cargo xtask ci is green.
-  `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs`
-
-## Done
+  `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs` — `b03823d`
 
 - `[x]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
   Why: The ground shadow says what stands on the floor and says nothing about the inside of a
