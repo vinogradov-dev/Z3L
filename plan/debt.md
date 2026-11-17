@@ -286,4 +286,4 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   the whole edited frame into an empty renderer is 102 / 371 ms, which is what every edit cost
   before. The frame-wide edge list with its 4 M line-vertex budget went with it: each drawable owns
   its lines, so the 5 000-sphere stress scene draws every ball's wireframe, and a single drawable
-  past one buffer is a readable refusal instead of a cut (X60's entry still describes the old shape).
+  past one buffer is a readable refusal instead of a cut (X60).
