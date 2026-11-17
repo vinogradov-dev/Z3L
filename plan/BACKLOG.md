@@ -41,7 +41,39 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X61** a fine sphere loses its meridians, so its poles read bald
+- `[ ]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
+  Why: Observation: a body that is neither axis-aligned nor a box gets a contact shadow of the
+   box of its box, or loses it. Every drawable's world box is now the eight corners of the
+   local box the mesh cache measured (X56), so a turned round or notched body reports the box
+   of the turned box: on a 50 mm ball turned 30 degrees about X the tight min.z stays at 0
+   because a ball is round, while the corner box dips to -34.15 mm, and
+   ContactShadow::from_bounds (crates/scene/src/lib.rs) refuses a body whose box is more than
+   FLOOR_TOLERANCE_MM (0.5 mm) off the floor, so the shadow disappears. A tilted body that
+   keeps one draws the ellipse of the looser box, up to 1.73x wider on the diagonal axis.
+   Axis-aligned bodies and any turned rectangle are unaffected, because a rectangle's extremes
+   are its corners, which is why the demo scene and every panel keep their shadows.
+   Expectation: a shadow follows the body's own footprint whatever its turn, and a body resting
+   on the floor always casts one. Suspected cause, measured: SubtreeBounds::include_solid in
+   app/src/scene_build.rs feeds the subtree's solid box from Aabb::transformed_by, and
+   transformed_by is the box of the eight turned corners rather than of the turned points (X56
+   traded tightness for a rebuild that transforms no vertex).
+  shape: Keep the tight world box per drawable beside the loose one, keyed by the world
+   placement it was measured for: a node whose composed placement did not move copies the box,
+   a node that moved transforms its vertices once (896 for a 32 x 16 sphere), so an edit still
+   costs its changed nodes. The box belongs to the drawable, not to the mesh, so the evaluation
+   carries it beside the mesh cache and the contact shadow reads it, while framing and the open
+   brackets keep the cheap corner box. An alternative that shrinks the work: give ContactShadow
+   a footprint of its own measured from the body's floor contact, which still needs the tight
+   box.
+  done: A test turns a 50 mm ball 30 degrees about X on the floor and asserts it casts a shadow
+   whose radii are within a percent of the unturned ball's; a body lifted clear of the floor
+   casts none; the X56 probe still reports that an ordinary edit measures no box from vertices;
+   and cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
+## Next
+## Done
+
+- `[x]` **X61** a fine sphere loses its meridians, so its poles read bald
   Why: Observation: on a 50 mm ball, raising the side count removes longitudinal lines instead
    of adding them, and the poles lose every meridian, so the cap draws as bare concentric rings
    and reads bald. Measured on the mesh, 16 bands, counting display edges by direction: 32
@@ -74,38 +106,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    four boundary edges and no diagonal, and a flat cap split into many triangles shows no inner
    edge; the constant's doc says the margin covers rounding noise, not a display radius; cargo
    xtask ci is green.
-  `files: crates/mesh/src/lib.rs`
-- `[ ]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
-  Why: Observation: a body that is neither axis-aligned nor a box gets a contact shadow of the
-   box of its box, or loses it. Every drawable's world box is now the eight corners of the
-   local box the mesh cache measured (X56), so a turned round or notched body reports the box
-   of the turned box: on a 50 mm ball turned 30 degrees about X the tight min.z stays at 0
-   because a ball is round, while the corner box dips to -34.15 mm, and
-   ContactShadow::from_bounds (crates/scene/src/lib.rs) refuses a body whose box is more than
-   FLOOR_TOLERANCE_MM (0.5 mm) off the floor, so the shadow disappears. A tilted body that
-   keeps one draws the ellipse of the looser box, up to 1.73x wider on the diagonal axis.
-   Axis-aligned bodies and any turned rectangle are unaffected, because a rectangle's extremes
-   are its corners, which is why the demo scene and every panel keep their shadows.
-   Expectation: a shadow follows the body's own footprint whatever its turn, and a body resting
-   on the floor always casts one. Suspected cause, measured: SubtreeBounds::include_solid in
-   app/src/scene_build.rs feeds the subtree's solid box from Aabb::transformed_by, and
-   transformed_by is the box of the eight turned corners rather than of the turned points (X56
-   traded tightness for a rebuild that transforms no vertex).
-  shape: Keep the tight world box per drawable beside the loose one, keyed by the world
-   placement it was measured for: a node whose composed placement did not move copies the box,
-   a node that moved transforms its vertices once (896 for a 32 x 16 sphere), so an edit still
-   costs its changed nodes. The box belongs to the drawable, not to the mesh, so the evaluation
-   carries it beside the mesh cache and the contact shadow reads it, while framing and the open
-   brackets keep the cheap corner box. An alternative that shrinks the work: give ContactShadow
-   a footprint of its own measured from the body's floor contact, which still needs the tight
-   box.
-  done: A test turns a 50 mm ball 30 degrees about X on the floor and asserts it casts a shadow
-   whose radii are within a percent of the unturned ball's; a body lifted clear of the floor
-   casts none; the X56 probe still reports that an ordinary edit measures no box from vertices;
-   and cargo xtask ci is green.
-  `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
-## Next
-## Done
+  `files: crates/mesh/src/lib.rs` — `be5f4a7`
 
 - `[x]` **X59** a click ray-casts every triangle of every object in the scene
   Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
