@@ -42,26 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U107** a shadow is an attribute of the view, with one intensity control beside it
-  Why: The shadow is controlled in two places today: a checkbox in the viewport cluster's
-   display-settings popover and a strength slider in Settings › View, and the frame takes the
-   result globally, so two split views cannot disagree. The owner asks for the shadow to be a
-   view mode with its own intensity control, 2026-11-17.
-  Shape: A view owns its shading style; it now owns its shadow too. `Leaf` gains the switch
-   beside the style, `ViewSpec` carries the resolved `ContactShadows`, and the frame keeps
-   colour, strength and the mask as workspace data, so one split cell draws a shadow while its
-   neighbour does not. One control site: the View tab's display group holds a *Shadows* toggle
-   with its key and, beside it, the intensity slider that leaves Settings › View, reading and
-   writing the active view; the popover checkbox goes, because two controls for one value
-   disagree eventually. A sixth `ShadingStyle` is rejected: a shadow combines with every face
-   style, so the list would have to grow to ten. The switch, the key, the icon, the label in
-   both languages and the inventory row ship in one change (the place-capability procedure).
-  Done: The View tab row toggles the active split view and leaves its neighbour drawing what it
-   drew; the intensity reaches the frame without an upload; the removed popover control leaves
-   no orphan message, key or test; the icon is authored under `assets/icons`, has its README
-   row and its empty-file fallback test; `cargo xtask ui-rules`, `cargo xtask skills` and
-   `cargo xtask ci` are green.
-  `files: crates/scene/src/lib.rs,crates/ui/src/display.rs,crates/ui/src/inventory.rs,crates/ui/src/settings.rs,app/src/view_cluster.rs,app/src/document.rs,app/src/tabs.rs,assets/icons`
 - `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
   Why: The ground shadow says what stands on the floor and says nothing about the inside of a
    cabinet: every joint between two surfaces is lit as if the two panels met at an infinite
@@ -87,6 +67,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs`
 
 ## Done
+
+- `[x]` **U107** a shadow is an attribute of the view, with one intensity control beside it
+  Why: The shadow is controlled in two places today: a checkbox in the viewport cluster's
+   display-settings popover and a strength slider in Settings › View, and the frame takes the
+   result globally, so two split views cannot disagree. The owner asks for the shadow to be a
+   view mode with its own intensity control, 2026-11-17.
+  Shape: A view owns its shading style; it now owns its shadow too. `Leaf` gains the switch
+   beside the style, `ViewSpec` carries the resolved `ContactShadows`, and the frame keeps
+   colour, strength and the mask as workspace data, so one split cell draws a shadow while its
+   neighbour does not. One control site: the View tab's display group holds a *Shadows* toggle
+   with its key and, beside it, the intensity slider that leaves Settings › View, reading and
+   writing the active view; the popover checkbox goes, because two controls for one value
+   disagree eventually. A sixth `ShadingStyle` is rejected: a shadow combines with every face
+   style, so the list would have to grow to ten. The switch, the key, the icon, the label in
+   both languages and the inventory row ship in one change (the place-capability procedure).
+  Done: The View tab row toggles the active split view and leaves its neighbour drawing what it
+   drew; the intensity reaches the frame without an upload; the removed popover control leaves
+   no orphan message, key or test; the icon is authored under `assets/icons`, has its README
+   row and its empty-file fallback test; `cargo xtask ui-rules`, `cargo xtask skills` and
+   `cargo xtask ci` are green.
+  `files: crates/scene/src/lib.rs,crates/render/src/lib.rs,crates/ui/src/display.rs,crates/ui/src/toolbars.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,crates/ui/src/inventory.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,crates/ui/src/icons.rs,app/src/view_layout.rs,app/src/view_cluster.rs,app/src/document.rs,app/src/main.rs,app/src/shortcuts.rs,app/src/ui_shots.rs,assets/icons,assets/README.md` — `85f1bfe`
 
 - `[x]` **X62** a turned round body loses its contact shadow or draws one of the box of its box
   Why: Measured 2026-11-17: `target/ui-shots/probe-shadow-on.png` and `probe-shadow-off.png`
