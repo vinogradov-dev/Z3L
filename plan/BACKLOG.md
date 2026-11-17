@@ -21,12 +21,15 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:
 `F` — revolution and sweep
 `G` — 2D booleans
 `H` — hardware and accessories
+`J` — MCP and the assistant: the tools an agent calls and the rules it obeys
 `K` — the contract other programs read: the scene file's compatibility and the order package
 `L` — scene lighting
 `M` — a milestone's own work, numbered by the milestone it was filed against
 `N` — the furniture product: its entity, the frame it reserves, the parts inside it and how they are
   placed
+`O` — the materials catalogue and the workshop standards: the files a build reads for its numbers
 `P` — the plan and `xtask` itself
+`Q` — the prototype mechanism: the parts, the card, the dissolve and the library
 `R` — the pre-release rename
 `S` — a structural refactor that changes module boundaries only
 `T` — the semantic classes: the registry table, its traits and the editors it gates
@@ -40,8 +43,83 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
+  Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:
+   340 and 320 were taken as axis spacing instead of clear openings, so the shelves landed on
+   the wrong side. The code has no single place that says which side Left is, so a reader
+   infers it from a mirrored picture.
+  Shape: A Side helper with Left, Right, Front and Back and their axes, tied by a test to
+   OpeningView::Left.direction(); a glossary paragraph in docs/domain/products.md fixing that a
+   spacing is a clear opening, that depth is measured with the fronts, and that left is +X seen
+   from the front.
+  Done: A test asserts that Side::Left equals OpeningView::Left.direction(), the glossary
+   states the three conventions, and cargo test -p model -p ui is green.
+  `files: crates/ui/src/display.rs,crates/model/src/,docs/domain/products.md`
+- `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
+  Why: The assistant and the prototype expander both need the document without a window, and
+   only export reaches the engine from the command line today. A generator that writes the
+   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
+   command gate.
+  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
+   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
+   groups them as one undo entry and writes once; query <scene>
+   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
+   Session::dispatch and SceneFile: no second mutation path.
+  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
+   leaves the file untouched, and query tree prints the ids the fixture created.
+  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
+- `[ ]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
+  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
+   such row, so the back falls back to a number written in code, which is the one thing the
+   material rules forbid.
+  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
+   rule; the back type's planes read it, and an out-of-range material stays a refusal.
+  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
+   type still uses the 18 mm stock.
+  `files: app/src/scene_build.rs,crates/model/src/catalog.rs`
+- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
+  Why: The prototype work needs three facts the document cannot store today: which container is
+   a section, which prototype and card produced a node, so a command works while the library is
+   missing, and which released node the parent must no longer rewrite.
+  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
+   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
+   opens without the library.
+  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
+   and a missing prototype library changes nothing in the load.
+  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
+
 ## Bugs
 ## Next
+- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
+  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
+   dissolve targets and the card, and no task may cite a decision that does not exist. Four
+   questions are still open, so the record waits for the owner's answers.
+  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
+   open questions in plan/questions.md.
+  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
+   plan/questions.md carries the four questions.
+  `files: docs/domain/prototypes.md,docs/decisions/README.md`
+- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
+  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
+   workshop, and today they are literals in a scenario. Where the file lives is an open
+   question, so the task waits for its answer.
+  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
+   validated on load, offering defaults to the card; a value outside its range is a sentence,
+   not a fallback.
+  Done: A test loads a standards file, a command takes its default from it, and a stale file is
+   a notice.
+  `files: app/src/settings_store.rs,crates/model/src/`
+- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
+  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
+   saying idle while four branches move. The worktree rule papers over the gap: the plan is
+   written in one checkout and a stream's progress lives only in its commits.
+  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
+   in-progress entry per stream in the order, and a status line that prints a row per stream.
+   The one-writer rule stays for the backlog file itself.
+  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
+   same stream, status prints one row per stream, and the backlog stays one file.
+  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
+
 ## Done
 
 - `[x]` **U109** the floor can be made see-through, and its shadow survives it

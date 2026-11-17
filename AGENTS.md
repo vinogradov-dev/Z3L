@@ -389,13 +389,23 @@ must not lose more than the current sub-step — and close the task with
 `plan/SESSION.md`. The research note under `plan/notes/` stays: it says what a session measured and
 ruled out, and the next one reads it through `cargo xtask task <ID>`.
 
-### 6.2 Branch workflow
+### 6.2 Branch workflow: four streams, four worktrees
 
-New tasks are developed on the `dev` branch; `main` holds only verified, merge-ready work. Work directly on `dev` and commit each completed operation there (section 6.1).
+The tree is split into four streams, each in its own git worktree, so two sessions never edit the same
+checkout — which is how a plan line and a source file were lost once.
 
-- When a task is finished and `cargo xtask ci` is green on `dev`, merge `dev` into `main` with `--no-ff`, so the merge point is explicit and the history shows when work landed.
-- Do not commit directly to `main`; it moves forward only through these merges.
-- A hot-fix follows the same path: fix on `dev`, run the gate, merge.
+| Stream | Branch | Where it is checked out | Task letters |
+|---|---|---|---|
+| the application: shell, engine, render, the editor's own UI | dev | the primary checkout | the area letters, A–V |
+| MCP and the assistant | stream/agent | a sibling checkout, z3l-wt/agent | J |
+| the materials catalogue and the workshop standards | stream/catalog | z3l-wt/catalog | O |
+| the prototype mechanism | stream/prototypes | z3l-wt/prototypes | Q |
+
+- `main` holds only verified, merge-ready work and moves forward only through a `--no-ff` merge of `dev`, so the merge point is explicit. Nothing is committed directly to `main`.
+- A stream branches from `dev` and merges back into `dev` when its task is finished and `cargo xtask ci` is green there. It merges `dev` in often and never merges into another stream. A hot-fix follows the same path: fix, gate, merge.
+- The stream's letter is the phase of its tasks: `J`, `O` and `Q` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A task runs in the checkout of its letter's stream.
+- **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so four branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
+- The lock file lives inside a checkout, so nothing enforces the one-writer rule across worktrees but the rule itself.
 
 ## 7. Anti-patterns
 

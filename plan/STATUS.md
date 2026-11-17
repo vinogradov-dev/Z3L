@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=b03823d updated=2026-11-17
+STATE: milestone=M7 phase=T task=U111 state=idle base=96f80a3 updated=2026-11-17
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -35,11 +35,18 @@ complete and F4 waits in `plan/questions.md`.
 - Faber's architecture is recorded (0028–0032) but not implemented. `state-contract` (L0) is the
 whole plan tool — gate, report, writer, dashboard, ADR index (P4–P7, P9, 0085); `xtask` keeps the
 layering rules and `ci` (P8); the plan gate follows every `files:` hint, a closed entry's ADR, the
-`STATE:` keys and a stale `base`; `dev` feeds `main` through one merge.
+`STATE:` keys and a stale `base`; `dev` feeds `main` through one merge; the tree is split into four
+streams in four worktrees (the application in the primary checkout, the agent, the catalogue and the
+prototypes), and `plan/` is written only in the primary checkout (`AGENTS.md` §6.2).
+
+- The prototype mechanism, MCP and the materials catalogue carry their own letters (`J`, `O`, `Q`)
+and their first tasks; the prototype design is written down in `docs/domain/prototypes.md` §0–18 and
+waits for four decisions before its ADR.
 
 ## Next
 
-Nothing is scheduled: the backlog holds no open task.
+U111 is next: the drawing's words are fixed: a spacing is the clear opening, left is +X, and the
+depth includes the fronts
 
 ## Index
 

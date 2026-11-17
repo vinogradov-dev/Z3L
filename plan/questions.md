@@ -48,3 +48,8 @@ this file only when a task touches the question.
   `30.10`, which is what an under-drawer runner physically does. T2 follows the table and the model
   test now rejects a variant that *widens* its host instead. Confirm the reading, or restore the
   record's wording and give `50.03.03` the type's hosts back.
+- The prototype's open decisions (`docs/domain/prototypes.md` §11): which formula surface a parameter
+  may use (arithmetic and min/max only, or also conditions and table lookups); whether a split's
+  threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
+  children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
+  The standards' home is the workshop-profile question above.
