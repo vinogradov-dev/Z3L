@@ -83,33 +83,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    before; the measured pick time at 5 000 spheres drops below 20 ms in the probe and the
    [perf] entry in plan/debt.md is re-measured.
   `files: crates/scene/src/ray.rs,app/src/mesh_pick.rs`
-- `[ ]` **X60** a dense scene silently loses the wireframe after four million line vertices
-  Why: Observation: in the edges styles (shown with edges, or edges through the faces) the 5
-   000-sphere stress scene draws the wireframe on the nearest balls only — about 1 400 of 5
-   000, fewer than half — and the rest render as solid triangles. Reproduced on 2026-11-17 in
-   the live window with target/stress-5000.z3l. Expectation: the style draws the edges of every
-   drawable in the frame, or the frame is refused with a sentence; it never silently stops
-   after a fixed budget. Suspected cause, measured: edge_geometry in
-   crates/render/src/geometry.rs flattens every drawable's edges into one line list and breaks
-   when the list reaches MAX_VERTICES = 4 000 000, after which every later drawable's slice has
-   vertex_count 0 and the pass draws nothing for it. A default 32 x 16 sphere has 1 440 edges
-   (480 ring, 512 spoke, 448 triangle diagonal) = 2 880 line vertices, so the budget covers 1
-   388 spheres — 27.8 % of 5 000 — and the same cap truncates the polylines and the product
-   envelopes of a frame with as many items. The face pass is per drawable and is not affected;
-   only the flattened line buffers are.
-  Shape: Keep the allocation guard, drop the silence. Until X57 gives every mesh its own edge
-   buffer, split the frame's line list into as many buffers as the budget needs and draw them
-   all: a LineList owns a small vector of buffers and each slice names buffer plus range, so 4
-   M stays a per-buffer limit instead of a per-frame cut-off. A frame that truly exceeds what
-   the device can hold is refused with a readable sentence instead of being drawn in part. When
-   X57 lands, an edge buffer belongs to the mesh and the truncation disappears with the shared
-   list.
-  Done: The stress scene at 5 000 spheres shows the wireframe on every ball in both edges
-   styles, with the same stencil rule per drawable as before; a test builds a line list of more
-   than 4 M vertices and asserts that every slice keeps its vertices and that the number of
-   buffers grew instead of the vertex count being cut, and that an upload past what the device
-   accepts is the readable error; the [perf] entries in plan/debt.md are re-measured.
-  `files: crates/render/src/geometry.rs,crates/render/src/lib.rs`
 - `[ ]` **X61** a fine sphere loses its meridians, so its poles read bald
   Why: Observation: on a 50 mm ball, raising the side count removes longitudinal lines instead
    of adding them, and the poles lose every meridian, so the cap draws as bare concentric rings
@@ -190,6 +163,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    volume and the sharp case; the icon is drawn and passes the icon test.
   `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
 ## Done
+
+- `[x]` **X60** a dense scene silently loses the wireframe after four million line vertices
+  Why: Observation: in the edges styles (shown with edges, or edges through the faces) the 5
+   000-sphere stress scene draws the wireframe on the nearest balls only — about 1 400 of 5
+   000, fewer than half — and the rest render as solid triangles. Reproduced on 2026-11-17 in
+   the live window with target/stress-5000.z3l. Expectation: the style draws the edges of every
+   drawable in the frame, or the frame is refused with a sentence; it never silently stops
+   after a fixed budget. Suspected cause, measured: edge_geometry in
+   crates/render/src/geometry.rs flattens every drawable's edges into one line list and breaks
+   when the list reaches MAX_VERTICES = 4 000 000, after which every later drawable's slice has
+   vertex_count 0 and the pass draws nothing for it. A default 32 x 16 sphere has 1 440 edges
+   (480 ring, 512 spoke, 448 triangle diagonal) = 2 880 line vertices, so the budget covers 1
+   388 spheres — 27.8 % of 5 000 — and the same cap truncates the polylines and the product
+   envelopes of a frame with as many items. The face pass is per drawable and is not affected;
+   only the flattened line buffers are.
+  Shape: Keep the allocation guard, drop the silence. Until X57 gives every mesh its own edge
+   buffer, split the frame's line list into as many buffers as the budget needs and draw them
+   all: a LineList owns a small vector of buffers and each slice names buffer plus range, so 4
+   M stays a per-buffer limit instead of a per-frame cut-off. A frame that truly exceeds what
+   the device can hold is refused with a readable sentence instead of being drawn in part. When
+   X57 lands, an edge buffer belongs to the mesh and the truncation disappears with the shared
+   list.
+  Done: The stress scene at 5 000 spheres shows the wireframe on every ball in both edges
+   styles, with the same stencil rule per drawable as before; a test builds a line list of more
+   than 4 M vertices and asserts that every slice keeps its vertices and that the number of
+   buffers grew instead of the vertex count being cut, and that an upload past what the device
+   accepts is the readable error; the [perf] entries in plan/debt.md are re-measured.
+  `files: crates/render/src/geometry.rs,crates/render/src/lib.rs` — `62d2bab`
 
 - `[x]` **X57** an edit re-uploads every GPU buffer and the whole edge list
   Why: Observation: an edit re-uploads the whole scene. ViewportRenderer::upload
