@@ -22,8 +22,9 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[render]` The frame uses the first authored sun light plus up to eight point lights; a ninth and
   later point light is stored but does not shade the viewport, and there is no culling by importance
   or distance. Point brightness uses a fixed shader exposure rather than a scene exposure, so a close
-  or very powerful lamp clips its highlights; there is no tone mapper, and the only shadow is the
-  ground one (ADR 0142) — a panel casts nothing on the panel behind it until L1.
+  or very powerful lamp clips its highlights; there is no tone mapper. Only the key light casts
+  (ADR 0143): a point light lights through a panel, and one map of 2048² serves the whole scene, so
+  two cabinets a workshop apart share the same texels.
 - `[render]` An authored camera uses the scene default near and far planes because the model does not
   store them.
 - `[render]` An authored camera pins the view and disables navigation, so the only way back to the

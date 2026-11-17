@@ -148,6 +148,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0140](0140-the-corner-display-is-a-diagnostic-block-the-maker-can-read.md) | The corner display is a diagnostic block the maker can read | Accepted |
 | [0141](0141-a-cone-is-drawn-by-its-base-circle.md) | A cone is drawn by its base circle | Accepted |
 | [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071 |
+| [0143](0143-the-shadow-map-is-the-key-lights-depth-pass.md) | The shadow map is the key light's depth pass, read by every face | Accepted |
 
 ## Format
 

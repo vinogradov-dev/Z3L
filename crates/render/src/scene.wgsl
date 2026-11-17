@@ -24,6 +24,19 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 
+// The key light's shadow map: the scene drawn from the sun into depth alone (ADR 0143). The face
+// shader compares a surface's own depth against it, so a face darkens where another face stands
+// between it and the light; the depth pass reads the same uniform from this group.
+struct ShadowCamera {
+    view_projection: mat4x4<f32>,
+    // x = the world size of one texel in mm, y = 1 when the map holds this frame's scene
+    params: vec4<f32>,
+};
+
+@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_sampler: sampler_comparison;
+@group(1) @binding(2) var<uniform> shadow_camera: ShadowCamera;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -71,6 +84,58 @@ fn point_lighting(normal: vec3<f32>, world_position: vec3<f32>, view_direction: 
     return total;
 }
 
+// The shadow map's texels, and the three numbers that keep a surface from shadowing itself.
+const SHADOW_TEXELS: f32 = 2048.0;
+// How far the receiver moves off its own surface along its normal, in texels: a face is compared
+// with a point in front of it, never with its own depth.
+const SHADOW_NORMAL_TEXELS: f32 = 1.5;
+// The depth bias in texels at a perpendicular and at a grazing angle. The map is square in the
+// light's axes, so one texel is the same distance across the map as it is deep into it.
+const SHADOW_BIAS_TEXELS: f32 = 1.5;
+const SHADOW_SLOPE_TEXELS: f32 = 2.5;
+// The grazing angle past which a bigger offset and a bigger bias buy nothing: past it the surface
+// faces away from the sun and receives no key light at all.
+const SHADOW_TAN_LIMIT: f32 = 4.0;
+
+// How much of the key light reaches a surface: 1 where nothing stands between it and the sun.
+//
+// The two coplanar cases decide the three constants above: a band lying on a panel face and a shelf
+// flush with the side it meets. Both sit at the caster's own depth, so the comparison is
+// `LessEqual` and a surface equal to the map is lit, while the normal offset keeps a band that is a
+// hair above the face from cutting a gap under itself.
+fn shadow_factor(normal: vec3<f32>, world_position: vec3<f32>) -> f32 {
+    if shadow_camera.params.y <= 0.0 {
+        return 1.0;
+    }
+    let light = safe_normalize(camera.light_direction.xyz);
+    let cos_theta = clamp(dot(normal, light), 0.0, 1.0);
+    let tan_theta = min(sqrt(max(1.0 - cos_theta * cos_theta, 0.0)) / max(cos_theta, 0.05), SHADOW_TAN_LIMIT);
+    let offset = normal * (SHADOW_NORMAL_TEXELS * shadow_camera.params.x * (1.0 + tan_theta));
+    let clip = shadow_camera.view_projection * vec4<f32>(world_position + offset, 1.0);
+    let ndc = clip.xyz / clip.w;
+    // The target's first row is the top of the screen, which is +Y in clip space, so v counts down.
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let reference = ndc.z - (SHADOW_BIAS_TEXELS + SHADOW_SLOPE_TEXELS * tan_theta) / SHADOW_TEXELS;
+    // A point outside the map is behind nothing it can see, so it stays lit; the coordinate is
+    // clamped instead of branched on, because sampling must stay in uniform control flow.
+    let inside = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+    let centre = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let texel = vec2<f32>(1.0 / SHADOW_TEXELS, 1.0 / SHADOW_TEXELS);
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            lit = lit + textureSampleCompare(shadow_map, shadow_sampler, centre + vec2<f32>(f32(x), f32(y)) * texel, reference);
+        }
+    }
+    return select(1.0, lit / 9.0, inside);
+}
+
+// The scene drawn from the sun: position alone, because the map holds depth and nothing else.
+@vertex
+fn vs_shadow(vertex: VertexIn) -> @builtin(position) vec4<f32> {
+    return shadow_camera.view_projection * vec4<f32>(vertex.position, 1.0);
+}
+
 struct MeshIn {
     @location(0) normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
@@ -94,9 +159,15 @@ fn shade_surface(
 
     let diffuse = max(dot(normal, light_direction), 0.0);
     let specular = pow(max(dot(normal, half_vector), 0.0), 32.0) * 0.12;
-    let key = camera.light_color.rgb * diffuse + vec3<f32>(camera.light_color.a);
+    // One strength for both masks: the floor's silhouette and a face's occlusion are the same
+    // light, so turning the shadow off leaves the model as flat as the ground (U107).
+    var occlusion = 1.0;
+    if (camera.shadow.a > 0.0) {
+        occlusion = 1.0 - camera.shadow.a * (1.0 - shadow_factor(normal, world_position));
+    }
+    let key = camera.light_color.rgb * (diffuse * occlusion) + vec3<f32>(camera.light_color.a);
     let points = point_lighting(normal, world_position, view_direction);
-    return color.rgb * (key + points) + vec3<f32>(specular);
+    return color.rgb * (key + points) + vec3<f32>(specular * occlusion);
 }
 
 // The offscreen target is Rgba8Unorm, which is what egui registers as a native texture.
@@ -184,10 +255,10 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> BlurOut {
     return out;
 }
 
-@group(1) @binding(0) var mask_texture: texture_2d<f32>;
-@group(1) @binding(1) var mask_sampler: sampler;
+@group(2) @binding(0) var mask_texture: texture_2d<f32>;
+@group(2) @binding(1) var mask_sampler: sampler;
 // xy = one texel along the axis being blurred, z = penumbra radius in texels
-@group(1) @binding(2) var<uniform> blur: vec4<f32>;
+@group(2) @binding(2) var<uniform> blur: vec4<f32>;
 
 const BLUR_TAPS: i32 = 4;
 

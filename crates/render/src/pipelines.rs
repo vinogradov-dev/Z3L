@@ -1,12 +1,13 @@
 //! The render pipelines and the GPU state each of them encodes.
 //!
-//! Holds seven pipeline constructors (two face, three line, the ground mask, the ground blur and the
-//! floor plate), the vertex layout they share and the depth, blend and stencil states those
-//! pipelines are built from.
+//! Holds eight pipeline constructors (two face, three line, the shadow map, the ground mask, the
+//! ground blur and the floor plate), the one helper that builds their layouts, the vertex layout
+//! they share and the depth, blend and stencil states those pipelines are built from.
 //!
 //! Contract: every constructor takes the device, the pipeline layout and the shader module the
 //! renderer built once, and returns a pipeline against [`crate::COLOR_FORMAT`] and
-//! [`crate::DEPTH_FORMAT`]. The state a pass encodes is a value: `face_depth_state`,
+//! [`crate::DEPTH_FORMAT`] — except the shadow map, whose only target is
+//! [`crate::SHADOW_FORMAT`]. The state a pass encodes is a value: `face_depth_state`,
 //! `floor_depth_state`, `line_depth_state` and `edge_depth_state` build it without a device, so a
 //! test asserts the promise of a style without a GPU.
 //!
@@ -20,7 +21,20 @@
 
 use scene::ShadingStyle;
 
-use crate::{COLOR_FORMAT, DEPTH_FORMAT, geometry::MeshVertex};
+use crate::{COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT, geometry::MeshVertex};
+
+/// One pipeline layout: the groups a pass binds, in order.
+pub(crate) fn pipeline_layout(
+    device: &wgpu::Device,
+    label: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &layouts.iter().map(|layout| Some(*layout)).collect::<Vec<_>>(),
+        immediate_size: 0,
+    })
+}
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
@@ -186,6 +200,60 @@ pub(crate) fn create_line_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The pass that fills the shadow map: the scene drawn from the key light into depth alone.
+///
+/// No colour attachment and no blend: a depth map is the nearest surface along each light ray, so
+/// the comparison happens when the map is read, not while it is written. Both sides of a panel cast,
+/// so nothing is culled; the bias that keeps a face from shadowing itself lives on the reading side
+/// (the normal offset and the depth bias in the face shader), where it can be expressed in texels
+/// instead of in the depth format's own units.
+pub(crate) fn create_shadow_depth_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Z3L shadow map pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_shadow"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(vertex_layout())],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            // A panel's back casts like its front: the map is the nearest surface, whatever side.
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(shadow_depth_state()),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: None,
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The depth state of the shadow map: the nearest surface wins and is written.
+///
+/// The target is cleared to one, which is the far plane, so a texel no triangle reached reads as
+/// "the sun gets through here". No depth bias is encoded: a constant in the depth buffer's own units
+/// means a different distance on every format, and the reading side needs a slope term anyway.
+pub(crate) fn shadow_depth_state() -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: SHADOW_FORMAT,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
 }
 
 /// The coverage pass of the ground shadow: the scene projected along the key light onto the floor.

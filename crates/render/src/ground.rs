@@ -28,7 +28,9 @@ use wgpu::util::DeviceExt as _;
 use crate::cache::Rebuilt;
 use crate::geometry::{floor_indices, floor_vertices};
 use crate::gpu::{GpuTriangles, triangle_list};
-use crate::pipelines::{create_floor_pipeline, create_shadow_blur_pipeline, create_shadow_cover_pipeline};
+use crate::pipelines::{
+    create_floor_pipeline, create_shadow_blur_pipeline, create_shadow_cover_pipeline, pipeline_layout,
+};
 use crate::{Drawn, RenderError};
 
 /// The size of one side of the ground mask, in texels.
@@ -65,17 +67,11 @@ pub(crate) struct GroundKey {
 
 impl GroundKey {
     /// The key of one frame.
+    ///
+    /// The light is quantised by the renderer's own [`crate::quantized_light`], so this mask and the
+    /// key light's shadow map turn on the same value.
     pub(crate) fn of(generation: u64, light: DVec3, extent_mm: f64) -> Self {
-        let light = light.try_normalize().unwrap_or(DVec3::Z);
-        Self {
-            generation,
-            light: [
-                (light.x * 1.0e4).round() as i32,
-                (light.y * 1.0e4).round() as i32,
-                (light.z * 1.0e4).round() as i32,
-            ],
-            extent_mm: extent_mm as f32,
-        }
+        Self { generation, light: crate::quantized_light(light), extent_mm: extent_mm as f32 }
     }
 }
 
@@ -127,6 +123,7 @@ impl Ground {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         camera_layout: &wgpu::BindGroupLayout,
+        shadow_layout: &wgpu::BindGroupLayout,
         texture_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let size = wgpu::Extent3d { width: MASK_SIZE, height: MASK_SIZE, depth_or_array_layers: 1 };
@@ -179,7 +176,10 @@ impl Ground {
             group("Z3L ground blur vertical", &views[1], &directions[0]),
         ];
         let camera_only = pipeline_layout(device, "Z3L ground coverage layout", &[camera_layout]);
-        let with_mask = pipeline_layout(device, "Z3L ground plate layout", &[camera_layout, texture_layout]);
+        // The shadow group comes first because its index is the face shader's, and the blur and the
+        // plate carry it without reading it: a pipeline layout names every group a pass binds.
+        let with_mask =
+            pipeline_layout(device, "Z3L ground plate layout", &[camera_layout, shadow_layout, texture_layout]);
         Self {
             cover: create_shadow_cover_pipeline(device, &camera_only, shader),
             blur: create_shadow_blur_pipeline(device, &with_mask, shader),
@@ -238,6 +238,7 @@ impl Ground {
         queue: &wgpu::Queue,
         key: &GroundKey,
         camera: (&wgpu::BindGroup, u32),
+        shadow: &wgpu::BindGroup,
         drawables: &[Drawn],
     ) {
         if self.built.as_ref() == Some(key) {
@@ -297,19 +298,11 @@ impl Ground {
             });
             pass.set_pipeline(&self.blur);
             pass.set_bind_group(0, camera.0, &[camera.1]);
-            pass.set_bind_group(1, &self.groups[group], &[]);
+            pass.set_bind_group(1, shadow, &[]);
+            pass.set_bind_group(2, &self.groups[group], &[]);
             pass.draw(0..3, 0..1);
         }
         queue.submit(Some(encoder.finish()));
         self.built = Some(*key);
     }
-}
-
-/// One pipeline layout: the camera first, then whatever else the pass reads.
-fn pipeline_layout(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout]) -> wgpu::PipelineLayout {
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &layouts.iter().map(|layout| Some(*layout)).collect::<Vec<_>>(),
-        immediate_size: 0,
-    })
 }
