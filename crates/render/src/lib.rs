@@ -36,9 +36,10 @@ mod pipelines;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use geom::{DMat4, DVec3, MeshData};
+use geom::{Aabb, DMat4, DVec3, MeshData};
 use scene::{
-    Camera, ContactShadows, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope, SceneFrame, ShadingStyle,
+    Camera, ContactShadows, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope, SceneFrame,
+    ShadingStyle,
 };
 use thiserror::Error;
 use wgpu::util::DeviceExt as _;
@@ -289,11 +290,15 @@ type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
 ///
 /// The buffers may be shared with an earlier frame, because they are keyed by the mesh, the
 /// transform and the colour that built them (X57). The stencil slot is not shared: it is the
-/// drawable's place in this frame, and a drawable that moved down the list moves its slot.
+/// drawable's place in this frame, and a drawable that moved down the list moves its slot. The box
+/// is the drawable's world extent, read from the frame's own value, so a view decides whether to
+/// draw it before it names a buffer (X58).
 struct Drawn {
     faces: Arc<GpuMesh>,
     edges: Option<Arc<GpuEdges>>,
     stencil_reference: u32,
+    /// World-space box, or `None` when the frame never measured the drawable's extent.
+    bounds: Option<Aabb>,
 }
 
 /// An offscreen scene renderer for one viewport.
@@ -318,6 +323,11 @@ pub struct ViewportRenderer {
     centres: Vec<DVec3>,
     /// A reusable index list, sorted back to front for each translucent view.
     draw_order: Vec<usize>,
+    /// A reusable index list: the drawables the last view drew, in frame order (X58).
+    ///
+    /// Every pass of one view reads it — faces, the translucent order and both edge passes — so a
+    /// culled drawable costs nothing at all instead of two buffer binds and a draw call.
+    visible: Vec<usize>,
     /// Face buffers kept between uploads, keyed by the mesh, transform and colour they hold.
     faces: SlotCache<FaceKey, GpuMesh>,
     /// Edge buffers kept between uploads, keyed by the edge list, transform and ink they hold.
@@ -424,6 +434,7 @@ impl ViewportRenderer {
             drawables: Vec::new(),
             centres: Vec::new(),
             draw_order: Vec::new(),
+            visible: Vec::new(),
             faces: SlotCache::new(),
             edge_slots: SlotCache::new(),
             grid: Rebuilt::new(),
@@ -438,6 +449,14 @@ impl ViewportRenderer {
     /// The current colour target's size in physical pixels.
     pub const fn size(&self) -> [u32; 2] {
         self.size
+    }
+
+    /// How many drawables the last view drew, after the view volume dropped the rest (X58).
+    ///
+    /// The passes walk the list themselves; this is the count a test asserts and a cost readout
+    /// prints, so a dense scene can say what one frame actually pays for.
+    pub fn drawn_drawables(&self) -> usize {
+        self.visible.len()
     }
 
     /// The view egui should sample.
@@ -494,7 +513,12 @@ impl ViewportRenderer {
                 }
                 None => None,
             };
-            drawables.push(Drawn { faces, edges, stencil_reference: stencil_slot(index) });
+            drawables.push(Drawn {
+                faces,
+                edges,
+                stencil_reference: stencil_slot(index),
+                bounds: drawable.world_bounds(),
+            });
         }
         self.faces.sweep();
         self.edge_slots.sweep();
@@ -565,6 +589,9 @@ impl ViewportRenderer {
     ///
     /// Each view carries its own camera, rectangle and display style, so a split workspace draws a
     /// neighbour with a different pass set without a second target or edge buffer.
+    ///
+    /// Each view also culls: a drawable whose world box misses the view's volume is left out of
+    /// every pass of that view, so faces and edges are dropped together (X58).
     ///
     /// At most [`MAX_VIEWS`] views are drawn; a longer slice is truncated. An empty slice clears the
     /// target and draws nothing.
@@ -647,6 +674,13 @@ impl ViewportRenderer {
                 // neighbour stamped are reset before this view stamps its own.
                 stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
             };
+            // Culling comes first: two views see one frame from different sides, so the list is
+            // rebuilt per view from the drawables' own boxes, and a drawable outside the view costs
+            // nothing — no buffer bind, no draw call, no edge line (X58).
+            let aspect = f64::from(region.width.max(1)) / f64::from(region.height.max(1));
+            let frustum = Frustum::of_camera(camera, aspect);
+            frustum.visible(self.drawables.iter().map(|drawn| drawn.bounds), &mut self.visible);
+
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Z3L view pass"),
                 color_attachments: &[color_attachment],
@@ -659,9 +693,12 @@ impl ViewportRenderer {
             pass.set_scissor_rect(x, y, width, height);
             pass.set_bind_group(0, &self.camera_bind_group, &[offset]);
 
-            if passes.opaque_faces && !self.drawables.is_empty() {
+            if passes.opaque_faces && !self.visible.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
-                for drawn in &self.drawables {
+                for &index in &self.visible {
+                    let Some(drawn) = self.drawables.get(index) else {
+                        continue;
+                    };
                     // The reference is the slot this drawable stamps; the hidden-edge pass reads it
                     // back before drawing the same drawable's lines.
                     pass.set_stencil_reference(drawn.stencil_reference);
@@ -698,8 +735,10 @@ impl ViewportRenderer {
 
             // Blended faces go after the opaque scene and back to front, so a nearer panel tints a
             // farther one instead of hiding it. The order is per view: two views see the same
-            // centre from opposite sides.
-            if passes.translucent_faces && !self.drawables.is_empty() {
+            // centre from opposite sides, and only the drawables the view kept are ordered.
+            if passes.translucent_faces && !self.visible.is_empty() {
+                self.draw_order.clear();
+                self.draw_order.extend_from_slice(&self.visible);
                 sort_back_to_front(&self.centres, camera.eye(), &mut self.draw_order);
                 pass.set_pipeline(&self.translucent_pipeline);
                 for &index in &self.draw_order {
@@ -715,12 +754,16 @@ impl ViewportRenderer {
             // Edges last, so a line sits on top of the faces it belongs to. *Shaded with hidden
             // edges* uses the stencil-gated pass, *wireframe* reaches here with no faces before it.
             //
-            // Every drawable owns its own line buffer (X57), so both styles walk the drawables: the
-            // visible one draws each list as it is, and the hidden one also names the drawable's
-            // stencil slot, which is what keeps an inside edge from showing through a neighbour.
+            // Every drawable owns its own line buffer (X57), so both styles walk the visible
+            // drawables: the list that kept a drawable's faces keeps its lines too, and the hidden
+            // one also names the drawable's stencil slot, which is what keeps an inside edge from
+            // showing through a neighbour.
             if passes.visible_edges {
                 pass.set_pipeline(&self.edge_pipeline);
-                for drawn in &self.drawables {
+                for &index in &self.visible {
+                    let Some(drawn) = self.drawables.get(index) else {
+                        continue;
+                    };
                     let Some(edges) = drawn.edges.as_deref() else {
                         continue;
                     };
@@ -732,7 +775,10 @@ impl ViewportRenderer {
                 }
             } else if passes.through_edges {
                 pass.set_pipeline(&self.hidden_edge_pipeline);
-                for drawn in &self.drawables {
+                for &index in &self.visible {
+                    let Some(drawn) = self.drawables.get(index) else {
+                        continue;
+                    };
                     let Some(edges) = drawn.edges.as_deref() else {
                         continue;
                     };
@@ -1570,6 +1616,47 @@ mod tests {
         let colors = SceneColors::DARK;
         assert_eq!(pixels_of(&pixels, colors.product_envelope_active), 0);
         assert_eq!(pixels_of(&pixels, colors.product_envelope_inactive), 0, "a piece with parts draws no box");
+    }
+
+    #[test]
+    fn a_view_draws_only_the_drawables_its_volume_meets() {
+        // X58: the passes walked the whole frame whatever the camera saw. The view volume is now
+        // tested once per drawable before a pass names a buffer, and the list serves faces and
+        // edges alike, so a drawable off screen costs neither.
+        let Some((device, queue)) = noop_device() else {
+            println!("this build has no noop backend to render the culling test with");
+            return;
+        };
+        let id = |value| Id::new(value).expect("id");
+        let mesh = Arc::new(triangle());
+        let edges: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2, 2, 0]);
+        let mut frame = SceneFrame {
+            camera: Camera::default().looked_from(DVec3::new(0.0, 0.0, 1_000.0), DVec3::X, DVec3::Y, -DVec3::Z),
+            grid: Grid { visible: false, ..Grid::default() },
+            ..SceneFrame::default()
+        };
+        // Five balls in a row three metres apart: a 45-degree view from the middle sees one at that
+        // distance, and only the camera's own pull-back sees all five.
+        for (index, x) in [-3_000.0, -1_500.0, 0.0, 1_500.0, 3_000.0].into_iter().enumerate() {
+            let transform = DMat4::from_translation(DVec3::new(x, 0.0, 0.0));
+            let drawable = Drawable::new(id(index as u64 + 1), Arc::clone(&mesh), transform, [0.6; 4])
+                .with_edges(Arc::clone(&edges));
+            frame.push(drawable);
+        }
+
+        let mut renderer = ViewportRenderer::new(&device, 200, 200);
+        renderer.upload(&device, &frame).expect("the field uploads");
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.drawn_drawables(), 1, "the camera inside the row draws the ball in front of it");
+        assert_eq!(renderer.drawables.len(), 5, "the culling drops drawables from the passes, not from the upload");
+        let drawn = &renderer.visible[0];
+        assert!(renderer.drawables[*drawn].edges.is_some(), "a drawn drawable keeps its edge list");
+
+        // Framing the whole row draws every drawable again.
+        frame.camera = Camera::new(DVec3::ZERO, 20_000.0).expect("camera");
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.drawn_drawables(), 5, "a camera far enough draws the whole row");
+        assert!(renderer.drawables.iter().all(|drawn| drawn.edges.is_some()), "and every edge list with it");
     }
 
     #[test]

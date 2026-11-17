@@ -13,7 +13,8 @@
 //! frame's value types (`Drawable`, `Polyline`, `ProductEnvelope`, `ShadingStyle`, `Grid`,
 //! `ContactShadow`, `ContactShadows`, `Lighting`, `PointLight`) beside `SceneFrame`'s own builders,
 //! and a frame is assembled from all of them at once — splitting them would put one description in
-//! nine modules a reader has to join back.
+//! nine modules a reader has to join back. [`Frustum`] is the volume a view culls the frame's
+//! drawables by, derived from the camera the frame carries.
 //!
 //! Changes when: what a frame carries, or how a frame describes a drawable, a shadow or a light,
 //! changes.
@@ -29,7 +30,7 @@
 
 use std::sync::Arc;
 
-use geom::{DMat4, DQuat, DVec3, MeshData};
+use geom::{Aabb, DMat4, DQuat, DVec3, DVec4, MeshData};
 use model::Id;
 
 use crate::ray::{ray_hit_drawable, ray_hit_polyline, ray_hit_product_envelope};
@@ -374,15 +375,43 @@ pub struct Drawable {
     pub world_transform: DMat4,
     /// Linear RGB colour and opacity.
     pub color: [f32; 4],
+    /// The box around the mesh in its own frame, as the mesh cache measured it (X56).
+    ///
+    /// `None` means the box was never measured, not that the drawable is empty: a view keeps a
+    /// drawable whose extent is unknown. [`Drawable::world_bounds`] turns it into the box a view
+    /// culls by (X58).
+    pub local_bounds: Option<Aabb>,
 }
 
 impl Drawable {
     /// Creates a drawable from a document id, a mesh, a rigid world transform and a colour.
     ///
+    /// The box around the mesh is measured here, which walks every vertex: a mesh that came from
+    /// the evaluation cache carries its box already, and [`Drawable::with_box`] takes it instead.
     /// The drawable starts with no edge lists; [`Drawable::with_edges`] and
     /// [`Drawable::with_all_edges`] add them.
     pub fn new(id: Id, mesh: Arc<MeshData>, world_transform: DMat4, color: [f32; 4]) -> Self {
-        Self { id, mesh, edges: None, all_edges: None, world_transform, color }
+        let local_bounds = mesh.local_bounds();
+        Self::with_box(id, mesh, world_transform, color, local_bounds)
+    }
+
+    /// Creates a drawable with the box the mesh cache measured beside the mesh, in the mesh's frame.
+    ///
+    /// This is the evaluation path: a rebuild copies the box it holds instead of measuring the
+    /// mesh again, so a dense frame costs eight corners per drawable and never a vertex (X56).
+    pub fn with_box(
+        id: Id,
+        mesh: Arc<MeshData>,
+        world_transform: DMat4,
+        color: [f32; 4],
+        local_bounds: Option<Aabb>,
+    ) -> Self {
+        Self { id, mesh, edges: None, all_edges: None, world_transform, color, local_bounds }
+    }
+
+    /// The box around the drawable in world space, or `None` when its extent was never measured.
+    pub fn world_bounds(&self) -> Option<Aabb> {
+        self.local_bounds.map(|local| local.transformed_by(self.world_transform))
     }
 
     /// Attaches the boundary and crease edge list derived from `mesh`.
@@ -395,6 +424,103 @@ impl Drawable {
     pub fn with_all_edges(mut self, all_edges: Arc<[u32]>) -> Self {
         self.all_edges = Some(all_edges);
         self
+    }
+}
+
+/// A camera's view volume, as the six half-spaces a view culls the frame against.
+///
+/// The volume is read from the same view-projection matrix the shader receives, so one rule holds
+/// for a perspective and an orthographic view, and the near and far planes are the camera's own (one
+/// millimetre in front of the eye, [`MAX_DISTANCE_MM`] away). A box that straddles a plane is kept:
+/// a box slightly behind the eye can still reach into the picture, so only a box entirely outside
+/// the volume is dropped (X58).
+///
+/// The value is derived per view and never stored: a camera move changes it, and it is not document
+/// data (ADR 0029).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frustum {
+    /// The six planes, or `None` when the matrix was degenerate: a volume that cannot be measured
+    /// keeps every drawable rather than hiding the scene.
+    planes: Option<[Plane; 6]>,
+}
+
+/// One half-space of a view volume: a point is inside when `normal · point + offset >= 0`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Plane {
+    normal: DVec3,
+    offset: f64,
+}
+
+impl Frustum {
+    /// The view volume of a camera seen through a viewport of the given aspect ratio.
+    pub fn of_camera(camera: Camera, aspect: f64) -> Self {
+        Self { planes: planes_of(camera.view_projection(aspect)) }
+    }
+
+    /// Whether any part of `bounds` lies inside the volume.
+    ///
+    /// The test is the box's farthest corner along each plane's normal: when that corner is on the
+    /// outside of one plane the whole box is, because no other corner reaches further that way.
+    pub fn meets(&self, bounds: Aabb) -> bool {
+        let Some(planes) = self.planes.as_ref() else {
+            return true;
+        };
+        let (min, max) = (bounds.min(), bounds.max());
+        if !min.is_finite() || !max.is_finite() {
+            return true;
+        }
+        planes.iter().all(|plane| {
+            let normal = plane.normal;
+            let far = DVec3::new(
+                if normal.x >= 0.0 { max.x } else { min.x },
+                if normal.y >= 0.0 { max.y } else { min.y },
+                if normal.z >= 0.0 { max.z } else { min.z },
+            );
+            normal.dot(far) + plane.offset >= 0.0
+        })
+    }
+
+    /// Replaces `out` with the position of every box the volume meets, in input order.
+    ///
+    /// A box that was never measured (`None`) is kept: an unknown extent is not an empty one. The
+    /// caller owns `out` because the passes of one view read the same list twice — once for faces
+    /// and once for the edges that belong to them (X58).
+    pub fn visible(&self, boxes: impl IntoIterator<Item = Option<Aabb>>, out: &mut Vec<usize>) {
+        out.clear();
+        for (index, bounds) in boxes.into_iter().enumerate() {
+            if bounds.is_none_or(|bounds| self.meets(bounds)) {
+                out.push(index);
+            }
+        }
+    }
+}
+
+/// The six planes of a view-projection matrix, or `None` when one of them is degenerate.
+///
+/// Clip depth runs from `0` at the near plane to `1` at the far one, so the near plane is the row of
+/// `z` rather than the usual `w + z` of a `-1..1` depth range.
+fn planes_of(matrix: DMat4) -> Option<[Plane; 6]> {
+    let (w, x, y, z) = (matrix.row(3), matrix.row(0), matrix.row(1), matrix.row(2));
+    let rows = [w + x, w - x, w + y, w - y, z, w - z];
+    let mut planes = [Plane { normal: DVec3::ZERO, offset: 0.0 }; 6];
+    for (plane, row) in planes.iter_mut().zip(rows) {
+        *plane = Plane::from_row(row)?;
+    }
+    Some(planes)
+}
+
+impl Plane {
+    /// The unit-normal form of one clip row, or `None` when it has no direction to normalize.
+    fn from_row(row: DVec4) -> Option<Self> {
+        if !row.is_finite() {
+            return None;
+        }
+        let normal = row.truncate();
+        let length = normal.length();
+        if !length.is_finite() || length <= 0.0 {
+            return None;
+        }
+        Some(Self { normal: normal / length, offset: row.w / length })
     }
 }
 
@@ -1949,5 +2075,99 @@ mod tests {
         assert_eq!(frame.with_selection_highlight(&[]), frame);
         let missing = Id::new(99).expect("id");
         assert_eq!(frame.with_selection_highlight(&[missing]), frame);
+    }
+
+    /// One drawable whose extent is exactly the box the test names.
+    ///
+    /// The box arrives the way the scene walk hands it over (X56), so the culling reads one value
+    /// and the mesh is never measured.
+    fn boxed(value: u64, min: DVec3, max: DVec3) -> Drawable {
+        let bounds = Aabb::of_points([min, max]).expect("a finite box");
+        let edges: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2]);
+        Drawable::with_box(Id::new(value).expect("id"), quad_mesh(), DMat4::IDENTITY, [1.0; 4], Some(bounds))
+            .with_edges(edges)
+    }
+
+    /// A cube of `side` millimetres with its minimum corner at the origin, in the world at `at`.
+    fn cube(value: u64, at: DVec3, side: f64) -> Drawable {
+        let mut drawable = boxed(value, DVec3::ZERO, DVec3::splat(side));
+        drawable.world_transform = DMat4::from_translation(at);
+        drawable
+    }
+
+    /// A field of cubes a thousand millimetres apart, the camera inside it at the origin of the
+    /// field: the wall X58 is measured on, cut down to a test.
+    fn cube_field(side: u64, spacing: f64) -> SceneFrame {
+        let mut frame = SceneFrame::default();
+        let half = side as i64 / 2;
+        for row in -half..=half {
+            for column in -half..=half {
+                let value = (row + half) as u64 * side + (column + half) as u64 + 1;
+                let at = DVec3::new(column as f64 * spacing, row as f64 * spacing, 0.0);
+                frame.push(cube(value, at, 100.0));
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn only_the_drawables_the_view_volume_meets_are_drawn() {
+        // X58: the renderer drew every drawable of the frame. A camera inside a dense scene now
+        // keeps the drawables its volume reaches and drops the rest, so an orbit over a wall of
+        // cabinets pays for what is on screen.
+        let frame = cube_field(41, 1_000.0);
+        assert_eq!(frame.drawables().len(), 1_681, "a 41 x 41 field is the dense scene");
+        let camera = Camera::new(DVec3::ZERO, 4_000.0).expect("camera");
+        let frustum = Frustum::of_camera(camera, 1.0);
+        let mut drawn = Vec::new();
+        frustum.visible(frame.drawables().iter().map(Drawable::world_bounds), &mut drawn);
+
+        let expected: Vec<usize> = (0..frame.drawables().len())
+            .filter(|index| {
+                let bounds = frame.drawables()[*index].world_bounds().expect("a measured box");
+                frustum.meets(bounds)
+            })
+            .collect();
+        assert_eq!(drawn, expected, "the list is exactly the drawables the volume meets");
+        assert!(drawn.len() < frame.drawables().len() / 4, "the camera inside the field drops most of it");
+        assert!(drawn.len() > 1, "and still draws the field around it, {} drawables", drawn.len());
+        for index in &drawn {
+            let drawable = &frame.drawables()[*index];
+            assert!(drawable.edges.is_some(), "a drawn drawable keeps the edge list it was built with");
+        }
+
+        // Framing the whole field draws every drawable again: culling never hides what is in view.
+        let whole = Camera::default().looked_from(DVec3::new(0.0, 0.0, 80_000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+        Frustum::of_camera(whole, 1.0).visible(frame.drawables().iter().map(Drawable::world_bounds), &mut drawn);
+        assert_eq!(drawn.len(), frame.drawables().len(), "a camera far enough draws the whole field");
+    }
+
+    #[test]
+    fn a_box_that_straddles_the_eye_is_kept() {
+        // The awkward case: the near plane cuts the box, and the eye is inside it. A box is dropped
+        // only when it lies wholly outside one plane, so the part of it in front of the eye is drawn.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 1_000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+        let frustum = Frustum::of_camera(camera, 1.0);
+        let mut frame = SceneFrame::default();
+        frame.push(boxed(1, DVec3::new(-50.0, -50.0, 995.0), DVec3::new(50.0, 50.0, 1_105.0)));
+        frame.push(boxed(2, DVec3::new(-50.0, -50.0, 1_020.0), DVec3::new(50.0, 50.0, 1_120.0)));
+
+        let mut drawn = Vec::new();
+        frustum.visible(frame.drawables().iter().map(Drawable::world_bounds), &mut drawn);
+        assert_eq!(drawn, vec![0], "the straddling box stays, the one wholly behind the eye goes");
+    }
+
+    #[test]
+    fn a_box_whose_extent_was_never_measured_is_never_culled() {
+        // An unknown extent is not an empty one: a drawable the frame did not measure is drawn,
+        // because hiding a body is worse than drawing an invisible one.
+        let camera = Camera::new(DVec3::new(1.0e6, 0.0, 0.0), 500.0).expect("camera");
+        let frustum = Frustum::of_camera(camera, 1.0);
+        let measured = Aabb::of_points([DVec3::ZERO, DVec3::X]).expect("a box");
+        assert!(!frustum.meets(measured), "the measured box is far outside the volume");
+
+        let mut drawn = Vec::new();
+        frustum.visible([None, Some(measured)], &mut drawn);
+        assert_eq!(drawn, vec![0], "the unmeasured box is kept, the measured one is dropped");
     }
 }

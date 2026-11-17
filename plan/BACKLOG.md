@@ -40,8 +40,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-## Bugs
-- `[ ]` **X58** the viewport draws every object in the scene, on screen or not
+- `[~]` **X58** the viewport draws every object in the scene, on screen or not
   Why: Observation: the viewport draws every drawable of the frame, on screen or not.
    draw_order is built as the whole index range (crates/render/src/lib.rs), the draw loop walks
    it, and the edge pass is one flattened list of every mesh edge in the scene; nothing tests a
@@ -62,6 +61,8 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the eye is not dropped, and that framing the whole scene draws every drawable again; the
    count of drawn drawables is exposed for the test.
   `files: crates/render/src/lib.rs,crates/scene/src/lib.rs`
+
+## Bugs
 - `[ ]` **X59** a click ray-casts every triangle of every object in the scene
   Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
    (crates/scene/src/ray.rs) loops over the whole index buffer of the drawable and transforms
