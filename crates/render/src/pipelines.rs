@@ -338,6 +338,9 @@ pub(crate) fn create_shadow_blur_pipeline(
 
 /// The floor plate: one unlit quad that reads the mask, so the shadow costs a texture fetch inside
 /// a pass the frame already draws rather than a pass of its own.
+///
+/// It is blended rather than opaque because the plate can be drawn see-through (U109): the frame
+/// carries its opacity in the camera uniform, so the blend state is the same whatever the value.
 pub(crate) fn create_floor_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -370,11 +373,17 @@ pub(crate) fn create_floor_pipeline(
             module: shader,
             entry_point: Some("fs_floor"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: std::slice::from_ref(&face_target(None)),
+            targets: std::slice::from_ref(&floor_target()),
         }),
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The plate's colour target: alpha-blended, because the plate's own opacity decides whether it
+/// covers what stands under it or only tints it.
+pub(crate) fn floor_target() -> Option<wgpu::ColorTargetState> {
+    face_target(Some(wgpu::BlendState::ALPHA_BLENDING))
 }
 
 /// The single-channel target of the mask passes.

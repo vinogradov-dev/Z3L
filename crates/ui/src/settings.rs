@@ -83,6 +83,21 @@ pub const DEFAULT_EDGE_STRENGTH: u32 = 70;
 /// edited (U107); this is only the value a workspace starts with and the one the reset restores.
 pub const DEFAULT_SHADOW_STRENGTH: u32 = 40;
 
+/// The most transparent the floor plate can be drawn, in percent.
+///
+/// Zero is a real answer, not the absence of one: the plate and the shadow it carries are gone,
+/// because a shadow needs a surface to darken (U109).
+pub const MIN_FLOOR_OPACITY: u32 = 0;
+
+/// The most the floor plate can be drawn: opaque, the floor a workspace opens with.
+pub const MAX_FLOOR_OPACITY: u32 = 100;
+
+/// The floor opacity a fresh workspace opens with, in percent.
+///
+/// Opaque, so a new workspace draws exactly the floor it drew before U109 gained the field; the
+/// person who wants to see a part through the ground lowers it.
+pub const DEFAULT_FLOOR_OPACITY: u32 = 100;
+
 /// How many recent files the workspace remembers.
 pub const MAX_RECENT: usize = 10;
 
@@ -286,6 +301,13 @@ pub struct ViewportSettings {
     /// One value for every view and a workspace default, because the shadow's *switch* is the view's
     /// leaf and its intensity is a taste knob nobody wants four different answers to.
     pub shadow_strength: u32,
+    /// How opaque the floor plate is, in percent (U109).
+    ///
+    /// Below 100 the plate is blended over what stands under it, so a part below the floor is seen
+    /// through the floor's tint; at 0 the plate and its shadow are gone, because a shadow needs a
+    /// surface to darken. Like the strengths it is read when the frame draws, so a drag costs no
+    /// upload.
+    pub floor_opacity: u32,
     /// Whether the edge pass draws every triangle edge, diagonals included.
     pub all_edges: bool,
     /// The direction a viewport opens from.
@@ -303,6 +325,7 @@ impl Default for ViewportSettings {
             grid_strength: DEFAULT_GRID_STRENGTH,
             edge_strength: DEFAULT_EDGE_STRENGTH,
             shadow_strength: DEFAULT_SHADOW_STRENGTH,
+            floor_opacity: DEFAULT_FLOOR_OPACITY,
             all_edges: false,
             opening_view: OpeningView::default(),
             roll_step_degrees: 1,
@@ -543,6 +566,7 @@ impl Settings {
         self.viewport.grid_strength = self.viewport.grid_strength.min(MAX_DISPLAY_STRENGTH);
         self.viewport.edge_strength = self.viewport.edge_strength.min(MAX_DISPLAY_STRENGTH);
         self.viewport.shadow_strength = self.viewport.shadow_strength.min(MAX_DISPLAY_STRENGTH);
+        self.viewport.floor_opacity = self.viewport.floor_opacity.clamp(MIN_FLOOR_OPACITY, MAX_FLOOR_OPACITY);
         self.viewport.roll_step_degrees =
             self.viewport.roll_step_degrees.clamp(MIN_ROLL_STEP_DEGREES, MAX_ROLL_STEP_DEGREES);
         self.gizmo.handle_points = self.gizmo.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS);
@@ -937,7 +961,8 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64). The
     // shadow's intensity is here alone: its *switch* is the view's, which is why the View tab draws
-    // the switch and no number (U107, U110).
+    // the switch and no number (U107, U110). The floor's opacity joined them because the ground is
+    // painted, not modelled: it is the fourth answer to "how is this view drawn" (U109).
     ui.label(egui::RichText::new(Message::DisplayHeading.text(lang)).strong());
     for (value, label, hint) in [
         (&mut settings.viewport.grid_strength, Message::GridStrength, Message::GridStrengthHint),
@@ -949,11 +974,21 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
             .on_hover_text(hint.text(lang))
             .changed();
     }
+    // The floor's own value has its own endpoints, because zero means something here that it does
+    // not mean for a strength: no plate and no shadow at all (U109).
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut settings.viewport.floor_opacity, MIN_FLOOR_OPACITY..=MAX_FLOOR_OPACITY)
+                .text(Message::FloorOpacity.text(lang)),
+        )
+        .on_hover_text(Message::FloorOpacityHint.text(lang))
+        .changed();
     ui.horizontal(|ui| {
         if ui.button(Message::ResetDisplay.text(lang)).on_hover_text(Message::ResetDisplayHint.text(lang)).clicked() {
             settings.viewport.grid_strength = DEFAULT_GRID_STRENGTH;
             settings.viewport.edge_strength = DEFAULT_EDGE_STRENGTH;
             settings.viewport.shadow_strength = DEFAULT_SHADOW_STRENGTH;
+            settings.viewport.floor_opacity = DEFAULT_FLOOR_OPACITY;
             changed = true;
         }
         ui.label(egui::RichText::new(Message::ResetDisplayHint.text(lang)).small().color(theme::text_dim(ui)));
@@ -1040,6 +1075,7 @@ mod tests {
                 grid_strength: 30,
                 edge_strength: 80,
                 shadow_strength: 55,
+                floor_opacity: 45,
                 all_edges: true,
                 opening_view: OpeningView::Top,
                 roll_step_degrees: 5,
@@ -1144,7 +1180,7 @@ mod tests {
 
     #[test]
     fn a_value_outside_its_range_is_clamped_on_read() {
-        let json = r#"{"version":1,"appearance":{"ui_scale":900,"panel_opacity":5},"viewport":{"grid_step_mm":0,"roll_step_degrees":0,"grid_strength":900,"edge_strength":900,"shadow_strength":900}}"#;
+        let json = r#"{"version":1,"appearance":{"ui_scale":900,"panel_opacity":5},"viewport":{"grid_step_mm":0,"roll_step_degrees":0,"grid_strength":900,"edge_strength":900,"shadow_strength":900,"floor_opacity":900}}"#;
         let settings = Settings::from_json(json).expect("parse and repair");
         assert_eq!(settings.appearance.ui_scale, ui_scale::MAX_PERCENT);
         assert_eq!(settings.appearance.panel_opacity, MIN_PANEL_OPACITY);
@@ -1153,6 +1189,7 @@ mod tests {
         assert_eq!(settings.viewport.grid_strength, MAX_DISPLAY_STRENGTH);
         assert_eq!(settings.viewport.edge_strength, MAX_DISPLAY_STRENGTH);
         assert_eq!(settings.viewport.shadow_strength, MAX_DISPLAY_STRENGTH);
+        assert_eq!(settings.viewport.floor_opacity, MAX_FLOOR_OPACITY);
     }
 
     #[test]
@@ -1163,16 +1200,19 @@ mod tests {
             (60, 70, 40),
             "a fresh workspace draws the owner's default display"
         );
+        assert_eq!(defaults.floor_opacity, MAX_FLOOR_OPACITY, "a new workspace opens with the opaque floor");
         let mut settings = Settings::default();
         settings.viewport.grid_strength = 0;
         settings.viewport.edge_strength = 50;
         settings.viewport.shadow_strength = 100;
+        settings.viewport.floor_opacity = 35;
         let json = settings.to_json().expect("serialise");
         let read = Settings::from_json(&json).expect("parse");
         assert_eq!(read.viewport.grid_strength, 0);
         assert_eq!(read.viewport.edge_strength, 50);
         assert_eq!(read.viewport.shadow_strength, 100);
-        assert_eq!(read, settings, "the workspace file keeps all three strengths");
+        assert_eq!(read.viewport.floor_opacity, 35, "the floor's opacity survives a restart");
+        assert_eq!(read, settings, "the workspace file keeps every display value");
 
         // A file written before the strengths moved out of the view cluster has no key for them.
         let json = r#"{"version":1,"viewport":{"grid":true}}"#;
@@ -1181,6 +1221,22 @@ mod tests {
             (settings.viewport.grid_strength, settings.viewport.edge_strength, settings.viewport.shadow_strength),
             (DEFAULT_GRID_STRENGTH, DEFAULT_EDGE_STRENGTH, DEFAULT_SHADOW_STRENGTH)
         );
+        assert_eq!(
+            settings.viewport.floor_opacity, DEFAULT_FLOOR_OPACITY,
+            "a file from before the field loads the solid floor"
+        );
+    }
+
+    #[test]
+    fn the_floor_opacity_is_a_percentage_that_can_reach_zero() {
+        // Zero is a real answer here, not a clamp: the plate and its shadow are gone (U109).
+        assert_eq!(MIN_FLOOR_OPACITY, 0);
+        const { assert!(MIN_FLOOR_OPACITY < DEFAULT_FLOOR_OPACITY) };
+        const { assert!(DEFAULT_FLOOR_OPACITY <= MAX_FLOOR_OPACITY) };
+        let mut settings = Settings::default();
+        settings.viewport.floor_opacity = 0;
+        settings.sanitize();
+        assert_eq!(settings.viewport.floor_opacity, 0, "an empty floor is a legal display");
     }
 
     #[test]

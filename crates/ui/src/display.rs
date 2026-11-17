@@ -60,6 +60,15 @@ pub fn contact_shadows(strength_percent: u32, visible: bool) -> scene::ContactSh
     scene::ContactShadows { visible, strength: display_strength(strength_percent), ..scene::ContactShadows::default() }
 }
 
+/// The floor plate's opacity as the frame reads it, from the workspace's whole percent.
+///
+/// Its own endpoints rather than [`display_strength`]'s: zero is a real answer for the plate — it and
+/// its shadow are gone — while a zero strength means "draw nothing" for a pass that still exists
+/// (U109).
+pub fn floor_opacity(percent: u32) -> f32 {
+    percent.clamp(crate::settings::MIN_FLOOR_OPACITY, crate::settings::MAX_FLOOR_OPACITY) as f32 / 100.0
+}
+
 /// The preset a viewport opens with.
 ///
 /// A preset only names an eye direction and, for the five standard views, the orthographic
@@ -145,6 +154,9 @@ mod tests {
         assert_eq!(display_strength(u32::MAX), 1.0, "a hand-edited percent is clamped");
         assert!(!contact_shadows(0, true).draws(), "a zero intensity draws nothing");
         assert_eq!(contact_shadows(u32::MAX, true).strength, 1.0, "a hand-edited strength is clamped");
+        assert_eq!(floor_opacity(0), 0.0, "an empty floor is a percent too, not a fallback");
+        assert_eq!(floor_opacity(40), 0.4, "forty percent is the plate a session asks for");
+        assert_eq!(floor_opacity(u32::MAX), 1.0, "a hand-edited opacity is clamped to the solid floor");
     }
 
     #[test]

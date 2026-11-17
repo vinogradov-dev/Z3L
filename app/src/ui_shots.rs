@@ -1216,11 +1216,11 @@ fn the_wireframe_on_the_dark_theme_draws_the_black_ink() {
 }
 
 #[test]
-#[ignore = "needs a GPU adapter; writes target/ui-shots/floor-underground.png"]
-fn a_body_under_the_floor_shows_through_the_plate() {
-    // U108: the plate carries the shadow in its own fragment, so it can stop writing depth; a part
-    // that stands under the floor then draws over the plate instead of being hidden behind it, and
-    // the shadow under the part that stands on the floor is still there.
+#[ignore = "needs a GPU adapter; writes target/ui-shots/floor-opacity-*.png"]
+fn the_floor_at_full_and_at_forty_percent_shows_what_stands_under_it() {
+    // U109: the plate is blended, so one scene under the same camera at 100 % and at 40 % is the pair
+    // that says what the setting does — the shelf moved under the floor is hidden by the opaque
+    // plate and seen through the tinted one, and the shadow beside it is drawn in both.
     let render_state = match render_state() {
         Ok(render_state) => render_state,
         Err(reason) => {
@@ -1230,31 +1230,77 @@ fn a_body_under_the_floor_shows_through_the_plate() {
     };
     let directory = testkit::ui_shots_dir().expect("the shots directory is created");
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
-    let ctx = egui::Context::default();
-    let workspace = testkit::scratch_dir("ui-shots").join("floor-underground.json");
-    let mut settings = Settings::default();
-    settings.appearance.theme = ThemeChoice::Dark;
-    settings.viewport.shadow_strength = 65;
-    let mut session = crate::scene_build::demo_session().expect("the sample session builds");
-    let shelf =
-        find_named(std::slice::from_ref(&model::Node::Container(session.project().root().clone())), "Loose shelf")
-            .expect("the demo scene holds the loose shelf");
-    let below =
-        model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
-    let params = serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below }).expect("params");
-    session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
-    let mut app =
-        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
-    let _ = settle(&mut app, &ctx, &render_state, screen);
-    let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
-    let pixels_per_point = ctx.pixels_per_point();
-    let size =
-        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
-    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
-    let path = directory.join("floor-underground.png");
-    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
-    app.tabs.active_mut().release_target();
-    println!("the shelf under the floor is in {}", path.display());
+    for opacity in [100, 40] {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("floor-opacity-{opacity}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = ThemeChoice::Dark;
+        settings.viewport.shadow_strength = 65;
+        settings.viewport.floor_opacity = opacity;
+        let mut session = crate::scene_build::demo_session().expect("the sample session builds");
+        let shelf =
+            find_named(std::slice::from_ref(&model::Node::Container(session.project().root().clone())), "Loose shelf")
+                .expect("the demo scene holds the loose shelf");
+        let below =
+            model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
+        let params = serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below }).expect("params");
+        session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("floor-opacity-{opacity}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the floor at {opacity} % over a shelf below it is in {}", path.display());
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/settings-view-*.png"]
+fn the_settings_window_draws_the_floor_opacity_beside_the_three_strengths() {
+    // U109: the floor's opacity is the fourth value in Settings › View, under one *Reset display*
+    // with the three display strengths. The picture is the check that the row fits the page and
+    // speaks both languages' words, which no assertion can see.
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    for (name, variant) in [("dark", ThemeChoice::Dark), ("light", ThemeChoice::Light)] {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("settings-view-{name}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        settings.viewport.floor_opacity = 40;
+        let session = crate::scene_build::demo_session().expect("the sample session builds");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        app.settings_open = true;
+        app.settings_section = ui::settings::SettingsSection::Viewport;
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("settings-view-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the {name} Settings › View page is in {}", path.display());
+    }
 }
 
 #[test]

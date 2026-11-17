@@ -200,6 +200,11 @@ struct CameraUniform {
     /// `x` the floor plate's half-size in millimetres, `y` and `z` one mask texel, `w` the penumbra
     /// in texels. The plate, the mask and the blur read this one value.
     shadow_plane: [f32; 4],
+    /// `x` how opaque the floor plate is, from 0 to 1; the rest is unused and keeps the slot aligned.
+    ///
+    /// The plate's alpha comes from here, because a change is read at draw time: a drag of the
+    /// slider costs one uniform write and no upload of any buffer (U109).
+    floor_opacity: [f32; 4],
 }
 
 struct RenderTargets {
@@ -687,7 +692,14 @@ impl ViewportRenderer {
         for (index, view) in views.iter().enumerate() {
             let region = view.region;
             let aspect = f64::from(region.width.max(1)) / f64::from(region.height.max(1));
-            uniforms.push(self.camera_uniform(view.camera, lighting, aspect, &view.shadows, frame.grid.extent_mm));
+            uniforms.push(camera_uniform(
+                view.camera,
+                lighting,
+                aspect,
+                &view.shadows,
+                frame.grid.extent_mm,
+                frame.floor_opacity,
+            ));
             offsets.push((index as u64 * self.camera_stride) as u32);
             let (x, y, width, height) = region.scissor(self.size[0], self.size[1]);
             debug_assert!(x.saturating_add(width) <= self.size[0] && y.saturating_add(height) <= self.size[1]);
@@ -702,12 +714,13 @@ impl ViewportRenderer {
             queue.write_buffer(
                 &self.camera_buffer,
                 u64::from(ground_offset),
-                bytemuck::bytes_of(&self.camera_uniform(
+                bytemuck::bytes_of(&camera_uniform(
                     views.first().map_or(Camera::default(), |view| view.camera),
                     lighting,
                     1.0,
                     &frame.contact_shadows,
                     frame.grid.extent_mm,
+                    frame.floor_opacity,
                 )),
             );
             self.ground.update(
@@ -796,27 +809,6 @@ impl ViewportRenderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[offset]);
             pass.set_bind_group(1, self.shadow.group(), &[]);
 
-            // The ground first: an unlit plate on z = 0 that carries the shadow in its own fragment,
-            // so the shadow costs no pass of its own and no blended layer over the scene. It is drawn
-            // in every display style, because the floor is not part of the model.
-            if let Some(plate) = self.ground.plate_value() {
-                pass.set_pipeline(self.ground.plate_pipeline());
-                pass.set_bind_group(2, self.ground.plate_group(), &[]);
-                pass.set_vertex_buffer(0, plate.vertex_buffer.slice(..));
-                pass.set_index_buffer(plate.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..plate.index_count, 0, 0..1);
-            }
-
-            // The grid is floor, not model, so it is drawn with the plate and before every body:
-            // the lines then lie under a part that stands below the floor as well as under one that
-            // stands on it, instead of crossing it (U108). It writes no depth, so a body drawn after
-            // it always wins.
-            if let Some(grid) = self.grid.value() {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                pass.draw(0..grid.vertex_count, 0..1);
-            }
-
             if passes.opaque_faces && !self.visible.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
                 for &index in &self.visible {
@@ -830,6 +822,34 @@ impl ViewportRenderer {
                     pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
                 }
+            }
+
+            // The ground after the opaque bodies and before every pass that writes no depth, so the
+            // plate is blended *over* what stands under it: a part below the floor is tinted by the
+            // plate instead of being erased by a depth-writing ground or drawn over an opaque one
+            // (U108, U109). The blended faces, the chains and the edges come later because none of
+            // them writes depth, and the plate could not be occluded by them: an opaque plate drawn
+            // after a ghost would paint the floor over the whole model.
+            //
+            // It writes no depth and carries the shadow in its own fragment, so the shadow costs no
+            // pass of its own. It is drawn in every display style, because the floor is not part of
+            // the model.
+            if let Some(plate) = self.ground.plate_value() {
+                pass.set_pipeline(self.ground.plate_pipeline());
+                pass.set_bind_group(2, self.ground.plate_group(), &[]);
+                pass.set_vertex_buffer(0, plate.vertex_buffer.slice(..));
+                pass.set_index_buffer(plate.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..plate.index_count, 0, 0..1);
+            }
+
+            // The grid is floor, not model, so it is drawn on the plate and after the opaque bodies:
+            // a line of the work plane lies in front of a part below the floor, which is where a
+            // floor marking belongs, and behind a body that stands on it, whose depth is nearer. It
+            // writes no depth, so it can never hide anything drawn after it (U108, U109).
+            if let Some(grid) = self.grid.value() {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+                pass.draw(0..grid.vertex_count, 0..1);
             }
 
             if self.polylines.value().is_some() {
@@ -908,41 +928,54 @@ impl ViewportRenderer {
         }
         queue.submit(Some(encoder.finish()));
     }
+}
 
-    /// The uniform one view shades with.
-    fn camera_uniform(
-        &self,
-        camera: Camera,
-        lighting: &Lighting,
-        aspect: f64,
-        shadows: &ContactShadows,
-        extent_mm: f64,
-    ) -> CameraUniform {
-        let eye = camera.eye();
-        let light = lighting.key_direction.try_normalize().unwrap_or(DVec3::Z);
-        let (point_count, point_position, point_color) = point_uniforms(lighting);
-        CameraUniform {
-            view_projection: camera.view_projection(aspect).as_mat4().to_cols_array_2d(),
-            camera_position: [eye.x as f32, eye.y as f32, eye.z as f32, 1.0],
-            light_direction: [light.x as f32, light.y as f32, light.z as f32, 0.0],
-            light_color: [
-                lighting.key_color[0],
-                lighting.key_color[1],
-                lighting.key_color[2],
-                lighting.ambient.clamp(0.0, 1.0),
-            ],
-            point_count,
-            point_position,
-            point_color,
-            shadow: shadow_uniform(shadows, light),
-            shadow_plane: [
-                extent_mm as f32,
-                1.0 / ground::MASK_SIZE as f32,
-                1.0 / ground::MASK_SIZE as f32,
-                ground::penumbra_texels(extent_mm),
-            ],
-        }
+/// The uniform one view shades with.
+///
+/// The ground travels in it too, because the plate is not the model: its size, its opacity and the
+/// shadow it carries are all read when the fragment runs, so a slider of any of them costs one
+/// uniform write and no buffer (U109).
+fn camera_uniform(
+    camera: Camera,
+    lighting: &Lighting,
+    aspect: f64,
+    shadows: &ContactShadows,
+    extent_mm: f64,
+    floor_opacity: f32,
+) -> CameraUniform {
+    let eye = camera.eye();
+    let light = lighting.key_direction.try_normalize().unwrap_or(DVec3::Z);
+    let (point_count, point_position, point_color) = point_uniforms(lighting);
+    CameraUniform {
+        view_projection: camera.view_projection(aspect).as_mat4().to_cols_array_2d(),
+        camera_position: [eye.x as f32, eye.y as f32, eye.z as f32, 1.0],
+        light_direction: [light.x as f32, light.y as f32, light.z as f32, 0.0],
+        light_color: [
+            lighting.key_color[0],
+            lighting.key_color[1],
+            lighting.key_color[2],
+            lighting.ambient.clamp(0.0, 1.0),
+        ],
+        point_count,
+        point_position,
+        point_color,
+        shadow: shadow_uniform(shadows, light),
+        shadow_plane: [
+            extent_mm as f32,
+            1.0 / ground::MASK_SIZE as f32,
+            1.0 / ground::MASK_SIZE as f32,
+            ground::penumbra_texels(extent_mm),
+        ],
+        floor_opacity: [sanitize_opacity(floor_opacity), 0.0, 0.0, 0.0],
     }
+}
+
+/// The floor plate's opacity as the fragment reads it, from the frame's own number.
+///
+/// A frame built by hand may carry anything; a NaN or a negative would turn the plate's blend into
+/// garbage, so the one place that writes the slot clamps it to the closed unit interval.
+fn sanitize_opacity(opacity: f32) -> f32 {
+    if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 }
 }
 
 /// Builds one drawable's vertex and index buffers from its mesh, world transform and colour.
@@ -1391,6 +1424,39 @@ mod tests {
         assert_eq!(state.depth_compare, Some(wgpu::CompareFunction::Less));
         assert_eq!(state.bias, FACE_DEPTH_BIAS, "a bottom outline still wins against the plate it lies on");
         assert_eq!(state.stencil, wgpu::StencilState::default(), "the ground owns no stencil slot");
+    }
+
+    #[test]
+    fn the_floor_plate_blends_so_it_can_tint_what_stands_under_it() {
+        // U109: the plate is one blended surface whatever the workspace's opacity is, so the slider
+        // changes a uniform and never a pipeline. Without a blend the paint would be opaque at any
+        // value, which is the floor U108 drew.
+        let target = crate::pipelines::floor_target();
+        assert_eq!(target.as_ref().map(|target| target.format), Some(COLOR_FORMAT));
+        assert_eq!(target.and_then(|target| target.blend), Some(wgpu::BlendState::ALPHA_BLENDING));
+    }
+
+    #[test]
+    fn the_floor_opacity_reaches_the_uniform_clamped_and_never_costs_a_buffer() {
+        // The plate reads one number from the camera slot, so a drag of the slider writes a uniform.
+        // A hostile frame value is clamped where the slot is written, not trusted.
+        let uniform = |opacity| {
+            camera_uniform(Camera::default(), &Lighting::default(), 1.0, &ContactShadows::default(), 5000.0, opacity)
+                .floor_opacity[0]
+        };
+        assert_eq!(uniform(1.0), 1.0, "an opaque floor is the value a fresh workspace carries");
+        assert_eq!(uniform(0.4), 0.4, "and forty percent is the plate a session asks for");
+        assert_eq!(uniform(0.0), 0.0, "an empty floor reaches the fragment as an empty floor");
+        assert_eq!(uniform(-3.0), 0.0, "a negative opacity is clamped, never blended backwards");
+        assert_eq!(uniform(9.0), 1.0);
+        assert_eq!(uniform(f32::NAN), 1.0, "a NaN falls back to the floor that hides nothing");
+        let frame = SceneFrame { floor_opacity: 0.4, ..SceneFrame::default() };
+        assert_eq!(
+            camera_uniform(frame.camera, &frame.lighting, 1.0, &frame.contact_shadows, 5000.0, frame.floor_opacity)
+                .floor_opacity[0],
+            0.4,
+            "the frame's own value is what the plate draws with"
+        );
     }
 
     #[test]
@@ -2029,6 +2095,99 @@ mod tests {
             (above_with - above_open).abs() < 3.0,
             "the panel above the shelf keeps its light: {above_with:.1} against {above_open:.1}"
         );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; the floor tints what stands under it and keeps its shadow"]
+    fn a_see_through_floor_tints_the_part_below_it_and_keeps_its_shadow() {
+        // U109: the plate is blended now, so one scene drawn at 100 %, 40 % and 0 % is three
+        // pictures of one rule — an opaque floor hides what stands under it, a translucent one tints
+        // it, an empty one draws neither plate nor shadow. Two patches of floor carry the shadow: one
+        // the standing box shades, one it does not, both away from every body so no geometry but
+        // plate, mask and background decides the pixel.
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a see-through floor with");
+            return;
+        };
+        const SIDE: u32 = 512;
+        // A right-handed basis: looking from `-Y` and above, so screen right is `+X` and screen up is
+        // `+Z`. The mirror `(X, up, forward)` would flip the winding and make every face a back face.
+        let eye = DVec3::new(0.0, -3000.0, 2500.0);
+        let forward = (DVec3::ZERO - eye).try_normalize().expect("a view direction");
+        let right = forward.cross(DVec3::Z).try_normalize().expect("a right vector");
+        let up = right.cross(forward);
+        let camera = Camera::default().looked_from(eye, right, up, forward);
+        let light = DVec3::new(-0.4, 0.3, 0.85);
+        // A strength above the plate's opacity: this is the case the `max()` rule exists for.
+        let shadows = ContactShadows { visible: true, strength: 0.9, color: [0.0, 0.0, 0.0] };
+        let standing = (1, DVec3::new(0.0, -200.0, 0.0), DVec3::new(400.0, 200.0, 600.0));
+        let below = (2, DVec3::new(-700.0, -500.0, -800.0), DVec3::new(-300.0, -100.0, -500.0));
+        let size = [SIDE, SIDE];
+        let frame = |opacity: f32| {
+            let mut frame = shaded_scene(camera, light, &[standing, below], shadows);
+            frame.floor_opacity = opacity;
+            frame
+        };
+        let (_, full) = shot(&device, &queue, &frame(1.0), SIDE);
+        let (_, tinted) = shot(&device, &queue, &frame(0.4), SIDE);
+        let (_, empty) = shot(&device, &queue, &frame(0.0), SIDE);
+
+        let patch = |min: DVec3, max: DVec3| projected_rect(camera, size, min, max);
+        // Up-sun of everything, so the mask is zero there.
+        let lit = patch(DVec3::new(-1100.0, 300.0, 0.0), DVec3::new(-600.0, 700.0, 0.0));
+        // Down-sun of the standing box and clear of the box's own screen footprint.
+        let shaded = patch(DVec3::new(500.0, -330.0, 0.0), DVec3::new(650.0, -160.0, 0.0));
+        let part = patch(DVec3::new(-700.0, -500.0, -800.0), DVec3::new(-300.0, -100.0, -500.0));
+        for (name, rect) in [("the lit floor", lit), ("the shaded floor", shaded), ("the part below", part)] {
+            assert!(rect.2 > 20 && rect.3 > 12, "{name} is on screen: {rect:?}");
+        }
+
+        // An opaque floor looks as the floor always did: its own colour, darkened under the shadow.
+        let full_lit = mean_luma(&full, size, lit);
+        let full_shaded = mean_luma(&full, size, shaded);
+        assert!(
+            full_lit > full_shaded + 15.0,
+            "the shadow darkens the opaque floor: {full_shaded:.1} against {full_lit:.1}"
+        );
+
+        // The part under the floor is hidden by an opaque plate, seen through a translucent one.
+        let part_full = mean_luma(&full, size, part);
+        let part_tinted = mean_luma(&tinted, size, part);
+        let part_none = mean_luma(&empty, size, part);
+        assert!(
+            part_tinted > part_full + 10.0,
+            "the part below is seen through the tint: {part_tinted:.1} against the opaque floor's {part_full:.1}"
+        );
+        assert!(part_tinted < part_none - 10.0, "and it is tinted, not drawn plainly: {part_none:.1} without a plate");
+
+        // The shadow survives the transparency, and keeps its weight rather than fading with the
+        // plate: the `max()` rule puts it above the plate's own opacity.
+        let tinted_lit = mean_luma(&tinted, size, lit);
+        let tinted_shaded = mean_luma(&tinted, size, shaded);
+        assert!(
+            tinted_lit > tinted_shaded + 15.0,
+            "the shadow is still on the see-through floor: {tinted_shaded:.1} against {tinted_lit:.1}"
+        );
+        assert!(
+            tinted_shaded < tinted_lit * 0.4,
+            "a shadow stronger than the opacity keeps its weight: {tinted_shaded:.1} of {tinted_lit:.1}"
+        );
+        assert!(
+            (tinted_lit - full_lit).abs() > 5.0,
+            "and the plate is genuinely see-through: {tinted_lit:.1} against {full_lit:.1}"
+        );
+
+        // An empty floor draws no plate and no shadow, because a shadow needs a surface to darken.
+        let background = frame(0.0).background;
+        let expected = f64::from(background[0]) + f64::from(background[1]) + f64::from(background[2]);
+        let expected = expected / 3.0 * 255.0;
+        let empty_lit = mean_luma(&empty, size, lit);
+        let empty_shaded = mean_luma(&empty, size, shaded);
+        assert!(
+            (empty_lit - expected).abs() < 3.0,
+            "an empty floor clears to the background: {empty_lit:.1} against {expected:.1}"
+        );
+        assert!((empty_lit - empty_shaded).abs() < 3.0, "and it carries no shadow either");
     }
 
     #[test]

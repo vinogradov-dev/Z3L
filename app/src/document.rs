@@ -103,10 +103,10 @@ const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied
 
 /// The display state the window owns and every frame of this tab is built with.
 ///
-/// The floor grid, the edge list, the ground shadow's strength and the colours of the active theme
-/// variant are the window's (ADR 0029), so the shell hands them to the active document; a frame
-/// rebuilt by a command, a card or a shortcut then draws the same display state the viewport shows.
-/// The shadow's *switch* is the view's, so it is not here (U107).
+/// The floor grid, the edge list, the ground shadow's strength, the floor's opacity and the colours
+/// of the active theme variant are the window's (ADR 0029), so the shell hands them to the active
+/// document; a frame rebuilt by a command, a card or a shortcut then draws the same display state
+/// the viewport shows. The shadow's *switch* is the view's, so it is not here (U107).
 #[derive(Clone, Copy, Debug)]
 struct Display {
     /// Whether the floor grid draws.
@@ -117,6 +117,8 @@ struct Display {
     all_edges: bool,
     /// How far the ground shadow darkens the floor plate, from 0 to 1.
     shadow_strength: f32,
+    /// How opaque the floor plate is, from 0 to 1: zero draws neither plate nor shadow (U109).
+    floor_opacity: f32,
     /// How much of the floor grid's inks shows, from 0 to 1.
     grid_strength: f32,
     /// How opaque the form-outline ink is, from 0 to 1.
@@ -133,6 +135,7 @@ impl Display {
             grid_step_mm: viewport.grid_step_mm,
             all_edges: viewport.all_edges,
             shadow_strength: ui::display::display_strength(viewport.shadow_strength),
+            floor_opacity: ui::display::floor_opacity(viewport.floor_opacity),
             grid_strength: ui::display::display_strength(viewport.grid_strength),
             edge_strength: ui::display::display_strength(viewport.edge_strength),
             colors,
@@ -144,7 +147,8 @@ impl Display {
     /// The shadow's switch is not here: it is the view's, so the active leaf has already put it in
     /// place and a whole-struct write here would overwrite it (U107). Its strength is, because the
     /// intensity is one workspace value — and so are the grid's and the outline's, which the frame
-    /// carries as opacities the renderer reads when it builds the lines.
+    /// carries as opacities the renderer reads when it builds the lines. The floor's opacity is a
+    /// number the plate's fragment reads, so it travels the same way (U109).
     fn apply(self, scene: &mut SceneFrame) {
         scene.grid.visible = self.grid;
         scene.grid.spacing_mm = f64::from(self.grid_step_mm.max(1));
@@ -152,6 +156,7 @@ impl Display {
         scene.all_edges = self.all_edges;
         scene.edge_strength = self.edge_strength;
         scene.contact_shadows.strength = self.shadow_strength;
+        scene.floor_opacity = self.floor_opacity;
         scene.apply_colors(self.colors);
     }
 
@@ -159,7 +164,8 @@ impl Display {
     ///
     /// The three strengths live in the colours and the inks the line buffers are built from, so a
     /// change to one costs a re-upload of the grid and the outlines, not a re-evaluation of the
-    /// document (U64, U107).
+    /// document (U64, U107). The floor's opacity and the shadow's strength are absent on purpose:
+    /// they are read from the uniform when the plate draws, so turning one moves no buffer at all.
     fn repaints(self, previous: Self) -> bool {
         self.colors != previous.colors
             || self.grid_strength != previous.grid_strength
@@ -2754,6 +2760,7 @@ impl Document {
         // reads a different cached list, so the last upload is replayed when the switch flips.
         self.layout.apply_frame_display(&mut self.scene);
         self.scene.contact_shadows.strength = ui::display::display_strength(settings.viewport.shadow_strength);
+        self.scene.floor_opacity = ui::display::floor_opacity(settings.viewport.floor_opacity);
         if self.scene.all_edges != settings.viewport.all_edges {
             self.scene.all_edges = settings.viewport.all_edges;
             if let Err(error) = self.upload_scene() {
@@ -3967,11 +3974,13 @@ mod tests {
     fn the_display_strengths_reach_the_frame_and_the_shadow_does_not_cost_an_upload() {
         // U64: the grid and outline strengths are workspace values the renderer reads when it builds
         // the line buffers, so a change to one repaints the frame; U107: the shadow's intensity is
-        // read from the view's uniform, so it never repaints anything.
+        // read from the view's uniform, so it never repaints anything. U109: the floor's opacity is
+        // read by the same uniform, so it does not repaint either.
         let settings = ViewportSettings {
             grid_strength: 25,
             edge_strength: 0,
             shadow_strength: 80,
+            floor_opacity: 40,
             ..ViewportSettings::default()
         };
         let display = Display::of(&settings, SceneColors::DARK);
@@ -3980,6 +3989,7 @@ mod tests {
         assert!((frame.grid.ink_strength - 0.25).abs() < 1.0e-6, "the grid strength reaches the frame");
         assert_eq!(frame.edge_strength, 0.0, "the outline strength reaches the frame");
         assert!((frame.contact_shadows.strength - 0.8).abs() < 1.0e-6, "and the shadow's");
+        assert!((frame.floor_opacity - 0.4).abs() < 1.0e-6, "and the floor's own opacity");
 
         let quieter = Display::of(&ViewportSettings { grid_strength: 10, ..settings }, SceneColors::DARK);
         assert!(quieter.repaints(display), "a grid strength repaints the frame's own lines");
@@ -3987,6 +3997,9 @@ mod tests {
         assert!(darker.repaints(display), "so does an outline strength");
         let dimmer = Display::of(&ViewportSettings { shadow_strength: 30, ..settings }, SceneColors::DARK);
         assert!(!dimmer.repaints(display), "the shadow's intensity is a uniform, never an upload");
+        let ground = Display::of(&ViewportSettings { floor_opacity: 100, ..settings }, SceneColors::DARK);
+        assert!(!ground.repaints(display), "and so is the floor's opacity");
+        assert_ne!(ground.floor_opacity, display.floor_opacity, "though the two frames draw different floors");
         let same = Display::of(&settings, SceneColors::LIGHT);
         assert!(same.repaints(display), "and a theme is the colours the lines are drawn with");
     }

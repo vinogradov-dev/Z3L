@@ -147,8 +147,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0139](0139-a-sphere-is-drawn-around-its-centre.md) | A sphere is drawn around its centre | Accepted |
 | [0140](0140-the-corner-display-is-a-diagnostic-block-the-maker-can-read.md) | The corner display is a diagnostic block the maker can read | Accepted |
 | [0141](0141-a-cone-is-drawn-by-its-base-circle.md) | A cone is drawn by its base circle | Accepted |
-| [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071 |
+| [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071; the plate's place in the pass and its opacity superseded by 0144 |
 | [0143](0143-the-shadow-map-is-the-key-lights-depth-pass.md) | The shadow map is the key light's depth pass, read by every face | Accepted |
+| [0144](0144-the-floor-plate-is-blended-so-it-tints-what-stands-under-it.md) | The floor plate is blended, so it tints what stands under it and keeps its shadow | Accepted |
 
 ## Format
 

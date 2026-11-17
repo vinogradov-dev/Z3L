@@ -20,6 +20,8 @@ struct Camera {
     shadow: vec4<f32>,
     // x = half-size of the floor plate in mm, y and z = one mask texel, w = penumbra in texels
     shadow_plane: vec4<f32>,
+    // x = how opaque the floor plate is, 0 to 1; the rest is unused
+    floor: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -290,12 +292,23 @@ fn vs_floor(vertex: VertexIn) -> FloorOut {
     return out;
 }
 
+// The plate's own opacity, and the reason the shadow survives it.
+//
+// Two layers meet in one fragment: the plate with the workspace's opacity, and the shadow on top of
+// it with the workspace's strength. One blend can carry only one of them, so the plate's alpha is
+// the *larger* of the two: at 40 % the plate tints what stands under it, while a shadow stronger
+// than that opacity keeps its own weight instead of being washed into the background — a
+// transparent floor cannot erase its own shadow. Zero is the one case the rule cannot express: a
+// shadow needs a surface to darken, so an empty floor draws nothing at all.
 @fragment
 fn fs_floor(fragment: FloorOut) -> @location(0) vec4<f32> {
     let extent = ground_extent();
     // The target's first row is the top of the screen, which is +Y here, so v counts down.
     let uv = vec2<f32>(fragment.world_position.x / (2.0 * extent) + 0.5, 0.5 - fragment.world_position.y / (2.0 * extent));
     let cover = textureSample(mask_texture, mask_sampler, uv).r;
-    let rgb = mix(fragment.color.rgb, camera.shadow.rgb, cover * camera.shadow.a);
-    return vec4<f32>(rgb, fragment.color.a);
+    let shadow = cover * camera.shadow.a;
+    let opacity = clamp(camera.floor.x, 0.0, 1.0);
+    let rgb = mix(fragment.color.rgb, camera.shadow.rgb, shadow);
+    let alpha = select(0.0, max(opacity, shadow), opacity > 0.0);
+    return vec4<f32>(rgb, alpha);
 }

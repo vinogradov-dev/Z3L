@@ -624,6 +624,13 @@ pub struct SceneFrame {
     /// single-sided so a view from below keeps the model. It is view state, never document data:
     /// the ground of a workspace, like the grid, not a board on the floor.
     pub floor: [f32; 4],
+    /// How opaque the floor plate is, from 0 to 1, read at draw time.
+    ///
+    /// One is the opaque floor of ADR 0142; below one the plate is blended over what stands under
+    /// it, so a part below the floor is seen *through* the plate's tint instead of beside it. A
+    /// shadow needs a surface to darken, so zero draws neither the plate nor its shadow (U109,
+    /// ADR 0144). Workspace data like the display strengths, never document data.
+    pub floor_opacity: f32,
     /// The key light.
     pub lighting: Lighting,
     /// The clear colour, in gamma space.
@@ -655,6 +662,7 @@ impl Default for SceneFrame {
             grid: colors.grid,
             contact_shadows: ContactShadows::default(),
             floor: colors.floor,
+            floor_opacity: 1.0,
             lighting: Lighting::default(),
             background: colors.background,
             line_ink: colors.line_ink,
@@ -967,6 +975,15 @@ mod tests {
         frame.apply_colors(SceneColors::LIGHT);
         assert_eq!(frame.floor, SceneColors::LIGHT.floor, "a theme switch repaints the ground");
         assert!(frame.grid.extent_mm > 0.0, "the plate spans the square the grid draws");
+    }
+
+    #[test]
+    fn the_floor_is_opaque_until_the_workspace_says_otherwise() {
+        let mut frame = SceneFrame::default();
+        assert_eq!(frame.floor_opacity, 1.0, "a frame that says nothing draws the floor as it always did");
+        frame.floor_opacity = 0.4;
+        frame.apply_colors(SceneColors::LIGHT);
+        assert_eq!(frame.floor_opacity, 0.4, "a theme repaints the ground without making it solid again");
     }
 
     #[test]

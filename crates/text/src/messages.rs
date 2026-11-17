@@ -255,15 +255,20 @@ messages! {
         "How far the floor darkens under the shadow the key light casts.",
         "Насколько сильно тень от ключевого света затемняет пол."
     ],
+    FloorOpacity = ["Floor opacity", "Непрозрачность пола"],
+    FloorOpacityHint = [
+        "How solid the floor plate is; below 100 you see what stands under it through the tint, and 0 hides the plate and its shadow.",
+        "Насколько плотна плита пола; ниже 100 сквозь неё видно то, что стоит под ней, а 0 скрывает плиту и её тень."
+    ],
     DisplayConfigure = ["Configure…", "Настроить…"],
     DisplayConfigureHint = [
-        "Opens Settings › View for the grid, outline and shadow strengths.",
-        "Открывает «Настройки › Вид» для силы сетки пола, контуров и тени."
+        "Opens Settings › View for the display strengths and the floor's opacity.",
+        "Открывает «Настройки › Вид» для силы отображения и непрозрачности пола."
     ],
     ResetDisplay = ["Reset display", "Сбросить отображение"],
     ResetDisplayHint = [
-        "Restores the floor grid, outline and ground shadow strengths to 60 / 70 / 40.",
-        "Возвращает силу сетки пола, контуров и тени на полу: 60 / 70 / 40."
+        "Restores the floor grid, outline, ground shadow and floor opacity to 60 / 70 / 40 / 100.",
+        "Возвращает силу сетки пола, контуров, тени и непрозрачность пола: 60 / 70 / 40 / 100."
     ],
     SectionAdditional = ["Additional", "Дополнительно"],
     WorkPlane = ["Work plane · {}", "Рабочая плоскость · {}"],
