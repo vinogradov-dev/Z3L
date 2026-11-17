@@ -2,8 +2,8 @@
 //!
 //! Turns one scene frame into pixels: it owns the offscreen colour target, the depth and stencil
 //! attachment, the uploaded geometry and the passes that draw it. The pipeline state lives in
-//! `pipelines.rs`, the buffer wrappers in `gpu.rs`, the vertex builders in `geometry.rs` and the
-//! floor plate with its shadow mask in `ground.rs`. It
+//! `pipelines.rs`, the buffer wrappers in `gpu.rs`, the vertex builders in `geometry.rs`, the floor
+//! plate with its ground mask in `ground.rs` and the key light's shadow map in `shadow.rs`. It
 //! knows nothing about `egui` and never
 //! creates a window: the shell registers the colour texture with `egui_wgpu` and displays it as an
 //! image. Scene geometry is uploaded when the document changes; camera changes only rewrite a small
@@ -34,6 +34,7 @@ mod geometry;
 mod gpu;
 mod ground;
 mod pipelines;
+mod shadow;
 
 use std::sync::Arc;
 
@@ -53,7 +54,10 @@ use self::geometry::{
 };
 use self::gpu::{GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
 use self::ground::{Ground, GroundKey, PlateKey};
-use self::pipelines::{create_line_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state};
+use self::pipelines::{
+    create_line_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state, pipeline_layout,
+};
+use self::shadow::{LightSpace, ShadowKey, ShadowMap, scene_box};
 
 /// The offscreen colour format. `egui_wgpu::Renderer::register_native_texture` requires this
 /// exact format, and it is not an sRGB format, so the shader writes gamma-corrected values.
@@ -66,12 +70,27 @@ pub(crate) const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8U
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 /// The ground mask's single-channel format: coverage, so one byte per texel is all it holds.
 pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// The shadow map's format: depth, because a panel needs the nearest surface along every light ray.
+///
+/// `Depth32Float` is the one depth format every backend can both render to and compare against; the
+/// comparison sampler reads it as `texture_depth_2d`, and the map is 16 MB.
+pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// The most views one frame may split into; the camera uniform holds one slot per view.
 pub const MAX_VIEWS: usize = 4;
 
 /// The camera slot the ground mask reads, one past the last view.
 const GROUND_SLOT: u64 = MAX_VIEWS as u64;
+
+/// The key light's direction as the frame keys it, quantised so a slider does not rebuild a mask.
+///
+/// The ground's coverage mask and the shadow map both name the sun this way: one direction means one
+/// quantisation, so the floor and the panels can never disagree about where the light is. A tenth of
+/// a thousandth of a unit is far below what a turned sun changes on screen.
+pub(crate) fn quantized_light(direction: DVec3) -> [i32; 3] {
+    let light = direction.try_normalize().unwrap_or(DVec3::Z);
+    [(light.x * 1.0e4).round() as i32, (light.y * 1.0e4).round() as i32, (light.z * 1.0e4).round() as i32]
+}
 
 /// The passes one display style turns on, derived without a GPU.
 ///
@@ -176,7 +195,7 @@ struct CameraUniform {
     point_position: [[f32; 4]; MAX_POINT_LIGHTS],
     /// Linear RGB and, in `a`, the radiant power in watts.
     point_color: [[f32; 4]; MAX_POINT_LIGHTS],
-    /// Gamma-space RGB and, in `a`, the ground-shadow strength.
+    /// Gamma-space RGB and, in `a`, the shadow strength: the ground's plate and the faces' occlusion.
     shadow: [f32; 4],
     /// `x` the floor plate's half-size in millimetres, `y` and `z` one mask texel, `w` the penumbra
     /// in texels. The plate, the mask and the blur read this one value.
@@ -338,6 +357,10 @@ pub struct ViewportRenderer {
     polylines: Rebuilt<GpuLineList, (Vec<Polyline>, [f32; 4])>,
     /// The dashed boxes of the product envelopes, rebuilt only when a box or an ink changes.
     product_envelopes: Rebuilt<GpuLineList, EnvelopeInput>,
+    /// The key light's shadow map: the depth pass the face shaders compare against (ADR 0143).
+    shadow: ShadowMap,
+    /// The box around the drawables of the last upload, which is what the light camera covers.
+    scene_bounds: Option<Aabb>,
     /// How many uploads the renderer has taken, which is what makes a mask stale.
     generation: u64,
     targets: RenderTargets,
@@ -393,15 +416,16 @@ impl ViewportRenderer {
                 }),
             }],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Z3L scene pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let camera_only = pipeline_layout(device, "Z3L scene pipeline layout", &[&bind_group_layout]);
+        // The frame's shadow map, second because the face shader reads it beside the camera: one
+        // depth pass over the scene, then a comparison in every face fragment (ADR 0143).
+        let shadow_layout = ShadowMap::layout(device);
+        let shadow = ShadowMap::new(device, &shader, &bind_group_layout, &shadow_layout);
+        let mesh_layout = pipeline_layout(device, "Z3L shaded pipeline layout", &[&bind_group_layout, &shadow_layout]);
 
         let mesh_pipeline = create_triangle_pipeline(
             device,
-            &pipeline_layout,
+            &mesh_layout,
             &shader,
             "Z3L shaded mesh pipeline",
             "fs_mesh",
@@ -409,18 +433,18 @@ impl ViewportRenderer {
         );
         let translucent_pipeline = create_triangle_pipeline(
             device,
-            &pipeline_layout,
+            &mesh_layout,
             &shader,
             "Z3L translucent mesh pipeline",
             "fs_mesh_translucent",
             ShadingStyle::Translucent,
         );
         let line_pipeline =
-            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L line pipeline", line_depth_state());
+            create_line_pipeline(device, &camera_only, &shader, "Z3L line pipeline", line_depth_state());
         let edge_pipeline =
-            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L edge pipeline", edge_depth_state(false));
+            create_line_pipeline(device, &camera_only, &shader, "Z3L edge pipeline", edge_depth_state(false));
         let hidden_edge_pipeline =
-            create_line_pipeline(device, &pipeline_layout, &shader, "Z3L hidden edge pipeline", edge_depth_state(true));
+            create_line_pipeline(device, &camera_only, &shader, "Z3L hidden edge pipeline", edge_depth_state(true));
         // The ground's own group: the mask it reads and the two blur steps it takes.
         let mask_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Z3L ground mask layout"),
@@ -453,7 +477,7 @@ impl ViewportRenderer {
                 },
             ],
         });
-        let ground = Ground::new(device, &shader, &bind_group_layout, &mask_layout);
+        let ground = Ground::new(device, &shader, &bind_group_layout, &shadow_layout, &mask_layout);
 
         Self {
             mesh_pipeline,
@@ -461,6 +485,7 @@ impl ViewportRenderer {
             line_pipeline,
             edge_pipeline,
             hidden_edge_pipeline,
+            shadow,
             ground,
             camera_buffer,
             camera_bind_group,
@@ -474,6 +499,7 @@ impl ViewportRenderer {
             grid: Rebuilt::new(),
             polylines: Rebuilt::new(),
             product_envelopes: Rebuilt::new(),
+            scene_bounds: None,
             generation: 0,
             targets,
             size,
@@ -491,6 +517,14 @@ impl ViewportRenderer {
     /// prints, so a dense scene can say what one frame actually pays for.
     pub fn drawn_drawables(&self) -> usize {
         self.visible.len()
+    }
+
+    /// How many times the key light's shadow map was drawn since the renderer was created.
+    ///
+    /// An upload and a turned sun redraw it; an orbiting camera does not, which is the promise a
+    /// probe reads here instead of counting passes on a GPU timeline (ADR 0143).
+    pub fn shadow_rebuilds(&self) -> u64 {
+        self.shadow.rebuilds()
     }
 
     /// The view egui should sample.
@@ -580,6 +614,7 @@ impl ViewportRenderer {
         self.ground.plate(device, PlateKey { extent_mm: frame.grid.extent_mm as f32, color: frame.floor })?;
         self.generation = self.generation.wrapping_add(1);
 
+        self.scene_bounds = scene_box(drawables.iter().map(|drawn| drawn.bounds));
         self.centres.clear();
         self.centres.extend(drawables.iter().map(|drawn| drawn.faces.centre));
         self.draw_order.clear();
@@ -621,8 +656,9 @@ impl ViewportRenderer {
     ///
     /// Each view carries its own camera, rectangle, display style and shadow switch, so a split
     /// workspace draws a neighbour with a different pass set and a different ground shadow without a
-    /// second target or edge buffer. The mask itself is built once, from the frame's own shadow
-    /// settings: it is geometry, and only the strength the plate reads is per view.
+    /// second target or edge buffer. The two masks — the ground's coverage and the key light's depth
+    /// map — are built once, from the frame's own scene and light: they are geometry, and only the
+    /// strength the face and the plate read is per view.
     ///
     /// Each view also culls: a drawable whose world box misses the view's volume is left out of
     /// every pass of that view, so faces and edges are dropped together (X58).
@@ -674,7 +710,22 @@ impl ViewportRenderer {
                     frame.grid.extent_mm,
                 )),
             );
-            self.ground.update(device, queue, &ground, (&self.camera_bind_group, ground_offset), &self.drawables);
+            self.ground.update(
+                device,
+                queue,
+                &ground,
+                (&self.camera_bind_group, ground_offset),
+                self.shadow.group(),
+                &self.drawables,
+            );
+        }
+
+        // The sun's map over the scene's box: one depth pass on an upload or a turned key light, and
+        // nothing at all while the camera orbits (ADR 0143).
+        let light_space = self.scene_bounds.and_then(|bounds| LightSpace::of(bounds, lighting.key_direction));
+        let shadow = ShadowKey::of(self.generation, lighting.key_direction);
+        if self.shadow.is_stale(&shadow) {
+            self.shadow.update(device, queue, &shadow, light_space, (&self.camera_bind_group, 0), &self.drawables);
         }
 
         let mut encoder =
@@ -743,13 +794,14 @@ impl ViewportRenderer {
             pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, width, height);
             pass.set_bind_group(0, &self.camera_bind_group, &[offset]);
+            pass.set_bind_group(1, self.shadow.group(), &[]);
 
             // The ground first: an unlit plate on z = 0 that carries the shadow in its own fragment,
             // so the shadow costs no pass of its own and no blended layer over the scene. It is drawn
             // in every display style, because the floor is not part of the model.
             if let Some(plate) = self.ground.plate_value() {
                 pass.set_pipeline(self.ground.plate_pipeline());
-                pass.set_bind_group(1, self.ground.plate_group(), &[]);
+                pass.set_bind_group(2, self.ground.plate_group(), &[]);
                 pass.set_vertex_buffer(0, plate.vertex_buffer.slice(..));
                 pass.set_index_buffer(plate.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..plate.index_count, 0, 0..1);
@@ -919,11 +971,12 @@ fn build_mesh(
     Ok(GpuMesh { vertex_buffer, index_buffer, index_count, centre: vertices_centre(&vertices) })
 }
 
-/// The shadow colour and strength the fragment shader reads.
+/// The shadow colour and strength the fragment shaders read.
 ///
-/// A switch that is off, a zero strength, a hostile value or a key light that shines from below the
-/// floor collapses to zero, so the plate keeps its own colour; the colour is kept so turning the
-/// strength back up needs no upload.
+/// One strength serves both masks — the plate's silhouette and a face's occlusion — because they are
+/// the same sun (ADR 0143). A switch that is off, a zero strength, a hostile value or a key light
+/// that shines from below the floor collapses to zero, so the plate keeps its own colour and no face
+/// loses its key light; the colour is kept so turning the strength back up needs no upload.
 fn shadow_uniform(shadows: &ContactShadows, light: DVec3) -> [f32; 4] {
     let lit = light.z > MIN_SHADOW_SUN_Z;
     let strength = if shadows.draws() && lit { shadows.strength.clamp(0.0, 1.0) } else { 0.0 };
@@ -971,6 +1024,115 @@ mod tests {
             normals: vec![[0.0, 0.0, 1.0]; 3],
             indices: vec![0, 1, 2],
         }
+    }
+
+    /// A closed box in world millimetres, flat-shaded with outward normals.
+    ///
+    /// The shadow tests need a caster with real faces: a triangle cannot stand between the light and
+    /// anything, so the shelf, the panel and the flush band are boxes. Every quad runs
+    /// counter-clockwise seen from outside, so `front_facing` agrees with the normal the fragment
+    /// shader flips back faces with; a mesh wound the other way reads every visible face as a back
+    /// face, flips its normal inwards and lets it shadow itself.
+    fn box_mesh(min: DVec3, max: DVec3) -> MeshData {
+        let corner = |index: usize| {
+            DVec3::new(
+                if index & 1 == 0 { min.x } else { max.x },
+                if index & 2 == 0 { min.y } else { max.y },
+                if index & 4 == 0 { min.z } else { max.z },
+            )
+        };
+        let faces: [(DVec3, [usize; 4]); 6] = [
+            (-DVec3::X, [0, 4, 6, 2]),
+            (DVec3::X, [1, 3, 7, 5]),
+            (-DVec3::Y, [0, 1, 5, 4]),
+            (DVec3::Y, [2, 6, 7, 3]),
+            (-DVec3::Z, [0, 2, 3, 1]),
+            (DVec3::Z, [4, 5, 7, 6]),
+        ];
+        let mut mesh = MeshData::default();
+        for (normal, indices) in faces {
+            let base = mesh.positions.len() as u32;
+            for index in indices {
+                let point = corner(index);
+                mesh.positions.push([point.x as f32, point.y as f32, point.z as f32]);
+                mesh.normals.push([normal.x as f32, normal.y as f32, normal.z as f32]);
+            }
+            mesh.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        mesh
+    }
+
+    /// The pixel rectangle the eight corners of a world box project to, clamped to the target.
+    fn projected_rect(camera: Camera, size: [u32; 2], min: DVec3, max: DVec3) -> (u32, u32, u32, u32) {
+        let aspect = f64::from(size[0].max(1)) / f64::from(size[1].max(1));
+        let matrix = camera.view_projection(aspect);
+        let mut low = DVec3::splat(f64::INFINITY);
+        let mut high = DVec3::splat(f64::NEG_INFINITY);
+        for corner in Aabb::of_points([min, max]).expect("a box of two corners").corners() {
+            let clip = matrix * corner.extend(1.0);
+            let ndc = clip.truncate() / clip.w.max(1.0e-9);
+            low = low.min(ndc);
+            high = high.max(ndc);
+        }
+        let pixel = |ndc: f64, extent: u32| {
+            let value = ((ndc * 0.5 + 0.5) * f64::from(extent)).round().max(0.0);
+            (value as u32).min(extent.saturating_sub(1))
+        };
+        let x0 = pixel(low.x, size[0]);
+        let x1 = pixel(high.x, size[0]);
+        let y0 = pixel(-high.y, size[1]);
+        let y1 = pixel(-low.y, size[1]);
+        (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1))
+    }
+
+    /// The mean of a pixel rectangle's three channels, in target levels.
+    fn mean_luma(pixels: &[u8], size: [u32; 2], rect: (u32, u32, u32, u32)) -> f64 {
+        let (x0, y0, width, height) = rect;
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for y in y0..(y0 + height).min(size[1]) {
+            for x in x0..(x0 + width).min(size[0]) {
+                let start = ((y * size[0] + x) * 4) as usize;
+                if let Some(pixel) = pixels.get(start..start + 4) {
+                    total += f64::from(pixel[0]) + f64::from(pixel[1]) + f64::from(pixel[2]);
+                    count += 3.0;
+                }
+            }
+        }
+        if count == 0.0 { 0.0 } else { total / count }
+    }
+
+    /// The largest amount any channel of `first` is darker than the same channel of `second`.
+    ///
+    /// A shadow map that lets a surface shadow itself shows up here and nowhere else: the two
+    /// pictures are the same frame at the same camera, one with the map and one without it.
+    fn darkest_change(first: &[u8], second: &[u8]) -> i32 {
+        first.iter().zip(second.iter()).map(|(first, second)| i32::from(*second) - i32::from(*first)).max().unwrap_or(0)
+    }
+
+    /// A frame of the given world boxes, lit by one sun and looked at through one camera.
+    fn shaded_scene(
+        camera: Camera,
+        light: DVec3,
+        boxes: &[(u64, DVec3, DVec3)],
+        shadows: ContactShadows,
+    ) -> SceneFrame {
+        let mut frame = SceneFrame {
+            camera,
+            shading: ShadingStyle::Shaded,
+            grid: Grid { visible: false, ..Grid::default() },
+            contact_shadows: shadows,
+            ..SceneFrame::default()
+        };
+        frame.lighting.key_direction = light.try_normalize().expect("a sun");
+        frame.lighting.key_color = [0.9, 0.88, 0.85];
+        frame.lighting.ambient = 0.25;
+        for (index, min, max) in boxes {
+            let id = Id::new(*index).expect("id");
+            let mesh = Arc::new(box_mesh(*min, *max));
+            frame.push(Drawable::new(id, mesh, DMat4::IDENTITY, [0.6, 0.58, 0.55, 1.0]));
+        }
+        frame
     }
 
     #[test]
@@ -1746,6 +1908,216 @@ mod tests {
         let colors = SceneColors::DARK;
         assert_eq!(pixels_of(&pixels, colors.product_envelope_active), 0);
         assert_eq!(pixels_of(&pixels, colors.product_envelope_inactive), 0, "a piece with parts draws no box");
+    }
+
+    /// Uploads one frame into a fresh target, renders it and reads the pixels back.
+    fn shot(device: &wgpu::Device, queue: &wgpu::Queue, frame: &SceneFrame, side: u32) -> (ViewportRenderer, Vec<u8>) {
+        let mut renderer = ViewportRenderer::new(device, side, side);
+        renderer.upload(device, frame).expect("the frame uploads");
+        renderer.render(device, queue, frame);
+        let pixels = read_pixels(&renderer, device, queue);
+        (renderer, pixels)
+    }
+
+    #[test]
+    fn the_ground_mask_and_the_shadow_map_turn_on_one_light() {
+        // ADR 0142 and 0143: the floor's silhouette and a panel's occlusion are cast by one sun, so
+        // the two keys must quantise the same direction and turn on the same input.
+        let light = DVec3::new(-0.35, 0.55, 0.75);
+        let directions = [
+            light,
+            light * 1.00005,
+            DVec3::new(0.35, 0.55, 0.75),
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(0.2, -0.4, 0.9),
+        ];
+        for left in directions {
+            for right in directions {
+                let ground = GroundKey::of(1, left, 5000.0) == GroundKey::of(1, right, 5000.0);
+                let shadow = ShadowKey::of(1, left) == ShadowKey::of(1, right);
+                assert_eq!(ground, shadow, "the two masks disagree about {left:?} and {right:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_shadow_map_is_drawn_on_an_upload_and_a_turned_sun_and_never_on_an_orbit() {
+        // The probe the task asks for: a world-space map is redrawn when the scene or the sun moves
+        // and costs nothing while the camera orbits, which is most frames of a session.
+        let Some((device, queue)) = noop_device() else {
+            println!("this build has no noop backend to draw a shadow map with");
+            return;
+        };
+        // A right-handed basis: looking down `-Y` with `+Z` up puts `-X` on the right.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 2000.0, 350.0), -DVec3::X, DVec3::Z, -DVec3::Y);
+        let box_ = (1, DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0));
+        let mut frame = shaded_scene(camera, DVec3::new(0.0, 0.8, 0.6), &[box_], ContactShadows::default());
+        let mut renderer = ViewportRenderer::new(&device, 200, 200);
+        renderer.upload(&device, &frame).expect("the frame uploads");
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.shadow_rebuilds(), 1, "an upload draws the map once");
+
+        frame.camera.orbit(0.3, -0.2);
+        renderer.render(&device, &queue, &frame);
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.shadow_rebuilds(), 1, "orbiting redraws nothing");
+
+        frame.lighting.key_direction = DVec3::new(0.3, -0.5, 0.8);
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.shadow_rebuilds(), 2, "a turned sun redraws it");
+
+        renderer.upload(&device, &frame).expect("the edited frame uploads");
+        renderer.render(&device, &queue, &frame);
+        assert_eq!(renderer.shadow_rebuilds(), 3, "an edit redraws it");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; a shelf darkens the panel behind it"]
+    fn a_shelf_darkens_the_panel_behind_it_and_the_open_cabinet_does_not() {
+        // The task's picture, measured: a shelf 300 mm inside an open cabinet stands between the sun
+        // and the back panel, so the band under it darkens; remove the shelf — or the shadow — and
+        // the same band is lit again.
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a shadow map with");
+            return;
+        };
+        const SIDE: u32 = 640;
+        // A right-handed basis: looking down `-Y` with `+Z` up puts `-X` on the right.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 2000.0, 350.0), -DVec3::X, DVec3::Z, -DVec3::Y);
+        let light = DVec3::new(0.0, 0.8, 0.6);
+        let on = ContactShadows { visible: true, strength: 0.65, color: [0.0, 0.0, 0.0] };
+        let off = ContactShadows { visible: false, ..on };
+        let panel = (1, DVec3::new(-300.0, -18.0, 0.0), DVec3::new(300.0, 0.0, 700.0));
+        let shelf = (2, DVec3::new(-250.0, 0.0, 300.0), DVec3::new(250.0, 300.0, 318.0));
+        let size = [SIDE, SIDE];
+
+        let hidden = projected_rect(camera, size, DVec3::new(-100.0, 0.0, 150.0), DVec3::new(100.0, 0.0, 280.0));
+        let lit_above = projected_rect(camera, size, DVec3::new(-100.0, 0.0, 400.0), DVec3::new(100.0, 0.0, 600.0));
+        assert!(hidden.2 > 20 && hidden.3 > 20, "the measured band is on screen: {hidden:?}");
+
+        let (_, with_shelf) = shot(&device, &queue, &shaded_scene(camera, light, &[panel, shelf], on), SIDE);
+        let (_, with_shelf_no_shadow) = shot(&device, &queue, &shaded_scene(camera, light, &[panel, shelf], off), SIDE);
+        let (_, open_cabinet) = shot(&device, &queue, &shaded_scene(camera, light, &[panel], on), SIDE);
+
+        // The picture beside the numbers, for the eye that has to accept it: the shelf inside an open
+        // cabinet, and the same cabinet with the shelf taken out.
+        if let Ok(directory) = testkit::ui_shots_dir() {
+            for (name, pixels) in [("shelf", &with_shelf), ("open", &open_cabinet)] {
+                let path = directory.join(format!("shadow-map-{name}.png"));
+                testkit::write_png(&path, SIDE, SIDE, pixels).expect("the picture is written");
+                println!("the shadow map at {name} is in {}", path.display());
+            }
+        }
+
+        let shadowed = mean_luma(&with_shelf, size, hidden);
+        let unshadowed = mean_luma(&with_shelf_no_shadow, size, hidden);
+        assert!(
+            shadowed < unshadowed - 20.0,
+            "the band under the shelf darkens: {shadowed:.1} against {unshadowed:.1}"
+        );
+
+        let opened = mean_luma(&open_cabinet, size, hidden);
+        assert!(
+            (opened - unshadowed).abs() < 3.0,
+            "opened to the sky the band is lit again: {opened:.1} against {unshadowed:.1}"
+        );
+
+        // The shadow is the shelf's, not a global dimming: above the shelf the panel is unchanged.
+        let above_with = mean_luma(&with_shelf, size, lit_above);
+        let above_open = mean_luma(&open_cabinet, size, lit_above);
+        assert!(
+            (above_with - above_open).abs() < 3.0,
+            "the panel above the shelf keeps its light: {above_with:.1} against {above_open:.1}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; a lit box shows no acne and no gap under a band"]
+    fn a_box_never_shadows_itself_and_a_flush_band_casts_nothing() {
+        // The bias decides this picture: with the map on, a lone convex box must look exactly like
+        // the same box with the shadow switched off — any darker pixel is the box comparing against
+        // itself — and a band lying flush on its top face must add no shadow of its own.
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a shadow map with");
+            return;
+        };
+        const SIDE: u32 = 512;
+        // Above the box, so its lit top face — the one the band lies on — fills the picture.
+        let eye = DVec3::new(1200.0, -1900.0, 2100.0);
+        let forward = (DVec3::new(0.0, 0.0, 1200.0) - eye).try_normalize().expect("a view direction");
+        let right = forward.cross(DVec3::Z).try_normalize().expect("a right vector");
+        let up = right.cross(forward);
+        let camera = Camera::default().looked_from(eye, right, up, forward);
+        let light = DVec3::new(-0.3, 0.4, 0.87);
+        let on = ContactShadows { visible: true, strength: 0.65, color: [0.0, 0.0, 0.0] };
+        let off = ContactShadows { visible: false, ..on };
+        let body = (1, DVec3::new(-200.0, -200.0, 1000.0), DVec3::new(200.0, 200.0, 1400.0));
+        let band = (2, DVec3::new(-120.0, -120.0, 1400.0), DVec3::new(120.0, 120.0, 1400.0));
+        // A ground of no size draws no plate at all, so the whole picture is the box: with the plate
+        // in frame its own silhouette would change between the two renders and hide the acne.
+        let frame = |boxes: &[(u64, DVec3, DVec3)], shadows: ContactShadows| {
+            let mut frame = shaded_scene(camera, light, boxes, shadows);
+            frame.grid.extent_mm = 0.0;
+            frame
+        };
+
+        let (_, alone) = shot(&device, &queue, &frame(&[body], on), SIDE);
+        let (_, alone_off) = shot(&device, &queue, &frame(&[body], off), SIDE);
+        let (_, banded) = shot(&device, &queue, &frame(&[body, band], on), SIDE);
+        let (_, banded_off) = shot(&device, &queue, &frame(&[body, band], off), SIDE);
+
+        // A comparison only means something if there is light to lose: the box's top face is lit.
+        let brightest = alone
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| (u32::from(pixel[0]) + u32::from(pixel[1]) + u32::from(pixel[2])) / 3)
+            .max()
+            .unwrap_or(0);
+        assert!(brightest > 190, "the picture holds a lit face, brightest {brightest}");
+
+        let self_shadow = darkest_change(&alone, &alone_off);
+        assert!(self_shadow <= 3, "the box never shadows itself, worst pixel {self_shadow} levels darker");
+        let band_gap = darkest_change(&banded, &banded_off);
+        assert!(band_gap <= 3, "the flush band casts nothing on the face it lies on, worst pixel {band_gap}");
+        let band_itself = darkest_change(&banded, &alone);
+        assert!(band_itself <= 3, "a band at the face's own depth changes no pixel, worst {band_itself}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; a shelf flush with a side shadows nothing at the joint"]
+    fn a_shelf_flush_with_a_side_leaves_the_panel_above_it_lit() {
+        // The second coplanar case: a shelf whose end meets a side panel's inner face exactly. The
+        // panel just above the joint must keep its light — a bias that leaks here draws a dark seam
+        // along every shelf in every cabinet.
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a shadow map with");
+            return;
+        };
+        const SIDE: u32 = 512;
+        let eye = DVec3::new(-1400.0, -400.0, 550.0);
+        let forward = (DVec3::new(200.0, 50.0, 380.0) - eye).try_normalize().expect("a view direction");
+        let right = forward.cross(DVec3::Z).try_normalize().expect("a right vector");
+        let up = right.cross(forward);
+        let camera = Camera::default().looked_from(eye, right, up, forward);
+        let light = DVec3::new(-0.45, 0.3, 0.84);
+        let on = ContactShadows { visible: true, strength: 0.65, color: [0.0, 0.0, 0.0] };
+        let side = (1, DVec3::new(200.0, -250.0, 0.0), DVec3::new(218.0, 250.0, 700.0));
+        let shelf = (2, DVec3::new(-200.0, -250.0, 300.0), DVec3::new(200.0, 250.0, 318.0));
+        let size = [SIDE, SIDE];
+        // The inner face of the side panel, just above the shelf's top face.
+        let joint = projected_rect(camera, size, DVec3::new(200.0, -100.0, 322.0), DVec3::new(200.0, 100.0, 345.0));
+        assert!(joint.2 > 10 && joint.3 > 10, "the joint is on screen: {joint:?}");
+
+        let (_, with_shelf) = shot(&device, &queue, &shaded_scene(camera, light, &[side, shelf], on), SIDE);
+        let (_, without_shelf) = shot(&device, &queue, &shaded_scene(camera, light, &[side], on), SIDE);
+        let banded = mean_luma(&with_shelf, size, joint);
+        let clean = mean_luma(&without_shelf, size, joint);
+        assert!(clean > 120.0, "the measured strip is lit by the sun: {clean:.1}");
+        assert!(
+            (banded - clean).abs() < 3.0,
+            "the shelf leaves the panel above it lit: {banded:.1} against {clean:.1}"
+        );
     }
 
     #[test]
