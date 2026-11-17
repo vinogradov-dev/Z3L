@@ -39,6 +39,13 @@ use crate::theme;
 /// The width every inspector field draws at, so a column of numbers lines up.
 pub(crate) const FIELD_WIDTH: f32 = 76.0;
 
+/// The width a field needs for a whole number of at most three digits and its padding, in points.
+///
+/// A percentage is always `0..=100`, so a display field in the ribbon is drawn this wide instead of a
+/// full inspector box: the digits are right-aligned with the unit outside, and the number cannot
+/// outgrow the box (U108).
+pub(crate) const COMPACT_FIELD_WIDTH: f32 = 40.0;
+
 /// The height every inspector field draws at.
 pub(crate) const FIELD_HEIGHT: f32 = 22.0;
 
@@ -152,6 +159,7 @@ pub(crate) type Parse = fn(&str) -> Result<f64, Message>;
 /// the field shows and how far a drag rounds; integers use `0`, millimetres and degrees `3`.
 pub(crate) struct Scrub<'a, N: Numeric> {
     value: &'a mut N,
+    width: f32,
     speed: f64,
     range: RangeInclusive<f64>,
     unit: &'a str,
@@ -167,6 +175,7 @@ impl<'a, N: Numeric> Scrub<'a, N> {
     pub(crate) fn new(value: &'a mut N) -> Self {
         Self {
             value,
+            width: FIELD_WIDTH,
             speed: 0.5,
             range: N::MIN.to_f64()..=N::MAX.to_f64(),
             unit: "",
@@ -197,6 +206,12 @@ impl<'a, N: Numeric> Scrub<'a, N> {
     /// The range the value stays inside, on a drag and when typed.
     pub(crate) fn range(mut self, range: RangeInclusive<N>) -> Self {
         self.range = range.start().to_f64()..=range.end().to_f64();
+        self
+    }
+
+    /// The width of the box, for a field whose range is narrower than an inspector number.
+    pub(crate) fn width(mut self, width: f32) -> Self {
+        self.width = width.max(COMPACT_FIELD_WIDTH);
         self
     }
 
@@ -234,10 +249,10 @@ impl<'a, N: Numeric> Scrub<'a, N> {
 
     /// Draws the field and reports whether this frame's number belongs in the document.
     pub(crate) fn show(self, ui: &mut Ui) -> FieldOutcome {
-        let Self { value, speed, range, unit, decimals, policy, parse, fresh, focus } = self;
+        let Self { value, width, speed, range, unit, decimals, policy, parse, fresh, focus } = self;
         // The space is reserved without a widget: an allocation with `Sense::hover` would tell egui
         // this id cannot take the focus, and egui would drop the focus it had just given it.
-        let (id, rect) = ui.allocate_space(vec2(FIELD_WIDTH, FIELD_HEIGHT));
+        let (id, rect) = ui.allocate_space(vec2(width, FIELD_HEIGHT));
         ui.memory_mut(|memory| memory.interested_in_focus(id, ui.layer_id()));
         if focus {
             ui.memory_mut(|memory| memory.request_focus(id));

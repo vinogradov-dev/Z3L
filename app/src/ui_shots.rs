@@ -1166,6 +1166,97 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
 /// one when it crosses (ADR 0137), and neither the fill's weight over a shaded board nor the
 /// difference between the two outlines can be read from a rectangle. The four files are
 /// `band-window-dark.png`, `band-crossing-dark.png` and the light pair.
+/// The first node called `name` in the tree, so a shot can move a part without a click.
+fn find_named(nodes: &[model::Node], name: &str) -> Option<model::Id> {
+    for node in nodes {
+        if node.name() == name {
+            return Some(node.id());
+        }
+        if let Some(children) = node.children()
+            && let Some(found) = find_named(children, name)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/wireframe-ink.png"]
+fn the_wireframe_on_the_dark_theme_draws_the_black_ink() {
+    // U108 made the outline ink black on both variants; a wireframe has no face under its lines, so
+    // this picture is the one that says how much of it survives on the dark background.
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("wireframe-ink.json");
+    let mut settings = Settings::default();
+    settings.appearance.theme = ThemeChoice::Dark;
+    settings.viewport.style = ui::display::ShadingStyle::Wireframe;
+    let session = crate::scene_build::demo_session().expect("the sample session builds");
+    let mut app =
+        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+    let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let path = directory.join("wireframe-ink.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    println!("the dark wireframe with the black ink is in {}", path.display());
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/floor-underground.png"]
+fn a_body_under_the_floor_shows_through_the_plate() {
+    // U108: the plate carries the shadow in its own fragment, so it can stop writing depth; a part
+    // that stands under the floor then draws over the plate instead of being hidden behind it, and
+    // the shadow under the part that stands on the floor is still there.
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("floor-underground.json");
+    let mut settings = Settings::default();
+    settings.appearance.theme = ThemeChoice::Dark;
+    settings.viewport.shadow_strength = 65;
+    let mut session = crate::scene_build::demo_session().expect("the sample session builds");
+    let shelf =
+        find_named(std::slice::from_ref(&model::Node::Container(session.project().root().clone())), "Loose shelf")
+            .expect("the demo scene holds the loose shelf");
+    let below =
+        model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
+    let params = serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below }).expect("params");
+    session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
+    let mut app =
+        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+    let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let path = directory.join("floor-underground.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    println!("the shelf under the floor is in {}", path.display());
+}
+
 #[test]
 #[ignore = "needs a GPU adapter; writes target/ui-shots/display-strength-*.png"]
 fn the_display_strengths_fade_the_grid_the_outlines_and_the_shadow() {

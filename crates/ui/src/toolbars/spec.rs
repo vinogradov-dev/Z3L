@@ -1092,8 +1092,9 @@ pub enum ValueKind {
     ShadowStrength,
 }
 
-/// The width a group's value takes, in cells: the shared numeric field is exactly two cells wide.
-pub const VALUE_COLUMNS: usize = 2;
+/// The width a group's value takes, in cells: the display field is one cell wide, enough for the
+/// three digits a whole percent can have.
+pub const VALUE_COLUMNS: usize = 1;
 
 /// One value and the group whose row draws it.
 #[derive(Clone, Debug, PartialEq)]
@@ -1546,14 +1547,14 @@ mod tests {
         assert_eq!(tab("model").expect("model").columns(), 5);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        assert_eq!(tab("view").expect("view").columns(), 6);
+        assert_eq!(tab("view").expect("view").columns(), 5);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
         assert_eq!(widest, 9, "the sketch tab is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
-        // The View tab's six cells are the projection pair, the shadow switch, its intensity field
-        // (two cells, U107) and the snap.
+        // The View tab's five cells are the projection pair, the shadow switch, its intensity field
+        // (one compact cell, U107/U108) and the snap.
         assert_eq!(tab("view").expect("view").columns(), 2 + 1 + VALUE_COLUMNS + 1);
     }
 

@@ -288,10 +288,12 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   before. The frame-wide edge list with its 4 M line-vertex budget went with it: each drawable owns
   its lines, so the 5 000-sphere stress scene draws every ball's wireframe, and a single drawable
   past one buffer is a readable refusal instead of a cut (X60).
-- `[perf]` The three display strengths became real in X64 as opacities on the line inks, and the ink
-  is one of the keys a line buffer is built from: dragging the outline strength re-uploads every edge
-  buffer on each frame of the drag (the grid is one small buffer of its own, so the grid strength
-  costs a few milliseconds at worst). The face and mesh caches still hit, so it is the X57 upload cost
-  and not an evaluation, but the 5 000-sphere stress scene would stutter. A uniform multiplier per
-  line pass — or a second dynamic offset for the grid and the outline slot in the camera buffer —
-  would make the drag free; nothing has asked for it while the sliders sit behind the Settings modal.
+- `[render]` The outline ink is one black constant for both variants since U108, and the edge buffer
+  is one of the values a line buffer is built from: a strength drag (X64) and any change of the ink
+  re-upload every edge buffer, once per change rather than per frame at rest. Two consequences wait
+  for a line uniform: a strength drag costs the X57 upload of the whole frame (0.9 ms at 2 000
+  spheres, ~370 ms in the 5 000-sphere stress scene), and the *wireframe* and *shaded with hidden
+  edges* styles draw black lines on the dark background, so they read faintly
+  (`target/ui-shots/wireframe-ink.png`). Both go away with the same change: a line ink and alpha in
+  the per-pass uniform (a third dynamic offset beside the camera and ground slots), so a style and a
+  strength become draw-time values instead of buffer keys.
