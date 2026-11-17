@@ -265,17 +265,16 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   already takes any point and asks nothing about where it came from, so the missing piece is the snap
   itself — one surface probe shared with the ruler and a marker of its own.
 
-- `[perf]` Measured on 2026-11-16 in a headless run (`app/src/frame_tests.rs`, a throwaway probe, dev
-  profile with opt-level 2): a frame that changes nothing costs 1.7 / 4.2 / 9.5 ms at 500 / 2 000 /
-  5 000 root spheres, and that cost is the chrome (the scene tree draws a row per node), not the
-  geometry — an idle orbit writes uniforms only. One edit anywhere, however small, rebuilds the whole
-  frame: 27 / 109 / 285 ms at the same counts even when the cache hits every node, because
-  `Bounds::include_mesh` transforms every vertex of every mesh twice (`all` and `solid`) to get the
-  world box. Cold evaluation is 0.6 / 2.2 / 5.6 s, dominated by meshing (1.1 ms per 32 x 16 sphere).
-  Picking a click ray-casts every triangle: 16 / 64 / 161 ms. 5 000 boxes (6 vertices each) instead:
-  14 / 44 / 124 ms cold, 0.9 / 5.2 / 24 ms per edit, 0.2 / 0.8 / 2.2 ms per pick, so the per-node
-  overhead of the frame walk is about 5 µs and the rest is per vertex. The two cheapest fixes: cache
-  each mesh's local AABB and transform eight corners once (or keep the world box keyed by placement),
-  and let the mesher write one flat index list while it builds instead of filling `model::Mesh`'s
-  `Vec<Vec<u32>>` and flattening it afterwards. An incremental frame and a picking BVH are the larger
-  steps, now filed as X56–X59.
+- `[perf]` Measured on 2026-11-17 in a headless run (`app/src/scene_build.rs`, the probe
+  `an_edit_costs_the_walk_of_the_tree_and_not_the_vertices`, dev profile with opt-level 2): an edit
+  anywhere costs 0.42 / 3.6 / 18.4 ms at 500 / 2 000 / 5 000 root spheres of 32 x 16, which is the
+  same as a rebuild that changes nothing (0.41 / 3.67 / 18.4 ms) — the walk of the tree at about
+  3.7 µs per node, now that a drawable's world box comes from the local box the mesh cache measured
+  (X56; the same edit cost 27 / 109 / 285 ms while the walk transformed every vertex twice).
+  A frame that changes nothing still costs 1.7 / 4.2 / 9.5 ms in the window, and that cost is the
+  chrome (the scene tree draws a row per node), not the geometry. Cold evaluation is 0.58 / 2.2 /
+  5.5 s, dominated by meshing (1.1 ms per 32 x 16 sphere). Picking a click still ray-casts every
+  triangle: 16 / 64 / 161 ms (X59). The remaining cheap fix in this area: let the mesher write one
+  flat index list while it builds instead of filling `model::Mesh`'s `Vec<Vec<u32>>` and flattening
+  it afterwards. An incremental frame, a picking BVH and the frustum test are the larger steps,
+  filed as X57–X59; the world box of a turned round body is the box of its box, filed as X62.
