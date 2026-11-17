@@ -405,6 +405,7 @@ checkout — which is how a plan line and a source file were lost once.
 - A stream branches from `dev` and merges back into `dev` when its task is finished and `cargo xtask ci` is green there. It merges `dev` in often and never merges into another stream. A hot-fix follows the same path: fix, gate, merge.
 - The stream's letter is the phase of its tasks: `J`, `O` and `Q` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A task runs in the checkout of its letter's stream.
 - **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so four branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
+- A worktree builds its own copy of the plan tool: the binary records its workspace root when it is compiled, so one build directory shared by two checkouts makes the tool write the other checkout's plan. Run the tool from the worktree whose plan it edits.
 - The lock file lives inside a checkout, so nothing enforces the one-writer rule across worktrees but the rule itself.
 
 ## 7. Anti-patterns
