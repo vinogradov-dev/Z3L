@@ -77,7 +77,7 @@ pub use panel::{
 pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
-    DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,
+    Cone, DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,
     MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, Sphere,
 };
 pub use project::{

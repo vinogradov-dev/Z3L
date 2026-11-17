@@ -133,6 +133,10 @@ struct HeightDraft {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct PrimitiveFields {
     radius: f64,
+    /// The top circle of a cone; zero is the sharp cone, not an empty field.
+    top_radius: f64,
+    /// The height a cone rises by from its base circle.
+    height: f64,
     segments: u32,
     bands: u32,
 }
@@ -145,6 +149,12 @@ impl PrimitiveFields {
                 fields.radius = sphere.radius().millimetres_f64();
                 fields.segments = sphere.segments();
                 fields.bands = sphere.bands();
+            }
+            Primitive::Cone(cone) => {
+                fields.radius = cone.base_radius().millimetres_f64();
+                fields.top_radius = cone.top_radius().millimetres_f64();
+                fields.height = cone.height().millimetres_f64();
+                fields.segments = cone.segments();
             }
         }
         fields
@@ -170,6 +180,12 @@ impl PrimitiveDraft {
             Primitive::Sphere(_) => {
                 Primitive::sphere(length(self.fields.radius)?, self.fields.segments, self.fields.bands)
             }
+            Primitive::Cone(_) => Primitive::cone(
+                length(self.fields.radius)?,
+                length(self.fields.top_radius)?,
+                length(self.fields.height)?,
+                self.fields.segments,
+            ),
         };
         primitive.map_err(|error| Message::PrimitiveRefused.with(lang, [error.to_string()]))
     }
@@ -404,6 +420,7 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
 fn primitive_kind_label(kind: model::PrimitiveKind) -> Message {
     match kind {
         model::PrimitiveKind::Sphere => Message::ToolSphere,
+        model::PrimitiveKind::Cone => Message::ToolCone,
     }
 }
 
@@ -834,6 +851,27 @@ impl ObjectCard {
                     fresh,
                 ));
             }
+            Primitive::Cone(_) => {
+                report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
+                // The top radius may be zero, and that zero is the sharp cone rather than a bad
+                // number, so its field starts at the bottom of the range instead of the smallest
+                // positive dimension.
+                report.absorb(length_row_from(
+                    ui,
+                    Message::FieldTopRadius.text(lang),
+                    &mut draft.fields.top_radius,
+                    0.0,
+                    fresh,
+                ));
+                report.absorb(length_row(ui, Message::FieldHeight.text(lang), &mut draft.fields.height, fresh));
+                report.absorb(count_row(
+                    ui,
+                    Message::FieldSides.text(lang),
+                    &mut draft.fields.segments,
+                    MIN_SEGMENTS..=MAX_SEGMENTS,
+                    fresh,
+                ));
+            }
         }
         if !report.committed {
             return (None, report);
@@ -1050,11 +1088,19 @@ const ANGLE_SPEED: f64 = 1.0;
 /// mesh: the field shows the running number, and the document takes it once, at the release. The
 /// offered range is the document's own bound on a figure or primitive dimension.
 fn length_row(ui: &mut Ui, label: &str, value: &mut f64, fresh: EditScope) -> scrub::FieldOutcome {
+    length_row_from(ui, label, value, MIN_PRIMITIVE_SIZE.millimetres_f64(), fresh)
+}
+
+/// A labelled length field whose floor is `min`, for a dimension where zero is a real value.
+///
+/// A cone's top radius is the case: zero there is the sharp apex, so the field must reach it while
+/// the document still refuses a nearly-zero ring the mesh could not tell from one.
+fn length_row_from(ui: &mut Ui, label: &str, value: &mut f64, min: f64, fresh: EditScope) -> scrub::FieldOutcome {
     ui.horizontal(|ui| {
         ui.label(label);
         Scrub::new(value)
             .speed(LENGTH_SPEED)
-            .range(MIN_PRIMITIVE_SIZE.millimetres_f64()..=MAX_PRIMITIVE_SIZE.millimetres_f64())
+            .range(min..=MAX_PRIMITIVE_SIZE.millimetres_f64())
             .decimals(3)
             .unit("mm")
             .parse(scrub::parse_millimetres)
@@ -1345,6 +1391,46 @@ mod tests {
         let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
         assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
         assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
+    }
+
+    #[test]
+    fn the_cone_fields_read_and_parse_its_two_circles_and_its_height() {
+        let cone = Primitive::cone(
+            Length::from_millimetres(40).expect("base"),
+            Length::from_millimetres(12).expect("top"),
+            Length::from_millimetres(90).expect("height"),
+            24,
+        )
+        .expect("cone");
+        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &cone);
+        assert_eq!(draft.fields, PrimitiveFields::read(&cone), "{cone:?} reads back");
+        assert_eq!(draft.fields.top_radius, 12.0);
+        assert_eq!(draft.fields.height, 90.0);
+        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&cone), "{cone:?} parses from its own numbers");
+    }
+
+    #[test]
+    fn the_cone_fields_take_a_zero_top_radius_as_the_sharp_case() {
+        let cone = Primitive::cone(
+            Length::from_millimetres(40).expect("base"),
+            Length::from_millimetres(12).expect("top"),
+            Length::from_millimetres(90).expect("height"),
+            24,
+        )
+        .expect("cone");
+        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &cone);
+        draft.fields.top_radius = 0.0;
+        let sharp = draft.parse(Lang::En).expect("zero is the apex, not a bad number");
+        let Primitive::Cone(stored) = &sharp else {
+            panic!("the card keeps the shape it read");
+        };
+        assert!(stored.is_sharp());
+        assert_eq!(stored.base_radius(), Length::from_millimetres(40).expect("base"));
+        // A top radius the document cannot tell from the apex is still refused.
+        draft.fields.top_radius = 0.001;
+        assert!(draft.parse(Lang::En).is_err(), "a third of a micrometre is not a ring");
+        draft.fields.height = 0.0;
+        assert!(draft.parse(Lang::En).is_err(), "a cone with no height is refused");
     }
 
     #[test]
@@ -1805,6 +1891,15 @@ mod tests {
             "its elements are derived, so it cannot be edited as one: {primitive:?}"
         );
         assert!(!drew(&primitive, "Edit contour"), "and it has no ring to reshape: {primitive:?}");
+
+        // A cone shows its two circles, its height and its sides, and no band count: it has no poles.
+        let cone = Primitive::cone(millimetres(40), millimetres(12), millimetres(90), 24).expect("cone");
+        let (mut cone_session, cone_id) = primitive_session(cone);
+        let cone = drew_card(&mut cone_session, cone_id);
+        for field in ["Radius", "Top radius", "Height", "Sides"] {
+            assert_eq!(count_exactly(&cone, field), 1, "a cone has one `{field}` field: {cone:?}");
+        }
+        assert!(!drew(&cone, "Bands"), "a cone has no latitude bands: {cone:?}");
 
         // A body grown from a tagged figure is edited by its fields, and one grown from a bare ring
         // by its corners; neither offers the other's editor.

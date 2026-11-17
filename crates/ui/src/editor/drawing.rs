@@ -43,10 +43,13 @@ fn body_name(profile: &model::Path, lang: Lang) -> String {
 ///
 /// A sphere stores the radius, the side count and the latitude bands, and the drawn circle supplies
 /// the first of them; the tessellation is the model's default, which the card then edits (ADR 0054,
-/// 0139).
-fn drawn_primitive(kind: PrimitiveKind, radius: Length) -> Result<Primitive, PrimitiveError> {
+/// 0139). A cone reads the same circle as its base and starts sharp, so `height` — the ribbon's
+/// height, or the one the pull has reached — is the distance it rises; the top radius is the pull's
+/// own number and is typed there (ADR 0140).
+fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<Primitive, PrimitiveError> {
     match kind {
         PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
+        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS),
     }
 }
 
@@ -282,7 +285,7 @@ impl Editor {
         let (centre, radius) = path
             .circle_center_radius()
             .ok_or_else(|| "The drawn figure is not a round, so it builds no primitive.".to_owned())?;
-        let primitive = drawn_primitive(kind, radius).map_err(|error| error.to_string())?;
+        let primitive = drawn_primitive(kind, radius, self.extrude_height()).map_err(|error| error.to_string())?;
         let offset = Placement::IDENTITY
             .with_translation(centre[0], centre[1], Length::ZERO)
             .map_err(|error| error.to_string())?;
