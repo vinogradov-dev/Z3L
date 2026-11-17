@@ -1,12 +1,13 @@
 //! The render pipelines and the GPU state each of them encodes.
 //!
-//! Holds six pipeline constructors (two face, three line, one shadow), the vertex layout they all
-//! share and the depth, blend and stencil states those pipelines are built from.
+//! Holds seven pipeline constructors (two face, three line, the ground mask, the ground blur and the
+//! floor plate), the vertex layout they share and the depth, blend and stencil states those
+//! pipelines are built from.
 //!
 //! Contract: every constructor takes the device, the pipeline layout and the shader module the
 //! renderer built once, and returns a pipeline against [`crate::COLOR_FORMAT`] and
 //! [`crate::DEPTH_FORMAT`]. The state a pass encodes is a value: `face_depth_state`,
-//! `line_depth_state`, `shadow_depth_state` and `edge_depth_state` build it without a device, so a
+//! `floor_depth_state`, `line_depth_state` and `edge_depth_state` build it without a device, so a
 //! test asserts the promise of a style without a GPU.
 //!
 //! Refuses: nothing. A wrong state is a compile error, not a runtime one; wgpu validates the
@@ -183,22 +184,22 @@ pub(crate) fn create_line_pipeline(
     })
 }
 
-/// One unlit, blended triangle pipeline for the contact shadows.
+/// The coverage pass of the ground shadow: the scene projected along the key light onto the floor.
 ///
-/// The shadow has no faces to light and no texture: the vertex fan carries a radial alpha and the
-/// fragment entry returns the uniform's shadow colour times that alpha. It shares `vs_mesh`
-/// because a shadow is still a world-space triangle, only without a shading model.
-pub(crate) fn create_shadow_pipeline(
+/// No depth, no stencil, no blend: every triangle the light reaches writes a one, and a mask texel
+/// keeps the largest value it was given. There is nothing to compare, because the plane is the only
+/// surface the pass knows about — which is what a projected shadow has instead of a bias.
+pub(crate) fn create_shadow_cover_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Z3L contact shadow pipeline"),
+        label: Some("Z3L ground shadow coverage pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_mesh"),
+            entry_point: Some("vs_shadow_cover"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[Some(vertex_layout())],
         },
@@ -206,33 +207,118 @@ pub(crate) fn create_shadow_pipeline(
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            // The ellipse is seen from either side when the camera dips below the floor.
+            // Both sides of a panel cast: the mask is a silhouette of the body, not of its front.
             cull_mode: None,
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
         },
-        depth_stencil: Some(shadow_depth_state()),
+        depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_shadow"),
+            entry_point: Some("fs_shadow_cover"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: std::slice::from_ref(&face_target(Some(wgpu::BlendState::ALPHA_BLENDING))),
+            targets: std::slice::from_ref(&mask_target()),
         }),
         multiview_mask: None,
         cache: None,
     })
 }
 
-/// The depth state of the shadow pass: it lies on the floor, so it is tested but never occludes.
-pub(crate) fn shadow_depth_state() -> wgpu::DepthStencilState {
+/// One separable blur pass over the mask: one texel step, the radius and the weights come from the
+/// shader and its uniform, so the same pipeline blurs both axes.
+pub(crate) fn create_shadow_blur_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Z3L ground shadow blur pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_fullscreen"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_blur"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: std::slice::from_ref(&mask_target()),
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The floor plate: one unlit quad that reads the mask, so the shadow costs a texture fetch inside
+/// a pass the frame already draws rather than a pass of its own.
+pub(crate) fn create_floor_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Z3L floor plate pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_floor"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(vertex_layout())],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            // One-sided on purpose: from below the plate would hide the model, so a view under the
+            // floor loses the ground instead of the cabinet. Its corners run counter-clockwise seen
+            // from `+Z`, which is the side the frame draws.
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(floor_depth_state()),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_floor"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: std::slice::from_ref(&face_target(None)),
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The single-channel target of the mask passes.
+fn mask_target() -> Option<wgpu::ColorTargetState> {
+    Some(wgpu::ColorTargetState { format: crate::MASK_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })
+}
+
+/// The depth state of the floor plate: it is a surface, so it writes depth, and it carries the same
+/// bias as the faces so a body's bottom outline still wins against the plate it lies on.
+pub(crate) fn floor_depth_state() -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: Some(false),
-        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
         stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
+        bias: FACE_DEPTH_BIAS,
     }
 }
 

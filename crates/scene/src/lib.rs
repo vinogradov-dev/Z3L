@@ -11,7 +11,7 @@
 //!
 //! The surface is over B6's 25 public items on purpose: they are the fields and constructors of the
 //! frame's value types (`Drawable`, `Polyline`, `ProductEnvelope`, `ShadingStyle`, `Grid`,
-//! `ContactShadow`, `ContactShadows`, `Lighting`, `PointLight`) beside `SceneFrame`'s own builders,
+//! `ContactShadows`, `Lighting`, `PointLight`) beside `SceneFrame`'s own builders,
 //! and a frame is assembled from all of them at once — splitting them would put one description in
 //! nine modules a reader has to join back. [`Frustum`] is the volume a view culls the frame's
 //! drawables by, derived from the camera the frame carries.
@@ -179,6 +179,12 @@ pub struct SceneColors {
     pub background: [f32; 4],
     /// The grid ink; its switch, spacing and size stay the viewport's own display state.
     pub grid: Grid,
+    /// The colour of the floor plate, in gamma space.
+    ///
+    /// The plate is the surface the ground shadow falls on, so it has to differ from the clear
+    /// colour behind it: a black shadow cannot darken a near-black background, which is why the
+    /// dark variant puts the floor a few steps above the background instead of at it.
+    pub floor: [f32; 4],
     /// The colour of an unlit line that names no colour of its own, in gamma space.
     pub line_ink: [f32; 4],
     /// The ink of the open product's envelope, in gamma space.
@@ -201,6 +207,7 @@ impl SceneColors {
     pub const DARK: Self = Self {
         background: [0.10, 0.11, 0.13, 1.0],
         grid: Grid::DARK,
+        floor: [0.17, 0.18, 0.21, 1.0],
         line_ink: [0.95, 0.72, 0.20, 1.0],
         product_envelope_active: [0.88, 0.64, 0.29, 1.0],
         product_envelope_inactive: [0.50, 0.54, 0.60, 1.0],
@@ -211,6 +218,7 @@ impl SceneColors {
     pub const LIGHT: Self = Self {
         background: [0.87, 0.88, 0.90, 1.0],
         grid: Grid::LIGHT,
+        floor: [0.93, 0.93, 0.94, 1.0],
         line_ink: [0.70, 0.44, 0.03, 1.0],
         product_envelope_active: [0.55, 0.33, 0.05, 1.0],
         product_envelope_inactive: [0.44, 0.47, 0.51, 1.0],
@@ -224,75 +232,23 @@ impl Default for SceneColors {
     }
 }
 
-/// How close a bound must come to the floor to count as resting on it, in millimetres.
+/// The ground shadow's switch, strength and colour, beside the grid in a frame.
 ///
-/// A panel placed at `z = 0` lands exactly on the plane, but a file edited elsewhere can leave a
-/// sub-millimetre gap; the tolerance keeps that cabinet on the floor without giving a shelf mounted
-/// ten millimetres up a shadow it should not have.
-pub const FLOOR_TOLERANCE_MM: f64 = 0.5;
-
-/// Fraction of an object's footprint half-extent the shadow ellipse covers.
-///
-/// Below one so the shadow stays inside the object's outline instead of spilling past it; the
-/// falloff reaches zero at the ellipse rim, inside the footprint edge.
-pub const SHADOW_FOOTPRINT_SCALE: f64 = 0.92;
-
-/// Height of the shadow plane above the floor, in millimetres.
-///
-/// The grid is lifted to `0.02`, so a shadow at `0.01` sits under the lines and never z-fights with
-/// the floor.
-const SHADOW_GROUND_Z_MM: f64 = 0.01;
-
-/// A soft contact shadow on the world XY plane under one object that rests on the floor.
-///
-/// The shadow is an axis-aligned ellipse derived from the object's world bounds. The renderer draws
-/// it unlit with one transparent triangle pass and a radial falloff — no shadow map, no extra pass
-/// and no texture — so a cabinet reads as standing on something instead of floating in the grid. It
-/// is frame data, never document data (ADR 0071).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ContactShadow {
-    /// The node whose footprint this shadow follows.
-    pub id: Id,
-    /// Centre of the ellipse on the ground plane, in world millimetres. `z` is the shadow plane.
-    pub center: DVec3,
-    /// Half-axes of the ellipse along world X and Y, in millimetres.
-    pub radii: [f64; 2],
-}
-
-impl ContactShadow {
-    /// Derives the shadow under a world-space bound, or `None` when the bound does not rest on the
-    /// floor.
-    ///
-    /// A non-finite bound, a footprint with no area, or a lowest point further than
-    /// [`FLOOR_TOLERANCE_MM`] from the floor casts nothing. The ellipse covers
-    /// [`SHADOW_FOOTPRINT_SCALE`] of the footprint, so it always stays inside the object's outline.
-    pub fn from_bounds(id: Id, min: DVec3, max: DVec3) -> Option<Self> {
-        if !min.is_finite() || !max.is_finite() || min.z.abs() > FLOOR_TOLERANCE_MM {
-            return None;
-        }
-        let radii = [(max.x - min.x) * 0.5 * SHADOW_FOOTPRINT_SCALE, (max.y - min.y) * 0.5 * SHADOW_FOOTPRINT_SCALE];
-        if !radii[0].is_finite() || !radii[1].is_finite() || radii[0] <= 0.0 || radii[1] <= 0.0 {
-            return None;
-        }
-        Some(Self { id, center: DVec3::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5, SHADOW_GROUND_Z_MM), radii })
-    }
-}
-
-/// The contact-shadow switch and strength, beside the grid in a frame.
-///
-/// A change is read at draw time like [`ShadingStyle`], so turning the pass off costs no upload.
+/// The shadow is the silhouette the key light casts on the floor plate, not a blob under each
+/// body: a body at any height casts one, and a body that is turned casts its own shape. A change is
+/// read at draw time like [`ShadingStyle`], so turning the shadow off costs no upload.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContactShadows {
     /// Whether the pass draws at all.
     pub visible: bool,
-    /// Peak opacity at the centre, from 0 to 1.
+    /// How far the shadow darkens the floor plate under a body, from 0 to 1.
     pub strength: f32,
     /// Gamma-space RGB of the shadow, like [`Grid`] colours, because the pass is unlit.
     pub color: [f32; 3],
 }
 
 impl ContactShadows {
-    /// Whether the pass draws anything: the switch is on and the strength is above zero.
+    /// Whether the shadow draws anything: the switch is on and the strength is above zero.
     pub fn draws(&self) -> bool {
         self.visible && self.strength.is_finite() && self.strength > 0.0
     }
@@ -633,10 +589,14 @@ pub struct SceneFrame {
     pub all_edges: bool,
     /// The floor grid.
     pub grid: Grid,
-    /// The contact-shadow switch and strength.
+    /// The ground shadow's switch, strength and colour.
     pub contact_shadows: ContactShadows,
-    /// Soft shadows under the objects that rest on the floor.
-    pub shadows: Vec<ContactShadow>,
+    /// The colour of the floor plate, in gamma space: the surface the shadow falls on.
+    ///
+    /// The plate is the square the grid draws (see [`Grid::extent_mm`]) at `z = 0`, drawn
+    /// single-sided so a view from below keeps the model. It is view state, never document data:
+    /// the ground of a workspace, like the grid, not a board on the floor.
+    pub floor: [f32; 4],
     /// The key light.
     pub lighting: Lighting,
     /// The clear colour, in gamma space.
@@ -666,7 +626,7 @@ impl Default for SceneFrame {
             all_edges: false,
             grid: colors.grid,
             contact_shadows: ContactShadows::default(),
-            shadows: Vec::new(),
+            floor: colors.floor,
             lighting: Lighting::default(),
             background: colors.background,
             line_ink: colors.line_ink,
@@ -693,6 +653,7 @@ impl SceneFrame {
         self.grid.major_color = colors.grid.major_color;
         self.grid.axis_x_color = colors.grid.axis_x_color;
         self.grid.axis_y_color = colors.grid.axis_y_color;
+        self.floor = colors.floor;
         self.line_ink = colors.line_ink;
         self.product_envelope_active = colors.product_envelope_active;
         self.product_envelope_inactive = colors.product_envelope_inactive;
@@ -709,11 +670,6 @@ impl SceneFrame {
         self.polylines.push(polyline);
     }
 
-    /// Adds a contact shadow to the frame.
-    pub fn push_contact_shadow(&mut self, shadow: ContactShadow) {
-        self.shadows.push(shadow);
-    }
-
     /// Adds a product envelope to the frame.
     pub fn push_product_envelope(&mut self, envelope: ProductEnvelope) {
         self.product_envelopes.push(envelope);
@@ -722,11 +678,6 @@ impl SceneFrame {
     /// The frame's drawables.
     pub fn drawables(&self) -> &[Drawable] {
         &self.drawables
-    }
-
-    /// The frame's contact shadows.
-    pub fn shadows(&self) -> &[ContactShadow] {
-        &self.shadows
     }
 
     /// The frame's unlit line chains.
@@ -870,13 +821,6 @@ impl SceneFrame {
                 envelope.world_transform = translation * envelope.world_transform;
             }
         }
-        for shadow in &mut frame.shadows {
-            if ids.contains(&shadow.id) {
-                // A shadow stays on the ground plane: only its footprint slides with the object.
-                shadow.center.x += delta.x;
-                shadow.center.y += delta.y;
-            }
-        }
         frame
     }
 
@@ -905,15 +849,6 @@ impl SceneFrame {
         for envelope in &mut frame.product_envelopes {
             if ids.contains(&envelope.id) {
                 envelope.world_transform = about_pivot * envelope.world_transform;
-            }
-        }
-        for shadow in &mut frame.shadows {
-            if ids.contains(&shadow.id) {
-                // The ellipse stays world-axis aligned, so only its centre follows the turn; the
-                // footprint is a soft blob and does not need a second orientation.
-                let turned = about_pivot.transform_point3(shadow.center);
-                shadow.center.x = turned.x;
-                shadow.center.y = turned.y;
             }
         }
         frame
@@ -980,43 +915,38 @@ mod tests {
     }
 
     #[test]
-    fn a_contact_shadow_rests_on_the_floor_inside_the_footprint() {
-        let id = Id::new(7).expect("id");
-        let shadow = ContactShadow::from_bounds(id, DVec3::new(-100.0, -50.0, 0.0), DVec3::new(100.0, 50.0, 600.0))
-            .expect("a bound on the floor casts a shadow");
-        assert_eq!(shadow.id, id);
-        assert!((shadow.center - DVec3::new(0.0, 0.0, SHADOW_GROUND_Z_MM)).length() < 1.0e-9);
-        assert!((shadow.radii[0] - 92.0).abs() < 1.0e-9, "the ellipse is narrower than the footprint");
-        assert!((shadow.radii[1] - 46.0).abs() < 1.0e-9);
-        assert!(shadow.radii[0] < 100.0 && shadow.radii[1] < 50.0, "the ellipse stays inside the footprint");
-        assert!(shadow.center.z < 0.02, "the shadow sits under the grid lines");
+    fn the_floor_plate_is_a_surface_a_shadow_can_darken() {
+        for colors in [SceneColors::DARK, SceneColors::LIGHT] {
+            let background = luminance(colors.background);
+            let floor = luminance(colors.floor);
+            assert!(
+                (floor - background).abs() > 0.02,
+                "the floor reads as its own surface: {floor} against {background}"
+            );
+            let shadow = colors.floor.map(|channel| channel * (1.0 - 0.4));
+            assert!(
+                (luminance(shadow) - floor).abs() > 0.02,
+                "an ordinary strength darkens the plate enough to see: {} against {floor}",
+                luminance(shadow)
+            );
+        }
     }
 
     #[test]
-    fn a_bound_without_floor_contact_casts_no_shadow() {
-        let id = Id::new(8).expect("id");
-        let floating = ContactShadow::from_bounds(id, DVec3::new(0.0, 0.0, 10.0), DVec3::new(600.0, 400.0, 700.0));
-        assert!(floating.is_none(), "a shelf ten millimetres up floats, it does not rest");
-        let within = ContactShadow::from_bounds(id, DVec3::new(0.0, 0.0, 0.4), DVec3::new(600.0, 400.0, 18.0));
-        assert!(within.is_some(), "a sub-millimetre gap still reads as the floor");
-        let flat = ContactShadow::from_bounds(id, DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 0.0));
-        assert!(flat.is_none(), "a footprint with no area casts nothing");
-        let hostile = ContactShadow::from_bounds(id, DVec3::new(f64::NAN, 0.0, 0.0), DVec3::new(1.0, 1.0, 1.0));
-        assert!(hostile.is_none(), "a non-finite bound casts nothing");
-    }
-
-    #[test]
-    fn the_contact_shadow_switch_removes_the_pass() {
+    fn a_frame_paints_the_floor_with_the_variant_it_is_given() {
         let mut frame = SceneFrame::default();
-        assert!(frame.contact_shadows.draws(), "a frame draws the shadows by default");
-        assert!(frame.shadows().is_empty());
-        let id = Id::new(9).expect("id");
-        let shadow = ContactShadow::from_bounds(id, DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 100.0, 500.0));
-        frame.push_contact_shadow(shadow.expect("shadow"));
-        assert_eq!(frame.shadows().len(), 1);
+        assert_eq!(frame.floor, SceneColors::DARK.floor, "the default frame is the dark variant");
+        frame.apply_colors(SceneColors::LIGHT);
+        assert_eq!(frame.floor, SceneColors::LIGHT.floor, "a theme switch repaints the ground");
+        assert!(frame.grid.extent_mm > 0.0, "the plate spans the square the grid draws");
+    }
 
+    #[test]
+    fn the_contact_shadow_switch_removes_the_shadow() {
+        let mut frame = SceneFrame::default();
+        assert!(frame.contact_shadows.draws(), "a frame draws the shadow by default");
         frame.contact_shadows.visible = false;
-        assert!(!frame.contact_shadows.draws(), "the switch removes the pass from the frame");
+        assert!(!frame.contact_shadows.draws(), "the switch removes the shadow from the frame");
         frame.contact_shadows.visible = true;
         frame.contact_shadows.strength = 0.0;
         assert!(!frame.contact_shadows.draws(), "a zero strength draws nothing either");
