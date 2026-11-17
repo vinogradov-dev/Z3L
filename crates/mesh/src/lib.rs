@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use geom::{DVec3, MeshData, triangulate_face};
+use geom::{Aabb, DVec3, MeshData, triangulate_face};
 use kernel::{BodyId, KernelError, SolidKernel, TessOptions};
 use model::{
     BandingSpec, Constructive, CornerBanding, EdgeBanding, EdgeBevel, Id, Machining, Mesh, Object, Panel,
@@ -294,13 +294,17 @@ pub fn path_points(path: &Path) -> Result<Vec<DVec3>, MeshError> {
 ///
 /// A panel contributes its body and one mesh per band, a geometry object contributes one mesh, and
 /// a path contributes a line chain instead. The meshes are shared handles, so a cache hit and a
-/// scene rebuild copy an [`Arc`], never vertex data.
+/// scene rebuild copy an [`Arc`], never vertex data. Each solid's local [`Aabb`] is measured once
+/// here, which is what lets a scene walk turn eight corners into a world box instead of reading
+/// every vertex (X56).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NodeGeometry {
     body: Option<Arc<MeshData>>,
+    body_bounds: Option<Aabb>,
     body_edges: Option<Arc<[u32]>>,
     body_all_edges: Option<Arc<[u32]>>,
     bands: Vec<Arc<MeshData>>,
+    band_bounds: Vec<Option<Aabb>>,
     band_edges: Vec<Arc<[u32]>>,
     band_all_edges: Vec<Arc<[u32]>>,
     polyline: Option<Arc<[DVec3]>>,
@@ -310,6 +314,12 @@ impl NodeGeometry {
     /// The panel body or the object mesh, when the node has a solid.
     pub const fn body(&self) -> Option<&Arc<MeshData>> {
         self.body.as_ref()
+    }
+
+    /// The box around [`NodeGeometry::body`] in the node's local millimetres, or `None` when the
+    /// body has no finite vertex.
+    pub const fn body_bounds(&self) -> Option<Aabb> {
+        self.body_bounds
     }
 
     /// The display edges of [`NodeGeometry::body`]: boundary and crease edges, two indices per edge.
@@ -325,6 +335,14 @@ impl NodeGeometry {
     /// One mesh per evaluated band, in application order.
     pub fn bands(&self) -> &[Arc<MeshData>] {
         &self.bands
+    }
+
+    /// The box around each band's mesh, in the same order as [`NodeGeometry::bands`].
+    ///
+    /// A band mesh is validated before it reaches here, so its box is always measured; the `Option`
+    /// keeps this list aligned with the meshes rather than dropping an entry.
+    pub fn band_bounds(&self) -> &[Option<Aabb>] {
+        &self.band_bounds
     }
 
     /// The display edges of each evaluated band, in the same order as [`NodeGeometry::bands`].
@@ -527,23 +545,32 @@ impl EvaluationCache {
         let inputs = PanelInputs::capture(panel, geometry, profile);
         let parts = build_panel_parts_with(kernel, panel, geometry, profile)?;
         let body = tessellate_panel(&*kernel, parts.body(), options)?;
+        let body_bounds = body.local_bounds();
         let body_edges: Arc<[u32]> = mesh_edges(&body).into();
         let body_all_edges: Arc<[u32]> = mesh_all_edges(&body).into();
         let mut bands = Vec::with_capacity(parts.bands().len());
+        let mut band_bounds = Vec::with_capacity(parts.bands().len());
         let mut band_edges = Vec::with_capacity(parts.bands().len());
         let mut band_all_edges = Vec::with_capacity(parts.bands().len());
         for part in parts.bands() {
             let mesh = tessellate_panel(&*kernel, part.body(), options)?;
             band_edges.push(Arc::from(mesh_edges(&mesh)));
             band_all_edges.push(Arc::from(mesh_all_edges(&mesh)));
+            if let Some(bounds) = mesh.local_bounds() {
+                band_bounds.push(Some(bounds));
+            } else {
+                band_bounds.push(None);
+            }
             bands.push(Arc::new(mesh));
         }
         kernel.clear();
         let geometry = NodeGeometry {
             body: Some(Arc::new(body)),
+            body_bounds,
             body_edges: Some(body_edges),
             body_all_edges: Some(body_all_edges),
             bands,
+            band_bounds,
             band_edges,
             band_all_edges,
             polyline: None,
@@ -621,12 +648,15 @@ impl EvaluationCache {
     }
 }
 
-/// The derived geometry of one solid: the render mesh and its feature and full edge lists.
+/// The derived geometry of one solid: the render mesh, its local box and its feature and full edge
+/// lists.
 fn solid_geometry(data: MeshData) -> NodeGeometry {
+    let bounds = data.local_bounds();
     let edges: Arc<[u32]> = mesh_edges(&data).into();
     let all_edges: Arc<[u32]> = mesh_all_edges(&data).into();
     NodeGeometry {
         body: Some(Arc::new(data)),
+        body_bounds: bounds,
         body_edges: Some(edges),
         body_all_edges: Some(all_edges),
         ..NodeGeometry::default()
@@ -1221,6 +1251,32 @@ mod tests {
         let third = cache.object(Revision::ZERO.checked_next().expect("revision"), &changed).expect("cube mesh");
         cache.finish();
         assert!(!Arc::ptr_eq(first.body().expect("body"), third.body().expect("body")));
+    }
+
+    /// The box a scene walk reads: measured once with the mesh, kept beside it, and copied on every
+    /// cache hit, so a rebuild costs eight corners per drawable instead of one transform per vertex
+    /// (X56).
+    #[test]
+    fn a_cached_mesh_carries_the_box_it_was_measured_with() {
+        let cube = testkit::cube_mesh(millimetres(100));
+        let object = Object::new(Id::new(3).expect("id"), "Cube", Placement::IDENTITY, model::Geometry::Mesh(cube));
+        let mut cache = EvaluationCache::new();
+        cache.start();
+        let first = cache.object(Revision::ZERO, &object).expect("cube mesh");
+        cache.finish();
+
+        let body = first.body().expect("body");
+        let expected = body.local_bounds().expect("the cube has vertices");
+        let measured = first.body_bounds().expect("the entry keeps the box of its mesh");
+        assert_eq!(measured, expected, "the box is the one the mesh itself measures");
+        assert!((measured.max() - measured.min() - geom::DVec3::splat(100.0)).length() < 1.0e-6, "a 100 mm cube");
+
+        // A hit copies the entry, so the box arrives without touching the vertices again.
+        cache.start();
+        let second = cache.object(Revision::ZERO.checked_next().expect("revision"), &object).expect("cube mesh");
+        cache.finish();
+        assert_eq!(second.body_bounds(), first.body_bounds());
+        assert!(Arc::ptr_eq(first.body().expect("body"), second.body().expect("body")));
     }
 
     #[test]

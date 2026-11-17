@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use engine::Session;
-use geom::{DMat4, DVec3, MeshData};
+use geom::{Aabb, DMat4, DVec3};
 use kernel::{SolidKernel, TessOptions};
 use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;
@@ -18,7 +18,7 @@ use model::{
 // The demonstration fixture is the only caller of these: a test build evaluates the same document
 // a maker builds, and nothing else in the shell creates cutouts, bands or a named panel size.
 #[cfg(test)]
-use geom::DQuat;
+use geom::{DQuat, MeshData};
 #[cfg(test)]
 use model::{CutoutDepth, CutoutShape, EdgeBanding, EdgeId, FaceSide, PanelNominalSize, PanelRect};
 use scene::{
@@ -47,87 +47,108 @@ const DEFAULT_WHITE_MATERIAL: u64 = 2;
 const DEFAULT_OAK_EDGE: u64 = 101;
 const DEFAULT_WHITE_EDGE: u64 = 102;
 
-/// A world-space axis-aligned bounds box built from evaluated meshes.
+/// A world-space axis-aligned box built from evaluated meshes.
+///
+/// The value grows one drawable at a time; the box of a drawable arrives as its cached local
+/// [`Aabb`] and eight corner transforms, so no rebuild reads a vertex (X56).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bounds {
-    min: DVec3,
-    max: DVec3,
-    valid: bool,
+    /// `None` until a finite point is included.
+    extent: Option<Aabb>,
 }
 
 impl Bounds {
     fn empty() -> Self {
-        Self { min: DVec3::splat(f64::INFINITY), max: DVec3::splat(f64::NEG_INFINITY), valid: false }
+        Self { extent: None }
     }
 
+    /// Includes one drawable's local box turned into the world.
+    ///
+    /// This is the one path a scene walk takes: the box is the mesh's own, measured when the mesh
+    /// was built, so the walk costs eight corners however many vertices the mesh has.
+    fn include_aabb(&mut self, local: Aabb, transform: DMat4) {
+        self.include(local.transformed_by(transform));
+    }
+
+    /// Includes every vertex of a mesh, transformed one by one.
+    ///
+    /// The reference implementation [`Bounds::include_aabb`] is checked against: the tests compose
+    /// the per-vertex box of a frame and compare it with the evaluated one. Nothing in the scene
+    /// walk may call it — the probe below fails when a rebuild reaches a vertex.
+    #[cfg(test)]
     fn include_mesh(&mut self, mesh: &MeshData, transform: DMat4) {
         for position in &mesh.positions {
-            let point = transform.transform_point3(DVec3::new(
+            VERTICES_TRANSFORMED.with(|count| count.set(count.get().saturating_add(1)));
+            self.include_point(transform.transform_point3(DVec3::new(
                 f64::from(position[0]),
                 f64::from(position[1]),
                 f64::from(position[2]),
-            ));
-            self.include_point(point);
+            )));
         }
     }
 
     fn include_point(&mut self, point: DVec3) {
-        if !point.is_finite() {
-            return;
+        if let Some(point_box) = Aabb::of_points(std::iter::once(point)) {
+            self.include(point_box);
         }
-        self.min = DVec3::new(self.min.x.min(point.x), self.min.y.min(point.y), self.min.z.min(point.z));
-        self.max = DVec3::new(self.max.x.max(point.x), self.max.y.max(point.y), self.max.z.max(point.z));
-        self.valid = true;
+    }
+
+    fn include(&mut self, other: Aabb) {
+        self.extent = Some(match self.extent {
+            Some(extent) => extent.union(other),
+            None => other,
+        });
     }
 
     fn include_bounds(&mut self, other: Self) {
-        if !other.valid {
-            return;
+        if let Some(extent) = other.extent {
+            self.include(extent);
         }
-        self.include_point(other.min);
-        self.include_point(other.max);
+    }
+
+    /// Whether the box holds no finite point.
+    fn is_empty(self) -> bool {
+        self.extent.is_none()
     }
 
     /// The minimum corner of the box, or `None` when no finite vertex was included.
     pub fn min(self) -> Option<DVec3> {
-        self.valid.then_some(self.min)
+        self.extent.map(Aabb::min)
     }
 
     /// The maximum corner of the box, or `None` when no finite vertex was included.
     pub fn max(self) -> Option<DVec3> {
-        self.valid.then_some(self.max)
+        self.extent.map(Aabb::max)
     }
 
     /// The centre of the box, or `None` when no finite vertex was included.
     pub fn center(self) -> Option<DVec3> {
-        self.valid.then(|| (self.min + self.max) * 0.5)
+        self.extent.map(Aabb::center)
     }
 
     /// The radius of the sphere around the centre that contains the box.
     pub fn radius(self) -> Option<f64> {
-        self.valid.then(|| ((self.max - self.min) * 0.5).length())
+        self.extent.map(Aabb::radius)
     }
 
     /// The eight corners of the box in world space, or `None` when it holds no finite vertex.
     ///
-    /// Bit 0 of the index picks the `x` maximum, bit 1 the `y` and bit 2 the `z`, so the two
-    /// corners that differ in one bit share one edge of the box — which is what a bracket needs to
-    /// draw its three arms along.
+    /// The bit order is [`Aabb::corners`]: bit 0 of the index picks the `x` maximum, bit 1 the `y`
+    /// and bit 2 the `z`, so the two corners that differ in one bit share one edge of the box —
+    /// which is what a bracket needs to draw its three arms along.
     pub fn corners(self) -> Option<[DVec3; 8]> {
-        if !self.valid {
-            return None;
-        }
-        let mut corners = [DVec3::ZERO; 8];
-        for (index, corner) in corners.iter_mut().enumerate() {
-            let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
-            *corner = DVec3::new(
-                pick(1, self.min.x, self.max.x),
-                pick(2, self.min.y, self.max.y),
-                pick(4, self.min.z, self.max.z),
-            );
-        }
-        Some(corners)
+        self.extent.map(Aabb::corners)
     }
+}
+
+// How many mesh vertices the per-vertex world box has transformed on this thread in a test build.
+//
+// A rebuild must leave this at zero: a drawable's world box comes from the corners of the box the
+// mesh cache measured, not from its vertices. A session that puts the vertex loop back into the
+// walk fails the probe even on a machine fast enough to hide it in the timing (X56).
+#[cfg(test)]
+thread_local! {
+    static VERTICES_TRANSFORMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The world box around one container's whole subtree, as its eight corners.
@@ -399,6 +420,21 @@ impl SubtreeBounds {
         self.all.include_bounds(other.all);
         self.solid.include_bounds(other.solid);
     }
+
+    /// Adds one solid drawable from the local box the mesh cache measured.
+    ///
+    /// The subtree's two boxes — everything it draws, and the solids that cast a contact shadow —
+    /// are fed from one world box, because a solid is both. The box is the eight corners of the
+    /// cached local box turned once, so this costs nothing per vertex (X56).
+    fn include_solid(&mut self, local: Option<Aabb>, transform: DMat4) {
+        let Some(local) = local else {
+            return;
+        };
+        let mut world = Bounds::empty();
+        world.include_aabb(local, transform);
+        self.all.include_bounds(world);
+        self.solid.include_bounds(world);
+    }
 }
 
 /// Mutable state shared by one scene evaluation.
@@ -485,7 +521,7 @@ impl<'a> Evaluation<'a> {
     ) -> SubtreeBounds {
         let state = if self.open_product == Some(id) {
             ProductEnvelopeState::Open
-        } else if bounds.all.valid {
+        } else if !bounds.all.is_empty() {
             ProductEnvelopeState::ClosedWithParts
         } else {
             ProductEnvelopeState::ClosedEmpty
@@ -518,14 +554,12 @@ impl<'a> Evaluation<'a> {
         self.palette_index = self.palette_index.saturating_add(1);
         let mut bounds = SubtreeBounds::empty();
         if let Some(body) = evaluated.body() {
-            bounds.all.include_mesh(body, transform);
-            bounds.solid.include_mesh(body, transform);
+            bounds.include_solid(evaluated.body_bounds(), transform);
             let drawable = Drawable::new(panel.id(), Arc::clone(body), transform, color);
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
         }
         for (index, mesh) in evaluated.bands().iter().enumerate() {
-            bounds.all.include_mesh(mesh, transform);
-            bounds.solid.include_mesh(mesh, transform);
+            bounds.include_solid(evaluated.band_bounds().get(index).copied().flatten(), transform);
             let drawable = Drawable::new(panel.id(), Arc::clone(mesh), transform, EDGE_BAND_COLOR);
             self.frame.push(with_cached_edges(
                 drawable,
@@ -565,8 +599,7 @@ impl<'a> Evaluation<'a> {
             return Ok(bounds);
         }
         if let Some(mesh) = evaluated.body() {
-            bounds.all.include_mesh(mesh, transform);
-            bounds.solid.include_mesh(mesh, transform);
+            bounds.include_solid(evaluated.body_bounds(), transform);
             let drawable = Drawable::new(object.id(), Arc::clone(mesh), transform, OBJECT_COLOR);
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
             return Ok(bounds);
@@ -1027,6 +1060,132 @@ mod tests {
         bounds.include_mesh(&mesh, DMat4::IDENTITY);
         assert_eq!(bounds.center(), Some(DVec3::new(50.0, 100.0, 20.0)));
         assert!(bounds.radius().is_some_and(|radius| radius > 0.0));
+    }
+
+    /// The world box of a drawable is the eight corners of the local box the mesh cache measured,
+    /// and it agrees with the per-vertex box the scene walk used to compute (X56).
+    #[test]
+    fn the_scene_box_is_the_box_of_the_vertices_it_holds() {
+        let session = demo_session().expect("the demo session");
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("the scene");
+
+        // The reference: every vertex of every drawable, transformed one at a time, exactly as the
+        // walk did while `Bounds::include_mesh` fed both of the subtree's boxes.
+        let mut vertices = Bounds::empty();
+        for drawable in evaluated.frame.drawables() {
+            vertices.include_mesh(&drawable.mesh, drawable.world_transform);
+        }
+        for polyline in evaluated.frame.polylines() {
+            for point in polyline.points.iter() {
+                vertices.include_point(polyline.world_transform.transform_point3(*point));
+            }
+        }
+        let (Some(vertex_min), Some(vertex_max)) = (vertices.min(), vertices.max()) else {
+            panic!("the demo scene draws something");
+        };
+        let scene_min = evaluated.bounds.min().expect("the scene has a box");
+        let scene_max = evaluated.bounds.max().expect("the scene has a box");
+        assert!(
+            (scene_min - vertex_min).length() < 1.0e-6 && (scene_max - vertex_max).length() < 1.0e-6,
+            "the corner box is the vertex box at the demo scene: {scene_min:?}..{scene_max:?} against \
+             {vertex_min:?}..{vertex_max:?}"
+        );
+
+        // And every drawable stays inside the box, which is what framing and the open brackets read.
+        for drawable in evaluated.frame.drawables() {
+            let local = drawable.mesh.local_bounds().expect("a drawable mesh has vertices");
+            let world = local.transformed_by(drawable.world_transform);
+            assert!(
+                world.min().cmpge(scene_min).all() && world.max().cmple(scene_max).all(),
+                "the drawable of {} stays inside the scene box",
+                drawable.id
+            );
+        }
+    }
+
+    /// A flat root of `count` 32 x 16 spheres: 896 vertices each, so the whole field is about 4.5 M
+    /// vertices and 4.8 M triangles. It is the stress scene the `[perf]` entries are measured on.
+    fn sphere_field(count: u64) -> Session {
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let primitive = model::Primitive::sphere(millimetres(25).expect("radius"), 32, 16).expect("sphere");
+        let side = (count as f64).sqrt().ceil() as u64;
+        for index in 0..count {
+            let column = index % side.max(1);
+            let row = index / side.max(1);
+            let placement = Placement::new(DVec3::new(column as f64 * 60.0, row as f64 * 60.0, 0.0), DQuat::IDENTITY)
+                .expect("placement");
+            project
+                .add_object(root, "Ball", placement, Geometry::Primitive(primitive.clone()))
+                .expect("a ball in the field");
+        }
+        Session::with_catalog(project, default_catalog().expect("catalogue"))
+    }
+
+    /// The fastest of `runs` evaluations of one document, so a busy machine reports its best case
+    /// instead of nothing.
+    fn fastest_evaluation(
+        runs: usize,
+        cache: &mut EvaluationCache,
+        kernel: &mut TruckKernel,
+        session: &Session,
+    ) -> std::time::Duration {
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..runs {
+            let started = std::time::Instant::now();
+            evaluate(cache, kernel, session, &ViewFlags::default(), None).expect("a scene");
+            best = best.min(started.elapsed());
+        }
+        best
+    }
+
+    /// One edit anywhere cost the whole scene: the walk transformed every vertex of every mesh twice
+    /// to find the world box of its drawable, so 5 000 spheres were 9 M transforms per rebuild (X56).
+    /// An edit now costs the walk of the tree and the corners of what moved.
+    #[test]
+    fn an_edit_costs_the_walk_of_the_tree_and_not_the_vertices() {
+        const COUNT: u64 = 5_000;
+        let mut session = sphere_field(COUNT);
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let flags = ViewFlags::default();
+        evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the first scene");
+        let moved = session.project().root().children().first().map(Node::id).expect("the field has a ball");
+
+        // A rebuild that changes nothing is the walk alone: 5 000 nodes, every mesh a cache hit.
+        let walk = fastest_evaluation(5, &mut cache, &mut kernel, &session);
+
+        // The edit: one ball moves, which is the most expensive one-node change there is — its world
+        // box changes, so the scene box is composed again from every drawable.
+        VERTICES_TRANSFORMED.with(|count| count.set(0));
+        let mut edit = std::time::Duration::MAX;
+        for step in 0..5 {
+            let placement =
+                Placement::new(DVec3::new(0.0, 0.0, step as f64 * 10.0), DQuat::IDENTITY).expect("placement");
+            let params = serde_json::json!({ "node": moved, "placement": placement });
+            session.dispatch("node.placement.set", &params).expect("move one ball");
+            let started = std::time::Instant::now();
+            evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the edited scene");
+            edit = edit.min(started.elapsed());
+        }
+        assert_eq!(VERTICES_TRANSFORMED.with(|count| count.get()), 0, "the walk reads boxes, never vertices");
+        assert!(
+            edit < std::time::Duration::from_millis(50),
+            "5 000 objects rebuild in {edit:?}; the walk alone costs {walk:?}"
+        );
+        assert!(
+            edit < walk * 2 + std::time::Duration::from_millis(5),
+            "an edit costs the walk of the tree, not the scene: edit {edit:?}, walk {walk:?}"
+        );
+
+        // The box still holds everything, and it followed the ball that moved.
+        let scene = evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the settled scene");
+        assert_eq!(scene.frame.drawables().len(), COUNT as usize, "every ball is still drawn");
+        let top = scene.bounds.max().expect("the field has a box").z;
+        assert!((top - 65.0).abs() < 1.0e-6, "the last move lifted a 25 mm ball onto a 40 mm offset: {top}");
     }
 
     #[test]
