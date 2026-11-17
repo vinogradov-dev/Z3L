@@ -142,10 +142,14 @@ pub(crate) fn stencil_slot(index: usize) -> u32 {
 }
 
 /// Light ink for a dark viewport and dark ink for a light one.
-pub(crate) fn edge_color(background: [f32; 4]) -> [f32; 4] {
+pub(crate) fn edge_color(background: [f32; 4], strength: f32) -> [f32; 4] {
     let background = sanitize_color(background);
     let luminance = 0.2126 * background[0] + 0.7152 * background[1] + 0.0722 * background[2];
-    if luminance < 0.45 { EDGE_COLOR_LIGHT } else { EDGE_COLOR_DARK }
+    let mut ink = if luminance < 0.45 { EDGE_COLOR_LIGHT } else { EDGE_COLOR_DARK };
+    // The strength is the ink's opacity: the line blends into the face it traces, so a strength of
+    // zero leaves the fill alone instead of painting a second outline (U107).
+    ink[3] = if strength.is_finite() { strength.clamp(0.0, 1.0) } else { 1.0 };
+    ink
 }
 
 /// Rewrites `order` so far objects come first, which is the order a blended pass needs.
@@ -441,21 +445,29 @@ pub(crate) fn grid_vertices(grid: &Grid) -> Vec<MeshVertex> {
     let major_every = i64::from(grid.major_every.max(1));
     let mut vertices = Vec::with_capacity((2 * divisions as usize + 1) * 4);
 
+    // The inks keep their hue and lose opacity, so the grid fades into the floor plate instead of
+    // changing colour (the display strength, U107).
+    let strength = if grid.ink_strength.is_finite() { grid.ink_strength.clamp(0.0, 1.0) } else { 1.0 };
+    let ink = |color: [f32; 4]| {
+        let mut color = sanitize_color(color);
+        color[3] *= strength;
+        color
+    };
     for step in -divisions..=divisions {
         let offset = step as f64 * spacing;
         let x_color = if step == 0 {
-            sanitize_color(grid.axis_x_color)
+            ink(grid.axis_x_color)
         } else if step % major_every == 0 {
-            sanitize_color(grid.major_color)
+            ink(grid.major_color)
         } else {
-            sanitize_color(grid.minor_color)
+            ink(grid.minor_color)
         };
         let y_color = if step == 0 {
-            sanitize_color(grid.axis_y_color)
+            ink(grid.axis_y_color)
         } else if step % major_every == 0 {
-            sanitize_color(grid.major_color)
+            ink(grid.major_color)
         } else {
-            sanitize_color(grid.minor_color)
+            ink(grid.minor_color)
         };
         // Lift the grid a fraction of a millimetre above the floor so a panel resting at z = 0
         // does not z-fight with it.

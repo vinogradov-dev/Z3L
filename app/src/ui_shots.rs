@@ -1167,6 +1167,48 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
 /// difference between the two outlines can be read from a rectangle. The four files are
 /// `band-window-dark.png`, `band-crossing-dark.png` and the light pair.
 #[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/display-strength-*.png"]
+fn the_display_strengths_fade_the_grid_the_outlines_and_the_shadow() {
+    // U64 shipped three display sliders and only one of them ever reached the frame; this pair is
+    // the picture that says all three do — the grid, the form outlines and the ground shadow at the
+    // workspace's own strengths and at zero.
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    for (name, grid, edges, shadows) in [("full", 100, 100, 65), ("none", 0, 0, 0)] {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("display-strength-{name}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = ThemeChoice::Dark;
+        settings.viewport.grid_strength = grid;
+        settings.viewport.edge_strength = edges;
+        settings.viewport.shadow_strength = shadows;
+        let session = crate::scene_build::demo_session().expect("the sample session builds");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        // The fitted view, so the floor, its grid and the shadow under the model are all in frame.
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("display-strength-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the three display strengths at {name} are in {}", path.display());
+    }
+}
+
+#[test]
 #[ignore = "needs a GPU adapter; writes target/ui-shots/shadows-*.png"]
 fn the_shadow_is_per_view_and_the_view_tab_carries_both_controls() {
     // U107: the View tab's Display group holds the shadow's switch and its one intensity, and a

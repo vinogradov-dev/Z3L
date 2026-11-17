@@ -935,15 +935,14 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         .changed();
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
-    // they live with the other display defaults and the cluster keeps only its switches (U64).
-    //
-    // The shadow's intensity is not here: its switch left for the View tab, and one value with one
-    // control belongs beside it, which is what the Display group draws (U107). The value is still a
-    // workspace default, so the reset below restores it with the other two.
+    // they live with the other display defaults and the cluster keeps only its switches (U64). The
+    // shadow's switch is the view's and sits in the View tab beside the same value (U107), so one
+    // number has one home here and one live field there — both read and write this setting.
     ui.label(egui::RichText::new(Message::DisplayHeading.text(lang)).strong());
     for (value, label, hint) in [
         (&mut settings.viewport.grid_strength, Message::GridStrength, Message::GridStrengthHint),
         (&mut settings.viewport.edge_strength, Message::EdgesStrength, Message::EdgesStrengthHint),
+        (&mut settings.viewport.shadow_strength, Message::ShadowStrength, Message::ShadowStrengthHint),
     ] {
         changed |= ui
             .add(egui::Slider::new(value, 0..=MAX_DISPLAY_STRENGTH).text(label.text(lang)))

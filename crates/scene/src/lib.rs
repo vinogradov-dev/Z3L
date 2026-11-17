@@ -126,6 +126,12 @@ pub struct Grid {
     pub axis_x_color: [f32; 4],
     /// Colour of the world Y axis, in gamma space.
     pub axis_y_color: [f32; 4],
+    /// How much of the inks above shows, from 0 to 1: the display strength of the grid.
+    ///
+    /// A fade, not a second colour, so the theme owns the hue and the workspace owns how much of it
+    /// appears — a strength of zero hides the grid instead of turning it black. The renderer
+    /// multiplies every grid ink's alpha by it (U107).
+    pub ink_strength: f32,
 }
 
 impl Grid {
@@ -139,6 +145,7 @@ impl Grid {
         major_color: [0.42, 0.45, 0.50, 1.0],
         axis_x_color: [0.72, 0.28, 0.28, 1.0],
         axis_y_color: [0.28, 0.62, 0.34, 1.0],
+        ink_strength: 1.0,
     };
 
     /// The floor grid of the light variant: dark lines on the paper viewport.
@@ -155,6 +162,7 @@ impl Grid {
         major_color: [0.50, 0.53, 0.58, 1.0],
         axis_x_color: [0.70, 0.26, 0.26, 1.0],
         axis_y_color: [0.20, 0.52, 0.28, 1.0],
+        ink_strength: 1.0,
     };
 }
 
@@ -591,6 +599,11 @@ pub struct SceneFrame {
     ///
     /// A diagnostic view state beside [`SceneFrame::shading`], never document data.
     pub all_edges: bool,
+    /// How strongly the form-outline pass draws, from 0 to 1.
+    ///
+    /// The renderer multiplies the outline ink's alpha by it, so the outline fades into the faces it
+    /// traces and a strength of zero leaves the fill alone. Workspace data, read at draw time.
+    pub edge_strength: f32,
     /// The floor grid.
     pub grid: Grid,
     /// The ground shadow's strength and colour, under the active view's switch.
@@ -633,6 +646,7 @@ impl Default for SceneFrame {
             camera: Camera::default(),
             shading: ShadingStyle::default(),
             all_edges: false,
+            edge_strength: 1.0,
             grid: colors.grid,
             contact_shadows: ContactShadows::default(),
             floor: colors.floor,
@@ -1543,6 +1557,17 @@ mod tests {
         assert!(!frame.grid.visible, "a variant never turns a hidden grid on");
         assert_eq!(frame.grid.spacing_mm, 25.0);
         assert_eq!(frame.grid.major_every, 2);
+    }
+
+    #[test]
+    fn a_theme_switch_keeps_the_grid_strength() {
+        // The strength is the workspace's and the hue is the theme's, so a variant repaint keeps the
+        // opacity the user set (U64).
+        let mut frame = SceneFrame::default();
+        frame.grid.ink_strength = 0.25;
+        frame.apply_colors(SceneColors::LIGHT);
+        assert_eq!(frame.grid.ink_strength, 0.25, "a variant never resets a display strength");
+        assert_eq!(frame.grid.minor_color[..3], SceneColors::LIGHT.grid.minor_color[..3], "the hue is the theme's");
     }
 
     #[test]
