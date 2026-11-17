@@ -40,6 +40,23 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **U108** the view display: a compact shadow field, black outlines and a floor that does not hide what stands below it
+  Why: Owner, 2026-11-17: the Display group's intensity field is wider than a three-digit
+   percent needs; the form outlines are light on the dark theme where the owner wants them
+   black; and a body below the floor is hidden by the plate, which he asks to see through while
+   the shadow keeps working, or else as a floor-opacity setting.
+  Shape: Scrub::width with COMPACT_FIELD_WIDTH, one cell wide, for a value whose range is a
+   whole percent, and VALUE_COLUMNS = 1. The edge ink becomes one black constant for both
+   variants: the edge buffer is built once and shared by every style (ADR 0070), so the ink
+   cannot follow the style, and the wireframe then draws black lines on the dark background —
+   plan/debt.md records it. The floor plate stops writing depth: it is drawn first and carries
+   the shadow in its own fragment, so it keeps darkening the floor while a body below it draws
+   over the plate instead of being culled behind it.
+  Done: The Display group field is one cell wide and shows 100 %; a body below the floor shows
+   through the plate and the plate still draws its shadow; the dark theme draws black form
+   outlines; a shot pair shows the floor case; cargo xtask ci is green.
+  `files: crates/ui/src/scrub.rs,crates/ui/src/toolbars.rs,crates/ui/src/toolbars/spec.rs,crates/render/src/geometry.rs,crates/render/src/pipelines.rs,crates/render/src/lib.rs,app/src/ui_shots.rs,plan/debt.md`
+
 ## Bugs
 ## Next
 - `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads

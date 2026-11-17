@@ -314,12 +314,17 @@ fn mask_target() -> Option<wgpu::ColorTargetState> {
     Some(wgpu::ColorTargetState { format: crate::MASK_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })
 }
 
-/// The depth state of the floor plate: it is a surface, so it writes depth, and it carries the same
-/// bias as the faces so a body's bottom outline still wins against the plate it lies on.
+/// The depth state of the floor plate: tested against the scene, writing nothing.
+///
+/// The plate is the ground, so a body below it is farther from an overhead camera and lost behind it
+/// the moment the plate writes depth. Writing none means a part that stands under the floor shows
+/// through the plate — over it, in draw order — while the plate keeps the shadow in its own fragment,
+/// so the shadow is untouched (U108). It also carries the faces' bias, so a bottom outline still wins
+/// against the plate it lies on.
 pub(crate) fn floor_depth_state() -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: Some(true),
+        depth_write_enabled: Some(false),
         depth_compare: Some(wgpu::CompareFunction::Less),
         stencil: wgpu::StencilState::default(),
         bias: FACE_DEPTH_BIAS,

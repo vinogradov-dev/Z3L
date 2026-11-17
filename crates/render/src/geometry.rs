@@ -59,11 +59,25 @@ const MIN_ENVELOPE_DASH_MM: f64 = 6.0;
 /// The painted fraction of one cycle: a dash and a gap about the same length.
 const ENVELOPE_DASH_DUTY: f64 = 0.55;
 
-/// Gamma-space ink for a light viewport.
-pub(crate) const EDGE_COLOR_DARK: [f32; 4] = [0.06, 0.07, 0.08, 1.0];
+/// The ink of the form outlines, in gamma space: black, on both theme variants.
+///
+/// The outline is a drawing line over a material face, and the faces are light in both variants, so
+/// the ink no longer follows the background: a light ink made a panel look washed out, and the owner
+/// asked for black in the dark theme (U108). One ink serves every display style, because the edge
+/// buffers are built once and shared by all of them (ADR 0070) — which is why a wireframe, whose
+/// lines stand on the background rather than on a face, is faint on the dark theme
+/// (`plan/debt.md`).
+pub(crate) const EDGE_INK: [f32; 4] = [0.06, 0.07, 0.08, 1.0];
 
-/// Gamma-space ink for a dark viewport: the dark ink disappears on the default background.
-pub(crate) const EDGE_COLOR_LIGHT: [f32; 4] = [0.86, 0.88, 0.91, 1.0];
+/// The outline ink with the workspace's display strength as its opacity.
+///
+/// The strength is the ink's alpha: the line blends into the face it traces, so a strength of zero
+/// leaves the fill alone instead of painting a second outline (U107).
+pub(crate) fn edge_ink(strength: f32) -> [f32; 4] {
+    let mut ink = EDGE_INK;
+    ink[3] = if strength.is_finite() { strength.clamp(0.0, 1.0) } else { 1.0 };
+    ink
+}
 
 /// A shaded vertex in world space.
 #[repr(C)]
@@ -142,16 +156,6 @@ pub(crate) fn stencil_slot(index: usize) -> u32 {
 }
 
 /// Light ink for a dark viewport and dark ink for a light one.
-pub(crate) fn edge_color(background: [f32; 4], strength: f32) -> [f32; 4] {
-    let background = sanitize_color(background);
-    let luminance = 0.2126 * background[0] + 0.7152 * background[1] + 0.0722 * background[2];
-    let mut ink = if luminance < 0.45 { EDGE_COLOR_LIGHT } else { EDGE_COLOR_DARK };
-    // The strength is the ink's opacity: the line blends into the face it traces, so a strength of
-    // zero leaves the fill alone instead of painting a second outline (U107).
-    ink[3] = if strength.is_finite() { strength.clamp(0.0, 1.0) } else { 1.0 };
-    ink
-}
-
 /// Rewrites `order` so far objects come first, which is the order a blended pass needs.
 ///
 /// The comparison is on squared distance to the eye, so no square root is taken per pair. A
@@ -171,8 +175,8 @@ pub(crate) fn sort_back_to_front(centres: &[DVec3], eye: DVec3, order: &mut Vec<
 ///
 /// The plate is the surface the ground shadow falls on, so it is the one piece of the frame that is
 /// neither lit nor a body: its colour arrives in the vertex colour, and the fragment shader mixes
-/// the shadow into it. It writes depth, because a body standing on the ground has to be nearer than
-/// the ground for the frame to read.
+/// the shadow into it. It writes no depth, so a body that stands under the floor draws over the
+/// plate and stays visible while the shadow still falls on the floor (U108).
 ///
 /// The corners are the grid's own square so the two never disagree, and the winding runs
 /// counter-clockwise seen from `+Z` so a view from below culls the plate.

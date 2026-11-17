@@ -48,7 +48,7 @@ use wgpu::util::DeviceExt as _;
 
 use self::cache::{EdgeKey, FaceKey, Rebuilt, SlotCache};
 use self::geometry::{
-    edge_color, edge_vertices, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
+    edge_ink, edge_vertices, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
     sort_back_to_front, stencil_slot, vertices_centre, world_vertices,
 };
 use self::gpu::{GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
@@ -520,7 +520,7 @@ impl ViewportRenderer {
     /// buffers, so an edit costs the drawables it changed and the walk of the frame, not the
     /// scene. A frame that no longer names a drawable drops its buffers (X57).
     pub fn upload(&mut self, device: &wgpu::Device, frame: &SceneFrame) -> Result<(), RenderError> {
-        let ink = edge_color(frame.background, frame.edge_strength);
+        let ink = edge_ink(frame.edge_strength);
         self.faces.begin();
         self.edge_slots.begin();
         let mut drawables = Vec::with_capacity(frame.drawables().len());
@@ -755,6 +755,16 @@ impl ViewportRenderer {
                 pass.draw_indexed(0..plate.index_count, 0, 0..1);
             }
 
+            // The grid is floor, not model, so it is drawn with the plate and before every body:
+            // the lines then lie under a part that stands below the floor as well as under one that
+            // stands on it, instead of crossing it (U108). It writes no depth, so a body drawn after
+            // it always wins.
+            if let Some(grid) = self.grid.value() {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+                pass.draw(0..grid.vertex_count, 0..1);
+            }
+
             if passes.opaque_faces && !self.visible.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
                 for &index in &self.visible {
@@ -770,12 +780,8 @@ impl ViewportRenderer {
                 }
             }
 
-            if self.grid.value().is_some() || self.polylines.value().is_some() {
+            if self.polylines.value().is_some() {
                 pass.set_pipeline(&self.line_pipeline);
-                if let Some(grid) = self.grid.value() {
-                    pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                    pass.draw(0..grid.vertex_count, 0..1);
-                }
                 if let Some(polylines) = self.polylines.value() {
                     pass.set_vertex_buffer(0, polylines.vertex_buffer.slice(..));
                     pass.draw(0..polylines.vertex_count, 0..1);
@@ -951,7 +957,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::geometry::{EDGE_COLOR_DARK, EDGE_COLOR_LIGHT, MAX_GRID_DIVISIONS, MAX_VERTICES, edge_color};
+    use crate::geometry::{EDGE_INK, MAX_GRID_DIVISIONS, MAX_VERTICES, edge_ink};
     use crate::geometry::{floor_indices, floor_vertices};
     use crate::ground::{GroundKey, penumbra_texels};
     use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, floor_depth_state};
@@ -1213,9 +1219,13 @@ mod tests {
     }
 
     #[test]
-    fn the_floor_plate_writes_depth_on_the_same_bias_as_the_faces() {
+    fn the_floor_plate_tests_depth_without_writing_it() {
         let state = floor_depth_state();
-        assert_eq!(state.depth_write_enabled, Some(true), "a body has to be nearer than the ground");
+        assert_eq!(
+            state.depth_write_enabled,
+            Some(false),
+            "a body under the floor draws over the plate instead of being culled behind it (U108)"
+        );
         assert_eq!(state.depth_compare, Some(wgpu::CompareFunction::Less));
         assert_eq!(state.bias, FACE_DEPTH_BIAS, "a bottom outline still wins against the plate it lies on");
         assert_eq!(state.stencil, wgpu::StencilState::default(), "the ground owns no stencil slot");
@@ -1425,13 +1435,13 @@ mod tests {
         mesh.normals.clear();
         let edges = [0, 1, 0, 9];
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let ink = edge_color(SceneFrame::default().background, 1.0);
+        let ink = edge_ink(1.0);
 
         let vertices = edge_vertices(0, &mesh, &edges, transform, ink).expect("a drawable's lines");
         assert_eq!(vertices.len(), 2, "the edge naming a missing vertex is skipped");
         assert_eq!(vertices[0].position, [100.0, 20.0, 5.0]);
         assert_eq!(vertices[1].position, [110.0, 20.0, 5.0]);
-        assert_eq!(vertices[0].color, EDGE_COLOR_LIGHT, "the default viewport is dark, so the ink is light");
+        assert_eq!(vertices[0].color, EDGE_INK, "one black ink serves every variant");
 
         // A half edge and a non-finite transform draw nothing, and neither is an error.
         assert_eq!(edge_vertices(0, &mesh, &[0, 1, 2], DMat4::IDENTITY, ink).expect("a half edge").len(), 2);
@@ -1446,7 +1456,7 @@ mod tests {
         // wireframe that quietly stops is a wrong picture (X60).
         let edges = vec![0u32; MAX_VERTICES + 2];
         assert_eq!(
-            edge_vertices(3, &triangle(), &edges, DMat4::IDENTITY, EDGE_COLOR_LIGHT),
+            edge_vertices(3, &triangle(), &edges, DMat4::IDENTITY, EDGE_INK),
             Err(RenderError::EdgeListTooLarge { index: 3 })
         );
     }
@@ -1462,7 +1472,7 @@ mod tests {
         let drawables = 1_500;
         let mut total = 0usize;
         for _ in 0..drawables {
-            let vertices = edge_vertices(0, &mesh, &edges, transform, EDGE_COLOR_LIGHT).expect("a drawable's lines");
+            let vertices = edge_vertices(0, &mesh, &edges, transform, EDGE_INK).expect("a drawable's lines");
             assert_eq!(vertices.len(), 2_880, "the list is never cut short");
             total += vertices.len();
         }
@@ -1477,7 +1487,7 @@ mod tests {
         let mesh = triangle();
         let feature: Arc<[u32]> = Arc::from(vec![0, 1]);
         let all: Arc<[u32]> = Arc::from(vec![0, 1, 1, 2, 2, 0]);
-        let ink = EDGE_COLOR_LIGHT;
+        let ink = EDGE_INK;
 
         let form = edge_vertices(0, &mesh, &feature, DMat4::IDENTITY, ink).expect("the form edges");
         let every = edge_vertices(0, &mesh, &all, DMat4::IDENTITY, ink).expect("every triangle edge");
@@ -1486,15 +1496,16 @@ mod tests {
     }
 
     #[test]
-    fn edge_ink_follows_the_background() {
-        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 1.0), EDGE_COLOR_LIGHT, "a dark viewport needs light edges");
-        assert_eq!(edge_color([0.92, 0.92, 0.94, 1.0], 1.0), EDGE_COLOR_DARK, "a light viewport needs dark edges");
-        assert_eq!(edge_color([f32::NAN; 4], 1.0), EDGE_COLOR_DARK, "a hostile colour falls back to the light ink");
+    fn the_outline_ink_is_black_under_every_theme() {
+        // U108: the outline is a drawing line over a material face, so one black ink serves both
+        // variants instead of following the background.
+        const { assert!(EDGE_INK[0] < 0.1 && EDGE_INK[1] < 0.1 && EDGE_INK[2] < 0.1, "the ink is black") };
         // The strength is the ink's opacity, so zero leaves the fill alone and a hostile value is
         // opaque rather than invisible (U107).
-        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 0.4)[3], 0.4);
-        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], 0.0)[3], 0.0);
-        assert_eq!(edge_color([0.10, 0.11, 0.13, 1.0], f32::NAN)[3], 1.0);
+        assert_eq!(edge_ink(0.4)[3], 0.4);
+        assert_eq!(edge_ink(0.0)[3], 0.0);
+        assert_eq!(edge_ink(f32::NAN)[3], 1.0);
+        assert_eq!(edge_ink(0.4)[..3], EDGE_INK[..3], "a strength never recolours the line");
     }
 
     /// A device and a queue with no surface behind them, or the sentence that says why there is
@@ -1678,7 +1689,7 @@ mod tests {
         renderer.upload(&device, &frame).expect("the frame uploads");
         renderer.render(&device, &queue, &frame);
         let pixels = read_pixels(&renderer, &device, &queue);
-        let ink = crate::geometry::edge_color(frame.background, frame.edge_strength);
+        let ink = crate::geometry::edge_ink(frame.edge_strength);
         let half = pixels.len() / 2;
         let upper = pixels_of(&pixels[..half], ink);
         let lower = pixels_of(&pixels[half..], ink);

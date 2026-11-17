@@ -592,14 +592,15 @@ fn show_group(
 /// The number a group draws beside its cells: the shared field with its unit outside (ADR 0092).
 ///
 /// A value is not a tool (U76 keeps the ribbon's cells to tools), so it is drawn here rather than as
-/// a cell: the same numeric field the cards use, one per group, two cells wide so the row keeps its
-/// pitch. The frame follows every value of a drag; the workspace file is written on the frame the
-/// gesture ends, so one drag is one write (U107).
+/// a cell: the same numeric field the cards use, one per group and one cell wide, because a whole
+/// percent is at most three digits (U107, U108). The frame follows every value of a drag; the
+/// workspace file is written on the frame the gesture ends, so one drag is one write.
 fn show_value(ui: &mut Ui, value: &ValueSpec, context: RibbonContext, actions: &mut Vec<ToolAction>, lang: Lang) {
     let mut percent = value_current(value.kind, context);
     let hint = value.hint.text(lang).to_owned();
     ui.add_space(crate::theme::STEP);
     let outcome = crate::scrub::Scrub::new(&mut percent)
+        .width(crate::theme::RIBBON_CELL_WIDTH)
         .range(value.range.clone())
         .unit(value.unit)
         .speed(value.speed)
