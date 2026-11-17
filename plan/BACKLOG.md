@@ -110,6 +110,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T9** the class list follows what a shop builds, not the order of the digits
+  Why: A person meets the chair and the stool first, because the registry is ordered by family
+   code, and the case a cabinet shop actually builds sits third while the placeholder product
+   sits last. The picker's tree and the product card's list are both drawn in that order, so
+   the first row of a new product is a scene prop.
+  Shape: A presentation order in model: a constant list of family codes and presentation_rank
+   by family, read by the class picker's tree and the product card's list; the table stays
+   ascending by code because ClassCode::row binary-searches it. The order is 80 general, 30
+   storage, 70 boards and trim, 40 surfaces, 20 lying, 50 fittings, 60 appliances, 10 seating.
+   docs/domain/classes.md section 7 lists the heading paragraph in that order, and the existing
+   family test compares the sequence instead of only the count.
+  Done: The picker's first family is 80 and seating is last, the product card's first row is
+   the placeholder and its last row is a seating class, and a family left out of the order
+   fails a test.
+  `files: crates/model/src/class.rs,crates/ui/src/class_picker.rs,docs/domain/classes.md` — `7322b60`
+
 - `[x]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
   Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:
    340 and 320 were taken as axis spacing instead of clear openings, so the shelves landed on
