@@ -42,29 +42,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
-  Why: The ground shadow says what stands on the floor and says nothing about the inside of a
-   cabinet: every joint between two surfaces is lit as if the two panels met at an infinite
-   plane, so a shelf, a niche and a drawer front read as flat paint. The products that convince
-   here — SketchUp, Rhino, Revit, Fusion — light the model from one shadow-casting sun and let
-   every surface receive it. Owner's decision, 2026-11-17: filed now, after the ground shadow
-   lands.
-  Shape: One depth map from the key light over the scene's box — 2048^2, rebuilt on the same
-   keys as the ground mask (a scene upload and a key-light turn) — sampled with PCF in
-   `fs_mesh`, so a face darkens where another face stands between it and the sun. Bias is the
-   whole design: a normal-offset bias keeps a panel from shadowing its own face, and the two
-   coplanar cases — a band on a panel face and a shelf flush with a side — decide the constant
-   and get a test each. The map reuses the scene's world-space baked vertex buffers, so it
-   costs one depth target and no new geometry, and it needs its own ADR because it is the first
-   pass that can cost a frame. Rejected for now: cascades (one cabinet is two metres), a second
-   authored sun (ADR 0036 keeps one key), and screen-space AO, which cannot darken a surface
-   that nothing covers.
-  Done: A shelf 300 mm inside an open cabinet darkens the back panel behind it, and stops
-   darkening it when the cabinet is opened to the sky; a lit box shows no acne on its own faces
-   and no gap under a band; the ground mask and the map agree on one light; a probe shows the
-   map does not rebuild while the camera orbits; the ADR is written and `cargo xtask ci` is
-   green.
-  `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs`
 - `[ ]` **U109** the floor can be made see-through, and its shadow survives it
   Why: Owner, 2026-11-17: the floor should be see-through with a setting of its own, and the
    shadow must not suffer for it. U108 already made the plate write no depth, so a part under
@@ -95,6 +72,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs`
 
 ## Done
+
+- `[x]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
+  Why: The ground shadow says what stands on the floor and says nothing about the inside of a
+   cabinet: every joint between two surfaces is lit as if the two panels met at an infinite
+   plane, so a shelf, a niche and a drawer front read as flat paint. The products that convince
+   here — SketchUp, Rhino, Revit, Fusion — light the model from one shadow-casting sun and let
+   every surface receive it. Owner's decision, 2026-11-17: filed now, after the ground shadow
+   lands.
+  Shape: One depth map from the key light over the scene's box — 2048^2, rebuilt on the same
+   keys as the ground mask (a scene upload and a key-light turn) — sampled with PCF in
+   `fs_mesh`, so a face darkens where another face stands between it and the sun. Bias is the
+   whole design: a normal-offset bias keeps a panel from shadowing its own face, and the two
+   coplanar cases — a band on a panel face and a shelf flush with a side — decide the constant
+   and get a test each. The map reuses the scene's world-space baked vertex buffers, so it
+   costs one depth target and no new geometry, and it needs its own ADR because it is the first
+   pass that can cost a frame. Rejected for now: cascades (one cabinet is two metres), a second
+   authored sun (ADR 0036 keeps one key), and screen-space AO, which cannot darken a surface
+   that nothing covers.
+  Done: A shelf 300 mm inside an open cabinet darkens the back panel behind it, and stops
+   darkening it when the cabinet is opened to the sky; a lit box shows no acne on its own faces
+   and no gap under a band; the ground mask and the map agree on one light; a probe shows the
+   map does not rebuild while the camera orbits; the ADR is written and `cargo xtask ci` is
+   green.
+  `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs` — `ad54f85`
 
 - `[x]` **U110** the ribbon keeps the shadow switch alone, and its intensity lives in Settings
   Why: Owner, 2026-11-17: «интенсивность оставить в настройках, в ленте оставить только
