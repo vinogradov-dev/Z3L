@@ -319,6 +319,7 @@ fn show_object(
         model::Geometry::Mesh(_) => Message::TreeBadgeMesh,
         model::Geometry::Primitive(primitive) => match primitive.kind() {
             model::PrimitiveKind::Sphere => Message::TreeBadgeSphere,
+            model::PrimitiveKind::Cone => Message::TreeBadgeCone,
         },
         model::Geometry::Constructive(_) => Message::TreeBadgeContour,
         model::Geometry::Path(_) => Message::TreeBadgePath,

@@ -146,9 +146,10 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    casts none; the X56 probe still reports that an ordinary edit measures no box from vertices;
    and cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
-
 ## Next
-- `[ ]` **V6** there is no cone primitive
+## Done
+
+- `[x]` **V6** there is no cone primitive
   Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
    `assets/icons/primitives/cone.svg` is empty although U46 counted it as declared. The owner
    needs a truncated cone for a leg or a turned blank, and a sharp one when the top radius is
@@ -161,8 +162,51 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A cone is drawn from a base circle and a height, the card edits both radii and the
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
-  `files: crates/model/src/primitive.rs,crates/param/src/lib.rs,crates/ui/src/toolbars/spec.rs,assets/icons/primitives/cone.svg`
-## Done
+  `files: crates/model/src/primitive.rs,crates/mesh/src/primitive.rs,crates/ui/src/draw.rs,crates/ui/src/editor/drawing.rs,crates/ui/src/object_card.rs,crates/ui/src/toolbars/spec.rs,app/src/extrude_gizmo.rs,assets/icons/primitives/cone.svg` — `00c8795`
+
+- `[x]` **X63** identical created objects all carry the same name in the tree and the card
+  Why: Observation: every created object is named after its shape alone (ui/editor/creation.rs:
+   primitive.kind().label(), and the fixed words Assembly, Camera, Light), so a scene of five
+   identical spheres shows five rows called Sphere in the tree and five identical titles in the
+   card and the undo history; nothing on a tree row tells one from another, and a maker who
+   wants the third sphere has to guess by eye. Expectation: a created node carries a number
+   that no sibling already carries — Sphere, Sphere 2, Sphere 3 — so every row of the tree
+   names one object, and a rename or a delete leaves the rest as they were.
+  Shape: One document query, Project::unique_child_name(parent, base), in model: the first free
+   base, base 2, base 3 among the parent's children, decided on read, so nothing rewrites a
+   stored name and no command learns a second naming rule. The creation paths in
+   ui/editor/creation.rs ask it for the default name they already build; a name the user types
+   stays theirs. The tree draws the stored names, so the tree, the card, the status bar and the
+   undo history read one string.
+  Done: A model test creates three siblings through unique_child_name and asserts Sphere,
+   Sphere 2, Sphere 3, that a free number is reused after a sibling is renamed away, and that
+   two different parents each start at Sphere; an editor test asserts the third created
+   sphere's stored name ends in 3.
+  `files: crates/model/src/project/query.rs,crates/ui/src/editor/creation.rs,crates/ui/src/scene_tree.rs` — `2cf4064`
+
+- `[x]` **U106** the projection readout becomes an on-screen display with a frame rate and the scene's cost
+  Why: Observation: the corner display under the orientation cube names only pitch, yaw, roll
+   and the projection, and the program reports no frame rate, no frame time and no scene cost
+   anywhere. A 5 000-object scene therefore reads as jerky with nothing to measure it against:
+   the two filed defects (X58 draws every drawable, X59 ray-casts every triangle per click)
+   were found with a throwaway probe, not with the editor, and a maker who reports a slow scene
+   has no number to send. Expectation: the switch that draws the corner text draws one
+   diagnostic block instead: the camera line it has today, the frame rate and frame time, the
+   object and triangle count of the frame, and the cost of the last rebuild, upload and pick,
+   each measured where the work happens.
+  Shape: Rename the switch to Show the on-screen display and make the block its own module
+   (app/src/osd.rs) instead of a line owned by gizmo.rs: the cube keeps the cube, the block
+   keeps the numbers, and the block no longer disappears when the cube is turned off. The frame
+   rate is an exponential average of egui's stable_dt, so one slow frame does not swing it; the
+   scene cost is a sum over the uploaded frame's drawables, counted only while the block is on.
+   The rebuild, upload and pick durations are recorded by the code that spends them
+   (Document::refresh, upload_scene, the pick helper) and read on the next frame. While the
+   block is on the window repaints every frame, because a rate measured on an idle window is a
+   lie.
+  Done: A test drives the block with a fixed frame time and asserts the printed rate; a test
+   asserts the block names the frame's objects and triangles for two drawables; a test asserts
+   the block is drawn only while its switch is on; the camera line keeps its existing test.
+  `files: app/src,crates/text/src/messages.rs` — `8a3bb66`
 
 - `[x]` **X60** a dense scene silently loses the wireframe after four million line vertices
   Why: Observation: in the edges styles (shown with edges, or edges through the faces) the 5

@@ -14,11 +14,11 @@
 //! Changes when: a creation tool, its command or the rule that places it changes.
 
 use engine::node_cmds::ASSEMBLY_CREATE_ID;
-use engine::object_cmds::OBJECT_PRIMITIVE_CREATE_ID;
+use engine::object_cmds::{OBJECT_PRIMITIVE_CREATE_ID, OBJECT_PRIMITIVE_REPLACE_ID, ObjectPrimitiveReplace};
 use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
 use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
-use engine::{AssemblyCreate, CameraCreate, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
+use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
     Placement, Primitive, Project,
@@ -28,7 +28,7 @@ use units::Length;
 
 use super::Editor;
 use crate::box_tool::{BoxDraft, BoxDraftError};
-use crate::command::{dispatch, json};
+use crate::command::{dispatch, dispatch_in, json};
 use crate::product_card::ProductDraft;
 use crate::target::creation_target;
 
@@ -130,11 +130,21 @@ impl Editor {
         class: Option<ClassCode>,
     ) -> Result<Id, String> {
         let material = Self::panel_material(session)?;
+        let name = Self::free_name(session, parent, &name);
         let params = json(&PanelCreate { parent, name, nominal_size, material, placement, class, outline, bevels })?;
         let outcome = dispatch(session, PANEL_CREATE_ID, &params)?;
         let created = outcome.created_id();
         self.select_created(created);
         created.ok_or_else(|| "the panel command created no node".to_owned())
+    }
+
+    /// A default name no sibling already carries: the word, then its number (X63).
+    ///
+    /// The creation paths here name a node after what it is — a sphere, a panel, a camera — and a
+    /// scene of five identical spheres would otherwise hold five rows with one name. The number is
+    /// read from the document as it stands, so a rename or a delete leaves the rest untouched.
+    fn free_name(session: &Session, parent: Id, base: &str) -> String {
+        session.project().unique_child_name(parent, base)
     }
 
     /// The material every created panel takes: the catalogue's first panel material.
@@ -158,12 +168,8 @@ impl Editor {
         let project = session.project();
         let root = project.root().id();
         let placement = project.product_placement(draft.envelope);
-        let name = draft
-            .class
-            .label()
-            .map(|label| label.text(lang))
-            .unwrap_or(Message::CmdCreateProduct.text(lang))
-            .to_owned();
+        let base = draft.class.label().map(|label| label.text(lang)).unwrap_or(Message::CmdCreateProduct.text(lang));
+        let name = project.unique_child_name(root, base);
         let params =
             json(&ProductCreate { parent: root, name, class: Some(draft.class), envelope: draft.envelope, placement })?;
         let outcome = dispatch(session, PRODUCT_CREATE_ID, &params)?;
@@ -179,7 +185,8 @@ impl Editor {
 
     /// Dispatches `assembly.create`.
     pub(super) fn create_assembly(&mut self, session: &mut Session, parent: Id) -> Result<(), String> {
-        let params = json(&AssemblyCreate { parent, name: "Assembly".to_owned(), placement: Placement::IDENTITY })?;
+        let name = Self::free_name(session, parent, "Assembly");
+        let params = json(&AssemblyCreate { parent, name, placement: Placement::IDENTITY })?;
         let outcome = dispatch(session, ASSEMBLY_CREATE_ID, &params)?;
         self.select_created(outcome.created_id());
         Ok(())
@@ -291,28 +298,46 @@ impl Editor {
 
     /// Dispatches `object.primitive.create` for one validated primitive at `placement`.
     ///
-    /// The drawn sphere's commit is the caller: the click that placed a primitive by one gesture
-    /// retired with the arm, because a sphere is now drawn around its centre (ADR 0139).
+    /// The drawn sphere's and cone's commit is the caller: the click that placed a primitive by one
+    /// gesture retired with the arm, because both shapes are drawn and not placed (ADR 0139, 0141).
+    /// `scope` is the open gesture a cone's create belongs to; a sphere passes `None` and is its own
+    /// undo entry.
     pub(super) fn create_primitive_node(
         &mut self,
         session: &mut Session,
         parent: Id,
         primitive: Primitive,
         placement: Placement,
+        scope: Option<EditScope>,
     ) -> Result<Id, String> {
-        let name = primitive.kind().label();
-        let params = json(&ObjectPrimitiveCreate { parent, name: name.to_owned(), primitive, placement })?;
-        let outcome = dispatch(session, OBJECT_PRIMITIVE_CREATE_ID, &params)?;
+        let name = Self::free_name(session, parent, primitive.kind().label());
+        let params = json(&ObjectPrimitiveCreate { parent, name, primitive, placement })?;
+        let outcome = dispatch_in(scope, session, OBJECT_PRIMITIVE_CREATE_ID, &params)?;
         let created = outcome.created_id();
         self.select_created(created);
         created.ok_or_else(|| "The primitive command created no node.".to_owned())
+    }
+
+    /// Writes a primitive's parameters, in the open scope a gesture created it in.
+    ///
+    /// The cone's pull is the caller: the node entered the document in the scope, so the ✓ replaces
+    /// its numbers in the same entry and its ✕ takes the node back (ADR 0141).
+    pub fn replace_primitive_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        primitive: Primitive,
+    ) -> Result<(), String> {
+        let params = json(&ObjectPrimitiveReplace { object, primitive })?;
+        dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())
     }
 
     /// Dispatches `camera.create`.
     pub(super) fn create_camera(&mut self, session: &mut Session, parent: Id) -> Result<(), String> {
         let params = json(&CameraCreate {
             parent,
-            name: "Camera".to_owned(),
+            name: Self::free_name(session, parent, "Camera"),
             placement: Placement::IDENTITY,
             projection: CameraProjection::DEFAULT,
         })?;
@@ -325,7 +350,7 @@ impl Editor {
     pub(super) fn create_light(&mut self, session: &mut Session, parent: Id) -> Result<(), String> {
         let params = json(&LightCreate {
             parent,
-            name: "Light".to_owned(),
+            name: Self::free_name(session, parent, "Light"),
             placement: Placement::IDENTITY,
             kind: LightKind::Sun,
             color: [1.0, 0.97, 0.92],

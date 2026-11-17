@@ -701,6 +701,12 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. } | ToolKind::Body(_))) => {
                     ready.hint.clone()
                 }
+                // A primitive cell names its shape as well: a sphere and a cone share the sketch's
+                // circle methods, so the method alone would read twice in one row of the ribbon
+                // (ADR 0139, 0141).
+                Some(_) if matches!(method.run, Some(ToolKind::Primitive { .. })) => {
+                    Message::ToolMethodName.with(lang, [tool.label.text(lang), method.label.text(lang)])
+                }
                 // Every other tool names the method alone: the glyph already says which tool it is.
                 Some(_) => icons::tool_hint(method.label.text(lang), method.shortcut),
             };
@@ -916,10 +922,12 @@ mod tests {
                 "model",
                 &[
                     "Box: draw its base on the work plane",
-                    // The sphere cell lists its methods, so the cell itself names the pinned one.
-                    "Centre and radius",
+                    // A primitive cell names its shape and its pinned method: a sphere and a cone
+                    // share the sketch's circle methods, so the method alone would read twice.
+                    "Cone: Centre and radius",
                     "Cylinder: draw its base on the work plane",
                     "Select a closed path first",
+                    "Sphere: Centre and radius",
                 ],
             ),
             (

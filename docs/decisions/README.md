@@ -145,6 +145,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0137](0137-a-rubber-band-selects-by-the-direction-it-is-dragged.md) | A rubber band selects by the direction it is dragged | Accepted |
 | [0138](0138-a-solid-body-is-a-drawn-profile-swept-on-z.md) | A solid body is a drawn profile swept on Z | Accepted |
 | [0139](0139-a-sphere-is-drawn-around-its-centre.md) | A sphere is drawn around its centre | Accepted |
+| [0140](0140-the-corner-display-is-a-diagnostic-block-the-maker-can-read.md) | The corner display is a diagnostic block the maker can read | Accepted |
+| [0141](0141-a-cone-is-drawn-by-its-base-circle.md) | A cone is drawn by its base circle | Accepted |
 
 ## Format
 

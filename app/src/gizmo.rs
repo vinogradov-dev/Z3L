@@ -4,9 +4,9 @@
 //! like the axes in the scene instead of a fixed diagram. Clicking one snaps the camera to look at
 //! its target from that direction; clicking the direction the camera already looks from flips to
 //! the opposite side, so the centre ball remains useful in a top or bottom view. A *home* button in
-//! the cube's top-right corner returns the view to *Axonometric*, a flat projection button under the
-//! cube switches orthographic and perspective, and an optional one-line readout under them names the
-//! pitch, the yaw, the roll and the projection the viewport is drawing with.
+//! the cube's top-right corner returns the view to *Axonometric*, and a flat projection button under
+//! the cube switches orthographic and perspective. The corner also anchors the on-screen display
+//! ([`crate::osd`]), which hangs below the widget and is painted by the shell, not by the cube.
 //!
 //! A screen-fixed ring around the balls turns the view about its own axis: four nodes at the top,
 //! left, bottom and right set the absolute roll to 0°, 90°, 180° and 270°, and a drag anywhere on
@@ -21,8 +21,8 @@ use std::f64::consts::{PI, TAU};
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Ui, Vec2};
 use geom::DVec3;
-use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection};
-use text::{Lang, Message};
+use scene::{Camera, MAX_PITCH, MIN_PITCH};
+use text::Message;
 use ui::{icons, theme};
 use units::Degrees;
 
@@ -78,11 +78,8 @@ const BUTTON_SIZE: f32 = 22.0;
 /// Point size of the projection glyph, in points.
 const BUTTON_ICON_POINT_SIZE: f32 = 20.0;
 
-/// Gap between the cube, the projection button and the readout, in points.
+/// Gap between the cube and the projection button, in points.
 const GAP: f32 = 2.0;
-
-/// Height reserved for one line of the readout, in points.
-const READOUT_HEIGHT: f32 = 14.0;
 
 /// The quarter-turn nodes of the ring, counter-clockwise from the top.
 const NODE_DEGREES: [i64; 4] = [0, 90, 180, 270];
@@ -154,17 +151,8 @@ impl Gizmo {
     ///
     /// `rect` is the placement [`widget_rect`] returned; the shell skips this call when the display
     /// switch is off, so the widget's drag state survives a hidden frame.
-    /// `readout` turns the line under the projection button on; the numbers are read from the same
-    /// camera the viewport draws with, so the label cannot disagree with the image.
     /// `step_degrees` is the hand-turn step from the workspace settings.
-    pub(crate) fn show(
-        &mut self,
-        ui: &Ui,
-        rect: Rect,
-        camera: Camera,
-        readout: bool,
-        step_degrees: u32,
-    ) -> Option<GizmoAction> {
+    pub(crate) fn show(&mut self, ui: &Ui, rect: Rect, camera: Camera, step_degrees: u32) -> Option<GizmoAction> {
         let cube = Rect::from_min_size(rect.min, Vec2::splat(SIZE));
         let center = cube.center();
         let painter = ui.painter().with_clip_rect(rect);
@@ -238,9 +226,6 @@ impl Gizmo {
             action = Some(GizmoAction::ToggleProjection);
         }
 
-        if readout {
-            paint_readout(ui, rect, camera);
-        }
         action
     }
 
@@ -334,9 +319,8 @@ impl Gizmo {
 /// then draws no widget at all (U73).
 ///
 /// The rectangle covers the cube, the home button in its corner and the projection button under it,
-/// because all three take clicks; the readout is a passive label painted below it and is
-/// deliberately outside, so it neither blocks a click on the scene nor widens the area that stops
-/// the transform gizmo.
+/// because all three take clicks; the on-screen display hangs below it and is deliberately outside,
+/// so it neither blocks a click on the scene nor widens the area that stops the transform gizmo.
 pub(crate) fn widget_rect(view: Rect, chrome: &Chrome) -> Option<Rect> {
     let size = Vec2::new(SIZE, SIZE + GAP + BUTTON_SIZE);
     // The band is chrome: the corner it covers has no room, so the placement starts below it.
@@ -463,52 +447,6 @@ fn home_button(ui: &Ui, rect: Rect) -> bool {
     let glyph = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
     icons::draw_icon(ui, icons::view::HOME, glyph, 14.0, visuals.fg_stroke.color);
     response.on_hover_text(Message::HomeHint.text(ui::language(ui.ctx()))).clicked()
-}
-
-/// Paints the one-line readout under the widget.
-///
-/// It is drawn outside [`widget_rect`], so it never blocks a click; the line is right-aligned to the
-/// widget's right edge because the widget sits in the viewport's corner, so the text grows into the
-/// scene instead of running under a side panel.
-fn paint_readout(ui: &Ui, widget: Rect, camera: Camera) {
-    let text = readout(camera, Lang::En);
-    let color = theme::text_dim(ui);
-    let galley = ui.painter().layout_no_wrap(text, FontId::proportional(9.5), color);
-    let size = galley.size();
-    let center_y = widget.bottom() + GAP + READOUT_HEIGHT / 2.0;
-    let position = egui::pos2(widget.right() - size.x, center_y - size.y / 2.0);
-    let clip = Rect::from_min_max(
-        egui::pos2(position.x, center_y - READOUT_HEIGHT / 2.0),
-        egui::pos2(widget.right(), center_y + READOUT_HEIGHT / 2.0),
-    );
-    ui.painter().with_clip_rect(clip).galley(position, galley, color);
-}
-
-/// The pitch, yaw, roll and projection line.
-///
-/// Pitch and yaw are the camera's own orbit angles, wrapped to a signed degree so the line reads as
-/// -51.7° rather than 308.3°; the roll is the camera's field about its own view axis, presented the
-/// same way, so a 270° roll reads as -90.0°. The projection is named the way the toggle names it,
-/// and every number is formatted through `units` so the readout has one source of truth.
-pub(crate) fn readout(camera: Camera, lang: Lang) -> String {
-    let pitch = Degrees::from_radians(camera.pitch()).unwrap_or(Degrees::ZERO);
-    let yaw = signed_degrees(camera.yaw());
-    let roll = signed_degrees(camera.roll());
-    let projection = match camera.projection() {
-        Projection::Orthographic { .. } => Message::ProjectionOrthoShort,
-        Projection::Perspective { .. } => Message::ProjectionPerspShort,
-    };
-    Message::OrientationReadout.with(
-        lang,
-        [pitch.format_fixed(1), yaw.format_fixed(1), roll.format_fixed(1), projection.text(lang).to_owned()],
-    )
-}
-
-/// Wraps a yaw in radians into `(-π, π]` and returns it as degrees.
-fn signed_degrees(yaw: f64) -> Degrees {
-    let half_turn = std::f64::consts::PI;
-    let wrapped = (yaw.rem_euclid(2.0 * half_turn) + half_turn).rem_euclid(2.0 * half_turn) - half_turn;
-    Degrees::from_radians(wrapped).unwrap_or(Degrees::ZERO)
 }
 
 /// The direction to look from when `direction` is clicked.
@@ -742,88 +680,10 @@ mod tests {
         };
         let mut action = None;
         let output = ctx.run_ui(input, |ui| {
-            action = Gizmo::default().show(ui, placement(viewport), Camera::default(), false, 1);
+            action = Gizmo::default().show(ui, placement(viewport), Camera::default(), 1);
         });
         output.drop_without_applying_deltas();
         action
-    }
-
-    #[test]
-    fn the_readout_names_the_angles_and_the_projection() {
-        let mut camera = Camera::default();
-        camera.look_from(DVec3::new(0.6, 0.8, 0.5));
-        assert!(matches!(camera.projection(), Projection::Perspective { .. }));
-        let text = readout(camera, Lang::En);
-        assert!(text.starts_with("Pitch "), "the line starts with the pitch: {text}");
-        assert!(text.contains(" · Yaw "), "and continues with the yaw: {text}");
-        assert!(text.contains(" · Roll "), "and the roll: {text}");
-        assert!(text.ends_with("Persp"), "a perspective view names the mode: {text}");
-
-        // Pitch, yaw and roll each carry one decimal place, exactly.
-        let numbers: Vec<&str> = text.split(" · ").collect();
-        assert_eq!(numbers.len(), 4, "four fields: {text}");
-        for field in &numbers[..3] {
-            let value = field.split_once(' ').map(|(_, value)| value).unwrap_or_default();
-            assert!(value.ends_with('°'), "a field ends in a degree sign: {field}");
-            assert_eq!(
-                value.split('.').nth(1).map(|fraction| fraction.chars().count()),
-                Some(2),
-                "one decimal place and the degree sign: {field}"
-            );
-        }
-
-        camera.toggle_projection();
-        assert!(readout(camera, Lang::En).ends_with("Ortho"), "an orthographic view names the mode");
-
-        camera.roll_to(std::f64::consts::FRAC_PI_2);
-        assert!(readout(camera, Lang::En).contains("Roll 90.0°"), "the readout shows the camera's roll field");
-    }
-
-    #[test]
-    fn the_readout_hides_when_its_switch_is_off() {
-        // The label is painted only on request: the widget's own rectangle never covers it either
-        // way, so a hidden readout leaves the scene exactly as it was.
-        let viewport = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0));
-        let widget = placement(viewport);
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let count = |readout: bool| {
-            let mut texts = 0;
-            let output = ctx.run_ui(Default::default(), |ui| {
-                let action = Gizmo::default().show(ui, widget, Camera::default(), readout, 1);
-                assert!(action.is_none(), "drawing alone asks for nothing");
-            });
-            fn walk(shape: &egui::Shape, out: &mut usize) {
-                match shape {
-                    egui::Shape::Text(_) => *out += 1,
-                    egui::Shape::Vec(shapes) => {
-                        for shape in shapes {
-                            walk(shape, out);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            for clipped in &output.shapes {
-                walk(&clipped.shape, &mut texts);
-            }
-            output.drop_without_applying_deltas();
-            texts
-        };
-        let without = count(false);
-        let with = count(true);
-        assert!(widget.width() <= SIZE + 0.5);
-        assert_eq!(with, without + 1, "the switch adds exactly the one readout line: {with} vs {without}");
-    }
-
-    #[test]
-    fn a_yaw_is_presented_as_a_signed_angle() {
-        assert_eq!(signed_degrees(0.0), Degrees::ZERO);
-        assert_eq!(signed_degrees(std::f64::consts::PI).format_fixed(1), "-180.0°", "a half turn wraps to -180°");
-        assert_eq!(signed_degrees(-std::f64::consts::FRAC_PI_2).format_fixed(1), "-90.0°");
-        // 308° is -52° once wrapped, which is what the user reads.
-        let wrapped = signed_degrees(308.0_f64.to_radians());
-        assert!((wrapped.degrees_f64() + 52.0).abs() < 1.0e-6, "wrapped to {wrapped}");
     }
 
     #[test]
@@ -888,7 +748,7 @@ mod tests {
         };
         let mut action = None;
         let output = ctx.run_ui(input, |ui| {
-            action = gizmo.show(ui, placement(viewport), camera, false, step_degrees);
+            action = gizmo.show(ui, placement(viewport), camera, step_degrees);
         });
         output.drop_without_applying_deltas();
         action

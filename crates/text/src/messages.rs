@@ -216,15 +216,20 @@ messages! {
     DisplaySettings = ["Display settings", "Настройки отображения"],
     ViewPreset = ["View preset", "Предустановка вида"],
     DisplayHeading = ["Display", "Отображение"],
-    ShowProjectionAngles = ["Show projection and angles", "Показывать проекцию и углы"],
-    ProjectionAnglesOn = [
-        "The orientation readout is drawn under the cube",
-        "Отсчёт ориентации рисуется под кубом"
+    ShowOnScreenDisplay = ["Show the on-screen display", "Показывать экранную информацию"],
+    OnScreenDisplayOn = [
+        "The corner block names the angles, the projection, the frame rate and the scene's cost",
+        "Блок в углу показывает углы, проекцию, частоту кадров и стоимость сцены"
     ],
-    ProjectionAnglesOff = [
-        "Draw the pitch, yaw, roll and the projection under the cube",
-        "Рисовать тангаж, рыскание, крен и проекцию под кубом"
+    OnScreenDisplayOff = [
+        "Draw the angles, the projection, the frame rate and the scene's cost in the free corner",
+        "Рисовать углы, проекцию, частоту кадров и стоимость сцены в свободном углу"
     ],
+    OsdRate = ["{} fps · {} ms", "{} кадр/с · {} мс"],
+    OsdScene = ["{} objects · {} triangles", "{} объектов · {} треугольников"],
+    OsdRebuild = ["rebuild {} ms", "перестроение {} мс"],
+    OsdUpload = ["upload {} ms", "выгрузка {} мс"],
+    OsdPick = ["pick {} ms", "выбор {} мс"],
     ShowOrientationWidget = ["Show the orientation cube", "Показывать куб ориентации"],
     OrientationWidgetOn = [
         "The corner cube, its home button and the projection toggle are drawn beside the panels",
@@ -330,6 +335,7 @@ messages! {
     PathSourceTruth = ["The drawing is the source of truth; it has no mesh yet.", "Чертёж — источник истины; сетки пока нет."],
     MeshSourceTruth = ["Editable as a mesh; undo is its only history.", "Редактируется как сетка; история — только отмена."],
     FieldRadius = ["Radius", "Радиус"],
+    FieldTopRadius = ["Top radius", "Верхний радиус"],
     FieldWidth = ["Width", "Ширина"],
     FieldEndAngle = ["End angle", "Конечный угол"],
     PrimitiveRefused = ["The primitive was refused: {}", "Примитив отклонён: {}"],
@@ -666,6 +672,7 @@ messages! {
     TreeBadgeContour = ["contour", "контур"],
     TreeBadgePath = ["path", "путь"],
     TreeBadgeSphere = ["sphere", "сфера"],
+    TreeBadgeCone = ["cone", "конус"],
     TreeAddChild = ["Add child", "Добавить дочерний"],
     TreeAddChildHint = ["Create the next node inside this container", "Следующий созданный узел попадёт в этот контейнер"],
     TreeShow = ["Show", "Показать"],
@@ -855,7 +862,7 @@ messages! {
     PanelContourDraw = ["{}: click the outline, then close the ring", "{}: наметьте контур, затем замкните его"],
     PanelContourOpen = ["A panel is cut from a closed outline", "Панель вырезается по замкнутому контуру"],
     PanelContourUnusable = ["This outline is not a usable panel shape", "Этот контур не годится для панели"],
-    FillMethod = ["{}: {}", "{}: {}"],
+    ToolMethodName = ["{}: {}", "{}: {}"],
     FillMethodFit = ["Largest rectangle", "Наибольший прямоугольник"],
     FillMethodShape = ["Niche shape", "По форме ниши"],
     GroupObjects = ["Objects", "Объекты"],
@@ -907,9 +914,9 @@ messages! {
     ToolBox = ["Box", "Блок"],
     ToolCylinder = ["Cylinder", "Цилиндр"],
     ToolSphere = ["Sphere", "Сфера"],
-    ToolSphereCentreRadius = ["Centre and radius", "Центр и радиус"],
-    ToolSphereCentreDiameter = ["Centre and diameter", "Центр и диаметр"],
-    ToolSphereThreePoints = ["Through 3 points", "Через 3 точки"],
+    ToolCentreRadius = ["Centre and radius", "Центр и радиус"],
+    ToolCentreDiameter = ["Centre and diameter", "Центр и диаметр"],
+    ToolThreePoints = ["Through 3 points", "Через 3 точки"],
     ToolCone = ["Cone", "Конус"],
     ToolPyramid = ["Pyramid", "Пирамида"],
     ToolUnion = ["Union", "Объединить"],

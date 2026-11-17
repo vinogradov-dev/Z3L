@@ -15,6 +15,33 @@ impl Project {
         find_container(&self.root, id, 1).map(|(_, container)| container)
     }
 
+    /// The name a new child of `container` takes when it would be called `base`.
+    ///
+    /// Siblings never share a name, so a wall of five identical spheres reads *Sphere*, *Sphere 2*,
+    /// *Sphere 3* in the tree, the card and the undo history instead of five rows a reader cannot
+    /// tell apart (X63). The number is decided on read, from the children the container holds now:
+    /// nothing rewrites a stored name, a name the user typed stays theirs, and a number a rename or
+    /// a delete freed is used again. A parent that is not a container keeps the base name.
+    pub fn unique_child_name(&self, parent: Id, base: &str) -> String {
+        let Some(container) = self.container(parent) else {
+            return base.to_owned();
+        };
+        let children = container.children();
+        let taken = |name: &str| children.iter().any(|child| child.name() == name);
+        if !taken(base) {
+            return base.to_owned();
+        }
+        // `children.len()` names are taken at most, so one of the next few numbers is always free;
+        // the bound keeps a hostile document from making the search unbounded.
+        for number in 2..=children.len().saturating_add(2) {
+            let candidate = format!("{base} {number}");
+            if !taken(&candidate) {
+                return candidate;
+            }
+        }
+        base.to_owned()
+    }
+
     /// Whether the id names a container or a panel.
     pub fn is_container(&self, id: Id) -> bool {
         self.container(id).is_some()
@@ -507,6 +534,34 @@ mod tests {
 
     use crate::fixtures::*;
     use crate::*;
+
+    #[test]
+    fn a_new_child_takes_the_first_name_no_sibling_carries() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let sphere = Primitive::from_kind(PrimitiveKind::Sphere, millimetres(10)).expect("a sphere");
+        let next = |project: &mut Project| {
+            let name = project.unique_child_name(root, "Sphere");
+            project
+                .add_object(root, name.clone(), Placement::IDENTITY, Geometry::Primitive(sphere.clone()))
+                .expect("the object joins the root");
+            name
+        };
+
+        assert_eq!(next(&mut project), "Sphere", "the first object keeps the plain name");
+        assert_eq!(next(&mut project), "Sphere 2", "the second one is numbered");
+        assert_eq!(next(&mut project), "Sphere 3");
+
+        // A freed number is used again: the names describe the tree, not a counter.
+        let second = project
+            .container(root)
+            .and_then(|container| container.children().iter().find(|child| child.name() == "Sphere 2"))
+            .map(|child| child.id())
+            .expect("the second sphere");
+        project.rename_node(second, "Ball").expect("a rename frees the number");
+        assert_eq!(next(&mut project), "Sphere 2", "the freed number is taken again");
+        assert_eq!(project.unique_child_name(Id::new(9_999).expect("an unknown id"), "Sphere"), "Sphere");
+    }
 
     #[test]
     fn placement_in_parent_undoes_the_parent_frame() {

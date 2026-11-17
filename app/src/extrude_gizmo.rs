@@ -11,6 +11,11 @@
 //! the ✕ takes the profile back through the edit scope it was created in. So the box and the cylinder
 //! are drawn by the sketch's own grammar and built on Z, without a second gesture of their own.
 //!
+//! And it pulls a cone, which is the one pull that sets two numbers (ADR 0141): the base circle is
+//! drawn, the node enters the document at the ribbon's height inside an edit scope, and the card
+//! carries the height `H` beside the top radius `R`, so a taper is chosen in the same breath and
+//! written by the same ✓ — one `object.primitive.replace`, one undo entry.
+//!
 //! The preview is the body itself, evaluated at the height the arrow shows, so the user sees the
 //! solid they are about to accept rather than a stand-in for it. The arrow sits on that top face,
 //! at the contour's bounds centre, and points along the body's local `+Z`. A drag is read as a
@@ -20,7 +25,7 @@
 use eframe::egui::{self, Pos2, Response, Stroke, Ui, Vec2};
 use engine::EditScope;
 use geom::{DVec2, DVec3};
-use model::{Geometry, Id, Placement, Project};
+use model::{Geometry, Id, Placement, Primitive, Project};
 use scene::Camera;
 use units::Length;
 
@@ -57,6 +62,9 @@ struct Pull {
     scope: Option<EditScope>,
     /// The height the arrow currently shows.
     height: Length,
+    /// The radius of the top circle a cone pull sets; `None` for a body or a profile, whose top is
+    /// its own contour (ADR 0141).
+    top: Option<Length>,
 }
 
 /// One continuous drag on the arrow.
@@ -81,13 +89,17 @@ pub(crate) enum ExtrudeEvent {
         object: Id,
         /// The height the preview shows.
         height: Length,
+        /// The top radius a cone pull shows; `None` for a body or a profile.
+        top: Option<Length>,
     },
-    /// The pull is done: write this height once, then drop the preview.
+    /// The pull is done: write these numbers once, then drop the preview.
     Finish {
         /// The body being pulled.
         object: Id,
         /// The height the pull shows.
         height: Length,
+        /// The top radius a cone pull shows; `None` for a body or a profile.
+        top: Option<Length>,
     },
 }
 
@@ -112,19 +124,17 @@ impl Body {
     /// to pull.
     fn read(project: &Project, object: Id) -> Option<Self> {
         let node = project.object(object)?;
-        let contour = match node.geometry() {
+        // A cone's axis runs through the centre of the base circle it was drawn on, which is the
+        // node's own origin; a body's or a profile's runs through the centre of its ring (ADR 0141).
+        let centre = match node.geometry() {
             Geometry::Constructive(body) => {
                 body.height()?;
-                body.contour().ok()?
+                bounds_centre(&body.contour().ok()?)?
             }
-            Geometry::Path(path) => path.to_contour().ok()?,
-            Geometry::Mesh(_) | Geometry::Primitive(_) => return None,
+            Geometry::Path(path) => bounds_centre(&path.to_contour().ok()?)?,
+            Geometry::Primitive(Primitive::Cone(_)) => DVec2::ZERO,
+            Geometry::Mesh(_) | Geometry::Primitive(Primitive::Sphere(_)) => return None,
         };
-        let ([min_x, min_y], [max_x, max_y]) = contour.bounds_micrometres();
-        let centre = DVec2::new((min_x as f64 + max_x as f64) / 2_000.0, (min_y as f64 + max_y as f64) / 2_000.0);
-        if !centre.is_finite() {
-            return None;
-        }
         let placement = project.world_placement(object)?;
         let axis_origin = placement.transform_point(DVec3::new(centre.x, centre.y, 0.0));
         let axis = placement.transform_vector(DVec3::Z).try_normalize()?;
@@ -135,6 +145,13 @@ impl Body {
     fn top(&self, height: Length) -> DVec3 {
         self.placement.transform_point(DVec3::new(self.centre.x, self.centre.y, height.millimetres_f64()))
     }
+}
+
+/// The centre of a contour's bounds, in millimetres.
+fn bounds_centre(contour: &model::Contour) -> Option<DVec2> {
+    let ([min_x, min_y], [max_x, max_y]) = contour.bounds_micrometres();
+    let centre = DVec2::new((min_x as f64 + max_x as f64) / 2_000.0, (min_y as f64 + max_y as f64) / 2_000.0);
+    centre.is_finite().then_some(centre)
 }
 
 /// Pointer state of the pull.
@@ -151,7 +168,7 @@ pub(crate) struct ExtrudeGizmo {
 impl ExtrudeGizmo {
     /// Starts a pull on a body that was just extruded at `height`.
     pub(crate) fn start(&mut self, object: Id, height: Length) {
-        self.start_pull(Pull { object, committed: Some(height), scope: None, height });
+        self.start_pull(Pull { object, committed: Some(height), scope: None, height, top: None });
     }
 
     /// Starts a pull on a profile a body cell has just drawn (ADR 0138).
@@ -160,7 +177,16 @@ impl ExtrudeGizmo {
     /// ✕ restores the document the gesture began with, so a cancelled create leaves no profile
     /// behind. `height` is the typed default the ribbon would hand an extrusion.
     pub(crate) fn start_profile(&mut self, object: Id, scope: EditScope, height: Length) {
-        self.start_pull(Pull { object, committed: None, scope: Some(scope), height });
+        self.start_pull(Pull { object, committed: None, scope: Some(scope), height, top: None });
+    }
+
+    /// Starts a pull on the cone a cell has just drawn and created (ADR 0141).
+    ///
+    /// The node is in the document already, at the height the ribbon names, inside `scope`; the ✓
+    /// replaces its numbers and closes that scope, and the ✕ takes the node back with it. The top
+    /// circle starts sharp, so the first thing the arrow drags is a plain cone.
+    pub(crate) fn start_cone(&mut self, object: Id, scope: EditScope, height: Length) {
+        self.start_pull(Pull { object, committed: Some(height), scope: Some(scope), height, top: Some(Length::ZERO) });
     }
 
     fn start_pull(&mut self, pull: Pull) {
@@ -211,6 +237,20 @@ impl ExtrudeGizmo {
     /// The height the arrow currently shows.
     pub(crate) fn height(&self) -> Option<Length> {
         self.pull.as_ref().map(|pull| pull.height)
+    }
+
+    /// The top radius the card shows, or `None` when the pulled shape has no second number.
+    pub(crate) fn top(&self) -> Option<Length> {
+        self.pull.as_ref().and_then(|pull| pull.top)
+    }
+
+    /// Takes a top radius typed into the card as the one the arrow shows.
+    pub(crate) fn set_top(&mut self, top: Option<Length>) {
+        if let (Some(pull), Some(top)) = (self.pull.as_mut(), top)
+            && pull.top.is_some()
+        {
+            pull.top = Some(top);
+        }
     }
 
     /// Takes a height typed into the card's field as the one the arrow shows.
@@ -276,7 +316,7 @@ impl ExtrudeGizmo {
                 return Ok(self
                     .pull
                     .as_ref()
-                    .map(|pull| ExtrudeEvent::Preview { object: pull.object, height: pull.height })
+                    .map(|pull| ExtrudeEvent::Preview { object: pull.object, height: pull.height, top: pull.top })
                     .filter(|_| moved));
             }
             // The release keeps the pull open on the height it reached: the ✓ writes it, the ✕
@@ -284,7 +324,7 @@ impl ExtrudeGizmo {
             return Ok(self
                 .pull
                 .as_ref()
-                .map(|pull| ExtrudeEvent::Preview { object: pull.object, height: pull.height })
+                .map(|pull| ExtrudeEvent::Preview { object: pull.object, height: pull.height, top: pull.top })
                 .filter(|_| moved));
         }
 
@@ -306,7 +346,7 @@ impl ExtrudeGizmo {
         }
 
         if response.clicked_by(egui::PointerButton::Primary) {
-            return Ok(Some(ExtrudeEvent::Finish { object: pull.object, height: pull.height }));
+            return Ok(Some(ExtrudeEvent::Finish { object: pull.object, height: pull.height, top: pull.top }));
         }
         Ok(None)
     }
@@ -536,10 +576,12 @@ mod tests {
             None,
             "a press starts the drag"
         );
-        let Some(ExtrudeEvent::Preview { object, height }) = run_frame(&ctx, &mut gizmo, &project, 2, end, None) else {
+        let Some(ExtrudeEvent::Preview { object, height, top }) = run_frame(&ctx, &mut gizmo, &project, 2, end, None)
+        else {
             panic!("a drag previews the height it reached");
         };
         assert_eq!(object, id);
+        assert_eq!(top, None, "a body sets one number, not two");
         assert!(height > millimetres(100), "the drag raised the preview, got {height}");
         assert_eq!(gizmo.height(), Some(height));
         assert_eq!(committed_height(&project, id), Some(millimetres(100)), "the body did not move");
@@ -575,7 +617,7 @@ mod tests {
         run_frame(&ctx, &mut gizmo, &project, 0, pointer, None);
         run_frame(&ctx, &mut gizmo, &project, 1, pointer, Some((pointer, true)));
         let event = run_frame(&ctx, &mut gizmo, &project, 2, pointer, Some((pointer, false)));
-        assert_eq!(event, Some(ExtrudeEvent::Finish { object: id, height: millimetres(100) }));
+        assert_eq!(event, Some(ExtrudeEvent::Finish { object: id, height: millimetres(100), top: None }));
         assert!(Body::read(&project, id).is_some(), "finishing reads the body, it does not touch it");
     }
 }

@@ -14,7 +14,7 @@
 //!
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
-use engine::Session;
+use engine::{EditScope, Session};
 use model::{
     DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
 };
@@ -43,10 +43,13 @@ fn body_name(profile: &model::Path, lang: Lang) -> String {
 ///
 /// A sphere stores the radius, the side count and the latitude bands, and the drawn circle supplies
 /// the first of them; the tessellation is the model's default, which the card then edits (ADR 0054,
-/// 0139).
-fn drawn_primitive(kind: PrimitiveKind, radius: Length) -> Result<Primitive, PrimitiveError> {
+/// 0139). A cone reads the same circle as its base and starts sharp, so `height` — the ribbon's
+/// height, or the one the pull has reached — is the distance it rises; the top radius is the pull's
+/// own number and is typed there (ADR 0140).
+fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<Primitive, PrimitiveError> {
     match kind {
         PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
+        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS),
     }
 }
 
@@ -201,8 +204,14 @@ impl Editor {
             return Err(Message::BodyProfileOpen.text(lang).to_owned());
         }
         // A body's ring and the body itself are one gesture, so the profile enters the document in
-        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138).
-        let scope = (intent == DrawIntent::Body).then(|| session.edit_scope());
+        // the scope the extrusion closes; every other figure is its own entry (ADR 0092, 0138). A
+        // cone's base circle is not the whole shape either: its height and its top circle are chosen
+        // on the pull, so it enters the document in the scope that pull closes (ADR 0141).
+        let scope = match intent {
+            DrawIntent::Body => Some(session.edit_scope()),
+            DrawIntent::Primitive(PrimitiveKind::Cone) => Some(session.edit_scope()),
+            _ => None,
+        };
         let object = match intent {
             DrawIntent::Path => draft.commit_in(None, session, parent, placement, None, lang)?,
             DrawIntent::Body => {
@@ -211,7 +220,7 @@ impl Editor {
                 draft.commit_in(scope, session, parent, placement, Some(&name), lang)?
             }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
-            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind)?,
+            DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind, scope)?,
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;
@@ -277,17 +286,18 @@ impl Editor {
         parent: model::Id,
         placement: Placement,
         kind: PrimitiveKind,
+        scope: Option<EditScope>,
     ) -> Result<model::Id, String> {
         let path = draft.to_path().map_err(|error| error.to_string())?;
         let (centre, radius) = path
             .circle_center_radius()
             .ok_or_else(|| "The drawn figure is not a round, so it builds no primitive.".to_owned())?;
-        let primitive = drawn_primitive(kind, radius).map_err(|error| error.to_string())?;
+        let primitive = drawn_primitive(kind, radius, self.extrude_height()).map_err(|error| error.to_string())?;
         let offset = Placement::IDENTITY
             .with_translation(centre[0], centre[1], Length::ZERO)
             .map_err(|error| error.to_string())?;
         let placement = Placement::compose(placement, offset).map_err(|error| error.to_string())?;
-        self.create_primitive_node(session, parent, primitive, placement)
+        self.create_primitive_node(session, parent, primitive, placement, scope)
     }
 
     /// Closes the running ring and commits it as one node.

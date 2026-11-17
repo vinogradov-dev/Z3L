@@ -35,8 +35,10 @@ pub const CARD_GAP: f32 = 18.0;
 /// The identity of one number an armed tool shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToolParam {
-    /// The height a pull sets: a box's height or an extrusion's.
+    /// The height a pull sets: a box's height, an extrusion's or a cone's.
     Height,
+    /// The radius of the top circle a cone's pull sets; zero is the sharp apex (ADR 0141).
+    TopRadius,
     /// The gap between the part's low face and the wall that stops it.
     LowGap,
     /// The gap between the part's high face and the wall that stops it.
@@ -65,6 +67,27 @@ pub struct ToolRow {
     pub disabled: bool,
     /// Whether the row's menu offers *Centred*, which only a measured gap can honour.
     pub centre: bool,
+}
+
+/// One lettered row: a symbol, the number it names and the range the field keeps it inside.
+fn lettered(
+    param: ToolParam,
+    symbol: &'static str,
+    value: f64,
+    range: RangeInclusive<f64>,
+    decimals: usize,
+) -> ToolRow {
+    ToolRow {
+        param,
+        label: Some(FieldLabel::Symbol(symbol)),
+        value,
+        unit: "",
+        range,
+        decimals,
+        locked: false,
+        disabled: false,
+        centre: false,
+    }
 }
 
 impl ToolRow {
@@ -119,10 +142,26 @@ impl ToolView {
     /// the plate carries no word, no unit and no button pair — the gesture's own Enter commits and
     /// its Escape cancels, and the field is the only control that takes the keyboard (U104).
     pub fn lettered_height(symbol: &'static str, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
-        let mut row = ToolRow::height(value, range, decimals);
-        row.label = Some(FieldLabel::Symbol(symbol));
-        row.unit = "";
-        Self { title: None, rows: vec![row], commit: ToolCommit::Keys }
+        Self {
+            title: None,
+            rows: vec![lettered(ToolParam::Height, symbol, value, range, decimals)],
+            commit: ToolCommit::Keys,
+        }
+    }
+
+    /// A pull's card: the height `H` a body rises by, and — for a cone — the top radius `R`.
+    ///
+    /// The two numbers are one plate because they are one shape: a taper is chosen in the same breath
+    /// as the height it tapers over, and both are written by the same ✓ (ADR 0141). A pull with no
+    /// `top` is the extrusion's one number and draws exactly as it did.
+    pub fn pull(height: f64, top: Option<f64>, range: RangeInclusive<f64>, decimals: usize) -> Self {
+        let mut rows = vec![lettered(ToolParam::Height, "H", height, range.clone(), decimals)];
+        if let Some(top) = top {
+            // A cone's top radius reaches zero, where the shape becomes the sharp apex, so its range
+            // starts at the bottom rather than at the smallest positive length.
+            rows.push(lettered(ToolParam::TopRadius, "R", top, 0.0..=*range.end(), decimals));
+        }
+        Self { title: None, rows, commit: ToolCommit::Keys }
     }
 
     /// Whether the surface draws anything at all.
