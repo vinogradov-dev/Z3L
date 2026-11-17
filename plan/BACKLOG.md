@@ -40,27 +40,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X64** the grid and outline display strengths reach nothing
-  Why: Owner, 2026-11-17: «не работает настройка силы сетки и контура». Measured:
-   `ViewportSettings::grid_strength` and `edge_strength` are read by nothing but the Settings
-   window — no crate outside `crates/ui/src/settings.rs` names either constant — so U64 shipped
-   two sliders that paint no pixel. The shadow's slider was the only one ever wired, and only
-   because U44/X62 routed it through the frame.
-  Shape: One conversion (`ui::display::display_strength`) from the whole percent to 0..1, and
-   the frame carries the three numbers as data the renderer reads when it builds the lines:
-   `Grid::ink_strength` scales the grid inks' alpha in `grid_vertices`,
-   `SceneFrame::edge_strength` is the outline ink's alpha in `edge_color`, and the shadow keeps
-   its per-view uniform (U107). The line pipeline gains `ALPHA_BLENDING` — without it an alpha
-   is ignored — which leaves every opaque line (the selection, a path, an envelope) unchanged.
-   `Display::repaints` decides the re-upload: the three strengths live in the ink the buffers
-   are built from, so a change repaints the frame and re-evaluates no node, while the shadow's
-   intensity stays a uniform and costs nothing.
-  Done: A grid at 0 % hides and at 100 % draws the theme's ink; an outline at 0 % leaves the
-   fill alone; a theme switch keeps all three strengths;
-   `target/ui-shots/display-strength-{full,none}.png` show the three at their strengths and at
-   zero; `cargo xtask ci` is green.
-  `files: crates/scene/src/lib.rs,crates/render/src/lib.rs,crates/render/src/geometry.rs,crates/render/src/pipelines.rs,app/src/document.rs,crates/ui/src/settings.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
@@ -88,6 +67,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/render/src/lib.rs,crates/render/src/scene.wgsl,crates/render/src/pipelines.rs,crates/scene/src/lib.rs`
 
 ## Done
+
+- `[x]` **X64** the grid and outline display strengths reach nothing
+  Why: Owner, 2026-11-17: «не работает настройка силы сетки и контура». Measured:
+   `ViewportSettings::grid_strength` and `edge_strength` are read by nothing but the Settings
+   window — no crate outside `crates/ui/src/settings.rs` names either constant — so U64 shipped
+   two sliders that paint no pixel. The shadow's slider was the only one ever wired, and only
+   because U44/X62 routed it through the frame.
+  Shape: One conversion (`ui::display::display_strength`) from the whole percent to 0..1, and
+   the frame carries the three numbers as data the renderer reads when it builds the lines:
+   `Grid::ink_strength` scales the grid inks' alpha in `grid_vertices`,
+   `SceneFrame::edge_strength` is the outline ink's alpha in `edge_color`, and the shadow keeps
+   its per-view uniform (U107). The line pipeline gains `ALPHA_BLENDING` — without it an alpha
+   is ignored — which leaves every opaque line (the selection, a path, an envelope) unchanged.
+   `Display::repaints` decides the re-upload: the three strengths live in the ink the buffers
+   are built from, so a change repaints the frame and re-evaluates no node, while the shadow's
+   intensity stays a uniform and costs nothing.
+  Done: A grid at 0 % hides and at 100 % draws the theme's ink; an outline at 0 % leaves the
+   fill alone; a theme switch keeps all three strengths;
+   `target/ui-shots/display-strength-{full,none}.png` show the three at their strengths and at
+   zero; `cargo xtask ci` is green.
+  `files: crates/scene/src/lib.rs,crates/render/src/lib.rs,crates/render/src/geometry.rs,crates/render/src/pipelines.rs,app/src/document.rs,crates/ui/src/settings.rs` — `2648f39`
 
 - `[x]` **U107** a shadow is an attribute of the view, with one intensity control beside it
   Why: The shadow is controlled in two places today: a checkbox in the viewport cluster's
