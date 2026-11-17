@@ -555,12 +555,13 @@ impl<'a> Evaluation<'a> {
         let mut bounds = SubtreeBounds::empty();
         if let Some(body) = evaluated.body() {
             bounds.include_solid(evaluated.body_bounds(), transform);
-            let drawable = Drawable::new(panel.id(), Arc::clone(body), transform, color);
+            let drawable = Drawable::with_box(panel.id(), Arc::clone(body), transform, color, evaluated.body_bounds());
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
         }
         for (index, mesh) in evaluated.bands().iter().enumerate() {
-            bounds.include_solid(evaluated.band_bounds().get(index).copied().flatten(), transform);
-            let drawable = Drawable::new(panel.id(), Arc::clone(mesh), transform, EDGE_BAND_COLOR);
+            let band_bounds = evaluated.band_bounds().get(index).copied().flatten();
+            bounds.include_solid(band_bounds, transform);
+            let drawable = Drawable::with_box(panel.id(), Arc::clone(mesh), transform, EDGE_BAND_COLOR, band_bounds);
             self.frame.push(with_cached_edges(
                 drawable,
                 evaluated.band_edges().get(index),
@@ -600,7 +601,8 @@ impl<'a> Evaluation<'a> {
         }
         if let Some(mesh) = evaluated.body() {
             bounds.include_solid(evaluated.body_bounds(), transform);
-            let drawable = Drawable::new(object.id(), Arc::clone(mesh), transform, OBJECT_COLOR);
+            let drawable =
+                Drawable::with_box(object.id(), Arc::clone(mesh), transform, OBJECT_COLOR, evaluated.body_bounds());
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
             return Ok(bounds);
         }

@@ -41,27 +41,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X58** the viewport draws every object in the scene, on screen or not
-  Why: Observation: the viewport draws every drawable of the frame, on screen or not.
-   draw_order is built as the whole index range (crates/render/src/lib.rs), the draw loop walks
-   it, and the edge pass is one flattened list of every mesh edge in the scene; nothing tests a
-   drawable against the camera's frustum. A cabinet with a wall of 5 000 objects therefore pays
-   for all of them in every frame — triangles, edges and stencil passes — even when the view
-   holds one shelf, which is what an orbit or a zoom on a dense scene feels like. Measured in
-   the headless probe: 500 / 2 000 / 5 000 spheres are 0.48 M / 1.9 M / 4.8 M triangles and 9.5
-   ms of an empty frame at the top count, so the GPU cost is already the dominant term and it
-   is spent on invisible geometry.
-  Shape: Keep a world AABB per drawable in the frame (the same box X56 caches, so the two tasks
-   share one value) and skip a drawable whose box lies outside the camera's frustum before it
-   enters draw_order and the edge list. The draw order stays the same for what survives, and
-   the stencil slot and the centres are indexed by the same drawable, so the culling is one
-   filter over the frame's own data and not a second pass. Frustum planes come from the camera
-   the renderer already reads.
-  Done: A test with the camera inside a dense scene asserts that only the drawables whose world
-   box meets the frustum are drawn and their edges are kept, that a drawable partially behind
-   the eye is not dropped, and that framing the whole scene draws every drawable again; the
-   count of drawn drawables is exposed for the test.
-  `files: crates/render/src/lib.rs,crates/scene/src/lib.rs`
 - `[ ]` **X59** a click ray-casts every triangle of every object in the scene
   Why: Observation: a click costs every triangle in the scene. ray_hit_drawable
    (crates/scene/src/ray.rs) loops over the whole index buffer of the drawable and transforms
@@ -148,6 +127,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs`
 ## Next
 ## Done
+
+- `[x]` **X58** the viewport draws every object in the scene, on screen or not
+  Why: Observation: the viewport draws every drawable of the frame, on screen or not.
+   draw_order is built as the whole index range (crates/render/src/lib.rs), the draw loop walks
+   it, and the edge pass is one flattened list of every mesh edge in the scene; nothing tests a
+   drawable against the camera's frustum. A cabinet with a wall of 5 000 objects therefore pays
+   for all of them in every frame — triangles, edges and stencil passes — even when the view
+   holds one shelf, which is what an orbit or a zoom on a dense scene feels like. Measured in
+   the headless probe: 500 / 2 000 / 5 000 spheres are 0.48 M / 1.9 M / 4.8 M triangles and 9.5
+   ms of an empty frame at the top count, so the GPU cost is already the dominant term and it
+   is spent on invisible geometry.
+  Shape: Keep a world AABB per drawable in the frame (the same box X56 caches, so the two tasks
+   share one value) and skip a drawable whose box lies outside the camera's frustum before it
+   enters draw_order and the edge list. The draw order stays the same for what survives, and
+   the stencil slot and the centres are indexed by the same drawable, so the culling is one
+   filter over the frame's own data and not a second pass. Frustum planes come from the camera
+   the renderer already reads.
+  Done: A test with the camera inside a dense scene asserts that only the drawables whose world
+   box meets the frustum are drawn and their edges are kept, that a drawable partially behind
+   the eye is not dropped, and that framing the whole scene draws every drawable again; the
+   count of drawn drawables is exposed for the test.
+  `files: crates/render/src/lib.rs,crates/scene/src/lib.rs` — `9167b0d`
 
 - `[x]` **V6** there is no cone primitive
   Why: There is no cone: the Model tab lists cuboid, cylinder and sphere, and
