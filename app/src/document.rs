@@ -322,8 +322,6 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The row of the tool card that takes the keyboard, consumed by the frame that draws it.
-    tool_focus: Option<ToolParam>,
     /// The point the tool card hangs from, frozen while the pointer is on the card itself.
     ///
     /// A card that follows the pointer would move away from the hand reaching for its field: the
@@ -443,7 +441,6 @@ impl Document {
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
-            tool_focus: None,
             tool_card_anchor: None,
             context_menu: ui::ViewportMenu::default(),
             scene_rect: None,
@@ -1978,9 +1975,11 @@ impl Document {
             return;
         };
         let anchor = self.card_anchor(pointer, card_before);
-        // A pull that just appeared takes the keyboard, so its height can be typed without a click;
-        // the flag is cleared by the read so the field never holds the focus against the next press.
-        let focus = self.tool_focus.take().or_else(|| self.extrude_gizmo.take_focus().then_some(ToolParam::Height));
+        // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
+        // a click; the flag is cleared by the read so the field never holds the focus against the
+        // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
+        // owns the number instead of the pointer (`update_box`, ADR 0119).
+        let focus = self.extrude_gizmo.take_focus().then_some(ToolParam::Height);
         let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity, true);
         // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.

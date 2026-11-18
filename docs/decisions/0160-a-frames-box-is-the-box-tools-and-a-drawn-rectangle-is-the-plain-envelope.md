@@ -48,8 +48,11 @@ is a refusal rather than a frame.
   no footprint. Two methods, two promises; the card edits whichever the piece carries.
 - The titled plate with the ✓/✕ pair stays part of the card's anatomy and has no shipping user. A tool
   that wants an explicit pair still can; nothing has needed one since the pull became lettered.
-- The pull still takes the keyboard only after a click (`Document::tool_focus` is unwritten). Both pulls
-  need the same counted ask; that is one change and it is not made here.
+- The plate is the solid's; the keyboard is not. A frame's height is what the hand pulls, so a field
+  that took the focus on appearance would stop the pointer driving it and would turn Escape into "drop
+  the frame" — the frame's field is typed after a click, which pins the number, exactly as the exact
+  distances work. `Document::tool_focus`, the slot nothing ever wrote, is gone; the rule is one row of
+  `plan/debt.md` with the reason measured.
 
 ## Related
 
