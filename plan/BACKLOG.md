@@ -267,6 +267,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X69** the camera gesture hides the pointer and returns it to the middle of the piece
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `3de9d3f`
+
 - `[x]` **X68** a camera change keeps the piece and returns the pointer to it
   `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/scene/src/camera.rs` — `58324e5`
 
