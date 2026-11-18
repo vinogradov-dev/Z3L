@@ -43,28 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
-  Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
-   with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
-   contour. Today an envelope is three lengths, and ADR 0097 says in so many words that a
-   sloped or reshaped one is a new field and a new decision, so neither the card nor the
-   gesture can offer a shape before that decision is recorded.
-  Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
-   rectangle with a cut at one or more corners, or a ring drawn on the plane, which is always a
-   reserved space and never a body. A cut stores offsets, not an angle: the offset along each
-   edge is what a maker measures on a board, and it reuses the panel corner language,
-   CornerFeatureKind (a chamfer of two setbacks), so one corner rule serves both. The corner
-   type is chosen first and names the row that follows: a chamfer offers its two offsets, a
-   fillet offers a radius only after the type is chosen. x and y stay the footprint bounds so
-   the readers, the export and the containment diagnostic keep an answer; the scene draws the
-   wireframe from the footprint, picking and the grips read it. An ADR records the footprint
-   and the corner rule (offsets for a chamfer, a radius for a fillet, the type first).
-  Done: A frame with a 45-degree and a frame with a 120-degree cut round-trip through the file
-   as their offsets, draw as the cut outline and are picked inside it; a fillet radius is
-   offered only after the corner type is chosen; a contour frame stores its ring as a reserved
-   space and pulls its height; a cut that eats an edge is a readable refusal; the ADR is
-   written and docs/decisions/README.md lists it; cargo xtask ci is green.
-  `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs`
 - `[ ]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
   Why: The owner: the frame kept the old card where the box has a typed height field, and the
    base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
@@ -323,6 +301,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
+  Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
+   with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
+   contour. Today an envelope is three lengths, and ADR 0097 says in so many words that a
+   sloped or reshaped one is a new field and a new decision, so neither the card nor the
+   gesture can offer a shape before that decision is recorded.
+  Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
+   rectangle with a cut at one or more corners, or a ring drawn on the plane, which is always a
+   reserved space and never a body. A cut stores offsets, not an angle: the offset along each
+   edge is what a maker measures on a board, and it reuses the panel corner language,
+   CornerFeatureKind (a chamfer of two setbacks), so one corner rule serves both. The corner
+   type is chosen first and names the row that follows: a chamfer offers its two offsets, a
+   fillet offers a radius only after the type is chosen. x and y stay the footprint bounds so
+   the readers, the export and the containment diagnostic keep an answer; the scene draws the
+   wireframe from the footprint, picking and the grips read it. An ADR records the footprint
+   and the corner rule (offsets for a chamfer, a radius for a fillet, the type first).
+  Done: A frame with a 45-degree and a frame with a 120-degree cut round-trip through the file
+   as their offsets, draw as the cut outline and are picked inside it; a fillet radius is
+   offered only after the corner type is chosen; a contour frame stores its ring as a reserved
+   space and pulls its height; a cut that eats an edge is a readable refusal; the ADR is
+   written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs` — `85cf0b2`
 
 - `[x]` **O5** the editor hot-reloads the directory
   Why: The directory is edited elsewhere; the editor must apply a new revision without a
