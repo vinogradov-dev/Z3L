@@ -332,9 +332,18 @@ nomenclature/
 - a record names its kind and its properties by **slug**, not by code, so a file a person edits
   reads `"thickness": 18000`; the loader resolves a slug through the registry and refuses one no row
   declares;
-- writes are atomic per file through the existing writer (temporary file, then rename), and a write
-  that changes several files bumps the revision last;
-- one writer at a time, guarded by the lock file; readers never lock and never write;
+- writes are atomic per file (a temporary sibling, then a rename), and a write that changes several
+  files bumps the revision last: the record first, the package's manifest last, because the manifest is
+  one of the files the stamp watches — so a poller sees one change, after every file of the write is in
+  place. The candidate directory is validated with the loader's own rows before anything is written, so
+  a save either lands whole or leaves the folder exactly as it was;
+- one writer at a time, guarded by the lock file; readers never lock and never write. The writer
+  creates it exclusively and refuses rather than waiting, the file names the process that holds it,
+  and the value that holds the lock removes it when it is dropped; a crashed writer leaves the file
+  behind, and the person removes a stale one deliberately;
+- a record is one file named `<kind slug>-<serial>.json`, so a rename of the record's own slug
+  rewrites one file and one path stays in a diff; a rewrite writes a temporary sibling and renames it
+  over the target, so a failure in the middle leaves the old record whole;
 - the folder's `revision()` is the hash of every file a snapshot reads — its name, size and
   modification time — so it needs no file of its own and a folder edited by hand is watched like one
   written by the application. A file that is not there is part of it too: a folder that gained its
