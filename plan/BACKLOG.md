@@ -267,6 +267,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **N24** the furniture move takes the piece by a click and follows the pointer
+  Why: The owner, after using the furniture move: the axis handles are the wrong affordance for
+   it. A maker takes a board by its body, not by a three-point arrow, and holding the button
+   through a 900 mm slide is the long part of the gesture. The tool should take the piece by
+   any part of it, follow the pointer with the hand free, and put it down on a click.
+  Shape: The furniture move draws no handle. A click on a movable body selects it and takes it
+   in hand; from then on the pointer moves it through the document's rule (contact, snapping,
+   the panel axis) with no button held, and the next click drops it as one
+   node.placement.set_many. Escape puts it back, changing the mode does the same, and the
+   camera stays put while a piece is in hand. The axis is the one allowed axis nearest the
+   hand's travel, latched at the first movement, so a panel still only slides along its
+   thickness; the exact-distance fields stay, because a latched axis is a number as before. The
+   free Move keeps its arrows and its held drag.
+  Done: A click on a panel in Furniture mode takes it and the pointer moves it with no button
+   held; a second click commits exactly one revision and one undo entry; Escape restores the
+   placement and writes nothing; a click that never moved writes nothing; a body that may
+   travel nowhere is not taken; a locked piece is not taken; the handles are not drawn and no
+   axis is offered in that mode; the panel still moves only along its thickness; the fields
+   still type a distance; the frame tests and cargo xtask ci are green.
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/status_bar.rs,crates/text/src/messages.rs,docs/decisions` — `e0e7a37`
+
 - `[x]` **O3** the directory is decided: three records, the domain documents and the task seeds
   Why: The catalogue outgrew two typed tables; the directory replaces it and every later task
    reads this decision.
