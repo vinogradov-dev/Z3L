@@ -4506,3 +4506,91 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     let carried_on = (harness.app.tabs.active().carried_delta() - before).length();
     assert!(carried_on > 1.0, "the mouse carries the piece again from the hand: {carried_on} mm");
 }
+
+/// The empty-space ghost passes the board its ray meets and holds at the frame's envelope (N23).
+///
+/// The point under the pointer cannot read the hand's place on a face square to the free axis — a
+/// shelf's top names one height for the whole face — so the tool carries the part from the place
+/// that face named and moves it with every millimetre the hand goes. A pointer that leaves the
+/// piece keeps the ghost, so the click still creates what was drawn.
+#[test]
+fn the_fill_ghost_passes_the_board_it_meets_and_holds_at_the_frame_envelope() {
+    // An empty scene: the sample session's loose parts stand inside a frame created at the origin,
+    // and a void holding a part is refused by the niche (ADR 0106).
+    let mut harness = Harness::with_session("frame-fill-passes", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let (product, rect, camera) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        // A shelf 350 mm above the frame's floor, spanning the whole footprint the card made.
+        let nominal =
+            model::PanelNominalSize::new(testkit::millimetres(600), testkit::millimetres(560)).expect("a shelf size");
+        let placement = model::Placement::IDENTITY
+            .with_translation(Length::ZERO, Length::ZERO, testkit::millimetres(350))
+            .expect("a placement");
+        document
+            .editor
+            .create_panel_sized(
+                &mut document.session,
+                product,
+                "Shelf".to_owned(),
+                nominal,
+                None,
+                Vec::new(),
+                placement,
+                Some(ClassCode::HORIZONTAL_PANEL),
+            )
+            .expect("the shelf lands in the open frame");
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+        (product, document.scene_rect().expect("a scene rectangle"), document.camera())
+    };
+    let pointer_at = |world: geom::DVec3| {
+        let pointer = gizmo_math::screen_point(camera, rect, world).expect("the frame is on screen");
+        assert!(rect.contains(pointer), "{pointer:?} is on the scene");
+        pointer
+    };
+    let ghost = |harness: &Harness| harness.app.tabs.active().fill_gizmo.ghost().cloned();
+
+    // Under the shelf the ray meets the frame's near wall, which runs along the height, so the point
+    // itself reads the hand: the part stands where the pointer is.
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 520.0, 250.0)));
+    let below = ghost(&harness).expect("the void under the shelf takes a ghost").free_low;
+    assert!((120.0..350.0).contains(&below), "the part stands under the shelf where the hand is: {below}");
+
+    // Over the shelf's own top face the point names one height for the whole face; the hand carries
+    // the part past the board instead of sticking it there.
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 500.0, 368.0)));
+    let near = ghost(&harness).expect("the cell above the shelf takes a ghost").free_low;
+    assert!(near >= 367.5, "the part jumps into the cell above the shelf: {near}");
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 260.0, 368.0)));
+    let far = ghost(&harness).expect("the ghost stays in the cell above the shelf").free_low;
+    assert!(far > near + 50.0, "the part passes the board as the hand does: {near} then {far}");
+    let carried = ghost(&harness).expect("the ghost holds a measurement");
+
+    // A pointer past the frame's envelope names no cell: the ghost holds the last part it could
+    // place, and the click writes exactly that part.
+    let model = model_screen_rect(&harness);
+    let outside = free_scene_point(&mut harness, model);
+    harness.hover(outside);
+    assert_eq!(ghost(&harness).map(|ghost| ghost.placement), Some(carried.placement), "the ghost holds");
+    let before = harness.revision();
+    harness.click(outside, egui::PointerButton::Primary);
+
+    let document = harness.app.tabs.active();
+    let created = document.editor.selected_node().expect("the click created a part");
+    let panel = document.session.project().panel(created).expect("it is a panel");
+    assert_eq!(panel.placement(), carried.placement, "the click writes the ghost that was drawn");
+    assert_eq!(panel.nominal_size(), carried.nominal_size, "and its size");
+    assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+    assert!(harness.revision() > before, "the click is the one write of the gesture");
+
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the part");
+}

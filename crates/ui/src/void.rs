@@ -13,7 +13,9 @@
 //!
 //! A pointer that moves less than [`MEASURE_STEP_MM`] re-measures nothing, and a point outside every
 //! product is a refusal rather than an empty value, because the report row has to say why the space
-//! has no name. Nothing here writes: there is no document field, no revision and no undo entry.
+//! has no name. The same ray answers the fill's free axis ([`free_place`]): which place along the
+//! axis the point names, and whether the face under it can name one at all. Nothing here writes:
+//! there is no document field, no revision and no undo entry.
 //!
 //! Changes when: a second niche shape needs the corners rather than the box, or the cursor rule for
 //! the point inside the product changes.
@@ -150,6 +152,20 @@ impl Void {
     }
 }
 
+/// What the pointer rests on in the open product: the point, and the face under it.
+///
+/// The face is what tells a fill whether the measured point can read the hand's place along the
+/// part's free axis: a face that runs along that axis can, a face square to it cannot
+/// ([`free_place`]). A ray that crosses the whole reserved space rests on no face of its own, so
+/// the entry point comes alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointerPoint {
+    /// The measured point, a micrometre on the free side of the face, in world millimetres.
+    pub point: DVec3,
+    /// The face's outward normal, pointing back at the camera, when the point rests on one.
+    pub face: Option<DVec3>,
+}
+
 /// The point in the open product the pointer points at, in world millimetres.
 ///
 /// The atom's cursor rule, shared by both tools that measure a niche. The ray enters the product's
@@ -159,6 +175,13 @@ impl Void {
 /// envelope answers the entry point, which is the whole reserved space. A pointer outside the
 /// product answers `None`.
 pub fn pointer_point(project: &Project, product: Id, ray: Ray) -> Option<DVec3> {
+    pointer_face(project, product, ray).map(|found| found.point)
+}
+
+/// The point in the open product the pointer points at, with the face it rests on.
+///
+/// [`pointer_point`] is this rule without the face, for the tools that only need the cell.
+pub fn pointer_face(project: &Project, product: Id, ray: Ray) -> Option<PointerPoint> {
     let envelope = project.container(product)?.envelope()?;
     let size =
         DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
@@ -176,20 +199,81 @@ pub fn pointer_point(project: &Project, product: Id, ray: Ray) -> Option<DVec3> 
         return None;
     }
     let Some(step) = ray.direction().try_normalize() else {
-        return Some(world_entry);
+        return Some(PointerPoint { point: world_entry, face: None });
     };
     let inside = world_entry + step * ENTRY_INSET_MM;
     let Some(probe) = project.probe(inside, ray.direction()) else {
-        return Some(inside);
+        return Some(PointerPoint { point: inside, face: None });
     };
     // The envelope's own far face means the ray crossed the whole void: the entry point is the
     // measurement. Anything else is a surface the maker is looking at, and the free space is on
     // the side the ray came from.
     if probe.hit.kind == SurfaceKind::Envelope || probe.distance_mm <= ENTRY_INSET_MM {
-        return Some(inside);
+        return Some(PointerPoint { point: inside, face: None });
     }
     let point = probe.face.point + probe.face.normal * FACE_INSET_MM;
-    point.is_finite().then_some(point)
+    point.is_finite().then_some(PointerPoint { point, face: Some(probe.face.normal) })
+}
+
+/// How square a face may be to the free axis before it says nothing about the hand's place.
+///
+/// A face within about two and a half degrees of square to the axis names one coordinate for the
+/// whole face, so nothing the pointer does along that face can move the part; a face that leans any
+/// more reads the hand's place where it meets the maker's eye.
+const SQUARE_FACE: f64 = 0.999;
+
+/// The unit vector of one axis of a product frame.
+const AXES: [DVec3; 3] = [DVec3::X, DVec3::Y, DVec3::Z];
+
+/// What the pointer says about the axis a fill moves along.
+///
+/// Two numbers, because a face reads the axis in one of two ways. A face that runs along the axis —
+/// a wall behind a shelf, the floor under a post — holds every place on the axis, so the point itself
+/// is the hand's place and a tool reads it. A face square to the axis holds one: a pointer travels
+/// over a board's top and the height it names never changes, so a part measured off that face sticks
+/// at the board however far the hand moves (N23). `hand` is the other reading — the point on the
+/// cell's own free axis nearest the view ray, the rule every drag in the viewport measures its travel
+/// with — and `square` says which of the two the tool is to read. What the tool does with the
+/// difference is its own business: the fill carries the part from the face the hand met.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FreePlace {
+    /// The hand's place on the cell's free axis, in the product frame and millimetres.
+    ///
+    /// It is the reading a face square to the axis cannot give, so it is the one a tool has to act
+    /// on there; where the face runs along the axis the point's own place is the exact answer.
+    pub hand: f64,
+    /// The place the point itself names, in the same frame and millimetres.
+    pub point: f64,
+    /// The face the point rests on, as its outward normal and its offset along that normal.
+    pub face: Option<(DVec3, f64)>,
+    /// Whether that face is square to the free axis, so the point cannot read the hand's place.
+    pub square: bool,
+}
+
+/// What the pointer says about a cell's free axis, or `None` when it names no point at all.
+///
+/// The face under the point decides the reading ([`FreePlace`]); nothing here moves the part, and a
+/// pointer outside the product answers nothing, which is the tool's business to hold on to.
+pub fn free_place(project: &Project, product: Id, niche: &Niche, axis: usize, ray: Ray) -> Option<FreePlace> {
+    let along = *AXES.get(axis)?;
+    let found = pointer_face(project, product, ray)?;
+    let placement = project.world_placement(product)?;
+    let inverse = placement.inverse().ok()?;
+    let local = inverse.transform_point(found.point);
+    if !local.is_finite() {
+        return None;
+    }
+    let face = found.face.map(|normal| (normal, normal.dot(found.point)));
+    let square = found.face.is_some_and(|normal| inverse.transform_vector(normal)[axis].abs() >= SQUARE_FACE);
+    let centre = niche.local_min + niche.size * 0.5;
+    let hand = if centre.is_finite() {
+        ray.closest_parameter_on_line(placement.transform_point(centre), placement.transform_vector(along))
+            .map(|parameter| centre[axis] + parameter)
+            .filter(|hand| hand.is_finite())
+    } else {
+        None
+    };
+    Some(FreePlace { hand: hand.unwrap_or(local[axis]), point: local[axis], face, square })
 }
 
 /// The distance at which a ray enters a box, or the origin's own distance when it starts inside.
@@ -343,6 +427,65 @@ mod tests {
         atom.measure(&project, point);
         let niche = atom.niche().expect("the void ends at the wall");
         assert!(niche.local_max().y <= 542.0, "the niche ends at the wall: {niche:?}");
+    }
+
+    /// A board lying across the piece: its top face at `z = 368` names one height for the whole
+    /// face, and its own slab is a cell no part fits.
+    fn shelf(project: &mut Project, product: Id) {
+        let nominal = model::PanelNominalSize::new(millimetres(600), millimetres(560)).expect("a shelf size");
+        let placement = model::Placement::IDENTITY
+            .with_translation(Length::ZERO, Length::ZERO, millimetres(350))
+            .expect("a shelf placement");
+        project.add_panel(product, "Shelf", nominal, None, millimetres(18), placement).expect("add a shelf");
+    }
+
+    /// A board standing across the piece's back: its inner face through `y = 560`, its normal along
+    /// `-Y`, so it runs along the height and reads the hand exactly.
+    fn back_wall(project: &mut Project, product: Id) {
+        let rotation = DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2);
+        let placement = model::Placement::new(DVec3::new(0.0, 560.0, 0.0), rotation).expect("a wall placement");
+        let nominal = model::PanelNominalSize::new(millimetres(1600), millimetres(600)).expect("a wall size");
+        project.add_panel(product, "Wall", nominal, None, millimetres(18), placement).expect("add a wall");
+    }
+
+    #[test]
+    fn a_face_square_to_the_axis_cannot_read_the_hand_but_a_face_along_it_can() {
+        let (mut project, product) = piece();
+        shelf(&mut project, product);
+        back_wall(&mut project, product);
+        let ray = |target: DVec3| {
+            let from = DVec3::new(0.0, -800.0, target.z + 532.0);
+            Ray::new(from, target - from).expect("a ray")
+        };
+        // The shelf's top face: the whole face names 368, so the point cannot say where the hand is
+        // along the height, and the hand's own place on the cell's axis is a different number.
+        let top = DVec3::new(200.0, 400.0, 368.0);
+        let niche = project.niche(top + DVec3::Z * 1.0e-3).expect("the cell above the shelf");
+        let aim = free_place(&project, product, &niche, 2, ray(top)).expect("the pointer names a point");
+        assert!(aim.square, "a top face is square to the height: {aim:?}");
+        assert!((aim.point - 368.0).abs() <= 0.01, "the point rests on the face: {aim:?}");
+        assert!((aim.hand - aim.point).abs() > 20.0, "the hand is elsewhere on the axis: {aim:?}");
+
+        // The wall behind runs along the height, so the point itself is the height the pointer is on
+        // and a tool reads that instead of the hand's projection.
+        let across = Ray::new(DVec3::new(300.0, -800.0, 400.0), DVec3::Y).expect("a ray");
+        let aim = free_place(&project, product, &niche, 2, across).expect("the pointer names a point");
+        assert!(!aim.square, "a wall is not square to the height: {aim:?}");
+        assert!((aim.point - 400.0).abs() <= 0.01, "the height the pointer is on: {aim:?}");
+
+        // A ray that crosses the whole reserved space rests on no face of its own, so the tool reads
+        // the entry point: an empty piece answers nothing but its envelope.
+        let (project, product) = piece();
+        let through = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
+        let niche = project.niche(DVec3::new(300.0, 1.0, 300.0)).expect("the whole reserved space");
+        let aim = free_place(&project, product, &niche, 2, through).expect("the ray crosses the void");
+        assert!(aim.face.is_none() && !aim.square, "the entry point names no face: {aim:?}");
+        assert!((aim.point - 300.0).abs() <= 0.01, "the entry point's own height: {aim:?}");
+
+        // A ray that misses the piece names nothing at all, and neither does a fourth axis.
+        let away = Ray::new(DVec3::new(-500.0, -800.0, 400.0), DVec3::X).expect("a ray");
+        assert_eq!(free_place(&project, product, &niche, 2, away), None);
+        assert_eq!(free_place(&project, product, &niche, 7, through), None, "no fourth axis");
     }
 
     #[test]

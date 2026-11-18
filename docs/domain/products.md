@@ -227,9 +227,15 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   whole-face coverage test is gone, so an open front with a short top still offers a niche. A part can
   therefore run past a board's own edge into open space; a surface standing *inside* the cell still
   makes the void non-convex and is refused (0109).
-- A **ghost** of the part follows the cursor through the session preview overlay (ADR 0093); nothing
-  is written until the click. A beveled part's ghost draws the far rim it really ends at, set back
-  at the wall it meets.
+- A **ghost** of the part follows the cursor, drawn as shell paint rather than through the session
+  preview overlay — a part that does not exist yet has no node an overlay entry could be keyed by
+  (0104) — and nothing is written until the click. The hand carries it along the free axis: a face
+  that runs along that axis, a wall behind a shelf, reads the hand's place exactly, while a face
+  square to it names one place for the whole face, so the tool carries the part from the place that
+  face named and moves it by every millimetre the hand travels there (0157). The cell's walls are what
+  stop it, the frame's envelope among them, and a pointer that leaves the piece keeps the ghost, so
+  the click writes exactly what was drawn. A beveled part's ghost draws the far rim it really ends
+  at, set back at the wall it meets.
 - The offset step is **1 mm**; there are no fractional sizes.
 - A click creates the part with exactly the ghost's size, outline, bevels and mode, through one
   command and one undo entry: the outline — a rectangle with its corner cuts, or the ring — and the

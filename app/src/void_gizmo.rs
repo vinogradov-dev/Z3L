@@ -11,6 +11,10 @@
 //! number the status bar prints, and it is drawn as a wireframe so the void reads through the boards
 //! around it.
 //!
+//! The fill tool also reads its free axis here ([`free_at`]): the cell names the measured sides, and
+//! the face under the pointer decides whether the point can say where the hand is along the one axis
+//! that moves (N23).
+//!
 //! Changes when: the niche gains a second shape to draw, or the pointer stops resolving through the
 //! atom's cursor rule.
 
@@ -34,6 +38,23 @@ const LABEL_PADDING: egui::Vec2 = egui::vec2(6.0, 2.0);
 pub(crate) fn point_at(project: &Project, product: Id, camera: Camera, rect: Rect, pointer: Pos2) -> Option<DVec3> {
     let ray = crate::gizmo_math::ray_to(pointer, rect, camera);
     ui::pointer_point(project, product, ray)
+}
+
+/// What the pointer says about the cell's free axis, or `None` when it names no point at all.
+///
+/// The one cursor rule becomes one ray here, and [`ui::free_place`] answers both halves of the
+/// reading: the place the point names and the hand's own place on the cell's axis, with the face
+/// that decides which of them the tool acts on (N23).
+pub(crate) fn free_at(
+    project: &Project,
+    product: Id,
+    niche: &Niche,
+    axis: usize,
+    camera: Camera,
+    rect: Rect,
+    pointer: Pos2,
+) -> Option<ui::FreePlace> {
+    ui::free_place(project, product, niche, axis, crate::gizmo_math::ray_to(pointer, rect, camera))
 }
 
 /// The niche tool's live overlay: nothing of its own, because the atom holds every number.

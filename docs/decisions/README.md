@@ -162,6 +162,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0154](0154-the-wheel-zooms-towards-the-pointer.md) | The wheel zooms towards the pointer | Accepted |
 | [0155](0155-a-carried-piece-keeps-its-place-under-the-hand.md) | A carried piece keeps its place under the hand | Superseded by 0156 |
 | [0156](0156-the-pointer-comes-back-to-a-carried-piece.md) | The pointer comes back to a carried piece | Accepted; replaces 0155 |
+| [0157](0157-a-fill-is-carried-by-the-hand-across-a-board.md) | A fill is carried by the hand across a board | Accepted; refines 0103 and 0109 |
 
 ## Format
 

@@ -365,6 +365,8 @@ pub(crate) struct Document {
     pub(crate) distance_fields: DistanceFields,
     /// The measurement the fields draw, rebuilt from the ghost every frame (ADR 0103).
     pub(crate) distances: Option<Distances>,
+    /// The face the fill's free axis is carried on, if the hand is carrying it (N23).
+    fill_carriage: Option<Carriage>,
     /// The exact distances of the translate drag in progress, measured once when it starts.
     move_distances: Option<MoveDistances>,
     /// The corner orientation widget, which owns the roll-ring drag across frames.
@@ -462,6 +464,7 @@ impl Document {
             band: None,
             distance_fields: DistanceFields::default(),
             distances: None,
+            fill_carriage: None,
             move_distances: None,
             gizmo: gizmo::Gizmo::default(),
             draft_menu: ui::DraftMenu::default(),
@@ -1453,6 +1456,47 @@ impl Document {
         self.editor.cancel_box();
     }
 
+    /// The place along the fill's free axis for this frame, read from what the pointer says.
+    ///
+    /// A typed number pins it, above everything the hand does (ADR 0103). Otherwise the face under
+    /// the pointer decides: a face that runs along the axis names the hand's place exactly, so the
+    /// point itself answers. A face square to the axis names one place for the whole face, and the
+    /// point would freeze the part at the board however far the hand travelled over it; there the
+    /// carriage carries the part instead — the place the face named when the hand met it, moved by
+    /// every millimetre the hand has gone since — so the part passes the board as the hand does and
+    /// only the cell's walls, the frame's envelope included, stop it (N23).
+    ///
+    /// A pointer that names no point at all answers `None`, which leaves the part where the tool
+    /// already holds it.
+    fn fill_place(
+        &mut self,
+        product: Id,
+        niche: &model::Niche,
+        axis: usize,
+        pointer: egui::Pos2,
+        rect: egui::Rect,
+    ) -> Option<f64> {
+        let camera = self.scene.camera;
+        let aim = void_gizmo::free_at(self.session.project(), product, niche, axis, camera, rect, pointer)?;
+        let Some((face, offset)) = aim.face.filter(|_| aim.square) else {
+            self.fill_carriage = None;
+            return Some(aim.point);
+        };
+        let carried = self
+            .fill_carriage
+            .filter(|carried| carried.face == face && (carried.offset - offset).abs() <= CARRIAGE_FACE_MM);
+        let Some(carried) = carried else {
+            self.fill_carriage = Some(Carriage { face, offset, hand: aim.hand, place: aim.point });
+            return Some(aim.point);
+        };
+        let place = carried.place + (aim.hand - carried.hand);
+        if !place.is_finite() {
+            return None;
+        }
+        self.fill_carriage = Some(Carriage { hand: aim.hand, place, ..carried });
+        Some(place)
+    }
+
     /// Measures the void under the pointer and keeps the ghost the next click would create.
     ///
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
@@ -1489,29 +1533,36 @@ impl Document {
             .hover_pos()
             .or_else(|| response.interact_pointer_pos())
             .or_else(|| ui.input(|input| input.pointer.hover_pos()).filter(|pointer| on_field(*pointer)));
-        let card_anchor = self.card_anchor(pointer, card_before);
-        let point = pointer.and_then(|pointer| {
-            void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer)
-        });
-        let Some(point) = point.or_else(|| {
-            // The card sits beside the pointer now and then over the envelope's silhouette; the
-            // gesture keeps the point it was measured at rather than dropping the ghost under the
-            // maker's cursor.
-            ui.input(|input| input.pointer.hover_pos())
-                .filter(|pointer| on_field(*pointer))
-                .and_then(|_| self.editor.void().point())
-        }) else {
+        let Some(pointer) = pointer else {
             self.reset_fill(ui.ctx());
             return;
         };
+        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        // The point under the pointer names the cell. A pointer that names none — the hand left the
+        // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
+        // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
+        // vanishing, and the click creates what was drawn (N23).
+        let named = void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer);
         // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
         // row and the part the click creates, so the pointer names one space in this frame.
-        let measured = self.editor.void_measure(self.session.project(), point);
+        let measured = named.is_some_and(|point| self.editor.void_measure(self.session.project(), point));
+        let Some(point) = named.or_else(|| self.editor.void().point()) else {
+            self.reset_fill(ui.ctx());
+            return;
+        };
         let niche = self.editor.void().niche().cloned();
+        let axis = model::free_axis(arm.fill);
         let planned = match niche.as_ref() {
             Some(niche) => {
-                // A number typed into a field pins the free position; the pointer drives it otherwise.
-                let free = self.distances.as_ref().and_then(Distances::pinned_low);
+                // A number typed into a field pins the free place; the hand carries it otherwise.
+                // A pointer that names no cell holds the ghost: the plan then reads the point's own
+                // place, and the cell the tool still holds is the one that keeps it on the screen.
+                let free = match self.distances.as_ref().and_then(Distances::pinned_low) {
+                    Some(pinned) => Some(pinned),
+                    None if named.is_some() => self.fill_place(product, niche, axis, pointer, rect),
+                    // The pointer names no cell, so the ghost holds the place the tool already has.
+                    None => self.fill_carriage.map(|carried| carried.place),
+                };
                 self.fill_gizmo.hover(
                     self.session.project(),
                     product,
@@ -1542,7 +1593,6 @@ impl Document {
             self.tool_card_rect = None;
             return;
         };
-        let axis = model::free_axis(arm.fill);
         let unit = axis_unit(axis);
         let low_wall = ghost.niche.local_min[axis];
         let high_wall = ghost.niche.local_max()[axis];
@@ -1615,6 +1665,7 @@ impl Document {
     /// Drops the empty-space ghost and the exact-distance card that measured it.
     fn reset_fill(&mut self, ctx: &egui::Context) {
         self.fill_gizmo.reset();
+        self.fill_carriage = None;
         self.distance_fields.dismiss(ctx);
         self.distances = None;
         self.tool_card_rect = None;
@@ -4040,6 +4091,33 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
     let data = object_mesh(&moved).map_err(|error| error.to_string())?;
     Ok(frame.with_drawable_mesh(preview.object, Arc::new(data)))
 }
+
+/// The face a fill's free axis is carried on, and the two numbers the hand turns it with.
+///
+/// A face square to the free axis names one place for the whole face, so a part measured off it
+/// sticks at the board while the pointer travels over it. The carriage is what the tool holds
+/// instead: the part's place and the hand's own place, one step behind, so every millimetre the hand
+/// travels moves the part by one. It starts at the place the face itself named, which is why the part
+/// never jumps when the carriage begins, and the face is remembered as its normal and offset, which
+/// is what keeps the same wall carrying and starts a new one at a new wall (N23).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Carriage {
+    /// The face's outward normal, in the world.
+    face: geom::DVec3,
+    /// The face's plane offset along that normal, in world millimetres.
+    offset: f64,
+    /// The hand's place along the free axis this step.
+    hand: f64,
+    /// The part's place this step, which the hand moves next step.
+    place: f64,
+}
+
+/// How far the point may drift within one face and still be the same face, in millimetres.
+///
+/// The point rests a micrometre on the free side of the face it met, and the probe answers whole
+/// micrometres, so one wall's offset moves by that much between frames; a hundredth of a millimetre
+/// separates two walls that are not the same wall.
+const CARRIAGE_FACE_MM: f64 = 0.01;
 
 /// Whether `node` offers the three-length grips when it is the only selection.
 ///
