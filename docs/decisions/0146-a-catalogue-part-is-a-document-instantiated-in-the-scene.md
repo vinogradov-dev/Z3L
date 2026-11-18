@@ -1,7 +1,7 @@
 # 0146. A catalogue part is a document, and the scene holds an instance of it
 
 - Status: Accepted
-- Date: 2026-11-17
+- Date: 2026-11-18
 
 ## Context
 

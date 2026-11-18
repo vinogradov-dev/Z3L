@@ -1,7 +1,7 @@
 # 0145. A nomenclature directory is a set of packages
 
 - Status: Accepted
-- Date: 2026-11-17
+- Date: 2026-11-18
 - Supersedes [0005](0005-material-catalogue.md)
 
 ## Context

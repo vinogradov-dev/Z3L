@@ -1,7 +1,7 @@
 # 0147. Machining is derived from geometry, and placement rules are tables
 
 - Status: Accepted
-- Date: 2026-11-17
+- Date: 2026-11-18
 
 ## Context
 
