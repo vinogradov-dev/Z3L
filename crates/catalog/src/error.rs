@@ -141,6 +141,18 @@ pub enum CatalogError {
         /// The family that was asked for.
         code: FamilyCode,
     },
+    /// A record names a kind by a slug no connected package declares.
+    #[error("`{slug}` is not a kind any connected package declares")]
+    UnknownKindSlug {
+        /// The slug the file used.
+        slug: String,
+    },
+    /// A record names a property by a slug no connected package declares.
+    #[error("`{slug}` is not a property any connected package declares")]
+    UnknownPropertySlug {
+        /// The slug the file used.
+        slug: String,
+    },
     /// A date the calendar does not have.
     #[error("`{text}` is not a date this calendar has; write a year, a month and a day")]
     Date {

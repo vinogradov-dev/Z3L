@@ -250,13 +250,30 @@ pub fn empty_session() -> Result<Session, String> {
     Ok(Session::with_directory(project, default_catalog()?))
 }
 
-/// Builds the directory a new session starts from: two boards and their edges.
+/// Builds the directory a new session starts from: the workshop's packages, or the starter one.
 ///
-/// The rows live in `catalog::starter` — the same package the tests start from — so the shell owns
-/// no material numbers of its own: a workshop's directory replaces this one row for row.
+/// The shell reads `nomenclature/` beside `settings.json`, so a workshop's directory replaces the
+/// starter rows without a rebuild, and a failure is reported rather than swallowed: the editor keeps
+/// working on the starter package and says in the log which file was refused
+/// (`docs/domain/nomenclature.md` §13; the status-bar sentence and the hot reload belong to O5).
 pub fn default_catalog() -> Result<catalog::Directory, String> {
-    catalog::default_directory().map_err(describe)
+    let starter = catalog::default_directory().map_err(describe)?;
+    let Some(config) = crate::settings_store::config_dir() else {
+        return Ok(starter);
+    };
+    let source = catalog::FolderSource::at(config.join(DIRECTORY_DIR));
+    match catalog::DirectorySource::snapshot(&source) {
+        Ok(directory) if !directory.is_empty() => Ok(directory),
+        Ok(_) => Ok(starter),
+        Err(error) => {
+            log::warn!("the workshop directory could not be read; the starter rows are in use: {error}");
+            Ok(starter)
+        }
+    }
 }
+
+/// The folder, beside `settings.json`, that holds the connected nomenclature packages.
+const DIRECTORY_DIR: &str = "nomenclature";
 
 /// Evaluates a constructive object into world-space drawables and product envelopes.
 ///

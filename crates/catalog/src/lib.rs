@@ -35,8 +35,10 @@ mod kind;
 mod money;
 mod property;
 mod slug;
+mod source;
 mod starter;
 mod view;
+mod wire;
 
 pub use directory::Directory;
 pub use error::CatalogError;
@@ -46,8 +48,13 @@ pub use kind::{Kind, KindCode, KindRegistry, Trait};
 pub use money::{Currency, CurrencyError, Money};
 pub use property::{Date, Property, PropertyCode, PropertyType, PropertyValue, Rgb};
 pub use slug::{MAX_SLUG_CHARS, Slug};
+pub use source::{DirectorySource, FolderSource, LoadError};
 pub use starter::{GROUP_SLUG, MATERIAL_SLUG, PRICE_SLUG, Starter, default_directory};
 pub use view::{
     BandingView, BoardView, COLOR_SLUG, SHEET_LENGTH_SLUG, SHEET_WIDTH_SLUG, SheetView, StockView, THICKNESS_SLUG,
     WIDTH_SLUG,
+};
+pub use wire::{
+    DIRECTORY_VERSION, FamilyWire, ItemWire, KindWire, MANIFEST_VERSION, ManifestWire, PropertyTypeWire, PropertyWire,
+    REGISTRY_VERSION, RegistryWire,
 };

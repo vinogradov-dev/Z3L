@@ -310,13 +310,15 @@ needs: kinds, properties, families), the part documents it carries and the rule 
 
 ## 14. Storage and the port
 
-`DirectorySource` in `model` offers `snapshot()` and `revision()`. The first implementation is a
-folder:
+`DirectorySource` offers `snapshot()` and `revision()`. The port and its folder live in `crates/catalog`
+and not in `model`, because `model` must not depend on the directory: a scene stores an `ItemId`, and
+the record behind it is not document data. The first implementation is a folder:
 
 ```text
 nomenclature/
   directory.json                  the connected packages and their order
-  packages/<package>/manifest.json
+  packages/<package>/manifest.json   the package's number, name and version
+  packages/<package>/registry.json   the kinds, properties and families the package declares
   packages/<package>/items/*.json one record per file, stable order, diffable
   packages/<package>/parts/*.z3l  part documents
   packages/<package>/rules/*.json rule tables
@@ -324,6 +326,9 @@ nomenclature/
   lock                            the writer's lock file
 ```
 
+- a record names its kind and its properties by **slug**, not by code, so a file a person edits
+  reads `"thickness": 18000`; the loader resolves a slug through the registry and refuses one no row
+  declares;
 - writes are atomic per file through the existing writer (temporary file, then rename), and a write
   that changes several files bumps the revision last;
 - one writer at a time, guarded by the lock file; readers never lock and never write;

@@ -128,8 +128,9 @@ fn notice(repair: ui::settings::Repair) -> Notice {
 /// The application's config directory, following each platform's convention.
 ///
 /// Every branch names the directory [`APP_ID`], so a rename moves one constant and nothing here
-/// (ADR 0135).
-fn config_dir() -> Option<PathBuf> {
+/// (ADR 0135). The shell reads the workspace settings and the nomenclature directory from it, so
+/// both sit beside each other and a workshop copies one folder.
+pub(crate) fn config_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         return std::env::var_os("APPDATA").map(PathBuf::from).map(|appdata| appdata.join(APP_ID));
     }

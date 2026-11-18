@@ -328,6 +328,7 @@ pub type PropertySet = BTreeMap<PropertyCode, PropertyValue>;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PropertyRegistry {
     rows: BTreeMap<PropertyCode, Property>,
+    by_slug: BTreeMap<String, PropertyCode>,
 }
 
 impl PropertyRegistry {
@@ -338,6 +339,10 @@ impl PropertyRegistry {
             if registry.rows.contains_key(&row.code) {
                 return Err(CatalogError::DuplicateCode { code: row.code.to_string() });
             }
+            if registry.by_slug.contains_key(row.slug.as_str()) {
+                return Err(CatalogError::DuplicateSlug { slug: row.slug.to_string() });
+            }
+            registry.by_slug.insert(row.slug.to_string(), row.code);
             registry.rows.insert(row.code, row);
         }
         Ok(registry)
@@ -346,6 +351,11 @@ impl PropertyRegistry {
     /// The row with `code`.
     pub fn get(&self, code: PropertyCode) -> Option<&Property> {
         self.rows.get(&code)
+    }
+
+    /// The row with `slug`, when a package declares it.
+    pub fn by_slug(&self, slug: &str) -> Option<&Property> {
+        self.by_slug.get(slug).and_then(|code| self.rows.get(code))
     }
 
     /// Every row, in code order.
