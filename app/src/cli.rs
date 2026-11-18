@@ -31,6 +31,7 @@ pub const EXIT_USAGE: i32 = 2;
 pub const USAGE: &str = "\
 usage: z3l                 open the editor
        z3l <scene.z3l>     open the editor on that scene
+       z3l directory [<folder>]  open the nomenclature directory application
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
 
@@ -51,6 +52,11 @@ pub enum Command {
     /// Whether the file exists is the opener's business, so a mistyped name reaches the status bar
     /// as a sentence instead of ending the process with a usage code.
     Scene(PathBuf),
+    /// Open the directory application: the window that edits a nomenclature folder.
+    ///
+    /// The folder is the one the editor watches unless the line names another, so a workshop can hold
+    /// two packages side by side and edit one of them.
+    Directory(Option<PathBuf>),
     /// Print this text and exit.
     Help(&'static str),
     /// Write an order package and exit.
@@ -125,6 +131,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         None => Ok(Command::Window),
         Some("-h" | "--help" | "help") => Ok(Command::Help(USAGE)),
         Some("export") => export_args(&args[1..]),
+        Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
         // One scene path opens the editor on it; the extension is the claim, because a path that
         // does not read yet is the opener's error and not a command-line one.
@@ -136,6 +143,19 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
 /// Whether a word names a scene file.
 fn is_scene_path(word: &str) -> bool {
     std::path::Path::new(word).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("z3l"))
+}
+
+/// Reads the words after `directory`: no folder, or exactly one.
+fn directory_args(args: &[String]) -> Result<Command, CliError> {
+    let mut words = args.iter();
+    let Some(folder) = words.next() else { return Ok(Command::Directory(None)) };
+    if folder.starts_with('-') {
+        return Err(CliError::Usage(format!("`{folder}` is not a directory option; run `z3l --help`")));
+    }
+    if let Some(extra) = words.next() {
+        return Err(CliError::Usage(format!("the directory application opens one folder, so `{extra}` has no place")));
+    }
+    Ok(Command::Directory(Some(PathBuf::from(folder))))
 }
 
 /// Reads the whole line of a window run: exactly one scene path and nothing else.
@@ -231,6 +251,7 @@ pub fn run(command: &Command) -> Option<i32> {
     match command {
         Command::Window => None,
         Command::Scene(_) => None,
+        Command::Directory(_) => None,
         Command::Help(text) => Some(print_stdout(text)),
         Command::Export(args) => Some(match export(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
@@ -368,6 +389,18 @@ mod tests {
         let manifest = read_json(&directory.join("package/manifest.json"));
         let exported_at = manifest["exported_at"].as_str().expect("the default manifest carries its time");
         assert!(exported_at.ends_with('Z') && exported_at.contains('T'), "the time is RFC 3339: {exported_at}");
+    }
+
+    #[test]
+    fn the_directory_application_takes_one_folder_or_the_one_the_editor_watches() {
+        // O6: the window that edits a package is a mode of this binary, and the folder is its one
+        // argument — no folder means the directory the editor itself reads.
+        assert_eq!(parse(&words(&["directory"])).expect("no folder"), Command::Directory(None));
+        let named = parse(&words(&["directory", "/tmp/workshop"])).expect("a folder");
+        assert_eq!(named, Command::Directory(Some(PathBuf::from("/tmp/workshop"))));
+        let error = parse(&words(&["directory", "one", "two"])).expect_err("one folder at a time");
+        assert!(error.to_string().contains("one folder"), "{error}");
+        assert!(run(&named).is_none(), "the command asks for a window, so nothing is printed");
     }
 
     #[test]

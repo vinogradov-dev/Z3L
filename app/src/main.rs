@@ -24,6 +24,7 @@ mod box_gizmo;
 mod cli;
 mod contour_gizmo;
 /// The workshop's directory, read again when another application changes it (O5).
+mod directory_app;
 mod directory_watch;
 mod document;
 mod draw_gizmo;
@@ -1126,6 +1127,7 @@ fn main() -> eframe::Result {
         Some(code) => exit_with(code),
         None => match command {
             cli::Command::Scene(path) => run_window(Some(path)),
+            cli::Command::Directory(folder) => directory_app::run(folder),
             _ => run_window(None),
         },
     }
