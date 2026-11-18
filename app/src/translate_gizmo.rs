@@ -152,6 +152,9 @@ pub(crate) struct TranslateGizmo {
     /// The carry compares them frame by frame: a camera that changed under a piece means the piece
     /// stayed where it is (X67) and the pointer has to come back to it (ADR 0156).
     last_view: Option<(Camera, egui::Rect)>,
+    /// Whether a camera gesture moved the view under the piece, which the carry owes the pointer a
+    /// return for once the gesture ends.
+    moved_by_gesture: bool,
     /// Where the carry wants the pointer, while it waits for the window to put it there.
     ///
     /// A camera gesture moves the view and not the piece, so the cursor is left behind by the whole
@@ -463,21 +466,24 @@ impl TranslateGizmo {
             }
             None => false,
         };
-        // The gesture is over and the camera moved under the piece: ask the pointer back onto it.
-        // A piece the new view pushed out of the window has nowhere to be asked for, so the carry
-        // re-anchors on the pointer where it is and the piece keeps the distance it has.
-        if !waiting
-            && !navigating
-            && camera_moved
-            && let Some(offset) = offset
-        {
-            // The bond is `pivot = pointer + offset`, so the pointer that holds the piece sits at
-            // the pivot less that offset: the request is the same bond read the other way.
-            let want = screen_point(target.camera, viewport, pivot).map(|at| at - offset);
-            match want {
+        // A camera that moved under a gesture has to be remembered: the frame that would ask for the
+        // pointer is exactly the frame the gesture is still running in, and by the frame it ends the
+        // camera has stopped moving and nothing would ask at all.
+        if navigating && camera_moved {
+            self.moved_by_gesture = true;
+        }
+        // The gesture is over and the camera moved under the piece: ask the pointer back onto the
+        // middle of the piece, which is where the maker reaches for it. A piece the new view pushed
+        // out of the window has nowhere to be asked for, so the carry keeps its distance and the
+        // hand carries on from the pointer where it stands.
+        if !waiting && !navigating && (camera_moved || self.moved_by_gesture) {
+            self.moved_by_gesture = false;
+            // The middle of the piece as it stands in the hand, not as the document still has it:
+            // the preview is where the maker is looking.
+            let middle =
+                target.project.world_box(drag.node).map_or(pivot, |(low, high)| (low + high) * 0.5 + drag.delta);
+            match screen_point(target.camera, viewport, middle) {
                 Some(want) if viewport.contains(want) => self.home = Some((want, 0)),
-                // The piece is out of the window: nothing to ask for, and the carry keeps the
-                // distance it has until the maker brings the piece back into view.
                 _ => self.home = None,
             }
         }

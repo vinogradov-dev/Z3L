@@ -2579,7 +2579,14 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
-        self.carry_cursor(ui.ctx(), navigating);
+        // The camera gestures are the input of a move of the eye: the middle button, the right
+        // button and the wheel, whatever tool holds the piece.
+        let gesture = ui.input(|input| {
+            input.pointer.middle_down()
+                || input.pointer.secondary_down()
+                || input.smooth_scroll_delta != egui::Vec2::ZERO
+        });
+        self.carry_cursor(ui.ctx(), gesture || navigating);
         if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Furniture))
             && self.translate_gizmo.is_dragging()
         {
@@ -3189,22 +3196,34 @@ impl Document {
         self.translate_gizmo.is_following()
     }
 
+    /// Whether the window is currently hiding the pointer for the carry, for a test's own reading.
+    #[cfg(test)]
+    pub(crate) fn cursor_hidden(&self) -> bool {
+        self.cursor_hidden
+    }
+
     /// Sends the window what the carry asks of the pointer: its way back onto the piece, or a hidden
     /// cursor while a camera gesture slides the view under it (ADR 0156).
     ///
-    /// A camera change must not move a piece, so the pointer is what returns to it. Both answers are
-    /// re-sent every frame until they take, because a window may drop a command and a platform that
-    /// cannot move the cursor answers nothing at all. `navigating` is the document's own answer about
-    /// a camera gesture: the gizmo is not even updated for one, so the hiding cannot come from it.
-    pub(crate) fn carry_cursor(&mut self, ctx: &egui::Context, navigating: bool) {
+    /// A camera change must not move a piece, so the pointer is what returns to it. The visibility is
+    /// re-sent every frame the pointer stays hidden, because a window may drop a command and a
+    /// composer may put the cursor back; the fly-home request is re-sent for the same reason.
+    ///
+    /// `gesture` is the *input* of a camera move — the middle and the right button and the wheel —
+    /// and not the document's armed navigation mode: a maker pans with the right button while the
+    /// furniture move holds the piece, and that pan is the gesture the cursor has to disappear for.
+    pub(crate) fn carry_cursor(&mut self, ctx: &egui::Context, gesture: bool) {
         if let Some(home) = self.translate_gizmo.cursor_home() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(home));
             ctx.request_repaint();
         }
-        let hidden = navigating && self.translate_gizmo.is_following();
-        if hidden != self.cursor_hidden {
-            self.cursor_hidden = hidden;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!hidden));
+        let hidden = gesture && self.translate_gizmo.is_following();
+        if hidden {
+            self.cursor_hidden = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+        } else if self.cursor_hidden {
+            self.cursor_hidden = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
         }
     }
 

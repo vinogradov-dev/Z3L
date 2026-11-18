@@ -40,6 +40,21 @@ pointer): the request is re-sent every frame and abandoned after `HOME_TRIES`, a
 re-reads its offset from the pointer where it is. Nothing jumps in that fallback — the piece keeps
 its millimetres and the hand carries on from where the pointer stands.
 
+The pointer comes back to the **middle of the piece**: the centre of its world box, moved by the
+carry, which is where a maker reaches for a panel. Not the pivot — a panel's pivot is its base corner
+— and not the grab: the point a click made on a face is not a place anyone can find again.
+
+Three defects of the first attempt, all found by the owner reporting that nothing had changed:
+
+- The hiding read the document's *armed navigation mode* instead of the input of a camera move, so a
+  right-button pan under a carried piece hid nothing. It now reads the middle button, the right
+  button and the wheel, and re-sends `CursorVisible` every frame the pointer stays hidden.
+- A gesture that ended never asked for the pointer back: the request was gated on the camera having
+  moved on *that* frame, and on the frames it moved the gesture was still running. The gizmo now
+  remembers `moved_by_gesture` and asks on the first frame after the gesture ends.
+- The middle was projected from the document's box, without the carry: the pointer flew to where the
+  piece stood when it was taken, not where the hand holds it.
+
 The grab offset is read from the click, in `TranslateGizmo::begin`, and not from the frame the axis
 is named: by then the hand has already travelled past `NAMING_TRAVEL`, and an offset read there
 swallows that travel and leaves the piece standing still.

@@ -64,6 +64,8 @@ struct Harness {
     /// Where the last frame asked the window to put the pointer, which a test plays as the window
     /// would (ADR 0156).
     cursor_home: Option<egui::Pos2>,
+    /// Whether the last frame asked the window to hide the pointer.
+    cursor_hidden: bool,
 }
 
 /// How many frames a test gives the window to carry out the carry's pointer request.
@@ -93,6 +95,7 @@ impl Harness {
             faces: Vec::new(),
             last_scene: None,
             cursor_home: None,
+            cursor_hidden: false,
         }
     }
 
@@ -122,12 +125,18 @@ impl Harness {
         self.last_scene = self.app.tabs.active().scene_rect();
         // A window applies the viewport commands it is given; a headless run has to play that part,
         // or a carry that asks the pointer back onto its piece never gets an answer (ADR 0156).
-        self.cursor_home = output.viewport_output.get(&egui::ViewportId::ROOT).and_then(|viewport| {
-            viewport.commands.iter().rev().find_map(|command| match command {
+        let commands = output.viewport_output.get(&egui::ViewportId::ROOT).map(|viewport| viewport.commands.as_slice());
+        self.cursor_home = commands.and_then(|commands| {
+            commands.iter().rev().find_map(|command| match command {
                 egui::ViewportCommand::CursorPosition(at) => Some(*at),
                 _ => None,
             })
         });
+        for command in commands.unwrap_or_default() {
+            if let egui::ViewportCommand::CursorVisible(visible) = command {
+                self.cursor_hidden = !visible;
+            }
+        }
         output.textures_delta.clear();
         chrome.expect("the frame drew the interface")
     }
@@ -1287,7 +1296,6 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     // piece keeps its millimetres, and the pointer is what comes back to it (X67, ADR 0156).
     let at = fingers.last().expect("three steps").0;
     let carried = harness.app.tabs.active().carried_delta();
-    let grab = piece(&harness) - at;
     let wheel = |points: f32| egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
         delta: egui::vec2(0.0, points),
@@ -1312,10 +1320,9 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     }
     assert_eq!(harness.app.tabs.active().carried_delta(), carried, "and the piece still stands where it was");
     let homed = homed.expect("the carry asks its pointer back after a zoom");
-    // The pointer holds the piece at the grab it took it by, so it lands as near the piece as that
-    // grab is: what is left is the share of the zoom the piece's own axis could not take out.
-    let near = (homed - piece(&harness)).length() - grab.length();
-    assert!(near.abs() < 8.0, "the pointer is back where it held the piece: {near} points off");
+    // The pointer comes back to the middle of the piece, which is where a maker reaches for it.
+    let back = homed - piece_middle(&harness, panel);
+    assert!(back.length() < 3.0, "the pointer is back in the middle of the board: {back:?}");
 
     let before = harness.app.tabs.active().carried_delta();
     harness.hover(homed - egui::vec2(0.0, 40.0));
@@ -1547,6 +1554,14 @@ fn collect_panels<'a>(children: &'a [model::Node], panels: &mut Vec<&'a model::P
 }
 
 /// A product of 600 x 560 x 720 mm holding one 500 x 400 mm side panel, and both ids.
+/// The middle of a piece's world box, in the points the viewport draws it at.
+fn piece_middle(harness: &Harness, node: Id) -> egui::Pos2 {
+    let project = harness.app.tabs.active().session.project();
+    let (low, high) = project.world_box(node).expect("the piece has a box");
+    let moved = (low + high) * 0.5 + harness.app.tabs.active().carried_delta();
+    gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+}
+
 fn product_with_a_side_panel() -> (model::Project, Id, Id) {
     let mm = testkit::millimetres;
     let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
@@ -4369,13 +4384,7 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     harness.settle();
 
     let body = harness.node_point(panel);
-    let screen = |harness: &Harness| {
-        let project = harness.app.tabs.active().session.project();
-        let moved = project.pivot_world(panel).expect("a pivot") + harness.app.tabs.active().carried_delta();
-        gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
-    };
     harness.click(body, egui::PointerButton::Primary);
-    let grab = screen(&harness) - body;
     let at = body + egui::vec2(70.0, -90.0);
     harness.hover(at);
     assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
@@ -4411,8 +4420,8 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
         }
         let homed = homed.unwrap_or_else(|| panic!("the carry asks its pointer back after {name}"));
         harness.run(Vec::new());
-        let back = homed - (screen(&harness) - grab);
-        assert!(back.length() < 31.0, "the pointer is back on the board after {name}: {back:?}");
+        let back = homed - piece_middle(&harness, panel);
+        assert!(back.length() < 3.0, "the pointer is back in the middle of the board after {name}: {back:?}");
     }
 
     assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand");
@@ -4439,9 +4448,6 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     };
     let body = harness.node_point(panel);
     harness.click(body, egui::PointerButton::Primary);
-    // The grab is what the click itself made: the pivot the carry measures from is the panel's own
-    // origin, a base corner of the board and nowhere near the point on its face that was clicked.
-    let grab = screen(&harness) - body;
     let at = body + egui::vec2(40.0, -60.0);
     harness.hover(at);
     assert!(harness.app.tabs.active().holding_piece(), "the panel is in hand");
@@ -4453,6 +4459,12 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     harness.press_at(at, egui::PointerButton::Secondary);
     for step in 1..=8 {
         harness.run(vec![egui::Event::PointerMoved(at + pan * (step as f32 / 8.0))]);
+        // While the gesture runs the pointer is hidden: a cursor standing still while the world
+        // slides under it is the picture of a piece being left behind, and it is not what happens.
+        if step == 4 {
+            assert!(harness.cursor_hidden, "the pointer is hidden for the length of the pan");
+            assert!(harness.app.tabs.active().cursor_hidden(), "and the document asked the window for that");
+        }
     }
     harness.release_at(at + pan, egui::PointerButton::Secondary);
     harness.run(Vec::new());
@@ -4471,6 +4483,8 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
 
     // The gesture is over, so the window puts the pointer back on the piece: a frame or two, without
     // moving the piece at all.
+    harness.run(Vec::new());
+    assert!(!harness.cursor_hidden, "the pointer comes back when the gesture ends");
     let mut homed = None;
     for _ in 0..HOME_FRAMES {
         harness.run(Vec::new());
@@ -4486,8 +4500,10 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     assert!(harness.app.tabs.active().holding_piece(), "the panel is still in hand");
     let after_home = harness.app.tabs.active().carried_delta();
     assert!((after_home - carried).length() < 1.0e-3, "and has not moved: {after_home:?}");
-    let back = homed - (screen(&harness) - grab);
-    assert!(back.length() < 3.0, "the pointer is back where the click held the piece: {back:?}");
+    // The pointer comes back to the middle of the piece, which is where a maker reaches for it.
+    let middle = piece_middle(&harness, panel);
+    let back = homed - middle;
+    assert!(back.length() < 3.0, "the pointer is back in the middle of the board: {back:?} from {middle:?}");
 
     // Carrying on from there: the hand carries the piece as before.
     let before = harness.app.tabs.active().carried_delta();
