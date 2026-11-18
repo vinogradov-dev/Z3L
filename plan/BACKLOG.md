@@ -43,25 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
-  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
-   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
-   maker reaches for the mouse for the most repeated action in the editor. The one key table
-   already exists (ADR 0117); the modes are simply absent from it.
-  Shape: A binding for Select, Move, Rotate and the furniture mode in inventory KEYS on chords
-   no drawing tool owns: W, E and Q beside Shift+W for the furniture move, with R, M, A, C, N,
-   L, P, V, G, S, O and F already taken by the sketch, the view and the niche. The status bar
-   band carries four states and prints the key beside each label; the node context menu of the
-   tree and the viewport offers the four as session entries in the list node_actions already
-   keeps beside its command rows, because they are view state and write no document, so the
-   action has a place in the menu without inventing a command for it. The Settings page lists
-   the same four rows with the rest. This task waits for N22 to exist before it names the
-   fourth mode; the other three can land first.
-  Done: Each of the four modes answers its key from the shell and the status bar cell shows it;
-   the tree row menu and the viewport menu both offer the four; the Settings shortcut list
-   holds all four; the table test proves no two rows share a key and every binding prints in
-   both languages; cargo xtask ci is green.
-  `files: crates/ui/src/inventory.rs,crates/ui/src/node_actions.rs,app/src/shortcuts.rs,app/src/status_bar.rs,app/src/main.rs,crates/text/src/messages.rs`
 - `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
   Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
    there, and should instead stop at it and jump past it into the free space beyond when the
@@ -202,6 +183,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
 
 ## Done
+
+- `[x]` **U113** select, move and rotate answer keys, and the status bar prints them
+  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
+   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
+   maker reaches for the mouse for the most repeated action in the editor. The one key table
+   already exists (ADR 0117); the modes are simply absent from it.
+  Shape: A binding for Select, Move, Rotate and the furniture mode in inventory KEYS on chords
+   no drawing tool owns: W, E and Q beside Shift+W for the furniture move, with R, M, A, C, N,
+   L, P, V, G, S, O and F already taken by the sketch, the view and the niche. The status bar
+   band carries four states and prints the key beside each label; the node context menu of the
+   tree and the viewport offers the four as session entries in the list node_actions already
+   keeps beside its command rows, because they are view state and write no document, so the
+   action has a place in the menu without inventing a command for it. The Settings page lists
+   the same four rows with the rest. This task waits for N22 to exist before it names the
+   fourth mode; the other three can land first.
+  Done: Each of the four modes answers its key from the shell and the status bar cell shows it;
+   the tree row menu and the viewport menu both offer the four; the Settings shortcut list
+   holds all four; the table test proves no two rows share a key and every binding prints in
+   both languages; cargo xtask ci is green.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/node_actions.rs,app/src/shortcuts.rs,app/src/status_bar.rs,app/src/main.rs,crates/text/src/messages.rs` — `ff5f72c`
 
 - `[x]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
   Why: The owner wants two tools: the move the editor has stays free and turns the furniture
