@@ -1758,30 +1758,35 @@ fn an_open_level_brackets_its_eight_corners_and_a_closed_one_draws_none() {
 
 #[test]
 fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
-    // The frame is created and edited like a box (ADR 0101): the same base rectangle and height
-    // pull, and the ✓ dispatches `product.create` instead of `object.primitive.create`.
+    // The frame is created and edited like a box (ADR 0101, N19): the frame cell arms the sketch's
+    // rectangle, the figure is the reserved space's base, and the height pull dispatches
+    // `product.create` instead of a body's extrude.
     let mut harness = Harness::new("frame-drawn-product");
     harness.settle();
     let before = harness.revision();
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box();
-        assert!(!document.editor.click_box([mm(600), mm(560)]).expect("the anchor"), "the first click only anchors");
-        assert!(document.editor.click_box([mm(0), mm(0)]).expect("the base"), "the second fixes the base");
+        document.editor.start_product_box_drawing(DrawTool::Rectangle);
+        document.editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+        document.editor.drawing_point([mm(600), mm(560)]).expect("the opposite corner");
+        assert_eq!(document.session.project().revision(), before, "the base is a draft, not a node");
+        document.editor.start_product_pull(Lang::En).expect("the finished rectangle is the base");
         document.editor.pull_box_height(mm(720)).expect("the pull");
         let ghost = document.editor.box_draft().and_then(ui::BoxDraft::sizes).expect("the ghost sizes");
         assert_eq!(ghost, [mm(600), mm(560), mm(720)]);
-        document.finish_box(Lang::En).expect("the ✓ commits the drawn frame");
+        document.finish_box(Lang::En).expect("the gesture commits the drawn frame");
     }
     let document = harness.app.tabs.active();
     let frame = document.session.active_product().expect("the drawn frame is opened for its parts");
     let container = document.session.project().container(frame).expect("a container");
     assert!(container.is_product(), "a drawn frame is a product");
-    let sides = container.envelope().expect("an envelope").components();
-    assert_eq!(sides, [mm(600), mm(560), mm(720)], "the frame keeps exactly the ghost's three sides");
+    let envelope = container.envelope().expect("an envelope");
+    assert_eq!(envelope.components(), [mm(600), mm(560), mm(720)], "the frame keeps exactly the ghost's sides");
+    assert!(envelope.footprint().is_rectangle(), "a drawn rectangle reserves the plain box the card writes");
     assert_eq!(container.class(), ClassCode::GENERAL_PRODUCT, "the drawn gesture takes the placeholder class");
     assert_eq!(harness.revision().get(), before.get() + 1, "the whole gesture is one command");
+    assert!(document.session.can_undo(), "and one undo entry");
     assert_eq!(document.editor.selected_nodes(), [frame], "the new frame is selected, so its grips show");
     assert_eq!(document.editor.creation_target(document.session.project()), frame, "the next part lands inside");
 }
@@ -1809,12 +1814,9 @@ fn a_contour_frame_stores_its_ring_and_pulls_its_height() {
             before,
             "the height is still being pulled, so nothing is written"
         );
-        assert!(
-            document.editor.box_draft().is_some_and(ui::BoxDraft::is_pulling),
-            "the pull owns the pointer once the outline is finished"
-        );
+        assert!(document.editor.box_draft().is_some(), "the pull owns the pointer once the outline is finished");
         document.editor.pull_box_height(mm(500)).expect("the pull");
-        document.finish_box(Lang::En).expect("the ✓ commits the drawn frame");
+        document.finish_box(Lang::En).expect("the gesture commits the drawn frame");
     }
     let document = harness.app.tabs.active();
     let frame = document.session.active_product().expect("the drawn frame is opened for its parts");
@@ -1827,6 +1829,166 @@ fn a_contour_frame_stores_its_ring_and_pulls_its_height() {
     );
     assert_eq!(harness.revision().get(), before.get() + 1, "the whole gesture is one command");
     assert_eq!(document.editor.selected_nodes(), [frame], "the new frame is selected");
+}
+
+#[test]
+fn the_frame_cell_and_the_box_cell_draw_one_base_with_one_set_of_plates() {
+    // N19: the frame's reserved box is drawn by the tool a solid's profile is drawn with, so the two
+    // cells arm the same sketch method and the plates that name the base's two sides are one set of
+    // rows read from one draft (ADR 0101).
+    use ui::toolbars::spec::{GroupSpec, ToolKind};
+
+    /// The cell one id names, in the map's own order.
+    fn cell(tab: &'static str, tool: &str) -> &'static ui::toolbars::spec::ToolSpec {
+        ui::toolbars::spec::tab(tab)
+            .expect("the tab is on the map")
+            .live_groups()
+            .flat_map(GroupSpec::live_tools)
+            .find(|candidate| candidate.id == tool)
+            .expect("the cell is on the map")
+    }
+
+    /// The sketch method the cell's `method` row draws its base with.
+    fn drawn(cell: &'static ui::toolbars::spec::ToolSpec, method: &str) -> DrawTool {
+        match cell.methods().find(|spec| spec.id == method).and_then(|spec| spec.run) {
+            Some(ToolKind::ProductBox(tool) | ToolKind::Body(tool)) => tool,
+            other => panic!("`{method}` does not draw a base: {other:?}"),
+        }
+    }
+
+    let frame_tool = drawn(cell("furniture", "furniture.product.frame"), "furniture.product.frame.draw");
+    let box_tool = drawn(cell("model", "model.primitives.cuboid"), "model.primitives.cuboid");
+    assert_eq!(frame_tool, box_tool, "the frame and the box are drawn by one method");
+
+    // The plates of the base: the same rows, in the same order, with the same letters.
+    let mm = testkit::millimetres;
+    let mut editor = ui::Editor::new();
+    let plates = |editor: &ui::Editor| {
+        ui::PointState::live(editor.drawing().expect("the base is being drawn"), DVec2::new(600.0, 400.0))
+            .expect("the second corner takes its numbers")
+            .rows
+    };
+    editor.start_product_box_drawing(frame_tool);
+    editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+    let frame_plates = plates(&editor);
+    editor.start_body_drawing(box_tool);
+    editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+    let box_plates = plates(&editor);
+    assert_eq!(frame_plates, box_plates, "the frame cell and the box cell draw the same base plates");
+    assert_eq!(
+        frame_plates.iter().map(|row| row.param).collect::<Vec<_>>(),
+        [FieldParam::Width, FieldParam::Height],
+        "and the two sides are the width and the depth the frame reserves"
+    );
+}
+
+#[test]
+fn the_frame_pull_draws_the_plate_the_solid_pull_draws() {
+    // N19, U104: the frame's height and a solid's height are one number on one plate — `H`, no unit,
+    // no word above it, no button pair, and the gesture's own Enter and Escape as its commit and its
+    // cancel — so the two gestures that build one document read as one tool.
+    let mm = testkit::millimetres;
+    let without_the_number = |view: &ui::ToolView| {
+        let mut view = view.clone();
+        for row in &mut view.rows {
+            row.value = 0.0;
+        }
+        view
+    };
+
+    let mut frame = Harness::with_session("frame-plate-frame", crate::scene_build::empty_session().expect("empty"));
+    frame.settle();
+    {
+        let document = frame.app.tabs.active_mut();
+        document.editor.start_product_box_drawing(DrawTool::Rectangle);
+        document.editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+        document.editor.drawing_point([mm(600), mm(400)]).expect("the base");
+        document.editor.start_product_pull(Lang::En).expect("the base is fixed");
+        document.editor.pull_box_height(mm(720)).expect("the pull");
+    }
+    let frame_view = frame.app.tabs.active().tool_view().expect("the frame's pull draws a plate");
+    assert_eq!(frame_view.rows.first().map(|row| row.value), Some(720.0), "the plate shows the pull");
+
+    let (session, body) = one_body();
+    let mut solid = Harness::with_session("frame-plate-solid", session);
+    solid.settle();
+    {
+        let document = solid.app.tabs.active_mut();
+        document.editor.select_node(Some(body));
+        document.extrude_gizmo.start(body, mm(40));
+    }
+    let solid_view = solid.app.tabs.active().tool_view().expect("the solid's pull draws a plate");
+
+    assert_eq!(without_the_number(&frame_view), without_the_number(&solid_view), "one plate, one tool");
+    assert_eq!(frame_view.title, None, "no word stands above the number");
+    assert_eq!(frame_view.commit, ui::ToolCommit::Keys, "the gesture's own keys are the commit");
+    let [row] = frame_view.rows.as_slice() else { panic!("a pull's plate holds one field") };
+    assert_eq!(row.label, Some(ui::FieldLabel::Symbol("H")), "the letter names the height");
+    assert_eq!(row.unit, "", "and no unit repeats what the letter says");
+}
+
+#[test]
+fn the_frames_drawn_box_is_drawn_by_the_sketch_and_committed_by_one_click() {
+    // The whole gesture through the real shell, as the hand makes it (N19): two clicks of the
+    // sketch's rectangle fix the base, the pointer pulls the height, and the click that accepts it is
+    // one `product.create` and one undo entry.
+    let mut harness = Harness::with_session("frame-drawn-gesture", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    let before = harness.revision();
+    let (anchor, corner) = {
+        let document = harness.app.tabs.active();
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        let camera = document.camera();
+        let project = |x: f64, y: f64, z: f64| {
+            crate::gizmo_math::screen_point(camera, rect, geom::DVec3::new(x, y, z)).expect("the plane is on screen")
+        };
+        (project(-300.0, -200.0, 0.0), project(300.0, 200.0, 0.0))
+    };
+    harness.app.tabs.active_mut().editor.start_product_box_drawing(DrawTool::Rectangle);
+    harness.hover(anchor);
+    harness.click(anchor, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().editor.drawing().is_some(), "the first click anchors the base");
+    harness.hover(corner);
+    harness.click(corner, egui::PointerButton::Primary);
+    {
+        let document = harness.app.tabs.active();
+        assert!(document.editor.drawing().is_none(), "the second click finishes the figure");
+        let draft = document.editor.box_draft().expect("the finished figure is the frame's base");
+        let sizes = draft.sizes().expect("a rectangle base has three sides");
+        assert_eq!((sizes[0].millimetres_f64(), sizes[1].millimetres_f64()), (600.0, 400.0), "the size the hand drew");
+        assert_eq!(document.session.project().revision(), before, "the base is a draft and writes nothing");
+    }
+
+    // The pointer rises 200 mm along the plane's normal, which is where the ghost's vertical runs.
+    let raised = {
+        let document = harness.app.tabs.active();
+        let rect = document.scene_rect().expect("the scene rectangle");
+        crate::gizmo_math::screen_point(document.camera(), rect, geom::DVec3::new(-300.0, -200.0, 200.0))
+            .expect("the pull is on screen")
+    };
+    harness.hover(raised);
+    let pulled = {
+        let draft = harness.app.tabs.active().editor.box_draft().cloned().expect("the pull is running");
+        let height = draft.height().millimetres_f64();
+        assert!((height - 200.0).abs() <= 2.0, "the pull reads the axis under the pointer, was {height}");
+        draft.height()
+    };
+    harness.click(raised, egui::PointerButton::Primary);
+
+    let document = harness.app.tabs.active();
+    assert!(document.editor.box_draft().is_none(), "the click accepts the height");
+    let frame = document.session.active_product().expect("the drawn frame is opened for its parts");
+    let envelope = document.session.project().container(frame).and_then(|node| node.envelope()).expect("an envelope");
+    assert_eq!(envelope.z(), pulled, "the frame keeps the height the pull showed");
+    assert!(envelope.footprint().is_rectangle(), "and the plain base a rectangle reserves");
+    assert_eq!(harness.revision().get(), before.get() + 1, "one click, one command");
+    assert_eq!(document.editor.selected_nodes(), [frame], "the new frame is selected");
+
+    // One undo takes the whole frame back: the base and the height were never two entries.
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo");
+    assert!(document.session.project().container(frame).is_none(), "the frame is gone as one entry");
+    assert!(!document.session.can_undo(), "the gesture wrote nothing else to undo");
 }
 
 /// The signed volume of a closed polygon mesh, in cubic millimetres.
@@ -2626,8 +2788,15 @@ fn the_square_marks_the_work_area_only() {
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a contour tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
 
-    // A frame draft does the same.
-    harness.app.tabs.active_mut().editor.arm_box();
+    // A frame's own gesture does the same: its base is the sketch's figure, so the square marks the
+    // work area for it and for the pull that follows.
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.start_product_box_drawing(DrawTool::Rectangle);
+        document.editor.drawing_point([testkit::millimetres(0), testkit::millimetres(0)]).expect("the anchor");
+        document.editor.drawing_point([testkit::millimetres(600), testkit::millimetres(400)]).expect("the base");
+        document.editor.start_product_pull(Lang::En).expect("the pull starts");
+    }
     harness.hover(centre);
     assert_eq!(harness.cursor, egui::CursorIcon::None, "a frame tool keeps the shell's square");
     assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted");
@@ -2703,15 +2872,16 @@ fn assert_the_card_and_the_inspector_agree(harness: &Harness, chrome: &Chrome) {
 }
 
 #[test]
-fn a_box_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree() {
+fn a_frame_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree() {
     let mut harness = Harness::with_session("frame-tool-card-box", crate::scene_build::empty_session().expect("empty"));
     harness.settle();
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box();
-        assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
-        assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"), "the second fixes the base");
+        document.editor.start_product_box_drawing(DrawTool::Rectangle);
+        document.editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+        document.editor.drawing_point([mm(300), mm(200)]).expect("the base");
+        document.editor.start_product_pull(Lang::En).expect("the pull starts");
         document.editor.pull_box_height(mm(120)).expect("the pull");
     }
     let chrome = harness.settle();
@@ -2719,7 +2889,10 @@ fn a_box_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagree(
     let card = document.tool_card_rect().expect("the height pull draws its card");
     let in_card = texts_inside(&harness, card);
     assert!(in_card.iter().any(|text| text == "120"), "the card shows the pulled height: {in_card:?}");
-    assert!(in_card.iter().any(|text| text == "Frame height"), "and names what it sizes: {in_card:?}");
+    assert!(
+        in_card.iter().any(|text| text == "H"),
+        "and the one letter names it, exactly as the solid's pull does: {in_card:?}"
+    );
     assert_the_card_and_the_inspector_agree(&harness, &chrome);
 }
 
@@ -2909,9 +3082,10 @@ fn escape_closes_the_card_and_writes_nothing() {
     let mm = testkit::millimetres;
     {
         let document = harness.app.tabs.active_mut();
-        document.editor.arm_box();
-        assert!(!document.editor.click_box([mm(0), mm(0)]).expect("the anchor"), "the first click only anchors");
-        assert!(document.editor.click_box([mm(300), mm(200)]).expect("the base"));
+        document.editor.start_product_box_drawing(DrawTool::Rectangle);
+        document.editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+        document.editor.drawing_point([mm(300), mm(200)]).expect("the base");
+        document.editor.start_product_pull(Lang::En).expect("the pull starts");
         document.editor.pull_box_height(mm(120)).expect("the pull");
     }
     harness.run(vec![egui::Event::PointerMoved(harness.scene().center())]);

@@ -43,23 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
-  Why: The owner: the frame kept the old card where the box has a typed height field, and the
-   base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
-   labels its two base sides but takes no typed number, while the cuboid draws the sketch
-   rectangle with the sketch field plates and pulls on Z; and the frame pull shows a titled
-   pane with a check and a cancel where the cuboid shows the lettered H plate. Two gestures
-   that build one document read as two tools.
-  Shape: The frame drawn method arms the same rectangle tool the cuboid cell arms, differing
-   only in the owner of the commit (product.create against object.primitive.create) and in the
-   extras the tool card offers while the draft lives (the class, and later the footprint and
-   the position). The base plates, the height pull and its lettered H plate, Enter, Esc and the
-   one undo entry are the shared ones; BoxDraft keeps only what the envelope grips still read
-   from it, or retires with box_tool.rs.
-  Done: The frame cell and the cuboid cell draw the same base plates and the same H plate,
-   compared row for row in a headless test; Esc drops the frame draft with no history entry;
-   one undo takes the created frame; cargo xtask ci is green.
-  `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs`
 - `[ ]` **N20** the card says the position its class gives, and never asks
   Why: The owner asked the card for a position, then settled it: the class already dictates how
    the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
@@ -294,6 +277,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
+  Why: The owner: the frame kept the old card where the box has a typed height field, and the
+   base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
+   labels its two base sides but takes no typed number, while the cuboid draws the sketch
+   rectangle with the sketch field plates and pulls on Z; and the frame pull shows a titled
+   pane with a check and a cancel where the cuboid shows the lettered H plate. Two gestures
+   that build one document read as two tools.
+  Shape: The frame drawn method arms the same rectangle tool the cuboid cell arms, differing
+   only in the owner of the commit (product.create against object.primitive.create) and in the
+   extras the tool card offers while the draft lives (the class, and later the footprint and
+   the position). The base plates, the height pull and its lettered H plate, Enter, Esc and the
+   one undo entry are the shared ones; BoxDraft keeps only what the envelope grips still read
+   from it, or retires with box_tool.rs.
+  Done: The frame cell and the cuboid cell draw the same base plates and the same H plate,
+   compared row for row in a headless test; Esc drops the frame draft with no history entry;
+   one undo takes the created frame; cargo xtask ci is green.
+  `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs` — `91063ac`
 
 - `[x]` **O6** the directory application edits a package
   Why: A directory nobody can edit is a file format.

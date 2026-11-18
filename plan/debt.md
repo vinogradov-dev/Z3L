@@ -165,11 +165,13 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `object.path.extrude` from the command palette or an API, and `object.extrude.create` from a
   contour, leave the body without a pull. The shell reads the height from the command result, so
   another entry point needs the same signal before it can pull too.
-- `[ui]` A box's height card never takes the keyboard on its own: `Document::tool_focus` is the slot
-  that should hold the row, and nothing writes it, so the box field is typed into only after a click.
-  U104 gave the pull its own counted ask in `ExtrudeGizmo::take_focus`; the box needs the same ask
-  from `Editor::pull_box_height`.
 
+- `[ui]` A frame's height is typed only after a click: its card's field cannot take the keyboard on
+  its own, because the height is what the hand pulls and a focused field owns the number instead of
+  the pointer (`Document::update_box`'s `text_edit_focused` guard), and Escape in the field drops the
+  whole draft instead of giving the number back to the pointer. A frame whose height is typed before
+  it is pulled needs the field to pin the pointer and Escape to release the number — the distance
+  fields' rule (ADR 0103) — which is a key path, not a flag (N19).
 - `[design]` `app/src/main.rs` `viewport` is one 635-line function. U45 moves it onto
   `Document` with the rest of the scene-bound state, so the S7 audit filed no split; it is measured
   again and split there.

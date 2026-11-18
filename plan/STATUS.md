@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N19 state=idle base=5aa6b9c updated=2026-11-18
+STATE: milestone=M7 phase=T task=N20 state=idle base=373868a updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -18,8 +18,7 @@ its next frame boundary (O6, ADR 0158, `nomenclature.md` §12–§14).
 
 ## Next
 
-N19 is next: the frame is drawn by the box tool it inherits from the cuboid, not by a card beside
-it. After it, O7 travels a package between workshops.
+N20 is next: the card says the position its class gives, and never asks.
 
 ## Index
 

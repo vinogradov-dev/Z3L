@@ -35,13 +35,13 @@ use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneC
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
-    BoxDraft, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue,
-    MeshElement, Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode,
-    ViewFlags, tool_card,
+    ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue, MeshElement,
+    Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode, ViewFlags,
+    tool_card,
 };
 use units::Length;
 
-use crate::box_gizmo::{self, BoxEvent, BoxGrips, GripUpdate};
+use crate::box_gizmo::{self, BoxGrips, GripUpdate};
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawModifiers};
@@ -322,8 +322,6 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The row of the tool card that takes the keyboard, consumed by the frame that draws it.
-    tool_focus: Option<ToolParam>,
     /// The point the tool card hangs from, frozen while the pointer is on the card itself.
     ///
     /// A card that follows the pointer would move away from the hand reaching for its field: the
@@ -443,7 +441,6 @@ impl Document {
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
-            tool_focus: None,
             tool_card_anchor: None,
             context_menu: ui::ViewportMenu::default(),
             scene_rect: None,
@@ -1154,18 +1151,20 @@ impl Document {
         self.end_drawing()
     }
 
-    /// Whether the running drawing is a product frame's base outline rather than a path or a body.
+    /// Whether the running drawing is a product frame's base rather than a path or a body.
     ///
-    /// A frame's base is finished by its height pull, not by a command of its own (ADR 0159), so the
-    /// shell hands it to the box draft instead of committing a node.
+    /// A frame's base is finished by its height pull, not by a command of its own (ADR 0101, ADR 0159),
+    /// so the shell hands it to the frame draft instead of committing a node. Both of the frame's
+    /// drawn methods end here: the rectangle the box cell draws and the free outline.
     fn product_draft_running(&self) -> bool {
-        self.editor.drawing_intent() == ui::DrawIntent::Product
+        matches!(self.editor.drawing_intent(), ui::DrawIntent::Product | ui::DrawIntent::ProductBox)
     }
 
-    /// Closes the frame's base outline and hands it to the height pull.
+    /// Closes the frame's base and hands it to the height pull.
     ///
-    /// The ring becomes the box draft's base, so the pull, its preview and its one `product.create`
-    /// are the drawn frame's own; nothing is written until that pull is accepted (ADR 0101, ADR 0159).
+    /// The figure becomes the frame draft's base, so the pull, its preview and its one
+    /// `product.create` are the drawn frame's own; nothing is written until that pull is accepted
+    /// (ADR 0101, ADR 0159).
     fn start_frame_pull(&mut self, lang: Lang) -> Result<(), String> {
         self.editor.start_product_pull(lang)?;
         self.end_drawing()
@@ -1398,46 +1397,33 @@ impl Document {
         ui.ctx().request_repaint();
     }
 
-    /// Reads one frame of the box gesture: the live base, the pulled height, and the click that
-    /// anchors it, fixes it or accepts it.
+    /// Reads one frame of the frame's height pull: the number the pointer pulls and the click that
+    /// accepts it.
     ///
-    /// A click that fixes the base starts the pull; every frame of the pull reads the pointer along
-    /// the plane's normal, so the height is a number of millimetres rather than a screen distance.
-    /// The last click, or the command bar's ✓, is the one command the gesture writes (ADR 0101).
+    /// The base is already drawn — the sketch fixed it — so this reads the pointer along the plane's
+    /// normal, which makes the height a number of millimetres rather than a screen distance, and the
+    /// click, the gesture's Enter or the field's own Enter is the one command the gesture writes
+    /// (ADR 0101).
     fn update_box(&mut self, ui: &mut egui::Ui, response: &egui::Response, rect: egui::Rect) {
         let plane = WorkPlane::from_camera(self.scene.camera);
         let Some(draft) = self.editor.box_draft().cloned() else {
             return;
         };
         let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
-        if draft.is_pulling() {
-            // A focused field owns its number: while the maker types the height into the card, the
-            // pointer may not overwrite it, and leaving the field hands the height back to the
-            // hand (ADR 0119).
-            if !ui.ctx().text_edit_focused()
-                && let (Some(pointer), Some(corner)) = (pointer, draft.base_corner())
-                && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, corner, pointer)
-                && let Err(error) = self.editor.pull_box_height(height)
-            {
-                self.last_error = Some(error.to_string());
-            }
-        } else if let Some(pointer) = pointer
-            && let Some(corner) = box_gizmo::plane_point(self.scene.camera, rect, plane, pointer)
+        // A focused field owns its number: while the maker types the height into the card, the
+        // pointer may not overwrite it, and leaving the field hands the height back to the
+        // hand (ADR 0119).
+        if !ui.ctx().text_edit_focused()
+            && let Some(pointer) = pointer
+            && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, draft.base_corner(), pointer)
+            && let Err(error) = self.editor.pull_box_height(height)
         {
-            self.editor.set_box_corner(corner);
+            self.last_error = Some(error.to_string());
         }
-        match box_gizmo::update_box(ui, response, rect, self.scene.camera, plane, &draft) {
-            Some(BoxEvent::Click(corner)) => {
-                if let Err(error) = self.editor.click_box(corner) {
-                    self.last_error = Some(error.to_string());
-                }
-            }
-            Some(BoxEvent::Commit) => {
-                if let Err(error) = self.finish_box(ui::language(ui.ctx())) {
-                    self.last_error = Some(error);
-                }
-            }
-            None => {}
+        if box_gizmo::update_box(ui, response)
+            && let Err(error) = self.finish_box(ui::language(ui.ctx()))
+        {
+            self.last_error = Some(error);
         }
     }
 
@@ -1989,9 +1975,11 @@ impl Document {
             return;
         };
         let anchor = self.card_anchor(pointer, card_before);
-        // A pull that just appeared takes the keyboard, so its height can be typed without a click;
-        // the flag is cleared by the read so the field never holds the focus against the next press.
-        let focus = self.tool_focus.take().or_else(|| self.extrude_gizmo.take_focus().then_some(ToolParam::Height));
+        // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
+        // a click; the flag is cleared by the read so the field never holds the focus against the
+        // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
+        // owns the number instead of the pointer (`update_box`, ADR 0119).
+        let focus = self.extrude_gizmo.take_focus().then_some(ToolParam::Height);
         let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity, true);
         // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.
@@ -2023,11 +2011,13 @@ impl Document {
     /// niche's gaps are drawn by `update_fill` from the same [`Distances`], and every tool reaches
     /// the inspector through [`Self::tool_view`].
     fn height_view(&self) -> Option<ToolView> {
-        if let Some(draft) = self.editor.box_draft().cloned().filter(BoxDraft::is_pulling) {
+        if let Some(draft) = self.editor.box_draft().cloned() {
             let maximum = box_gizmo::MAX_SIDE_MM as f64;
-            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101).
+            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101), and its plate
+            // is the pull's own: `H`, no unit, no button pair, Enter and Escape the commit and the
+            // cancel — one plate for the frame and the solid it is drawn with (N19, U104).
             let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
-            return Some(ToolView::height(Message::FrameHeight, draft.height().millimetres_f64(), range, 3));
+            return Some(ToolView::pull(draft.height().millimetres_f64(), None, range, 3));
         }
         self.extrude_gizmo.object()?;
         let height = self.extrude_gizmo.height()?;
@@ -2067,7 +2057,7 @@ impl Document {
             };
             match edit.param {
                 ToolParam::Height => {
-                    if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                    if self.editor.box_draft().is_some() {
                         if let Err(error) = self.editor.pull_box_height(next) {
                             self.last_error = Some(error.to_string());
                         }
@@ -2107,7 +2097,7 @@ impl Document {
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                if self.editor.box_draft().is_some() {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
@@ -3677,7 +3667,7 @@ impl Document {
                 self.cancel_box();
             } else if enter
                 && !ui.ctx().text_edit_focused()
-                && self.editor.box_draft().is_some_and(BoxDraft::is_pulling)
+                && self.editor.box_draft().is_some()
                 && let Err(error) = self.finish_box(ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);

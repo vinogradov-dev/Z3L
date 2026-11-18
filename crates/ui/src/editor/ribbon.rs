@@ -99,7 +99,10 @@ impl Editor {
                     outcome.started_drawing = true;
                 }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
-                ToolAction::DrawProductFrame => self.arm_box(),
+                ToolAction::DrawProductFrame { tool } => {
+                    self.start_product_box_drawing(tool);
+                    outcome.started_drawing = true;
+                }
                 ToolAction::DrawProductFrameContour => {
                     self.start_product_drawing();
                     outcome.started_drawing = true;

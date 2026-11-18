@@ -71,9 +71,17 @@ pub enum DrawIntent {
     /// The base outline of a product frame: the closed ring becomes the frame's footprint and the
     /// height is then pulled from it.
     ///
-    /// Nothing is written when the ring closes: the ring is a draft like the box tool's base, and the
-    /// pull's one `product.create` stores it with its height (ADR 0159).
+    /// Nothing is written when the ring closes: the ring is a draft like the frame's base rectangle,
+    /// and the pull's one `product.create` stores it with its height (ADR 0159).
     Product,
+    /// The base rectangle of a product frame: the figure becomes the frame's own box and the height is
+    /// pulled from it.
+    ///
+    /// A frame and a solid are drawn by one tool (ADR 0101), so the draft is the sketch draft again
+    /// and only the owner of the commit differs: a drawn rectangle reserves a plain box whose corner
+    /// grips edit the envelope, where a drawn profile is swept on Z (ADR 0138). Nothing is written
+    /// before the pull's one `product.create`.
+    ProductBox,
 }
 
 /// The tool a drawing draft is building with.
