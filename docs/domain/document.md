@@ -1,13 +1,14 @@
 # Scene document
 
-Status: domain specification. This document describes the scene file: what it stores, what it does not store, how a scene is loaded, how it behaves when a material is missing and which diagnostics it shows. Panel geometry and catalogue structure are not duplicated here.
+Status: domain specification. This document describes the scene file: what it stores, what it does not store, how a scene is loaded, how it behaves when a material or an instance is missing and which diagnostics it shows. Panel geometry and directory structure are not duplicated here.
 
 Related documents:
 
 - [Scene file](scene-file.md) — the envelope that holds the document on disk.
 - [Geometry objects](geometry.md) — objects with a baked mesh, a parametric primitive or a feature history.
 - [Panels and edge banding](panels.md) — panel, its dimensions, banding and commands.
-- [Materials and catalogue](materials.md) — material records and the catalogue.
+- [Nomenclature directory](nomenclature.md) — items, kinds, properties, families, packages and part documents.
+- [Processing and rules](technology.md) — machining, tools, placement rules and derived holes.
 
 Related decisions: [0005](../decisions/0005-material-catalogue.md),
 [0006](../decisions/0006-panel-nominal-and-resolved-geometry.md),
@@ -17,13 +18,19 @@ Related decisions: [0005](../decisions/0005-material-catalogue.md),
 [0034](../decisions/0034-nodes-carry-typed-properties.md),
 [0035](../decisions/0035-furniture-types-form-a-numbered-tree.md),
 [0036](../decisions/0036-cameras-and-lights-are-scene-objects.md) and
-[0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md).
+[0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md),
+[0145](../decisions/0145-a-nomenclature-directory-is-a-set-of-packages.md),
+[0146](../decisions/0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) and
+[0147](../decisions/0147-machining-is-derived-and-rules-are-tables.md).
 
 ## 1. Terms
 
 - **Document** (scene) — a saved Z3L project: node tree, panels, their placements, properties, machining and material references.
-- **Catalogue** — the external material collection; it is not part of the scene file.
-- **Fallback** — the last known value stored in the scene in case a material disappears from the catalogue.
+- **Directory** — the workshop's external directory of nomenclature; it is not part of the scene file.
+- **Instance** — a node that stands for a directory item; its placement is document data, its contents
+  are derived from the item's part document.
+- **Fallback** — the last known value stored in the scene in case a material or an item disappears from
+  the directory.
 - **Diagnostic** — a computed panel or scene state that is not stored as data.
 - **Revision** — a monotonic document change counter.
 - **Schema version** — the version of the scene file format.
@@ -134,11 +141,29 @@ both would change a camera the document owns. Clearing the active camera returns
 built-in, navigable camera, whose projection the viewport toggles between perspective and
 orthographic ([ADR 0049](../decisions/0049-the-viewport-toggles-its-own-projection.md)).
 
+### 2.3. Catalogue instances
+
+A node may be an **instance** of a directory item: a hinge, a runner, a handle, a fastener, a facade
+([Nomenclature directory](nomenclature.md) §9). The node stores the item's `ItemId`, its own
+placement and pivot, its own properties and any machining a person added to it. The item's contents —
+geometry, anchors, drilling objects and the fasteners nested inside them — are derived from the item's
+part document and are not stored. An instance is one object for picking, for the selection and for the
+gizmos; its internals cannot be renamed or deleted one by one.
+
+`catalogue.detach` replaces the link with ordinary nodes in one undo entry: the detached subtree keeps
+the geometry it had and stops following the item. An instance whose item or part document is absent
+stays in the document, draws a placeholder of the item's recorded bounds and reports a diagnostic
+(§5.4). The dependency graph a part document may form is acyclic; the rule and its guards are in
+[Nomenclature directory](nomenclature.md) §9.2.
+
 ## 3. What the scene file does not store
 
-- the material catalogue;
+- the directory of nomenclature and the part documents it carries: a node stores the item id, never the
+  item's contents;
 - meshes and other derived geometry; a constructive object stores its features, and the evaluated
   mesh is rebuilt on load;
+- holes a hardware item causes: they are derived from drilling objects crossing the panel
+  (see [Processing and rules](technology.md));
 - colours, brushes and textures;
 - diagnostics and "problem panel" states;
 - viewport navigation, selection, hover, open containers, grid, shading, projection and the work
@@ -152,7 +177,7 @@ orthographic ([ADR 0049](../decisions/0049-the-viewport-toggles-its-own-projecti
 ## 4. Scene loading
 
 1. Read the scene file.
-2. Read the catalogue (see [Materials and catalogue](materials.md)).
+2. Read the directory snapshot (see [Nomenclature directory](nomenclature.md) §13).
 3. For each panel, read `material_id`. If it is `None`, use the fallback and mark `NoMaterial`; otherwise look it up in the catalogue.
 4. If the material is found: panel thickness = the material's nominal thickness; refresh `last_known_thickness`.
 5. If a present id is not found: thickness = `last_known_thickness`; mark `MissingMaterial` and the panel as a problem panel.
@@ -163,6 +188,10 @@ orthographic ([ADR 0049](../decisions/0049-the-viewport-toggles-its-own-projecti
 10. Compute machining diagnostics against the new core; do not reject the file for a fit problem.
 11. Rebuild the panel geometry and group.
 12. Build the scene and UI diagnostics.
+13. Resolve every instance through the directory: contents, anchors, drilling objects and the items
+    nested in them. A cycle, the depth limit or the part budget is a diagnostic, not a load error.
+14. Derive the holes of each panel from the resolved drilling objects and cache the result by
+    `(panel revision, instance placements, directory revision)`.
 
 Loading must not fail because a material is missing. A whole-file load error is acceptable only when the scene cannot be read or recovered.
 
@@ -195,13 +224,29 @@ If an edge-banding material is missing:
 - Do not delete the panel or the banding.
 - Do not crash and do not lose user data.
 
+### 5.4. An instance whose item or part document is absent
+
+If an instance's item is absent from the directory, its part document is missing, or the file's hash
+no longer matches the recorded one:
+
+- the node stays in the document with its placement, pivot and properties;
+- the last resolved bounds are drawn as a placeholder, so the object is visible in the right place;
+- `MissingItem(item)`, `MissingPart { item, path }` or `PartChanged { item }` is reported;
+- a changed hash is a notice for a person to re-link the item, never an automatic acceptance of the
+  new version, because a moved cup bore changes the holes the shop drills;
+- nothing is written back: the placeholder is derived, and the document keeps the id.
+
 ## 6. Material changes
 
 - Changing a panel material through a command changes `material_id`; thickness, geometry and banding are recomputed.
 - `panel.material.set` rejects an unknown material id or a non-positive resulting core. If the new thickness makes machining invalid, the command is accepted, data is not deleted, and the panel becomes a problem panel with a warning.
 - Changing an edge-banding material changes the profile and may change the core/overall size when the banding is included in the size. The nominal panel length and width are preserved. `panel.edge_banding.set` follows the same rule as a material change: unknown ids and a non-positive core are errors; machining that no longer fits is a diagnostic.
 - `panel.resize` is stricter: it rejects a change that would leave existing machining outside the new core.
-- Changing material properties in the catalogue under the same id is applied on the next scene load.
+- Changing properties in the directory under the same id is applied on the next scene load or when a
+  new directory revision arrives.
+- A new directory revision is applied to a loaded scene without a restart: the snapshot is swapped at
+  a frame boundary, derived data — thickness, appearance, resolved instances, holes, diagnostics — is
+  recomputed and the undo history is untouched ([Nomenclature directory](nomenclature.md) §13).
 
 ## 7. Diagnostics
 
@@ -214,7 +259,13 @@ Diagnostics are computed during loading/rebuild and are not stored as data:
 - `NonPositiveCore`;
 - `InvalidOutline`: the outline or its edge banding does not form a valid contour ring;
 - `MachiningOutsideCore`;
-- `BlindDepthNotLessThanThickness`.
+- `BlindDepthNotLessThanThickness`;
+- `MissingItem(item)`, `MissingPart { item, path }`, `PartChanged { item }` — an instance that cannot
+  be resolved (§5.4);
+- `CyclicPartReference(chain)`, `PartDepthExceeded(item)`, `PartBudgetExceeded(item)` — a part document
+  graph the resolve path refuses ([Nomenclature directory](nomenclature.md) §9.2);
+- a hole that cannot be derived — a drilling object tangent to a face, grazing it, or larger than the
+  panel ([Processing and rules](technology.md) §3).
 
 A panel with an issue stays in the document, is drawn where possible and shows a warning in the card. A diagnostic does not change the document and does not enter the file.
 
