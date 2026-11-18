@@ -1,8 +1,10 @@
 //! The furniture move rule: how far one drag along a world axis may travel.
 //!
 //! The translate gizmo proposes a world distance and this module answers with the distance the
-//! document allows. Three facts decide it and none of them is a code literal:
+//! document allows. Four facts decide it and none of them is a code literal:
 //!
+//! - the **axes** the drag offers: a panel slides only along its own thickness, so the two in-plane
+//!   directions are refused, and a floor-bound product keeps its height (N22, ADR 0147);
 //! - the **mount** trait of a product's class: a `Floor` product keeps its height, a `Wall` product
 //!   moves freely (ADR 0097);
 //! - **contact**: a shell stops at another shell and a body at another body, while containment of
@@ -21,7 +23,9 @@
 //! cannot disagree. Nothing is stored and nothing is mutated.
 //!
 //! A drag in which no product is involved — free geometry, a panel at the root — is not a furniture
-//! move: [`Project::move_rule`] answers `None` and the gizmo keeps its exact micrometre move.
+//! move: [`Project::move_rule`] answers `None` and the gizmo keeps its exact micrometre move. The
+//! panel axis is the one part of the rule that needs no surface, so [`Project::furniture_axes`]
+//! answers it wherever the board stands.
 
 use geom::DVec3;
 
@@ -42,6 +46,9 @@ pub enum MoveAxis {
 }
 
 impl MoveAxis {
+    /// All three axes in the order [`MoveAxis::index`] counts them.
+    pub const ALL: [Self; 3] = [Self::X, Self::Y, Self::Z];
+
     /// The two axes perpendicular to this one, in frame order.
     const fn perpendicular(self) -> [Self; 2] {
         match self {
@@ -50,7 +57,28 @@ impl MoveAxis {
             Self::Z => [Self::X, Self::Y],
         }
     }
+
+    /// The unit vector of this axis in the world.
+    pub const fn direction(self) -> DVec3 {
+        match self {
+            Self::X => DVec3::X,
+            Self::Y => DVec3::Y,
+            Self::Z => DVec3::Z,
+        }
+    }
+
+    /// Its slot in an axis table: X, Y, Z in that order.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::X => 0,
+            Self::Y => 1,
+            Self::Z => 2,
+        }
+    }
 }
+
+/// Every axis, for a drag the document has no rule about.
+const ALL_MOVE_AXES: [bool; 3] = [true, true, true];
 
 /// How far a furniture drag may go, and what stopped it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -154,8 +182,7 @@ impl Project {
     /// moves while the pointer travels, and a settings change mid-drag does not bend the preview
     /// away from the placement the release commits.
     pub fn move_rule(&self, moving: &[Id], snaps: SnapSettings) -> Option<MoveRule> {
-        let root = self.root.id();
-        let targets: Vec<Id> = self.top_most_nodes(moving).into_iter().filter(|id| *id != root).collect();
+        let targets = self.moved_targets(moving);
         if targets.is_empty() || !targets.iter().all(|id| self.is_furniture(*id)) {
             return None;
         }
@@ -163,26 +190,101 @@ impl Project {
         if movers.is_empty() {
             return None;
         }
-        Some(MoveRule {
-            floor_bound: self.is_floor_bound(&targets),
-            obstacles: self.obstacle_boxes(&targets),
-            movers,
-            snaps,
-        })
+        Some(MoveRule { axes: self.axes_of(&targets), obstacles: self.obstacle_boxes(&targets), movers, snaps })
+    }
+
+    /// The world axes a furniture drag of this selection offers, in [`MoveAxis`] order.
+    ///
+    /// A selection offers what every one of its top-most nodes offers, so a panel beside a frame is
+    /// held to the panel's one axis. A `false` slot is an axis the tool does not draw and does not
+    /// start a drag on: an armed handle that refuses the press is worse than no handle at all
+    /// (ADR 0113).
+    ///
+    /// The answer is the tool's, not the document's, so it does not need the surfaces a full
+    /// [`Project::move_rule`] collects: the panel axis holds wherever a panel stands, and a drag
+    /// outside furniture reads it without walking the tree.
+    pub fn furniture_axes(&self, moving: &[Id]) -> [bool; 3] {
+        let targets = self.moved_targets(moving);
+        if targets.is_empty() {
+            return ALL_MOVE_AXES;
+        }
+        self.axes_of(&targets)
+    }
+
+    /// The top-most moved nodes of a selection, without the root.
+    fn moved_targets(&self, moving: &[Id]) -> Vec<Id> {
+        let root = self.root.id();
+        self.top_most_nodes(moving).into_iter().filter(|id| *id != root).collect()
+    }
+
+    /// The world axes a drag of `targets` offers: the intersection of what each one allows.
+    fn axes_of(&self, targets: &[Id]) -> [bool; 3] {
+        let mut axes = ALL_MOVE_AXES;
+        for target in targets {
+            let allowed = self.node_axes(*target);
+            for (slot, allowed) in axes.iter_mut().zip(allowed) {
+                *slot &= allowed;
+            }
+        }
+        axes
+    }
+
+    /// The world axes one moved node offers a furniture drag.
+    ///
+    /// A **panel** offers one: the axis its own thickness points most nearly at, so it slides parallel
+    /// to its own A and B faces and never across them. That is the whole of the panel rule and it is
+    /// what the trade means: a shelf rises and falls in its thickness direction, a divider crosses the
+    /// case and a back moves in and out (N22, ADR 0147).
+    ///
+    /// A **floor-bound product** keeps its height, so the vertical is refused by the class's `mount`
+    /// trait (ADR 0097). Everything else — a wall-hung frame, a body, a group — is free on all three.
+    fn node_axes(&self, id: Id) -> [bool; 3] {
+        if self.panel(id).is_some() {
+            return self.panel_axis(id).map_or(ALL_MOVE_AXES, |axis| {
+                let mut axes = [false; 3];
+                if let Some(slot) = axes.get_mut(axis.index()) {
+                    *slot = true;
+                }
+                axes
+            });
+        }
+        if self.keeps_height(id) {
+            // A floor-bound product still slides along the floor and sticks to the pieces beside it.
+            return [true, true, false];
+        }
+        ALL_MOVE_AXES
+    }
+
+    /// The world axis a panel slides along: the one its thickness points most nearly at.
+    ///
+    /// A panel's own frame puts its thickness on local Z, so the world normal is that axis turned by
+    /// every frame above it. The two A and B faces stay parallel to each other under any translation,
+    /// so what the rule holds is not the board's orientation but its own normal: the only direction it
+    /// may travel is the one it is a slab across. A board turned off the world axes slides along the
+    /// axis it leans towards, because every surface the rule measures is a world box (ADR 0102).
+    fn panel_axis(&self, id: Id) -> Option<MoveAxis> {
+        let normal = self.world_placement(id)?.transform_vector(DVec3::Z);
+        let mut best = MoveAxis::X;
+        let mut widest = 0.0;
+        for axis in MoveAxis::ALL {
+            let reach = normal.dot(axis.direction()).abs();
+            if reach.is_finite() && reach > widest {
+                widest = reach;
+                best = axis;
+            }
+        }
+        (widest > 0.0).then_some(best)
+    }
+
+    /// Whether `id` is a product whose class mounts on the floor, and so keeps its height.
+    fn keeps_height(&self, id: Id) -> bool {
+        self.container(id).is_some_and(Container::is_product)
+            && self.class(id).and_then(|class| class.traits()).and_then(|traits| traits.mount()) == Some(Mount::Floor)
     }
 
     /// Whether `id` is furniture: a product, or a node inside a product.
     fn is_furniture(&self, id: Id) -> bool {
         self.container(id).is_some_and(Container::is_product) || self.product_of(id).is_some()
-    }
-
-    /// Whether any of the products stands on the floor by its class's `mount` trait.
-    fn is_floor_bound(&self, products: &[Id]) -> bool {
-        products.iter().any(|id| {
-            self.container(*id).is_some_and(Container::is_product)
-                && self.class(*id).and_then(|class| class.traits()).and_then(|traits| traits.mount())
-                    == Some(Mount::Floor)
-        })
     }
 
     /// The world box each moved node carries.
@@ -277,8 +379,11 @@ pub struct MoveRule {
     movers: Vec<SurfaceBox>,
     /// The surfaces that stay behind: the other products' envelopes, panels and objects.
     obstacles: Vec<SurfaceBox>,
-    /// Whether a moved product stands on the floor by its class's `mount` trait.
-    floor_bound: bool,
+    /// Which world axes the drag offers, in [`MoveAxis`] order.
+    ///
+    /// It is the intersection of what every moved node allows, taken once when the drag starts: a
+    /// panel's own thickness axis, a floor-bound product's two horizontal axes (N22, ADR 0147).
+    axes: [bool; 3],
     /// What this drag snaps to, and how near, as the workspace settings chose it (ADR 0146).
     snaps: SnapSettings,
 }
@@ -286,10 +391,11 @@ pub struct MoveRule {
 impl MoveRule {
     /// Whether a drag may move along `axis` at all.
     ///
-    /// A floor-bound product keeps its height, so a vertical distance is never a free one; the
-    /// distance fields read this before offering a number on that axis.
+    /// A panel offers only its own thickness axis and a floor-bound product keeps its height, so the
+    /// other axes have no free distance; the handle list and the distance fields read this before
+    /// offering a handle or a number (ADR 0113, N22).
     pub const fn allows(&self, axis: MoveAxis) -> bool {
-        !(self.floor_bound && matches!(axis, MoveAxis::Z))
+        self.axes[axis.index()]
     }
 
     /// The distance a proposal may travel along a world axis.
@@ -303,9 +409,9 @@ impl MoveRule {
         if !proposed_mm.is_finite() {
             return MoveLimit { distance_mm: 0.0, contact: None, capture: None };
         }
-        // A floor-bound product keeps its height: the mount trait forbids the vertical drag, and
-        // saying so here keeps the rule out of the gizmo.
-        let distance = if axis == MoveAxis::Z && self.floor_bound { 0.0 } else { proposed_mm };
+        // An axis the drag does not offer moves nothing: a floor-bound product keeps its height and a
+        // panel does not cross its own faces, and saying so here keeps the rule out of the gizmo.
+        let distance = if self.allows(axis) { proposed_mm } else { 0.0 };
         let (snapped, capture) = snap_distance(axis, &self.movers, &self.obstacles, distance, self.snaps);
         let limit = stop_at_contact(axis, snapped, &self.movers, &self.obstacles);
         // A contact that cuts the snapped distance stops the piece short of the captured surface, so
@@ -523,6 +629,21 @@ mod tests {
         project.add_panel(parent, name, sample_nominal(), None, sample_thickness(), placement).expect("add panel")
     }
 
+    /// The same panel, turned `degrees` about `axis` in its own frame, so its thickness points
+    /// another way: a quarter turn about Y makes a divider, about X a back.
+    fn turned_panel(project: &mut Project, parent: Id, name: &str, axis: char, degrees: i64) -> Id {
+        let id = panel(project, parent, name, (0, 0, 0));
+        let turn = Degrees::from_millidegrees(degrees * 1000);
+        let angles = match axis {
+            'x' => EulerAngles { x: turn, ..EulerAngles::default() },
+            'y' => EulerAngles { y: turn, ..EulerAngles::default() },
+            _ => EulerAngles { z: turn, ..EulerAngles::default() },
+        };
+        let placement = Placement::IDENTITY.with_rotation_euler(angles).expect("a quarter turn");
+        project.set_node_placement(id, placement).expect("turn the panel");
+        id
+    }
+
     /// The sample scene with one empty product of `600 x 560 x 720` millimetres at the origin.
     fn product_project(code: &str) -> (Project, Id) {
         let mut project = sample_project();
@@ -556,6 +677,79 @@ mod tests {
 
     fn limit(project: &Project, moving: &[Id], axis: MoveAxis, proposed: f64) -> MoveLimit {
         rule(project, moving).limit(axis, proposed)
+    }
+
+    #[test]
+    fn a_panel_offers_only_its_own_thickness_axis() {
+        // N22: a board slides along its own normal and never across it, so a shelf rises in its
+        // thickness direction and the two in-plane handles are not offered at all.
+        let (mut project, piece) = product_project("10.01.01");
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        assert_eq!(project.furniture_axes(&[shelf]), [false, false, true], "a shelf's thickness is its upright axis");
+        let rule = rule(&project, &[shelf]);
+        assert!(rule.allows(MoveAxis::Z), "the shelf rises and falls");
+        assert!(!rule.allows(MoveAxis::X) && !rule.allows(MoveAxis::Y), "and does not slide in its own plane");
+        assert_eq!(rule.limit(MoveAxis::X, 100.0), moved(0.0), "a drag across the board moves nothing");
+        assert_eq!(rule.limit(MoveAxis::Z, 40.4), moved(40.0), "along its thickness it keeps the furniture grid");
+    }
+
+    #[test]
+    fn a_divider_crosses_the_case_and_a_back_moves_in_and_out() {
+        // The same board, turned: its thickness points along X for a divider and along Y for a back,
+        // and the axis it offers follows the board rather than the world (N22).
+        let (mut project, piece) = product_project("10.01.01");
+        let divider = turned_panel(&mut project, piece, "Divider", 'y', 90);
+        assert_eq!(project.furniture_axes(&[divider]), [true, false, false], "a divider crosses the case");
+        assert_eq!(
+            rule(&project, &[divider]).limit(MoveAxis::X, 120.4),
+            moved(120.0),
+            "and its drag runs along the width of the case"
+        );
+
+        let back = turned_panel(&mut project, piece, "Back", 'x', 90);
+        assert_eq!(project.furniture_axes(&[back]), [false, true, false], "a back moves in and out");
+    }
+
+    #[test]
+    fn a_quarter_turned_product_of_panels_is_measured_in_the_world_frame() {
+        // The board's own frame is what the rule reads, so a turned cabinet turns its shelf's axis
+        // with it: the shelf that rose in world Z now slides in world X (ADR 0024, N22).
+        let mut project = empty_project();
+        let piece = product(&mut project, "10.01.02", (600, 560, 720), (0, 0, 0));
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        let turn = Degrees::from_millidegrees(90_000);
+        let quarters = Placement::IDENTITY
+            .with_rotation_euler(EulerAngles { y: turn, ..EulerAngles::default() })
+            .expect("a quarter turn");
+        project.set_node_placement(piece, quarters).expect("turn the case");
+        assert_eq!(project.furniture_axes(&[shelf]), [true, false, false]);
+    }
+
+    #[test]
+    fn a_selection_offers_only_the_axes_every_part_of_it_allows() {
+        // Two boards that cannot slide rigidly anywhere offer no handle at all, which is honest: the
+        // mode draws nothing rather than an armed handle that refuses the press (ADR 0113).
+        let (mut project, piece) = product_project("10.01.01");
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        let back = turned_panel(&mut project, piece, "Back", 'x', 90);
+        assert_eq!(project.furniture_axes(&[shelf, back]), [false, false, false]);
+
+        // A frame beside a board offers its own axes, and the intersection keeps what they share: a
+        // wall-hung frame offers all three, so this selection slides the board along Z alone.
+        let neighbour = product(&mut project, "10.01.02", (600, 560, 720), (1000, 0, 0));
+        assert_eq!(project.furniture_axes(&[shelf, neighbour]), [false, false, true]);
+    }
+
+    #[test]
+    fn the_panel_axis_holds_outside_a_product_where_the_rule_does_not() {
+        // A board at the root has no furniture to measure against, so its drag keeps the exact
+        // micrometre move — but it is still a board, and the tool still slides it along its
+        // thickness only (N22).
+        let project = sample_project();
+        let loose = Id::new(2).expect("id");
+        assert_eq!(project.furniture_axes(&[loose]), [false, false, true], "the sample shelf is a board");
+        assert!(project.move_rule(&[loose], SnapSettings::default()).is_none(), "and it has no surface rule");
+        assert_eq!(project.furniture_axes(&[]), [true, true, true], "nothing selected offers every axis");
     }
 
     #[test]
@@ -630,21 +824,23 @@ mod tests {
 
     #[test]
     fn a_body_stops_at_a_body_and_not_at_a_shell() {
+        // A shelf is a board, so the furniture move slides it along its thickness — upright (N22) —
+        // and the contact it meets is the panel above it in the same case.
         let (mut project, piece) = product_project("10.01.01");
-        // Away from the sample panels at the origin, so only the two panels below are measured.
         let shelf = panel(&mut project, piece, "Shelf", (0, 1000, 0));
-        let other = panel(&mut project, piece, "Other", (1000, 1000, 0));
+        let above = panel(&mut project, piece, "Above", (0, 1000, 1000));
         assert_eq!(
-            limit(&project, &[shelf], MoveAxis::X, 1000.0),
-            MoveLimit { distance_mm: 300.0, contact: Some(other), capture: None }
+            limit(&project, &[shelf], MoveAxis::Z, 1000.0),
+            MoveLimit { distance_mm: 982.0, contact: Some(above), capture: None },
+            "the shelf rises 982 mm, which is where its 18 mm board meets the panel above"
         );
 
-        // A shell is not a body: the same shelf slides up to a neighbouring frame untouched. The
+        // A shell is not a body: the same shelf rises up to a neighbouring frame untouched. The
         // drag stops short of every face around it, so the answer is the pointer's own distance.
         let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
-        let _frame = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
-        assert_eq!(limit(&project, &[shelf], MoveAxis::X, 1100.0), moved(1100.0));
+        let _frame = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 1000));
+        assert_eq!(limit(&project, &[shelf], MoveAxis::Z, 1100.0), moved(1100.0));
     }
 
     /// The answer of a drag whose high face landed `at` millimetres on `surface`.
@@ -657,16 +853,16 @@ mod tests {
         // A lone part inside a piece: nothing to meet, so the 1 mm grid decides.
         let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 1000, 0));
-        assert_eq!(limit(&project, &[shelf], MoveAxis::X, 97.4), moved(97.0));
+        assert_eq!(limit(&project, &[shelf], MoveAxis::Z, 97.4), moved(97.0));
 
-        // A neighbour frame's virtual face at x = 1000 captures the shelf's far face, and a body
+        // A neighbour frame's virtual face at z = 1000 captures the shelf's upper face, and a body
         // never stops at a shell, so the face — not the grid — is the answer.
-        let frame = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
+        let frame = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 1000));
         let shelf = panel(&mut project, piece, "Second shelf", (0, 0, 0));
         assert_eq!(
-            limit(&project, &[shelf], MoveAxis::X, 297.4),
-            landed(300.0, 1000.0, SnapSurface::Frame(frame)),
-            "the shelf's far face lands on the neighbouring frame's virtual face, not on the grid"
+            limit(&project, &[shelf], MoveAxis::Z, 979.4),
+            landed(982.0, 1000.0, SnapSurface::Frame(frame)),
+            "the shelf's upper face lands on the neighbouring frame's virtual face, not on the grid"
         );
 
         // The same drag in a world where the frame is gone: the part's own face is the surface the
@@ -674,10 +870,10 @@ mod tests {
         let mut project = empty_project();
         let piece = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
         let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
-        let beside = panel(&mut project, piece, "Beside", (1000, 0, 0));
+        let beside = panel(&mut project, piece, "Beside", (0, 0, 1000));
         assert_eq!(
-            limit(&project, &[shelf], MoveAxis::X, 297.4),
-            landed(300.0, 1000.0, SnapSurface::Face(beside)),
+            limit(&project, &[shelf], MoveAxis::Z, 979.4),
+            landed(982.0, 1000.0, SnapSurface::Face(beside)),
             "a neighbouring part face is a snap target too"
         );
     }

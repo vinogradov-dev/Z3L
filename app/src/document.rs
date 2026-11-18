@@ -2472,6 +2472,7 @@ impl Document {
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
             snaps: settings.snaps.rule(),
+            move_kind: shell.mode.move_kind(),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
@@ -2495,7 +2496,7 @@ impl Document {
             match shell.mode.transform() {
                 // No mode owns a handle, so no gizmo runs: a press where one would be is a pick.
                 None => Ok(None),
-                Some(Transform::Move) => {
+                Some(Transform::Move | Transform::Furniture) => {
                     let pinned = self.move_pinned();
                     self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
@@ -2513,7 +2514,9 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
-        if matches!(shell.mode.transform(), Some(Transform::Move)) && self.translate_gizmo.is_dragging() {
+        if matches!(shell.mode.transform(), Some(Transform::Move | Transform::Furniture))
+            && self.translate_gizmo.is_dragging()
+        {
             self.show_move_distances(ui, rect, opacity);
         } else {
             self.clear_move_distances(ui.ctx());
@@ -2549,7 +2552,7 @@ impl Document {
             match shell.mode.transform() {
                 // The mode offers no handle, so nothing consumed the press: the click picks.
                 None => false,
-                Some(Transform::Move) => self.translate_gizmo.consumed_click(),
+                Some(Transform::Move | Transform::Furniture) => self.translate_gizmo.consumed_click(),
                 Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
             }
         };
@@ -2872,6 +2875,7 @@ impl Document {
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
             snaps: settings.snaps.rule(),
+            move_kind: shell.mode.move_kind(),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
         if let Some(edit) = self.editor.contour_edit() {
@@ -2926,7 +2930,9 @@ impl Document {
             self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
             match shell.mode.transform() {
                 None => {}
-                Some(Transform::Move) => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
+                Some(Transform::Move | Transform::Furniture) => {
+                    self.translate_gizmo.paint(ui, rect, paint_target, handle_length);
+                }
                 Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
             }
         }

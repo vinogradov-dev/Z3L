@@ -144,6 +144,36 @@ pub(crate) struct Target<'a> {
     /// It travels here rather than as another argument because a drag that starts reads it once,
     /// with the camera and the selection it starts under.
     pub(crate) snaps: SnapSettings,
+    /// Which move a translate drag is: the free one, or the furniture one that obeys the document's
+    /// rules and offers only the axes they allow (N22, ADR 0147).
+    pub(crate) move_kind: MoveKind,
+}
+
+/// Which move a translate drag makes.
+///
+/// The two tools share every other part of the gesture — the pivot, the preview, the exact-distance
+/// fields and the one `node.placement.set_many` on release — and differ in one question: does the
+/// document's rule measure the drag, or the pointer's own travel (N22, ADR 0147).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MoveKind {
+    /// The pointer's own distance, rounded to the document's micrometre: no contact and no snap.
+    Free,
+    /// The furniture rules: the axes they allow, contact at the neighbours, and the workspace's snaps.
+    Furniture,
+}
+
+impl MoveKind {
+    /// The axes a drag of this kind offers the selection.
+    ///
+    /// The free move keeps the three world axes everywhere; the furniture move asks the document
+    /// which axes the pieces may travel along, so a panel is held to its own thickness axis and a
+    /// floor-bound frame keeps its height (N22).
+    pub(crate) fn axes(self, project: &Project, selection: &[Id]) -> [bool; 3] {
+        match self {
+            Self::Free => ALL_AXES,
+            Self::Furniture => project.furniture_axes(selection),
+        }
+    }
 }
 
 impl Target<'_> {
@@ -988,7 +1018,13 @@ mod tests {
     }
 
     fn target<'a>(project: &'a Project, selection: &'a [Id]) -> Target<'a> {
-        Target { camera: Camera::default(), project, selection, snaps: SnapSettings::default() }
+        Target {
+            camera: Camera::default(),
+            project,
+            selection,
+            snaps: SnapSettings::default(),
+            move_kind: MoveKind::Free,
+        }
     }
 
     /// The handle length the tests draw and grab with, in points.

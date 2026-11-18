@@ -367,12 +367,16 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
     (None, moved)
 }
 
-/// The window's transform mode as one control: *Select*, *Move*, *Rotate*, side by side in one band.
+/// The window's transform mode as one control: *Select*, *Move*, *Furniture*, *Rotate*, side by
+/// side in one band.
 ///
-/// Three states of one value are one control, not three switches: the filled cell is the mode the
-/// viewport is in, and the band behind them says the three belong together (ADR 0113). The mode is
-/// the window's view state, so the control reads it and returns the chosen one; the caller writes
-/// it, and no command and no undo entry is involved.
+/// States of one value are one control, not separate switches: the filled cell is the mode the
+/// viewport is in, and the band behind them says the four belong together (ADR 0113). The two moves
+/// sit next to each other because they are one decision made two ways — the free move keeps the
+/// pointer's distance and the furniture move obeys the document's rules (ADR 0147) — and each cell
+/// says in a hover line which of the two it is, because "Move" alone no longer names the choice.
+/// The mode is the window's view state, so the control reads it and returns the chosen one; the
+/// caller writes it, and no command and no undo entry is involved.
 fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<TransformMode> {
     let lang = ui::language(ui.ctx());
     let band = egui::Frame::new()
@@ -382,15 +386,17 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
     let mut chosen = mode;
     let changed = band
         .show(ui, |ui| {
-            // Touching cells are what makes one band out of three states; the row's own gap stays.
+            // Touching cells are what makes one band out of four states; the row's own gap stays.
             ui.spacing_mut().item_spacing.x = 0.0;
             let mut clicked = false;
-            for (entry, label) in [
-                (TransformMode::Select, Message::Select),
-                (TransformMode::Move, Message::Move),
-                (TransformMode::Rotate, Message::Rotate),
+            for (entry, label, hint) in [
+                (TransformMode::Select, Message::Select, Message::SelectHint),
+                (TransformMode::Move, Message::Move, Message::MoveHint),
+                (TransformMode::Furniture, Message::Furniture, Message::FurnitureHint),
+                (TransformMode::Rotate, Message::Rotate, Message::RotateHint),
             ] {
-                clicked |= ui.selectable_value(&mut chosen, entry, label.text(lang)).clicked();
+                let response = ui.selectable_value(&mut chosen, entry, label.text(lang));
+                clicked |= response.on_hover_text(hint.text(lang)).clicked();
             }
             clicked
         })
@@ -696,14 +702,14 @@ mod tests {
     }
 
     #[test]
-    fn the_transform_mode_is_one_control_of_three_states() {
-        // U87: Select, Move and Rotate are one control rather than three switches, so the three
-        // captions sit side by side and one press returns the state it names. The mode is the
+    fn the_transform_mode_is_one_control_of_four_states() {
+        // U87, N22: Select, both moves and Rotate are one control rather than four switches, so the
+        // four captions sit side by side and one press returns the state it names. The mode is the
         // window's view state: the control returns a value, it runs no command and no undo entry.
         let ctx = egui::Context::default();
         ui::theme::install(&ctx);
         let info = StatusInfo { mode: TransformMode::Select, ..idle_status() };
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, theme::STATUS_HEIGHT));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, theme::STATUS_HEIGHT));
         let row = |events: Vec<egui::Event>| {
             let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
             let mut chosen = None;
@@ -716,15 +722,15 @@ mod tests {
         let (idle, chosen) = row(Vec::new());
         let texts = drawn_text(&idle.shapes);
         assert_eq!(chosen, None, "drawing the control changes nothing");
-        for caption in [Message::Select, Message::Move, Message::Rotate] {
+        for caption in [Message::Select, Message::Move, Message::Furniture, Message::Rotate] {
             let caption = caption.text(Lang::En);
             assert!(texts.iter().any(|text| text == caption), "the control names {caption}: {texts:?}");
         }
         let at = drawn_text_rects(&idle.shapes)
             .into_iter()
-            .find(|(_, text)| text == Message::Rotate.text(Lang::En))
+            .find(|(_, text)| text == Message::Furniture.text(Lang::En))
             .map(|(rect, _)| rect.center())
-            .expect("the control drew Rotate");
+            .expect("the control drew Furniture");
         idle.drop_without_applying_deltas();
 
         let button = |pressed: bool| egui::Event::PointerButton {
@@ -740,7 +746,38 @@ mod tests {
         assert_eq!(chosen, None, "the press alone is not a click");
         let (released, chosen) = row(vec![button(false)]);
         released.drop_without_applying_deltas();
-        assert_eq!(chosen, Some(TransformMode::Rotate), "a click on Rotate returns Rotate");
+        assert_eq!(chosen, Some(TransformMode::Furniture), "a click on Furniture returns Furniture");
+    }
+
+    #[test]
+    fn the_four_mode_cells_fit_the_narrowest_window() {
+        // The band is window chrome, so it must fit the narrowest window the shell opens (640 pt) with
+        // the hint and the right-hand readouts beside it: a mode nobody can see is a mode nobody has
+        // (ADR 0113, ADR 0147).
+        let ctx = egui::Context::default();
+        ui::theme::install(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
+        // Russian is the longer language, so the narrower window is asked about both: a sheet of text
+        // that fits one and not the other is a band a third of the users cannot read.
+        for lang in [Lang::En, Lang::Ru] {
+            ui::set_language(&ctx, lang);
+            let mut out = StatusOut::default();
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| {
+                ui.set_width(screen.width());
+                ui.set_height(theme::STATUS_HEIGHT);
+                status_row_ui(ui, &idle_status(), &mut out);
+            });
+            let texts = drawn_text(&output.shapes);
+            for caption in [Message::Select, Message::Move, Message::Furniture, Message::Rotate] {
+                let caption = caption.text(lang);
+                assert!(
+                    texts.iter().any(|text| text == caption),
+                    "the narrowest window still names {caption} in {lang:?}: {texts:?}"
+                );
+            }
+            output.drop_without_applying_deltas();
+        }
     }
 
     #[test]

@@ -13,6 +13,13 @@
 //! starts (ADR 0146). The rule is applied to the preview, and the release commits that same
 //! distance, so a drag is one undo entry and the preview is not a promise the command breaks.
 //!
+//! The same handles serve two tools (N22, ADR 0147). The free move keeps the pointer's own micrometre
+//! distance on the three world axes and applies no rule and no snap at all. The furniture move asks
+//! the document which axes the pieces may travel along first: a panel offers only the axis its own
+//! thickness points at, so a shelf rises in its thickness direction and a drag across the board is
+//! refused by having no handle to grab. Both keep the exact-distance fields, which are the typed
+//! path to the same distance (ADR 0103).
+//!
 //! Handles keep a constant screen length. An axis within about ten degrees of the view direction is
 //! not drawn: its projected direction is unstable and a pointer drag would move it by metres.
 
@@ -23,7 +30,7 @@ use model::{Capture, Id, MoveRule};
 use scene::MAX_DISTANCE_MM;
 
 use crate::gizmo_math::{
-    ALL_AXES, Axis, HandleSpec, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
+    Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
     paint_axis_handles, ray_to,
 };
 
@@ -108,8 +115,8 @@ impl TranslateGizmo {
 
     /// Whether the drag's axis may carry a typed distance.
     ///
-    /// A floor-bound product keeps its height, so the vertical axis has no free distance to state;
-    /// the fields are not offered there.
+    /// A floor-bound product keeps its height and a panel never leaves its own thickness axis, so an
+    /// axis the tool does not offer has no free distance to state; the fields are not offered there.
     pub(crate) fn exact_axis(&self) -> bool {
         match self.drag.as_ref() {
             Some(drag) => drag.rule.as_ref().is_none_or(|rule| rule.allows(drag.axis.move_axis())),
@@ -192,7 +199,7 @@ impl TranslateGizmo {
         let Some(pointer) = response.hover_pos() else {
             return Ok(None);
         };
-        let spec = HandleSpec { axes: ALL_AXES, length: handle_length };
+        let spec = HandleSpec { axes: target.move_kind.axes(target.project, target.selection), length: handle_length };
         let Some(axis) = hit_axis(target.camera, viewport, origin_world, pointer, spec) else {
             return Ok(None);
         };
@@ -208,7 +215,12 @@ impl TranslateGizmo {
         };
 
         let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
-        let rule = target.project.move_rule(&moving, target.snaps);
+        // The free move applies no rule at all: the furniture snapping of ADR 0146 is the other
+        // tool's, and a loose body keeps the pointer's own distance wherever it goes (N22).
+        let rule = match target.move_kind {
+            MoveKind::Free => None,
+            MoveKind::Furniture => target.project.move_rule(&moving, target.snaps),
+        };
         self.drag = Some(Drag {
             node: anchor.node,
             axis,
@@ -244,7 +256,7 @@ impl TranslateGizmo {
             origin_world,
             self.hover,
             self.drag.as_ref().map(|drag| drag.axis),
-            HandleSpec { axes: ALL_AXES, length: handle_length },
+            HandleSpec { axes: target.move_kind.axes(target.project, target.selection), length: handle_length },
         );
     }
 }

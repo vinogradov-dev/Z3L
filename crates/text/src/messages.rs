@@ -185,6 +185,17 @@ messages! {
     Move = ["Move", "Перемещение"],
     Select = ["Select", "Выбор"],
     Rotate = ["Rotate", "Вращение"],
+    Furniture = ["Furniture", "Мебель"],
+    SelectHint = ["Select: a click picks, a drag draws a band", "Выбор: щелчок выбирает, перетаскивание рисует рамку"],
+    MoveHint = [
+        "Move freely: the pointer's own distance, no snapping",
+        "Двигать свободно: расстояние по указателю, без привязок"
+    ],
+    FurnitureHint = [
+        "Move by furniture rules: a panel along its thickness, frames to their neighbours and the floor",
+        "Двигать по правилам мебели: панель вдоль своей толщины, каркасы — к соседям и полу"
+    ],
+    RotateHint = ["Turn the selection about its pivot", "Поворачивать выделение вокруг пивота"],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],
     MeshEditStatusFew = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершины"],
     MeshEditStatusMany = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершин"],
