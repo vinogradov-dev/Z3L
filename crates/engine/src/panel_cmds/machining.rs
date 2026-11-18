@@ -13,7 +13,8 @@
 //! It does not do: compute the machining effects or the outline they cut — `param`
 //! owns that.
 
-use model::{Catalog, Id, MachiningAnchor, MachiningId, MachiningKind, MachiningParams, Project};
+use catalog::Directory;
+use model::{Id, MachiningAnchor, MachiningId, MachiningKind, MachiningParams, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -61,7 +62,7 @@ fn machining_add_enabled(session: &Session, params: &Value) -> bool {
 
 fn machining_add_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelMachiningAdd::parse(params)?;
@@ -117,7 +118,7 @@ fn machining_update_enabled(session: &Session, params: &Value) -> bool {
 
 fn machining_update_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelMachiningUpdate::parse(params)?;
@@ -162,7 +163,7 @@ fn machining_remove_enabled(session: &Session, params: &Value) -> bool {
 
 fn machining_remove_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelMachiningRemove::parse(params)?;
@@ -212,7 +213,7 @@ fn machining_move_enabled(session: &Session, params: &Value) -> bool {
 
 fn machining_move_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelMachiningMove::parse(params)?;

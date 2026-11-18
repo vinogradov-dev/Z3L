@@ -11,15 +11,23 @@ use units::Length;
 use crate::directory::Directory;
 use crate::item::NomenclatureItem;
 use crate::kind::Trait;
-use crate::property::{PropertyType, PropertyValue, Rgb};
+use crate::money::Money;
+use crate::property::{PropertyType, PropertyValue};
 use crate::slug::Slug;
 
 /// The property naming a board's or a band's thickness.
 pub const THICKNESS_SLUG: &str = "thickness";
 /// The property naming an edge band's width.
 pub const WIDTH_SLUG: &str = "width";
-/// The property naming what a record looks like, as a display colour.
+/// The property naming what a record looks like, as the decor's own name: `oak`, `white`.
+///
+/// A text rather than a colour: a workshop reads its decor by name, and the scene's tint arrives
+/// with the appearance block, which has its own consumer (`§7`).
 pub const COLOR_SLUG: &str = "color";
+/// The property naming the stock group a record is bought in.
+pub const GROUP_SLUG: &str = "group";
+/// The property naming the price of one purchase unit.
+pub const PRICE_SLUG: &str = "price";
 /// The property naming the long side of the sheet a board is bought in.
 pub const SHEET_LENGTH_SLUG: &str = "sheet-length";
 /// The property naming the short side of that sheet.
@@ -43,8 +51,8 @@ pub struct BoardView {
     pub name: String,
     /// The nominal thickness a panel takes from it.
     pub thickness: Length,
-    /// What it looks like, when the record says.
-    pub color: Option<Rgb>,
+    /// The decor's name, when the record says: `oak`, `white`.
+    pub color: Option<String>,
     /// The sheet it is bought in, when the record carries one.
     pub sheet: Option<SheetView>,
 }
@@ -60,8 +68,21 @@ pub struct BandingView {
     pub thickness: Length,
     /// The width the band is cut from.
     pub width: Length,
-    /// What it looks like, when the record says.
-    pub color: Option<Rgb>,
+    /// The band's own name for its decor, when the record says.
+    pub color: Option<String>,
+}
+
+/// The stock block a record is bought in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StockView {
+    /// The long side of the sheet.
+    pub length: Length,
+    /// The short side of the sheet.
+    pub width: Length,
+    /// The workshop's own stock group, when it has one.
+    pub group: Option<String>,
+    /// The price of one sheet, when the record carries one.
+    pub price: Option<Money>,
 }
 
 impl Directory {
@@ -80,7 +101,13 @@ impl Directory {
             (Some(length), Some(width)) => Some(SheetView { length, width }),
             _ => None,
         };
-        Some(BoardView { id, name: item.name().to_owned(), thickness, color: self.color(item), sheet })
+        Some(BoardView {
+            id,
+            name: item.name().to_owned(),
+            thickness,
+            color: self.text(item, COLOR_SLUG).map(str::to_owned),
+            sheet,
+        })
     }
 
     /// The edge band with `id`, when the record is of a banded kind that is not a sheet.
@@ -95,7 +122,7 @@ impl Directory {
             name: item.name().to_owned(),
             thickness: self.length(item, THICKNESS_SLUG)?,
             width: self.length(item, WIDTH_SLUG)?,
-            color: self.color(item),
+            color: self.text(item, COLOR_SLUG).map(str::to_owned),
         })
     }
 
@@ -118,12 +145,24 @@ impl Directory {
         }
     }
 
-    /// A display colour of `item`, looked up by slug.
-    pub fn color(&self, item: &NomenclatureItem) -> Option<Rgb> {
-        match self.prop_by_slug(item, COLOR_SLUG)?.1 {
-            PropertyValue::Color(color) => Some(*color),
+    /// A text property of `item`, looked up by the row's slug and read only when it is a text.
+    pub fn text<'a>(&'a self, item: &'a NomenclatureItem, slug: &str) -> Option<&'a str> {
+        match self.prop_by_slug(item, slug)?.1 {
+            PropertyValue::Text(text) => Some(text.as_str()),
             _ => None,
         }
+    }
+
+    /// The stock block of `item`: a sheet, a price and a group, when the record carries them.
+    pub fn stock(&self, item: &NomenclatureItem) -> Option<StockView> {
+        let length = self.length(item, SHEET_LENGTH_SLUG)?;
+        let width = self.length(item, SHEET_WIDTH_SLUG)?;
+        let group = self.text(item, GROUP_SLUG).map(str::to_owned);
+        let price = match self.prop_by_slug(item, PRICE_SLUG)?.1 {
+            PropertyValue::Money(price) => Some(*price),
+            _ => None,
+        };
+        Some(StockView { length, width, group, price })
     }
 
     /// The record's value of the property whose row is named `slug`, with its declared type.
@@ -171,7 +210,7 @@ mod tests {
         let properties = PropertyRegistry::new([
             Property::new(code(1), slug(THICKNESS_SLUG), "Thickness", range(1, 100)).expect("a row"),
             Property::new(code(2), slug(WIDTH_SLUG), "Width", range(1, 100)).expect("a row"),
-            Property::new(code(3), slug(COLOR_SLUG), "Colour", PropertyType::Color).expect("a row"),
+            Property::new(code(3), slug(COLOR_SLUG), "Decor", PropertyType::Text { max_chars: 48 }).expect("a row"),
             Property::new(code(4), slug(SHEET_LENGTH_SLUG), "Sheet length", range(1, 6_000)).expect("a row"),
             Property::new(code(5), slug(SHEET_WIDTH_SLUG), "Sheet width", range(1, 6_000)).expect("a row"),
         ])
@@ -209,7 +248,7 @@ mod tests {
         let millimetres = |value: i64| Length::from_micrometres(value * 1_000);
         let props = BTreeMap::from([
             (code(1), PropertyValue::Length(millimetres(18))),
-            (code(3), PropertyValue::Color(Rgb::new(0xd8, 0xd5, 0xcf))),
+            (code(3), PropertyValue::Text("white".to_owned())),
             (code(4), PropertyValue::Length(millimetres(2_800))),
             (code(5), PropertyValue::Length(millimetres(2_070))),
         ]);
@@ -218,7 +257,7 @@ mod tests {
         let directory = directory(item(id, 1, props), [kind]);
         let board = directory.board(id).expect("a board");
         assert_eq!(board.thickness, millimetres(18));
-        assert_eq!(board.color, Some(Rgb::new(0xd8, 0xd5, 0xcf)));
+        assert_eq!(board.color.as_deref(), Some("white"));
         assert_eq!(board.sheet, Some(SheetView { length: millimetres(2_800), width: millimetres(2_070) }));
         assert_eq!(directory.boards().count(), 1);
     }

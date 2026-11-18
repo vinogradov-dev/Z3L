@@ -1,3 +1,3 @@
 material_id,name,kind,thickness_um,width_um,color,sheet_length_um,sheet_width_um,stock_group,price_minor
-1,Chipboard,chipboard,18000,0,white,2800000,2070000,chipboard-18,320000
-101,PVC edge,pvc,2000,22000,white,0,0,,0
+1-1,Chipboard,chipboard,18000,0,white,2800000,2070000,chipboard-18,320000
+1-101,PVC edge,pvc,2000,22000,white,0,0,,0

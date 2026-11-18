@@ -949,7 +949,7 @@ mod tests {
     use crate::testing::millimetres;
 
     use super::*;
-    use crate::{CornerBanding, EdgeBow, Id, MaterialId, PanelNominalSize, Placement, RectCorner, RectEdge};
+    use crate::{CornerBanding, EdgeBow, Id, ItemId, PanelNominalSize, Placement, RectCorner, RectEdge};
     use units::Length;
 
     fn panel(length: i64, width: i64) -> Panel {
@@ -1019,7 +1019,7 @@ mod tests {
             )
             .expect("chamfer"),
         );
-        let material = MaterialId::new(1).expect("material");
+        let material = ItemId::new(1, 1).expect("material");
         for edge in [RectEdge::Bottom, RectEdge::Right] {
             panel
                 .apply_edge_banding(
@@ -1125,7 +1125,7 @@ mod tests {
             CornerFeature::new(RectCorner::TopRight.id(), CornerFeatureKind::Radius { radius: millimetres(10) })
                 .expect("radius"),
         );
-        let material = MaterialId::new(1).expect("material");
+        let material = ItemId::new(1, 1).expect("material");
         let band =
             EdgeBanding::new(RectEdge::Right.id(), material, false, millimetres(2), millimetres(20)).expect("band");
         panel.apply_edge_banding(band).expect("apply band");
@@ -1143,7 +1143,7 @@ mod tests {
     fn banding_outside_the_outline_is_rejected() {
         let mut panel = panel(100, 60);
         let edge = EdgeId::new(9).expect("edge id");
-        let material = MaterialId::new(1).expect("material");
+        let material = ItemId::new(1, 1).expect("material");
         let band = EdgeBanding::new(edge, material, false, millimetres(2), millimetres(20)).expect("band");
         assert_eq!(panel.apply_edge_banding(band), Err(PanelContourError::UnsupportedEdge { edge }));
     }
@@ -1210,7 +1210,7 @@ mod tests {
         panel.upsert_corner_feature(
             CornerFeature::new(corner, CornerFeatureKind::Radius { radius: millimetres(10) }).expect("radius"),
         );
-        let edge_material = MaterialId::new(1).expect("material");
+        let edge_material = ItemId::new(1, 1).expect("material");
         panel
             .apply_edge_banding(
                 EdgeBanding::new(RectEdge::Right.id(), edge_material, false, millimetres(2), millimetres(20))
@@ -1218,7 +1218,7 @@ mod tests {
             )
             .expect("apply edge band");
         panel.add_band_source(SegmentSource::Edge(RectEdge::Right.id()));
-        let corner_material = MaterialId::new(2).expect("material");
+        let corner_material = ItemId::new(1, 2).expect("material");
         panel.upsert_corner_banding(
             CornerBanding::new(corner, corner_material, true, millimetres(1), millimetres(15)).expect("corner band"),
         );
@@ -1271,7 +1271,7 @@ mod tests {
         let mut panel = panel(100, 60);
         let corner = RectCorner::TopRight.id();
         panel.upsert_corner_banding(
-            CornerBanding::new(corner, MaterialId::new(1).expect("material"), false, millimetres(2), millimetres(20))
+            CornerBanding::new(corner, ItemId::new(1, 1).expect("material"), false, millimetres(2), millimetres(20))
                 .expect("corner band"),
         );
         panel.add_band_source(SegmentSource::Corner(corner));

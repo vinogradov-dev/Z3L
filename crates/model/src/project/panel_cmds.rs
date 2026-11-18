@@ -151,7 +151,7 @@ impl Project {
     pub fn set_panel_material(
         &mut self,
         id: Id,
-        material: MaterialId,
+        material: ItemId,
         thickness: Length,
     ) -> Result<Revision, ProjectError> {
         let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
@@ -589,7 +589,7 @@ impl Project {
         parent: Id,
         name: impl Into<String>,
         nominal_size: PanelNominalSize,
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Id, ProjectError> {
@@ -624,7 +624,7 @@ impl Project {
         nominal_size: PanelNominalSize,
         outline: PanelOutline,
         bevels: &[EdgeBevel],
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Id, ProjectError> {
@@ -679,7 +679,7 @@ impl Project {
         parent: Id,
         name: impl Into<String>,
         contour: &Contour,
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Id, ProjectError> {
@@ -697,7 +697,7 @@ impl Project {
         name: impl Into<String>,
         contour: &Contour,
         bevels: &[EdgeBevel],
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Id, ProjectError> {
@@ -1168,7 +1168,7 @@ mod tests {
         project
             .add_cutout(other_panel, blind_rect, CutoutDepth::Blind { depth: millimetres(8) }, FaceSide::A)
             .expect("blind cutout");
-        let material = MaterialId::new(1).expect("material id");
+        let material = ItemId::new(1, 1).expect("material id");
         let revision = project.set_panel_material(other_panel, material, millimetres(5)).expect("material change");
         assert_eq!(revision.get(), 3);
         let panel = project.panel(other_panel).expect("panel exists");
@@ -1194,7 +1194,7 @@ mod tests {
     fn cutout_coordinates_are_nominal_and_do_not_move_with_the_core() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let material = MaterialId::new(99).expect("material id");
+        let material = ItemId::new(1, 99).expect("material id");
         for edge in [1, 4] {
             let band =
                 EdgeBanding::new(EdgeId::new(edge).expect("edge id"), material, true, millimetres(2), millimetres(22))

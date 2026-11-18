@@ -19,7 +19,6 @@ use std::collections::HashSet;
 use units::Length;
 
 mod camera;
-mod catalog;
 mod class;
 mod container;
 mod contour;
@@ -46,10 +45,6 @@ pub mod testing;
 mod tree;
 
 pub use camera::{CameraError, CameraNode, CameraProjection};
-pub use catalog::{
-    Catalog, CatalogError, Currency, EdgeBandingMaterial, MaterialId, Money, PanelMaterial, PanelStock, SheetSize,
-    StockError,
-};
 pub use class::{
     CLASS_MAX_CODE, ClassCode, ClassCodeError, ClassPrefix, ClassRow, Extent, Fill, Level, Measure, Mount, Nesting,
     Opening, Operation, OperationSet, Supply, TraitSet, registry,

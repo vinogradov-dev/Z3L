@@ -19,10 +19,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use model::{
-    Catalog, Currency, EdgeBandingMaterial, MaterialId, Money, PanelMaterial, PanelNominalSize, PanelRect, PanelStock,
-    SheetSize,
-};
+use catalog::{Currency, Directory, Money, Starter};
+use model::{ItemId, PanelNominalSize, PanelRect};
 use units::Length;
 
 /// The fixtures every crate's tests start from, defined once in `model::testing`
@@ -43,16 +41,19 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     directory
 }
 
+/// The package number the sample fixtures' directory uses.
+pub const SAMPLE_PACKAGE: u32 = 1;
+
 /// The stable id of the sample panel material.
 #[allow(clippy::expect_used)]
-pub fn sample_material_id() -> MaterialId {
-    MaterialId::new(1).expect("non-zero material id")
+pub fn sample_material_id() -> ItemId {
+    ItemId::new(SAMPLE_PACKAGE, 1).expect("non-zero serial")
 }
 
 /// The stable id of the sample edge-banding material.
 #[allow(clippy::expect_used)]
-pub fn sample_edge_material_id() -> MaterialId {
-    MaterialId::new(101).expect("non-zero material id")
+pub fn sample_edge_material_id() -> ItemId {
+    ItemId::new(SAMPLE_PACKAGE, 101).expect("non-zero serial")
 }
 
 /// The fallback thickness of a sample panel.
@@ -110,34 +111,56 @@ pub fn sample_narrow_panel_nominal_size() -> PanelNominalSize {
     .expect("sample panel size is within limits")
 }
 
-/// A catalogue with an 18 mm chipboard and a 2 x 22 mm PVC edge.
+/// The starter package with an 18 mm chipboard and a 2 x 22 mm PVC edge.
 ///
 /// The board is stocked as a 2800 x 2070 mm sheet in the group `chipboard-18` and priced at 3200.00
 /// roubles a sheet, so every fixture that exports a package exercises the stock block and the money
 /// columns instead of an empty corner of the contract.
 #[allow(clippy::expect_used)]
-pub fn sample_catalog() -> Catalog {
-    let sheet = SheetSize::new(
-        Length::from_millimetres(2800).expect("2800 mm fits a length"),
-        Length::from_millimetres(2070).expect("2070 mm fits a length"),
-    )
-    .expect("the sample sheet is valid");
-    let stock = PanelStock::new(sheet, Some("chipboard-18".to_owned()), Some(Money::from_minor(320_000)))
-        .expect("the sample stock block is valid");
-    let panel = PanelMaterial::new(sample_material_id(), "Chipboard", "chipboard", sample_panel_thickness(), "white")
-        .expect("sample panel material is valid")
-        .with_stock(stock);
-    let edge = EdgeBandingMaterial::new(
-        sample_edge_material_id(),
-        "PVC edge",
-        "pvc",
-        Length::from_millimetres(2).expect("2 mm fits a length"),
-        Length::from_millimetres(22).expect("22 mm fits a length"),
-        "white",
-    )
-    .expect("sample edge material is valid");
-    Catalog::new(vec![panel], vec![edge], Some(Currency::new("RUB", 100).expect("a currency")))
-        .expect("sample catalogue ids are unique")
+pub fn sample_catalog() -> Directory {
+    let millimetres = |value: i64| Length::from_micrometres(value * 1_000);
+    let sheet = Some((millimetres(2_800), millimetres(2_070)));
+    Starter::new()
+        .board(1, "Chipboard", "chipboard", sample_panel_thickness(), "white", sheet)
+        .stocked("chipboard-18", Money::from_minor(320_000))
+        .banding(101, "PVC edge", "pvc", millimetres(2), millimetres(22), "white")
+        .currency(Currency::new("RUB", 100).ok())
+        .directory()
+        .expect("the sample package is valid")
+}
+
+/// The starter package with a board of `board` thickness and an edge band of `band` by `width`.
+#[allow(clippy::expect_used)]
+pub fn sample_catalog_with(board: Length, band: Length, width: Length) -> Directory {
+    Starter::new()
+        .board(1, "Thick board", "mdf", board, "white", None)
+        .banding(101, "Thick edge", "abs", band, width, "white")
+        .currency(Currency::new("RUB", 100).ok())
+        .directory()
+        .expect("the fixture package is valid")
+}
+
+/// The starter package with one board of `thickness` and no edge band.
+///
+/// A test that needs a board other than the sample one asks for it here instead of building a
+/// catalogue of its own, so every fixture speaks the directory's language.
+#[allow(clippy::expect_used)]
+pub fn sample_catalog_with_thickness(thickness: Length) -> Directory {
+    Starter::new()
+        .board(1, "Thin board", "mdf", thickness, "white", None)
+        .currency(Currency::new("RUB", 100).ok())
+        .directory()
+        .expect("the fixture package is valid")
+}
+
+/// The starter package with one edge band of `thickness` and `width`, and no board.
+#[allow(clippy::expect_used)]
+pub fn sample_catalog_with_band(thickness: Length, width: Length) -> Directory {
+    Starter::new()
+        .banding(101, "Thick edge", "abs", thickness, width, "white")
+        .currency(Currency::new("RUB", 100).ok())
+        .directory()
+        .expect("the fixture package is valid")
 }
 
 /// A 100 x 50 mm cutout rectangle at `(10, 10)` on the sample panel.

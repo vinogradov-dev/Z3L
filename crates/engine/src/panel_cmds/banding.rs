@@ -13,9 +13,10 @@
 //! It does not do: derive the trimmed size, the outline ring or a mesh — `param` owns
 //! that.
 
+use catalog::Directory;
 use model::{
-    Catalog, ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow, EdgeId, Id,
-    MaterialId, Operation, Project, ProjectError, RingBanding, VertexId,
+    ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow, EdgeId, Id, ItemId,
+    Operation, Project, ProjectError, RingBanding, VertexId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,7 +42,7 @@ pub struct PanelEdgeBandingSet {
     /// Edge to cover.
     pub edge: EdgeId,
     /// Edge-banding material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
     /// Whether the banding thickness is taken out of the nominal size.
     pub included_in_size: bool,
 }
@@ -52,9 +53,9 @@ impl PanelEdgeBandingSet {
             .map_err(|error| CommandError::InvalidParams { command: EDGE_BANDING_SET_ID, message: error.to_string() })
     }
 
-    fn band(&self, catalog: &Catalog) -> Option<EdgeBanding> {
-        let material = catalog.edge_material(self.material)?;
-        EdgeBanding::new(self.edge, self.material, self.included_in_size, material.thickness(), material.width()).ok()
+    fn band(&self, catalog: &Directory) -> Option<EdgeBanding> {
+        let material = catalog.banding(self.material)?;
+        EdgeBanding::new(self.edge, self.material, self.included_in_size, material.thickness, material.width).ok()
     }
 }
 
@@ -66,7 +67,7 @@ fn edge_banding_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelEdgeBandingSet::parse(params) else {
         return false;
     };
-    let Some(band) = params.band(session.catalog()) else {
+    let Some(band) = params.band(session.directory()) else {
         return false;
     };
     class_allows(session.project(), params.panel, EDGE_BANDING_SET_ID, Operation::EdgeBand).is_ok()
@@ -75,16 +76,16 @@ fn edge_banding_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn edge_banding_set_run(
     project: &mut Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelEdgeBandingSet::parse(params)?;
     class_allows(project, params.panel, EDGE_BANDING_SET_ID, Operation::EdgeBand)?;
-    let Some(material) = catalog.edge_material(params.material) else {
+    let Some(material) = catalog.banding(params.material) else {
         return Err(CommandError::UnknownMaterial { material: params.material });
     };
     let band =
-        EdgeBanding::new(params.edge, params.material, params.included_in_size, material.thickness(), material.width())
+        EdgeBanding::new(params.edge, params.material, params.included_in_size, material.thickness, material.width)
             .map_err(|error| CommandError::Model(ProjectError::PanelDimension(error)))?;
     project.set_edge_banding(params.panel, band)?;
     Ok(CommandOutcome::changed())
@@ -133,7 +134,7 @@ fn edge_banding_clear_enabled(session: &Session, params: &Value) -> bool {
 
 fn edge_banding_clear_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelEdgeBandingClear::parse(params)?;
@@ -156,7 +157,7 @@ pub struct PanelCornerBandingSet {
     /// Chamfer corner to cover.
     pub corner: VertexId,
     /// Edge-banding material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
     /// Whether the banding thickness is taken out of the nominal size.
     pub included_in_size: bool,
 }
@@ -167,10 +168,9 @@ impl PanelCornerBandingSet {
             .map_err(|error| CommandError::InvalidParams { command: CORNER_BANDING_SET_ID, message: error.to_string() })
     }
 
-    fn band(&self, catalog: &Catalog) -> Option<CornerBanding> {
-        let material = catalog.edge_material(self.material)?;
-        CornerBanding::new(self.corner, self.material, self.included_in_size, material.thickness(), material.width())
-            .ok()
+    fn band(&self, catalog: &Directory) -> Option<CornerBanding> {
+        let material = catalog.banding(self.material)?;
+        CornerBanding::new(self.corner, self.material, self.included_in_size, material.thickness, material.width).ok()
     }
 }
 
@@ -186,7 +186,7 @@ fn corner_banding_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelCornerBandingSet::parse(params) else {
         return false;
     };
-    let Some(band) = params.band(session.catalog()) else {
+    let Some(band) = params.band(session.directory()) else {
         return false;
     };
     class_allows(session.project(), params.panel, CORNER_BANDING_SET_ID, Operation::EdgeBand).is_ok()
@@ -195,22 +195,17 @@ fn corner_banding_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn corner_banding_set_run(
     project: &mut Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerBandingSet::parse(params)?;
     class_allows(project, params.panel, CORNER_BANDING_SET_ID, Operation::EdgeBand)?;
-    let Some(material) = catalog.edge_material(params.material) else {
+    let Some(material) = catalog.banding(params.material) else {
         return Err(CommandError::UnknownMaterial { material: params.material });
     };
-    let band = CornerBanding::new(
-        params.corner,
-        params.material,
-        params.included_in_size,
-        material.thickness(),
-        material.width(),
-    )
-    .map_err(|error| CommandError::Model(ProjectError::PanelDimension(error)))?;
+    let band =
+        CornerBanding::new(params.corner, params.material, params.included_in_size, material.thickness, material.width)
+            .map_err(|error| CommandError::Model(ProjectError::PanelDimension(error)))?;
     project.set_corner_banding(params.panel, band)?;
     Ok(CommandOutcome::changed())
 }
@@ -257,7 +252,7 @@ fn corner_banding_clear_enabled(session: &Session, params: &Value) -> bool {
 
 fn corner_banding_clear_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerBandingClear::parse(params)?;
@@ -280,7 +275,7 @@ pub struct PanelRingBandingSet {
     /// Stable id of the ring segment to cover.
     pub segment: ContourSegmentId,
     /// Edge-banding material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
     /// Whether the banding thickness is taken out of the nominal size.
     pub included_in_size: bool,
 }
@@ -291,10 +286,9 @@ impl PanelRingBandingSet {
             .map_err(|error| CommandError::InvalidParams { command: RING_BANDING_SET_ID, message: error.to_string() })
     }
 
-    fn band(&self, catalog: &Catalog) -> Option<RingBanding> {
-        let material = catalog.edge_material(self.material)?;
-        RingBanding::new(self.segment, self.material, self.included_in_size, material.thickness(), material.width())
-            .ok()
+    fn band(&self, catalog: &Directory) -> Option<RingBanding> {
+        let material = catalog.banding(self.material)?;
+        RingBanding::new(self.segment, self.material, self.included_in_size, material.thickness, material.width).ok()
     }
 }
 
@@ -306,7 +300,7 @@ fn ring_banding_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelRingBandingSet::parse(params) else {
         return false;
     };
-    let Some(band) = params.band(session.catalog()) else {
+    let Some(band) = params.band(session.directory()) else {
         return false;
     };
     class_allows(session.project(), params.panel, RING_BANDING_SET_ID, Operation::EdgeBand).is_ok()
@@ -315,22 +309,17 @@ fn ring_banding_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn ring_banding_set_run(
     project: &mut Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelRingBandingSet::parse(params)?;
     class_allows(project, params.panel, RING_BANDING_SET_ID, Operation::EdgeBand)?;
-    let Some(material) = catalog.edge_material(params.material) else {
+    let Some(material) = catalog.banding(params.material) else {
         return Err(CommandError::UnknownMaterial { material: params.material });
     };
-    let band = RingBanding::new(
-        params.segment,
-        params.material,
-        params.included_in_size,
-        material.thickness(),
-        material.width(),
-    )
-    .map_err(|error| CommandError::Model(ProjectError::PanelDimension(error)))?;
+    let band =
+        RingBanding::new(params.segment, params.material, params.included_in_size, material.thickness, material.width)
+            .map_err(|error| CommandError::Model(ProjectError::PanelDimension(error)))?;
     project.set_ring_banding(params.panel, band)?;
     Ok(CommandOutcome::changed())
 }
@@ -375,7 +364,7 @@ fn ring_banding_clear_enabled(session: &Session, params: &Value) -> bool {
 
 fn ring_banding_clear_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelRingBandingClear::parse(params)?;
@@ -434,7 +423,7 @@ fn corner_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_corner_feature(params.panel, feature).is_ok()
 }
 
-fn corner_set_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn corner_set_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerSet::parse(params)?;
     class_allows(project, params.panel, CORNER_SET_ID, Operation::Contour)?;
     project.set_corner_feature(params.panel, params.feature()?)?;
@@ -475,7 +464,11 @@ fn corner_clear_enabled(session: &Session, params: &Value) -> bool {
     session.project().panel(params.panel).is_some_and(|panel| panel.corner_feature(params.corner).is_some())
 }
 
-fn corner_clear_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn corner_clear_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerClear::parse(params)?;
     project.clear_corner_feature(params.panel, params.corner)?;
     Ok(CommandOutcome::changed())
@@ -530,7 +523,7 @@ fn bow_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_edge_bow(params.panel, bow).is_ok()
 }
 
-fn bow_set_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bow_set_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
     let params = PanelBowSet::parse(params)?;
     class_allows(project, params.panel, BOW_SET_ID, Operation::Contour)?;
     project.set_edge_bow(params.panel, params.bow()?)?;
@@ -571,7 +564,7 @@ fn bow_clear_enabled(session: &Session, params: &Value) -> bool {
     session.project().panel(params.panel).is_some_and(|panel| panel.edge_bow(params.edge).is_some())
 }
 
-fn bow_clear_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bow_clear_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
     let params = PanelBowClear::parse(params)?;
     project.clear_edge_bow(params.panel, params.edge)?;
     Ok(CommandOutcome::changed())

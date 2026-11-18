@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use model::{BandingSpec, Catalog, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
+use catalog::Directory;
+use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
 use param::EdgeBandProfile;
 use serde_json::Value;
 
@@ -35,7 +36,7 @@ pub struct Session {
     undo: Vec<Project>,
     redo: Vec<Project>,
     dirty: bool,
-    catalog: Arc<Catalog>,
+    directory: Arc<Directory>,
     edit: Option<OpenEdit>,
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
@@ -49,13 +50,13 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a clean session around a document with an empty catalogue.
+    /// Creates a clean session around a document with an empty directory.
     pub fn new(project: Project) -> Self {
-        Self::with_catalog(project, Catalog::default())
+        Self::with_directory(project, Directory::default())
     }
 
-    /// Creates a clean session around a document and its read-only material catalogue.
-    pub fn with_catalog(project: Project, catalog: Catalog) -> Self {
+    /// Creates a clean session around a document and its read-only nomenclature directory.
+    pub fn with_directory(project: Project, directory: Directory) -> Self {
         let saved_project = project.clone();
         Self {
             project,
@@ -63,7 +64,7 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             dirty: false,
-            catalog: Arc::new(catalog),
+            directory: Arc::new(directory),
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
@@ -145,36 +146,36 @@ impl Session {
         self.preview.geometry(node).or_else(|| self.project.object(node).map(|object| object.geometry()))
     }
 
-    /// The session-scoped, read-only material catalogue.
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    /// The session-scoped, read-only nomenclature directory.
+    pub fn directory(&self) -> &Directory {
+        &self.directory
     }
 
-    /// Resolves one panel's geometry against the session catalogue.
+    /// Resolves one panel's geometry against the session directory.
     ///
     /// Catalogue material dimensions take precedence; the stored fallbacks are used only when a
     /// material is missing. This keeps rendering, diagnostics and the panel card on one source of
     /// truth.
     pub fn panel_geometry(&self, panel_id: Id) -> Result<PanelGeometry, ProjectError> {
-        resolve::panel_geometry(&self.project, &self.catalog, panel_id)
+        resolve::panel_geometry(&self.project, &self.directory, panel_id)
     }
 
-    /// Resolves a banding profile against the session catalogue.
+    /// Resolves a banding profile against the session directory.
     ///
-    /// The catalogue supplies both the thickness that widens the core and the visible band width;
-    /// stored fallbacks cover a material that is missing from the catalogue.
+    /// The directory supplies both the thickness that widens the core and the visible band width;
+    /// stored fallbacks cover a material that is missing from the directory.
     pub fn band_profile(&self, band: &EdgeBanding) -> EdgeBandProfile {
         self.band_spec_profile(&band.spec())
     }
 
     /// Resolves a banding profile for either an edge or a corner owner.
     pub fn band_spec_profile(&self, spec: &BandingSpec) -> EdgeBandProfile {
-        EdgeBandProfile::new(resolve::spec_thickness(spec, &self.catalog), resolve::spec_width(spec, &self.catalog))
+        EdgeBandProfile::new(resolve::spec_thickness(spec, &self.directory), resolve::spec_width(spec, &self.directory))
     }
 
-    /// Resolves the derived issues of one panel against the session catalogue.
+    /// Resolves the derived issues of one panel against the session directory.
     pub fn panel_diagnostics(&self, panel_id: Id) -> Vec<PanelDiagnostic> {
-        diagnose_panel(&self.project, &self.catalog, panel_id)
+        diagnose_panel(&self.project, &self.directory, panel_id)
     }
 
     /// Whether an earlier document state can be restored.
@@ -295,7 +296,7 @@ impl Session {
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
-        let outcome = spec.run(&mut working, &self.catalog, params)?;
+        let outcome = spec.run(&mut working, &self.directory, params)?;
         spec.creation_refusal(self, params).map_err(|refusal| CommandError::creation(spec.id(), refusal))?;
         let previous = std::mem::replace(&mut self.project, working);
         Ok((outcome, previous))
@@ -344,10 +345,10 @@ mod tests {
     use super::*;
 
     use model::{
-        Catalog, ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth,
-        CutoutShape, EdgeBandingMaterial, EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor,
-        MachiningParams, PanelContourError, PanelMaterial, PanelNominalSize, PanelOutline, PivotLocal, Placement,
-        ProjectError, PropertyValue, RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
+        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor, MachiningParams, PanelContourError,
+        PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue, RectCorner, RectEdge,
+        Revision, SYSTEM_CLASS, SegmentSource, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -373,13 +374,13 @@ mod tests {
     };
 
     fn sample_session() -> Session {
-        Session::with_catalog(sample_project(), sample_catalog())
+        Session::with_directory(sample_project(), sample_catalog())
     }
 
     /// The sample scene with one product open, so a furniture command has somewhere to build.
     fn product_session() -> Session {
         let (project, product) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
         session
     }
@@ -422,7 +423,7 @@ mod tests {
         let source = project
             .add_object(product, "Counter", Placement::IDENTITY, Geometry::Constructive(constructive))
             .expect("contour source");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
         (session, source)
     }
@@ -495,7 +496,7 @@ mod tests {
         let second = project
             .add_product(root, "Other", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
             .expect("a second product");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(second), "the second product is open");
         let closed = json_params(&PanelCreate { parent: first, ..panel_create(&session, "Back") });
         assert!(matches!(
@@ -805,7 +806,7 @@ mod tests {
         ));
 
         let mut unknown_material = contour_panel_create(&session, source, "Top");
-        unknown_material.material = model::MaterialId::new(9_999).expect("id");
+        unknown_material.material = model::ItemId::new(1, 9_999).expect("id");
         assert!(!spec.enabled(&session, &json_params(&unknown_material)));
         assert_eq!(session.project().revision(), before);
     }
@@ -838,7 +839,7 @@ mod tests {
             .with_rotation_euler(EulerAngles { z: Degrees::from_millidegrees(40_000), ..EulerAngles::default() })
             .expect("rotation");
         let parent = project.add_component(product, "Frame", parent_world).expect("container");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
 
         let create = PanelContourCreate {
@@ -1553,11 +1554,8 @@ mod tests {
 
     #[test]
     fn material_set_accepts_machining_that_no_longer_fits() {
-        let panel_material =
-            PanelMaterial::new(sample_material_id(), "Thin board", "mdf", sample_thin_panel_thickness(), "white")
-                .expect("thin material");
-        let catalog = Catalog::new(vec![panel_material], Vec::new(), None).expect("catalog");
-        let mut session = Session::with_catalog(sample_project(), catalog);
+        let catalog = testkit::sample_catalog_with_thickness(sample_thin_panel_thickness());
+        let mut session = Session::with_directory(sample_project(), catalog);
         let panel_id = Id::new(4).expect("id");
         let blind = cutout_request(
             panel_id,
@@ -1577,7 +1575,7 @@ mod tests {
     #[test]
     fn unknown_materials_are_rejected_without_mutation() {
         let mut session = sample_session();
-        let missing = model::MaterialId::new(999).expect("id");
+        let missing = model::ItemId::new(1, 999).expect("id");
         let params = json_params(&PanelMaterialSet { panel: Id::new(2).expect("id"), material: missing });
         let error = session.dispatch("panel.material.set", &params).expect_err("unknown material");
         assert!(matches!(error, CommandError::UnknownMaterial { material } if material == missing));
@@ -1642,17 +1640,8 @@ mod tests {
 
     #[test]
     fn edge_banding_set_rejects_a_band_that_empties_the_core() {
-        let edge_material = EdgeBandingMaterial::new(
-            sample_edge_material_id(),
-            "Wide edge",
-            "pvc",
-            sample_wide_band_thickness(),
-            sample_band_width(),
-            "white",
-        )
-        .expect("wide edge material");
-        let catalog = Catalog::new(Vec::new(), vec![edge_material], None).expect("catalog");
-        let mut session = Session::with_catalog(sample_project(), catalog);
+        let catalog = testkit::sample_catalog_with_band(sample_wide_band_thickness(), sample_band_width());
+        let mut session = Session::with_directory(sample_project(), catalog);
         let params = PanelEdgeBandingSet {
             panel: Id::new(2).expect("id"),
             edge: EdgeId::new(1).expect("edge id"),
@@ -2505,7 +2494,7 @@ mod tests {
         let mut expected = project.clone();
         expected.set_node_placement(front, zeroed).expect("expected world-zero placement");
 
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         session
             .dispatch("node.placement.world_zero", &json_params(&NodePlacementWorldZero { node: front }))
             .expect("zero the nested translation");
@@ -2955,7 +2944,7 @@ mod product_tests {
 
     /// A session with two products, created through the one creation command.
     fn session_with_two_products() -> (Session, model::Id, model::Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let mut create = |name: &str| {
             let placement = session.project().product_placement(box_());
@@ -3003,7 +2992,7 @@ mod product_tests {
 
     #[test]
     fn only_a_product_container_can_be_opened() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let panel = model::Id::new(2).expect("the sample panel");
         assert!(!session.open_product(root), "the root is a frame, not a product");
@@ -3021,7 +3010,7 @@ mod product_tests {
         assert!(!text.contains("\"open\""), "no open flag is stored on a node");
 
         let reloaded = serde_json::from_str::<model::Project>(&text).expect("load the scene");
-        let next = Session::with_catalog(reloaded, sample_catalog());
+        let next = Session::with_directory(reloaded, sample_catalog());
         assert_eq!(next.active_product(), None, "a reloaded scene starts with every product closed");
     }
 

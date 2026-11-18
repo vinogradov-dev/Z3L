@@ -583,7 +583,7 @@ mod tests {
     fn a_hidden_container_still_lists_its_children() {
         // Hiding a branch is a viewport decision, not a tree one: the row stays where the user can
         // find it and switch it back on (ADR 0065).
-        let session = Session::with_catalog(sample_project(), sample_catalog());
+        let session = Session::with_directory(sample_project(), sample_catalog());
         let mut flags = ViewFlags::default();
         flags.set_hidden(Id::new(3).expect("drawer id"), true);
         let (texts, _) = draw(&session, &mut flags);
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn a_row_at_rest_reveals_nothing_and_a_flagged_row_keeps_its_toggle() {
-        let session = Session::with_catalog(sample_project(), sample_catalog());
+        let session = Session::with_directory(sample_project(), sample_catalog());
         let shelf = Id::new(2).expect("shelf id");
         let mut flags = ViewFlags::default();
         let (resting, resting_images) = draw(&session, &mut flags);
@@ -625,7 +625,7 @@ mod tests {
         use engine::node_cmds::NODE_PROPERTY_SET_ID;
         use model::{PropertyValue, SYSTEM_CLASS};
 
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let (before, _) = draw(&session, &mut ViewFlags::default());
         assert!(before.iter().any(|text| text == "Drawer  [component]"), "a bare component says so: {before:?}");

@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn an_axis_edit_moves_the_node_as_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
 
         drag(&mut session, panel, Axis::X, &[10.0]);
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn a_drag_that_writes_every_frame_is_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
 
         drag(&mut session, panel, Axis::Y, &[1.0, 2.0, 3.0, 4.0]);
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn a_rotation_edit_is_one_undo_step_and_keeps_the_translation() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
 
         drag(&mut session, panel, Axis::Rx, &[90.0]);
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_value_does_not_touch_history() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         drag(&mut session, panel, Axis::X, &[0.0]);
         drag(&mut session, panel, Axis::Rx, &[0.0]);
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn a_full_turn_or_a_wrapped_angle_does_not_touch_history() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
 
         drag(&mut session, panel, Axis::Rx, &[360.0]);
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn a_hostile_value_is_refused_without_touching_the_document() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         let scope = session.edit_scope();
 
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn a_rotation_edit_keeps_the_exact_translation() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         let placement: Placement = serde_json::from_value(serde_json::json!({
             "translation": [1.234567, -0.0004, 5.5],
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn a_translation_edit_keeps_the_exact_quaternion() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         let angle: f64 = 0.123_456;
         let placement: Placement = serde_json::from_value(serde_json::json!({
@@ -504,7 +504,7 @@ mod tests {
         }))
         .expect("turned placement");
         project.set_node_placement(panel, start).expect("place the panel");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
 
         apply_world_zero(&mut session, panel, Lang::En).expect("zero the translation");
 

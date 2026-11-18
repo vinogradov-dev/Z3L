@@ -12,8 +12,9 @@
 //! Changes when: what the bar reports or the buttons it offers change — not when a tool gains a
 //! gesture, which belongs to the tool's own module.
 
+use catalog::Directory;
 use eframe::egui;
-use model::{Catalog, Geometry, Id, Node, Project};
+use model::{Geometry, Id, Node, Project};
 use scene::Projection;
 use text::{Lang, Message};
 use ui::TransformMode;
@@ -96,7 +97,7 @@ impl StatusSummary {
     /// no tree walk, no geometry solve and no second look at the document. The warning is the
     /// cheapest one to know — the editor's lock flag and a catalogue lookup; an outline that does not
     /// resolve needs the panel's geometry, which the inspector already computes.
-    fn of(project: &Project, catalog: &Catalog, selection: &[Id], locked: Option<Id>, lang: Lang) -> Self {
+    fn of(project: &Project, directory: &Directory, selection: &[Id], locked: Option<Id>, lang: Lang) -> Self {
         if selection.is_empty() {
             return Self::default();
         }
@@ -107,7 +108,7 @@ impl StatusSummary {
         };
         // The warning is the primary's in either case; name, size and material describe one node,
         // so a multi-selection carries the count and stops there.
-        summary.warning = warning_of(catalog, node, locked, lang);
+        summary.warning = warning_of(directory, node, locked, lang);
         if summary.count > 1 {
             return summary;
         }
@@ -119,14 +120,12 @@ impl StatusSummary {
                 summary.size = Some(
                     Message::StatusSize.with(lang, [nominal.length(), nominal.width(), panel.last_known_thickness()]),
                 );
-                summary.material = panel
-                    .material()
-                    .and_then(|id| catalog.panel_material(id))
-                    .map(|material| material.name().to_owned());
+                summary.material =
+                    panel.material().and_then(|id| directory.board(id)).map(|material| material.name.to_owned());
                 summary.banding = panel.edge_banding().first().map(|band| {
-                    let thickness = catalog
-                        .edge_material(band.material())
-                        .map_or_else(|| band.last_known_thickness(), |material| material.thickness());
+                    let thickness = directory
+                        .banding(band.material())
+                        .map_or_else(|| band.last_known_thickness(), |material| material.thickness);
                     Message::StatusBanding.with(lang, [thickness])
                 });
             }
@@ -185,7 +184,7 @@ impl StatusSummary {
 /// Every check is a flag or a catalogue lookup, so the frame path stays free of derived geometry.
 /// A missing edge material or an unresolved outline is a panel diagnostic: it needs the resolved
 /// panel, which the inspector computes for its own section and the bar does not repeat per frame.
-fn warning_of(catalog: &Catalog, node: &Node, locked: Option<Id>, lang: Lang) -> Option<StatusWarning> {
+fn warning_of(directory: &Directory, node: &Node, locked: Option<Id>, lang: Lang) -> Option<StatusWarning> {
     if locked == Some(node.id()) {
         return Some(StatusWarning {
             text: Message::LockedStatus.with(lang, [node.name()]),
@@ -197,7 +196,7 @@ fn warning_of(catalog: &Catalog, node: &Node, locked: Option<Id>, lang: Lang) ->
     };
     match panel.material() {
         None => Some(StatusWarning { text: Message::DiagNoMaterial.text(lang).to_owned(), hint: None }),
-        Some(material) if catalog.panel_material(material).is_none() => {
+        Some(material) if directory.board(material).is_none() => {
             Some(StatusWarning { text: Message::DiagPanelMaterialMissing.with(lang, [material]), hint: None })
         }
         Some(_) => None,
@@ -619,7 +618,7 @@ impl Document {
             }),
             navigation,
             creation_parent: self.editor.creation_parent_name(project).map(str::to_owned),
-            summary: StatusSummary::of(project, self.session.catalog(), selection, locked, lang),
+            summary: StatusSummary::of(project, self.session.directory(), selection, locked, lang),
             projection: self.projection(),
             rebuilding,
         }
@@ -918,7 +917,7 @@ mod tests {
                 .expect("the shelf panel is valid");
         let root =
             Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, vec![front.into(), shelf.into()]);
-        let mut session = Session::with_catalog(Project::new(root).expect("the project is valid"), sample_catalog());
+        let mut session = Session::with_directory(Project::new(root).expect("the project is valid"), sample_catalog());
         let params = serde_json::to_value(PanelEdgeBandingSet {
             panel: Id::new(2).expect("id"),
             edge: RectEdge::Bottom.id(),
@@ -934,7 +933,7 @@ mod tests {
     fn the_summary_reads_only_the_resolved_selection() {
         let session = banded_session();
         let front = Id::new(2).expect("id");
-        let summary = StatusSummary::of(session.project(), session.catalog(), &[front], None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &[front], None, Lang::En);
         let line = summary.line(Lang::En).expect("a selected panel has context");
         assert_eq!(summary.count, 1);
         assert_eq!(summary.name.as_deref(), Some("Front"));
@@ -954,7 +953,7 @@ mod tests {
     fn a_multi_selection_reports_its_count_and_nothing_more() {
         let session = banded_session();
         let selection = [Id::new(2).expect("id"), Id::new(4).expect("id")];
-        let summary = StatusSummary::of(session.project(), session.catalog(), &selection, None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &selection, None, Lang::En);
         assert_eq!(summary.count, 2);
         assert_eq!(summary.line(Lang::En).as_deref(), Some("Selected: 2"));
         assert!(summary.name.is_none(), "no single name describes two nodes");
@@ -963,7 +962,7 @@ mod tests {
     #[test]
     fn an_empty_selection_has_no_context() {
         let session = banded_session();
-        let summary = StatusSummary::of(session.project(), session.catalog(), &[], None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &[], None, Lang::En);
         assert_eq!(summary, StatusSummary::default());
         assert_eq!(summary.line(Lang::En), None);
     }
@@ -972,13 +971,13 @@ mod tests {
     fn the_summary_warns_about_a_lock_before_a_missing_material() {
         let session = banded_session();
         let front = Id::new(2).expect("id");
-        let locked = StatusSummary::of(session.project(), session.catalog(), &[front], Some(front), Lang::En);
+        let locked = StatusSummary::of(session.project(), session.directory(), &[front], Some(front), Lang::En);
         let warning = locked.warning.expect("a locked node warns");
         assert_eq!(warning.text, "Locked · Front");
         assert!(warning.hint.is_some(), "the chip says what unlocks it");
 
         let shelf = Id::new(4).expect("id");
-        let plain = StatusSummary::of(session.project(), session.catalog(), &[shelf], None, Lang::En);
+        let plain = StatusSummary::of(session.project(), session.directory(), &[shelf], None, Lang::En);
         assert_eq!(plain.warning.expect("a panel without a material warns").text, "No panel material is assigned.");
 
         // The sample project's panels carry no catalogue material either, and an unlocked node with

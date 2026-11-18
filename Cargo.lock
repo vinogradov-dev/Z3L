@@ -189,6 +189,7 @@ dependencies = [
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "catalog",
  "eframe",
  "engine",
  "export",
@@ -1068,6 +1069,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 name = "engine"
 version = "0.1.0"
 dependencies = [
+ "catalog",
  "mesh",
  "model",
  "param",
@@ -1207,6 +1209,7 @@ dependencies = [
 name = "export"
 version = "0.1.0"
 dependencies = [
+ "catalog",
  "geom",
  "model",
  "serde",
@@ -3729,6 +3732,7 @@ dependencies = [
 name = "testkit"
 version = "0.1.0"
 dependencies = [
+ "catalog",
  "model",
  "png 0.18.1",
  "units",
@@ -4070,6 +4074,7 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
+ "catalog",
  "egui",
  "egui_extras",
  "engine",

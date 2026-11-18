@@ -17,8 +17,8 @@ use std::fs;
 
 use model::{
     CameraNode, CameraProjection, Constructive, Container, CutoutDepth, CutoutShape, EdgeBanding, EdgeBevel, EdgeId,
-    EdgeRef, FaceSide, Geometry, Id, LightKind, LightNode, MaterialId, Object, Panel, PanelNominalSize, PanelRect,
-    Path, Placement, Primitive, Project,
+    EdgeRef, FaceSide, Geometry, Id, ItemId, LightKind, LightNode, Object, Panel, PanelNominalSize, PanelRect, Path,
+    Placement, Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -99,7 +99,7 @@ fn scene() -> SceneFile {
             id(2),
             EdgeBanding::new(
                 EdgeId::new(1).expect("edge"),
-                MaterialId::new(1).expect("material"),
+                ItemId::new(1, 1).expect("material"),
                 false,
                 millimetres(2),
                 millimetres(22),

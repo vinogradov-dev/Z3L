@@ -12,13 +12,14 @@ use kernel::{SolidKernel, TessOptions};
 use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;
 use model::{
-    CameraProjection, Catalog, Container, EdgeBandingMaterial, Envelope, Id, LightKind, MaterialId, Node, NodeQuery,
-    Panel, PanelMaterial, PanelStock, Placement, Project, SheetSize, StructuralKind,
+    CameraProjection, Container, Envelope, Id, LightKind, Node, NodeQuery, Panel, Placement, Project, StructuralKind,
 };
 // The demonstration fixture is the only caller of these: a test build evaluates the same document
 // a maker builds, and nothing else in the shell creates cutouts, bands or a named panel size.
 #[cfg(test)]
 use geom::{DQuat, MeshData};
+#[cfg(test)]
+use model::ItemId;
 #[cfg(test)]
 use model::{CutoutDepth, CutoutShape, EdgeBanding, EdgeId, FaceSide, PanelNominalSize, PanelRect};
 use scene::{
@@ -28,6 +29,7 @@ use scene::{
 #[cfg(test)]
 use std::f64::consts::FRAC_PI_2;
 use ui::ViewFlags;
+#[cfg(test)]
 use units::Length;
 
 /// A panel's surface colour, taken in tree order, in linear RGB: v1 has no per-panel material
@@ -40,12 +42,17 @@ const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
 /// The default surface colour of a geometry object; v1 has no per-object material.
 const OBJECT_COLOR: [f32; 4] = [0.58, 0.60, 0.64, 1.0];
 
-/// Default catalogue ids. The catalogue is not scene data and is never written to a file, so
-/// these numbers are this catalogue's own labels.
-const DEFAULT_OAK_MATERIAL: u64 = 1;
-const DEFAULT_WHITE_MATERIAL: u64 = 2;
-const DEFAULT_OAK_EDGE: u64 = 101;
-const DEFAULT_WHITE_EDGE: u64 = 102;
+/// The demonstration fixture's item ids: the starter package's own rows.
+///
+/// A scene is not the directory and never writes it, so these numbers label one fixture.
+#[cfg(test)]
+const DEFAULT_OAK_MATERIAL: u32 = 1;
+#[cfg(test)]
+const DEFAULT_WHITE_MATERIAL: u32 = 2;
+#[cfg(test)]
+const DEFAULT_OAK_EDGE: u32 = 101;
+#[cfg(test)]
+const DEFAULT_WHITE_EDGE: u32 = 102;
 
 /// A world-space axis-aligned box built from evaluated meshes.
 ///
@@ -224,7 +231,7 @@ pub fn demo_session() -> Result<Session, String> {
         .map_err(describe)?;
 
     project.validate().map_err(describe)?;
-    Ok(Session::with_catalog(project, default_catalog()?))
+    Ok(Session::with_directory(project, default_catalog()?))
 }
 
 /// The session the window opens with: an empty scene and the default catalogue.
@@ -240,52 +247,15 @@ pub fn initial_session() -> Result<Session, String> {
 pub fn empty_session() -> Result<Session, String> {
     let root = Container::new(id(1)?, "Scene", Placement::IDENTITY, Vec::new());
     let project = Project::new(root).map_err(describe)?;
-    Ok(Session::with_catalog(project, default_catalog()?))
+    Ok(Session::with_directory(project, default_catalog()?))
 }
 
-/// Builds the catalogue a new session starts from: two panel materials and their edges.
+/// Builds the directory a new session starts from: two boards and their edges.
 ///
-/// Both boards are stocked as a 2800 x 2070 mm sheet under a stock group of their own, so an order
-/// exported from the default catalogue carries the sheet plan. No price and no currency is invented
-/// here: money is the workshop's data and the catalogue file the shop loads is where it appears.
-pub fn default_catalog() -> Result<Catalog, String> {
-    let thickness = millimetres(18)?;
-    let sheet = SheetSize::new(millimetres(2800)?, millimetres(2070)?).map_err(describe)?;
-    let group = |name: &str| PanelStock::new(sheet, Some(name.to_owned()), None).map_err(describe);
-    let oak =
-        PanelMaterial::new(material_id(DEFAULT_OAK_MATERIAL)?, "Oak veneered chipboard", "chipboard", thickness, "oak")
-            .map_err(describe)?
-            .with_stock(group("chipboard-18-oak")?);
-    let white = PanelMaterial::new(
-        material_id(DEFAULT_WHITE_MATERIAL)?,
-        "White melamine chipboard",
-        "chipboard",
-        thickness,
-        "white",
-    )
-    .map_err(describe)?
-    .with_stock(group("chipboard-18-white")?);
-    let edge_thickness = millimetres(2)?;
-    let edge_width = millimetres(22)?;
-    let oak_edge = EdgeBandingMaterial::new(
-        material_id(DEFAULT_OAK_EDGE)?,
-        "Oak ABS edge",
-        "abs",
-        edge_thickness,
-        edge_width,
-        "oak",
-    )
-    .map_err(describe)?;
-    let white_edge = EdgeBandingMaterial::new(
-        material_id(DEFAULT_WHITE_EDGE)?,
-        "White ABS edge",
-        "abs",
-        edge_thickness,
-        edge_width,
-        "white",
-    )
-    .map_err(describe)?;
-    Catalog::new(vec![oak, white], vec![oak_edge, white_edge], None).map_err(describe)
+/// The rows live in `catalog::starter` — the same package the tests start from — so the shell owns
+/// no material numbers of its own: a workshop's directory replaces this one row for row.
+pub fn default_catalog() -> Result<catalog::Directory, String> {
+    catalog::default_directory().map_err(describe)
 }
 
 /// Evaluates a constructive object into world-space drawables and product envelopes.
@@ -638,10 +608,12 @@ fn id(value: u64) -> Result<Id, String> {
     Id::new(value).ok_or_else(|| "ids start at one".to_owned())
 }
 
-fn material_id(value: u64) -> Result<MaterialId, String> {
-    MaterialId::new(value).ok_or_else(|| "material ids start at one".to_owned())
+#[cfg(test)]
+fn material_id(value: u32) -> Result<ItemId, String> {
+    ItemId::new(1, value).ok_or_else(|| "material ids start at one".to_owned())
 }
 
+#[cfg(test)]
 fn millimetres(value: i64) -> Result<Length, String> {
     Length::from_millimetres(value).ok_or_else(|| format!("{value} mm does not fit a length"))
 }
@@ -652,7 +624,7 @@ fn add_band(
     panel: Id,
     edge: u32,
     included_in_size: bool,
-    material: MaterialId,
+    material: ItemId,
 ) -> Result<(), String> {
     let edge = EdgeId::new(edge).ok_or_else(|| "edge ids start at one".to_owned())?;
     let band =
@@ -906,18 +878,18 @@ mod tests {
     #[test]
     fn the_demo_materials_resolve_from_the_catalogue() {
         let session = demo_session().expect("the demo session");
-        let catalog = session.catalog();
+        let catalog = session.directory();
         let mut panel_materials = Vec::new();
         let mut panels = Vec::new();
         panels_in(session.project().root().children(), &mut panels);
         for panel in &panels {
             let material = panel.material().expect("a demo panel has a material");
-            let resolved = catalog.panel_material(material).expect("a demo panel material resolves");
-            assert!(!resolved.name().is_empty());
+            let resolved = catalog.board(material).expect("a demo panel material resolves");
+            assert!(!resolved.name.is_empty());
             panel_materials.push(material);
             for band in panel.edge_banding() {
-                let resolved = catalog.edge_material(band.material()).expect("a demo edge material resolves");
-                assert!(!resolved.name().is_empty());
+                let resolved = catalog.banding(band.material()).expect("a demo edge material resolves");
+                assert!(!resolved.name.is_empty());
             }
         }
         assert_eq!(panel_materials.len(), 3);
@@ -948,7 +920,7 @@ mod tests {
         assert!(session.project().root().children().is_empty(), "a new document has no object");
         assert!(!session.is_dirty(), "opening a document is not an edit");
         assert!(
-            !session.catalog().panel_materials().is_empty(),
+            !session.directory().boards().collect::<Vec<_>>().is_empty(),
             "the default materials stay: a panel needs one to be created"
         );
     }
@@ -991,7 +963,7 @@ mod tests {
         let mut project = Project::new(root).expect("project");
         let root = project.root().id();
         project.add_object(root, "Sketch", Placement::IDENTITY, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1086,7 +1058,7 @@ mod tests {
                 .add_object(root, "Ball", placement, Geometry::Primitive(primitive.clone()))
                 .expect("a ball in the field");
         }
-        Session::with_catalog(project, default_catalog().expect("catalogue"))
+        Session::with_directory(project, default_catalog().expect("catalogue"))
     }
 
     /// Measures what one edit costs the uploader: one drawable rebuilt, the rest kept (X57).
@@ -1296,7 +1268,7 @@ mod tests {
         let root = project.root().id();
         let object =
             project.add_object(root, "Top", Placement::IDENTITY, Geometry::Constructive(constructive)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1319,7 +1291,7 @@ mod tests {
         let root = project.root().id();
         let object =
             project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(primitive)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1352,7 +1324,7 @@ mod tests {
         let root = project.root().id();
         let placement = Placement::new(DVec3::new(10.0, 20.0, 30.0), DQuat::IDENTITY).expect("placement");
         let object = project.add_object(root, "Sketch", placement, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1390,7 +1362,7 @@ mod tests {
         let mut project = Project::new(root).expect("project");
         let root = project.root().id();
         project.add_object(root, "Sketch", Placement::IDENTITY, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1572,7 +1544,7 @@ mod tests {
     /// again.
     #[test]
     fn a_hidden_container_takes_its_whole_subtree_out_of_the_frame() {
-        let session = Session::with_catalog(sample_project(), default_catalog().expect("catalogue"));
+        let session = Session::with_directory(sample_project(), default_catalog().expect("catalogue"));
         let shelf = Id::new(2).expect("shelf id");
         let drawer = Id::new(3).expect("drawer id");
         let front = Id::new(4).expect("front id");
@@ -1641,7 +1613,7 @@ mod tests {
             vec![hidden_panel.into(), shown_panel.into()],
         );
         let project = Project::new(root).expect("project");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
         let camera = scene::Camera::new(DVec3::ZERO, 1500.0).expect("camera");
         let viewport = eframe::egui::Rect::from_min_size(eframe::egui::Pos2::ZERO, eframe::egui::vec2(800.0, 600.0));
         let pointer = viewport.center();

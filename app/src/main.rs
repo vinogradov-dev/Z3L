@@ -447,7 +447,7 @@ impl App {
             self.tabs.activate(id);
             return Ok(());
         }
-        let catalog = self.tabs.active().session.catalog().clone();
+        let catalog = self.tabs.active().session.directory().clone();
         let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, &catalog)?;
         self.tabs.add(document);
         Ok(())

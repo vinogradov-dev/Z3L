@@ -12,7 +12,8 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use model::{Catalog, Project};
+use catalog::Directory;
+use model::Project;
 
 use crate::error::ExportError;
 use crate::manifest::{DocumentMeta, Manifest, MoneyUnit, OrderMeta};
@@ -42,7 +43,7 @@ impl OrderPackage {
     ///
     /// Nothing is written here: a package that fails to build leaves the filesystem untouched. The
     /// records are ordered by their key, so two builds of one revision are identical.
-    pub fn build(project: &Project, catalog: &Catalog, options: ExportOptions) -> Result<Self, ExportError> {
+    pub fn build(project: &Project, catalog: &Directory, options: ExportOptions) -> Result<Self, ExportError> {
         let tables = rows::build(project, catalog)?;
         let counts: BTreeMap<&'static str, usize> =
             tables.iter().map(|table| (table.spec().name, table.rows().len())).collect();

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use units::Length;
 
 use crate::panel::geometry::{PanelDimensionError, validate_dimension};
-use crate::{Contour, ContourSegmentId, EdgeId, MaterialId, Panel, PanelError, SegmentSource, VertexId};
+use crate::{Contour, ContourSegmentId, EdgeId, ItemId, Panel, PanelError, SegmentSource, VertexId};
 
 /// The catalogued and fallback values that describe one band.
 ///
@@ -19,7 +19,7 @@ use crate::{Contour, ContourSegmentId, EdgeId, MaterialId, Panel, PanelError, Se
 /// material is missing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BandingSpec {
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -28,7 +28,7 @@ pub struct BandingSpec {
 impl BandingSpec {
     /// Creates a spec with validated fallback dimensions.
     pub fn new(
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
         thickness: Length,
         width: Length,
@@ -39,7 +39,7 @@ impl BandingSpec {
     }
 
     /// The banding material id.
-    pub const fn material(self) -> MaterialId {
+    pub const fn material(self) -> ItemId {
         self.material
     }
 
@@ -64,7 +64,7 @@ impl BandingSpec {
 #[serde(try_from = "EdgeBandingWire")]
 pub struct EdgeBanding {
     edge: EdgeId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -74,7 +74,7 @@ impl EdgeBanding {
     /// Creates a banding record with validated fallback dimensions.
     pub fn new(
         edge: EdgeId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
         thickness: Length,
         width: Length,
@@ -90,7 +90,7 @@ impl EdgeBanding {
     }
 
     /// The banding material id.
-    pub const fn material(&self) -> MaterialId {
+    pub const fn material(&self) -> ItemId {
         self.material
     }
 
@@ -128,7 +128,7 @@ impl EdgeBanding {
 #[serde(try_from = "CornerBandingWire")]
 pub struct CornerBanding {
     corner: VertexId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -138,7 +138,7 @@ impl CornerBanding {
     /// Creates a corner banding record with validated fallback dimensions.
     pub fn new(
         corner: VertexId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
         thickness: Length,
         width: Length,
@@ -154,7 +154,7 @@ impl CornerBanding {
     }
 
     /// The banding material id.
-    pub const fn material(&self) -> MaterialId {
+    pub const fn material(&self) -> ItemId {
         self.material
     }
 
@@ -193,7 +193,7 @@ impl CornerBanding {
 #[serde(try_from = "RingBandingWire")]
 pub struct RingBanding {
     segment: ContourSegmentId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -203,7 +203,7 @@ impl RingBanding {
     /// Creates a ring banding record with validated fallback dimensions.
     pub fn new(
         segment: ContourSegmentId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
         thickness: Length,
         width: Length,
@@ -219,7 +219,7 @@ impl RingBanding {
     }
 
     /// The banding material id.
-    pub const fn material(&self) -> MaterialId {
+    pub const fn material(&self) -> ItemId {
         self.material
     }
 
@@ -254,7 +254,7 @@ impl RingBanding {
 #[serde(deny_unknown_fields)]
 struct EdgeBandingWire {
     edge: EdgeId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -272,7 +272,7 @@ impl TryFrom<EdgeBandingWire> for EdgeBanding {
 #[serde(deny_unknown_fields)]
 struct CornerBandingWire {
     corner: VertexId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -290,7 +290,7 @@ impl TryFrom<CornerBandingWire> for CornerBanding {
 #[serde(deny_unknown_fields)]
 struct RingBandingWire {
     segment: ContourSegmentId,
-    material: MaterialId,
+    material: ItemId,
     included_in_size: bool,
     last_known_thickness: Length,
     last_known_width: Length,
@@ -446,7 +446,7 @@ mod tests {
         let mut ring_on_rect = rect.clone();
         ring_on_rect["ring_banding"] = serde_json::json!([{
             "segment": 1,
-            "material": 1,
+            "material": "1-1",
             "included_in_size": false,
             "last_known_thickness": 2_000,
             "last_known_width": 20_000,
@@ -457,7 +457,7 @@ mod tests {
         let mut duplicate = serde_json::to_value(decoded_panel).expect("serialize panel");
         let one = serde_json::json!({
             "segment": segment.get(),
-            "material": 1,
+            "material": "1-1",
             "included_in_size": false,
             "last_known_thickness": 2_000,
             "last_known_width": 20_000,
@@ -469,7 +469,7 @@ mod tests {
         let mut unknown = serde_json::to_value(decoded_panel).expect("serialize panel");
         unknown["ring_banding"] = serde_json::json!([{
             "segment": 99,
-            "material": 1,
+            "material": "1-1",
             "included_in_size": false,
             "last_known_thickness": 2_000,
             "last_known_width": 20_000,
@@ -693,7 +693,7 @@ mod tests {
             serde_json::json!([{"corner": 2, "feature": {"kind": "chamfer", "incoming": 10000, "outgoing": 20000}}]);
         let band = serde_json::json!([{
             "corner": 2,
-            "material": 1,
+            "material": "1-1",
             "included_in_size": true,
             "last_known_thickness": 2000,
             "last_known_width": 22000
@@ -711,7 +711,7 @@ mod tests {
         let radius = Panel::try_from(radius).expect("corner banding survives a radius");
         assert!(radius.corner_banding_at(corner).is_some());
 
-        let outside = serde_json::json!({"corner": 5, "material": 1, "included_in_size": true, "last_known_thickness": 2000, "last_known_width": 22000});
+        let outside = serde_json::json!({"corner": 5, "material": "1-1", "included_in_size": true, "last_known_thickness": 2000, "last_known_width": 22000});
         let outside: PanelWire =
             serde_json::from_value(base(serde_json::json!([]), serde_json::json!([outside]))).expect("panel wire");
         assert_eq!(
@@ -724,7 +724,7 @@ mod tests {
     fn panel_banding_cannot_make_the_core_non_positive() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let material = MaterialId::new(99).expect("material id");
+        let material = ItemId::new(1, 99).expect("material id");
         let too_wide =
             EdgeBanding::new(EdgeId::new(1).expect("edge id"), material, true, millimetres(500), millimetres(22))
                 .expect("valid banding dimensions");
@@ -741,7 +741,7 @@ mod tests {
     fn panel_banding_serde_round_trip_and_validation() {
         let band = EdgeBanding::new(
             EdgeId::new(1).expect("edge id"),
-            MaterialId::new(99).expect("material id"),
+            ItemId::new(1, 99).expect("material id"),
             true,
             millimetres(2),
             millimetres(22),
@@ -751,7 +751,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<EdgeBanding>(&text).expect("deserialize banding"), band);
         assert!(
             serde_json::from_str::<EdgeBanding>(
-                r#"{"edge":1,"material":99,"included_in_size":true,"last_known_thickness":0,"last_known_width":22000}"#
+                r#"{"edge":1,"material": "1-99","included_in_size":true,"last_known_thickness":0,"last_known_width":22000}"#
             )
             .is_err()
         );

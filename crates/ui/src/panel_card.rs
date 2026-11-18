@@ -17,7 +17,7 @@ use engine::{
 };
 use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeId, EdgeRef, Extent, Id,
-    MAX_BEVEL_ANGLE, MachiningId, MaterialId, Operation, Panel, PanelNominalSize, RectCorner, RectEdge, RingBanding,
+    ItemId, MAX_BEVEL_ANGLE, MachiningId, Operation, Panel, PanelNominalSize, RectCorner, RectEdge, RingBanding,
     SegmentSource, VertexId,
 };
 use serde_json::Value;
@@ -80,12 +80,12 @@ enum Action {
     },
     SetMaterial {
         panel: Id,
-        material: MaterialId,
+        material: ItemId,
     },
     SetBand {
         panel: Id,
         edge: EdgeId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
     },
     ClearBand {
@@ -95,7 +95,7 @@ enum Action {
     SetCornerBand {
         panel: Id,
         corner: VertexId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
     },
     ClearCornerBand {
@@ -105,7 +105,7 @@ enum Action {
     SetRingBand {
         panel: Id,
         segment: ContourSegmentId,
-        material: MaterialId,
+        material: ItemId,
         included_in_size: bool,
     },
     ClearRingBand {
@@ -417,27 +417,27 @@ impl PanelCard {
         ui: &mut Ui,
         session: &Session,
         panel_id: Id,
-        current: Option<MaterialId>,
+        current: Option<ItemId>,
         actions: &mut Vec<Action>,
     ) {
         let lang = crate::language(ui.ctx());
         if let Some(material) = current
-            && session.catalog().panel_material(material).is_none()
+            && session.directory().board(material).is_none()
         {
             ui.colored_label(theme::danger(ui), Message::PanelMaterialMissingCatalogue.with(lang, [material]));
         }
         let selected_text = match current {
             Some(material) => session
-                .catalog()
-                .panel_material(material)
-                .map_or_else(|| Message::MissingMaterial.with(lang, [material]), |material| material.name().to_owned()),
+                .directory()
+                .board(material)
+                .map_or_else(|| Message::MissingMaterial.with(lang, [material]), |material| material.name.to_owned()),
             None => Message::NoMaterial.text(lang).to_owned(),
         };
         ComboBox::from_id_salt(("panel_material", panel_id.get())).selected_text(selected_text).show_ui(ui, |ui| {
-            for material in session.catalog().panel_materials() {
-                let selected = current == Some(material.id());
-                if ui.selectable_label(selected, material.name()).clicked() && !selected {
-                    actions.push(Action::SetMaterial { panel: panel_id, material: material.id() });
+            for material in session.directory().boards().collect::<Vec<_>>() {
+                let selected = current == Some(material.id);
+                if ui.selectable_label(selected, material.name).clicked() && !selected {
+                    actions.push(Action::SetMaterial { panel: panel_id, material: material.id });
                 }
             }
         });
@@ -684,7 +684,8 @@ impl PanelCard {
             }
             return;
         }
-        let Some(material) = session.catalog().edge_materials().first() else {
+        let bands: Vec<catalog::BandingView> = session.directory().bandings().collect();
+        let Some(material) = bands.first() else {
             ui.label(Message::AddEdgeMaterial.text(lang));
             return;
         };
@@ -699,19 +700,19 @@ impl PanelCard {
                                 SegmentSource::Edge(edge) => actions.push(Action::SetBand {
                                     panel: panel_id,
                                     edge: *edge,
-                                    material: material.id(),
+                                    material: material.id,
                                     included_in_size: false,
                                 }),
                                 SegmentSource::Corner(corner) => actions.push(Action::SetCornerBand {
                                     panel: panel_id,
                                     corner: *corner,
-                                    material: material.id(),
+                                    material: material.id,
                                     included_in_size: false,
                                 }),
                                 SegmentSource::Ring(segment) => actions.push(Action::SetRingBand {
                                     panel: panel_id,
                                     segment: *segment,
-                                    material: material.id(),
+                                    material: material.id,
                                     included_in_size: false,
                                 }),
                             }
@@ -1108,11 +1109,11 @@ fn band_key(source: SegmentSource) -> u64 {
     }
 }
 
-fn material_name(session: &Session, material: MaterialId, lang: crate::Lang) -> String {
+fn material_name(session: &Session, material: ItemId, lang: crate::Lang) -> String {
     session
-        .catalog()
-        .edge_material(material)
-        .map_or_else(|| Message::MissingMaterial.with(lang, [material]), |material| material.name().to_owned())
+        .directory()
+        .banding(material)
+        .map_or_else(|| Message::MissingMaterial.with(lang, [material]), |material| material.name.to_owned())
 }
 
 fn show_edge_band_row(
@@ -1129,20 +1130,20 @@ fn show_edge_band_row(
         ComboBox::from_id_salt(("band_material", panel_id.get(), band_key(SegmentSource::Edge(edge))))
             .selected_text(material_name(session, band.material(), lang))
             .show_ui(ui, |ui| {
-                for material in session.catalog().edge_materials() {
-                    let chosen = band.material() == material.id();
-                    if ui.selectable_label(chosen, material.name()).clicked() && !chosen {
+                for material in session.directory().bandings().collect::<Vec<_>>() {
+                    let chosen = band.material() == material.id;
+                    if ui.selectable_label(chosen, material.name).clicked() && !chosen {
                         actions.push(Action::SetBand {
                             panel: panel_id,
                             edge,
-                            material: material.id(),
+                            material: material.id,
                             included_in_size: band.included_in_size(),
                         });
                     }
                 }
             });
         let mut included = band.included_in_size();
-        let material_known = session.catalog().edge_material(band.material()).is_some();
+        let material_known = session.directory().banding(band.material()).is_some();
         if ui.add_enabled(material_known, egui::Checkbox::new(&mut included, Message::Included.text(lang))).changed() {
             actions.push(Action::SetBand {
                 panel: panel_id,
@@ -1172,20 +1173,20 @@ fn show_corner_band_row(
         ComboBox::from_id_salt(("band_material", panel_id.get(), band_key(SegmentSource::Corner(corner))))
             .selected_text(material_name(session, band.material(), lang))
             .show_ui(ui, |ui| {
-                for material in session.catalog().edge_materials() {
-                    let chosen = band.material() == material.id();
-                    if ui.selectable_label(chosen, material.name()).clicked() && !chosen {
+                for material in session.directory().bandings().collect::<Vec<_>>() {
+                    let chosen = band.material() == material.id;
+                    if ui.selectable_label(chosen, material.name).clicked() && !chosen {
                         actions.push(Action::SetCornerBand {
                             panel: panel_id,
                             corner,
-                            material: material.id(),
+                            material: material.id,
                             included_in_size: band.included_in_size(),
                         });
                     }
                 }
             });
         let mut included = band.included_in_size();
-        let material_known = session.catalog().edge_material(band.material()).is_some();
+        let material_known = session.directory().banding(band.material()).is_some();
         if ui.add_enabled(material_known, egui::Checkbox::new(&mut included, Message::Included.text(lang))).changed() {
             actions.push(Action::SetCornerBand {
                 panel: panel_id,
@@ -1215,20 +1216,20 @@ fn show_ring_band_row(
         ComboBox::from_id_salt(("band_material", panel_id.get(), band_key(SegmentSource::Ring(segment))))
             .selected_text(material_name(session, band.material(), lang))
             .show_ui(ui, |ui| {
-                for material in session.catalog().edge_materials() {
-                    let chosen = band.material() == material.id();
-                    if ui.selectable_label(chosen, material.name()).clicked() && !chosen {
+                for material in session.directory().bandings().collect::<Vec<_>>() {
+                    let chosen = band.material() == material.id;
+                    if ui.selectable_label(chosen, material.name).clicked() && !chosen {
                         actions.push(Action::SetRingBand {
                             panel: panel_id,
                             segment,
-                            material: material.id(),
+                            material: material.id,
                             included_in_size: band.included_in_size(),
                         });
                     }
                 }
             });
         let mut included = band.included_in_size();
-        let material_known = session.catalog().edge_material(band.material()).is_some();
+        let material_known = session.directory().banding(band.material()).is_some();
         if ui.add_enabled(material_known, egui::Checkbox::new(&mut included, Message::Included.text(lang))).changed() {
             actions.push(Action::SetRingBand {
                 panel: panel_id,
@@ -1250,8 +1251,8 @@ mod tests {
     use super::*;
     use model::{Contour, MachiningId, Placement};
 
-    fn material(value: u64) -> MaterialId {
-        MaterialId::new(value).expect("material id")
+    fn material(value: u32) -> ItemId {
+        ItemId::new(1, value).expect("material id")
     }
 
     /// A session whose root holds a 700 x 500 contour panel.
@@ -1267,7 +1268,7 @@ mod tests {
         let panel = project
             .add_panel_contour(project.root().id(), "Contour", &ring, None, mm(18), Placement::IDENTITY)
             .expect("contour panel");
-        (Session::with_catalog(project, testkit::sample_catalog()), panel)
+        (Session::with_directory(project, testkit::sample_catalog()), panel)
     }
 
     fn ring_segments(panel: &Panel) -> Vec<SegmentSource> {
@@ -1283,28 +1284,28 @@ mod tests {
         assert_eq!(diagnostic_message_en(&PanelDiagnostic::NoMaterial), "No panel material is assigned.");
         assert_eq!(
             diagnostic_message_en(&PanelDiagnostic::MissingMaterial { material: material(7) }),
-            "Panel material 7 is missing from the catalogue."
+            "Panel material 1-7 is missing from the catalogue."
         );
         assert_eq!(
             diagnostic_message_en(&PanelDiagnostic::MissingBandingMaterial {
                 edge: EdgeId::new(2).expect("edge"),
                 material: material(101),
             }),
-            "Edge 2 uses missing edge material 101."
+            "Edge 2 uses missing edge material 1-101."
         );
         assert_eq!(
             diagnostic_message_en(&PanelDiagnostic::MissingCornerBandingMaterial {
                 corner: RectCorner::BottomRight.id(),
                 material: material(101),
             }),
-            "Corner 2 uses missing edge material 101."
+            "Corner 2 uses missing edge material 1-101."
         );
         assert_eq!(
             diagnostic_message_en(&PanelDiagnostic::MissingRingBandingMaterial {
                 segment: ContourSegmentId::new(3).expect("segment"),
                 material: material(101),
             }),
-            "Segment 3 uses missing edge material 101."
+            "Segment 3 uses missing edge material 1-101."
         );
         assert_eq!(diagnostic_message_en(&PanelDiagnostic::NonPositiveCore), "The panel core is not positive.");
         assert_eq!(
@@ -1334,7 +1335,7 @@ mod tests {
 
     #[test]
     fn band_picker_lists_existing_unbanded_segments() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let panel = session.project().panel(panel_id).expect("panel");
         assert_eq!(
@@ -1397,7 +1398,7 @@ mod tests {
 
     #[test]
     fn to_contour_action_bakes_a_rectangle_and_refuses_a_ring() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
 
         run_action(&mut session, &Action::ToContour { panel: panel_id }).expect("bake the outline");
@@ -1422,7 +1423,7 @@ mod tests {
 
     #[test]
     fn card_actions_dispatch_through_the_engine() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
 
         run_action(&mut session, &Action::Rename { panel: panel_id, name: "Renamed".to_owned() }).expect("rename");
@@ -1536,7 +1537,7 @@ mod tests {
 
     #[test]
     fn corner_and_bow_actions_dispatch_through_the_engine() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::TopRight.id();
         let edge = RectEdge::Top.id();
@@ -1568,7 +1569,7 @@ mod tests {
 
     #[test]
     fn corner_band_actions_dispatch_through_the_engine() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::BottomRight.id();
 
@@ -1602,7 +1603,7 @@ mod tests {
 
     #[test]
     fn band_actions_accept_a_shaped_panel() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let corner = RectCorner::BottomLeft.id();
         run_action(
@@ -1640,7 +1641,7 @@ mod tests {
 
     #[test]
     fn bevel_actions_dispatch_through_the_engine() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let source = EdgeRef::Rect { edge: RectEdge::Bottom.id() };
 
@@ -1676,7 +1677,7 @@ mod tests {
 
     #[test]
     fn the_bevel_rows_cover_straight_edges_only() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let panel = session.project().panel(panel_id).expect("panel");
         assert_eq!(
@@ -1733,7 +1734,7 @@ mod tests {
 
     #[test]
     fn typing_an_angle_writes_the_bevel_and_zero_clears_it() {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let source = EdgeRef::Rect { edge: RectEdge::Bottom.id() };
         let mut context = egui::Context::default();
@@ -1852,7 +1853,7 @@ mod tests {
         text: &str,
         ending: Vec<egui::Event>,
     ) -> Vec<Action> {
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         for corner in RectCorner::ALL {
             run_action(&mut session, &Action::SetCorner { panel: panel_id, corner: corner.id(), feature })
@@ -1904,7 +1905,7 @@ mod tests {
 
     #[test]
     fn a_typed_bowed_edge_commits_on_enter() {
-        let session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel_id = Id::new(2).expect("panel id");
         let mut context = egui::Context::default();
         shape_frame(&mut context, &session, panel_id, Vec::new());
@@ -1976,7 +1977,7 @@ mod tests {
         use engine::{NodePropertySet, node_cmds::NODE_PROPERTY_SET_ID};
         use model::{PropertyValue, SYSTEM_CLASS};
 
-        let mut session = Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let panel = Id::new(2).expect("panel id");
         if let Some(code) = code {
             let params = crate::command::json(&NodePropertySet {

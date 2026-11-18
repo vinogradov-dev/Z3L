@@ -7,7 +7,7 @@
 use units::Length;
 
 use crate::{
-    ClassCode, Contour, ContourSegmentId, Geometry, Id, MaterialId, Mesh, Object, Panel, PanelNominalSize, PanelRect,
+    ClassCode, Contour, ContourSegmentId, Geometry, Id, ItemId, Mesh, Object, Panel, PanelNominalSize, PanelRect,
     Placement,
 };
 
@@ -30,8 +30,8 @@ pub(crate) fn sample_panel(id: Id, name: &str) -> Panel {
     Panel::new(id, name, sample_nominal(), None, sample_thickness(), Placement::IDENTITY).expect("valid panel")
 }
 
-pub(crate) fn sample_material() -> MaterialId {
-    MaterialId::new(1).expect("material id")
+pub(crate) fn sample_material() -> ItemId {
+    ItemId::new(1, 1).expect("material id")
 }
 
 pub(crate) fn box_mesh() -> Mesh {

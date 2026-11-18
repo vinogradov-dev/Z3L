@@ -130,7 +130,7 @@ pub const PART_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::integer("product_id"),
     Column::text("class"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("thickness_um").in_unit("um"),
     Column::integer("length_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
@@ -147,7 +147,7 @@ pub const PART_COLUMNS: &[Column] = &[
 pub const BANDING_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::text("unit"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("thickness_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
     Column::boolean("included_in_size"),
@@ -174,7 +174,7 @@ pub const FACADE_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::integer("product_id"),
     Column::text("class"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("length_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
     Column::integer("thickness_um").in_unit("um"),
@@ -207,7 +207,7 @@ pub const MACHINING_COLUMNS: &[Column] = &[
 
 /// The columns of `materials`.
 pub const MATERIAL_COLUMNS: &[Column] = &[
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::text("name"),
     Column::text("kind"),
     Column::integer("thickness_um").in_unit("um"),
@@ -221,7 +221,7 @@ pub const MATERIAL_COLUMNS: &[Column] = &[
 
 /// The columns of `sheets`.
 pub const SHEET_COLUMNS: &[Column] = &[
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::text("stock_group"),
     Column::integer("sheet_length_um").in_unit("um"),
     Column::integer("sheet_width_um").in_unit("um"),

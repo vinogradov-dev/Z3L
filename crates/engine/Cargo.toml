@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 mesh = { workspace = true }
 model = { workspace = true }
+catalog = { workspace = true }
 param = { workspace = true }
 text = { workspace = true }
 units = { workspace = true }

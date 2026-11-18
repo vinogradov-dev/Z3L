@@ -15,6 +15,9 @@ use crate::slug::Slug;
 pub struct KindCode(u16);
 
 impl KindCode {
+    /// The smallest code: a constant table of our own rows falls back to it.
+    pub const MIN: Self = Self(1);
+
     /// Creates a code from a non-zero number.
     pub const fn new(value: u16) -> Option<Self> {
         if value == 0 { None } else { Some(Self(value)) }

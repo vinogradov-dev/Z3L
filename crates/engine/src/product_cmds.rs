@@ -6,7 +6,8 @@
 //! placeholder when the caller names none. `product.envelope.set` edits the box and never a child
 //! size: the content bounds of the parts are derived when asked and never stored.
 
-use model::{Catalog, ClassCode, Envelope, Id, Placement, Project};
+use catalog::Directory;
+use model::{ClassCode, Envelope, Id, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -70,7 +71,7 @@ fn product_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn product_create_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductCreate>(params, PRODUCT_CREATE_ID)?;
@@ -113,7 +114,7 @@ fn product_envelope_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn product_envelope_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductEnvelopeSet>(params, PRODUCT_ENVELOPE_SET_ID)?;
@@ -148,7 +149,7 @@ mod tests {
     }
 
     fn session_with_product() -> (Session, Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let parent = session.project().root().id();
         let product = session
             .dispatch(PRODUCT_CREATE_ID, &create_params(parent, None))
@@ -160,7 +161,7 @@ mod tests {
 
     #[test]
     fn creating_a_product_stores_a_class_and_an_envelope_in_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let params = create_params(root, Some(ClassCode::GENERAL_PRODUCT));
 
@@ -191,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_refused_product_writes_nothing() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let registry = CommandRegistry::new();
         let create = registry.get(PRODUCT_CREATE_ID).expect("product.create is registered");

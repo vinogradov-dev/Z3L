@@ -139,6 +139,7 @@ crates/export          L3  order package: one manifest and flat tables other pro
 crates/mesh            L3  evaluation cache: revision -> solid and triangle mesh
 crates/param           L2  document features -> kernel calls
 crates/project         L2  scene file envelope: read, write, atomic save, preserved sections
+crates/catalog         L2  nomenclature directory: item envelope, the registries a package carries, the validated snapshot
 crates/kernel-truck    L2  geometry kernel adapter implemented with truck
 crates/kernel          L1  geometry kernel port: profiles, bodies, booleans, tessellation
 crates/model           L1  document data: placements, panels, assemblies, hardware, materials

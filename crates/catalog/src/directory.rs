@@ -22,6 +22,7 @@ pub struct Directory {
     families: FamilyRegistry,
     by_kind: BTreeMap<KindCode, Vec<ItemId>>,
     by_slug: BTreeMap<KindCode, BTreeMap<String, ItemId>>,
+    pub(crate) currency: Option<crate::money::Currency>,
 }
 
 impl Directory {

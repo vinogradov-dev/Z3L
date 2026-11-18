@@ -234,7 +234,7 @@ mod tests {
     use super::*;
 
     fn light_session() -> (Session, Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let params = json(&LightCreate {
             parent: root,

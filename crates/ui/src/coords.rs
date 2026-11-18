@@ -53,7 +53,7 @@ mod tests {
 
     /// The sample drawer is turned 90° about Z at x = 100 mm and holds the front at x = 10 mm.
     fn turned_session() -> (Session, Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let front = Id::new(4).expect("front id");
         let half = std::f64::consts::FRAC_PI_4;

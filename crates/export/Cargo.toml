@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 geom = { workspace = true }
 model = { workspace = true }
+catalog = { workspace = true }
 text = { workspace = true }
 units = { workspace = true }
 serde = { workspace = true }

@@ -28,7 +28,7 @@ use engine::node_cmds::{NODE_DELETE_MANY_ID, NODE_PLACEMENT_SET_MANY_ID};
 use engine::{MeshVertexMove, MeshVerticesMove, NodeDeleteMany, NodePlacement, NodePlacementSetMany, Session};
 use kernel_truck::TruckKernel;
 use mesh::{EvaluationCache, object_mesh};
-use model::{Catalog, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
+use model::{CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
 use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
@@ -482,12 +482,12 @@ impl Document {
         settings: &Settings,
         shell: &Shell,
         path: &Path,
-        catalog: &Catalog,
+        directory: &catalog::Directory,
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let project = scene.into_document();
-        let session = Session::with_catalog(project, catalog.clone());
+        let session = Session::with_directory(project, directory.clone());
         let mut document = Self::new(render_state, settings, shell, session, extra)?;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -1834,7 +1834,7 @@ impl Document {
 
     /// The thickness a filled part takes: the catalogue's first panel material.
     fn fill_thickness(&self) -> Option<Length> {
-        self.session.catalog().panel_materials().first().map(|material| material.nominal_thickness())
+        self.session.directory().boards().next().map(|board| board.thickness)
     }
 
     /// Creates the ghost's part through one `panel.create`, class included.

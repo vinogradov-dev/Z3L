@@ -217,13 +217,16 @@ contour cutout carries its `segments` in the same shape as the `contours` table.
 
 ### `materials`
 
-The catalogue rows the order uses — this is what makes the package self-contained:
+The directory rows the order uses — this is what makes the package self-contained:
 `material_id`, `name`, `kind`, `thickness_um`, `width_um` (the banding profile width, zero for a
 panel material), `color`, `sheet_length_um`, `sheet_width_um` (the stock sheet the panel material is
 bought in, zero when it is not stocked), `stock_group` (the workshop's own grouping, empty when it has
 none) and `price_minor` (the price of one sheet, zero when the catalogue carries no price). The last
 four columns describe a panel material's stock; a banding material is not cut from a sheet and writes
 zeroes and an empty group.
+
+`material_id` is the directory item's written id, `package-serial` such as `712-34`: an item's
+identity is composite, so one number cannot name it (ADR 0148).
 
 ### `sheets`
 

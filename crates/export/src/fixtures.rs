@@ -14,7 +14,7 @@ use testkit::{millimetres, sample_catalog, sample_product_project};
 use units::Degrees;
 
 /// The scene the exporter tests and the golden package are built from.
-pub fn fixture() -> (Project, model::Catalog) {
+pub fn fixture() -> (Project, catalog::Directory) {
     let (mut project, product) = sample_product_project();
     let catalog = sample_catalog();
     add_parts(&mut project, product);
