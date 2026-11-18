@@ -73,6 +73,7 @@ const CRATES: &[CrateRule] = &[
     // `TRUCK_PREFIX` rule below keeps truck out of every crate but the adapter.
     CrateRule { name: "kernel", layer: 1, forbidden: UI_GPU_DEPS },
     CrateRule { name: "model", layer: 1, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "catalog", layer: 2, forbidden: UI_GPU_DEPS },
     // The only crate allowed to depend on truck.
     CrateRule { name: TRUCK_ADAPTER, layer: 2, forbidden: UI_GPU_DEPS },
     CrateRule { name: "param", layer: 2, forbidden: UI_GPU_DEPS },

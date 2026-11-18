@@ -615,6 +615,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "catalog"
+version = "0.1.0"
+dependencies = [
+ "model",
+ "serde",
+ "serde_json",
+ "text",
+ "thiserror 2.0.21",
+ "units",
+]
+
+[[package]]
 name = "cc"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
