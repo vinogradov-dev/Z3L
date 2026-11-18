@@ -267,6 +267,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X65** a carried piece runs away from the cursor when the hand strays off its axis
+  Why: Observation: a board carried by the furniture move runs away from the cursor —
+   reproduced in the divider fixture, where a pointer that moved sideways and up carried the
+   board from a 50 mm contact to -715 mm. Expectation: a carried piece follows the hand, and a
+   hand that moves across the piece's axis moves it none. Suspected cause, reproduced: the
+   distance is the projection of the pointer's ray onto the axis line, and that projection is
+   unstable as soon as the pointer strays sideways from the line — 69 mm of travel for a purely
+   sideways 200 pt move in the default view, hundreds once the axis is oblique to the view.
+  Shape: Measure the carry by the hand's own travel: the pointer's movement projected onto the
+   axis' screen direction, scaled where the piece was anchored (the local slope of the
+   projection, one point along that direction). The anchor is set when the axis is named and on
+   every frame that drives the camera, and nowhere else, so the piece cannot move when the view
+   does and cannot run away from the hand. The held handle keeps the ray's projection, because
+   a handle sits on the line.
+  Done: A pointer that moves across the axis' screen direction changes no distance, at any
+   distance from the line; a pointer that moves along it carries the piece at the scale the
+   projection gives at the take; an axis that points at the camera carries nothing; the rule,
+   the fields and the capture are unchanged; the divider stops at its neighbour and the free
+   move still crosses it; frame tests and cargo xtask ci are green.
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `2c52c44`
+
 - `[x]` **N25** a piece in hand blocks nothing, and the view may move under it
   Why: The owner, using N24: a piece in hand freezes the viewport. Orbit, pan and the wheel are
    refused while the furniture move carries a piece, so a maker who took a shelf cannot turn
