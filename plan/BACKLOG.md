@@ -267,6 +267,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X68** a camera change keeps the piece and returns the pointer to it
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/scene/src/camera.rs` — `58324e5`
+
 - `[x]` **X67** a camera change leaves the carried piece in the hand
   `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/document.rs,app/src/view_layout.rs,crates/scene/src/camera.rs` — `bac9750`
 
