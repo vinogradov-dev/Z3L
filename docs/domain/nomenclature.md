@@ -3,10 +3,10 @@
 Status: domain specification, target state. This document describes the directory of nomenclature a
 workshop works from: its items, their kinds, properties and families, the packages they arrive in,
 the part documents that carry their geometry, the rules that pick and place them, and the contract
-the editor reads them through. The program today reads two typed tables — panel materials and edge
-banding — from one mock file (`crates/model/src/catalog.rs`). The package, the item envelope and the
-instance node replace them; the mock file, the `MaterialId` type and the two tables are deleted by
-the change that lands the envelope, together with the old loader (ADR 0096).
+the editor reads them through. The program today reads one package: the starter rows in
+`catalog::default_directory`, loaded as a `Directory` through the item envelope and its registries
+(ADR 0148); a workshop's own packages arrive as folders beside the workspace settings. The instance
+node and the part documents are the part of this specification that has not landed yet.
 
 Related documents:
 

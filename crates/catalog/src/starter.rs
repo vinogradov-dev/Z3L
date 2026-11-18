@@ -266,7 +266,12 @@ impl Directory {
     }
 }
 
-/// The directory a workspace opens with: an oak and a white board, and their two edges.
+/// The directory a workspace opens with: an oak and a white carcass board, the thin sheet a back is
+/// cut from, and the two edges.
+///
+/// The 4 mm HDF row is not a convenience: an applied or a grooved back is a thin sheet and an inset
+/// one is a carcass board, so without the row the planes of two back types would have no material to
+/// read and would fall back to a number written in code (`docs/domain/prototypes.md` §16.4).
 pub fn default_directory() -> Result<Directory, CatalogError> {
     let millimetres = |value: i64| Length::from_micrometres(value.saturating_mul(1_000));
     let sheet = Some((millimetres(2_800), millimetres(2_070)));
@@ -275,6 +280,8 @@ pub fn default_directory() -> Result<Directory, CatalogError> {
         .stocked("chipboard-18-oak", Money::from_minor(320_000))
         .board(2, "White melamine chipboard", "chipboard", millimetres(18), "white", sheet)
         .stocked("chipboard-18-white", Money::from_minor(240_000))
+        .board(3, "HDF back sheet", "hdf", millimetres(4), "raw", sheet)
+        .stocked("hdf-4", Money::from_minor(95_000))
         .banding(101, "Oak ABS edge", "abs", millimetres(2), millimetres(22), "oak")
         .banding(102, "White ABS edge", "abs", millimetres(2), millimetres(22), "white")
         .currency(Currency::new("RUB", 100).ok())
@@ -299,13 +306,39 @@ mod tests {
             (sheet.length, sheet.width),
             (Length::from_micrometres(2_800_000), Length::from_micrometres(2_070_000))
         );
-        assert_eq!(directory.boards().count(), 2);
+        assert_eq!(directory.boards().count(), 3);
 
         let edge = ItemId::new(STARTER_PACKAGE, 101).expect("an item id");
         let band = directory.banding(edge).expect("a band");
         assert_eq!((band.thickness, band.width), (Length::from_micrometres(2_000), Length::from_micrometres(22_000)));
         assert!(directory.board(edge).is_none(), "a band is not a board");
         assert_eq!(directory.currency().map(Currency::code), Some("RUB"));
+    }
+
+    #[test]
+    fn the_default_directory_carries_the_thin_sheet_a_back_is_cut_from() {
+        // An applied or a grooved back is 4 mm and an inset one is the 18 mm carcass board, so the
+        // default package must answer both instead of leaving one to a number in code.
+        let directory = default_directory().expect("the starter package");
+        let thin = directory
+            .boards()
+            .find(|board| board.thickness == Length::from_micrometres(4_000))
+            .expect("the thin sheet a back is cut from");
+        assert_eq!(thin.name, "HDF back sheet");
+        let sheet = thin.sheet.expect("the row is stocked, so the order package writes its stock block");
+        assert_eq!(
+            (sheet.length, sheet.width),
+            (Length::from_micrometres(2_800_000), Length::from_micrometres(2_070_000))
+        );
+        assert_eq!(thin.color.as_deref(), Some("raw"), "an unfinished sheet reads by its own name");
+        assert!(
+            directory.boards().any(|board| board.thickness == Length::from_micrometres(18_000)),
+            "the inset type keeps the carcass board"
+        );
+        assert!(
+            directory.bandings().all(|band| band.thickness != thin.thickness),
+            "a back sheet is not banded: the sheet kind carries no banded trait"
+        );
     }
 
     #[test]

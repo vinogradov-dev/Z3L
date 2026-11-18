@@ -53,6 +53,9 @@ const DEFAULT_WHITE_MATERIAL: u32 = 2;
 const DEFAULT_OAK_EDGE: u32 = 101;
 #[cfg(test)]
 const DEFAULT_WHITE_EDGE: u32 = 102;
+/// The starter package's 4 mm HDF sheet: what an applied or a grooved back is cut from.
+#[cfg(test)]
+const DEFAULT_HDF_BACK: u32 = 3;
 
 /// A world-space axis-aligned box built from evaluated meshes.
 ///
@@ -685,6 +688,40 @@ mod tests {
                 Node::Object(_) | Node::Camera(_) | Node::Light(_) => {}
             }
         }
+    }
+
+    #[test]
+    fn a_back_panel_resolves_its_thickness_from_the_catalogue_row_it_names() {
+        // The two back constructions are two rows and not two numbers in code: an applied or grooved
+        // back is cut from the 4 mm sheet, an inset one from the 18 mm carcass board, and both panels
+        // store the same fallback — so the resolved planes come from the catalogue alone.
+        let directory = catalog::default_directory().expect("the starter package");
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let envelope = Envelope::new(
+            millimetres(600).expect("width"),
+            millimetres(560).expect("depth"),
+            millimetres(720).expect("height"),
+        )
+        .expect("an envelope");
+        let product = project
+            .add_product(root, "Case", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a product");
+        let size = panel_nominal_size(600, 400).expect("a back");
+        let fallback = millimetres(18).expect("18 mm");
+        let row = |serial: u32| material_id(serial).expect("an item id");
+        let thin = project
+            .add_panel(product, "Back (applied)", size, Some(row(DEFAULT_HDF_BACK)), fallback, Placement::IDENTITY)
+            .expect("the thin back");
+        let inset = project
+            .add_panel(product, "Back (inset)", size, Some(row(DEFAULT_OAK_MATERIAL)), fallback, Placement::IDENTITY)
+            .expect("the inset back");
+
+        let session = Session::with_directory(project, directory);
+        let resolved = |panel| session.panel_geometry(panel).expect("resolved geometry").thickness();
+        assert_eq!(resolved(thin), millimetres(4).expect("4 mm"), "the 4 mm sheet answers the applied back");
+        assert_eq!(resolved(inset), millimetres(18).expect("18 mm"), "the inset back keeps the carcass board");
     }
 
     #[test]
