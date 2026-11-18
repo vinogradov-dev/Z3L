@@ -1,6 +1,6 @@
 # 0155. A carried piece keeps its place under the hand
 
-- Status: Accepted; replaces the "a view that moves keeps the piece's millimetres" reading of ADR 0152
+- Status: Superseded by ADR 0156
 - Date: 2026-11-18
 
 ## Context

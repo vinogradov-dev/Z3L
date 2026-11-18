@@ -341,6 +341,8 @@ pub(crate) struct Document {
     /// save so an older build never silently destroys a newer build's data.
     extra: PreservedSections,
     translate_gizmo: TranslateGizmo,
+    /// Whether the window is currently hiding the pointer for the carry (ADR 0156).
+    cursor_hidden: bool,
     rotate_gizmo: RotateGizmo,
     vertex_gizmo: VertexGizmo,
     pub(crate) contour_gizmo: ContourGizmo,
@@ -447,6 +449,7 @@ impl Document {
             file: FileMenu::new(),
             extra,
             translate_gizmo: TranslateGizmo::default(),
+            cursor_hidden: false,
             rotate_gizmo: RotateGizmo::default(),
             vertex_gizmo: VertexGizmo::default(),
             contour_gizmo: ContourGizmo::default(),
@@ -2576,6 +2579,7 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
+        self.carry_cursor(ui.ctx(), navigating);
         if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Furniture))
             && self.translate_gizmo.is_dragging()
         {
@@ -3185,12 +3189,29 @@ impl Document {
         self.translate_gizmo.is_following()
     }
 
+    /// Sends the window what the carry asks of the pointer: its way back onto the piece, or a hidden
+    /// cursor while a camera gesture slides the view under it (ADR 0156).
+    ///
+    /// A camera change must not move a piece, so the pointer is what returns to it. Both answers are
+    /// re-sent every frame until they take, because a window may drop a command and a platform that
+    /// cannot move the cursor answers nothing at all. `navigating` is the document's own answer about
+    /// a camera gesture: the gizmo is not even updated for one, so the hiding cannot come from it.
+    pub(crate) fn carry_cursor(&mut self, ctx: &egui::Context, navigating: bool) {
+        if let Some(home) = self.translate_gizmo.cursor_home() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(home));
+            ctx.request_repaint();
+        }
+        let hidden = navigating && self.translate_gizmo.is_following();
+        if hidden != self.cursor_hidden {
+            self.cursor_hidden = hidden;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!hidden));
+        }
+    }
+
     /// The world distance the carried piece has travelled, for a test that watches the preview.
     ///
     /// The preview lives in the session overlay and the document is untouched until the drop, so a
     /// test cannot read the moved box from the project.
-    #[cfg(test)]
-    /// The world distance the carried piece has travelled, for a test that reads the hold.
     #[cfg(test)]
     pub(crate) fn carried_delta(&self) -> geom::DVec3 {
         self.translate_gizmo.drag_delta()
