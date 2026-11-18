@@ -315,3 +315,11 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   owner-directed defect has to be filed with `task add --at top` instead, which files it in `## Now`
   rather than in `## Bugs`. The far end of the order still takes `--at end`, which needs no state
   change; the fix is to point `STATE:` at the new head in the same write, as `add` does.
+
+- `[plan]` `cargo xtask file <reference>` takes the *whole* body of the file, so a session that means
+  to append one entry passes its own text and silently replaces every entry the file held: one session
+  did exactly that to `plan/questions.md` and committed the single line it meant to add, and the file
+  had to be restored from git. The gate cannot see the loss — the short body is still a legal file —
+  and `plan/BACKLOG.md` is refused outright, so the verb that owns the reference files has no append
+  form at all. An `--add` that appends one entry through the same gate, or a guard that refuses a body
+  far shorter than the file it replaces, closes it.
