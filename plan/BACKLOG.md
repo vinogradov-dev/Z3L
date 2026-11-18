@@ -267,6 +267,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X67** a camera change leaves the carried piece in the hand
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/document.rs,app/src/view_layout.rs,crates/scene/src/camera.rs` — `bac9750`
+
 - `[x]` **X65** a carried piece runs away from the cursor when the hand strays off its axis
   Why: Observation: a board carried by the furniture move runs away from the cursor —
    reproduced in the divider fixture, where a pointer that moved sideways and up carried the
