@@ -2,7 +2,7 @@
 
 Status: pointer. The catalogue outgrew this document: it is the workshop's directory of nomenclature —
 items, kinds, properties, families, packages, part documents, suppliers' prices and the rules that pick
-and place them (ADR 0145).
+and place them (ADR 0148).
 
 The specification lives in:
 

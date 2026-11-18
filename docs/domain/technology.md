@@ -2,7 +2,7 @@
 
 Status: domain specification, target state. This document describes how a panel is machined, where
 the trades and tools come from, how drilling is derived from the hardware that causes it, and how the
-placement rules a workshop works by are stored and applied (ADR 0147). Today a panel carries one
+placement rules a workshop works by are stored and applied (ADR 0150). Today a panel carries one
 ordered list of anchored machining records and the list has one kind, a cutout
 (`crates/model/src/panel/machining.rs`, ADR 0045, 0046); drilling is not in the program at all.
 
@@ -16,8 +16,8 @@ Related documents:
 Related decisions: [0045](../decisions/0045-machining-is-an-ordered-list-of-anchored-operations.md),
 [0046](../decisions/0046-machining-compiles-to-staged-effects.md),
 [0094](../decisions/0094-a-class-registry-gives-the-machine-its-semantics.md),
-[0146](../decisions/0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md),
-[0147](../decisions/0147-machining-is-derived-and-rules-are-tables.md).
+[0149](../decisions/0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md),
+[0150](../decisions/0150-machining-is-derived-and-rules-are-tables.md).
 
 ## 1. Two kinds of machining
 
@@ -50,7 +50,7 @@ cutout already is.
 
 A part document carries **drilling objects**: a path node with a class from the class registry
 (ADR 0094) and typed properties for diameter and depth, plus a direction. A **fastener point** is the
-same kind of object whose property references the fastener's item (ADR 0146 §8).
+same kind of object whose property references the fastener's item (ADR 0149 §8).
 
 The rule:
 

@@ -1,4 +1,4 @@
-# 0146. A catalogue part is a document, and the scene holds an instance of it
+# 0149. A catalogue part is a document, and the scene holds an instance of it
 
 - Status: Accepted
 - Date: 2026-11-18
@@ -38,7 +38,7 @@ a second format, it is a second *use* of the first.
 
 **The scene holds an instance, not a copy.** A node may be an instance of an item: the placement is
 document data, the contents are derived from the item's part document and cached by the item's
-version and the directory revision (ADR 0145). A changed part document therefore reaches every
+version and the directory revision (ADR 0148). A changed part document therefore reaches every
 project that uses the item — which is the whole point — and no rebuild is triggered by an unrelated
 edit.
 
@@ -65,7 +65,7 @@ drawable: the item carries a coarse bounding box, so the scene paints a placehol
 and reports a diagnostic, and the project opens.
 
 **The live document re-derives; the order package is the frozen copy.** Holes are not panel data
-(ADR 0147), so an open project always shows the current hinge; an exported order names the directory
+(ADR 0150), so an open project always shows the current hinge; an exported order names the directory
 revision and the part hashes it was built from, and it does not move afterwards (ADR 0120).
 
 **Insertion is a session flow, not a data write.** Inserting an item opens its part document through
@@ -95,7 +95,7 @@ second editor and no second viewer.
 
 - ADR [0034](0034-nodes-carry-typed-properties.md), [0094](0094-a-class-registry-gives-the-machine-its-semantics.md),
   [0096](0096-before-the-first-release-the-format-has-no-past.md), [0120](0120-sheets-and-money-are-additive-in-the-package.md),
-  [0145](0145-a-nomenclature-directory-is-a-set-of-packages.md), [0147](0147-machining-is-derived-and-rules-are-tables.md).
+  [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md), [0150](0150-machining-is-derived-and-rules-are-tables.md).
 - `docs/domain/nomenclature.md` — items, packages and the part-document contract.
 - `docs/domain/document.md` — the scene file and the instance node.
 - Plan: O10, O13, O14.

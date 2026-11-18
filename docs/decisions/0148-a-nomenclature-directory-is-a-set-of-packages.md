@@ -1,4 +1,4 @@
-# 0145. A nomenclature directory is a set of packages
+# 0148. A nomenclature directory is a set of packages
 
 - Status: Accepted
 - Date: 2026-11-18

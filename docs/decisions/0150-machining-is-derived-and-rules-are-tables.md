@@ -1,4 +1,4 @@
-# 0147. Machining is derived from geometry, and placement rules are tables
+# 0150. Machining is derived from geometry, and placement rules are tables
 
 - Status: Accepted
 - Date: 2026-11-18
@@ -27,7 +27,7 @@ records: a cutout, a groove, a contour milling. It never stores a drilled hole. 
 **A drilled hole is the crossing of a drilling object with a panel.** A part document carries
 drilling objects — a path with a class from the registry (ADR 0094) and typed properties for diameter
 and depth — and a fastener point is the same object with a property reference to the fastener's item
-(ADR 0146). Where such an object crosses a panel, the crossing becomes a hole. It is computed when a
+(ADR 0149). Where such an object crosses a panel, the crossing becomes a hole. It is computed when a
 report, a drawing or a CNC program asks for it, and cached by the panel's revision, the instance
 placements and the directory revision, so a frame never computes it and an untouched cabinet never
 recomputes it.
@@ -39,7 +39,7 @@ from the workshop's park. A hole stores neither: its diameter comes from the dri
 
 **Tools are nomenclature, and the machine park is a package.** A cutter, a drill and a saw are
 ordinary items with their own properties; "on this machine it sits in slot 7 at 3000 rpm" is a row of
-a machine-park package that references the same `ItemId` (ADR 0145). A milling whose cutter is no
+a machine-park package that references the same `ItemId` (ADR 0148). A milling whose cutter is no
 longer in the directory is a diagnostic naming the missing tool; the last resolved offset is used as
 a fallback, exactly as a panel keeps its last known thickness, so a project opens and says what it
 lost. Nothing is substituted silently: a groove whose width no tool can cut is a refusal with the
@@ -85,14 +85,14 @@ authored parameters that decide the shape.
 - No expressions means some shop habit cannot be expressed until a template is added; that is the
   cost of testability, and the line is re-drawn by an ADR when prototypes need arithmetic.
 - The order package is the only frozen copy: an open project re-derives its holes, an exported order
-  names the directory revision and the part hashes (ADR 0120, 0146).
+  names the directory revision and the part hashes (ADR 0120, 0149).
 
 ## References
 
 - ADR [0045](0045-machining-is-an-ordered-list-of-anchored-operations.md),
   [0046](0046-machining-compiles-to-staged-effects.md), [0094](0094-a-class-registry-gives-the-machine-its-semantics.md),
-  [0120](0120-sheets-and-money-are-additive-in-the-package.md), [0145](0145-a-nomenclature-directory-is-a-set-of-packages.md),
-  [0146](0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md).
+  [0120](0120-sheets-and-money-are-additive-in-the-package.md), [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md),
+  [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md).
 - `docs/domain/technology.md` — the structure this record decides.
 - `crates/model/src/panel/machining.rs` — the authored record and its kinds;
   `crates/model/src/class.rs` — the class a drilling object takes from the registry.

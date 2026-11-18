@@ -18,9 +18,9 @@ Related documents:
 - [Semantic classes](classes.md) — the class registry a part's objects take their class from.
 
 Related decisions: [0094](../decisions/0094-a-class-registry-gives-the-machine-its-semantics.md),
-[0145](../decisions/0145-a-nomenclature-directory-is-a-set-of-packages.md),
-[0146](../decisions/0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md),
-[0147](../decisions/0147-machining-is-derived-and-rules-are-tables.md),
+[0148](../decisions/0148-a-nomenclature-directory-is-a-set-of-packages.md),
+[0149](../decisions/0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md),
+[0150](../decisions/0150-machining-is-derived-and-rules-are-tables.md),
 [0031](../decisions/0031-external-resources-keep-their-own-system-of-record.md),
 [0096](../decisions/0096-before-the-first-release-the-format-has-no-past.md),
 [0120](../decisions/0120-sheets-and-money-are-additive-in-the-package.md).
@@ -190,7 +190,7 @@ is a normal record, not a data error.
 ## 8. Part documents
 
 An item may carry a part document: our own scene file, stored in the package, referenced by a
-relative path and a content hash (ADR 0146).
+relative path and a content hash (ADR 0149).
 
 The contract a part document must satisfy:
 

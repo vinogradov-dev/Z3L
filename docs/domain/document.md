@@ -19,9 +19,9 @@ Related decisions: [0005](../decisions/0005-material-catalogue.md),
 [0035](../decisions/0035-furniture-types-form-a-numbered-tree.md),
 [0036](../decisions/0036-cameras-and-lights-are-scene-objects.md) and
 [0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md),
-[0145](../decisions/0145-a-nomenclature-directory-is-a-set-of-packages.md),
-[0146](../decisions/0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) and
-[0147](../decisions/0147-machining-is-derived-and-rules-are-tables.md).
+[0148](../decisions/0148-a-nomenclature-directory-is-a-set-of-packages.md),
+[0149](../decisions/0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) and
+[0150](../decisions/0150-machining-is-derived-and-rules-are-tables.md).
 
 ## 1. Terms
 

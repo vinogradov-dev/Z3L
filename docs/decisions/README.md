@@ -9,7 +9,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0002](0002-vendored-truck-shapeops.md) | Vendored `truck-shapeops` without the VTK stack | Accepted |
 | [0003](0003-length-is-integer-micrometres.md) | Lengths are integer micrometres | Accepted |
 | [0004](0004-panel-local-frame.md) | Panel-local frame, faces and topology ids | Accepted; frame origin superseded by 0009 |
-| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Superseded by 0145 |
+| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Superseded by 0148 |
 | [0006](0006-panel-nominal-and-resolved-geometry.md) | Panels store nominal size; geometry is resolved | Accepted; core-origin placement superseded by 0009 |
 | [0007](0007-edge-banding-v1.md) | Edge banding v1: ordered bands and butt joints | Accepted; per-path banding unit superseded by 0014 |
 | [0008](0008-panel-diagnostics.md) | Panel diagnostics and command invalidation | Accepted |
@@ -150,9 +150,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071; the plate's place in the pass and its opacity superseded by 0144 |
 | [0143](0143-the-shadow-map-is-the-key-lights-depth-pass.md) | The shadow map is the key light's depth pass, read by every face | Accepted |
 | [0144](0144-the-floor-plate-is-blended-so-it-tints-what-stands-under-it.md) | The floor plate is blended, so it tints what stands under it and keeps its shadow | Accepted |
-| [0145](0145-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
-| [0146](0146-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
-| [0147](0147-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
+| [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
+| [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
+| [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
 
 ## Format
 
