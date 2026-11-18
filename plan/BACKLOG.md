@@ -114,36 +114,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    sloped or reshaped one is a new field and a new decision, so neither the card nor the
    gesture can offer a shape before that decision is recorded.
   Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
-   rectangle with a cut at one or more corners, or a ring drawn on the plane. A cut reuses the
-   panel corner language, CornerFeatureKind (a chamfer of two setbacks, which is any angle, or
-   a fillet radius), so a maker learns one corner rule in two places. x and y stay the
-   footprint bounds, so the readers, the export and the containment diagnostic keep an answer;
-   the scene draws the wireframe from the footprint and picking and the grips read it. An ADR
-   records the footprint, the corner parameter (an angle derived into setbacks, or the setbacks
-   themselves) and what a contour frame is: a reserved space extruded by the height, not a
-   body.
-  Done: A frame with one 45-degree chamfer round-trips through the file, draws as the cut
-   outline and is picked inside it; a contour frame stores its ring and pulls its height; a cut
-   that eats an edge is a readable refusal; the ADR is written and docs/decisions/README.md
-   lists it; cargo xtask ci is green.
+   rectangle with a cut at one or more corners, or a ring drawn on the plane, which is always a
+   reserved space and never a body. A cut stores offsets, not an angle: the offset along each
+   edge is what a maker measures on a board, and it reuses the panel corner language,
+   CornerFeatureKind (a chamfer of two setbacks), so one corner rule serves both. The corner
+   type is chosen first and names the row that follows: a chamfer offers its two offsets, a
+   fillet offers a radius only after the type is chosen. x and y stay the footprint bounds so
+   the readers, the export and the containment diagnostic keep an answer; the scene draws the
+   wireframe from the footprint, picking and the grips read it. An ADR records the footprint
+   and the corner rule (offsets for a chamfer, a radius for a fillet, the type first).
+  Done: A frame with a 45-degree and a frame with a 120-degree cut round-trip through the file
+   as their offsets, draw as the cut outline and are picked inside it; a fillet radius is
+   offered only after the corner type is chosen; a contour frame stores its ring as a reserved
+   space and pulls its height; a cut that eats an edge is a readable refusal; the ADR is
+   written and docs/decisions/README.md lists it; cargo xtask ci is green.
   `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs`
-- `[ ]` **N18** the card asks whether the piece stands on the floor or hangs on the wall
-  Why: The owner asks the card for a position: on the floor or on the wall. ADR 0097 made
-   mounting a class trait, mount: Floor | Wall, read by the furniture move tool, so a product
-   field would be the second source of truth that record refuses. The card shows only a class
-   code today, so a maker who wants a wall piece has to know which code that is before the list
-   helps at all.
-  Shape: The card offers the two positions as a filter over the registry product classes by the
-   class mount trait, and names the class it leaves; picking a class of the other mount moves
-   the toggle, so the class stays the only stored fact. The created placement stays
-   product_placement and a height above the floor stays the makers placement, as ADR 0100 has
-   it. If the owner instead wants a mount field on the product, that is a new decision and an
-   ADR, not a card edit.
-  Done: With On the wall chosen the list holds only wall classes and the placeholder is not
-   offered; the frame created from it carries a wall class and the move query keeps it at its
-   height; the toggle and the class cannot disagree in a headless test; cargo xtask ci is
-   green.
-  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/model/src/class.rs,docs/decisions/0097-a-product-is-a-container-with-an-authored-envelope.md`
 - `[ ]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
   Why: The owner: the frame kept the old card where the box has a typed height field, and the
    base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
@@ -161,6 +146,95 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    compared row for row in a headless test; Esc drops the frame draft with no history entry;
    one undo takes the created frame; cargo xtask ci is green.
   `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs`
+- `[ ]` **N20** the card says the position its class gives, and never asks
+  Why: The owner asked the card for a position, then settled it: the class already dictates how
+   the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
+   source of truth that record refuses. What is missing is only the sentence: the card names a
+   class code and says nothing about whether the piece stands or hangs, so a maker cannot tell
+   why a floor cabinet will not rise or why a wall cabinet does. No field and no filter: the
+   card reads the trait.
+  Shape: One row under the class: the position the chosen class carries, said in words (On the
+   floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
+   class list is not filtered and the class stays the only stored fact. Two messages carry the
+   words in both languages.
+  Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
+   wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
+   xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs`
+- `[ ]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
+  Why: The owner: frames should stick to each other at a tolerance set in settings, and to the
+   floor and to walls, and until a house-wall tool exists the virtual coordinate planes stand
+   in for walls. Today the capture is two constants in move_query.rs (a 5 mm snap radius and a
+   1 mm grid), no coordinate plane is a candidate, no gap is ever left between two pieces, and
+   the maker cannot turn any of it off. Snapping is a taste and a workshop standard, not a code
+   literal, so it belongs in the workspace settings like the grid step and the gizmo handle.
+  Shape: One Settings section for snapping: the coordinate planes on or off, other frames on or
+   off, and the tolerance in millimetres that captures a drag, with the 1 mm grid as it is. The
+   move rule reads a SnapSettings value the shell passes in, instead of the constants; the
+   candidates gain the X=0, Y=0 and Z=0 planes (floor included) beside the envelopes, virtual
+   faces and part faces, and a capture onto a neighbour or a plane leaves the settings gap
+   rather than always 0. A captured face draws a cue and its field says the gap, so the number
+   the maker reads is the number the rule used. Defaults: planes on, frames on, the current 5
+   mm tolerance, gap 0.
+  Done: A workspace file round-trips the three values; a frame dragged within the tolerance of
+   Y=0 lands with its back on the plane and one dragged past it does not; two frames within
+   tolerance stop at the set gap; turning planes off leaves the piece where the pointer put it;
+   the field at the captured face shows the same number the rule used; cargo xtask ci is green.
+  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs`
+- `[ ]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
+  Why: The owner wants two tools: the move the editor has stays free, and a furniture move
+   moves the object by its own rules — a panel only inside its own plane, a frame on all three
+   axes but seeing its neighbours and the walls — with the distance to the neighbour or the
+   wall as a typed field. Today one Move mode decides under the hand: the translate gizmo reads
+   Project::move_rule and applies it whenever the selection is furniture (ADR 0102, 0103), so
+   the same handle is free for a loose body and ruled for a cabinet, and no rule keeps a panel
+   in its plane at all.
+  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
+   never a document field (ADR 0113). The free Move drops the rule and keeps the exact
+   micrometre drag; the furniture mode reads Project::move_rule, adds the panel-plane rule (the
+   two axes of the panels own face plane are free, the thickness normal is refused, so a shelf
+   height is set by the fill or the card and not by the grab), keeps a frame free on the three
+   axes subject to its class mount, and shows the Distances gap fields of this drag, which
+   already measure the nearest surfaces (ADR 0103), as this mode fields. One undo entry per
+   drag either way.
+  Done: A selected shelf moves on the two axes of its face and refuses the third; a frame moves
+   on three axes, a floor frame keeps its height and a neighbour stops it; the free move keeps
+   a 97.4 mm drag where the furniture move stops at the wall; a typed gap lands the face where
+   typed and the field shows the same number; one undo takes the drag; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,crates/model/src/project/move_query.rs,crates/ui/src/distance.rs`
+- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner: a panel created in a frame runs into its neighbour and freezes there, and
+   should instead stop at it and jump past it into the free space beyond when the pointer
+   crosses; and a panel dragged in an empty frame or an empty part of one should stop at the
+   frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps the
+   free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
+- `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
+  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
+   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
+   maker reaches for the mouse for the most repeated action in the editor. The one key table
+   already exists (ADR 0117); the modes are simply absent from it.
+  Shape: A binding for Select, Move and Rotate in inventory KEYS on chords no drawing tool owns
+   (plain W and E are free; R is rectangle, M is measure, S is shadow, O and F are view), the
+   status bar cells print the key beside the label, and the Settings page lists the three rows
+   with the rest. The furniture move of N22 adds its own key in its own change, so this task
+   does not wait for a mode that does not exist.
+  Done: Each of the three modes answers its key from the shell and the status bar cell shows
+   it; the Settings shortcut list holds all three; the table test proves no two rows share a
+   key and every binding prints in both languages; cargo xtask ci is green.
+  `files: crates/ui/src/inventory.rs,app/src/shortcuts.rs,app/src/status_bar.rs,crates/text/src/messages.rs`
 
 ## Done
 
