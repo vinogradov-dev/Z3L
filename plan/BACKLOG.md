@@ -43,9 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X71** the carry's hand is the pointer the viewport hit-tests while it is displaced
-  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs`
-
 - `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
   Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
    there, and should instead stop at it and jump past it into the free space beyond when the
@@ -292,6 +289,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **X71** the carry's hand is the pointer the viewport hit-tests while it is displaced
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `0fc31df`
 
 - `[x]` **X70** the carry's hand is the drawn pointer, not the system one
   `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/main.rs,app/src/work_cursor.rs` — `58c2988`
