@@ -21,14 +21,18 @@ frames. In the default view a purely sideways move of 200 points already moves s
 ## Decision
 
 **A carry is measured by the hand's own travel.** The distance is the pointer's movement projected
-onto the axis' *screen* direction and scaled where the piece was anchored; one anchored point of
-travel along that direction means the millimetres the ray's projection gives there, which is the
-local slope and exact at the take. The mapping is linear from the anchor, so it is bounded, monotone
-in the hand's direction and identical for every pointer position that travels the same way.
+onto the axis' *screen* direction, multiplied by how many millimetres of that axis one point of the
+screen means — the inverse of how long a millimetre of the axis looks at the piece's pivot. One
+point of the hand therefore moves the piece one point on screen, which is bounded, monotone in the
+hand's direction and identical for every pointer position that travels the same way.
 
-**An anchor is a fact about the hand, not about the frame.** It is set where the axis is named, and
-again on every frame that drives the camera; the piece keeps the distance it already has across an
-anchor, so the view never moves the piece and the pointer never re-scales the mapping under itself.
+**The travel is integrated frame by frame.** Each frame the piece keeps what it has and adds the
+hand's movement of that frame, measured with the scale the projection has *there*. A single anchor
+held for the whole carry would use the take's scale everywhere, and a perspective view changes it as
+the piece comes closer or goes further — measured at 40, 84 and 131 points of piece for 40, 80 and
+120 points of hand before the change, which a maker reads as the panel running away. A frame that
+drives the camera adds nothing: the hand is turning the view, so the piece keeps the distance it
+has.
 
 **A held handle keeps the ray's projection.** It is the right measurement there — a handle is the
 line — and its own dead zone keeps the pointer near it.
@@ -44,10 +48,12 @@ still names the surface it landed on, and the piece is still put down by one cli
   across the axis carries nothing, so dragging a shelf sideways nudges it by the small part of the
   movement that lies along its thickness, which is honest and slightly less forgiving than an exact
   projection would be if it were stable.
-- A piece moved far along its axis travels at the scale measured where it was taken, so in a
-  perspective view a very long carry is a linear approximation: it may lag the ray's exact answer by
-  a few per cent at the ends. The alternative is a mapping that is exact and unbounded, which is the
-  defect.
+- A frame-by-frame sum is a rectangle rule: over a very fast flick the piece may trail or lead the
+  hand by a few per cent, because one frame's travel is measured with one slope. It cannot run away,
+  which is what the exact-and-unbounded mapping did.
+- A wheel turn and a middle- or right-button drag carry nothing until their smoothing ends, because
+  the hand is turning the view in those frames (ADR 0152); the piece is where it was and the hand
+  takes it again as soon as the camera settles.
 - The typed distance, the fields and the capture are untouched: they read `drag_delta` and the axis,
   and the axis and the axis' meaning are the same as before.
 - A camera gesture anchors the carry every frame it runs, so the hand's travel during an orbit is not

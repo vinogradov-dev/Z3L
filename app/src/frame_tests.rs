@@ -1131,6 +1131,55 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
 }
 
 #[test]
+fn a_press_on_the_carried_piece_s_card_takes_the_hand_and_puts_it_down() {
+    // X66: at the edge of the work area the card is pulled back over the pointer, so its plates must
+    // not take the hand — the press there is the click that ends the carry, and a drag across a plate
+    // must not scrub a gap the piece would then jump to.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-carry-card", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    // The panels are put away, so the corner of the work area is clear of them: a pointer there
+    // cannot hang the card below itself or to its right, and the card is pulled back over the hand.
+    harness.app.shell.panels.toggle_hide_all();
+    harness.settle();
+    let scene = harness.scene();
+    let corner = egui::pos2(scene.right() - 24.0, scene.bottom() - 20.0);
+    harness.click(harness.node_point(panel), egui::PointerButton::Primary);
+    harness.hover(corner);
+    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
+    let card = harness.app.tabs.active().tool_card_rect().expect("the card drew");
+    assert!(card.contains(corner), "the card was pulled back over the pointer: {card:?} holds {corner:?}");
+    let carried = harness.app.tabs.active().carried_delta();
+
+    // A drag across the card is the viewport's: it carries the piece and scrubs nothing.
+    harness.press_at(card.center(), egui::PointerButton::Primary);
+    harness.run(vec![egui::Event::PointerMoved(card.center() + egui::vec2(30.0, 0.0))]);
+    harness.release_at(card.center() + egui::vec2(30.0, 0.0), egui::PointerButton::Primary);
+    harness.settle();
+    assert!(harness.app.tabs.active().holding_piece(), "a drag over the card ends nothing");
+
+    // The hand comes back, and so does the piece: no number pinned it.
+    harness.hover(corner);
+    harness.settle();
+    let back = harness.app.tabs.active().carried_delta();
+    assert!((back - carried).length() < 1.0, "the piece is where the hand put it: {back:?} from {carried:?}");
+
+    // A click on the card puts the piece down, as it does anywhere else in the scene.
+    let card = harness.app.tabs.active().tool_card_rect().expect("the card followed the pointer");
+    let revision = harness.revision();
+    harness.click(card.center(), egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "the click over the card puts the piece down");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "and commits it as one undo entry");
+}
+
+#[test]
 fn a_sideways_hand_never_carries_a_piece_away() {
     // The defect a maker reported: the panel ran away from the cursor. The distance was the ray's
     // projection onto the axis line, and a pointer that strayed sideways from that line met it at an
@@ -1165,6 +1214,74 @@ fn a_sideways_hand_never_carries_a_piece_away() {
             "a hand {step} points across the axis moves nothing: {sideways:?} from {carried:?}"
         );
     }
+}
+
+#[test]
+fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
+    // X65, in perspective: the scale of the axis changes as the piece travels (a perspective camera)
+    // and again when the view is zoomed, so the hand's travel is integrated frame by frame. A piece
+    // measured against one anchor held for the whole carry lags behind the hand and looks like it
+    // ran away as soon as the camera moves.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-carry-perspective", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    let piece = |harness: &Harness| {
+        let project = harness.app.tabs.active().session.project();
+        let moved = project.pivot_world(panel).expect("a pivot") + harness.app.tabs.active().carried_delta();
+        gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+    };
+    harness.click(body, egui::PointerButton::Primary);
+    let start = piece(&harness);
+    let mut fingers = Vec::new();
+    for step in 1..=3 {
+        let at = body - egui::vec2(0.0, 40.0 * step as f32);
+        harness.hover(at);
+        fingers.push((at, piece(&harness)));
+    }
+    for (index, (at, moved)) in fingers.iter().enumerate() {
+        let hand = (at.y - body.y).abs();
+        let travelled = (moved.y - start.y).abs();
+        assert!(
+            (travelled - hand).abs() < hand * 0.2,
+            "step {}: the hand moved {hand} pt and the piece {travelled} pt",
+            index + 1
+        );
+    }
+
+    // Zooming out under the carry keeps the distance and does not lose the hand.
+    let at = fingers.last().expect("three steps").0;
+    let carried = harness.app.tabs.active().carried_delta();
+    let wheel = |points: f32| egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    for _ in 0..2 {
+        harness.run(vec![egui::Event::PointerMoved(at), wheel(-80.0)]);
+        harness.settle();
+    }
+    assert_eq!(harness.app.tabs.active().carried_delta(), carried, "a zoom does not move the piece");
+    // The wheel smooths itself over a few frames; the hand carries the piece again once it settles.
+    for _ in 0..8 {
+        harness.run(Vec::new());
+    }
+    harness.settle();
+    let before = harness.app.tabs.active().carried_delta();
+    harness.hover(at - egui::vec2(0.0, 40.0));
+    assert!(
+        (harness.app.tabs.active().carried_delta() - before).length() > 1.0,
+        "after the zoom the hand carries the piece again"
+    );
 }
 
 #[test]

@@ -217,6 +217,13 @@ impl ToolOutcome {
 /// The plate is kept inside `viewport`, so a pointer at the edge of the work area leaves the whole
 /// card on screen instead of clipping it. `focus` names the row that takes the keyboard this frame,
 /// for a tool that appears with a number ready to type.
+///
+/// `sense_pointer` is whether the card may take the hand as well as the keyboard. A gesture that
+/// holds no button — the furniture move, which carries a piece until a click puts it down — passes
+/// `false`: the plate is kept inside the window, so at the edge of the work area it is pulled back
+/// over the pointer, and a row that senses the pointer would take the very press that ends the
+/// gesture and scrub a number into the gap the piece would then jump to (X66). The field nearest the
+/// pointer still takes the keyboard, so a gap is still typed.
 pub fn show(
     ui: &mut Ui,
     viewport: Rect,
@@ -224,6 +231,7 @@ pub fn show(
     view: &mut ToolView,
     focus: Option<ToolParam>,
     opacity: u32,
+    sense_pointer: bool,
 ) -> (ToolOutcome, Rect) {
     let fill = theme::at_opacity(theme::floating(ui), opacity.clamp(80, 100));
     let anchor = pointer + egui::vec2(CARD_GAP, CARD_GAP);
@@ -232,6 +240,7 @@ pub fn show(
         .order(Order::Middle)
         .pivot(Align2::LEFT_TOP)
         .fixed_pos(anchor)
+        .interactable(sense_pointer)
         .constrain_to(viewport)
         .show(ui.ctx(), |ui| {
             let frame = egui::Frame::new()
@@ -384,6 +393,16 @@ mod tests {
 
     /// Draws one card frame at `pointer` and returns what it asked for and the rectangle it took.
     fn run(events: Vec<egui::Event>, pointer: Pos2, scale: f32) -> (ToolOutcome, Rect, Vec<String>) {
+        run_with(events, pointer, scale, true)
+    }
+
+    /// The same, with the card's own answer about the pointer: `false` is the carried piece's card.
+    fn run_with(
+        events: Vec<egui::Event>,
+        pointer: Pos2,
+        scale: f32,
+        sense_pointer: bool,
+    ) -> (ToolOutcome, Rect, Vec<String>) {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(scale);
         crate::set_language(&ctx, crate::Lang::En);
@@ -394,7 +413,7 @@ mod tests {
         for _ in 0..2 {
             let input = egui::RawInput { screen_rect: Some(viewport()), events: events.clone(), ..Default::default() };
             let output = ctx.run_ui(input, |ui| {
-                let shown = show(ui, viewport(), pointer, &mut tool, None, 92);
+                let shown = show(ui, viewport(), pointer, &mut tool, None, 92, sense_pointer);
                 outcome = shown.0;
                 rect = shown.1;
             });
@@ -427,13 +446,65 @@ mod tests {
             let mut focused = false;
             let focus = (frame < 2).then_some(ToolParam::Height);
             let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
-                show(ui, viewport(), Pos2::new(200.0, 200.0), &mut tool, focus, 92);
+                show(ui, viewport(), Pos2::new(200.0, 200.0), &mut tool, focus, 92, true);
                 focused = ui.ctx().text_edit_focused();
             });
             output.drop_without_applying_deltas();
             states.push(focused);
         }
         assert_eq!(states, vec![false, true, true, true], "the ask lands on the second frame and is kept");
+    }
+
+    #[test]
+    fn a_card_without_the_pointer_is_click_through() {
+        // X66: the carried piece's card is pulled back over the pointer at the edge of the work area,
+        // so the pointer must reach whatever is behind it — the press there is the click that puts
+        // the piece down. A card that senses the pointer keeps the layer, which is what every other
+        // gesture wants: its plate is a deliberate target.
+        let id = Id::unique("tool_card");
+        let reach = |sense_pointer: bool| {
+            let ctx = egui::Context::default();
+            crate::set_language(&ctx, crate::Lang::En);
+            let mut tool = view();
+            let mut inside = None;
+            let mut layer = None;
+            for _ in 0..3 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(viewport()),
+                        events: vec![egui::Event::PointerMoved(Pos2::new(190.0, 235.0))],
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let shown = show(ui, viewport(), Pos2::new(120.0, 150.0), &mut tool, None, 92, sense_pointer);
+                        inside = Some(shown.1.contains(Pos2::new(190.0, 235.0)));
+                        layer = ui.ctx().layer_id_at(Pos2::new(190.0, 235.0)).map(|layer| layer.id);
+                    },
+                );
+                output.drop_without_applying_deltas();
+            }
+            assert_eq!(inside, Some(true), "the card covers the pointer");
+            layer
+        };
+        assert_eq!(reach(true), Some(id), "a card that senses the pointer owns the layer under it");
+        assert_ne!(reach(false), Some(id), "a card without the pointer is click-through");
+    }
+
+    #[test]
+    fn a_card_without_the_pointer_still_takes_the_keyboard() {
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let mut tool = view();
+        let mut focused = false;
+        for frame in 0..4 {
+            let focus = (frame < 2).then_some(ToolParam::Height);
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
+                show(ui, viewport(), Pos2::new(200.0, 200.0), &mut tool, focus, 92, false);
+                focused = ui.ctx().text_edit_focused();
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert!(focused, "a carried piece's card still lets a gap be typed");
     }
 
     #[test]

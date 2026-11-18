@@ -938,16 +938,16 @@ pub(crate) fn named_axis(
 /// The screen frame a carried piece's hand travel is read in: the axis' unit direction at the
 /// pivot, and the millimetres along the axis one point of travel in it means.
 ///
-/// The furniture move carries a piece by the hand, not by a rail the pointer points at: the ray of
-/// a pointer that strayed sideways from the axis' screen line meets that line at an arbitrary and
-/// wildly unstable place, so the distance is the hand's *screen* travel along the axis' direction,
-/// scaled where it was taken. A piece then never runs away from the hand that carries it (N25).
+/// The piece travels along a world line, and this is the inverse of how long that travel looks on
+/// screen: one point of the hand is however many millimetres the axis needs to move the piece by one
+/// point. The furniture move is carried by the hand (N24), so its distance is measured in points of
+/// the hand and never by projecting a ray onto the line — that projection is unstable away from the
+/// line (X65) and its slope at the pointer is not the piece's own.
 pub(crate) fn travel_frame(
     camera: Camera,
     viewport: egui::Rect,
     origin_world: DVec3,
     axis: Axis,
-    pointer: Pos2,
 ) -> Option<(Vec2, f64)> {
     // An axis that points at the camera has neither a direction on screen nor a distance to travel.
     if axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
@@ -957,12 +957,9 @@ pub(crate) fn travel_frame(
     let step = (camera.distance() * 0.01).max(1.0);
     let along = screen_point(camera, viewport, origin_world + axis.direction() * step)?;
     let direction = screen_direction(along - origin)?;
-    let parameter =
-        |pointer: Pos2| ray_to(pointer, viewport, camera).closest_parameter_on_line(origin_world, axis.direction());
-    // The local slope of the projection, one point along the axis' screen direction, which is exact
-    // where the hand took the piece and linear from there.
-    let scale = parameter(pointer + direction)? - parameter(pointer)?;
-    (scale.is_finite() && scale.abs() > f64::EPSILON).then_some((direction, scale))
+    let on_screen = f64::from((along - origin).length());
+    let per_point = step / on_screen;
+    (per_point.is_finite() && per_point.abs() > f64::EPSILON).then_some((direction, per_point))
 }
 
 /// The hit radius of a handle of `length` points.
@@ -1170,33 +1167,40 @@ mod tests {
 
     #[test]
     fn the_travel_is_the_hand_s_own_and_the_ray_s_is_unstable() {
-        // N25: a carried piece is measured by the hand's screen travel along the axis, scaled where
-        // it was taken. The defect this replaces was the ray's projection onto the axis line, which
-        // ran away as soon as the pointer strayed sideways from that line.
+        // X65: a carried piece is measured by the hand's screen travel along the axis, scaled by how
+        // long a millimetre of that axis looks. The defect this replaces was the ray's projection
+        // onto the axis line, which ran away as soon as the pointer strayed sideways from that line.
         let camera = Camera::default();
         let origin = camera.target();
         let handles = axis_handles(camera, viewport(), origin, origin_screen(camera), spec(ALL_AXES));
         let direction =
             |axis: Axis| handles.iter().find(|h| h.axis == axis).map(|h| h.direction).expect("a drawn axis");
-        let at = origin_screen(camera) + Vec2::new(20.0, 15.0);
-        let (screen, per_point) = travel_frame(camera, viewport(), origin, Axis::Z, at).expect("Z has a frame");
+        let (screen, per_point) = travel_frame(camera, viewport(), origin, Axis::Z).expect("Z has a frame");
         assert!((screen - direction(Axis::Z)).length() < 1.0e-5, "the frame keeps the axis' screen direction");
         assert!(per_point > 0.0, "up the screen is up the world in the default view: {per_point}");
 
-        // Sideways is none of the piece's business: the frame is the axis' and does not move with the
-        // pointer, while the ray's projection onto the axis line jumps by hundreds of millimetres.
+        // The scale is the axis' own, so one point of the hand is one point of the piece: the
+        // millimetres it names move the piece exactly that far on screen, whatever the pointer does.
+        let near = origin_screen(camera);
+        let far = screen_point(camera, viewport(), origin + Axis::Z.direction() * per_point).expect("on screen");
+        assert!(
+            (f64::from((far - near).length()) - 1.0).abs() < 0.05,
+            "one point of the hand is {} points of the piece",
+            (far - near).length()
+        );
+
+        // The ray's own projection onto that line is what used to be read, and a hand that strays
+        // sideways moves it by much more than the piece could have moved.
         let sideways = Vec2::new(-screen.y, screen.x);
-        let (side, _) = travel_frame(camera, viewport(), origin, Axis::Z, at + sideways * 200.0).expect("a frame");
-        assert!((side - screen).length() < 1.0e-5, "the frame is the axis', not the pointer's");
         let parameter =
             |pointer: Pos2| ray_to(pointer, viewport(), camera).closest_parameter_on_line(origin, Axis::Z.direction());
-        let from = parameter(at).expect("a ray through the axis");
-        let jumped = parameter(at + sideways * 200.0).expect("a ray through the axis") - from;
+        let from = parameter(near).expect("a ray through the axis");
+        let jumped = parameter(near + sideways * 200.0).expect("a ray through the axis") - from;
         assert!(jumped.abs() > 10.0, "the ray's projection moves {jumped} mm for a sideways move of the hand");
 
         // An axis that points at the camera has no frame at all.
         let top = orthographic_view(DVec3::new(0.0, 0.0, 1.0));
-        assert!(travel_frame(top, viewport(), top.target(), Axis::Z, at).is_none());
+        assert!(travel_frame(top, viewport(), top.target(), Axis::Z).is_none());
     }
 
     #[test]

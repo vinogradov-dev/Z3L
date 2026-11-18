@@ -1581,7 +1581,8 @@ impl Document {
             placements.push(FieldPlacement { side, position: middle_screen });
         }
         let outcome: DistanceOutcome =
-            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity);
+            // A fill holds the pointer with its own gesture, so its plates are a deliberate target.
+            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity, true);
         self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
@@ -1800,7 +1801,20 @@ impl Document {
             placements.push(FieldPlacement { side, position });
         }
         let anchor = ui.input(|input| input.pointer.hover_pos()).unwrap_or_else(|| rect.center());
-        let outcome = self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
+        // The furniture move carries a piece with no button held, so its card keeps the keyboard and
+        // never the pointer: a press over it is the drop, not a scrub (X66). Every other gesture
+        // reaches this function too, so the flag is the hold's own.
+        let sense_pointer = !self.translate_gizmo.is_following();
+        let outcome = self.distance_fields.show(
+            ui,
+            &mut measure.distances,
+            &placements,
+            rect,
+            anchor,
+            None,
+            opacity,
+            sense_pointer,
+        );
         self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
@@ -1874,7 +1888,7 @@ impl Document {
         // A pull that just appeared takes the keyboard, so its height can be typed without a click;
         // the flag is cleared by the read so the field never holds the focus against the next press.
         let focus = self.tool_focus.take().or_else(|| self.extrude_gizmo.take_focus().then_some(ToolParam::Height));
-        let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity);
+        let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity, true);
         // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.
         self.tool_card_rect = Some(rect);

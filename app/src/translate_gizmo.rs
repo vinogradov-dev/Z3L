@@ -31,7 +31,7 @@ use eframe::egui;
 use egui::{Response, Ui};
 use geom::DVec3;
 use model::{Capture, Id, MoveRule};
-use scene::{Camera, MAX_DISTANCE_MM};
+use scene::MAX_DISTANCE_MM;
 
 use crate::gizmo_math::{
     Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
@@ -133,19 +133,6 @@ struct Drag {
     /// A command that lands under the hand makes both stale, so the hold ends rather than committing
     /// a distance measured against a scene that is no longer there (N25).
     revision: model::Revision,
-    /// The view the hold was last measured in, so a camera move re-anchors instead of moving the
-    /// piece under the hand (N25).
-    view: View,
-}
-
-/// The viewport a hold is measured in: the camera and the rectangle the rays are cast through.
-///
-/// Both are stored, because a panel that folds or a split that moves changes the ray of the same
-/// pointer exactly as an orbit does.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct View {
-    camera: Camera,
-    viewport: egui::Rect,
 }
 
 /// Persistent state of the translate gizmo.
@@ -386,7 +373,6 @@ impl TranslateGizmo {
             return Ok(None);
         };
         let axes = target.move_kind.axes(target.project, target.selection);
-        let view = View { camera: target.camera, viewport };
         // The camera gestures are the middle and the right button and the wheel: the viewport turns
         // those three into a camera move, and none of that travel belongs to the piece.
         let navigating = ui.input(|input| {
@@ -411,20 +397,24 @@ impl TranslateGizmo {
             self.drag = Some(drag);
             return Ok(None);
         };
-        // An anchor is where the hand's travel is read from: the frame the axis is named, and every
-        // frame that drives the camera. The piece keeps the distance it has across one, so a view
-        // that moves never moves the piece (N25).
-        if !travel.is_anchored() || navigating || drag.view != view {
-            let named = !travel.is_anchored();
-            let covered = if named { 0.0 } else { drag.delta.dot(axis.direction()) };
-            let from = if named { travel.from } else { pointer.unwrap_or(travel.from) };
-            let Some((direction, per_point)) = travel_frame(target.camera, viewport, drag.start_origin, axis, from)
-            else {
-                self.drag = Some(drag);
-                return Ok(None);
-            };
-            travel = Travel { from, covered, direction, per_point };
-            drag.view = view;
+        // The hand's travel is integrated frame by frame, each frame measured with the slope the
+        // projection has *here*: a perpective view changes that slope as the piece moves away from
+        // the camera, so one anchor held for the whole carry lags behind the hand and a zoom makes it
+        // worse (X65). A frame that drives the camera carries nothing: the hand is turning the view,
+        // and the piece keeps the distance it has (N25).
+        let anchor = |travel: &mut Travel, at: egui::Pos2, covered: f64| {
+            if let Some((direction, per_point)) = travel_frame(target.camera, viewport, drag.start_origin, axis) {
+                *travel = Travel { from: at, covered, direction, per_point };
+            }
+        };
+        // The hand has not moved yet, or has only just: the axis is named from the point the piece
+        // was taken at, and the piece does not move on that frame.
+        let taken_at = travel.from;
+        match (pointer, held) {
+            (Some(pointer), Some(_)) if navigating => anchor(&mut travel, pointer, drag.delta.dot(axis.direction())),
+            (_, None) => anchor(&mut travel, taken_at, 0.0),
+            (Some(pointer), Some(_)) if !travel.is_anchored() => anchor(&mut travel, pointer, 0.0),
+            _ => {}
         }
         drag.hold = Hold::Following { axis: Some(axis), travel };
         let (distance, capture) = match pinned {
@@ -439,6 +429,12 @@ impl TranslateGizmo {
             drag.delta = axis.direction() * distance;
             drag.capture = capture;
         }
+        // The anchor moves with the piece: the next frame measures only its own small movement, with
+        // the slope the projection has there, so a long carry never drifts from the hand.
+        if let Some(pointer) = pointer {
+            anchor(&mut travel, pointer, drag.delta.dot(axis.direction()));
+        }
+        drag.hold = Hold::Following { axis: Some(axis), travel };
         self.drag = Some(drag);
         Ok(None)
     }
@@ -491,7 +487,6 @@ impl TranslateGizmo {
                 start_parameter: 0.0,
                 delta: DVec3::ZERO,
                 revision: target.project.revision(),
-                view: View { camera: target.camera, viewport },
             });
             return Ok(None);
         }
@@ -532,7 +527,6 @@ impl TranslateGizmo {
             start_parameter: parameter,
             delta: DVec3::ZERO,
             revision: target.project.revision(),
-            view: View { camera: target.camera, viewport },
         });
         if !ui.input(|input| input.pointer.primary_down()) {
             self.drag = None;

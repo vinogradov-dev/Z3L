@@ -475,6 +475,11 @@ impl DistanceFields {
     /// looking at; the numbers themselves come from `state`, so this never measures anything. The
     /// card is the same [`crate::tool_card`] surface a box or a pull draws, so the two share one
     /// layout, one commit path and one edit scope (ADR 0092, ADR 0119).
+    ///
+    /// `sense_pointer` is the card's own question and reaches it unchanged: a gesture that holds no
+    /// button carries a piece under the hand, so its plates take the keyboard and not the pointer
+    /// (X66).
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -485,6 +490,7 @@ impl DistanceFields {
         anchor: Pos2,
         title: Option<Message>,
         opacity: u32,
+        sense_pointer: bool,
     ) -> DistanceOutcome {
         let mut outcome = DistanceOutcome::default();
         // Tab belongs to the gesture, not to egui's focus order: consume it before a text edit
@@ -514,7 +520,7 @@ impl DistanceFields {
         }
         let mut view = ToolView { title, rows: state.rows(), commit: ToolCommit::Gesture };
         let (reported, rect) =
-            crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
+            crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity, sense_pointer);
         outcome.rect = Some(rect);
         outcome.changed = self.apply(state, &reported);
         if let Some(side) = reported.focused.and_then(Side::of_param) {
@@ -759,7 +765,8 @@ mod tests {
         let mut locked = false;
         for _ in 0..2 {
             let output = context.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |ui| {
-                last = Some(fields.show(ui, &mut state, &placements, viewport, Pos2::new(400.0, 300.0), None, 92));
+                last =
+                    Some(fields.show(ui, &mut state, &placements, viewport, Pos2::new(400.0, 300.0), None, 92, true));
             });
             if let Some(outcome) = &last {
                 locked = contains_image(&output.shapes, outcome.rect);
