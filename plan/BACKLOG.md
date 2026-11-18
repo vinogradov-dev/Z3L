@@ -43,33 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
-  Why: The owner wants two tools: the move the editor has stays free and turns the furniture
-   snapping off, and a furniture move moves the object by its own rules — a panel only along
-   its own Z, parallel to its AB planes, and a frame on all three axes but seeing its
-   neighbours and the walls — with the distance to the neighbour or the wall as a typed field.
-   Today one Move mode decides under the hand: the translate gizmo reads Project::move_rule and
-   applies it whenever the selection is furniture (ADR 0102, 0103), so the same handle is free
-   for a loose body and ruled for a cabinet, and no rule gives a panel its own axis at all.
-  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
-   never a document field (ADR 0113). The free Move drops the furniture rule and its snapping
-   and keeps the exact micrometre drag; the exact-distance fields stay in both modes, because
-   they are the typed path (ADR 0103) and the owner answer named the snapping alone. The
-   furniture mode reads Project::move_rule and adds the panel rule: a panel moves only along
-   its own local Z, the thickness axis, so it slides parallel to its AB planes and keeps them
-   parallel; a shelf rises and falls in its thickness direction, a divider crosses the case, a
-   back moves front and back. A frame moves on the three world axes subject to its class mount
-   (a floor piece keeps its height), and every drag sees the neighbours, the planes and the
-   walls of N21 through the distance fields of this mode, whose number is the gap to the face
-   that stops it. One undo entry per drag either way; an ADR records the mode, the panel axis
-   and what the free move no longer does.
-  Done: A selected shelf moves only along its own Z and the two in-plane directions are
-   refused; a divider moves across the case and a back moves in and out; a frame moves on three
-   axes, a floor frame keeps its height and a neighbour stops it; the free move keeps a 97.4 mm
-   drag where the furniture move stops at the wall, and the free move does not snap; a typed
-   gap lands the face where typed and the field shows the same number; each drag is one undo
-   entry; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
-  `files: app/src/main.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,crates/model/src/project/move_query.rs,crates/ui/src/distance.rs`
 - `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
   Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
    band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
@@ -229,6 +202,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
 
 ## Done
+
+- `[x]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
+  Why: The owner wants two tools: the move the editor has stays free and turns the furniture
+   snapping off, and a furniture move moves the object by its own rules — a panel only along
+   its own Z, parallel to its AB planes, and a frame on all three axes but seeing its
+   neighbours and the walls — with the distance to the neighbour or the wall as a typed field.
+   Today one Move mode decides under the hand: the translate gizmo reads Project::move_rule and
+   applies it whenever the selection is furniture (ADR 0102, 0103), so the same handle is free
+   for a loose body and ruled for a cabinet, and no rule gives a panel its own axis at all.
+  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
+   never a document field (ADR 0113). The free Move drops the furniture rule and its snapping
+   and keeps the exact micrometre drag; the exact-distance fields stay in both modes, because
+   they are the typed path (ADR 0103) and the owner answer named the snapping alone. The
+   furniture mode reads Project::move_rule and adds the panel rule: a panel moves only along
+   its own local Z, the thickness axis, so it slides parallel to its AB planes and keeps them
+   parallel; a shelf rises and falls in its thickness direction, a divider crosses the case, a
+   back moves front and back. A frame moves on the three world axes subject to its class mount
+   (a floor piece keeps its height), and every drag sees the neighbours, the planes and the
+   walls of N21 through the distance fields of this mode, whose number is the gap to the face
+   that stops it. One undo entry per drag either way; an ADR records the mode, the panel axis
+   and what the free move no longer does.
+  Done: A selected shelf moves only along its own Z and the two in-plane directions are
+   refused; a divider moves across the case and a back moves in and out; a frame moves on three
+   axes, a floor frame keeps its height and a neighbour stops it; the free move keeps a 97.4 mm
+   drag where the furniture move stops at the wall, and the free move does not snap; a typed
+   gap lands the face where typed and the field shows the same number; each drag is one undo
+   entry; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/gizmo_math.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,app/src/frame_tests.rs,crates/model/src/project/move_query.rs,crates/text/src/messages.rs,crates/ui/src/distance.rs` — `cd44446`
 
 - `[x]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
   Why: The owner: frames stick to each other, and the tolerance is the distance at which a

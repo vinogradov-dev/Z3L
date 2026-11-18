@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N22 state=idle base=5499a93 updated=2026-11-18
+STATE: milestone=M7 phase=T task=U113 state=idle base=cd44446 updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,8 +45,7 @@ waits for four decisions before its ADR.
 
 ## Next
 
-N22 is next: the furniture move is a tool of its own, and the free move keeps its hands off the
-rules
+U113 gives the four transform modes their keys, and the status bar prints them
 
 ## Index
 
