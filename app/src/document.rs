@@ -36,8 +36,8 @@ use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
     BoxDraft, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue,
-    MeshElement, Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, ViewFlags,
-    tool_card,
+    MeshElement, Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode,
+    ViewFlags, tool_card,
 };
 use units::Length;
 
@@ -50,7 +50,7 @@ use crate::file_menu::{FileAction, FileMenu, PreservedSections};
 use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
-use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
+use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, WorkPlane};
 use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
@@ -602,6 +602,14 @@ impl Document {
     #[cfg(test)]
     pub(crate) fn tool_card_is_up(&self) -> bool {
         self.tool_card_rect.is_some()
+    }
+
+    /// Takes the transform mode a node menu asked for, for the shell to write.
+    ///
+    /// The mode belongs to the window and this tab only records the wish, so the shell drains it
+    /// once per frame after the tree and the viewport have drawn (U113).
+    pub(crate) fn take_mode_request(&mut self) -> Option<TransformMode> {
+        self.editor.take_mode_request()
     }
 
     /// The rectangle of the armed tool's card, which the shell hands to `Chrome`.
@@ -2472,7 +2480,7 @@ impl Document {
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
             snaps: settings.snaps.rule(),
-            move_kind: shell.mode.move_kind(),
+            move_kind: MoveKind::of(shell.mode),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
@@ -2493,7 +2501,7 @@ impl Document {
         {
             Ok(None)
         } else {
-            match shell.mode.transform() {
+            match Transform::of(shell.mode) {
                 // No mode owns a handle, so no gizmo runs: a press where one would be is a pick.
                 None => Ok(None),
                 Some(Transform::Move | Transform::Furniture) => {
@@ -2514,7 +2522,7 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
-        if matches!(shell.mode.transform(), Some(Transform::Move | Transform::Furniture))
+        if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Furniture))
             && self.translate_gizmo.is_dragging()
         {
             self.show_move_distances(ui, rect, opacity);
@@ -2549,7 +2557,7 @@ impl Document {
         } else if mesh_object.is_some() {
             self.vertex_gizmo.consumed_click()
         } else {
-            match shell.mode.transform() {
+            match Transform::of(shell.mode) {
                 // The mode offers no handle, so nothing consumed the press: the click picks.
                 None => false,
                 Some(Transform::Move | Transform::Furniture) => self.translate_gizmo.consumed_click(),
@@ -2875,7 +2883,7 @@ impl Document {
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
             snaps: settings.snaps.rule(),
-            move_kind: shell.mode.move_kind(),
+            move_kind: MoveKind::of(shell.mode),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
         if let Some(edit) = self.editor.contour_edit() {
@@ -2928,7 +2936,7 @@ impl Document {
             // A box shows its grips instead of nothing: the faces and the base corners are the
             // three-side editor, and the placement handles still act beside them.
             self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
-            match shell.mode.transform() {
+            match Transform::of(shell.mode) {
                 None => {}
                 Some(Transform::Move | Transform::Furniture) => {
                     self.translate_gizmo.paint(ui, rect, paint_target, handle_length);

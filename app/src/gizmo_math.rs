@@ -15,6 +15,7 @@ use engine::{Dimension, NodeRules};
 use geom::{DMat4, DQuat, DVec2, DVec3};
 use model::{Id, MoveAxis, Placement, Project, SnapSettings};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
+use ui::TransformMode;
 use units::Length;
 
 /// Radius inside which a pointer hits a handle, in points: the largest a handle may have.
@@ -163,6 +164,18 @@ pub(crate) enum MoveKind {
 }
 
 impl MoveKind {
+    /// Which of the two moves a mode makes, or the free one where the mode is not a move at all.
+    ///
+    /// A rotate has no use for it, and `Select` draws no gizmo, so the two answer the free move: the
+    /// question is only ever asked by a translate drag. The mode is the window's, named in
+    /// `ui::transform` beside its key (U113); this is the gesture it hands the gizmo.
+    pub(crate) fn of(mode: TransformMode) -> Self {
+        match mode {
+            TransformMode::Furniture => Self::Furniture,
+            TransformMode::Select | TransformMode::Move | TransformMode::Rotate => Self::Free,
+        }
+    }
+
     /// The axes a drag of this kind offers the selection.
     ///
     /// The free move keeps the three world axes everywhere; the furniture move asks the document

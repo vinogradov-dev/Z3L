@@ -1570,6 +1570,23 @@ mod tests {
     }
 
     #[test]
+    fn the_shortcut_table_names_every_transform_mode_with_its_key() {
+        // U113: the band's four gestures are keys too, so the Settings page lists them with the rest
+        // and prints the table's own spelling of the pair — one row per mode, in both languages.
+        for lang in [Lang::En, Lang::Ru] {
+            let rows = shortcut_table(lang);
+            for mode in crate::transform::TransformMode::ALL {
+                let key = mode.key().expect("a mode is bound to a key");
+                assert!(
+                    rows.iter().any(|(printed, action)| printed == key && action == mode.label(lang)),
+                    "`{}` is missing from the shortcut page in {lang:?}",
+                    mode.id()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_scene_saved_in_russian_loads_in_english_with_its_names_unchanged() {
         let root = Container::new(Id::new(1).expect("id"), "Шкаф", Placement::IDENTITY, Vec::new());
         let project = Project::new(root).expect("project");

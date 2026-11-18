@@ -69,11 +69,10 @@ use scene::SceneColors;
 use ui::product_card::ProductCard;
 use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
-use ui::{Palette, icons, theme};
+use ui::{Palette, TransformMode, icons, theme};
 
 use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
-use crate::gizmo_math::MoveKind;
 use crate::header::{HeaderAction, HeaderState, TabView};
 use crate::scene_build::{empty_session, initial_session};
 
@@ -93,32 +92,17 @@ use crate::strip::strip_rect;
 use crate::tabs::{CloseOutcome, TabId, Tabs};
 use crate::view_cluster::ViewCluster;
 
-/// Which transform gesture the viewport offers, if any.
+/// The transform gesture a [`TransformMode`] offers.
 ///
-/// The mode is view state: it belongs to the window, it is never serialized into a scene and it
-/// adds no undo entry. `Select` is the state a window opens in, so a person who only wants to look,
-/// pick and read is never handed a handle they did not ask for (ADR 0113).
+/// The three gestures read the same pivot and commit through the same command, and `Select` offers
+/// none, so a caller asks the mode for one of these instead of matching four states twice. The four
+/// modes themselves are named in `ui::transform`, beside the key that arms each one and the words
+/// the band, the node menu and the Settings page print, because three surfaces read them (U113);
+/// this file adds the gesture a mode hands the viewport, which is the shell's own business.
 ///
 /// The two moves are two tools and not one tool that guesses (N22, ADR 0147): `Move` keeps the
 /// pointer's own distance and applies no rule, and `Furniture` moves a piece by the document's own
 /// rules — the axes they allow, the neighbours that stop it and the workspace's snapping.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TransformMode {
-    /// No transform: a click selects, shift adds, a double click enters a level.
-    Select,
-    /// Three world-axis arrows move the selection freely, with no rule and no snapping.
-    Move,
-    /// The arrows move furniture by its own rules: a panel along its thickness, a frame to its
-    /// neighbours and the floor, and every drag landing on the workspace's snaps.
-    Furniture,
-    /// Three local-axis rings turn the selection about its origin.
-    Rotate,
-}
-
-/// The transform gesture a [`TransformMode`] offers.
-///
-/// The three gestures read the same pivot and commit through the same command, and `Select` offers
-/// none, so a caller asks the mode for one of these instead of matching four states twice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
     /// Three world-axis arrows move the selection without a rule.
@@ -129,28 +113,17 @@ pub(crate) enum Transform {
     Rotate,
 }
 
-impl TransformMode {
+impl Transform {
     /// The gesture this mode offers, or `None` when it offers no handle at all.
     ///
     /// The viewport draws and updates a gizmo only for a `Some`, so a press where a handle would be
     /// cannot start a drag the mode does not offer.
-    pub(crate) fn transform(self) -> Option<Transform> {
-        match self {
-            Self::Select => None,
-            Self::Move => Some(Transform::Move),
-            Self::Furniture => Some(Transform::Furniture),
-            Self::Rotate => Some(Transform::Rotate),
-        }
-    }
-
-    /// Which of the two moves this mode makes, or the free one where the mode is not a move at all.
-    ///
-    /// A rotate has no use for it, and `Select` draws no gizmo, so the two answer the free move: the
-    /// question is only ever asked by a translate drag.
-    pub(crate) fn move_kind(self) -> MoveKind {
-        match self {
-            Self::Furniture => MoveKind::Furniture,
-            Self::Select | Self::Move | Self::Rotate => MoveKind::Free,
+    pub(crate) fn of(mode: TransformMode) -> Option<Self> {
+        match mode {
+            TransformMode::Select => None,
+            TransformMode::Move => Some(Self::Move),
+            TransformMode::Furniture => Some(Self::Furniture),
+            TransformMode::Rotate => Some(Self::Rotate),
         }
     }
 }
@@ -941,6 +914,11 @@ impl App {
             if shortcuts.collapse_panels {
                 self.shell.panels.toggle_collapse_all();
             }
+            // The four gestures are the window's view state, not the tab's: the key arms the mode
+            // for every tab, and no document is written (ADR 0113, U113).
+            if let Some(mode) = shortcuts.mode {
+                self.shell.mode = mode;
+            }
         }
 
         let header_state = {
@@ -1025,6 +1003,12 @@ impl App {
             self.panel_card(&ctx, rect);
         }
         self.sync_panels();
+        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
+        // write it: the editor recorded the wish and the shell applies it here, after both menus
+        // have drawn (U113).
+        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
+            self.shell.mode = mode;
+        }
         self.command_palette(ui);
         // The cluster's *Configure…* link is drawn inside the viewport, which only has the shell;
         // the window owns the Settings modal, so it opens it here on the same frame (U64).

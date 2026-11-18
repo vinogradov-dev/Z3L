@@ -20,7 +20,7 @@ use model::{ClassCode, ContourSegment, Envelope, Id};
 use scene::Camera;
 use text::{Lang, Message};
 use ui::settings::{MAX_HANDLE_POINTS, MAX_RING_PERCENT, MIN_HANDLE_POINTS, MIN_RING_PERCENT};
-use ui::{DrawIntent, DrawTool, FieldParam, MeasureStage};
+use ui::{DrawIntent, DrawTool, FieldParam, MeasureStage, TransformMode};
 use units::Length;
 
 use super::*;
@@ -893,12 +893,67 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     assert_eq!(harness.revision(), revision, "and a drag there moves nothing: no gizmo is armed");
 
     // The bar's own cell changes the mode, and the same drag now moves the part.
-    let cell = harness.mode_cell(Message::Move.text(Lang::En));
+    let cell = harness.mode_cell(&TransformMode::Move.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
     assert_eq!(harness.app.shell.mode, TransformMode::Move, "the bar's cell changes the mode");
     let revision = harness.revision();
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
+}
+
+#[test]
+fn each_of_the_four_gestures_answers_its_key_and_the_bar_prints_the_pair() {
+    // U113: the mode is the window's view state, so a key arms it for the whole window and writes no
+    // document; the band then prints the key beside the gesture it arms, which is what makes the
+    // four discoverable without the manual.
+    let mut harness = Harness::new("frame-mode-keys");
+    harness.settle();
+    assert_eq!(harness.app.shell.mode, TransformMode::Select, "a window opens in Select");
+    let revision = harness.revision();
+    for (key, modifiers, mode) in [
+        (egui::Key::W, egui::Modifiers::NONE, TransformMode::Move),
+        (egui::Key::W, egui::Modifiers::SHIFT, TransformMode::Furniture),
+        (egui::Key::E, egui::Modifiers::NONE, TransformMode::Rotate),
+        (egui::Key::Q, egui::Modifiers::NONE, TransformMode::Select),
+    ] {
+        harness.press(key, modifiers);
+        assert_eq!(harness.app.shell.mode, mode, "`{key:?}` with {modifiers:?} arms {mode:?}");
+        assert_eq!(harness.revision(), revision, "a mode key writes no document");
+    }
+    for mode in TransformMode::ALL {
+        let caption = mode.caption(Lang::En);
+        assert!(harness.drew(&caption), "the bar prints `{caption}`: {:?}", harness.drawn);
+    }
+}
+
+#[test]
+fn the_viewport_menu_arms_a_gesture_and_writes_nothing() {
+    // The same four are in the node menu, beside the eye and the padlock: they are view state, so
+    // the tab records the wish, the shell takes it after the menus have drawn, and no revision moves.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-mode-menu", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    let at = harness.node_point(panel);
+    let revision = harness.revision();
+    harness.click(at, egui::PointerButton::Secondary);
+    harness.settle();
+    let menu = harness.app.tabs.active().menu_rect().expect("a right click opens the node's actions");
+    let rotate = TransformMode::Rotate.label(Lang::En);
+    let entry = harness
+        .drawn_rects
+        .iter()
+        .find(|(rect, text)| menu.contains_rect(*rect) && text == rotate)
+        .map(|(rect, _)| rect.center())
+        .unwrap_or_else(|| panic!("the menu offers `{rotate}`: {:?}", harness.drawn));
+    harness.click(entry, egui::PointerButton::Primary);
+    assert_eq!(harness.app.shell.mode, TransformMode::Rotate, "the menu entry arms the gesture it names");
+    assert_eq!(harness.revision(), revision, "and a gesture is view state: no undo entry, no revision");
+    assert!(harness.app.tabs.active().menu_rect().is_none(), "the menu closes when an entry runs");
 }
 
 #[test]
@@ -914,7 +969,7 @@ fn the_furniture_move_offers_a_panel_only_its_thickness_axis() {
     harness.app.tabs.active_mut().editor.select_node(Some(panel));
     harness.settle();
 
-    let cell = harness.mode_cell(Message::Furniture.text(Lang::En));
+    let cell = harness.mode_cell(&TransformMode::Furniture.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
     assert_eq!(harness.app.shell.mode, TransformMode::Furniture, "the bar's cell arms the furniture move");
     harness.settle();

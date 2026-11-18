@@ -80,6 +80,11 @@ pub struct Editor {
     void_armed: bool,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
+    /// The transform mode a menu entry asked for, until the window takes it.
+    ///
+    /// The mode is the window's view state and this editor belongs to one tab, so a menu entry
+    /// records the wish here and the shell writes it once per frame (U113).
+    mode_request: Option<crate::transform::TransformMode>,
     toolbars: toolbars::Toolbars,
     card: PanelCard,
     container_card: ContainerCard,
@@ -103,5 +108,14 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn toolbars_mut(&mut self) -> &mut toolbars::Toolbars {
         &mut self.toolbars
+    }
+
+    /// Takes the transform mode a menu entry asked for, leaving none behind.
+    ///
+    /// The window owns the mode, so it drains this once per frame after the menus have drawn. One
+    /// slot rather than a queue: only one menu is open at a time, and the last press is the one that
+    /// counts.
+    pub fn take_mode_request(&mut self) -> Option<crate::transform::TransformMode> {
+        self.mode_request.take()
     }
 }

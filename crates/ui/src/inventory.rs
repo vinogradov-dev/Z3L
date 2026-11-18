@@ -189,6 +189,14 @@ pub const PALETTE_OPEN: &str = "palette.open";
 pub const PANELS_HIDE: &str = "view.panels.hide";
 /// The id that folds both side panels to strips, or unfolds them again.
 pub const PANELS_COLLAPSE: &str = "view.panels.collapse";
+/// The id of the `Select` transform mode: view state, so no command answers for it.
+pub const TRANSFORM_SELECT: &str = "view.transform.select";
+/// The id of the free `Move` mode.
+pub const TRANSFORM_MOVE: &str = "view.transform.move";
+/// The id of the `Furniture` move, which obeys the document's rules.
+pub const TRANSFORM_FURNITURE: &str = "view.transform.furniture";
+/// The id of the `Rotate` mode.
+pub const TRANSFORM_ROTATE: &str = "view.transform.rotate";
 
 /// Every interface action the shell runs from a key, with no command behind it.
 pub const ACTIONS: &[Action] = &[
@@ -200,6 +208,13 @@ pub const ACTIONS: &[Action] = &[
     Action { id: PALETTE_OPEN, words: Message::ShortcutPalette },
     Action { id: PANELS_HIDE, words: Message::ShortcutHidePanels },
     Action { id: PANELS_COLLAPSE, words: Message::ShortcutCollapsePanels },
+    // The four gestures the viewport offers are one band and four keys (U113). They write no
+    // document, so no command and no undo entry answers for them; the words are the band's own, so
+    // the cell, the menu entry and the Settings row print one spelling.
+    Action { id: TRANSFORM_SELECT, words: Message::Select },
+    Action { id: TRANSFORM_MOVE, words: Message::Move },
+    Action { id: TRANSFORM_FURNITURE, words: Message::Furniture },
+    Action { id: TRANSFORM_ROTATE, words: Message::Rotate },
 ];
 
 /// Every key the interface binds, in the order the Settings page lists them.
@@ -219,6 +234,13 @@ pub const KEYS: &[Binding] = &[
     Binding { id: PANELS_HIDE, key: egui::Key::Num0, chord: Chord::Ctrl, label: "Ctrl+0" },
     Binding { id: PANELS_COLLAPSE, key: egui::Key::Num0, chord: Chord::CtrlShift, label: "Ctrl+Shift+0" },
     Binding { id: "view.layout.maximize", key: egui::Key::W, chord: Chord::Alt, label: "Alt+W" },
+    // The band's four keys: `Q`, `W` and `E` beside `Shift+W`, on the letters the sketch, the view
+    // and the niche do not hold (U113). The furniture move is the shifted pair of the free one
+    // because it is the same decision made by the document's rules (ADR 0147).
+    Binding { id: TRANSFORM_SELECT, key: egui::Key::Q, chord: Chord::Plain, label: "Q" },
+    Binding { id: TRANSFORM_MOVE, key: egui::Key::W, chord: Chord::Plain, label: "W" },
+    Binding { id: TRANSFORM_FURNITURE, key: egui::Key::W, chord: Chord::Shift, label: "Shift+W" },
+    Binding { id: TRANSFORM_ROTATE, key: egui::Key::E, chord: Chord::Plain, label: "E" },
     Binding { id: "node.delete", key: egui::Key::Delete, chord: Chord::Plain, label: "Delete" },
     Binding { id: "view.projection.toggle", key: egui::Key::O, chord: Chord::Plain, label: "O" },
     Binding { id: "view.projection.frame-all", key: egui::Key::F, chord: Chord::Plain, label: "F" },

@@ -54,6 +54,7 @@ mod target;
 pub mod theme;
 pub mod tool_card;
 pub mod toolbars;
+pub mod transform;
 pub mod ui_scale;
 mod view_flags;
 mod void;
@@ -76,6 +77,7 @@ pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
 pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
+pub use transform::TransformMode;
 pub use view_flags::ViewFlags;
 pub use void::{Void, VoidRefusal, pointer_point};
 

@@ -16,12 +16,13 @@ use eframe::egui;
 use model::{Catalog, Geometry, Id, Node, Project};
 use scene::Projection;
 use text::{Lang, Message};
+use ui::TransformMode;
 use ui::{DrawTool, MeasureStage, MeshElement, VoidRefusal, theme};
 use units::Length;
 
+use crate::App;
 use crate::document::Document;
 use crate::view_cluster::NavigationMode;
-use crate::{App, TransformMode};
 
 /// What separates the parts of the selection context.
 const SUMMARY_SEPARATOR: &str = " · ";
@@ -388,15 +389,14 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
         .show(ui, |ui| {
             // Touching cells are what makes one band out of four states; the row's own gap stays.
             ui.spacing_mut().item_spacing.x = 0.0;
+            // A cell is a word and a key, not a word and two paddings: the four keys are what U113
+            // adds to the band, and the narrowest window in the longer language still has to hold
+            // the whole band beside the readouts.
+            ui.spacing_mut().button_padding.x = theme::STEP;
             let mut clicked = false;
-            for (entry, label, hint) in [
-                (TransformMode::Select, Message::Select, Message::SelectHint),
-                (TransformMode::Move, Message::Move, Message::MoveHint),
-                (TransformMode::Furniture, Message::Furniture, Message::FurnitureHint),
-                (TransformMode::Rotate, Message::Rotate, Message::RotateHint),
-            ] {
-                let response = ui.selectable_value(&mut chosen, entry, label.text(lang));
-                clicked |= response.on_hover_text(hint.text(lang)).clicked();
+            for entry in TransformMode::ALL {
+                let response = ui.selectable_value(&mut chosen, entry, entry.cell(ui, lang));
+                clicked |= response.on_hover_text(entry.hint(lang)).clicked();
             }
             clicked
         })
@@ -722,13 +722,14 @@ mod tests {
         let (idle, chosen) = row(Vec::new());
         let texts = drawn_text(&idle.shapes);
         assert_eq!(chosen, None, "drawing the control changes nothing");
-        for caption in [Message::Select, Message::Move, Message::Furniture, Message::Rotate] {
-            let caption = caption.text(Lang::En);
-            assert!(texts.iter().any(|text| text == caption), "the control names {caption}: {texts:?}");
+        for mode in TransformMode::ALL {
+            let caption = mode.caption(Lang::En);
+            assert!(texts.contains(&caption), "the control names {caption}: {texts:?}");
         }
+        let furniture = TransformMode::Furniture.caption(Lang::En);
         let at = drawn_text_rects(&idle.shapes)
             .into_iter()
-            .find(|(_, text)| text == Message::Furniture.text(Lang::En))
+            .find(|(_, text)| *text == furniture)
             .map(|(rect, _)| rect.center())
             .expect("the control drew Furniture");
         idle.drop_without_applying_deltas();
@@ -750,13 +751,16 @@ mod tests {
     }
 
     #[test]
-    fn the_four_mode_cells_fit_the_narrowest_window() {
+    fn the_four_mode_cells_fit_the_narrowest_window_with_their_keys() {
         // The band is window chrome, so it must fit the narrowest window the shell opens (640 pt) with
         // the hint and the right-hand readouts beside it: a mode nobody can see is a mode nobody has
-        // (ADR 0113, ADR 0147).
+        // (ADR 0113, ADR 0147). U113 adds a key to every cell, so the floor is measured again: the
+        // last cell's right edge has to stay inside the left zone, where the readouts begin.
         let ctx = egui::Context::default();
         ui::theme::install(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
+        // The right zone takes 30 % of the row, and nothing left of it may grow into it.
+        let readouts = screen.right() - (screen.width() * 0.30).clamp(120.0, 260.0);
         // Russian is the longer language, so the narrower window is asked about both: a sheet of text
         // that fits one and not the other is a band a third of the users cannot read.
         for lang in [Lang::En, Lang::Ru] {
@@ -769,13 +773,19 @@ mod tests {
                 status_row_ui(ui, &idle_status(), &mut out);
             });
             let texts = drawn_text(&output.shapes);
-            for caption in [Message::Select, Message::Move, Message::Furniture, Message::Rotate] {
-                let caption = caption.text(lang);
+            let cells = drawn_text_rects(&output.shapes);
+            for mode in TransformMode::ALL {
+                let caption = mode.caption(lang);
+                assert!(texts.contains(&caption), "the narrowest window still names {caption} in {lang:?}: {texts:?}");
+                let (rect, _) =
+                    cells.iter().find(|(_, text)| *text == caption).expect("a drawn caption has a rectangle");
                 assert!(
-                    texts.iter().any(|text| text == caption),
-                    "the narrowest window still names {caption} in {lang:?}: {texts:?}"
+                    rect.right() <= readouts,
+                    "{caption} in {lang:?} ends at {} and the readouts start at {readouts}",
+                    rect.right()
                 );
             }
+
             output.drop_without_applying_deltas();
         }
     }
