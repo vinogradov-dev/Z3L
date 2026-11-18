@@ -248,6 +248,35 @@ impl PropertyTypeWire {
 }
 
 impl ItemWire {
+    /// The written form of one record: its kind and every property named by slug.
+    ///
+    /// The reverse of [`ItemWire::to_item`], and the only way a record reaches a folder: the file a
+    /// workshop reads names `"thickness": 18000`, never a property code. A code no row declares is
+    /// refused here rather than written, because a package that cannot be read back is worse than a
+    /// refused save.
+    pub fn from_item(
+        item: &NomenclatureItem,
+        kinds: &crate::kind::KindRegistry,
+        properties: &crate::property::PropertyRegistry,
+    ) -> Result<Self, CatalogError> {
+        let kind = kinds.get(item.kind()).ok_or(CatalogError::UnknownKind { item: item.id(), kind: item.kind() })?;
+        let mut props = BTreeMap::new();
+        for (code, value) in item.props() {
+            let row =
+                properties.get(*code).ok_or(CatalogError::UnknownProperty { item: item.id(), property: *code })?;
+            props.insert(row.slug().as_str().to_owned(), value.clone());
+        }
+        Ok(Self {
+            id: item.id(),
+            kind: kind.slug().as_str().to_owned(),
+            name: item.name().to_owned(),
+            slug: item.slug().as_str().to_owned(),
+            archived: item.is_archived(),
+            props,
+            external: item.external().to_vec(),
+        })
+    }
+
     /// The record, with its kind and every property resolved through the registries.
     ///
     /// A slug names the kind and each property, so an unknown one is refused here with the word the

@@ -39,6 +39,7 @@ mod source;
 mod starter;
 mod view;
 mod wire;
+mod write;
 
 pub use directory::Directory;
 pub use error::CatalogError;
@@ -58,3 +59,4 @@ pub use wire::{
     DIRECTORY_VERSION, FamilyWire, ItemWire, KindWire, MANIFEST_VERSION, ManifestWire, PropertyTypeWire, PropertyWire,
     REGISTRY_VERSION, RegistryWire,
 };
+pub use write::{FolderWriter, WriteError};
