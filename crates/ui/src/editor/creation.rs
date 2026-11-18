@@ -20,8 +20,8 @@ use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
 use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
-    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
-    Placement, Primitive, Project,
+    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, PanelNominalSize, PanelOutline, Placement,
+    Primitive, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -148,12 +148,13 @@ impl Editor {
     }
 
     /// The material every created panel takes: the catalogue's first panel material.
-    fn panel_material(session: &Session) -> Result<MaterialId, String> {
+    fn panel_material(session: &Session) -> Result<ItemId, String> {
         session
-            .catalog()
-            .panel_materials()
+            .directory()
+            .boards()
+            .collect::<Vec<_>>()
             .first()
-            .map(|material| material.id())
+            .map(|material| material.id)
             .ok_or_else(|| "Add a panel material to the catalogue first.".to_owned())
     }
 

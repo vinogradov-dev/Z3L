@@ -3,10 +3,10 @@
 Status: domain specification, target state. This document describes the directory of nomenclature a
 workshop works from: its items, their kinds, properties and families, the packages they arrive in,
 the part documents that carry their geometry, the rules that pick and place them, and the contract
-the editor reads them through. The program today reads two typed tables — panel materials and edge
-banding — from one mock file (`crates/model/src/catalog.rs`). The package, the item envelope and the
-instance node replace them; the mock file, the `MaterialId` type and the two tables are deleted by
-the change that lands the envelope, together with the old loader (ADR 0096).
+the editor reads them through. The program today reads one package: the starter rows in
+`catalog::default_directory`, loaded as a `Directory` through the item envelope and its registries
+(ADR 0148); a workshop's own packages arrive as folders beside the workspace settings. The instance
+node and the part documents are the part of this specification that has not landed yet.
 
 Related documents:
 
@@ -307,16 +307,21 @@ needs: kinds, properties, families), the part documents it carries and the rule 
   a person did. A person's explicit choices live on the document and survive.
 - A failed load keeps the old snapshot and shows the refusal; the editor never runs on half a
   directory.
+- A folder that lists no package — a first run, or a workshop that disconnected everything — is the
+  starter package, because the editor needs rows to offer and the starter is the one every workshop
+  has. Which packages are connected is stated by the directory application, not by an empty editor.
 
 ## 14. Storage and the port
 
-`DirectorySource` in `model` offers `snapshot()` and `revision()`. The first implementation is a
-folder:
+`DirectorySource` offers `snapshot()` and `revision()`. The port and its folder live in `crates/catalog`
+and not in `model`, because `model` must not depend on the directory: a scene stores an `ItemId`, and
+the record behind it is not document data. The first implementation is a folder:
 
 ```text
 nomenclature/
   directory.json                  the connected packages and their order
-  packages/<package>/manifest.json
+  packages/<package>/manifest.json   the package's number, name and version
+  packages/<package>/registry.json   the kinds, properties and families the package declares
   packages/<package>/items/*.json one record per file, stable order, diffable
   packages/<package>/parts/*.z3l  part documents
   packages/<package>/rules/*.json rule tables
@@ -324,9 +329,18 @@ nomenclature/
   lock                            the writer's lock file
 ```
 
+- a record names its kind and its properties by **slug**, not by code, so a file a person edits
+  reads `"thickness": 18000`; the loader resolves a slug through the registry and refuses one no row
+  declares;
 - writes are atomic per file through the existing writer (temporary file, then rename), and a write
   that changes several files bumps the revision last;
 - one writer at a time, guarded by the lock file; readers never lock and never write;
+- the folder's `revision()` is the hash of every file a snapshot reads — its name, size and
+  modification time — so it needs no file of its own and a folder edited by hand is watched like one
+  written by the application. A file that is not there is part of it too: a folder that gained its
+  first package moves the stamp, and a reader that cannot tell `NotFound` from a failed stat cannot
+  watch a folder at all. A store that keeps a numbered revision behind the same port is free to; the
+  editor compares the value and never interprets it;
 - the folder copies as a folder — a workshop moves its directory by copying it — and an archive of one
   package is its folder;
 - an embedded pure-Rust store may replace the implementation behind the same port when the schema

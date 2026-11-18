@@ -471,8 +471,9 @@ as a whole is still a draft.
 
    The bottom type decides where the sides begin and end, which is why the further logic follows from
    it, exactly as in k3. The owner corrected the material rule below: the back is a type **and** a
-   material, two card parameters (§16), and the default catalogue still needs a 4 mm HDF row before
-   an applied or grooved back reports a resolved material; today it holds only the 18 mm board.
+   material, two card parameters (§16). The default catalogue now carries the 4 mm HDF sheet beside the
+   two 18 mm carcass boards (`catalog::default_directory`), so an applied or grooved back resolves its
+   planes from a row and not from a number in code; the *type* itself waits for the plane skeleton.
 
 Consequences settled later: dissolve keeps the section containers and takes a depth (§16); the card
 is one form with a selector that jumps to a section (§16). Still open: the split's threshold and
@@ -612,8 +613,7 @@ A task can be filed when all five hold:
 ### 18.2 Ready, blocked, or waiting for code
 
 - **Ready now** (no open decision): the convention glossary and the `Side` type; the headless command
-  channel (`commands --json`, `run --commands`, `query`); the 4 mm HDF row in the default catalogue;
-  the reserved keys `compartment`, `prototype.kind` and `manual`.
+  channel (`commands --json`, `run --commands`, `query`); the reserved keys `compartment`, `prototype.kind` and `manual`.
 - **Blocked by a decision**: the workshop standards file (its home is in `plan/questions.md`), the
   prototype format (the formula surface), and the split (threshold, child naming, minimum width).
 - **Waiting for code**: drawer and door units wait for M8 — runners, hinges and their machining. A
@@ -628,7 +628,7 @@ A task can be filed when all five hold:
 | S1 | ADR «a prototype is data, not a script», with the section, the plane skeleton, the three kinds and the dissolve targets | the ADR is accepted and listed, §15–§17 are folded into the spec, the open decisions are in `plan/questions.md` | `docs/domain/prototypes.md`, `docs/decisions/README.md` | §11 |
 | S2 | The convention glossary and `Side` | a test ties `Side::Left` to `OpeningView::Left.direction()`, and the glossary says 340/320 = a clear opening and depth = with the fronts | `crates/ui/src/display.rs`, `crates/model/src/`, `docs/domain/products.md` | nothing |
 | S3 | The headless command channel | a scene is built from a JSONL recipe in one undo group, and `--dry-run` writes nothing | `app/src/cli.rs`, `app/src/main.rs`, `crates/engine/src/` | nothing |
-| S4 | A 4 mm HDF row in the default catalogue | an applied or grooved back resolves to a material instead of a fallback | `app/src/scene_build.rs`, `crates/model/src/catalog.rs` | nothing |
+| S4 | A 4 mm HDF row in the default catalogue | an applied or grooved back resolves to a material instead of a fallback | `app/src/scene_build.rs`, `crates/catalog/src/starter.rs` | landed as O1 (the row); the back *type* waits for §15 |
 | S5 | The workshop standards file | it loads with validation, a command takes its default from it, and staleness is a notice | `app/src/settings_store.rs`, `crates/model/src/` | where it lives |
 | S6 | Reserved keys `compartment`, `prototype.kind`, `manual` | the gate rejects a wrong type and a scene opens without the prototype library | `crates/model/src/properties.rs`, `crates/model/src/project/query.rs` | nothing |
 | S7 | The prototype format (kinds, parameters, planes, slots, eight rule shapes, checks, bounded formula tree) | an unknown rule kind or version is a readable error and every parameter validates | `crates/model/src/`, `docs/domain/prototypes.md` | the formula surface |

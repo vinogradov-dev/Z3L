@@ -722,7 +722,7 @@ mod tests {
     #[test]
     fn a_corner_grip_moves_two_sides_and_a_face_grip_one() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let project = session.project().clone();
         let camera = Camera::new(DVec3::new(300.0, 200.0, 360.0), 3_000.0).expect("camera");
         let grips = BoxGrips::default();
@@ -775,7 +775,7 @@ mod tests {
     #[test]
     fn a_frame_corner_grip_changes_two_sizes_and_a_face_grip_one() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let camera = Camera::new(DVec3::new(300.0, 280.0, 360.0), 3_000.0).expect("camera");
         let grips = BoxGrips::default();
         let body = BoxBody::read(session.project(), id).expect("a frame body");
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn a_frame_corner_drag_writes_one_undo_entry() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let before = session.project().revision().get();
         let scope = session.edit_scope();
         let envelope = |width: i64, depth: i64| {
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn a_frame_minimum_face_drag_keeps_the_opposite_face_still_in_the_world() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let scope = session.edit_scope();
         // Drag the min-X face 100 mm to the left: the reserved box grows to 700 and the zero moves
         // 100 mm in the frame's own axis, so the far face does not move.

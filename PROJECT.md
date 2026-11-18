@@ -253,6 +253,7 @@ only when the crates exist.
 | L0 | `geom` | `glam` re-exports, `Frame`, indexed `MeshData`; bounds and planes as features need them | glam, serde |
 | L1 | `kernel` | Geometry kernel **port**: `Profile`, opaque `BodyId`, extrusion (linear sweep), booleans, tessellation, measures. No third-party kernel types | geom, thiserror |
 | L1 | `model` | Document data: `Project`, `Container`, `Object`, `Geometry`, `Properties`, `ClassCode` and its registry, `Placement`, `Panel`, `Material`, `Hardware`, `Id`, `Revision`; invariants and typed errors | units, geom, text, serde |
+| L2 | `catalog` | The nomenclature directory: the item envelope `NomenclatureItem`, the `Kind`/`Trait`/`Property`/`Family` registries a package carries, and the validated `Directory` snapshot its consumers query. No file I/O, no scene, no renderer | model, units, text, serde, thiserror |
 | L2 | `kernel-truck` | Geometry kernel **adapter** implemented with `truck` (Apache-2.0). The only crate allowed to depend on `truck` | kernel, geom, truck-modeling, truck-shapeops, truck-meshalgo |
 | L2 | `param` | Compiles document features into kernel operations: panel features, placements, panel machining | model, kernel, geom, units |
 | L2 | `project` | Scene file envelope: format identity and version, read, atomic write, preserved unknown sections | model, serde, serde_json, thiserror |

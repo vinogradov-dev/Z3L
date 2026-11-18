@@ -6,7 +6,8 @@
 //!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
-use model::{CameraProjection, Catalog, Id, LightKind, LightNode, Placement, Project};
+use catalog::Directory;
+use model::{CameraProjection, Id, LightKind, LightNode, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -48,7 +49,7 @@ fn camera_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn camera_create_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<CameraCreate>(params, CAMERA_CREATE_ID)?;
@@ -95,7 +96,11 @@ fn light_create_enabled(session: &Session, params: &Value) -> bool {
         && valid_intensity(params.intensity)
 }
 
-fn light_create_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn light_create_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<LightCreate>(params, LIGHT_CREATE_ID)?;
     validate_name(&params.name, LIGHT_CREATE_ID)?;
     if !valid_color(params.color) {
@@ -149,7 +154,7 @@ fn scene_active_camera_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn scene_active_camera_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<SceneActiveCameraSet>(params, SCENE_ACTIVE_CAMERA_SET_ID)?;
@@ -190,7 +195,7 @@ fn camera_projection_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn camera_projection_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<CameraProjectionSet>(params, CAMERA_PROJECTION_SET_ID)?;
@@ -231,7 +236,7 @@ fn light_params_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn light_params_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<LightParamsSet>(params, LIGHT_PARAMS_SET_ID)?;
@@ -292,7 +297,7 @@ mod tests {
 
     #[test]
     fn camera_and_light_creation_take_one_revision_each() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let camera = session
             .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
             .expect("create camera")
@@ -313,7 +318,7 @@ mod tests {
 
     #[test]
     fn creation_rejects_a_bad_parent_name_or_value_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let missing = Id::new(99).expect("id");
 
         let mut bad_parent = CameraCreate {
@@ -352,7 +357,7 @@ mod tests {
 
     #[test]
     fn the_active_camera_only_accepts_a_camera_and_clears_with_none() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let camera = session
             .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
             .expect("create camera")
@@ -375,7 +380,7 @@ mod tests {
 
     #[test]
     fn projection_and_light_parameter_commands_write_one_revision() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let camera = session
             .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
             .expect("create camera")
@@ -423,7 +428,7 @@ mod tests {
         use crate::{NodePlacement, NodePlacementSetMany, NodePropertySet, NodeRename};
         use model::PropertyValue;
 
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let camera = session
             .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
             .expect("create camera")

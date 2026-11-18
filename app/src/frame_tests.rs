@@ -304,6 +304,28 @@ impl Harness {
             .unwrap_or_else(|| panic!("the status bar drew no cell named {caption}"))
     }
 
+    /// Runs frames until `done` holds, the way a window left open does while something outside it
+    /// finishes.
+    ///
+    /// A hot reload is a worker thread's answer, so a test waits for the frame it lands in instead
+    /// of assuming one. The wait is bounded and returns whether the condition holds, so a condition
+    /// that never holds fails the assertion the test already wrote instead of hanging the suite.
+    fn until(&mut self, mut done: impl FnMut(&App) -> bool) -> bool {
+        for _ in 0..400 {
+            if done(&self.app) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.frame();
+        }
+        done(&self.app)
+    }
+
+    /// The thickness the session resolves for `panel`: what the last rebuild cut the panel from.
+    fn thickness(&self, panel: Id) -> Length {
+        self.app.tabs.active().session.panel_geometry(panel).expect("a panel resolves").thickness()
+    }
+
     /// The middle of the control the last frame published as `label`.
     ///
     /// A test presses the middle of a face, so the point is what it asks for and the rectangle stays
@@ -835,7 +857,7 @@ fn one_wide_panel() -> (engine::Session, Id) {
     let panel = project
         .add_panel(project.root().id(), "Board", size, None, mm(18), model::Placement::IDENTITY)
         .expect("a panel at the origin");
-    (engine::Session::with_catalog(project, testkit::sample_catalog()), panel)
+    (engine::Session::with_directory(project, testkit::sample_catalog()), panel)
 }
 
 /// A point on a translate handle of `node`, with the screen direction the handle points in.
@@ -943,7 +965,7 @@ fn the_viewport_menu_arms_a_gesture_and_writes_nothing() {
     // The same four are in the node menu, beside the eye and the padlock: they are view state, so
     // the tab records the wish, the shell takes it after the menus have drawn, and no revision moves.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-mode-menu", session);
     harness.settle();
@@ -1125,7 +1147,7 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
         .with_translation(mm(1068), Length::ZERO, mm(-600))
         .expect("a placement beside the divider");
     let beside = project.add_panel(frame, "Beside", size, None, mm(18), beside_at).expect("a panel beside the divider");
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     // The product is open, so a click lands on the part and not on the frame around it: the
     // furniture move takes the piece the click named (N24).
     assert!(session.open_product(frame), "the fixture product opens");
@@ -1138,7 +1160,7 @@ fn a_press_on_the_carried_piece_s_card_takes_the_hand_and_puts_it_down() {
     // not take the hand — the press there is the click that ends the carry, and a drag across a plate
     // must not scrub a gap the piece would then jump to.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-carry-card", session);
     harness.settle();
@@ -1225,7 +1247,7 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     // measured against one anchor held for the whole carry lags behind the hand and looks like it
     // ran away as soon as the camera moves.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-carry-perspective", session);
     harness.settle();
@@ -1541,7 +1563,7 @@ fn a_click_inside_an_open_product_selects_the_part_under_the_pointer() {
     // product's openness is the session's view state and the pick rule read only the editor's open
     // set. Once a level is open, a click has to reach the part the pointer is on.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-open-product-pick", session);
     harness.settle();
@@ -1579,7 +1601,7 @@ fn a_right_click_opens_the_actions_of_the_panel_under_the_pointer_and_writes_not
     // under the hand were three clicks away. A right click over the scene now opens the same list,
     // and the right *drag* stays the camera pan it already was.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-context-menu", session);
     harness.settle();
@@ -1722,7 +1744,7 @@ fn an_open_level_brackets_its_eight_corners_and_a_closed_one_draws_none() {
 
     // A product is opened by the session rather than by the open set, and brackets its envelope.
     let (project, product, _panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-open-product-brackets", session);
     harness.settle();
@@ -2707,7 +2729,7 @@ fn one_body() -> (engine::Session, Id) {
     let id = project
         .add_object(project.root().id(), "Body", Placement::IDENTITY, Geometry::Constructive(body))
         .expect("the body is added");
-    (engine::Session::with_catalog(project, testkit::sample_catalog()), id)
+    (engine::Session::with_directory(project, testkit::sample_catalog()), id)
 }
 
 #[test]
@@ -3048,7 +3070,7 @@ fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
     // The reserved box is a probe surface (ADR 0103) and the first thing the ray meets from
     // outside, so the ruler steps past its near face: the person points at the board inside.
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-measure-product", session);
     harness.settle();
@@ -3741,7 +3763,7 @@ fn one_sketch_path() -> (engine::Session, Id) {
     let object = project
         .add_object(root, "Sketch", model::Placement::IDENTITY, model::Geometry::Path(path))
         .expect("a path object");
-    (engine::Session::with_catalog(project, testkit::sample_catalog()), object)
+    (engine::Session::with_directory(project, testkit::sample_catalog()), object)
 }
 
 /// A headless frame in contour edit mode on the open chain, framed so its corners are grabbable.
@@ -4327,6 +4349,56 @@ fn a_band_is_drawn_only_while_the_pointer_drags_on_empty_space() {
 }
 
 #[test]
+fn a_board_changed_in_the_directory_reaches_the_open_scene() {
+    // The directory is edited in its own application, so the window has to apply a new revision by
+    // itself: the panel is cut from the new board, the card names it, and the history is the one the
+    // person left, because a directory is not the document (ADR 0148, `nomenclature.md` §13, O5).
+    let size = model::PanelNominalSize::new(testkit::millimetres(600), testkit::millimetres(400)).expect("a panel");
+    let root = model::Container::new(Id::new(1).expect("id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let panel = project
+        .add_panel(
+            root,
+            "Side",
+            size,
+            Some(testkit::sample_material_id()),
+            testkit::millimetres(18),
+            model::Placement::IDENTITY,
+        )
+        .expect("a panel cut from the sample board");
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    session
+        .dispatch("panel.rename", &serde_json::json!({ "panel": panel, "name": "Side 2" }))
+        .expect("one edit, so the history has something to lose");
+    let mut harness = Harness::with_session("frame-directory-row", session);
+    harness.app.tabs.active_mut().editor.select_node(Some(panel));
+    harness.settle();
+    assert!(harness.drew("Chipboard"), "the card names the board the panel is cut from");
+    assert_eq!(harness.thickness(panel), testkit::millimetres(18), "and the panel is 18 mm thick");
+
+    // Another application writes the workshop's folder while the window is open.
+    let folder =
+        harness.path.parent().expect("the settings file has a folder").join(crate::directory_watch::DIRECTORY_DIR);
+    crate::test_support::write_sample_folder(&folder, testkit::millimetres(25), "Graphite oak");
+    let board = testkit::sample_material_id();
+    let reloaded = harness
+        .until(|app| app.tabs.active().session.directory().board(board).is_some_and(|row| row.name == "Graphite oak"));
+    assert!(reloaded, "the window reads the new rows without a restart");
+
+    harness.settle();
+    assert!(harness.drew("Graphite oak"), "the card names the board the directory now holds");
+    assert_eq!(harness.thickness(panel), testkit::millimetres(25), "and the panel is cut again, from it");
+    assert!(harness.app.tabs.active().can_undo(), "the history is the one the person left");
+    harness.app.tabs.active_mut().undo();
+    assert_eq!(
+        harness.app.tabs.active().session.project().panel(panel).expect("panel").name(),
+        "Side",
+        "and it takes back the person's edit, not the directory's"
+    );
+}
+
+#[test]
 fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
     // X70's follow-up: while the carry's hand is displaced the square is not where the system pointer
     // is, and everything hit-tested at the system pointer would disagree with what the maker sees.
@@ -4386,7 +4458,7 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     // was nowhere near the pointer. A view preset is the eye's, not the hand's: the panel keeps its
     // distance to its neighbour, and the pointer is what comes back onto the panel (ADR 0156).
     let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut harness = Harness::with_session("frame-view-preset-carry", session);
     harness.settle();

@@ -413,7 +413,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     };
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("box-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
@@ -515,7 +515,7 @@ fn the_product_card_is_painted_offscreen() {
     for variant in VARIANTS {
         let ctx = egui::Context::default();
         let workspace = testkit::scratch_dir("ui-shots").join("product-card-workspace.json");
-        let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
         let mut settings = Settings::default();
         settings.appearance.theme = variant;
         let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
@@ -565,7 +565,7 @@ fn the_cone_pull_is_painted_offscreen() {
     };
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("cone-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The picture must show the Model tab the cone cell lives on, not the tab a fresh workspace opens.
@@ -729,7 +729,7 @@ fn gizmo_picture(
 ) -> Result<Picture, String> {
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("gizmo-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut settings = Settings::default();
     settings.gizmo.handle_points = handle_points;
     settings.gizmo.ring_percent = ring_percent;
@@ -849,7 +849,7 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("fill-workspace.json");
     let (project, product) = empty_product();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
@@ -938,7 +938,7 @@ fn deep_session() -> Result<(engine::Session, model::Id), String> {
         .add_panel(last, "Shelf", size, None, millimetres(18)?, Placement::IDENTITY)
         .map_err(|error| error.to_string())?;
     project.validate().map_err(|error| error.to_string())?;
-    let session = engine::Session::with_catalog(project, crate::scene_build::default_catalog()?);
+    let session = engine::Session::with_directory(project, crate::scene_build::default_catalog()?);
     Ok((session, panel))
 }
 
@@ -1209,7 +1209,7 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
     let object = project
         .add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(sphere))
         .map_err(|error| error.to_string())?;
-    Ok((engine::Session::with_catalog(project, testkit::sample_catalog()), [panel, object, frame]))
+    Ok((engine::Session::with_directory(project, testkit::sample_catalog()), [panel, object, frame]))
 }
 
 /// Draws the rubber band mid-drag in both themes, for each of its two rules.

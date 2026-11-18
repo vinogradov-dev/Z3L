@@ -25,6 +25,7 @@ kernel = { workspace = true }
 kernel-truck = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
+catalog = { workspace = true }
 param = { workspace = true }
 project = { workspace = true }
 render = { workspace = true }

@@ -261,7 +261,7 @@ mod tests {
             .add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(cube_mesh(millimetres(100))))
             .expect("the sample project takes a mesh object");
         let panel = project.root().children()[0].id();
-        (Session::with_catalog(project, sample_catalog()), panel, cube, product)
+        (Session::with_directory(project, sample_catalog()), panel, cube, product)
     }
 
     /// Draws the inspector for one selection and answers the texts it painted.

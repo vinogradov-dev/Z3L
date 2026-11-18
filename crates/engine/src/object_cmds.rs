@@ -77,7 +77,7 @@ fn object_primitive_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_primitive_create_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveCreate>(params, OBJECT_PRIMITIVE_CREATE_ID)?;
@@ -113,7 +113,7 @@ fn object_primitive_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_primitive_replace_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveReplace>(params, OBJECT_PRIMITIVE_REPLACE_ID)?;
@@ -168,7 +168,7 @@ fn object_extrude_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_extrude_create_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeCreate>(params, OBJECT_EXTRUDE_CREATE_ID)?;
@@ -234,7 +234,7 @@ fn object_contour_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_contour_replace_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectContourReplace>(params, OBJECT_CONTOUR_REPLACE_ID)?;
@@ -293,7 +293,7 @@ fn object_path_extrude_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_extrude_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathExtrude>(params, OBJECT_PATH_EXTRUDE_ID)?;
@@ -353,7 +353,7 @@ fn object_extrude_height_set_enabled(session: &Session, params: &Value) -> bool 
 
 fn object_extrude_height_set_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeHeightSet>(params, OBJECT_EXTRUDE_HEIGHT_SET_ID)?;
@@ -408,7 +408,7 @@ fn object_path_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_create_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathCreate>(params, OBJECT_PATH_CREATE_ID)?;
@@ -452,7 +452,7 @@ fn object_path_replace_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_path_replace_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathReplace>(params, OBJECT_PATH_REPLACE_ID)?;
@@ -492,7 +492,7 @@ fn object_collapse_enabled(session: &Session, params: &Value) -> bool {
 
 fn object_collapse_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectCollapse>(params, OBJECT_COLLAPSE_ID)?;
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn dispatch_stores_the_recipe_in_one_revision() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let params = sphere_params(&session);
 
         let outcome = session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &params).expect("create sphere");
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn every_primitive_kind_stores_its_parameters() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         assert_eq!(session.active_product(), None, "a primitive is a scene object, not a furniture part");
         let size = Length::from_millimetres(100).expect("length");
         let cases = [(Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere"), ([-50_000; 3], [50_000; 3]))];
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn a_side_outside_the_limit_is_rejected_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let too_large = MAX_PRIMITIVE_SIZE.checked_add(Length::from_micrometres(1)).expect("sum");
         // The parameters are hostile JSON, not a value this build can build: a shape asks for a
         // side outside the document's limit and the command refuses to read it at all.
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn a_blank_name_is_rejected_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let mut value = sphere_params(&session);
         value["name"] = Value::from("  ");
         assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &value).is_err());
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn an_unknown_parent_is_rejected_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let mut value = sphere_params(&session);
         value["parent"] = Value::from(99);
         assert!(session.dispatch(OBJECT_PRIMITIVE_CREATE_ID, &value).is_err());
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn replacing_the_parameters_is_one_revision_and_one_undo() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &sphere_params(&session))
             .expect("create")
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn a_primitive_collapses_to_exactly_the_mesh_the_evaluator_produces() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let size = Length::from_millimetres(80).expect("size");
         let value = serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn a_primitive_replace_on_another_payload_is_refused_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(
                 OBJECT_EXTRUDE_CREATE_ID,
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn a_large_legal_ring_is_created_replaced_and_drawn() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let registry = CommandRegistry::new();
         let height = Length::from_millimetres(18).expect("height");
         let value = serde_json::to_value(ObjectExtrudeCreate {
@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn a_contour_replacement_is_one_revision_and_one_undo() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(
                 OBJECT_EXTRUDE_CREATE_ID,
@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn an_extrusion_is_created_rebuilt_and_collapsed_one_revision_at_a_time() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let height = Length::from_millimetres(18).expect("height");
         let id = session
             .dispatch(OBJECT_EXTRUDE_CREATE_ID, &extrude_params(&session, "Top", height))
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn a_collapse_bakes_exactly_the_mesh_the_evaluator_produces() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let height = Length::from_millimetres(18).expect("height");
         let id = session
             .dispatch(OBJECT_EXTRUDE_CREATE_ID, &extrude_params(&session, "Top", height))
@@ -900,7 +900,7 @@ mod tests {
 
     #[test]
     fn a_bad_height_or_a_mesh_object_is_refused_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let value = extrude_params(&session, "Top", Length::ZERO);
         assert!(session.dispatch(OBJECT_EXTRUDE_CREATE_ID, &value).is_err(), "a zero height is not a solid");
         assert_eq!(session.project().revision(), Revision::ZERO);
@@ -958,7 +958,7 @@ mod tests {
 
     #[test]
     fn a_path_is_created_in_one_revision_and_undone_in_one_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let path = l_path(100);
         let value = path_create_params(&session, "Sketch", path.clone());
         let spec = CommandRegistry::new().get(OBJECT_PATH_CREATE_ID).expect("registered");
@@ -982,7 +982,7 @@ mod tests {
 
     #[test]
     fn a_path_replacement_is_one_revision_and_one_undo() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let original = l_path(100);
         let id = session
             .dispatch(OBJECT_PATH_CREATE_ID, &path_create_params(&session, "Sketch", original.clone()))
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn extruding_a_path_turns_the_node_into_the_body_in_one_revision() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let millimetres = |value| Length::from_millimetres(value).expect("length");
         let closed =
             Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]).expect("rectangle");
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn an_open_path_cannot_be_extruded() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(OBJECT_PATH_CREATE_ID, &path_create_params(&session, "Sketch", l_path(100)))
             .expect("create the drawing")
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[test]
     fn the_extrusion_height_command_keeps_the_path() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(
                 OBJECT_EXTRUDE_CREATE_ID,
@@ -1105,7 +1105,7 @@ mod tests {
 
     #[test]
     fn a_body_path_replacement_keeps_every_other_field() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(
                 OBJECT_EXTRUDE_CREATE_ID,
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn a_created_drawing_is_born_at_its_own_zero() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let millimetres = |value| Length::from_millimetres(value).expect("length");
 
         let closed = Path::rectangle([millimetres(600), millimetres(400)], [millimetres(700), millimetres(500)])
@@ -1175,7 +1175,7 @@ mod tests {
 
     #[test]
     fn an_extruded_body_is_born_at_its_rings_centre() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let id = session
             .dispatch(
                 OBJECT_EXTRUDE_CREATE_ID,
@@ -1198,7 +1198,7 @@ mod tests {
 
     #[test]
     fn a_drawing_in_a_moved_container_lands_where_it_was_clicked() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let millimetres = |value| Length::from_millimetres(value).expect("length");
         // A container turned about Z and moved, so a parent-frame placement is not a world one.
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     fn a_geometry_replacement_leaves_the_creation_origin_alone() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let millimetres = |value| Length::from_millimetres(value).expect("length");
 
         let closed =
@@ -1296,7 +1296,7 @@ mod tests {
 
     #[test]
     fn a_blank_name_or_an_unknown_parent_is_refused_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let registry = CommandRegistry::new();
         let spec = registry.get(OBJECT_PATH_CREATE_ID).expect("registered");
 
@@ -1320,7 +1320,7 @@ mod tests {
 
     #[test]
     fn a_path_replace_on_a_mesh_object_is_refused_without_mutating() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let sphere = session
             .dispatch(OBJECT_PRIMITIVE_CREATE_ID, &sphere_params(&session))
             .expect("a sphere")

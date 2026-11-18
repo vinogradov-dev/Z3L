@@ -199,7 +199,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "thickness_um",
@@ -265,7 +265,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "thickness_um",
@@ -364,7 +364,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "length_um",
@@ -476,7 +476,7 @@
       "columns": [
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "name",
@@ -527,7 +527,7 @@
       "columns": [
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "stock_group",

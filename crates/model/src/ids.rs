@@ -169,9 +169,115 @@ stable_id!(
     "contour segment id"
 );
 
+/// A catalogue item's identifier: the package that owns the record and its serial inside it.
+///
+/// An item id is not a document [`Id`]: it is composite, it says which package brought the record
+/// and it is never reused, so a scene cannot silently point at a new item with the same number
+/// once a package is disconnected. It is written `712-34` and read back from that form, so a
+/// package's records stay diffable and a person can read the number that names the package.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ItemId {
+    package: u32,
+    serial: u32,
+}
+
+impl ItemId {
+    /// Creates an id from a package number and a serial inside that package.
+    ///
+    /// Both are non-zero: a package is registered with a number of its own and its records start
+    /// at one, so zero cannot name an item.
+    pub const fn new(package: u32, serial: u32) -> Option<Self> {
+        if package == 0 || serial == 0 {
+            return None;
+        }
+        Some(Self { package, serial })
+    }
+
+    /// The package that owns the record.
+    pub const fn package(self) -> u32 {
+        self.package
+    }
+
+    /// The record's serial inside its package.
+    pub const fn serial(self) -> u32 {
+        self.serial
+    }
+}
+
+impl fmt::Display for ItemId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}-{}", self.package, self.serial)
+    }
+}
+
+/// Why a written item id could not be read.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ItemIdError {
+    /// The text is not `package-serial`.
+    #[error("`{0}` is not an item id; write it as `package-serial`, for example `712-34`")]
+    Form(String),
+    /// One of the two numbers is zero or does not fit in 32 bits.
+    #[error("`{value}` in `{text}` is not a package or serial number")]
+    Part {
+        /// The whole text that was read.
+        text: String,
+        /// The part that failed.
+        value: String,
+    },
+}
+
+impl std::str::FromStr for ItemId {
+    type Err = ItemIdError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (package, serial) = text.split_once('-').ok_or_else(|| ItemIdError::Form(text.to_owned()))?;
+        let part = |value: &str| {
+            value.parse::<u32>().map_err(|_| ItemIdError::Part { text: text.to_owned(), value: value.to_owned() })
+        };
+        Self::new(part(package)?, part(serial)?)
+            .ok_or_else(|| ItemIdError::Part { text: text.to_owned(), value: text.to_owned() })
+    }
+}
+
+impl TryFrom<String> for ItemId {
+    type Error = ItemIdError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<ItemId> for String {
+    fn from(id: ItemId) -> Self {
+        id.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_item_id_names_its_package_and_reads_back_from_its_written_form() {
+        let id = ItemId::new(712, 34).expect("a non-zero id");
+        assert_eq!((id.package(), id.serial()), (712, 34));
+        assert_eq!(id.to_string(), "712-34");
+        assert_eq!("712-34".parse::<ItemId>(), Ok(id));
+        let json = serde_json::to_string(&id).expect("serialize an item id");
+        assert_eq!(json, "\"712-34\"", "an item id is a written pair, not a document id number");
+        assert_eq!(serde_json::from_str::<ItemId>(&json).expect("read it back"), id);
+    }
+
+    #[test]
+    fn an_item_id_refuses_zero_and_a_malformed_pair() {
+        assert_eq!(ItemId::new(0, 3), None);
+        assert_eq!(ItemId::new(3, 0), None);
+        assert!("0-3".parse::<ItemId>().is_err(), "a zero package is not an item");
+        assert!("3".parse::<ItemId>().is_err());
+        assert!("3-4-5".parse::<ItemId>().is_err(), "the pair is two numbers, not three");
+        assert!(serde_json::from_str::<ItemId>("\"x-y\"").is_err());
+    }
 
     #[test]
     fn ids_are_non_zero_and_serialize_as_numbers() {

@@ -62,7 +62,7 @@ fn mesh_vertices_move_enabled(session: &Session, params: &Value) -> bool {
 
 fn mesh_vertices_move_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<MeshVerticesMove>(params)?;
@@ -131,7 +131,7 @@ mod tests {
         let root = project.root().id();
         let mesh = cube_mesh(millimetres(100));
         let id = project.add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(mesh)).expect("object");
-        (Session::with_catalog(project, sample_catalog()), id)
+        (Session::with_directory(project, sample_catalog()), id)
     }
 
     fn move_params(object: Id, moves: &[(u32, [Length; 3])]) -> Value {

@@ -473,7 +473,7 @@ mod tests {
     }
 
     fn session() -> Session {
-        Session::with_catalog(sample_project(), sample_catalog())
+        Session::with_directory(sample_project(), sample_catalog())
     }
 
     fn cutout(rect: PanelRect, depth: CutoutDepth) -> MachiningParams {

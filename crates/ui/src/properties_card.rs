@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn applying_a_property_edit_dispatches_one_undoable_change() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(
             &mut session,
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn clearing_a_missing_property_is_an_error() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         assert!(apply(&mut session, panel, Edit::Clear { key: "missing".to_owned() }).is_err());
     }
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn a_dragged_length_is_one_undo_entry() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(&mut session, panel, Edit::Set { key: "thickness".to_owned(), value: length_property(10), scope: None })
             .expect("set property");
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn choosing_a_class_is_one_undoable_change() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let mut card = PropertiesCard::default();
         let ctx = egui::Context::default();
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn a_click_on_a_picker_row_assigns_the_class_and_one_undo_returns_it() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let mut card = PropertiesCard::default();
         let ctx = egui::Context::default();
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn a_length_is_drawn_as_a_number_with_the_unit_outside_it() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(&mut session, panel, Edit::Set { key: "thickness".to_owned(), value: length_property(18), scope: None })
             .expect("set property");

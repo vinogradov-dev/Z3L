@@ -1195,7 +1195,7 @@ mod tests {
     fn band(material: u64, thickness: i64, width: i64) -> EdgeBanding {
         EdgeBanding::new(
             EdgeId::new(1).expect("edge"),
-            model::MaterialId::new(material).expect("material"),
+            model::ItemId::new(1, u32::try_from(material).unwrap_or(u32::MAX)).expect("material"),
             false,
             millimetres(thickness),
             millimetres(width),

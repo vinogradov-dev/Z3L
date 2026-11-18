@@ -1,6 +1,7 @@
 //! Command metadata, the static registry and dispatch errors.
 
-use model::{Catalog, Id, Level, MachiningId, MaterialId, Project, ProjectError};
+use catalog::Directory;
+use model::{Id, ItemId, Level, MachiningId, Project, ProjectError};
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
@@ -81,7 +82,7 @@ pub struct CommandSpec {
     id: &'static str,
     label: Message,
     enabled_fn: fn(&Session, &Value) -> bool,
-    run_fn: fn(&mut Project, &Catalog, &Value) -> Result<CommandOutcome, CommandError>,
+    run_fn: fn(&mut Project, &Directory, &Value) -> Result<CommandOutcome, CommandError>,
     creation: Option<Creation>,
 }
 
@@ -91,7 +92,7 @@ impl CommandSpec {
         id: &'static str,
         label: Message,
         enabled_fn: fn(&Session, &Value) -> bool,
-        run_fn: fn(&mut Project, &Catalog, &Value) -> Result<CommandOutcome, CommandError>,
+        run_fn: fn(&mut Project, &Directory, &Value) -> Result<CommandOutcome, CommandError>,
     ) -> Self {
         Self { id, label, enabled_fn, run_fn, creation: None }
     }
@@ -142,7 +143,7 @@ impl CommandSpec {
     pub(crate) fn run(
         self,
         project: &mut Project,
-        catalog: &Catalog,
+        catalog: &Directory,
         params: &Value,
     ) -> Result<CommandOutcome, CommandError> {
         (self.run_fn)(project, catalog, params)
@@ -279,7 +280,7 @@ pub enum CommandError {
     #[error("unknown material {material}")]
     UnknownMaterial {
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
     },
     /// There is no earlier document state to restore.
     #[error("nothing to undo")]

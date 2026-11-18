@@ -3,31 +3,32 @@
 //! The model stores fallback thicknesses so a missing material never makes a scene unreadable. The
 //! session resolves the catalogue first and uses those fallbacks only when a material is absent.
 
-use model::{BandingSpec, Catalog, Id, Panel, PanelGeometry, Project, ProjectError};
+use catalog::Directory;
+use model::{BandingSpec, Id, Panel, PanelGeometry, Project, ProjectError};
 use units::Length;
 
 /// The resolved panel thickness: catalogue material first, stored fallback otherwise.
-pub(crate) fn panel_thickness(panel: &Panel, catalog: &Catalog) -> Length {
+pub(crate) fn panel_thickness(panel: &Panel, catalog: &Directory) -> Length {
     panel
         .material()
-        .and_then(|id| catalog.panel_material(id))
-        .map_or(panel.last_known_thickness(), |material| material.nominal_thickness())
+        .and_then(|id| catalog.board(id))
+        .map_or(panel.last_known_thickness(), |material| material.thickness)
 }
 
 /// The resolved thickness for any banding owner.
-pub(crate) fn spec_thickness(spec: &BandingSpec, catalog: &Catalog) -> Length {
-    catalog.edge_material(spec.material()).map_or(spec.last_known_thickness(), |material| material.thickness())
+pub(crate) fn spec_thickness(spec: &BandingSpec, catalog: &Directory) -> Length {
+    catalog.banding(spec.material()).map_or(spec.last_known_thickness(), |material| material.thickness)
 }
 
 /// The resolved width for any banding owner.
-pub(crate) fn spec_width(spec: &BandingSpec, catalog: &Catalog) -> Length {
-    catalog.edge_material(spec.material()).map_or(spec.last_known_width(), |material| material.width())
+pub(crate) fn spec_width(spec: &BandingSpec, catalog: &Directory) -> Length {
+    catalog.banding(spec.material()).map_or(spec.last_known_width(), |material| material.width)
 }
 
 /// Resolves one panel's core, overall and effective thickness.
 pub(crate) fn panel_geometry(
     project: &Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     panel_id: Id,
 ) -> Result<PanelGeometry, ProjectError> {
     let panel = project.panel(panel_id).ok_or(ProjectError::PanelNotFound { id: panel_id })?;
@@ -41,7 +42,7 @@ mod tests {
 
     use super::*;
 
-    use model::{EdgeBanding, EdgeBandingMaterial, PanelMaterial};
+    use model::EdgeBanding;
     use testkit::{millimetres, sample_edge_material_id, sample_material_id, sample_panel_thickness, sample_project};
 
     #[test]
@@ -54,18 +55,7 @@ mod tests {
         project.set_edge_banding(panel_id, band).expect("banding");
         project.set_panel_material(panel_id, sample_material_id(), sample_panel_thickness()).expect("material");
 
-        let panel_material = PanelMaterial::new(sample_material_id(), "Thick board", "mdf", millimetres(25), "white")
-            .expect("panel material");
-        let edge_material = EdgeBandingMaterial::new(
-            sample_edge_material_id(),
-            "Thick edge",
-            "abs",
-            millimetres(4),
-            millimetres(30),
-            "white",
-        )
-        .expect("edge material");
-        let catalog = Catalog::new(vec![panel_material], vec![edge_material], None).expect("catalog");
+        let catalog = testkit::sample_catalog_with(millimetres(25), millimetres(4), millimetres(30));
 
         let geometry = panel_geometry(&project, &catalog, panel_id).expect("resolved geometry");
         assert_eq!(geometry.thickness(), millimetres(25));
@@ -80,7 +70,7 @@ mod tests {
     #[test]
     fn missing_materials_keep_the_stored_fallbacks() {
         let project = sample_project();
-        let catalog = Catalog::default();
+        let catalog = Directory::default();
         let geometry = panel_geometry(&project, &catalog, Id::new(2).expect("id")).expect("resolved geometry");
         assert_eq!(geometry.thickness(), sample_panel_thickness());
     }
@@ -89,7 +79,7 @@ mod tests {
     fn missing_panels_are_reported() {
         let project = sample_project();
         let error =
-            panel_geometry(&project, &Catalog::default(), Id::new(999).expect("id")).expect_err("missing panel");
+            panel_geometry(&project, &Directory::default(), Id::new(999).expect("id")).expect_err("missing panel");
         assert!(matches!(error, ProjectError::PanelNotFound { id } if id == Id::new(999).expect("id")));
     }
 }

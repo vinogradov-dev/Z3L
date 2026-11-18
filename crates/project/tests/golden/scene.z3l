@@ -2,7 +2,7 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 25,
+    "schema_version": 26,
     "revision": 4,
     "next_id": 11,
     "root": {
@@ -86,7 +86,7 @@
             "edge_banding": [
               {
                 "edge": 1,
-                "material": 1,
+                "material": "1-1",
                 "included_in_size": false,
                 "last_known_thickness": 2000,
                 "last_known_width": 22000

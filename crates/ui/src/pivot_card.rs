@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn an_axis_edit_moves_the_pivot_as_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
 
         drag(&mut session, drawer, 0, &[1.5]);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_drag_that_writes_every_frame_is_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let before = session.project().pivot_local(drawer);
 
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_pivot_does_not_touch_history() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let stored = session.project().pivot_local(drawer).expect("pivot");
         let x = stored.components()[0].millimetres_f64();
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn centring_uses_the_local_bounds_and_is_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         session
             .dispatch(
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn centring_at_the_stored_pivot_does_not_touch_history() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         apply_center(&mut session, drawer, Lang::En).expect("center pivot");
         let revision = session.project().revision();
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn a_hostile_value_is_refused_and_names_the_axis() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let scope = session.edit_scope();
 
