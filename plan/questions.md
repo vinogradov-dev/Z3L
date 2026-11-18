@@ -53,24 +53,3 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
-- Snapping onto a neighbour or a plane: do two pieces meet flush (gap 0) when the tolerance captures
-  the drag, or does the tolerance double as a deliberate gap? Recommendation: one capture tolerance
-  (5 mm today) and a separate gap (0 by default, 2 mm for a shadow gap), both in the same Settings
-  row (N21).
-- Which virtual planes are "walls" until the house tool exists: X = 0, Y = 0 and Z = 0 (the floor),
-  with the face nearest the plane snapping to it? Recommendation yes; a floor-bound frame already
-  keeps its height, so the floor plane matters only for a free body (N21).
-- A panel in the furniture move: the two axes of its own face plane free and the thickness normal
-  refused, so a shelf's height comes from the fill or the card and never from the grab? That is the
-  reading of "only along its plane" the assistant put in N22 (N22).
-- The free move's exact-distance fields (ADR 0103): does the free move keep them, or are they this
-  mode's signature and only the furniture move shows the gap? Recommendation: both keep the fields,
-  because they are the typed path; only the rules differ (N22).
-- Keys for the transform modes: recommendation W free move, Shift+W furniture move, E rotate, Q
-  select, beside the drawing tools that already own R, M, A, C, N, L, P, V, G, S, O and F (U113,
-  N22).
-- The cue a snap draws: a line on the plane or the neighbour's face, a wash on the moving face, or
-  only the number in the distance field? A capture nobody can see is a drag that feels broken (N21).
-- The empty-space ghost: the reading in N23 is that the pointer names the next cell and a point
-  outside the frame clamps to the envelope instead of vanishing. Confirm that is the behaviour the
-  owner watched, or name the tool (fill, contour panel, a dragged panel) it belongs to.

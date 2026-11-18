@@ -43,70 +43,95 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
-  Why: The assistant and the prototype expander both need the document without a window, and
-   only export reaches the engine from the command line today. A generator that writes the
-   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
-   command gate.
-  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
-   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
-   groups them as one undo entry and writes once; query <scene>
-   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
-   Session::dispatch and SceneFile: no second mutation path.
-  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
-   leaves the file untouched, and query tree prints the ids the fixture created.
-  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
-- `[ ]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
-  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
-   such row, so the back falls back to a number written in code, which is the one thing the
-   material rules forbid.
-  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
-   rule; the back type's planes read it, and an out-of-range material stays a refusal.
-  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
-   type still uses the 18 mm stock.
-  `files: app/src/scene_build.rs,crates/model/src/catalog.rs`
-- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
-  Why: The prototype work needs three facts the document cannot store today: which container is
-   a section, which prototype and card produced a node, so a command works while the library is
-   missing, and which released node the parent must no longer rewrite.
-  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
-   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
-   opens without the library.
-  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
-   and a missing prototype library changes nothing in the load.
-  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-
-## Bugs
-## Next
-- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
-  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
-   dissolve targets and the card, and no task may cite a decision that does not exist. Four
-   questions are still open, so the record waits for the owner's answers.
-  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
-   open questions in plan/questions.md.
-  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
-   plan/questions.md carries the four questions.
-  `files: docs/domain/prototypes.md,docs/decisions/README.md`
-- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
-  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
-   workshop, and today they are literals in a scenario. Where the file lives is an open
-   question, so the task waits for its answer.
-  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
-   validated on load, offering defaults to the card; a value outside its range is a sentence,
-   not a fallback.
-  Done: A test loads a standards file, a command takes its default from it, and a stale file is
-   a notice.
-  `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
-  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
-   saying idle while four branches move. The worktree rule papers over the gap: the plan is
-   written in one checkout and a stream's progress lives only in its commits.
-  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
-   in-progress entry per stream in the order, and a status line that prints a row per stream.
-   The one-writer rule stays for the backlog file itself.
-  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
-   same stream, status prints one row per stream, and the backlog stays one file.
-  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
+- `[ ]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
+  Why: The owner: frames stick to each other, and the tolerance is the distance at which a
+   piece jumps to another, like a snap; frames stick to the floor and to walls, and until a
+   house-wall tool exists the virtual coordinate planes stand in for walls. Today the capture
+   is two constants in move_query.rs (a 5 mm snap radius and a 1 mm grid), no coordinate plane
+   is a candidate, and the maker cannot turn any of it off. Snapping is a taste and a workshop
+   standard, not a code literal, so it belongs in the workspace settings like the grid step and
+   the gizmo handle.
+  Shape: One Settings section for snapping (in the View page, beside the grid): the coordinate
+   planes on or off, the frames on or off, and the tolerance in millimetres that captures a
+   drag and makes the piece jump — it lands flush, because the tolerance is the distance at
+   which the snap fires and not a gap to keep. The move rule reads a SnapSettings value the
+   shell passes in instead of the constants; the candidates gain the X=0, Y=0 and Z=0 planes
+   (the floor included) beside the envelopes, the virtual faces and the part faces, and a
+   capture still lands the faces together. A captured face draws a line on the plane or the
+   neighbour and its field says the number, so a snap nobody can see is not a drag that feels
+   broken. One ADR records the settings, the planes as stand-in walls and the tolerance
+   reading.
+  Done: A workspace file round-trips planes, frames and tolerance; a frame dragged within the
+   tolerance of Y=0 jumps onto the plane and one dragged past it does not; two frames within
+   the tolerance meet flush and beyond it stay apart; turning the planes off leaves the piece
+   where the pointer put it; the field at the captured face shows the same number the rule
+   used; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs`
+- `[ ]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
+  Why: The owner wants two tools: the move the editor has stays free and turns the furniture
+   snapping off, and a furniture move moves the object by its own rules — a panel only along
+   its own Z, parallel to its AB planes, and a frame on all three axes but seeing its
+   neighbours and the walls — with the distance to the neighbour or the wall as a typed field.
+   Today one Move mode decides under the hand: the translate gizmo reads Project::move_rule and
+   applies it whenever the selection is furniture (ADR 0102, 0103), so the same handle is free
+   for a loose body and ruled for a cabinet, and no rule gives a panel its own axis at all.
+  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
+   never a document field (ADR 0113). The free Move drops the furniture rule and its snapping
+   and keeps the exact micrometre drag; the exact-distance fields stay in both modes, because
+   they are the typed path (ADR 0103) and the owner answer named the snapping alone. The
+   furniture mode reads Project::move_rule and adds the panel rule: a panel moves only along
+   its own local Z, the thickness axis, so it slides parallel to its AB planes and keeps them
+   parallel; a shelf rises and falls in its thickness direction, a divider crosses the case, a
+   back moves front and back. A frame moves on the three world axes subject to its class mount
+   (a floor piece keeps its height), and every drag sees the neighbours, the planes and the
+   walls of N21 through the distance fields of this mode, whose number is the gap to the face
+   that stops it. One undo entry per drag either way; an ADR records the mode, the panel axis
+   and what the free move no longer does.
+  Done: A selected shelf moves only along its own Z and the two in-plane directions are
+   refused; a divider moves across the case and a back moves in and out; a frame moves on three
+   axes, a floor frame keeps its height and a neighbour stops it; the free move keeps a 97.4 mm
+   drag where the furniture move stops at the wall, and the free move does not snap; a typed
+   gap lands the face where typed and the field shows the same number; each drag is one undo
+   entry; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,crates/model/src/project/move_query.rs,crates/ui/src/distance.rs`
+- `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
+  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
+   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
+   maker reaches for the mouse for the most repeated action in the editor. The one key table
+   already exists (ADR 0117); the modes are simply absent from it.
+  Shape: A binding for Select, Move, Rotate and the furniture mode in inventory KEYS on chords
+   no drawing tool owns: W, E and Q beside Shift+W for the furniture move, with R, M, A, C, N,
+   L, P, V, G, S, O and F already taken by the sketch, the view and the niche. The status bar
+   band carries four states and prints the key beside each label; the node context menu of the
+   tree and the viewport offers the four as session entries in the list node_actions already
+   keeps beside its command rows, because they are view state and write no document, so the
+   action has a place in the menu without inventing a command for it. The Settings page lists
+   the same four rows with the rest. This task waits for N22 to exist before it names the
+   fourth mode; the other three can land first.
+  Done: Each of the four modes answers its key from the shell and the status bar cell shows it;
+   the tree row menu and the viewport menu both offer the four; the Settings shortcut list
+   holds all four; the table test proves no two rows share a key and every binding prints in
+   both languages; cargo xtask ci is green.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/node_actions.rs,app/src/shortcuts.rs,app/src/status_bar.rs,app/src/main.rs,crates/text/src/messages.rs`
+- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
+   there, and should instead stop at it and jump past it into the free space beyond when the
+   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
+   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
+   the free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
 - `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
   Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
    with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
@@ -162,80 +187,70 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
    xtask ci is green.
   `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs`
-- `[ ]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
-  Why: The owner: frames should stick to each other at a tolerance set in settings, and to the
-   floor and to walls, and until a house-wall tool exists the virtual coordinate planes stand
-   in for walls. Today the capture is two constants in move_query.rs (a 5 mm snap radius and a
-   1 mm grid), no coordinate plane is a candidate, no gap is ever left between two pieces, and
-   the maker cannot turn any of it off. Snapping is a taste and a workshop standard, not a code
-   literal, so it belongs in the workspace settings like the grid step and the gizmo handle.
-  Shape: One Settings section for snapping: the coordinate planes on or off, other frames on or
-   off, and the tolerance in millimetres that captures a drag, with the 1 mm grid as it is. The
-   move rule reads a SnapSettings value the shell passes in, instead of the constants; the
-   candidates gain the X=0, Y=0 and Z=0 planes (floor included) beside the envelopes, virtual
-   faces and part faces, and a capture onto a neighbour or a plane leaves the settings gap
-   rather than always 0. A captured face draws a cue and its field says the gap, so the number
-   the maker reads is the number the rule used. Defaults: planes on, frames on, the current 5
-   mm tolerance, gap 0.
-  Done: A workspace file round-trips the three values; a frame dragged within the tolerance of
-   Y=0 lands with its back on the plane and one dragged past it does not; two frames within
-   tolerance stop at the set gap; turning planes off leaves the piece where the pointer put it;
-   the field at the captured face shows the same number the rule used; cargo xtask ci is green.
-  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs`
-- `[ ]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
-  Why: The owner wants two tools: the move the editor has stays free, and a furniture move
-   moves the object by its own rules — a panel only inside its own plane, a frame on all three
-   axes but seeing its neighbours and the walls — with the distance to the neighbour or the
-   wall as a typed field. Today one Move mode decides under the hand: the translate gizmo reads
-   Project::move_rule and applies it whenever the selection is furniture (ADR 0102, 0103), so
-   the same handle is free for a loose body and ruled for a cabinet, and no rule keeps a panel
-   in its plane at all.
-  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
-   never a document field (ADR 0113). The free Move drops the rule and keeps the exact
-   micrometre drag; the furniture mode reads Project::move_rule, adds the panel-plane rule (the
-   two axes of the panels own face plane are free, the thickness normal is refused, so a shelf
-   height is set by the fill or the card and not by the grab), keeps a frame free on the three
-   axes subject to its class mount, and shows the Distances gap fields of this drag, which
-   already measure the nearest surfaces (ADR 0103), as this mode fields. One undo entry per
-   drag either way.
-  Done: A selected shelf moves on the two axes of its face and refuses the third; a frame moves
-   on three axes, a floor frame keeps its height and a neighbour stops it; the free move keeps
-   a 97.4 mm drag where the furniture move stops at the wall; a typed gap lands the face where
-   typed and the field shows the same number; one undo takes the drag; cargo xtask ci is green.
-  `files: app/src/main.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,crates/model/src/project/move_query.rs,crates/ui/src/distance.rs`
-- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
-  Why: The owner: a panel created in a frame runs into its neighbour and freezes there, and
-   should instead stop at it and jump past it into the free space beyond when the pointer
-   crosses; and a panel dragged in an empty frame or an empty part of one should stop at the
-   frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps the
-   free-axis position inside the void and refuses a point outside the open product, so the
-   ghost sticks at the panel it meets and disappears at the envelope.
-  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
-   part re-plans into the cell beyond instead of clamping at the part; a point outside the
-   product clamps to the envelope inner face, so the ghost stays the last part it could place
-   and the click creates what was drawn. A refusal that is not about the pointer (a void
-   thinner than the board, a cell that is not convex, another product void) still says why. The
-   ghost stays the one measurement the click stores, so the picture, the numbers and the
-   panel.create cannot disagree.
-  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
-   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
-   void thinner than the board still refuses with its sentence; one click is one undo entry;
-   cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
-- `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
-  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
-   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
-   maker reaches for the mouse for the most repeated action in the editor. The one key table
-   already exists (ADR 0117); the modes are simply absent from it.
-  Shape: A binding for Select, Move and Rotate in inventory KEYS on chords no drawing tool owns
-   (plain W and E are free; R is rectangle, M is measure, S is shadow, O and F are view), the
-   status bar cells print the key beside the label, and the Settings page lists the three rows
-   with the rest. The furniture move of N22 adds its own key in its own change, so this task
-   does not wait for a mode that does not exist.
-  Done: Each of the three modes answers its key from the shell and the status bar cell shows
-   it; the Settings shortcut list holds all three; the table test proves no two rows share a
-   key and every binding prints in both languages; cargo xtask ci is green.
-  `files: crates/ui/src/inventory.rs,app/src/shortcuts.rs,app/src/status_bar.rs,crates/text/src/messages.rs`
+
+## Bugs
+## Next
+- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
+  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
+   dissolve targets and the card, and no task may cite a decision that does not exist. Four
+   questions are still open, so the record waits for the owner's answers.
+  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
+   open questions in plan/questions.md.
+  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
+   plan/questions.md carries the four questions.
+  `files: docs/domain/prototypes.md,docs/decisions/README.md`
+- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
+  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
+   workshop, and today they are literals in a scenario. Where the file lives is an open
+   question, so the task waits for its answer.
+  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
+   validated on load, offering defaults to the card; a value outside its range is a sentence,
+   not a fallback.
+  Done: A test loads a standards file, a command takes its default from it, and a stale file is
+   a notice.
+  `files: app/src/settings_store.rs,crates/model/src/`
+- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
+  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
+   saying idle while four branches move. The worktree rule papers over the gap: the plan is
+   written in one checkout and a stream's progress lives only in its commits.
+  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
+   in-progress entry per stream in the order, and a status line that prints a row per stream.
+   The one-writer rule stays for the backlog file itself.
+  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
+   same stream, status prints one row per stream, and the backlog stays one file.
+  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
+- `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
+  Why: The assistant and the prototype expander both need the document without a window, and
+   only export reaches the engine from the command line today. A generator that writes the
+   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
+   command gate.
+  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
+   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
+   groups them as one undo entry and writes once; query <scene>
+   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
+   Session::dispatch and SceneFile: no second mutation path.
+  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
+   leaves the file untouched, and query tree prints the ids the fixture created.
+  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
+- `[ ]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
+  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
+   such row, so the back falls back to a number written in code, which is the one thing the
+   material rules forbid.
+  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
+   rule; the back type's planes read it, and an out-of-range material stays a refusal.
+  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
+   type still uses the 18 mm stock.
+  `files: app/src/scene_build.rs,crates/model/src/catalog.rs`
+- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
+  Why: The prototype work needs three facts the document cannot store today: which container is
+   a section, which prototype and card produced a node, so a command works while the library is
+   missing, and which released node the parent must no longer rewrite.
+  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
+   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
+   opens without the library.
+  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
+   and a missing prototype library changes nothing in the load.
+  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
 
 ## Done
 
