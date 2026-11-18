@@ -112,13 +112,13 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateProductCard),
         },
-        ToolKind::ProductDraw => Ready {
+        // The drawn frame is the box gesture with the envelope as its owner: the same rectangle
+        // method, the same plates and the same base a solid begins with (N19, ADR 0101).
+        ToolKind::ProductBox(draw) => Ready {
             enabled: true,
             armed: is_armed(active, kind),
-            // The drawn frame is the box gesture with the envelope as its owner: the first step is
-            // the base rectangle, exactly as it is for a solid (ADR 0101).
             hint: Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
-            action: Some(ToolAction::DrawProductFrame),
+            action: Some(ToolAction::DrawProductFrame { tool: draw }),
         },
         ToolKind::ProductContour => Ready {
             enabled: true,

@@ -427,7 +427,9 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     // Two points on the work plane, and the height the pointer pulls above the base.
     let corners = {
         let document = app.tabs.active_mut();
-        document.editor.arm_box();
+        // The frame cell arms the sketch's own rectangle tool, so the base is two clicks of the
+        // sketch draft and the height is pulled from the figure it makes (N19).
+        document.editor.start_product_box_drawing(ui::DrawTool::Rectangle);
         let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
         let camera = document.camera();
         let project = document.session.project();
@@ -479,7 +481,8 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     {
         let document = app.tabs.active_mut();
         let draft = document.editor.box_draft().cloned().expect("the gesture is pulling its height");
-        assert!(draft.is_pulling() && draft.height().is_positive(), "the height follows the pointer");
+        assert!(draft.height().is_positive(), "the height follows the pointer");
+        assert_eq!(draft.sizes().map(|sizes| sizes[0].is_positive()), Some(true), "the base is the drawn box");
         assert!(document.tool_card_is_up(), "the height pull draws its tool card: {draft:?}");
     }
     let pixels_per_point = ctx.pixels_per_point();

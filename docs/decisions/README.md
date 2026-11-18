@@ -165,6 +165,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0157](0157-a-fill-is-carried-by-the-hand-across-a-board.md) | A fill is carried by the hand across a board | Accepted; refines 0103 and 0109 |
 | [0158](0158-the-directory-is-edited-by-a-window-of-its-own.md) | The directory is edited by a window of its own, one record per save | Accepted; implements `nomenclature.md` §12–§14, refines 0148 |
 | [0159](0159-a-product-frame-reserves-a-footprint.md) | A product frame reserves a footprint, and a cut corner is two offsets | Accepted; refines 0097, 0100 and 0101 |
+| [0160](0160-a-frames-box-is-the-box-tools-and-a-drawn-rectangle-is-the-plain-envelope.md) | A frame's box is the box tool's, and a drawn rectangle is the plain envelope | Accepted; amends the creation gesture of 0101, refines 0138 and 0159 |
 
 ## Format
 

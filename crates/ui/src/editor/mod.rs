@@ -66,9 +66,12 @@ pub struct Editor {
     contour_edit: Option<ContourEdit>,
     drawing: Option<DrawDraft>,
     /// What the running draft will become: a path of its own, a board cut to its ring, a body's
-    /// profile or a drawn primitive.
+    /// profile, a drawn primitive or a frame's base.
     drawing_intent: DrawIntent,
-    /// The base rectangle and the height of a box being drawn, before its one command.
+    /// The base a product frame's height is pulled from, and the height, before its one command.
+    ///
+    /// The base arrives from the drawing: the frame cell arms the sketch's rectangle or its free
+    /// outline, and the finished figure becomes this draft (N19, ADR 0101, ADR 0159).
     box_draft: Option<BoxDraft>,
     /// The class the next click fills a niche with, when the empty-space tool is armed.
     fill: Option<FillArm>,

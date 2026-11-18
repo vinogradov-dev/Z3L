@@ -83,9 +83,12 @@ pub enum ToolAction {
     },
     /// Opens the product-frame card; the card dispatches `product.create`.
     CreateProductCard,
-    /// Arms the box tool with the frame as its owner: the next clicks draw the reserved box and the
-    /// ✓ dispatches `product.create`.
-    DrawProductFrame,
+    /// Arms the rectangle tool with the frame as its owner: the figure fixes the reserved box's base
+    /// and the height pulled from it dispatches `product.create` (N19, ADR 0101).
+    DrawProductFrame {
+        /// Which rectangle method draws the base.
+        tool: DrawTool,
+    },
     /// Arms the free-outline tool whose closed ring becomes a frame's base outline.
     DrawProductFrameContour,
     /// Arms the free-outline tool, whose closed ring becomes one panel cut to it.
@@ -182,7 +185,12 @@ pub enum ToolActivity {
     PanelContour,
     /// A primitive is waiting for its work-plane click.
     Primitive(PrimitiveKind),
-    /// The box tool is drawing a product frame's reserved box.
+    /// A rectangle method is drawing a product frame's reserved box.
+    ///
+    /// The draft is the sketch draft; only what its commit becomes differs, so the pressed cell is the
+    /// frame cell and not the box cell whose glyph the draft borrows (N19, ADR 0101).
+    ProductBox(DrawTool),
+    /// The frame's reserved box is pulling its height.
     ProductFrame,
     /// A drawing tool is building the base outline of a product frame.
     ProductContour,
@@ -215,6 +223,7 @@ pub fn tool_activity(
         (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
         (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
+        (Some((tool, DrawIntent::ProductBox)), _, _, _, _) => Some(ToolActivity::ProductBox(tool)),
         (Some((_, DrawIntent::Product)), _, _, _, _) => Some(ToolActivity::ProductContour),
         // A primitive's placement is a draft like any other, so the pressed cell is the sphere's.
         (Some((_, DrawIntent::Primitive(kind))), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
@@ -236,9 +245,10 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         (Some(ToolActivity::Body(armed)), ToolKind::Body(tool)) => armed == tool,
         (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
         (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive { kind, .. }) => armed == kind,
+        (Some(ToolActivity::ProductBox(armed)), ToolKind::ProductBox(tool)) => armed == tool,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
         // pressed state and the cell shows it through the list (U74).
-        (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw) => true,
+        (Some(ToolActivity::ProductFrame), ToolKind::ProductBox(_)) => true,
         (Some(ToolActivity::ProductContour), ToolKind::ProductContour) => true,
         (Some(ToolActivity::Fill { class: armed, mode: armed_mode }), ToolKind::Fill { class, mode }) => {
             armed == class && armed_mode == mode
@@ -1159,6 +1169,8 @@ mod tests {
         let post = ClassCode::VERTICAL_PANEL;
         let path = DrawIntent::Path;
         let panel = DrawIntent::Panel;
+        let frame = DrawIntent::Product;
+        let frame_box = DrawIntent::ProductBox;
         let sphere = DrawIntent::Primitive(PrimitiveKind::Sphere);
         let cases = [
             (None, false, None, false, false, None),
@@ -1172,6 +1184,17 @@ mod tests {
                 Some(ToolActivity::Body(DrawTool::Rectangle)),
             ),
             (Some((DrawTool::Polyline, panel)), false, None, false, false, Some(ToolActivity::PanelContour)),
+            // A frame's base is a draft of its own: the rectangle presses the drawn box's row and the
+            // free outline the contour's (N19, ADR 0101, ADR 0159).
+            (
+                Some((DrawTool::Rectangle, frame_box)),
+                false,
+                None,
+                false,
+                false,
+                Some(ToolActivity::ProductBox(DrawTool::Rectangle)),
+            ),
+            (Some((DrawTool::Polyline, frame)), false, None, false, false, Some(ToolActivity::ProductContour)),
             // A sphere is a draft too: the round it draws presses the sphere's own cell.
             (
                 Some((DrawTool::Sphere, sphere)),
@@ -1232,7 +1255,9 @@ mod tests {
             (Some(ToolActivity::Body(DrawTool::Circle)), ToolKind::Draw(DrawTool::Circle), false),
             (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Draw(DrawTool::Circle), false),
             (Some(ToolActivity::Primitive(PrimitiveKind::Sphere)), ToolKind::Light, false),
-            (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw, true),
+            (Some(ToolActivity::ProductFrame), ToolKind::ProductBox(DrawTool::Rectangle), true),
+            (Some(ToolActivity::ProductBox(DrawTool::Rectangle)), ToolKind::ProductBox(DrawTool::Rectangle), true),
+            (Some(ToolActivity::ProductBox(DrawTool::Rectangle)), ToolKind::ProductContour, false),
             (Some(ToolActivity::ProductFrame), ToolKind::Product, false),
             (
                 Some(ToolActivity::ProductFrame),

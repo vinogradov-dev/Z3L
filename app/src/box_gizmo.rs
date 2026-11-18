@@ -1,10 +1,10 @@
-//! The frame tool: the base outline, the pulled height and the grips of a selected frame.
+//! The frame tool: the pulled height and the grips of a selected frame.
 //!
-//! A product frame reserves a prism and is drawn the way the extrusion is (ADR 0101): the first click
-//! anchors the base rectangle on the active work plane, the second fixes it, the pointer then pulls
-//! the height along the plane's normal, and the click after that — or the command bar's ✓ — commits
-//! one `product.create`. A base outline drawn in the sketch arrives the same way: the ring becomes the
-//! draft's base and the pull continues from it (ADR 0159). Nothing reaches the document before the
+//! A product frame reserves a prism and is drawn the way the extrusion is (ADR 0101): the sketch draws
+//! the base on the active work plane — the rectangle tool the box cell arms, or a ring when the
+//! footprint is not a box (ADR 0159) — and the pointer then pulls the height along the plane's
+//! normal. What this module owns is that pull: its prism, its number and the click, the Enter or the
+//! field's own Enter that commits one `product.create`. Nothing reaches the document before the
 //! commit, so Escape costs nothing, and the wireframe prism the pointer pulls is shell paint: an
 //! overlay entry is keyed by the id of a node the document holds, and a frame that does not exist yet
 //! has none (ADR 0093, ADR 0104).
@@ -38,8 +38,6 @@ use units::Length;
 
 use crate::gizmo_math::{ACTIVE_COLOR, WorkPlane, ray_plane, ray_to, screen_point};
 
-/// Colour of the base rectangle while its second corner is being drawn.
-const BASE_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
 /// Colour of the pulled prism and of an idle grip.
 const BOX_COLOR: Color32 = Color32::from_rgb(255, 220, 96);
 /// Colour of a live size label.
@@ -62,15 +60,6 @@ pub(crate) const MIN_SIDE_MM: i64 = 1;
 /// Largest side a grip or a pull leaves, in millimetres: the primitive bound the document validates.
 pub(crate) const MAX_SIDE_MM: i64 = model::MAX_PRIMITIVE_SIZE.micrometres() / 1_000;
 
-/// What one frame of the box creation gesture asks the shell to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BoxEvent {
-    /// A click on the work plane: it anchors the base or fixes it.
-    Click([Length; 2]),
-    /// A click with the base fixed: the ✓ of the gesture, which commits the box.
-    Commit,
-}
-
 /// A work-plane point as a float vector in millimetres.
 fn plane_millimetres(point: [Length; 2]) -> DVec2 {
     DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64())
@@ -82,18 +71,6 @@ fn length_micrometres(millimetres: f64) -> Option<Length> {
         return None;
     }
     Some(Length::from_micrometres((millimetres * 1_000.0).round() as i64))
-}
-
-/// The plane point under the pointer, in work-plane millimetres rounded to the micrometre.
-pub(crate) fn plane_point(
-    camera: Camera,
-    viewport: egui::Rect,
-    plane: WorkPlane,
-    pointer: Pos2,
-) -> Option<[Length; 2]> {
-    let world = ray_plane(ray_to(pointer, viewport, camera), DVec3::ZERO, plane.normal())?;
-    let local = plane.local(world);
-    Some([length_micrometres(local.x)?, length_micrometres(local.y)?])
 }
 
 /// The height under the pointer, measured along the plane's normal from the base corner.
@@ -119,15 +96,15 @@ pub(crate) fn pulled_height(
 
 /// The work plane's frame with its origin on the frame's own zero: the base's minimum corner.
 pub(crate) fn base_placement(plane: WorkPlane, draft: &BoxDraft) -> Option<Placement> {
-    plane.placement_at(plane_millimetres(draft.base_corner()?))
+    plane.placement_at(plane_millimetres(draft.base_corner()))
 }
 
-/// The frame and the envelope the ✓ would commit — exactly what the ghost shows.
+/// The frame and the envelope the commit would write — exactly what the ghost shows.
 ///
 /// A rectangle base and a drawn ring both answer one envelope, so the ghost and the command never
 /// disagree about which shape is being made (ADR 0159).
 pub(crate) fn commit_frame(plane: WorkPlane, draft: &BoxDraft) -> Option<(Placement, Envelope)> {
-    let envelope = draft.envelope()?.ok()?;
+    let envelope = draft.envelope().ok()?;
     Some((base_placement(plane, draft)?, envelope))
 }
 
@@ -149,29 +126,17 @@ fn ring_outline(draft: &BoxDraft) -> Option<(Vec<DVec2>, Vec<DVec2>)> {
     Some((points, corners))
 }
 
-/// Reads one click of the box creation gesture.
+/// Reads the click that accepts the pulled height of a frame.
 ///
-/// The gizmo never touches the document: it reports the click or the commit, and the editor's draft
-/// holds the numbers, exactly as the drawing gizmo hands its clicks to the drawing draft.
-pub(crate) fn update_box(
-    ui: &Ui,
-    response: &Response,
-    viewport: egui::Rect,
-    camera: Camera,
-    plane: WorkPlane,
-    draft: &BoxDraft,
-) -> Option<BoxEvent> {
+/// The base is already fixed — it is what the draft exists for — so a click on the scene is the
+/// gesture's own accept, exactly as a click elsewhere finishes an extrusion's pull. The gizmo never touches
+/// the document: it reports the answer and the editor's draft holds the numbers.
+pub(crate) fn update_box(ui: &Ui, response: &Response) -> bool {
     if !response.clicked_by(egui::PointerButton::Primary) {
-        return None;
+        return false;
     }
-    if draft.is_pulling() {
-        // The click that accepts the height is the gesture's own ✓; the command bar accepts the
-        // same pull, and a second click finds no draft to commit.
-        return Some(BoxEvent::Commit);
-    }
-    let corner = plane_point(camera, viewport, plane, response.interact_pointer_pos()?)?;
     ui.ctx().request_repaint();
-    Some(BoxEvent::Click(corner))
+    true
 }
 
 /// The four corners of the rectangle between two opposite corners, in plane millimetres.
@@ -187,7 +152,7 @@ fn rectangle_corners(first: [Length; 2], second: [Length; 2]) -> [[Length; 2]; 4
     [point(min_x, min_y), point(max_x, min_y), point(max_x, max_y), point(min_x, max_y)]
 }
 
-/// Paints the base outline being drawn and the prism its height pulls.
+/// Paints the prism the pulled height makes — the ring or the rectangle the base already is.
 pub(crate) fn paint_box(
     ui: &Ui,
     viewport: egui::Rect,
@@ -196,31 +161,12 @@ pub(crate) fn paint_box(
     pointer: Option<Pos2>,
     draft: &BoxDraft,
 ) {
-    let Some(first) = draft.first() else {
-        return;
-    };
     let painter = ui.painter().with_clip_rect(viewport);
     let project = |point: [Length; 2], height: Length| -> Option<Pos2> {
         let local = plane_millimetres(point);
         let world = plane.world(local) + plane.normal() * height.millimetres_f64();
         screen_point(camera, viewport, world)
     };
-    // The base rectangle while it is being drawn; once it is fixed the prism's bottom ring is the
-    // same rectangle, so drawing it again would only hide it.
-    if draft.base().is_none() && draft.ring().is_none() {
-        let mut base = Vec::with_capacity(5);
-        for corner in rectangle_corners(first, draft.live().unwrap_or(first)) {
-            match project(corner, Length::ZERO) {
-                Some(position) => base.push(position),
-                None => return,
-            }
-        }
-        if let Some(&first_point) = base.first() {
-            base.push(first_point);
-            painter.add(egui::Shape::line(base, Stroke::new(1.6, BASE_COLOR)));
-        }
-        return;
-    }
     // A drawn ring: its own outline twice, and a vertical where the shape turns.
     if draft.ring().is_some() {
         let drawn = |draft: &BoxDraft| -> Option<()> {
@@ -244,7 +190,7 @@ pub(crate) fn paint_box(
                 painter.line_segment([low, high], stroke);
             }
             if let Some(pointer) = pointer
-                && let Some(Ok(envelope)) = draft.envelope()
+                && let Ok(envelope) = draft.envelope()
             {
                 let [width, depth] = [envelope.x(), envelope.y()].map(Length::millimetres_f64);
                 let label = format!("{} × {} × {}", width, depth, height.millimetres_f64());
@@ -258,18 +204,16 @@ pub(crate) fn paint_box(
     let Some(sizes) = draft.sizes() else {
         return;
     };
-    let Some(base) = draft.base() else {
-        return;
-    };
-    // The pulled prism: four verticals and the two rings, which is the box the ✓ builds.
+    let corner = draft.base_corner();
+    // The pulled prism: four verticals and the two rings, which is the box the commit builds.
     let stroke = Stroke::new(1.8, BOX_COLOR);
     let mut low_ring = Vec::with_capacity(5);
     let mut high_ring = Vec::with_capacity(5);
     for corner in rectangle_corners(
-        base.corner,
+        corner,
         [
-            Length::from_micrometres(base.corner[0].micrometres().saturating_add(sizes[0].micrometres())),
-            Length::from_micrometres(base.corner[1].micrometres().saturating_add(sizes[1].micrometres())),
+            Length::from_micrometres(corner[0].micrometres().saturating_add(sizes[0].micrometres())),
+            Length::from_micrometres(corner[1].micrometres().saturating_add(sizes[1].micrometres())),
         ],
     ) {
         let (Some(low), Some(high)) = (project(corner, Length::ZERO), project(corner, sizes[2])) else {
@@ -310,9 +254,8 @@ pub(crate) fn commit_box(
     plane: WorkPlane,
     lang: text::Lang,
 ) -> Result<Id, String> {
-    let draft = editor.box_draft().cloned().ok_or_else(|| "No box is being drawn.".to_owned())?;
-    let (placement, _) =
-        commit_frame(plane, &draft).ok_or_else(|| "The box has no base corner or height.".to_owned())?;
+    let draft = editor.box_draft().cloned().ok_or_else(|| "No frame is being drawn.".to_owned())?;
+    let (placement, _) = commit_frame(plane, &draft).ok_or_else(|| "The frame has no height yet.".to_owned())?;
     editor.commit_box(session, placement, lang)
 }
 
@@ -878,13 +821,13 @@ mod tests {
 
     #[test]
     fn the_committed_frame_is_the_ghost_the_maker_saw() {
-        let mut editor = Editor::new();
-        editor.arm_box();
-        editor.click_box([millimetres(600), millimetres(400)]).expect("anchor");
-        editor.click_box([millimetres(0), millimetres(0)]).expect("base");
-        editor.pull_box_height(millimetres(720)).expect("pull");
-        let (placement, envelope) =
-            commit_frame(WorkPlane::WORLD_XY, editor.box_draft().expect("a draft")).expect("frame");
+        // A drawn rectangle reaches the draft as the box's base: its corner is the frame's zero and
+        // its two sides are the width and the depth (N19, ADR 0101).
+        let base =
+            ui::BoxBase { corner: [Length::ZERO, Length::ZERO], width: millimetres(600), depth: millimetres(400) };
+        let mut draft = BoxDraft::from_rectangle(base);
+        draft.set_height(millimetres(720)).expect("the pull");
+        let (placement, envelope) = commit_frame(WorkPlane::WORLD_XY, &draft).expect("frame");
         assert_eq!(envelope.components(), [millimetres(600), millimetres(400), millimetres(720)]);
         assert!(envelope.footprint().is_rectangle(), "a drawn rectangle reserves a plain box");
         assert!(placement.translation().length() < 1.0e-9, "the base corner is the plane origin here");

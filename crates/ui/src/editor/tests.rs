@@ -1575,15 +1575,11 @@ fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
 }
 
 #[test]
-fn a_box_draft_that_is_cancelled_writes_nothing() {
+fn a_frame_draft_that_is_cancelled_writes_nothing() {
     let (project, _panel) = contour_panel_project();
     let session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
-    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_box();
-    editor.click_box([mm(0), mm(0)]).expect("anchor");
-    editor.click_box([mm(600), mm(400)]).expect("base");
-    editor.pull_box_height(mm(720)).expect("pull");
+    draw_the_frame_box(&mut editor);
     editor.cancel_box();
     assert!(editor.box_draft().is_none());
     assert_eq!(session.project().revision().get(), 0, "the draft never reached the document");
@@ -1596,13 +1592,19 @@ fn empty_editor_session() -> Session {
     Session::with_directory(Project::new(root).expect("a project"), sample_catalog())
 }
 
-/// Draw the box whose base runs from `[600, 560]` to the plane origin and whose height is 720 mm.
+/// Draw the frame's base with the sketch's rectangle tool and pull its height.
+///
+/// The frame cell arms the rectangle the box cell arms (N19), so the base is two points of the sketch
+/// draft and the finished figure is the frame's own box: 600 x 560 mm from the plane origin, and the
+/// height the pull holds is 720 mm.
 fn draw_the_frame_box(editor: &mut Editor) {
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_box();
-    assert!(editor.box_draft().is_some(), "the frame cell arms the box tool");
-    assert!(!editor.click_box([mm(600), mm(560)]).expect("the anchor"), "the first click only anchors");
-    assert!(editor.click_box([mm(0), mm(0)]).expect("the base"), "the second click fixes the base");
+    editor.start_product_box_drawing(DrawTool::Rectangle);
+    assert!(editor.drawing().is_some(), "the frame cell arms the sketch's rectangle tool");
+    editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+    editor.drawing_point([mm(600), mm(560)]).expect("the opposite corner");
+    editor.start_product_pull(text::Lang::En).expect("the finished rectangle is the base");
+    assert!(editor.drawing().is_none(), "the base is drawn, so the sketch is over");
     editor.pull_box_height(mm(720)).expect("the pull");
 }
 
@@ -1632,17 +1634,24 @@ fn the_frame_tool_draws_the_box_the_ghost_shows_and_creates_it() {
 }
 
 #[test]
-fn the_ribbons_drawn_frame_method_arms_the_box_tool() {
+fn the_ribbons_drawn_frame_method_arms_the_sketchs_rectangle_tool() {
     let mut session = empty_editor_session();
     let mut editor = Editor::new();
     let outcome = editor
-        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrame], text::Lang::En)
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::DrawProductFrame { tool: DrawTool::Rectangle }],
+            text::Lang::En,
+        )
         .expect("the drawn method arms");
-    assert!(editor.box_draft().is_some(), "the box tool draws a frame");
+    assert_eq!(editor.drawing_intent(), crate::DrawIntent::ProductBox, "the figure is a frame's base");
+    assert_eq!(editor.drawing().map(DrawDraft::tool), Some(DrawTool::Rectangle), "and the box cell's own method");
+    assert!(editor.box_draft().is_none(), "the base does not exist before it is drawn");
+    assert!(outcome.started_drawing, "the shell must expect the sketch's clicks");
     assert!(!outcome.open_product_card, "the drawn method opens no card");
     assert_eq!(session.project().revision().get(), 0, "arming writes nothing");
-    editor.cancel_box();
-    assert!(editor.box_draft().is_none(), "Escape drops the draft");
+    editor.cancel_drawing();
+    assert!(editor.drawing().is_none(), "Escape drops the draft");
     assert_eq!(session.project().revision().get(), 0);
 }
 
@@ -1664,7 +1673,6 @@ fn the_ribbons_contour_method_draws_a_base_outline_and_hands_it_to_the_height_pu
     editor.start_product_pull(text::Lang::En).expect("the closed ring becomes the base");
     assert!(editor.drawing().is_none(), "the sketch is finished");
     let draft = editor.box_draft().expect("the height is being pulled");
-    assert!(draft.is_pulling(), "the pull owns the pointer");
     assert!(draft.ring().is_some(), "the base is the drawn ring, not a rectangle");
     assert_eq!(session.project().revision().get(), 0, "the ring and its height are still a draft");
 }
@@ -2083,11 +2091,11 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
     editor.start_drawing(DrawTool::Line);
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the post");
     assert!(editor.drawing().is_none(), "a fill replaces the running draft");
-    editor.arm_box();
+    editor.start_product_box_drawing(DrawTool::Rectangle);
     assert!(editor.fill_arm().is_none(), "the frame tool replaces the fill");
-    assert!(editor.box_draft().is_some());
+    assert!(editor.drawing().is_some(), "and draws its base with the sketch");
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Shape, crate::Lang::En).expect("arm the post again");
-    assert!(editor.box_draft().is_none(), "the fill replaces the frame tool");
+    assert!(editor.drawing().is_none(), "the fill replaces the frame tool");
     assert_eq!(editor.fill_arm().map(|arm| arm.mode), Some(FillMode::Shape), "the mode switches with the method");
     editor.cancel_fill();
     assert!(editor.fill_arm().is_none());
