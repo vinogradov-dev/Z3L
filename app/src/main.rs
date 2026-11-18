@@ -747,7 +747,11 @@ impl App {
     fn draw_work_cursor(&mut self, ctx: &egui::Context) {
         let scene = self.tabs.active().scene_rect();
         let widget = self.shell.orientation_rect;
-        let cursor = work_cursor::show(ctx, &self.settings.pointer, scene, widget);
+        // The carry puts the pointer away while a camera gesture moves the view under the piece it
+        // holds, and asks the window to bring it back to the piece once the gesture ends (X69).
+        let hidden = self.tabs.active().hides_pointer();
+        let hand = self.tabs.active().carry_hand();
+        let cursor = work_cursor::show(ctx, &self.settings.pointer, scene, widget, hidden, hand);
         #[cfg(test)]
         {
             self.shell.work_cursor = cursor;

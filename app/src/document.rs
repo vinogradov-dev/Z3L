@@ -1742,6 +1742,8 @@ impl Document {
             self.clear_move_distances(ui.ctx());
             return;
         }
+        // The carry's own hand is read before the measurement is borrowed: the card hangs from it.
+        let hand = self.carry_hand();
         if self.move_distances.as_ref().is_none_or(|measured| measured.node != node || measured.axis != axis) {
             self.distance_fields.dismiss(ui.ctx());
             self.move_distances = self.measure_move(node, axis);
@@ -1803,7 +1805,10 @@ impl Document {
             );
             placements.push(FieldPlacement { side, position });
         }
-        let anchor = ui.input(|input| input.pointer.hover_pos()).unwrap_or_else(|| rect.center());
+        // The card hangs from the carry's own hand while it is away from the system pointer: after a
+        // camera gesture the hand is on the piece, and a card left at the pointer would sit across
+        // the room from the gaps it names (X69).
+        let anchor = hand.or_else(|| ui.input(|input| input.pointer.hover_pos())).unwrap_or_else(|| rect.center());
         // The furniture move carries a piece with no button held, so its card keeps the keyboard and
         // never the pointer: a press over it is the drop, not a scrub (X66). Every other gesture
         // reaches this function too, so the flag is the hold's own.
@@ -3196,35 +3201,33 @@ impl Document {
         self.translate_gizmo.is_following()
     }
 
-    /// Whether the window is currently hiding the pointer for the carry, for a test's own reading.
-    #[cfg(test)]
-    pub(crate) fn cursor_hidden(&self) -> bool {
+    /// Settles what the carry asks of the pointer this frame (X69).
+    ///
+    /// The work area draws its own square and hides the system arrow (X40), so the carry asks the
+    /// *window* for nothing at all: on a Wayland session the system pointer cannot be moved
+    /// (`set_cursor_position` answers `NotSupported`), and a cursor shown through a viewport command
+    /// fights `egui-winit`'s own icon, which re-shows it on every icon change. The carry keeps a hand
+    /// of its own instead — [`Document::carry_hand`] — and the pointer is simply not drawn while a
+    /// camera gesture slides the view under the piece it holds.
+    pub(crate) fn carry_cursor(&mut self, _ctx: &egui::Context, gesture: bool) {
+        self.cursor_hidden = gesture && self.translate_gizmo.is_following();
+    }
+
+    /// Whether the carry has put the pointer away this frame, for the shell's own square.
+    ///
+    /// Hiding the pointer is a question of not drawing it: a square standing still over a scene
+    /// sliding under it is the picture of a piece being left behind, and it is not what happens.
+    pub(crate) fn hides_pointer(&self) -> bool {
         self.cursor_hidden
     }
 
-    /// Sends the window what the carry asks of the pointer: its way back onto the piece, or a hidden
-    /// cursor while a camera gesture slides the view under it (ADR 0156).
+    /// Where the carry's hand is on screen, when it is not where the system pointer is.
     ///
-    /// A camera change must not move a piece, so the pointer is what returns to it. The visibility is
-    /// re-sent every frame the pointer stays hidden, because a window may drop a command and a
-    /// composer may put the cursor back; the fly-home request is re-sent for the same reason.
-    ///
-    /// `gesture` is the *input* of a camera move — the middle and the right button and the wheel —
-    /// and not the document's armed navigation mode: a maker pans with the right button while the
-    /// furniture move holds the piece, and that pan is the gesture the cursor has to disappear for.
-    pub(crate) fn carry_cursor(&mut self, ctx: &egui::Context, gesture: bool) {
-        if let Some(home) = self.translate_gizmo.cursor_home() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(home));
-            ctx.request_repaint();
-        }
-        let hidden = gesture && self.translate_gizmo.is_following();
-        if hidden {
-            self.cursor_hidden = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-        } else if self.cursor_hidden {
-            self.cursor_hidden = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        }
+    /// A camera gesture moves the view and the piece stays, so the hand is put back on the middle of
+    /// the piece and the square is drawn there; the mouse then moves that hand by its own movement,
+    /// so dragging carries the piece from the piece (X69).
+    pub(crate) fn carry_hand(&self) -> Option<egui::Pos2> {
+        self.translate_gizmo.hand()
     }
 
     /// The world distance the carried piece has travelled, for a test that watches the preview.

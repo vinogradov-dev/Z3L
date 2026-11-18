@@ -38,18 +38,6 @@ use crate::gizmo_math::{
     named_axis, paint_axis_handles, ray_to, screen_point, travel_frame,
 };
 
-/// How near the pointer has to be to the place the carry asked for to count as arrived.
-///
-/// A window rounds a cursor position to whole points and a display may scale it, so the answer is
-/// never exact; a couple of points is well inside the grab of a piece.
-const HOME_TOLERANCE: f32 = 3.0;
-
-/// How many frames the carry waits for the pointer to come back before it gives up and carries on.
-///
-/// A platform that cannot move the pointer never answers; eight frames is long enough for the one
-/// that can, and short enough that the piece does not stand still under a hand that is moving.
-const HOME_TRIES: u8 = 8;
-
 /// The smallest travel, in points, that names an axis.
 ///
 /// Below it the hand has not said which way the piece goes, and a piece that picked a direction from
@@ -88,11 +76,30 @@ enum Hold {
 struct Hand {
     /// The pointer that took the piece, which the axis is named from.
     from: egui::Pos2,
-    /// The pivot's offset from that pointer, in points, once the axis is named.
+    /// The pivot's offset from the hand, in points: the bond the piece hangs by.
     ///
     /// The click lands on the body, so the pivot is not under the pointer; snapping it there would
     /// jump the piece by its own half-size on the frame the axis is named.
     offset: Option<egui::Vec2>,
+    /// Where the hand is on screen now.
+    ///
+    /// It is the pointer while the hand tracks the mouse. After a camera gesture the view moved and
+    /// the piece did not, so the hand is put back on the piece instead — the pointer itself cannot
+    /// be moved on a Wayland session (`set_cursor_position` is unsupported there), and the work area
+    /// already draws its own square, so the hand *is* the drawn pointer (X69). It follows the mouse
+    /// by the mouse's own movement after that, so dragging still carries the piece 1:1.
+    at: egui::Pos2,
+    /// The pointer the window last reported, so the hand moves by the mouse's movement.
+    seen: egui::Pos2,
+    /// Whether the hand was put back on the piece and no longer sits where the pointer is.
+    displaced: bool,
+}
+
+impl Hand {
+    /// The hand of a piece taken by a click at `at`.
+    const fn taken(at: egui::Pos2) -> Self {
+        Self { from: at, offset: None, at, seen: at, displaced: false }
+    }
 }
 
 impl Hold {
@@ -155,14 +162,6 @@ pub(crate) struct TranslateGizmo {
     /// Whether a camera gesture moved the view under the piece, which the carry owes the pointer a
     /// return for once the gesture ends.
     moved_by_gesture: bool,
-    /// Where the carry wants the pointer, while it waits for the window to put it there.
-    ///
-    /// A camera gesture moves the view and not the piece, so the cursor is left behind by the whole
-    /// gesture. The carry asks the window to put it back on the piece instead of dragging the piece
-    /// to the cursor. The count is the frames the request has gone unanswered: a platform that cannot
-    /// move the pointer (a Wayland session, a window that refuses) falls back to carrying from where
-    /// the pointer is rather than waiting forever.
-    home: Option<(egui::Pos2, u8)>,
 }
 
 impl TranslateGizmo {
@@ -202,12 +201,16 @@ impl TranslateGizmo {
         self.request = Some(pointer);
     }
 
-    /// Where the carry asks the window to put the pointer, until it gets there (ADR 0156).
+    /// Where the carry's own hand is on screen, when a piece is in it.
     ///
-    /// The shell sends it as a viewport command every frame it is asked for, because a window may
-    /// drop one; a platform that refuses it leaves the carry to the frames counter.
-    pub(crate) fn cursor_home(&self) -> Option<egui::Pos2> {
-        self.home.map(|(at, _)| at)
+    /// The work area draws its own pointer, so this is where the square goes: the pointer while the
+    /// hand tracks the mouse, and the middle of the piece after a camera gesture put it back there
+    /// (X69). A session that cannot move the system pointer — Wayland — never sees the difference.
+    pub(crate) fn hand(&self) -> Option<egui::Pos2> {
+        match self.drag.as_ref()?.hold {
+            Hold::Following { hand, .. } if hand.displaced => Some(hand.at),
+            _ => None,
+        }
     }
 
     /// Whether this frame's pointer release belongs to a gizmo drag and must not select.
@@ -402,95 +405,58 @@ impl TranslateGizmo {
             return Ok(None);
         };
         let axes = target.move_kind.axes(target.project, target.selection);
-        // The axis is named once, by the first movement of the hand past a stray point, and kept: a
-        // piece that re-decided every frame would flip near 45° and its distance would restart.
-        let axis = match held {
-            Some(axis) => Some(axis),
-            None => pointer.and_then(|pointer| {
-                let named = pointer - hand.from;
-                (named.length() >= NAMING_TRAVEL)
-                    .then(|| named_axis(target.camera, viewport, drag.start_origin, named, axes))
-                    .flatten()
-                    .map(|handle| handle.axis)
-            }),
-        };
-        let Some(axis) = axis else {
-            // The hand has not said which way yet, so the piece stays where it was taken.
-            self.drag = Some(drag);
-            return Ok(None);
-        };
-        let Some(pointer) = pointer else {
-            self.drag = Some(drag);
-            return Ok(None);
-        };
         // A camera gesture is the eye's: the view slides under the piece and the piece keeps its
         // place — a panel set 200 mm from its neighbour stays 200 mm away while the maker pans
-        // (X67). The document hides the pointer for the length of the gesture and asks it back onto
-        // the piece once the gesture is over (ADR 0156).
+        // (X67). The document does not draw the pointer for the length of the gesture.
         let navigating = ui.input(|input| {
             input.pointer.middle_down()
                 || input.pointer.secondary_down()
                 || input.smooth_scroll_delta != egui::Vec2::ZERO
         });
         let camera_moved = self.last_view.is_some_and(|(camera, _)| camera != target.camera);
-        // The pointer hangs the piece from itself: the pivot keeps the offset on screen the click
-        // gave it. The click lands on the body, so the pivot is not under the pointer; snapping it
-        // there would jump the piece by its own half-size on the frame the axis is named.
-        let pivot = drag.start_origin + drag.delta;
-        let mut offset = hand.offset;
-        if offset.is_none() {
-            offset = screen_point(target.camera, viewport, pivot).map(|at| at - pointer);
-        }
-        // The pointer comes back to the piece after the camera moved, and the piece is held while the
-        // window carries the request out: dragging a piece to a pointer nobody moved is what tore the
-        // piece off the hand in the first place (X67, ADR 0156).
-        let waiting = match self.home {
-            // The pointer arrived where the carry asked for it: the hand is on the piece again, and
-            // the offset is re-read here so the frame itself carries nothing.
-            Some((want, _)) if (pointer - want).length() <= HOME_TOLERANCE => {
-                self.home = None;
-                offset = screen_point(target.camera, viewport, pivot).map(|at| at - want);
-                false
-            }
-            // A window that cannot move the pointer never answers: the carry resumes from the
-            // pointer where it is, which is a carry that keeps the piece's metres and re-anchors.
-            Some((_, tries)) if tries >= HOME_TRIES => {
-                self.home = None;
-                offset = screen_point(target.camera, viewport, pivot).map(|at| at - pointer);
-                false
-            }
-            Some((want, tries)) => {
-                offset = screen_point(target.camera, viewport, pivot).map(|at| at - want);
-                self.home = Some((want, tries + 1));
-                true
-            }
-            None => false,
+        let Some(pointer) = pointer else {
+            self.drag = Some(drag);
+            return Ok(None);
         };
-        // A camera that moved under a gesture has to be remembered: the frame that would ask for the
-        // pointer is exactly the frame the gesture is still running in, and by the frame it ends the
-        // camera has stopped moving and nothing would ask at all.
-        if navigating && camera_moved {
-            self.moved_by_gesture = true;
+        // The hand is the app's own square, not the system pointer: on a Wayland session the pointer
+        // cannot be moved at all, and the work area already draws its own cursor (X40, X69). While
+        // the hand tracks the mouse it *is* the mouse; once a camera gesture has put it back on the
+        // piece it moves by the mouse's own movement, so dragging carries the piece 1:1 either way.
+        let mut hand = hand;
+        let moved = pointer - hand.seen;
+        hand.seen = pointer;
+        if hand.displaced {
+            hand.at += moved;
+        } else {
+            hand.at = pointer;
         }
-        // The gesture is over and the camera moved under the piece: ask the pointer back onto the
-        // middle of the piece, which is where the maker reaches for it. A piece the new view pushed
-        // out of the window has nowhere to be asked for, so the carry keeps its distance and the
-        // hand carries on from the pointer where it stands.
-        if !waiting && !navigating && (camera_moved || self.moved_by_gesture) {
-            self.moved_by_gesture = false;
-            // The middle of the piece as it stands in the hand, not as the document still has it:
-            // the preview is where the maker is looking.
-            let middle =
-                target.project.world_box(drag.node).map_or(pivot, |(low, high)| (low + high) * 0.5 + drag.delta);
-            match screen_point(target.camera, viewport, middle) {
-                Some(want) if viewport.contains(want) => self.home = Some((want, 0)),
-                _ => self.home = None,
+        let mut offset = hand.offset;
+        // The axis is named once, by the first movement of the hand past a stray point, and kept: a
+        // piece that re-decided every frame would flip near 45° and its distance would restart.
+        let axis = match held {
+            Some(axis) => Some(axis),
+            None => {
+                let named = hand.at - hand.from;
+                (named.length() >= NAMING_TRAVEL)
+                    .then(|| named_axis(target.camera, viewport, drag.start_origin, named, axes))
+                    .flatten()
+                    .map(|handle| handle.axis)
             }
+        };
+        let Some(axis) = axis else {
+            // The hand has not said which way yet, so the piece stays where it was taken.
+            drag.hold = Hold::Following { axis: None, hand };
+            self.drag = Some(drag);
+            return Ok(None);
+        };
+        let pivot = drag.start_origin + drag.delta;
+        if offset.is_none() {
+            offset = screen_point(target.camera, viewport, pivot).map(|at| at - hand.at);
         }
-        // The piece is held — it keeps its own distance — while the eye is moving and while the
-        // pointer is on its way back to it. Only a hand that is on the piece moves it.
-        let held = waiting || navigating || self.home.is_some();
-        let hand = Hand { from: hand.from, offset };
+        // The piece is held — it keeps its own distance — while the eye is moving, and on the frame
+        // the hand is put back on it: a frame that moves the view must never move the piece (X67).
+        let rehome = !navigating && (camera_moved || self.moved_by_gesture);
+        let held = navigating || rehome;
         let carried = match (offset, pinned) {
             // A typed distance is the maker's own number on the carried piece too.
             (_, Some(pinned)) => pinned.is_finite().then_some(pinned),
@@ -499,7 +465,7 @@ impl TranslateGizmo {
                 target.camera,
                 drag.start_origin,
                 axis,
-                pointer + offset,
+                hand.at + offset,
                 drag.delta.dot(axis.direction()),
             ),
             _ => None,
@@ -511,6 +477,26 @@ impl TranslateGizmo {
         if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
             drag.delta = axis.direction() * distance;
             drag.capture = capture;
+        }
+        // The gesture is over and the camera moved under the piece: put the *hand* back on the middle
+        // of the piece, which is where a maker reaches for it. The view moved and the piece did not,
+        // so this is the pointer that comes back — never the piece (X67, X69).
+        if rehome {
+            self.moved_by_gesture = false;
+            let middle = target
+                .project
+                .world_box(drag.node)
+                .map_or(drag.start_origin, |(low, high)| (low + high) * 0.5 + drag.delta);
+            if let Some(want) = screen_point(target.camera, viewport, middle).filter(|at| viewport.contains(*at)) {
+                hand.at = want;
+                hand.displaced = true;
+                // The bond is re-read at the new place, so the frame the hand moves carries nothing.
+                hand.offset = screen_point(target.camera, viewport, drag.start_origin + drag.delta).map(|at| at - want);
+            }
+        } else if navigating && camera_moved {
+            // The frame that ends the gesture is the one that has to remember it: the camera stops
+            // moving on the very frame the hand can be put back.
+            self.moved_by_gesture = true;
         }
         drag.hold = Hold::Following { axis: Some(axis), hand };
         self.drag = Some(drag);
@@ -594,7 +580,7 @@ impl TranslateGizmo {
             // by then the hand has already travelled far enough to name one, and an offset read
             // there would swallow that travel and leave the piece standing still (X67).
             let offset = screen_point(target.camera, viewport, origin_world).map(|pivot| pivot - at);
-            let hand = Hand { from: at, offset };
+            let hand = Hand { offset, ..Hand::taken(at) };
             self.drag = Some(Drag {
                 node: anchor.node,
                 hold: Hold::Following { axis: None, hand },

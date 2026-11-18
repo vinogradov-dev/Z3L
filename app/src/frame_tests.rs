@@ -61,15 +61,7 @@ struct Harness {
     /// The scene rectangle the frame before the last one gave the split views, so [`Harness::settle`]
     /// can tell a settled frame from one whose layout is still moving.
     last_scene: Option<egui::Rect>,
-    /// Where the last frame asked the window to put the pointer, which a test plays as the window
-    /// would (ADR 0156).
-    cursor_home: Option<egui::Pos2>,
-    /// Whether the last frame asked the window to hide the pointer.
-    cursor_hidden: bool,
 }
-
-/// How many frames a test gives the window to carry out the carry's pointer request.
-const HOME_FRAMES: usize = 6;
 
 impl Harness {
     fn new(name: &str) -> Self {
@@ -94,8 +86,6 @@ impl Harness {
             cursor: egui::CursorIcon::Default,
             faces: Vec::new(),
             last_scene: None,
-            cursor_home: None,
-            cursor_hidden: false,
         }
     }
 
@@ -125,18 +115,6 @@ impl Harness {
         self.last_scene = self.app.tabs.active().scene_rect();
         // A window applies the viewport commands it is given; a headless run has to play that part,
         // or a carry that asks the pointer back onto its piece never gets an answer (ADR 0156).
-        let commands = output.viewport_output.get(&egui::ViewportId::ROOT).map(|viewport| viewport.commands.as_slice());
-        self.cursor_home = commands.and_then(|commands| {
-            commands.iter().rev().find_map(|command| match command {
-                egui::ViewportCommand::CursorPosition(at) => Some(*at),
-                _ => None,
-            })
-        });
-        for command in commands.unwrap_or_default() {
-            if let egui::ViewportCommand::CursorVisible(visible) = command {
-                self.cursor_hidden = !visible;
-            }
-        }
         output.textures_delta.clear();
         chrome.expect("the frame drew the interface")
     }
@@ -204,18 +182,6 @@ impl Harness {
         // The window reports the release of the modifier too, so the next press is a plain one.
         self.run_with(egui::Modifiers::NONE, Vec::new());
         chrome
-    }
-
-    /// Puts the pointer where the last frame asked the window to, whenever it asked.
-    ///
-    /// Returns whether it moved: a carry that asks for its pointer back needs a frame or two, and a
-    /// test that never answers would be testing the fallback instead of the rule.
-    fn home_cursor(&mut self) -> bool {
-        let Some(at) = self.cursor_home.take() else {
-            return false;
-        };
-        self.run(vec![egui::Event::PointerMoved(at)]);
-        true
     }
 
     /// Moves the pointer to `pos` and lets the frame settle, so the ghost is measured before a click.
@@ -1308,27 +1274,21 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
         harness.settle();
     }
     assert_eq!(harness.app.tabs.active().carried_delta(), carried, "a zoom carries nothing");
-    // The wheel smooths itself over a few frames; then the window is asked to put the pointer back on
-    // the piece, and the hand carries it again from there.
-    let mut homed = None;
+    // The wheel smooths itself over a few frames; then the carry puts its hand back on the piece and
+    // the mouse carries it again from there.
     for _ in 0..16 {
         harness.run(Vec::new());
-        if let Some(want) = harness.cursor_home {
-            homed = Some(want);
-        }
-        harness.home_cursor();
     }
     assert_eq!(harness.app.tabs.active().carried_delta(), carried, "and the piece still stands where it was");
-    let homed = homed.expect("the carry asks its pointer back after a zoom");
-    // The pointer comes back to the middle of the piece, which is where a maker reaches for it.
-    let back = homed - piece_middle(&harness, panel);
-    assert!(back.length() < 3.0, "the pointer is back in the middle of the board: {back:?}");
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a zoom");
+    let back = hand - piece_middle(&harness, panel);
+    assert!(back.length() < 3.0, "the hand is back in the middle of the board: {back:?}");
 
     let before = harness.app.tabs.active().carried_delta();
-    harness.hover(homed - egui::vec2(0.0, 40.0));
+    harness.hover(at - egui::vec2(0.0, 40.0));
     assert!(
         (harness.app.tabs.active().carried_delta() - before).length() > 1.0,
-        "after the zoom the hand carries the piece again"
+        "after the zoom the mouse carries the piece again from the hand"
     );
 }
 
@@ -1374,7 +1334,9 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
         phase: egui::TouchPhase::Move,
         source: egui::MouseWheelSource::Wheel,
     };
-    harness.run(vec![egui::Event::PointerMoved(at + orbit), wheel(-40.0)]);
+    // The wheel goes through the scene, so the pointer stays clear of the card the carry draws.
+    let wheel_at = at + orbit + egui::vec2(60.0, 40.0);
+    harness.run(vec![egui::Event::PointerMoved(wheel_at), wheel(-40.0)]);
     harness.settle();
     assert_ne!(harness.camera(), camera, "the wheel zooms under a piece in hand");
     let kept = harness.app.tabs.active().carried_delta();
@@ -1385,23 +1347,19 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
         "no view gesture moved the board in the room"
     );
 
-    // The gesture is over, so the pointer comes back to the piece instead of the piece to it.
-    let mut homed = None;
-    for _ in 0..HOME_FRAMES {
+    // The gesture is over — the wheel smooths itself out over a few frames — so the carry's hand
+    // comes back to the piece instead of the piece to it.
+    for _ in 0..12 {
         harness.run(Vec::new());
-        if let Some(want) = harness.cursor_home {
-            homed = Some(want);
-        }
-        if !harness.home_cursor() {
-            break;
-        }
     }
-    assert!(homed.is_some(), "the carry asks its pointer back after the view moved");
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a gesture");
+    let back = hand - piece_middle(&harness, panel);
+    assert!(back.length() < 3.0, "the hand is back on the piece: {back:?}");
     assert!((harness.app.tabs.active().carried_delta() - carried).length() < 1.0e-3, "and the piece has not moved");
 
     // The click that puts it down commits the distance the hand added, and only that.
     let revision = harness.revision();
-    harness.click(homed.expect("a pointer home"), egui::PointerButton::Primary);
+    harness.click(hand, egui::PointerButton::Primary);
     assert!(!harness.app.tabs.active().holding_piece(), "the click puts it down");
     assert_eq!(harness.revision().get(), revision.get() + 1, "one carried piece is one undo entry");
 }
@@ -4407,21 +4365,12 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
             "{name} leaves the board where it stands in the room"
         );
 
-        // The pointer comes back onto the piece, which is what the maker sees as "still in hand".
-        let mut homed = None;
-        for _ in 0..HOME_FRAMES {
-            harness.run(Vec::new());
-            if let Some(want) = harness.cursor_home {
-                homed = Some(want);
-            }
-            if !harness.home_cursor() {
-                break;
-            }
-        }
-        let homed = homed.unwrap_or_else(|| panic!("the carry asks its pointer back after {name}"));
+        // The hand comes back onto the piece, which is what the maker sees as "still in hand".
         harness.run(Vec::new());
-        let back = homed - piece_middle(&harness, panel);
-        assert!(back.length() < 3.0, "the pointer is back in the middle of the board after {name}: {back:?}");
+        let hand =
+            harness.app.tabs.active().carry_hand().unwrap_or_else(|| panic!("the carry has its own hand after {name}"));
+        let back = hand - piece_middle(&harness, panel);
+        assert!(back.length() < 3.0, "the hand is back in the middle of the board after {name}: {back:?}");
     }
 
     assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand");
@@ -4462,8 +4411,11 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
         // While the gesture runs the pointer is hidden: a cursor standing still while the world
         // slides under it is the picture of a piece being left behind, and it is not what happens.
         if step == 4 {
-            assert!(harness.cursor_hidden, "the pointer is hidden for the length of the pan");
-            assert!(harness.app.tabs.active().cursor_hidden(), "and the document asked the window for that");
+            // The work area draws its own square, so hiding the pointer is not drawing it: a square
+            // standing still over the scene sliding under it is the picture of a piece left behind.
+            assert!(harness.app.tabs.active().hides_pointer(), "the pointer is hidden for the pan");
+            assert!(harness.app.shell.work_cursor.is_none(), "and its square is not drawn");
+            assert_eq!(harness.cursor, egui::CursorIcon::None, "and no system arrow shows in its place");
         }
     }
     harness.release_at(at + pan, egui::PointerButton::Secondary);
@@ -4481,33 +4433,22 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     let apart = (screen(&harness) - (at + pan)).length();
     assert!(apart.is_finite(), "the piece is still on screen: {apart}");
 
-    // The gesture is over, so the window puts the pointer back on the piece: a frame or two, without
-    // moving the piece at all.
+    // The gesture is over, so the carry puts its own hand back on the piece: the square is drawn in
+    // the middle of the board, which is where a maker reaches for it, and the piece has not moved.
     harness.run(Vec::new());
-    assert!(!harness.cursor_hidden, "the pointer comes back when the gesture ends");
-    let mut homed = None;
-    for _ in 0..HOME_FRAMES {
-        harness.run(Vec::new());
-        if let Some(want) = harness.cursor_home {
-            homed = Some(want);
-        }
-        if !harness.home_cursor() {
-            break;
-        }
-    }
-    let homed = homed.expect("the carry asks for its pointer back");
-    harness.run(Vec::new());
+    assert!(!harness.app.tabs.active().hides_pointer(), "the pointer comes back when the gesture ends");
     assert!(harness.app.tabs.active().holding_piece(), "the panel is still in hand");
     let after_home = harness.app.tabs.active().carried_delta();
     assert!((after_home - carried).length() < 1.0e-3, "and has not moved: {after_home:?}");
-    // The pointer comes back to the middle of the piece, which is where a maker reaches for it.
     let middle = piece_middle(&harness, panel);
-    let back = homed - middle;
-    assert!(back.length() < 3.0, "the pointer is back in the middle of the board: {back:?} from {middle:?}");
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a pan");
+    let back = hand - middle;
+    assert!(back.length() < 3.0, "the hand is back in the middle of the board: {back:?} from {middle:?}");
 
-    // Carrying on from there: the hand carries the piece as before.
+    // Carrying on from there: the mouse moves the hand by its own movement, and the hand carries the
+    // piece 1:1 — the pointer never jumped, so the piece does not either.
     let before = harness.app.tabs.active().carried_delta();
-    harness.hover(homed - egui::vec2(0.0, 30.0));
+    harness.hover(at + pan + egui::vec2(0.0, -30.0));
     let carried_on = (harness.app.tabs.active().carried_delta() - before).length();
-    assert!(carried_on > 1.0, "the hand carries the piece again: {carried_on} mm");
+    assert!(carried_on > 1.0, "the mouse carries the piece again from the hand: {carried_on} mm");
 }

@@ -1,6 +1,7 @@
 # 0156. The pointer comes back to a carried piece
 
-- Status: Accepted; supersedes ADR 0155
+- Status: Accepted; supersedes ADR 0155; the window-carried pointer of the first draft is replaced by
+  the carry's own hand (X69)
 - Date: 2026-11-18
 
 ## Context
@@ -72,3 +73,28 @@ swallows that travel and leaves the piece standing still.
   distance until the maker brings the piece back into view.
 - Every surface that zooms still goes through `zoom_about_pointer` (ADR 0154), so a wheel turn keeps
   the point under the pointer where it is and rarely needs the pointer moved back at all.
+
+## The mechanism had to change: this session is Wayland
+
+The first draft asked the *window* to put the pointer back (`ViewportCommand::CursorPosition`) and to
+hide it (`CursorVisible`). Both were wrong on the desktop the owner works on:
+
+- Wayland cannot move the pointer. `winit`'s `set_cursor_position` answers `NotSupported` unless the
+  pointer is *locked*, so the request was dropped and the pointer never came back — three reports of
+  "nothing has changed" were this one fact.
+- `CursorVisible` fights `egui-winit`, which shows the cursor again whenever the icon changes, and the
+  icon changes every frame the scene is drawn. It also fought the app's own rule that the work area
+  draws its own square and keeps the system arrow away (X40).
+
+So the carry keeps a **hand of its own**:
+
+- The hand is the system pointer while it tracks the mouse, so ordinary carrying is unchanged.
+- A camera gesture under a carried piece captures nothing and draws no pointer: the square is simply
+  not painted for the length of the gesture.
+- On the first frame after the camera moved, the hand is put on the middle of the piece (the box
+  centre plus the carry), and the piece—hand bond is re-read there, so the frame carries nothing.
+- From then on the hand moves by the mouse's *own movement*, so dragging still carries the piece 1:1
+  from the piece; the work cursor paints the square at the hand, and the exact-distance card hangs
+  from it. The system pointer stays where the desktop put it, which costs one thing: a press is
+  hit-tested at the system pointer. In the work area that is the click that puts the piece down
+  anywhere, so the cost is invisible; over a panel the press belongs to the panel, as it should.
