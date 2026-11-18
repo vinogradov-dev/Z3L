@@ -122,7 +122,24 @@ Every object can be selected by structural kind, a class subtree and property pr
 
 ### `Material`
 
-A catalogue entry: kind (chipboard, MDF, solid wood, plywood, HPL), nominal thickness, sheet size, decor/colour and grain availability. Panels reference materials by `MaterialId`; changing a material's thickness must not rewrite the panel's nominal size.
+A record of the workshop's directory: kind (chipboard, MDF, solid wood, plywood, HPL), nominal
+thickness, sheet size, decor/colour and grain availability. Panels reference it by a stable id;
+changing a record's thickness must not rewrite the panel's nominal size. The record is one item of the
+[nomenclature directory](docs/domain/nomenclature.md) — a package of items, kinds, properties,
+families and part documents, edited in its own application and read by the editor as an immutable
+snapshot ([ADR 0148](docs/decisions/0148-a-nomenclature-directory-is-a-set-of-packages.md)). The
+`MaterialId` type and the two typed tables are the temporary shape that change deletes.
+
+### Nomenclature, parts and instances
+
+A workshop works from a directory of nomenclature: piece materials, assemblies, hardware, tools,
+finishes, suppliers' tables and its own standards. It arrives in packages that are connected,
+disconnected, exported and imported as units, and the editor picks up a new revision without a restart.
+An item may carry a **part document** — a scene file under a narrow contract that holds its geometry,
+anchors, drilling objects and nested fasteners — and the scene holds an **instance** of the item, not a
+copy: the placement is document data, the contents are derived ([ADR 0149](docs/decisions/0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md)).
+Holes are derived from the objects that cause them and are never a panel parameter
+([ADR 0150](docs/decisions/0150-machining-is-derived-and-rules-are-tables.md)).
 
 ### Scene file
 
@@ -130,7 +147,8 @@ A saved scene is a UTF-8 JSON envelope with the extension `.z3l`: `format` (`fur
 `format_version` for the framing, and one `document` payload that carries its own `schema`. The
 envelope owns the versions, protects unknown top-level sections and lets the document layout change
 without touching the framing. The file holds the scene — objects, camera and light objects, the active
-camera, settings — and never the material catalogue, derived meshes, diagnostics, undo history,
+camera, settings — and never the directory of nomenclature or the part documents it carries, derived
+meshes and holes, diagnostics, undo history,
 selection, viewport state or any order data. Saving is atomic: a temporary file replaces the target
 only after it is complete. See [`docs/domain/scene-file.md`](docs/domain/scene-file.md).
 
@@ -139,7 +157,9 @@ only after it is complete. See [`docs/domain/scene-file.md`](docs/domain/scene-f
 Detailed, normative descriptions live in `docs/domain/`:
 
 - [`panels.md`](docs/domain/panels.md) — the panel as an atomic group, local frame, nominal/core/overall sizes, edge banding, order and corners.
-- [`materials.md`](docs/domain/materials.md) — material records, the external catalogue and its future database structure.
+- [`nomenclature.md`](docs/domain/nomenclature.md) — the workshop's directory: items, kinds, properties, families, packages, part documents, prices, revision.
+- [`technology.md`](docs/domain/technology.md) — machining, tools, placement rules and the holes hardware derives.
+- [`materials.md`](docs/domain/materials.md) — pointer; the catalogue specification moved to `nomenclature.md`.
 - [`document.md`](docs/domain/document.md) — the document, its nodes, loading, fallbacks, diagnostics, schema and migrations.
 - [`geometry.md`](docs/domain/geometry.md) — objects with a baked mesh, parametric primitive or a feature history, evaluation and collapse.
 - [`scene-file.md`](docs/domain/scene-file.md) — the envelope, its versions, what it stores and how it is written.
@@ -207,8 +227,8 @@ before.
   materialized geometry, the furniture type, the prototype reference and its parameter record; the
   model only chooses the prototype and fills the parameters. The catalogue available to the model is
   generated from the prototype registry (ADR 0034).
-- The material catalogue and the order registry are separate programs with their own databases and
-  APIs. Faber uses the same API as their interfaces, never the database. An order is the project
+- The nomenclature directory and the order registry are separate programs with their own storage and
+  APIs (ADR 0148). Faber uses the same API as their interfaces, never the database. An order is the project
   file, its records and the files produced for it; every version is a numbered folder holding the
   complete file set, and only one is sent to production (ADR 0032). External side effects such as
   ordering materials require a person's confirmation (ADR 0031).
@@ -287,12 +307,15 @@ These are deliberately unresolved. Do not pick an answer inside an unrelated tas
 
 - **Named views.** Cameras are document objects (ADR 0036); whether named views return as bookmarks over them, or are dropped, is open.
 - **Selection.** In v1, can the user select objects and faces only, or edges too? How are faces identified after a rebuild? Mesh element references are indices valid within one revision (ADR 0037).
-- **Hardware anchoring.** Does hardware attach to a panel face and a coordinate, to an existing machined feature (a hole), or to an edge? How are multi-panel fittings (hinges, runners) expressed? Generated holes themselves are always stored in core-local coordinates.
+- **Hardware anchoring.** A catalogue part carries its own anchors and drilling objects inside its part document, and the crossing with a panel derives the hole (ADR 0149, 0150). Whether a fitting that spans two panels — a hinge between a door and a side — is one instance placed once or two instances tied together is still open. Derived holes are computed in the panel's nominal frame.
 - **Derived versus edited.** Which panels are produced by a prototype script, which are hand-placed, and what happens when a parameter changes under a hand-edited panel?
-- **Reusable assemblies.** v1 uses unique tree nodes. Whether a later version adds shared definitions and instances is still open.
+- **Reusable assemblies.** Settled for catalogue parts: the scene holds an instance and the contents are derived (ADR 0149). Whether a person's own assembly can be shared between projects the same way is still open.
 - **Grain.** How is grain direction stored and how does it constrain rotation, cutting and edge banding?
 - **Dimensions.** Product parameters are typed properties read by a user prototype script. Whether a property can be an expression of other properties is deferred with the script runtime.
-- **Property schema.** User properties are free-form until a schema/catalogue exists; decide whether the catalogue is per project or per workshop, and how a script declares the properties it writes.
+- **Property schema.** The directory owns a typed property registry — a workshop's own property is a
+  registry row, and its external key is the integration surface (ADR 0148). The remaining question is
+  the document side: user properties in a scene are still a free-form bag, and how a prototype declares
+  the properties it writes is open.
 - **User scripts.** Product prototypes are scripts, not built-in builders. The sandbox, the language, the unit boundary and the failure policy (missing script/DB is a warning, never a load failure) are undecided.
 - **Invariants.** Panel-owned cutouts outside the core and overlapping cutouts are command errors in v1; loading a scene keeps machining that no longer fits as a problem panel instead of rejecting the file. ADR 0009 replaces these v1 rules in stage 3 with a union of through cutouts, boundary notches and a connected-core invariant; the union layer is the in-house `geom::boolean` module over `geom::ring` (ADR 0012). Panel larger than the sheet and overlapping hardware-generated holes remain open.
 - **Persistent naming.** Features reference their inputs only (ADR 0037); fillet and chamfer on a face generated by an earlier feature wait for a naming design.

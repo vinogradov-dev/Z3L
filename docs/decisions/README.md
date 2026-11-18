@@ -9,7 +9,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0002](0002-vendored-truck-shapeops.md) | Vendored `truck-shapeops` without the VTK stack | Accepted |
 | [0003](0003-length-is-integer-micrometres.md) | Lengths are integer micrometres | Accepted |
 | [0004](0004-panel-local-frame.md) | Panel-local frame, faces and topology ids | Accepted; frame origin superseded by 0009 |
-| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Accepted |
+| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Superseded by 0148 |
 | [0006](0006-panel-nominal-and-resolved-geometry.md) | Panels store nominal size; geometry is resolved | Accepted; core-origin placement superseded by 0009 |
 | [0007](0007-edge-banding-v1.md) | Edge banding v1: ordered bands and butt joints | Accepted; per-path banding unit superseded by 0014 |
 | [0008](0008-panel-diagnostics.md) | Panel diagnostics and command invalidation | Accepted |
@@ -153,6 +153,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0145](0145-the-group-digits-follow-the-order-of-the-work.md) | The group digits follow the order of the work | Accepted; reassigns the group digits of 0094 and supersedes the group-10 sentence of 0097 |
 | [0146](0146-snapping-is-a-workspace-setting-and-the-coordinate-planes-stand-in-for-walls.md) | Snapping is a workspace setting, and the coordinate planes stand in for walls | Accepted; the snap constants of 0102 and 0103 become settings, and the floor snap joins the three planes |
 | [0147](0147-the-furniture-move-is-its-own-tool-and-a-panel-slides-along-its-thickness.md) | The furniture move is its own tool, and a panel slides along its thickness | Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the free move, and adds the panel axis |
+| [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
+| [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
+| [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
 
 ## Format
 

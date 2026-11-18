@@ -1,6 +1,6 @@
 # 0005. The material catalogue is external and session-scoped
 
-- Status: Accepted
+- Status: Superseded by 0148
 - Date: 2026-10-23
 
 ## Context

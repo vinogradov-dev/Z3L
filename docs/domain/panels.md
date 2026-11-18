@@ -4,7 +4,7 @@ Status: domain specification. This document describes the domain model, not a pa
 
 Related documents:
 
-- [Materials and catalogue](materials.md) — material records and the catalogue.
+- [Nomenclature directory](nomenclature.md) — material records and the directory of nomenclature.
 - [Scene document](document.md) — scene file, loading, storage and diagnostics.
 
 Related decisions: [0006](../decisions/0006-panel-nominal-and-resolved-geometry.md),
@@ -35,7 +35,7 @@ Related decisions: [0006](../decisions/0006-panel-nominal-and-resolved-geometry.
 - **Overall size** — the finished outer length and width including all edge banding.
 - **Problem panel** — a diagnostic state, not document data. It appears, for example, when a catalogue material is missing; see [Scene document](document.md).
 
-Panel material and edge-banding material are described in [Materials and catalogue](materials.md).
+Panel material and edge-banding material are described in [Nomenclature directory](nomenclature.md).
 
 ## 2. Panel as a group
 
@@ -152,7 +152,7 @@ When creating or editing a panel, the user sets:
 A contour panel is the exception: its nominal size comes from the ring, so creation chooses the
 source ring and the material, and the card shows no length or width fields.
 
-Thickness is not editable: it comes from the panel material (see [Materials and catalogue](materials.md)). The card shows it as a read-only property. If the material is not found, the card shows `<no material id %d>` (or a similar marker) and the last known thickness with a warning; the loading behaviour is described in [Scene document](document.md).
+Thickness is not editable: it comes from the panel material (see [Nomenclature directory](nomenclature.md)). The card shows it as a read-only property. If the material is not found, the card shows `<no material id %d>` (or a similar marker) and the last known thickness with a warning; the loading behaviour is described in [Scene document](document.md).
 
 The document stores nominal length and width only; core and overall are derived. A panel may have no material (`None`); that is different from a material id that is absent from the catalogue.
 
@@ -538,7 +538,7 @@ At minimum:
 - a through contour cutout may touch or cross the core edge and open a notch, while a blind contour
   cutout may touch but not cross it; overlap is decided on the sampled ring.
 
-Catalogue and scene-loading tests live in [Materials and catalogue](materials.md) and [Scene document](document.md).
+Catalogue and scene-loading tests live in [Nomenclature directory](nomenclature.md) and [Scene document](document.md).
 
 ## 11. Open questions
 
