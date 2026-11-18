@@ -1,17 +1,25 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N19 state=idle base=85cf0b2 updated=2026-11-18
+STATE: milestone=M7 phase=T task=N19 state=idle base=5aa6b9c updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
-The carry keeps a hand of its own: the drawn square is what carries a piece, so a camera gesture can
-hide it and put it back on the piece without touching the window's pointer (ADR 0156, X69).
+The carry keeps a hand of its own: the drawn square is what carries a piece, so a
+camera gesture can hide it and put it back on the piece without touching the
+window's pointer (ADR 0156, X69).
+
+The nomenclature directory is edited by a window of its own: `z3l directory
+[<folder>]` opens the item tree, the record's card and the registry view, and a
+save is one record plus the package's revision — written behind one lock, record
+first and the manifest last, so the editor re-derives the panels that name it at
+its next frame boundary (O6, ADR 0158, `nomenclature.md` §12–§14).
 
 ## Next
 
-N19 is next: the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
+N19 is next: the frame is drawn by the box tool it inherits from the cuboid, not by a card beside
+it. After it, O7 travels a package between workshops.
 
 ## Index
 

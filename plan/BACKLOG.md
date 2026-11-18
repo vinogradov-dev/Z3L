@@ -233,13 +233,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-- `[ ]` **O6** the directory application edits a package
-  Why: A directory nobody can edit is a file format.
-  Shape: A second binary on the same stack: item tree, card, property editor, kind registry
-   view; one writer behind the lock, atomic writes, revision bumped last.
-  Done: A new item with properties is authored, saved and read back by the editor on a new
-   revision.
-  `files: crates/catalog/src/source.rs,crates/catalog/src/wire.rs,app/src/cli.rs,app/Cargo.toml`
 - `[ ]` **O7** a package travels between workshops
   Why: A workshop extends its directory and hands the extension to another workshop.
   Shape: Package export and import as a folder, connect and disconnect, requires on registry
@@ -301,6 +294,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **O6** the directory application edits a package
+  Why: A directory nobody can edit is a file format.
+  Shape: A second binary on the same stack: item tree, card, property editor, kind registry
+   view; one writer behind the lock, atomic writes, revision bumped last.
+  Done: A new item with properties is authored, saved and read back by the editor on a new
+   revision.
+  `files: crates/catalog/src/source.rs,crates/catalog/src/wire.rs,app/src/cli.rs,app/Cargo.toml` — `bcd0aa1`
 
 - `[x]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
   Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet

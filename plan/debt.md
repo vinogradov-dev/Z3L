@@ -10,6 +10,12 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[release]` a gate that has to run before the first release, `[vendor]`.
 
+- `[design]` `app` is a binary root without a library, so a second binary cannot share the shell's
+  rules: `z3l directory` is a mode of the one program, because a second `[[bin]]` would write the rule
+  for where `nomenclature/` lives (`settings_store::config_dir`) a second time. Split `app` into
+  `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
+  of `app/src/directory_app.rs` then (ADR 0158).
+
 - `[release]` The product name leaves the code before the first release: R1 is the measured
   four-commit procedure in `plan/rename.md`, deferred out of the work order until then so a release
   does not wait for the whole order. Run `cargo xtask task take R1` and the four commits first.
