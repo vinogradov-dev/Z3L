@@ -152,10 +152,11 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0144](0144-the-floor-plate-is-blended-so-it-tints-what-stands-under-it.md) | The floor plate is blended, so it tints what stands under it and keeps its shadow | Accepted |
 | [0145](0145-the-group-digits-follow-the-order-of-the-work.md) | The group digits follow the order of the work | Accepted; reassigns the group digits of 0094 and supersedes the group-10 sentence of 0097 |
 | [0146](0146-snapping-is-a-workspace-setting-and-the-coordinate-planes-stand-in-for-walls.md) | Snapping is a workspace setting, and the coordinate planes stand in for walls | Accepted; the snap constants of 0102 and 0103 become settings, and the floor snap joins the three planes |
-| [0147](0147-the-furniture-move-is-its-own-tool-and-a-panel-slides-along-its-thickness.md) | The furniture move is its own tool, and a panel slides along its thickness | Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the free move, and adds the panel axis |
+| [0147](0147-the-furniture-move-is-its-own-tool-and-a-panel-slides-along-its-thickness.md) | The furniture move is its own tool, and a panel slides along its thickness | Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the free move, and adds the panel axis; its handle half is superseded by 0151 |
 | [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
 | [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
 | [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
+| [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147 |
 
 ## Format
 

@@ -1,7 +1,9 @@
 # 0147. The furniture move is its own tool, and a panel slides along its thickness
 
 - Status: Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the
-  free move, and adds the panel axis 0102 and 0103 did not have
+  free move, and adds the panel axis 0102 and 0103 did not have. Its handle half — the arrows, the
+  held drag and the absence of an in-plane handle — is superseded by
+  [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md)
 - Date: 2026-11-18
 
 ## Context

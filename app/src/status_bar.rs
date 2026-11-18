@@ -41,6 +41,8 @@ struct StatusInfo {
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
     void: Option<Result<[Length; 3], VoidRefusal>>,
+    /// Whether the furniture move is carrying a piece the pointer moves with no button held.
+    holding: bool,
     grid: bool,
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
@@ -362,6 +364,10 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         };
         ui.label(counted.text(lang));
         ui.label(egui::RichText::new(Message::MeshEditHint.text(lang)).color(theme::text_dim(ui)));
+    } else if info.holding {
+        // The piece follows the pointer rather than a button, so the left zone says what ends the
+        // hold: a click puts it down and Escape puts it back (ADR 0151).
+        hint(ui, Message::FurnitureHold.text(lang));
     } else {
         hint(ui, Message::ViewportHint.text(lang));
     }
@@ -602,6 +608,7 @@ impl Document {
             void: self.editor.void_armed().then(|| {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),
+            holding: self.holding_piece(),
             grid: self.draw_gizmo.grid(),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
@@ -670,6 +677,7 @@ mod tests {
             preview_error: None,
             measure: None,
             void: None,
+            holding: false,
             grid: true,
             mesh: None,
             navigation: None,

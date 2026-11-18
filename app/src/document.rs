@@ -2666,6 +2666,9 @@ impl Document {
             && ui.input(|input| input.pointer.primary_pressed())
             && response.interact_pointer_pos().is_some_and(|pointer| self.over_empty_space(rect, pointer, &previewed));
         self.update_band(ui, &response, rect, band_starts);
+        // Whether the click opened a container instead of picking a node, so the furniture move
+        // does not take a piece on the way into a level.
+        let mut entered_level = false;
         let clicked = interactive
             && !pointer_on_chrome
             && if mesh_object.is_some() {
@@ -2771,7 +2774,8 @@ impl Document {
                 if response.double_clicked() {
                     // Opening a product repaints its envelope without a document revision, so the
                     // scene is rebuilt here instead of waiting a frame for the next sync.
-                    if self.editor.enter_viewport_level(&mut self.session, hit) {
+                    entered_level = self.editor.enter_viewport_level(&mut self.session, hit);
+                    if entered_level {
                         if let Err(error) = self.refresh() {
                             self.last_error = Some(error);
                         }
@@ -2784,6 +2788,12 @@ impl Document {
                         self.last_error = Some(error);
                     }
                 }
+            }
+            // The furniture move takes the piece the click named, by any part of its body: the click
+            // has selected it, and the pointer carries it until the next click puts it down (N24). A
+            // click that opened a container is navigation, not a hand on a piece.
+            if Transform::of(shell.mode) == Some(Transform::Furniture) && !entered_level {
+                self.take_furniture(pointer);
             }
         }
 
@@ -3079,6 +3089,39 @@ impl Document {
             self.last_error = Some(error);
         }
         ui.ctx().request_repaint();
+    }
+
+    /// Takes the selected piece in hand for the furniture move, unless it may travel nowhere.
+    ///
+    /// The click has already named the piece and set the selection, so this reads the selection and
+    /// asks the document what may move: a piece with no allowed axis, a locked piece and an empty
+    /// selection are all left alone, and the click stays an ordinary selection.
+    fn take_furniture(&mut self, pointer: egui::Pos2) {
+        let selection = self.editor.selected_nodes();
+        let project = self.session.project();
+        if selection.is_empty() || project.furniture_axes(selection) == [false, false, false] {
+            return;
+        }
+        if self.editor.locked_selection(project).is_some() {
+            return;
+        }
+        // The hold itself starts on the next frame, from this point: the gizmo has already run for
+        // the frame this click was read in.
+        self.translate_gizmo.grab(pointer);
+    }
+
+    /// Whether the furniture move is carrying a piece, for the status bar's own words (N24).
+    pub(crate) fn holding_piece(&self) -> bool {
+        self.translate_gizmo.is_following()
+    }
+
+    /// The world distance the carried piece has travelled, for a test that watches the preview.
+    ///
+    /// The preview lives in the session overlay and the document is untouched until the drop, so a
+    /// test cannot read the moved box from the project.
+    #[cfg(test)]
+    pub(crate) fn carried_delta(&self) -> geom::DVec3 {
+        self.translate_gizmo.drag_delta()
     }
 
     /// The rectangle the open context menu drew last frame, which the shell hands to `Chrome`.

@@ -897,6 +897,43 @@ pub(crate) fn hit_axis(
     best.map(|(_, axis)| axis)
 }
 
+/// The axis a hand's travel names, for a tool that draws no handle.
+///
+/// The furniture move is taken by the piece's body rather than by an arrow (N24), so the direction
+/// has to be read from the pointer itself: each axis the tool may travel is projected at the piece's
+/// pivot and the one whose screen direction lies nearest to `travel` wins, whichever way the travel
+/// points, because the sign comes from the projection of the ray and not from this choice. An axis
+/// that points at the camera is not a candidate, exactly as it draws no handle.
+///
+/// `travel` is the pointer's movement since the piece was taken, in points; a travel shorter than
+/// [`screen_direction`] accepts names nothing, so the piece does not jump on the first frame.
+pub(crate) fn named_axis(
+    camera: Camera,
+    viewport: egui::Rect,
+    origin_world: DVec3,
+    travel: Vec2,
+    axes: [bool; 3],
+) -> Option<Axis> {
+    let travel = screen_direction(travel)?;
+    let origin = screen_point(camera, viewport, origin_world)?;
+    let step = (camera.distance() * 0.01).max(1.0);
+    let mut best: Option<(f32, Axis)> = None;
+    for axis in Axis::ALL {
+        if !axis_allowed(axes, axis) || axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
+            continue;
+        }
+        let Some(end) = screen_point(camera, viewport, origin_world + axis.direction() * step) else {
+            continue;
+        };
+        let Some(direction) = screen_direction(end - origin) else { continue };
+        let score = direction.dot(travel).abs();
+        if best.is_none_or(|(nearest, _)| score > nearest) {
+            best = Some((score, axis));
+        }
+    }
+    best.map(|(_, axis)| axis)
+}
+
 /// The hit radius of a handle of `length` points.
 fn hit_radius(length: f32) -> f32 {
     (length.max(0.0) * HIT_RADIUS_FRACTION).clamp(MIN_HIT_RADIUS, HIT_RADIUS)
@@ -1054,6 +1091,57 @@ mod tests {
 
     fn origin_screen(camera: Camera) -> Pos2 {
         screen_point(camera, viewport(), camera.target()).expect("the target is in front")
+    }
+
+    #[test]
+    fn a_hand_travel_names_the_axis_it_points_along() {
+        // N24: the furniture move draws no handle, so the axis is read from the pointer's own
+        // travel. The default view projects Z up and X to the right, which is what makes the two
+        // travels below unambiguous.
+        let camera = Camera::default();
+        let origin = camera.target();
+        let handles = axis_handles(camera, viewport(), origin, origin_screen(camera), spec(ALL_AXES));
+        let direction = |axis: Axis| {
+            handles.iter().find(|handle| handle.axis == axis).map(|handle| handle.direction).expect("a drawn axis")
+        };
+        for axis in Axis::ALL {
+            let travel = direction(axis) * 40.0;
+            assert_eq!(
+                named_axis(camera, viewport(), origin, travel, ALL_AXES),
+                Some(axis),
+                "a travel along {axis:?} names {axis:?}"
+            );
+            // The same travel, backwards: the axis is the same and the sign comes from the ray.
+            assert_eq!(
+                named_axis(camera, viewport(), origin, -travel, ALL_AXES),
+                Some(axis),
+                "and so does its opposite"
+            );
+        }
+        // Only one axis is offered, so the hand's travel is not consulted at all.
+        let travel = direction(Axis::Z) * 40.0;
+        assert_eq!(named_axis(camera, viewport(), origin, travel, [true, false, false]), Some(Axis::X));
+        // Nothing offered, nothing named.
+        assert_eq!(named_axis(camera, viewport(), origin, travel, [false; 3]), None);
+        // A hand that has not moved says nothing, so a taken piece never jumps on its first frame.
+        assert_eq!(named_axis(camera, viewport(), origin, Vec2::ZERO, ALL_AXES), None);
+        assert_eq!(named_axis(camera, viewport(), origin, Vec2::new(0.3, 0.0), ALL_AXES), None);
+    }
+
+    #[test]
+    fn an_axis_that_points_at_the_camera_is_no_direction_a_hand_can_name() {
+        // The same rule the handles obey: a view down Z has no Z direction on screen, and a travel
+        // along the screen's up direction names the axis that is actually drawn there.
+        let camera = orthographic_view(DVec3::new(0.0, 0.0, 1.0));
+        let origin = camera.target();
+        let travel = Vec2::new(0.0, -40.0);
+        let named = named_axis(camera, viewport(), origin, travel, ALL_AXES).expect("one of the plane axes");
+        assert_ne!(named, Axis::Z, "Z points at the camera, so it is no candidate");
+        assert_eq!(
+            named_axis(camera, viewport(), origin, travel, [false, false, true]),
+            None,
+            "and alone it names nothing"
+        );
     }
 
     #[test]

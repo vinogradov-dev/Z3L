@@ -192,8 +192,12 @@ messages! {
         "Двигать свободно: расстояние по указателю, без привязок"
     ],
     FurnitureHint = [
-        "Move by furniture rules: a panel along its thickness, frames to their neighbours and the floor",
-        "Двигать по правилам мебели: панель вдоль своей толщины, каркасы — к соседям и полу"
+        "Move by furniture rules: click a piece to take it, move the pointer, click to put it down",
+        "Двигать по правилам мебели: щелчок берёт деталь, укажите новое место, щелчок ставит её"
+    ],
+    FurnitureHold = [
+        "Piece in hand: the pointer moves it, a click puts it down, Esc puts it back",
+        "Деталь в руке: указатель её двигает, щелчок ставит, Esc возвращает"
     ],
     RotateHint = ["Turn the selection about its pivot", "Поворачивать выделение вокруг пивота"],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],

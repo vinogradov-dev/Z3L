@@ -196,6 +196,16 @@ impl Harness {
         self.settle()
     }
 
+    /// Takes the piece under `at` with a click, carries it by `travel` and puts it down.
+    ///
+    /// The furniture move holds nothing (ADR 0151), so its gesture is two clicks with the pointer
+    /// travelling in between: the first takes the piece by its body, the second drops it.
+    fn carry(&mut self, at: egui::Pos2, travel: egui::Vec2) -> Chrome {
+        self.click(at, egui::PointerButton::Primary);
+        self.hover(at + travel);
+        self.click(at + travel, egui::PointerButton::Primary)
+    }
+
     /// Presses and releases `key`, the way a window reports one shortcut.
     fn press(&mut self, key: egui::Key, modifiers: egui::Modifiers) -> Chrome {
         let event = |pressed: bool| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers };
@@ -957,16 +967,16 @@ fn the_viewport_menu_arms_a_gesture_and_writes_nothing() {
 }
 
 #[test]
-fn the_furniture_move_offers_a_panel_only_its_thickness_axis() {
-    // N22: the fourth mode is the tool that obeys the document's rules, and the first of them is that
-    // a board slides along its own thickness. The two in-plane directions have no handle at all, so a
-    // press where they would be is a pick and not an armed handle that refuses the drag (ADR 0113).
+fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
+    // N24: the furniture move draws no handle. A click anywhere on the board takes it, the pointer
+    // carries it with no button held, and the next click puts it down as one undo entry; what it may
+    // travel is still the document's answer, so the board never moves across its own faces (ADR 0147).
     let (session, panel) = one_wide_panel();
     let mut harness = Harness::with_session("frame-furniture-panel", session);
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.tabs.active_mut().editor.select_node(Some(panel));
+    harness.app.tabs.active_mut().editor.select_node(None);
     harness.settle();
 
     let cell = harness.mode_cell(&TransformMode::Furniture.caption(Lang::En));
@@ -976,20 +986,61 @@ fn the_furniture_move_offers_a_panel_only_its_thickness_axis() {
 
     let axes = harness.app.tabs.active().session.project().furniture_axes(&[panel]);
     assert_eq!(axes, [false, false, true], "a board offers its own thickness and nothing else");
-    let across = handle_point_on(&harness, panel, gizmo_math::ALL_AXES, Some(gizmo_math::Axis::X))
-        .expect("the in-plane handle is on screen where the free move would draw it")
-        .0;
-    let (upright, up) =
-        handle_point_on(&harness, panel, axes, Some(gizmo_math::Axis::Z)).expect("the thickness handle is on screen");
-
-    // The in-plane handle is not drawn, so the press belongs to the viewport and no drag starts.
+    // The middle of the board's face is no handle: the body is what a click takes.
+    let body = harness.node_point(panel);
     let revision = harness.revision();
-    harness.drag(across, egui::Vec2::new(30.0, 0.0), egui::PointerButton::Primary);
-    assert_eq!(harness.revision(), revision, "a press across the board moves nothing");
+    let before = harness.app.tabs.active().session.project().world_box(panel).expect("the board has a box").0;
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "a click on the board takes it");
+    assert_eq!(harness.selected(), vec![panel], "and the selected piece is what the pointer carries");
+    assert_eq!(harness.revision(), revision, "taking a piece writes nothing");
 
-    // The thickness handle is, and the same kind of drag slides the board along it.
-    harness.drag(upright, up * 40.0, egui::PointerButton::Primary);
-    assert_eq!(harness.revision().get(), revision.get() + 1, "the upright handle moves the board: one drag, one entry");
+    // The pointer carries it: up and to the side, which the board may only partly obey.
+    harness.hover(body + egui::vec2(60.0, -80.0));
+    assert_eq!(harness.revision(), revision, "carrying it is a preview, not a revision");
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.z > 0.0, "the board rises in its thickness direction: {carried:?}");
+
+    harness.click(body + egui::vec2(60.0, -80.0), egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "the second click puts it down");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one carried piece is one undo entry");
+    let after = harness.app.tabs.active().session.project().world_box(panel).expect("a box").0;
+    assert!(after.z > before.z, "the board moved along its thickness: {after:?} from {before:?}");
+    assert!(
+        (after.x - before.x).abs() < 1.0e-6 && (after.y - before.y).abs() < 1.0e-6,
+        "and never across its own faces: {after:?} from {before:?}"
+    );
+}
+
+#[test]
+fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothing() {
+    // The two ways a hold ends without a placement: Escape puts the piece back, and a click that
+    // never travelled commits a zero delta, which is no command at all (ADR 0151).
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-furniture-cancel", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    let revision = harness.revision();
+    let start = harness.app.tabs.active().session.project().world_box(panel).expect("a box").0;
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body + egui::vec2(40.0, -90.0));
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().holding_piece(), "Escape puts the piece back");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+    let restored = harness.app.tabs.active().session.project().world_box(panel).expect("a box").0;
+    assert!((restored - start).length() < 1.0e-6, "the board is where it was: {restored:?} from {start:?}");
+
+    // A click that takes the piece and a click that puts it back without travelling: no command.
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "the board is taken again");
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "and put down without moving");
+    assert_eq!(harness.revision(), revision, "a zero move is no undo entry");
 }
 
 #[test]
@@ -998,13 +1049,13 @@ fn the_free_move_crosses_a_neighbour_the_furniture_move_stops_at() {
     // the pointer's own distance and passes the panel beside it; the furniture move stops flush
     // against that panel, because contact is the document's rule and a body stops at a body
     // (ADR 0102, ADR 0147). Each drag is one revision, so the two tools share the whole gesture.
-    let (free_end, free_start, free_revision) = dragged_divider(TransformMode::Move, "frame-free-move");
+    let (free_end, free_start, free_revision) = moved_divider(TransformMode::Move, "frame-free-move");
     assert!(
         free_end > free_start,
         "the free move passes the neighbour's low face at {free_start}: it ends at {free_end}"
     );
     let (stopped_end, neighbour_start, stopped_revision) =
-        dragged_divider(TransformMode::Furniture, "frame-furniture-move");
+        moved_divider(TransformMode::Furniture, "frame-furniture-move");
     assert!(
         (stopped_end - neighbour_start).abs() < 1.0e-6,
         "the furniture move stops the board flush against the neighbour at {neighbour_start}: it ends at {stopped_end}"
@@ -1012,9 +1063,12 @@ fn the_free_move_crosses_a_neighbour_the_furniture_move_stops_at() {
     assert_eq!(free_revision, stopped_revision, "both drags cost one undo entry");
 }
 
-/// Drags the divider of [`divider_beside_a_panel`] 150 points along its one handle and answers the
-/// face it left, the neighbour's low face and how many revisions the drag cost.
-fn dragged_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
+/// Moves the divider of [`divider_beside_a_panel`] 150 points along world X and answers the face it
+/// ends on, the neighbour's low face and how many revisions the gesture cost.
+///
+/// The two tools are asked the same question with their own gesture: the free move takes a handle and
+/// drags it, the furniture move takes the board by its body and carries it (N24).
+fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
     let (session, divider, beside) = divider_beside_a_panel();
     let mut harness = Harness::with_session(name, session);
     harness.settle();
@@ -1025,11 +1079,20 @@ fn dragged_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
     harness.settle();
     let project = harness.app.tabs.active().session.project();
     let axes = project.furniture_axes(&[divider]);
-    assert_eq!(axes, [true, false, false], "a divider crosses the case, so X is the handle it offers");
-    let (at, direction) =
-        handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X)).expect("the divider's handle is on screen");
+    assert_eq!(axes, [true, false, false], "a divider crosses the case, so X is the only way it travels");
+    let (handle, direction) = handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X))
+        .expect("the direction X runs in is on screen");
     let revision = harness.revision();
-    harness.drag(at, direction * 150.0, egui::PointerButton::Primary);
+    match mode {
+        TransformMode::Furniture => {
+            // Any part of the body takes it; the travel names the axis it may move along.
+            let body = harness.node_point(divider);
+            harness.carry(body, direction * 150.0);
+        }
+        _ => {
+            harness.drag(handle, direction * 150.0, egui::PointerButton::Primary);
+        }
+    }
     let project = harness.app.tabs.active().session.project();
     let ended = project.world_box(divider).expect("the divider has a box").1.x;
     let neighbour = project.world_box(beside).expect("the neighbour has a box").0.x;
@@ -1060,7 +1123,11 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
         .with_translation(mm(1068), Length::ZERO, mm(-600))
         .expect("a placement beside the divider");
     let beside = project.add_panel(frame, "Beside", size, None, mm(18), beside_at).expect("a panel beside the divider");
-    (engine::Session::with_catalog(project, testkit::sample_catalog()), divider, beside)
+    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    // The product is open, so a click lands on the part and not on the frame around it: the
+    // furniture move takes the piece the click named (N24).
+    assert!(session.open_product(frame), "the fixture product opens");
+    (session, divider, beside)
 }
 
 #[test]

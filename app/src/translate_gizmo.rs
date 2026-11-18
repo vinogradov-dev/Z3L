@@ -13,15 +13,19 @@
 //! starts (ADR 0146). The rule is applied to the preview, and the release commits that same
 //! distance, so a drag is one undo entry and the preview is not a promise the command breaks.
 //!
-//! The same handles serve two tools (N22, ADR 0147). The free move keeps the pointer's own micrometre
-//! distance on the three world axes and applies no rule and no snap at all. The furniture move asks
-//! the document which axes the pieces may travel along first: a panel offers only the axis its own
-//! thickness points at, so a shelf rises in its thickness direction and a drag across the board is
-//! refused by having no handle to grab. Both keep the exact-distance fields, which are the typed
-//! path to the same distance (ADR 0103).
+//! The two tools are held differently (N22, N24, ADR 0147, ADR 0151). The free `Move` keeps its three
+//! arrows: a press on a handle and the release are one drag, and the pointer's own micrometre
+//! distance applies no rule and no snap at all. Handles keep a constant screen length, and an axis
+//! within about ten degrees of the view direction is not drawn, because its projected direction is
+//! unstable and a pointer drag would move it by metres.
 //!
-//! Handles keep a constant screen length. An axis within about ten degrees of the view direction is
-//! not drawn: its projected direction is unstable and a pointer drag would move it by metres.
+//! The furniture move draws **no handle at all**: a click on a piece's body takes it, the pointer
+//! carries it with no button held, and the next click puts it down. What it may travel is the
+//! document's answer: a panel offers only the axis its own thickness points at, so a shelf rises and
+//! falls in its thickness direction and never across its own faces. The axis is the allowed one the
+//! hand's travel names best, latched at the first movement so the piece cannot change direction under
+//! the hand. Both tools keep the exact-distance fields, which are the typed path to the same distance
+//! (ADR 0103).
 
 use eframe::egui;
 use egui::{Response, Ui};
@@ -31,14 +35,54 @@ use scene::MAX_DISTANCE_MM;
 
 use crate::gizmo_math::{
     Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
-    paint_axis_handles, ray_to,
+    named_axis, paint_axis_handles, ray_to,
 };
 
-/// One continuous axis drag.
+/// The smallest travel, in points, that names an axis.
+///
+/// Below it the hand has not said which way the piece goes, and a piece that picked a direction from
+/// the noise of a still pointer would jump on the frame it was taken.
+const NAMING_TRAVEL: f32 = 4.0;
+
+/// How a hand holds the piece a drag moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Hold {
+    /// The free move holds one arrow with the primary button: the axis is known at the press and the
+    /// release commits the distance under the pointer.
+    Handle(Axis),
+    /// The furniture move holds nothing: a click took the piece, the pointer carries it, and the
+    /// next click puts it down (ADR 0151).
+    Following {
+        /// The axis the travel named, once the pointer moved far enough for the hand to say so.
+        axis: Option<Axis>,
+        /// Where the click took the piece, in viewport points.
+        ///
+        /// The travel that names the axis and the distance the rule measures are both read from
+        /// here, so taking a piece never moves it and the first frame of the hold is already exact.
+        at: egui::Pos2,
+    },
+}
+
+impl Hold {
+    /// The axis this hold moves along, while it has one.
+    fn axis(self) -> Option<Axis> {
+        match self {
+            Self::Handle(axis) => Some(axis),
+            Self::Following { axis, .. } => axis,
+        }
+    }
+
+    /// Whether the piece is carried without a button, which is the furniture move.
+    fn follows(self) -> bool {
+        matches!(self, Self::Following { .. })
+    }
+}
+
+/// One continuous move: one handle drag, or one piece carried by the pointer.
 #[derive(Debug)]
 struct Drag {
     node: Id,
-    axis: Axis,
+    hold: Hold,
     /// The furniture rule this drag was measured against when it started, if any.
     rule: Option<MoveRule>,
     /// The surface the face landed on this frame, when a snap — and not the pointer — placed it.
@@ -46,6 +90,7 @@ struct Drag {
     drawables: Vec<Id>,
     targets: Vec<MoveTarget>,
     start_origin: DVec3,
+    /// The pointer's parameter along the latched axis at the moment the hold started.
     start_parameter: f64,
     delta: DVec3,
 }
@@ -56,12 +101,32 @@ pub(crate) struct TranslateGizmo {
     drag: Option<Drag>,
     hover: Option<Axis>,
     consumed_click: bool,
+    /// Where a click took a piece, until the next frame builds the hold from it.
+    ///
+    /// The click that takes a piece is read by the shell, after this gizmo has already run for the
+    /// frame: it names the pointer here and the hold starts on the next frame, from that point, so
+    /// the piece is measured where the hand took it and not where the pointer has drifted to.
+    request: Option<egui::Pos2>,
 }
 
 impl TranslateGizmo {
-    /// Whether an axis drag is in progress.
+    /// Whether a drag is in progress: a handle held, or a piece carried by the pointer.
     pub(crate) fn is_dragging(&self) -> bool {
         self.drag.is_some()
+    }
+
+    /// Whether a piece is carried by the pointer rather than by a held handle.
+    pub(crate) fn is_following(&self) -> bool {
+        self.drag.as_ref().is_some_and(|drag| drag.hold.follows())
+    }
+
+    /// Takes the piece under `pointer` in hand, for the furniture move to carry (ADR 0151).
+    ///
+    /// The shell calls this after the click that named the piece has selected it; the hold itself
+    /// starts on the next frame, from this point. A request that no furniture move picks up is
+    /// dropped with the mode, so a stray click never arms a piece much later.
+    pub(crate) fn grab(&mut self, pointer: egui::Pos2) {
+        self.request = Some(pointer);
     }
 
     /// Whether this frame's pointer release belongs to a gizmo drag and must not select.
@@ -91,8 +156,11 @@ impl TranslateGizmo {
     }
 
     /// The world axis of the drag in progress, if any.
+    ///
+    /// A carried piece has none until the hand's travel names one, which is why the exact-distance
+    /// fields appear on the frame the piece starts to move and not on the frame it is taken.
     pub(crate) fn axis(&self) -> Option<Axis> {
-        self.drag.as_ref().map(|drag| drag.axis)
+        self.drag.as_ref().and_then(|drag| drag.hold.axis())
     }
 
     /// The node whose pivot anchors the drag.
@@ -118,10 +186,9 @@ impl TranslateGizmo {
     /// A floor-bound product keeps its height and a panel never leaves its own thickness axis, so an
     /// axis the tool does not offer has no free distance to state; the fields are not offered there.
     pub(crate) fn exact_axis(&self) -> bool {
-        match self.drag.as_ref() {
-            Some(drag) => drag.rule.as_ref().is_none_or(|rule| rule.allows(drag.axis.move_axis())),
-            None => false,
-        }
+        let Some(drag) = self.drag.as_ref() else { return false };
+        let Some(axis) = drag.hold.axis() else { return false };
+        drag.rule.as_ref().is_none_or(|rule| rule.allows(axis.move_axis()))
     }
 
     /// Starts, continues or finishes a drag and returns a placement to dispatch on release.
@@ -148,44 +215,167 @@ impl TranslateGizmo {
         handle_length: f32,
     ) -> Result<Option<PlacementCommit>, String> {
         self.consumed_click = false;
-        if let Some(mut drag) = self.drag.take() {
-            let (pointer, down, escape) = ui.input(|input| {
-                (input.pointer.latest_pos(), input.pointer.primary_down(), input.key_pressed(egui::Key::Escape))
-            });
-            // Escape belongs to the field while a number is pinned: it returns the mouse first, and
-            // the next press leaves the drag.
-            if escape && pinned.is_none() {
-                self.consumed_click = true;
-                return Ok(None);
-            }
-            let (distance, capture) = match pinned {
-                // A typed distance is the maker's own number, so no snap moves it.
-                Some(pinned) => (pinned.is_finite().then_some(pinned), None),
-                None => pointer
-                    .and_then(|pointer| {
-                        ray_to(pointer, viewport, target.camera)
-                            .closest_parameter_on_line(drag.start_origin, drag.axis.direction())
-                    })
-                    .map(|parameter| {
-                        let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
-                        constrained_distance(drag.rule.as_ref(), drag.axis, scalar)
-                    })
-                    .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
+        if let Some(drag) = self.drag.take() {
+            return match drag.hold {
+                Hold::Handle(axis) => self.continue_handle(ui, viewport, target, drag, axis, pinned),
+                Hold::Following { .. } => self.continue_follow(ui, response, viewport, target, drag, pinned),
             };
-            if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
-                drag.delta = drag.axis.direction() * distance;
-                drag.capture = capture;
-            }
-            if !down {
-                self.consumed_click = true;
-                let commit = commit_translation(&drag.targets, drag.delta)?;
-                return Ok(commit);
-            }
-            self.drag = Some(drag);
+        }
+        self.begin(ui, response, viewport, target, pointer_over_widget, handle_length)
+    }
+
+    /// Carries on a held handle: the pointer's distance along the axis, cut by the rule, and the
+    /// release is the commit.
+    #[allow(clippy::too_many_arguments)]
+    fn continue_handle(
+        &mut self,
+        ui: &Ui,
+        viewport: egui::Rect,
+        target: Target<'_>,
+        mut drag: Drag,
+        axis: Axis,
+        pinned: Option<f64>,
+    ) -> Result<Option<PlacementCommit>, String> {
+        let (pointer, down, escape) = ui.input(|input| {
+            (input.pointer.latest_pos(), input.pointer.primary_down(), input.key_pressed(egui::Key::Escape))
+        });
+        // Escape belongs to the field while a number is pinned: it returns the mouse first, and the
+        // next press leaves the drag.
+        if escape && pinned.is_none() {
+            self.consumed_click = true;
             return Ok(None);
         }
+        let (distance, capture) = match pinned {
+            // A typed distance is the maker's own number, so no snap moves it.
+            Some(pinned) => (pinned.is_finite().then_some(pinned), None),
+            None => pointer
+                .and_then(|pointer| {
+                    ray_to(pointer, viewport, target.camera)
+                        .closest_parameter_on_line(drag.start_origin, axis.direction())
+                })
+                .map(|parameter| {
+                    let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
+                    constrained_distance(drag.rule.as_ref(), axis, scalar)
+                })
+                .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
+        };
+        if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
+            drag.delta = axis.direction() * distance;
+            drag.capture = capture;
+        }
+        if !down {
+            self.consumed_click = true;
+            let commit = commit_translation(&drag.targets, drag.delta)?;
+            return Ok(commit);
+        }
+        self.drag = Some(drag);
+        Ok(None)
+    }
 
+    /// Carries a piece the furniture move took: the pointer moves it, a click puts it down and
+    /// Escape puts it back (ADR 0151).
+    ///
+    /// No button is held here, so the hold ends on a *click* — press and release at one place — and
+    /// not on a release: the press that drops the piece is the gizmo's and never the pick's, which
+    /// [`Self::consumed_click`] reports to the shell.
+    fn continue_follow(
+        &mut self,
+        ui: &Ui,
+        response: &Response,
+        viewport: egui::Rect,
+        target: Target<'_>,
+        mut drag: Drag,
+        pinned: Option<f64>,
+    ) -> Result<Option<PlacementCommit>, String> {
+        // The mode is the window's one value, and it is read again here: a piece in hand whose tool
+        // is switched under it goes back where it was taken, because nothing said where it goes.
+        if target.move_kind != MoveKind::Furniture {
+            return Ok(None);
+        }
+        let (pointer, escape) = ui.input(|input| (input.pointer.latest_pos(), input.key_pressed(egui::Key::Escape)));
+        // Escape belongs to the field while a number is pinned, as it does in a held drag: the first
+        // press returns the pointer and the next one puts the piece back.
+        if escape && pinned.is_none() {
+            self.consumed_click = true;
+            return Ok(None);
+        }
+        // The piece is put down by a click whether or not the hand ever named a direction: a piece
+        // taken and put back without travelling is no move, and the click still ends the hold.
+        if response.clicked_by(egui::PointerButton::Primary) {
+            self.consumed_click = true;
+            let commit = commit_translation(&drag.targets, drag.delta)?;
+            return Ok(commit);
+        }
+        let Hold::Following { axis, at } = drag.hold else {
+            return Ok(None);
+        };
+        let axes = target.move_kind.axes(target.project, target.selection);
+        let axis = match axis {
+            Some(axis) => Some(axis),
+            None => pointer.and_then(|pointer| {
+                let travel = pointer - at;
+                (travel.length() >= NAMING_TRAVEL)
+                    .then(|| named_axis(target.camera, viewport, drag.start_origin, travel, axes))
+                    .flatten()
+            }),
+        };
+        let Some(axis) = axis else {
+            // The hand has not said which way yet, so the piece stays where it was taken.
+            self.drag = Some(drag);
+            return Ok(None);
+        };
+        if drag.hold.axis() != Some(axis) {
+            // The axis was named this frame: its distance is measured from the point the piece was
+            // taken at, so the first movement of the hand is the distance it meant.
+            let Some(parameter) =
+                ray_to(at, viewport, target.camera).closest_parameter_on_line(drag.start_origin, axis.direction())
+            else {
+                self.drag = Some(drag);
+                return Ok(None);
+            };
+            drag.start_parameter = parameter;
+            drag.hold = Hold::Following { axis: Some(axis), at };
+        }
+        let (distance, capture) = match pinned {
+            // A typed distance is the maker's own number on the carried piece too.
+            Some(pinned) => (pinned.is_finite().then_some(pinned), None),
+            None => pointer
+                .and_then(|pointer| {
+                    ray_to(pointer, viewport, target.camera)
+                        .closest_parameter_on_line(drag.start_origin, axis.direction())
+                })
+                .map(|parameter| {
+                    let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
+                    constrained_distance(drag.rule.as_ref(), axis, scalar)
+                })
+                .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
+        };
+        if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
+            drag.delta = axis.direction() * distance;
+            drag.capture = capture;
+        }
+        self.drag = Some(drag);
+        Ok(None)
+    }
+
+    /// Starts a hold: a handle taken by a press, or a piece taken by a click on its body.
+    ///
+    /// `pointer_over_widget` is true when the pointer is over the orientation widget, which owns its
+    /// own clicks.
+    fn begin(
+        &mut self,
+        ui: &Ui,
+        response: &Response,
+        viewport: egui::Rect,
+        target: Target<'_>,
+        pointer_over_widget: bool,
+        handle_length: f32,
+    ) -> Result<Option<PlacementCommit>, String> {
         self.hover = None;
+        // A click that took a piece is read by the shell after this gizmo has run for its frame, so
+        // the hold starts here on the next one. A request the furniture move no longer owns is
+        // dropped, so a click never arms a piece much later.
+        let request = self.request.take();
         if pointer_over_widget {
             return Ok(None);
         }
@@ -196,6 +386,29 @@ impl TranslateGizmo {
         let Some(origin_world) = target.project.pivot_world(anchor.node) else {
             return Ok(None);
         };
+
+        if target.move_kind == MoveKind::Furniture {
+            let Some(at) = request else {
+                return Ok(None);
+            };
+            let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
+            // The rule and the snap settings are read once, when the piece is taken, exactly as a
+            // held drag reads them at the press: the preview and the drop then measure one document.
+            let rule = target.project.move_rule(&moving, target.snaps);
+            self.drag = Some(Drag {
+                node: anchor.node,
+                hold: Hold::Following { axis: None, at },
+                rule,
+                capture: None,
+                drawables: target.drawables(),
+                targets,
+                start_origin: origin_world,
+                start_parameter: 0.0,
+                delta: DVec3::ZERO,
+            });
+            return Ok(None);
+        }
+
         let Some(pointer) = response.hover_pos() else {
             return Ok(None);
         };
@@ -223,7 +436,7 @@ impl TranslateGizmo {
         };
         self.drag = Some(Drag {
             node: anchor.node,
-            axis,
+            hold: Hold::Handle(axis),
             rule,
             capture: None,
             drawables: target.drawables(),
@@ -240,7 +453,13 @@ impl TranslateGizmo {
     }
 
     /// Draws the handles over the viewport.
+    ///
+    /// The furniture move draws none: a piece is taken by any part of its body, so an arrow over it
+    /// would name a target the tool does not have (ADR 0151).
     pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>, handle_length: f32) {
+        if target.move_kind == MoveKind::Furniture {
+            return;
+        }
         let origin_world = if let Some(drag) = &self.drag {
             drag.start_origin + drag.delta
         } else {
@@ -255,7 +474,7 @@ impl TranslateGizmo {
             target.camera,
             origin_world,
             self.hover,
-            self.drag.as_ref().map(|drag| drag.axis),
+            self.drag.as_ref().and_then(|drag| drag.hold.axis()),
             HandleSpec { axes: target.move_kind.axes(target.project, target.selection), length: handle_length },
         );
     }
