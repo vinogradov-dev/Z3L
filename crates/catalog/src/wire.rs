@@ -43,6 +43,26 @@ pub struct ManifestWire {
     /// The workshop's own version of the package's content, shown in the directory.
     #[serde(default)]
     pub package_version: u32,
+    /// The packages this one was written against, by number and content version.
+    ///
+    /// A package that names another's kinds, properties or families declares it here, so a
+    /// directory that lacks it — or carries an older version of it — refuses the load and says so,
+    /// instead of resolving a record through a row that changed under it (`§12`, `§16`).
+    #[serde(default)]
+    pub requires: Vec<RequiresWire>,
+}
+
+/// One package this one depends on, in written form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequiresWire {
+    /// The required package's number.
+    pub id: u32,
+    /// The required package's name, for the sentence a person reads.
+    pub name: String,
+    /// The content version this package was written against.
+    #[serde(default)]
+    pub package_version: u32,
 }
 
 /// The registry rows a package carries.
@@ -175,7 +195,14 @@ pub struct ItemWire {
 impl ManifestWire {
     /// The manifest of a package with `id` and `name`.
     pub fn new(id: u32, name: &str) -> Self {
-        Self { version: MANIFEST_VERSION, id, name: name.to_owned(), package_version: 1 }
+        Self { version: MANIFEST_VERSION, id, name: name.to_owned(), package_version: 1, requires: Vec::new() }
+    }
+}
+
+impl RequiresWire {
+    /// One requirement: package `id`, called `name`, at no less than `package_version`.
+    pub fn new(id: u32, name: &str, package_version: u32) -> Self {
+        Self { id, name: name.to_owned(), package_version }
     }
 }
 

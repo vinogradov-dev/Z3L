@@ -87,6 +87,66 @@ pub enum LoadError {
         /// The package that id belongs to.
         owner: u32,
     },
+    /// Two connected packages claim the same number, so the ids they own would collide.
+    #[error("package `{package}`, {path}: number {id} is already claimed by package `{existing}`")]
+    DuplicatePackage {
+        /// The package that claims the number a second time.
+        package: String,
+        /// Its manifest.
+        path: PathBuf,
+        /// The number both packages claim.
+        id: u32,
+        /// The package that claimed it first.
+        existing: String,
+    },
+    /// A package requires one the directory does not carry.
+    #[error(
+        "package `{package}`, {path}: requires package `{name}` (number {id}) at version {version}, which is not connected"
+    )]
+    RequiresMissing {
+        /// The package that declares the requirement.
+        package: String,
+        /// Its manifest.
+        path: PathBuf,
+        /// The name of the package it needs.
+        name: String,
+        /// The number of the package it needs.
+        id: u32,
+        /// The content version it was written against.
+        version: u32,
+    },
+    /// A package requires a newer version of one the directory carries.
+    #[error(
+        "package `{package}`, {path}: requires package `{name}` (number {id}) at version {version}, connected at {found}"
+    )]
+    RequiresStale {
+        /// The package that declares the requirement.
+        package: String,
+        /// Its manifest.
+        path: PathBuf,
+        /// The name of the package it needs.
+        name: String,
+        /// The number of the package it needs.
+        id: u32,
+        /// The content version it was written against.
+        version: u32,
+        /// The content version the connected package carries.
+        found: u32,
+    },
+}
+
+/// One connected package's manifest, as the loader read it.
+struct Connected {
+    package: String,
+    path: PathBuf,
+    manifest: ManifestWire,
+}
+
+/// One file read into the snapshot, with where it came from.
+struct Loaded<T> {
+    package: String,
+    path: PathBuf,
+    value: T,
 }
 
 /// The stamp of the files a directory is read from.
@@ -127,12 +187,12 @@ pub trait DirectorySource {
 }
 
 /// The names of the packages a directory lists, in the order they load.
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-struct DirectoryWire {
-    version: u32,
+pub(crate) struct DirectoryWire {
+    pub(crate) version: u32,
     #[serde(default)]
-    packages: Vec<String>,
+    pub(crate) packages: Vec<String>,
 }
 
 /// A directory read from a folder.
@@ -176,34 +236,12 @@ impl FolderSource {
     /// A missing `directory.json` is an empty directory, not a failure: a workspace that has never
     /// connected a package has nothing to read, and the shell offers the starter one instead.
     pub fn packages(&self) -> Result<Vec<String>, LoadError> {
-        let path = self.root.join(DIRECTORY_FILE);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(LoadError::Read { path, reason: error.to_string() }),
-        };
-        let wire: DirectoryWire = serde_json::from_str(&text).map_err(|error| LoadError::File {
-            package: DIRECTORY_FILE.to_owned(),
-            path: path.clone(),
-            reason: error.to_string(),
-        })?;
-        if wire.version != DIRECTORY_VERSION {
-            return Err(LoadError::Version {
-                package: DIRECTORY_FILE.to_owned(),
-                path,
-                found: wire.version,
-                expected: DIRECTORY_VERSION,
-            });
-        }
-        Ok(wire.packages)
+        connected(&self.root)
     }
-}
-
-/// One file read into the snapshot, with where it came from.
-struct Loaded<T> {
-    package: String,
-    path: PathBuf,
-    value: T,
+    /// The connected packages, and the schema of the file that lists them.
+    pub(crate) fn listing(&self) -> Result<DirectoryWire, LoadError> {
+        read_listing(&self.root)
+    }
 }
 
 impl FolderSource {
@@ -244,88 +282,174 @@ impl DirectorySource for FolderSource {
     }
 
     fn snapshot(&self) -> Result<Directory, LoadError> {
-        let mut kinds = Vec::new();
-        let mut properties = Vec::new();
-        let mut families = Vec::new();
-        let mut items = Vec::new();
-        for package in self.packages()? {
-            let folder = self.root.join(PACKAGES_DIR).join(&package);
-            let manifest_path = folder.join(MANIFEST_FILE);
-            let manifest: ManifestWire = read_json(&manifest_path, &package)?;
-            if manifest.version != MANIFEST_VERSION {
-                return Err(LoadError::Version {
+        load(&self.root, &self.packages()?)
+    }
+}
+
+/// Reads a chosen set of a directory's packages as one validated snapshot.
+///
+/// [`FolderSource::snapshot`] passes the names `directory.json` lists; the writer passes the list it
+/// is about to write, so a connect, a disconnect and an import meet the loader's own refusals before
+/// a file is touched (`§12`).
+pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadError> {
+    let mut kinds = Vec::new();
+    let mut properties = Vec::new();
+    let mut families = Vec::new();
+    let mut items = Vec::new();
+    let mut connected: Vec<Connected> = Vec::new();
+    for name in packages {
+        let package = name.clone();
+        let folder = root.join(PACKAGES_DIR).join(&package);
+        let manifest_path = folder.join(MANIFEST_FILE);
+        let manifest: ManifestWire = read_json(&manifest_path, &package)?;
+        if manifest.version != MANIFEST_VERSION {
+            return Err(LoadError::Version {
+                package: package.clone(),
+                path: manifest_path,
+                found: manifest.version,
+                expected: MANIFEST_VERSION,
+            });
+        }
+        // Two folders that claim one number would own the same item ids, so the second one is
+        // refused here rather than as a duplicated record three files later.
+        if let Some(first) = connected.iter().find(|other| other.manifest.id == manifest.id) {
+            return Err(LoadError::DuplicatePackage {
+                package,
+                path: manifest_path,
+                id: manifest.id,
+                existing: first.package.clone(),
+            });
+        }
+        let owner = manifest.id;
+        connected.push(Connected { package: package.clone(), path: manifest_path, manifest });
+
+        let registry_path = folder.join(REGISTRY_FILE);
+        let registry: RegistryWire = read_json(&registry_path, &package)?;
+        if registry.version != REGISTRY_VERSION {
+            return Err(LoadError::Version {
+                package: package.clone(),
+                path: registry_path,
+                found: registry.version,
+                expected: REGISTRY_VERSION,
+            });
+        }
+        let (package_kinds, package_properties, package_families) = registry.rows().map_err(|error| {
+            LoadError::File { package: package.clone(), path: registry_path.clone(), reason: error.to_string() }
+        })?;
+        for row in package_kinds {
+            kinds.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
+        }
+        for row in package_properties {
+            properties.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
+        }
+        for row in package_families {
+            families.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
+        }
+
+        let items_dir = folder.join(ITEMS_DIR);
+        for entry in read_dir(&items_dir, &package)? {
+            let path = items_dir.join(&entry);
+            let wire: crate::wire::ItemWire = read_json(&path, &package)?;
+            if wire.id.package() != owner {
+                return Err(LoadError::ForeignItem {
                     package: package.clone(),
-                    path: manifest_path,
-                    found: manifest.version,
-                    expected: MANIFEST_VERSION,
+                    path,
+                    item: wire.id,
+                    owner: wire.id.package(),
                 });
             }
+            items.push(Loaded { package: package.clone(), path, value: wire });
+        }
+    }
 
-            let registry_path = folder.join(REGISTRY_FILE);
-            let registry: RegistryWire = read_json(&registry_path, &package)?;
-            if registry.version != REGISTRY_VERSION {
-                return Err(LoadError::Version {
-                    package: package.clone(),
-                    path: registry_path,
-                    found: registry.version,
-                    expected: REGISTRY_VERSION,
-                });
-            }
-            let (package_kinds, package_properties, package_families) = registry.rows().map_err(|error| {
-                LoadError::File { package: package.clone(), path: registry_path.clone(), reason: error.to_string() }
-            })?;
-            for row in package_kinds {
-                kinds.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
-            }
-            for row in package_properties {
-                properties.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
-            }
-            for row in package_families {
-                families.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
-            }
-
-            let items_dir = folder.join(ITEMS_DIR);
-            for entry in read_dir(&items_dir, &package)? {
-                let path = items_dir.join(&entry);
-                let wire: crate::wire::ItemWire = read_json(&path, &package)?;
-                if wire.id.package() != manifest.id {
-                    return Err(LoadError::ForeignItem {
-                        package: package.clone(),
-                        path,
-                        item: wire.id,
-                        owner: wire.id.package(),
+    // A requirement is checked against the whole set, never against load order: a package that
+    // names another's rows is refused when that package is absent or older, whatever the order.
+    for package in &connected {
+        for requirement in &package.manifest.requires {
+            let carried = connected.iter().find(|other| other.manifest.id == requirement.id);
+            match carried {
+                Some(other) if other.manifest.package_version < requirement.package_version => {
+                    return Err(LoadError::RequiresStale {
+                        package: package.package.clone(),
+                        path: package.path.clone(),
+                        name: requirement.name.clone(),
+                        id: requirement.id,
+                        version: requirement.package_version,
+                        found: other.manifest.package_version,
                     });
                 }
-                items.push(Loaded { package: package.clone(), path, value: wire });
+                Some(_) => {}
+                None => {
+                    return Err(LoadError::RequiresMissing {
+                        package: package.package.clone(),
+                        path: package.path.clone(),
+                        name: requirement.name.clone(),
+                        id: requirement.id,
+                        version: requirement.package_version,
+                    });
+                }
             }
         }
+    }
 
-        let kinds = KindRegistry::new(kinds.iter().map(|row| row.value.clone())).map_err(|error| LoadError::File {
-            package: String::new(),
-            path: PathBuf::from(REGISTRY_FILE),
+    let kinds = KindRegistry::new(kinds.iter().map(|row| row.value.clone())).map_err(|error| LoadError::File {
+        package: String::new(),
+        path: PathBuf::from(REGISTRY_FILE),
+        reason: error.to_string(),
+    })?;
+    let properties = PropertyRegistry::new(properties.iter().map(|row| row.value.clone())).map_err(|error| {
+        LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
+    })?;
+    let families = FamilyRegistry::new(families.iter().map(|row| row.value.clone())).map_err(|error| {
+        LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
+    })?;
+
+    let mut records = Vec::with_capacity(items.len());
+    for item in &items {
+        let record = item.value.to_item(&kinds, &properties).map_err(|error| LoadError::File {
+            package: item.package.clone(),
+            path: item.path.clone(),
             reason: error.to_string(),
         })?;
-        let properties = PropertyRegistry::new(properties.iter().map(|row| row.value.clone())).map_err(|error| {
-            LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
-        })?;
-        let families = FamilyRegistry::new(families.iter().map(|row| row.value.clone())).map_err(|error| {
-            LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
-        })?;
-
-        let mut records = Vec::with_capacity(items.len());
-        for item in &items {
-            let record = item.value.to_item(&kinds, &properties).map_err(|error| LoadError::File {
-                package: item.package.clone(),
-                path: item.path.clone(),
-                reason: error.to_string(),
-            })?;
-            records.push(record);
-        }
-        Directory::new(records, kinds, properties, families).map_err(|error| {
-            let (package, path) = attributes(&items, &error);
-            LoadError::File { package, path, reason: error.to_string() }
-        })
+        records.push(record);
     }
+    Directory::new(records, kinds, properties, families).map_err(|error| {
+        let (package, path) = attributes(&items, &error);
+        LoadError::File { package, path, reason: error.to_string() }
+    })
+}
+
+/// The names of the packages a directory lists, in load order.
+fn connected(root: &Path) -> Result<Vec<String>, LoadError> {
+    Ok(read_listing(root)?.packages)
+}
+
+/// The file that lists the connected packages, as it was written.
+///
+/// A missing file is an empty list at the current schema rather than a refusal: a workspace that has
+/// never connected a package has nothing to read (`§13`).
+fn read_listing(root: &Path) -> Result<DirectoryWire, LoadError> {
+    let path = root.join(DIRECTORY_FILE);
+    let empty = DirectoryWire { version: DIRECTORY_VERSION, packages: Vec::new() };
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(empty),
+        Err(error) => return Err(LoadError::Read { path, reason: error.to_string() }),
+    };
+    let wire: DirectoryWire = serde_json::from_str(&text).map_err(|error| LoadError::File {
+        package: DIRECTORY_FILE.to_owned(),
+        path: path.clone(),
+        reason: error.to_string(),
+    })?;
+    if wire.version != DIRECTORY_VERSION {
+        return Err(LoadError::Version {
+            package: DIRECTORY_FILE.to_owned(),
+            path,
+            found: wire.version,
+            expected: DIRECTORY_VERSION,
+        });
+    }
+    Ok(wire)
 }
 
 /// The package and file an item-level refusal belongs to.
@@ -615,5 +739,75 @@ mod tests {
         let refusal = FolderSource::at(&temp.0).snapshot().expect_err("a newer package");
         let sentence = refusal.to_string();
         assert!(sentence.contains("schema 2") && sentence.contains("reads 1"), "{sentence}");
+    }
+
+    /// A package folder of `id` at `package_version`, with an empty registry and no records.
+    fn empty_package(root: &Path, name: &str, id: u32, package_version: u32) -> PathBuf {
+        let package = root.join(PACKAGES_DIR).join(name);
+        fs::create_dir_all(package.join(ITEMS_DIR)).expect("create the package");
+        let mut manifest = ManifestWire::new(id, name);
+        manifest.package_version = package_version;
+        fs::write(package.join(MANIFEST_FILE), serde_json::to_string(&manifest).expect("serialize"))
+            .expect("write the manifest");
+        fs::write(package.join(REGISTRY_FILE), serde_json::json!({ "version": 1 }).to_string())
+            .expect("write the registry");
+        package
+    }
+
+    /// Lists `names` as connected, in that order.
+    fn connect(root: &Path, names: &[&str]) {
+        let wire = DirectoryWire {
+            version: DIRECTORY_VERSION,
+            packages: names.iter().map(|name| (*name).to_owned()).collect(),
+        };
+        fs::write(root.join(DIRECTORY_FILE), serde_json::to_string(&wire).expect("serialize"))
+            .expect("write the connected list");
+    }
+
+    /// Gives a package's manifest one requirement.
+    fn require(package: &Path, id: u32, name: &str, package_version: u32) {
+        let path = package.join(MANIFEST_FILE);
+        let mut manifest: ManifestWire = read_json(&path, "the package").expect("the manifest");
+        manifest.requires.push(crate::wire::RequiresWire::new(id, name, package_version));
+        fs::write(&path, serde_json::to_string(&manifest).expect("serialize")).expect("write the manifest");
+    }
+
+    #[test]
+    fn two_connected_packages_that_claim_one_number_are_refused_with_both_named() {
+        let temp = TempDir::new("number");
+        starter_folder(&temp.0);
+        empty_package(&temp.0, "supplier", 1, 1);
+        connect(&temp.0, &["starter", "supplier"]);
+        let refusal = FolderSource::at(&temp.0).snapshot().expect_err("one number, two packages");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("supplier") && sentence.contains("starter"), "{sentence}");
+    }
+
+    #[test]
+    fn a_package_requiring_one_that_is_not_connected_is_refused_with_both_named() {
+        let temp = TempDir::new("requires");
+        let starter = starter_folder(&temp.0);
+        require(&starter, 7, "supplier", 3);
+        let refusal = FolderSource::at(&temp.0).snapshot().expect_err("a package that is not there");
+        let sentence = refusal.to_string();
+        assert!(
+            sentence.contains("starter") && sentence.contains("supplier") && sentence.contains("not connected"),
+            "{sentence}"
+        );
+    }
+
+    #[test]
+    fn a_requirement_the_connected_package_cannot_meet_is_refused_naming_both() {
+        let temp = TempDir::new("stale");
+        let starter = starter_folder(&temp.0);
+        empty_package(&temp.0, "supplier", 2, 2);
+        connect(&temp.0, &["starter", "supplier"]);
+        require(&starter, 2, "supplier", 3);
+        let refusal = FolderSource::at(&temp.0).snapshot().expect_err("needs a newer supplier");
+        let sentence = refusal.to_string();
+        assert!(
+            sentence.contains("starter") && sentence.contains("supplier") && sentence.contains("connected at 2"),
+            "{sentence}"
+        );
     }
 }

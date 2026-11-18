@@ -57,6 +57,6 @@ pub use view::{
 };
 pub use wire::{
     DIRECTORY_VERSION, FamilyWire, ItemWire, KindWire, MANIFEST_VERSION, ManifestWire, PropertyTypeWire, PropertyWire,
-    REGISTRY_VERSION, RegistryWire,
+    REGISTRY_VERSION, RegistryWire, RequiresWire,
 };
 pub use write::{FolderWriter, WriteError};
