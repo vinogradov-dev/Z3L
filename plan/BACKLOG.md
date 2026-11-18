@@ -110,6 +110,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T10** the group digits follow the order of the work, so the case is 10 and the seat is 80
+  Why: T9 made the picker sort the families by a presentation constant, which leaves the stored
+   digits in the old order: a saved node still says 30.01 for a cabinet and 10.01 for a chair,
+   and every export, report and reader still meets the seating first. The order belongs in the
+   number, as the owner asked: the case starts at 10 and the seat ends at 80. No build has
+   shipped, so a code may still move (ADR 0094 immortalises a code only once it ships).
+  Shape: Remap the group digit of every class, host prefix, constant, doc table and test
+   literal: 30 to 10 storage, 70 to 20 boards and trim, 40 to 30 surfaces, 20 to 40 lying, 80
+   to 70 general, 10 to 80 seating; 50 and 60 keep their numbers. The type and variant digits
+   stay, so 30.01.02 becomes 10.01.02 and the old 10.01 cabinet of furntypes.md is true again.
+   presentation_rank and PRESENTATION_ORDER leave model, the picker and the product card walk
+   registry() again, and docs/domain/classes.md section 7 lists the families ascending, which
+   is now the order of the work. One ADR records that the digits follow the work and that group
+   10 names storage, not the product role of 0097.
+  Done: The cabinet is 10.01 and the chair is 80.01, the picker's first family is 10 and its
+   last is 80 with no sort in the way, and a test proves every stored code resolves to the row
+   the document gives it.
+  `files: crates/model/src/class.rs,docs/domain/classes.md,crates/ui/src/class_picker.rs` — `f0f8f68`
+
 - `[x]` **T9** the class list follows what a shop builds, not the order of the digits
   Why: A person meets the chair and the stool first, because the registry is ordered by family
    code, and the case a cabinet shop actually builds sits third while the placeholder product
