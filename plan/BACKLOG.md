@@ -123,6 +123,73 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs`
 
 ## Bugs
+- `[ ]` **X72** a moved part may come to rest inside another part
+  Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
+   may not come to rest inside another part. Reproduced paths around the rule, not inside it:
+   the rule itself does stop a body at a body (`stop_at_contact` and `blocking` in
+   `move_query.rs`), but it lives in the two gestures and nowhere else. The free `Move` applies
+   no rule at all — ADR 0147 took the furniture rule out of it on purpose and X65's `Done` asks
+   that "the free move still crosses it" — and `Project::move_rule` answers `None` for a panel
+   that is not inside a product (`is_furniture`), so the furniture tool also carries a loose
+   board through anything. Nothing checks the placement a command is asked to write, so a typed
+   distance, a palette command or the assistant can land a board inside another one as well.
+   The live path the owner used is not yet identified; the two open ends are the free move and
+   a panel outside a product.
+  Shape: The overlap is refused where the document is written, not only where a gesture runs.
+   The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
+   with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
+   shell that stays behind — touching faces are contact, not overlap, and a panel inside its
+   own frame's envelope stays legal. The placement commands (`node.placement.set`, `set_many`,
+   the fill's `panel.create`) ask it and refuse with a sentence naming the part that is in the
+   way; the gestures read the same answer first, so a piece stops at a neighbour instead of
+   reaching a refusal, and the free move stops too — X65's crossing clause is narrowed by a new
+   ADR, and the class rules, the axes and the snapping are untouched. A part that already
+   overlaps another (a file written before this rule) can still be dragged out of the overlap:
+   the test refuses a placement that makes an overlap worse, never one that makes it no worse.
+   The awkward cases are decisions, not accidents: a selection of several parts against one
+   neighbour, a shell inside a shell (a piece inside a case), a board that only touches, and a
+   part carried with the camera moving.
+  Done: A panel dragged into another panel stops at its face with both moves; a
+   `node.placement.set` asked for the same overlap is refused with a sentence naming the part
+   and writes nothing, so the revision does not move; a part already overlapping another can be
+   dragged out of it and a touch is never a refusal; a piece inside a case's envelope and a
+   selection of several parts are unchanged; the ADR is written, `docs/decisions/README.md`
+   lists it and X65's clause is amended; cargo xtask ci is green.
+  `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs`
+- `[ ]` **X73** a hidden part is still in the way of the tools
+  Why: Observation, from the owner: he switched the facades of a frame off in the tree, armed
+   the shelf fill, and the ghost stuck in the phantom facades — a panel he cannot see still cut
+   the void. Expected, in the owner's words: if a part is switched off it is invisible to
+   everything. Today the hidden set is session view state (`ui::ViewFlags`, whose `hides` walks
+   the parent chain so a hidden container hides its subtree) and only the consumers that
+   project the whole tree ask it: the frame builder and the light rig
+   (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
+   model's own measurements walk the document, where the flag has no home: `Project::probe` and
+   `Project::niche` measure every panel, object and shell
+   (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
+   (`crates/ui/src/void.rs`), `Project::move_rule`'s obstacles stop a carried piece at a hidden
+   panel (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls.
+   So the drawing and the measuring disagree about what is there.
+  Shape: One sight value in the model, passed in the way `SnapSettings` is passed into
+   `move_rule`: the nodes the user switched off, plus the parent walk that makes a hidden
+   container hide its subtree (the walk `ViewFlags::hides` does today, moved where the model
+   can read it). Every query that looks at surfaces takes it — `probe`, `niche`, the move
+   rule's obstacles, the boxes a command measures against — and the shell passes
+   `editor.flags().hidden()` at each call site, so `Void::measure`, the fill plan, the distance
+   fields and the pick cannot disagree about what the pointer sees. A hidden part keeps its
+   document life: the file, the tree, undo, the order package and the panel diagnostics still
+   hold it, and showing it again restores every reading with no revision in either direction.
+   The overlap guard of X72 reads the same sight, which is the owner's own rule taken to its
+   end: a placement may go where a hidden part stands, and the clash shows when the part is
+   shown again — the question of whether that is wanted is filed for the owner.
+  Done: With a frame's facades hidden the shelf fill measures the void without them and the
+   ghost lands in the clear space; a carried panel passes a hidden panel and still stops at a
+   visible one; the niche row, the distance fields, the picking and the drawing name the same
+   parts in both states; showing a part again restores its walls everywhere with no document
+   revision; a hidden container hides its whole subtree for the tools as it does for the frame;
+   cargo xtask ci is green.
+  `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs`
+
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
