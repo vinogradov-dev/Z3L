@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_worktop_resizes_by_length_only_and_a_shelf_stays_free() {
-        let (project, shelf) = shelf_with_class("70.01");
+        let (project, shelf) = shelf_with_class("20.01");
         let rules = NodeRules::of(&project, shelf);
         assert_eq!(rules.extent(), Extent::LengthOnly);
         assert!(rules.may_resize(Dimension::Length));
@@ -286,7 +286,7 @@ mod tests {
         assert!(!rules.may_resize(Dimension::Thickness));
         assert_eq!(rules.allow_resize(Dimension::Width), Err(ClassRefusal::Dimension(Dimension::Width)));
 
-        let (project, shelf) = shelf_with_class("30.11");
+        let (project, shelf) = shelf_with_class("10.11");
         let rules = NodeRules::of(&project, shelf);
         assert!(Dimension::ALL.iter().all(|dimension| rules.may_resize(*dimension)));
     }
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(fitting.nesting(), Some(Nesting::Never));
         assert_eq!(fitting.measure(), Some(Measure::Count));
 
-        let (project, node) = shelf_with_class("30.20");
+        let (project, node) = shelf_with_class("10.20");
         let door = NodeRules::of(&project, node);
         assert_eq!(door.nesting(), Some(Nesting::Member));
         assert_eq!(door.measure(), Some(Measure::Area));
@@ -327,19 +327,19 @@ mod tests {
         assert!(rules.admits(Operation::EdgeBand));
         assert_eq!(rules.nesting(), None);
         assert_eq!(rules.measure(), None);
-        assert!(rules.may_sit_in(class("70.01")), "an unclassified object claims nothing");
+        assert!(rules.may_sit_in(class("20.01")), "an unclassified object claims nothing");
     }
 
     #[test]
     fn changing_the_row_flips_the_behaviour_without_touching_a_command() {
-        let (project, shelf) = shelf_with_class("70.01");
+        let (project, shelf) = shelf_with_class("20.01");
         assert!(!NodeRules::of(&project, shelf).may_resize(Dimension::Width));
 
-        let (project, shelf) = shelf_with_class("70.02");
+        let (project, shelf) = shelf_with_class("20.02");
         assert_eq!(NodeRules::of(&project, shelf).extent(), Extent::LengthOnly);
         assert!(!NodeRules::of(&project, shelf).admits(Operation::Cutout), "a plinth admits no cutout");
 
-        let (project, shelf) = shelf_with_class("70.01");
+        let (project, shelf) = shelf_with_class("20.01");
         assert!(NodeRules::of(&project, shelf).admits(Operation::Cutout));
     }
 
@@ -347,18 +347,18 @@ mod tests {
     fn mounting_checks_the_host_class() {
         // A sink names the worktop as its host.
         let sink = NodeRules::of_code(class("60.01"));
-        assert!(sink.may_sit_in(class("70.01")));
-        assert!(!sink.may_sit_in(class("30.01.01")), "a sink does not sit in a base cabinet");
+        assert!(sink.may_sit_in(class("20.01")));
+        assert!(!sink.may_sit_in(class("10.01.01")), "a sink does not sit in a base cabinet");
 
         // A hinge names a vertical panel and every facade, never a worktop.
         let hinge = NodeRules::of_code(class("50.02"));
-        assert!(hinge.may_sit_in(class("30.20")));
-        assert!(hinge.may_sit_in(class("30.10")));
-        assert_eq!(hinge.allow_host(class("70.01")), Err(ClassRefusal::Host { host: class("70.01") }));
+        assert!(hinge.may_sit_in(class("10.20")));
+        assert!(hinge.may_sit_in(class("10.10")));
+        assert_eq!(hinge.allow_host(class("20.01")), Err(ClassRefusal::Host { host: class("20.01") }));
 
         // A group has no class, and an unclassified object claims nothing.
         assert!(hinge.may_sit_in(ClassCode::UNCLASSIFIED));
-        assert!(NodeRules::of_code(ClassCode::UNCLASSIFIED).may_sit_in(class("70.01")));
+        assert!(NodeRules::of_code(ClassCode::UNCLASSIFIED).may_sit_in(class("20.01")));
     }
 
     #[test]

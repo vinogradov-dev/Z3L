@@ -559,7 +559,7 @@ mod tests {
             output.drop_without_applying_deltas();
         }
 
-        let shelf: ClassCode = "30.11".parse().expect("the horizontal panel code");
+        let shelf: ClassCode = "10.11".parse().expect("the horizontal panel code");
         assert_eq!(session.project().class(drawer), Some(shelf), "Enter takes the first match the search leaves");
         session.undo().expect("one undo returns the previous class");
         assert_eq!(session.project().class(drawer), Some(ClassCode::UNCLASSIFIED));
@@ -636,7 +636,7 @@ mod tests {
         card_frame(&ctx, vec![button(true)], &mut session, &mut card, drawer);
         card_frame(&ctx, vec![button(false)], &mut session, &mut card, drawer);
 
-        let shelf: ClassCode = "30.11".parse().expect("the horizontal panel code");
+        let shelf: ClassCode = "10.11".parse().expect("the horizontal panel code");
         assert_eq!(session.project().class(drawer), Some(shelf), "the click assigns the row under the pointer");
         session.undo().expect("one undo returns the previous class");
         assert_eq!(session.project().class(drawer), Some(ClassCode::UNCLASSIFIED));

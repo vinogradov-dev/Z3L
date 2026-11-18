@@ -633,7 +633,7 @@ mod tests {
         let params = crate::command::json(&NodePropertySet {
             node: drawer,
             key: SYSTEM_CLASS.to_owned(),
-            value: PropertyValue::class("30.11".parse().expect("horizontal panel")),
+            value: PropertyValue::class("10.11".parse().expect("horizontal panel")),
         })
         .expect("class parameters");
         session.dispatch(NODE_PROPERTY_SET_ID, &params).expect("assign the class");

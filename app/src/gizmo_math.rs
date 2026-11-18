@@ -1554,7 +1554,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid envelope");
-        let class: ClassCode = "30.01.01".parse().expect("a base cabinet");
+        let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
         let product = project.add_product(root, "Cabinet", class, envelope, Placement::IDENTITY).expect("a product");
         let selection = [product];
         assert!(
@@ -1576,7 +1576,7 @@ mod tests {
         let origin = origin_screen(camera);
         assert_eq!(axis_handles(camera, viewport(), camera.target(), origin, spec(ALL_AXES)).len(), 3);
 
-        let (project, worktop) = classed_cube("70.01");
+        let (project, worktop) = classed_cube("20.01");
         let axes = editable_axes(&project, worktop);
         assert_eq!(axes, [true, false, false], "a worktop changes its length only");
         let handles = axis_handles(camera, viewport(), camera.target(), origin, spec(axes));

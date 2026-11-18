@@ -536,10 +536,10 @@ mod tests {
         let free = NodeRules::of_code(ClassCode::UNCLASSIFIED);
         assert_eq!(admitted_groups(free).iter().map(|(_, kinds)| kinds.len()).sum::<usize>(), MachiningKind::ALL.len());
 
-        let plinth: ClassCode = "70.02".parse().expect("the plinth code");
+        let plinth: ClassCode = "20.02".parse().expect("the plinth code");
         assert!(admitted_groups(NodeRules::of_code(plinth)).is_empty(), "a plinth admits no cutout");
 
-        let worktop: ClassCode = "70.01".parse().expect("the worktop code");
+        let worktop: ClassCode = "20.01".parse().expect("the worktop code");
         let groups = admitted_groups(NodeRules::of_code(worktop));
         assert_eq!(groups.iter().flat_map(|(_, kinds)| kinds).copied().collect::<Vec<_>>(), MachiningKind::ALL);
     }

@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn the_mount_trait_decides_whether_a_product_keeps_its_height() {
-        let (floor, floor_id) = product_project("30.01.01");
+        let (floor, floor_id) = product_project("10.01.01");
         assert_eq!(
             limit(&floor, &[floor_id], MoveAxis::Z, 120.0),
             MoveLimit { distance_mm: 0.0, contact: None },
@@ -440,7 +440,7 @@ mod tests {
         assert!(!rule(&floor, &[floor_id]).allows(MoveAxis::Z), "the vertical axis has no free distance");
         assert!(rule(&floor, &[floor_id]).allows(MoveAxis::X), "the floor plane stays free");
 
-        let (wall, wall_id) = product_project("30.01.02");
+        let (wall, wall_id) = product_project("10.01.02");
         assert_eq!(
             limit(&wall, &[wall_id], MoveAxis::Z, 120.0),
             MoveLimit { distance_mm: 120.0, contact: None },
@@ -450,7 +450,7 @@ mod tests {
         // The same node, not a second one: the row decides, never the container or the command.
         let mut changed = floor;
         changed
-            .set_property(floor_id, SYSTEM_CLASS, PropertyValue::class(class("30.01.02")))
+            .set_property(floor_id, SYSTEM_CLASS, PropertyValue::class(class("10.01.02")))
             .expect("a wall class keeps the envelope");
         assert_eq!(
             limit(&changed, &[floor_id], MoveAxis::Z, 120.0),
@@ -461,14 +461,14 @@ mod tests {
 
     #[test]
     fn a_floor_bound_product_still_slides_and_snaps_on_the_floor() {
-        let (project, id) = product_project("30.01.01");
+        let (project, id) = product_project("10.01.01");
         assert_eq!(limit(&project, &[id], MoveAxis::X, 297.4), MoveLimit { distance_mm: 297.0, contact: None });
     }
 
     #[test]
     fn a_shell_stops_at_contact_with_another_shell() {
-        let (mut project, cabinet) = product_project("30.01.01");
-        let neighbour = product(&mut project, "30.01.01", (600, 560, 720), (1000, 0, 0));
+        let (mut project, cabinet) = product_project("10.01.01");
+        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
         // The cabinet spans x = 0..600 and the neighbour starts at 1000: the drag stops at 400.
         assert_eq!(
             limit(&project, &[cabinet], MoveAxis::X, 1000.0),
@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn a_contained_shell_moves_inside_until_it_would_cross_a_wall() {
         let mut project = sample_project();
-        let outer = product(&mut project, "30.01.02", (2000, 1000, 2000), (0, 0, 0));
-        let inner = product(&mut project, "30.01.02", (600, 500, 700), (700, 200, 500));
+        let outer = product(&mut project, "10.01.02", (2000, 1000, 2000), (0, 0, 0));
+        let inner = product(&mut project, "10.01.02", (600, 500, 700), (700, 200, 500));
         assert_eq!(
             limit(&project, &[inner], MoveAxis::Z, 1500.0),
             MoveLimit { distance_mm: 800.0, contact: Some(outer) },
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn a_body_stops_at_a_body_and_not_at_a_shell() {
-        let (mut project, piece) = product_project("30.01.01");
+        let (mut project, piece) = product_project("10.01.01");
         // Away from the sample panels at the origin, so only the two panels below are measured.
         let shelf = panel(&mut project, piece, "Shelf", (0, 1000, 0));
         let other = panel(&mut project, piece, "Other", (1000, 1000, 0));
@@ -510,22 +510,22 @@ mod tests {
         );
 
         // A shell is not a body: the same shelf slides up to a neighbouring frame untouched.
-        let (mut project, piece) = product_project("30.01.01");
+        let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
-        let _frame = product(&mut project, "30.01.01", (600, 560, 720), (1000, 0, 0));
+        let _frame = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
         assert_eq!(limit(&project, &[shelf], MoveAxis::X, 1000.0), MoveLimit { distance_mm: 1000.0, contact: None });
     }
 
     #[test]
     fn a_drag_lands_on_the_grid_and_on_a_face() {
         // A lone part inside a piece: nothing to meet, so the 1 mm grid decides.
-        let (mut project, piece) = product_project("30.01.01");
+        let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 1000, 0));
         assert_eq!(limit(&project, &[shelf], MoveAxis::X, 97.4), MoveLimit { distance_mm: 97.0, contact: None });
 
         // A neighbour frame's virtual face at x = 1000 captures the shelf's far face, and a body
         // never stops at a shell, so the face — not the grid — is the answer.
-        let _frame = product(&mut project, "30.01.01", (600, 560, 720), (1000, 0, 0));
+        let _frame = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
         let shelf = panel(&mut project, piece, "Second shelf", (0, 0, 0));
         assert_eq!(
             limit(&project, &[shelf], MoveAxis::X, 297.4),
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn a_wall_product_lands_on_the_floor() {
         let mut project = sample_project();
-        let hanging = product(&mut project, "30.01.02", (600, 560, 720), (0, 0, 3));
+        let hanging = product(&mut project, "10.01.02", (600, 560, 720), (0, 0, 3));
         assert_eq!(
             limit(&project, &[hanging], MoveAxis::Z, -1.5),
             MoveLimit { distance_mm: -3.0, contact: None },
@@ -564,14 +564,14 @@ mod tests {
 
     #[test]
     fn a_non_finite_proposal_moves_nothing() {
-        let (project, id) = product_project("30.01.01");
+        let (project, id) = product_project("10.01.01");
         assert_eq!(rule(&project, &[id]).limit(MoveAxis::X, f64::NAN), MoveLimit { distance_mm: 0.0, contact: None });
     }
 
     #[test]
     fn a_turned_product_is_measured_by_its_world_box() {
-        let (mut project, cabinet) = product_project("30.01.01");
-        let neighbour = product(&mut project, "30.01.01", (600, 560, 720), (1000, 0, 0));
+        let (mut project, cabinet) = product_project("10.01.01");
+        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
         // Turn the cabinet a quarter about Z: its depth (560) now runs along +X, so its world box
         // reaches x = 560 and the drag may travel 440 mm before contact.
         let turned = Placement::IDENTITY

@@ -309,7 +309,7 @@ volume asks the program for it when such a report exists.
 ## 12. Answered questions
 
 - **A code group for products?** No. `level = Product` is a class trait; the code names the product's
-  function (a wall cabinet is `30.01.02`). A code range would put the assembly role back into the
+  function (a wall cabinet is `10.01.02`). A code range would put the assembly role back into the
   digits, which 0094 removed.
 - **The class at creation?** A placeholder class, «изделие общего назначения», assigned by
   `product.create` and changed later from the card; a product always has a class.

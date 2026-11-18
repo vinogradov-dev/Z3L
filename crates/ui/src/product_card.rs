@@ -279,33 +279,18 @@ mod tests {
     }
 
     #[test]
-    fn the_class_list_follows_the_order_of_the_work() {
-        let mut card = ProductCard::new();
-        card.start();
-        let (texts, _) = present(&mut card, Lang::En);
-        let row = |code: &str| texts.iter().position(|text| text.starts_with(code));
-        let (placeholder, cabinet, table, bed, chair) =
-            (row("80.01"), row("30.01 "), row("40.01 "), row("20.01 "), row("10.01 "));
-        assert!(placeholder.is_some(), "the placeholder is listed: {texts:?}");
-        assert!(placeholder < cabinet, "the placeholder comes before the cabinet: {texts:?}");
-        assert!(cabinet < table, "a cabinet is what a shop makes before a table: {texts:?}");
-        assert!(table < bed, "tables before beds: {texts:?}");
-        assert!(bed < chair, "a chair belongs to a scene, so it is last: {texts:?}");
-    }
-
-    #[test]
     fn a_search_narrows_the_class_list() {
         let mut card = ProductCard::new();
         card.start();
         card.query = "no such product".to_owned();
         let (texts, _) = present(&mut card, Lang::En);
         assert!(texts.iter().any(|text| text == "No class matches."), "a query with no answer says so: {texts:?}");
-        assert!(!texts.iter().any(|text| text.starts_with("80.01")), "and hides the rows: {texts:?}");
+        assert!(!texts.iter().any(|text| text.starts_with("70.01")), "and hides the rows: {texts:?}");
 
         card.query = "general".to_owned();
         let (texts, _) = present(&mut card, Lang::En);
         assert!(
-            texts.iter().any(|text| text.starts_with("80.01") && text.contains("General product")),
+            texts.iter().any(|text| text.starts_with("70.01") && text.contains("General product")),
             "a matching query brings the row back: {texts:?}"
         );
     }

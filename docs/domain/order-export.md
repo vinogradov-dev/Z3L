@@ -137,7 +137,7 @@ byte-identical. The column lists below are the contract; the manifest repeats th
 | `node_id` | the product node |
 | `parent_id` | its parent in the tree |
 | `name` | the user's name |
-| `class` | the class code, e.g. `30.01.03` |
+| `class` | the class code, e.g. `10.01.03` |
 | `level` | `Product` |
 | `width_um`, `height_um`, `depth_um` | the product's envelope: authored on the container, never derived |
 | `content_width_um`, `content_height_um`, `content_depth_um` | the derived bounds of its parts in the product frame, so a reader sees whether anything pokes out |

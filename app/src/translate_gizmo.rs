@@ -335,7 +335,7 @@ mod tests {
         let placement = Placement::IDENTITY
             .with_translation(millimetres(x), Length::ZERO, Length::ZERO)
             .expect("a floor placement");
-        let class: ClassCode = "30.01.01".parse().expect("a base cabinet");
+        let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
         project.add_product(root, "Cabinet", class, envelope, placement).expect("a product")
     }
 

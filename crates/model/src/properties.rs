@@ -317,7 +317,7 @@ mod tests {
             PropertyValue::text("oak"),
             PropertyValue::choice("left", "Left"),
             PropertyValue::reference(Id::new(9).expect("id")),
-            PropertyValue::class(class("30.11")),
+            PropertyValue::class(class("10.11")),
             PropertyValue::structured(serde_json::json!({"width": 600})),
         ];
         for value in values {
@@ -338,7 +338,7 @@ mod tests {
         }
         let mut properties = Properties::new();
         properties.insert(SYSTEM_COMPONENT, PropertyValue::bool(false)).expect("component flag");
-        properties.insert(SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        properties.insert(SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         properties
             .insert(SYSTEM_PROTOTYPE_ID, PropertyValue::reference(Id::new(5).expect("id")))
             .expect("prototype id");
@@ -354,13 +354,13 @@ mod tests {
         let unknown = class("20.01.09");
         assert!(!unknown.is_registered());
         assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(unknown)).is_err());
-        assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(class("30"))).is_err(), "a family");
+        assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(class("10"))).is_err(), "a family");
 
         let stored = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(unknown) });
         let loaded = Properties::deserialize(stored).expect("an unknown class still loads");
         assert_eq!(loaded.get(SYSTEM_CLASS), Some(&PropertyValue::class(unknown)));
 
-        let family = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(class("30")) });
+        let family = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(class("10")) });
         Properties::deserialize(family).expect("a family code loads and reads as not assignable");
     }
 }

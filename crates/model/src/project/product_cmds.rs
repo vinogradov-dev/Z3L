@@ -107,7 +107,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let product = project
-            .add_product(root, "Base cabinet", class("30.01.02"), envelope(600, 560, 720), Placement::IDENTITY)
+            .add_product(root, "Base cabinet", class("10.01.02"), envelope(600, 560, 720), Placement::IDENTITY)
             .expect("add product");
         let group = project.add_component(product, "Carcass", Placement::IDENTITY).expect("add group");
         let shelf = project
@@ -159,7 +159,7 @@ mod tests {
         let revision = project.revision();
 
         let product = project
-            .add_product(root, "Wall cabinet", class("30.01.02"), envelope(600, 320, 720), Placement::IDENTITY)
+            .add_product(root, "Wall cabinet", class("10.01.02"), envelope(600, 320, 720), Placement::IDENTITY)
             .expect("add product");
 
         assert_eq!(project.revision(), revision.checked_next().expect("revision"));
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(container.name(), "Wall cabinet");
         assert!(container.is_product());
         assert!(container.is_component(), "a product carries a class, so it is a component");
-        assert_eq!(container.class(), class("30.01.02"));
+        assert_eq!(container.class(), class("10.01.02"));
         assert_eq!(container.envelope(), Some(envelope(600, 320, 720)));
         assert_eq!(project.parent_of(product), Some(root));
         assert_eq!(project.product_of(product), Some(product));
@@ -183,8 +183,8 @@ mod tests {
         let revision = project.revision();
 
         assert_eq!(
-            project.add_product(root, "Shelf", class("30.11"), envelope(600, 320, 720), Placement::IDENTITY),
-            Err(ProjectError::NotAProductClass { class: class("30.11") })
+            project.add_product(root, "Shelf", class("10.11"), envelope(600, 320, 720), Placement::IDENTITY),
+            Err(ProjectError::NotAProductClass { class: class("10.11") })
         );
         let missing = Id::new(99).expect("id");
         assert_eq!(
@@ -269,7 +269,7 @@ mod tests {
 
         // Turning the product into a shelf would leave its envelope on a non-product.
         assert_eq!(
-            project.set_property(product, SYSTEM_CLASS, PropertyValue::class(class("30.11"))),
+            project.set_property(product, SYSTEM_CLASS, PropertyValue::class(class("10.11"))),
             Err(ProjectError::EnvelopeWithoutProductClass { node: product })
         );
         assert_eq!(

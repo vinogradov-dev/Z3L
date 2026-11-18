@@ -72,7 +72,7 @@ fn add_parts(project: &mut Project, product: Id) {
         )
         .expect("a door is added");
     project
-        .set_property(door, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(302_000).expect("a hinged door")))
+        .set_property(door, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(102_000).expect("a hinged door")))
         .expect("a facade class");
 
     let fitting = project.add_component(product, "Hinge", Placement::IDENTITY).expect("a fitting container");
@@ -105,7 +105,7 @@ fn add_second_product(project: &mut Project) {
         )
         .expect("a back panel");
     project
-        .set_property(back, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(301_200).expect("a back panel")))
+        .set_property(back, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(101_200).expect("a back panel")))
         .expect("a back class");
 
     // A round shelf draws arcs, so the contour table carries a curve and not only lines.
