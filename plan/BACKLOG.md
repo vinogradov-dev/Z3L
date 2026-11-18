@@ -155,8 +155,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    card reads the trait.
   Shape: One row under the class: the position the chosen class carries, said in words (On the
    floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
-   class list is not filtered and the class stays the only stored fact. Two messages carry the
-   words in both languages.
+   class list is not filtered and the class stays the only stored fact. A height above the
+   floor stays the makers placement, as ADR 0100 has it, so the row describes the rule and
+   never sets a height. Two messages carry the words in both languages.
   Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
    wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
    xtask ci is green.
