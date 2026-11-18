@@ -173,7 +173,7 @@ mod tests {
         assert!(product.is_product());
         assert!(product.is_component());
         assert_eq!(product.class(), ClassCode::GENERAL_PRODUCT);
-        assert_eq!(product.envelope(), Some(envelope(600, 560, 720)));
+        assert_eq!(product.envelope().cloned(), Some(envelope(600, 560, 720)));
         assert_eq!(session.project().product_of(id), Some(id));
 
         session.undo().expect("undo create");
@@ -247,10 +247,16 @@ mod tests {
 
         let revision = session.project().revision();
         session.dispatch(PRODUCT_ENVELOPE_SET_ID, &params).expect("set envelope");
-        assert_eq!(session.project().container(product).expect("product").envelope(), Some(envelope(900, 560, 2000)));
+        assert_eq!(
+            session.project().container(product).expect("product").envelope().cloned(),
+            Some(envelope(900, 560, 2000))
+        );
         assert_eq!(session.project().revision(), revision.checked_next().expect("revision"));
         session.undo().expect("undo the envelope edit");
-        assert_eq!(session.project().container(product).expect("product").envelope(), Some(envelope(600, 560, 720)));
+        assert_eq!(
+            session.project().container(product).expect("product").envelope().cloned(),
+            Some(envelope(600, 560, 720))
+        );
 
         let shelf = Id::new(2).expect("sample shelf");
         let wrong = serde_json::to_value(ProductEnvelopeSet { node: shelf, envelope: envelope(1, 1, 1) })

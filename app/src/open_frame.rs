@@ -85,14 +85,18 @@ impl OpenBoxes {
 /// The eight corners of a product's authored box in world space.
 ///
 /// The bit order is the one [`geom::Bounds`] promises for a container's box: bit 0 picks
-/// the `x` maximum, bit 1 the `y` and bit 2 the `z`, so both kinds of box bracket the same way.
+/// the `x` maximum, bit 1 the `y` and bit 2 the `z`, so both kinds of box bracket the same way. The
+/// box is the one around the reserved footprint: a bracket marks the piece's extent, not its shape.
 fn envelope_corners(envelope: &ProductEnvelope) -> [DVec3; 8] {
-    let size = envelope.size;
+    let (min, max) = envelope.local_bounds().unwrap_or((DVec3::ZERO, DVec3::ZERO));
     let mut corners = [DVec3::ZERO; 8];
     for (index, corner) in corners.iter_mut().enumerate() {
-        let pick = |bit: usize, high: f64| if index & bit == 0 { 0.0 } else { high };
-        *corner =
-            envelope.world_transform.transform_point3(DVec3::new(pick(1, size.x), pick(2, size.y), pick(4, size.z)));
+        let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+        *corner = envelope.world_transform.transform_point3(DVec3::new(
+            pick(1, min.x, max.x),
+            pick(2, min.y, max.y),
+            pick(4, min.z, max.z),
+        ));
     }
     corners
 }
@@ -277,12 +281,7 @@ mod tests {
             DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2),
             DVec3::new(100.0, 0.0, 0.0),
         );
-        ProductEnvelope {
-            id: Id::new(id).expect("id"),
-            size: DVec3::new(600.0, 400.0, 720.0),
-            world_transform: placement,
-            state,
-        }
+        ProductEnvelope::rectangular(Id::new(id).expect("id"), DVec3::new(600.0, 400.0, 720.0), placement, state)
     }
 
     #[test]
@@ -293,9 +292,10 @@ mod tests {
 
         // The box follows the product's own frame, so a turned piece brackets a turned box.
         let corners = boxes.0[0];
+        let (min, max) = opening.local_bounds().expect("a valid envelope");
         for (index, corner) in corners.iter().enumerate() {
-            let pick = |bit: usize, high: f64| if index & bit == 0 { 0.0 } else { high };
-            let local = DVec3::new(pick(1, opening.size.x), pick(2, opening.size.y), pick(4, opening.size.z));
+            let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+            let local = DVec3::new(pick(1, min.x, max.x), pick(2, min.y, max.y), pick(4, min.z, max.z));
             let expected = opening.world_transform.transform_point3(local);
             assert!((*corner - expected).length() < 1.0e-9, "corner {index} of the authored box");
         }

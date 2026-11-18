@@ -26,6 +26,7 @@ mod contour_edit;
 mod contour_frames;
 #[cfg(test)]
 mod fixtures;
+mod footprint;
 mod frame;
 mod ids;
 mod light;
@@ -56,6 +57,7 @@ pub use contour::{
 };
 pub use contour_edit::{ContourEditError, CornerMove, PathCorner};
 pub use contour_frames::{ArcFrame, CircleFrame, PolygonFrame, RectangleFrame};
+pub use footprint::{Footprint, FootprintError};
 pub use frame::{Anchored, FrameAnchor, FrameError, Rebased, rebase_origin_at};
 pub use ids::{ContourSegmentId, EdgeId, Id, ItemId, ItemIdError, MachiningId, Revision, VertexId};
 pub use light::{LightError, LightKind, LightNode};

@@ -1047,7 +1047,7 @@ mod tests {
     use crate::geometry::{floor_indices, floor_vertices};
     use crate::ground::{GroundKey, penumbra_texels};
     use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, floor_depth_state};
-    use geom::{DMat4, MeshData};
+    use geom::{DMat4, DVec2, MeshData};
     use model::Id;
     use scene::{Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
 
@@ -1250,7 +1250,7 @@ mod tests {
     }
 
     fn product_envelope(id: u64, size: DVec3, state: ProductEnvelopeState) -> ProductEnvelope {
-        ProductEnvelope { id: Id::new(id).expect("id"), size, world_transform: DMat4::IDENTITY, state }
+        ProductEnvelope::rectangular(Id::new(id).expect("id"), size, DMat4::IDENTITY, state)
     }
 
     #[test]
@@ -1285,6 +1285,48 @@ mod tests {
             product_envelope_vertices(&[with_parts], active, inactive).expect("a valid envelope").is_empty(),
             "a closed piece with parts draws no lines"
         );
+    }
+
+    #[test]
+    fn a_cut_envelope_draws_its_two_rings_and_one_vertical_at_each_corner() {
+        let active = SceneColors::DARK.product_envelope_active;
+        let inactive = SceneColors::DARK.product_envelope_inactive;
+        let outline = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(100.0, 0.0),
+            DVec2::new(100.0, 40.0),
+            DVec2::new(40.0, 40.0),
+            DVec2::new(40.0, 100.0),
+            DVec2::new(0.0, 100.0),
+        ];
+        let envelope = ProductEnvelope {
+            id: Id::new(9).expect("id"),
+            outline: Arc::from(outline),
+            corners: Arc::from(outline),
+            height: 100.0,
+            world_transform: DMat4::IDENTITY,
+            state: ProductEnvelopeState::Open,
+        };
+        let vertices = product_envelope_vertices(&[envelope], active, inactive).expect("a valid envelope");
+        assert!(vertices.len().is_multiple_of(2), "a line list is drawn in pairs");
+        assert!(
+            vertices.iter().all(|vertex| (0.0..=100.0).contains(&vertex.position[2])),
+            "the wireframe stays between the base and the top"
+        );
+        let mut verticals: Vec<(i64, i64)> = vertices
+            .chunks(2)
+            .filter_map(|pair| {
+                let [from, to] = pair else {
+                    return None;
+                };
+                ((from.position[2] - to.position[2]).abs() > 1.0e-6)
+                    .then(|| (i64::from(from.position[0].round() as i32), i64::from(from.position[1].round() as i32)))
+            })
+            .collect();
+        verticals.sort_unstable();
+        verticals.dedup();
+        assert_eq!(verticals.len(), 6, "one vertical per corner of the cut shape: {verticals:?}");
+        assert!(!verticals.iter().any(|(x, y)| *x > 40 && *y > 40), "the cut corner stands no vertical: {verticals:?}");
     }
 
     #[test]
@@ -1941,12 +1983,12 @@ mod tests {
             (2, 0.0, ProductEnvelopeState::ClosedEmpty),
             (3, 800.0, ProductEnvelopeState::ClosedWithParts),
         ] {
-            frame.push_product_envelope(ProductEnvelope {
-                id: Id::new(id).expect("id"),
-                size: box_size,
-                world_transform: DMat4::from_translation(DVec3::new(x, 0.0, 0.0)),
+            frame.push_product_envelope(ProductEnvelope::rectangular(
+                Id::new(id).expect("id"),
+                box_size,
+                DMat4::from_translation(DVec3::new(x, 0.0, 0.0)),
                 state,
-            });
+            ));
         }
         let mut renderer = ViewportRenderer::new(&device, 1280, 800);
         let directory = testkit::ui_shots_dir().expect("the shots directory is created");

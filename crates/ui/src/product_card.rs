@@ -57,7 +57,7 @@ fn max_side_mm() -> f64 {
 }
 
 /// What the maker asked for, ready for `product.create`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductDraft {
     /// The authored width, depth and height of the reserved box.
     pub envelope: Envelope,

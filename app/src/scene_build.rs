@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use engine::Session;
-use geom::{Aabb, DMat4, DVec3};
+use geom::{Aabb, DMat4, DVec2, DVec3};
 use kernel::{SolidKernel, TessOptions};
 use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;
@@ -383,6 +383,32 @@ pub fn authored_lighting_with(project: &Project, previewed: &[(Id, Placement)], 
     any_authored.then_some(lighting)
 }
 
+/// The tolerance a footprint's arcs are flattened with, in millimetres.
+///
+/// A quarter of a millimetre is far finer than a dashed wireframe can show and far coarser than the
+/// half-micrometre a panel profile samples with, so a rounded corner costs a handful of points rather
+/// than a curve drawn as code.
+const FOOTPRINT_SAMPLE_MM: f64 = 0.25;
+
+/// The base outline of a product envelope and the points where its vertical edges stand.
+///
+/// The footprint draws itself through the panel's own outline generator (ADR 0159), so a frame and a
+/// board cut to the same profile agree to the micrometre. The ring is flattened here because the scene
+/// carries points, not curves; a smooth joint — a fillet's tangency — draws no vertical edge, so only
+/// the shape's real corners are named.
+fn envelope_outline(envelope: &Envelope) -> Result<(Vec<DVec2>, Vec<DVec2>), String> {
+    let ring = envelope.footprint().outline(envelope.x(), envelope.y()).map_err(describe)?;
+    let points = ring.sample(FOOTPRINT_SAMPLE_MM).map_err(describe)?;
+    let mut corners = Vec::new();
+    for (index, segment) in ring.segments().iter().enumerate() {
+        if ring.joint_is_smooth(index, geom::DEFAULT_TANGENT_TOLERANCE) == Some(true) {
+            continue;
+        }
+        corners.push(segment.start());
+    }
+    Ok((points, corners))
+}
+
 /// A node's world placement, preferring a previewed one during a drag.
 pub fn previewed_world(project: &Project, id: Id, previewed: &[(Id, Placement)]) -> Option<Placement> {
     previewed
@@ -454,7 +480,7 @@ impl<'a> Evaluation<'a> {
                     let world = Placement::compose(parent, container.placement()).map_err(describe)?;
                     let subtree = self.collect(container.children(), world)?;
                     let subtree = match container.envelope() {
-                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree),
+                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
                         None => subtree,
                     };
                     // Recorded for every container, open or not: which of them are open is view
@@ -478,7 +504,13 @@ impl<'a> Evaluation<'a> {
     /// a closed product with nothing in it still shows its box. The envelope joins the drawn bounds
     /// so *Frame all* sees an empty piece; it never joins the solid bounds, because a reserved box is
     /// not a body and casts no contact shadow.
-    fn collect_product(&mut self, id: Id, envelope: Envelope, world: Placement, mut bounds: Bounds) -> Bounds {
+    fn collect_product(
+        &mut self,
+        id: Id,
+        envelope: &Envelope,
+        world: Placement,
+        mut bounds: Bounds,
+    ) -> Result<Bounds, String> {
         let state = if self.open_product == Some(id) {
             ProductEnvelopeState::Open
         } else if !bounds.is_empty() {
@@ -486,18 +518,23 @@ impl<'a> Evaluation<'a> {
         } else {
             ProductEnvelopeState::ClosedEmpty
         };
-        let size =
-            DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
+        let (outline, corners) = envelope_outline(envelope)?;
+        let height = envelope.z().millimetres_f64();
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
-        for bits in 0..8 {
-            bounds.include_point(transform.transform_point3(DVec3::new(
-                if bits & 1 == 0 { 0.0 } else { size.x },
-                if bits & 2 == 0 { 0.0 } else { size.y },
-                if bits & 4 == 0 { 0.0 } else { size.z },
-            )));
+        for point in &outline {
+            for z in [0.0, height] {
+                bounds.include_point(transform.transform_point3(DVec3::new(point.x, point.y, z)));
+            }
         }
-        self.frame.push_product_envelope(ProductEnvelope { id, size, world_transform: transform, state });
-        bounds
+        self.frame.push_product_envelope(ProductEnvelope {
+            id,
+            outline: outline.into(),
+            corners: corners.into(),
+            height,
+            world_transform: transform,
+            state,
+        });
+        Ok(bounds)
     }
 
     fn collect_panel(&mut self, panel: &Panel, parent: Placement) -> Result<Bounds, String> {
@@ -1778,7 +1815,9 @@ mod tests {
         assert_eq!(envelopes.len(), 1);
         assert_eq!(envelopes[0].id, product);
         assert_eq!(envelopes[0].state, ProductEnvelopeState::ClosedEmpty);
-        assert_eq!(envelopes[0].size, DVec3::splat(1000.0));
+        assert_eq!(envelopes[0].height, 1000.0);
+        assert_eq!(envelopes[0].outline.len(), 4, "a plain frame draws its four base sides");
+        assert_eq!(envelopes[0].corners.len(), 4, "and one vertical at each corner");
         assert_eq!(
             DVec3::new(
                 envelopes[0].world_transform.w_axis.x,
@@ -1805,6 +1844,55 @@ mod tests {
             "the panel is drawn inside the closed piece"
         );
         assert!(closed.frame.drawables().iter().all(|drawable| drawable.id != product), "the envelope is never a body");
+    }
+
+    #[test]
+    fn a_cut_footprint_reaches_the_scene_as_its_cut_outline() {
+        let root = Container::new(id(1).expect("id"), "Scene", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let footprint = model::Footprint::cut([
+            None,
+            Some(model::CornerFeatureKind::Chamfer {
+                incoming: millimetres(120).expect("length"),
+                outgoing: millimetres(120).expect("length"),
+            }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(
+            millimetres(800).expect("length"),
+            millimetres(600).expect("length"),
+            millimetres(900).expect("length"),
+            footprint,
+        )
+        .expect("a corner cabinet");
+        let root_id = project.root().id();
+        project
+            .add_product(root_id, "Corner", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("product");
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("scene");
+        let envelope = &evaluated.frame.product_envelopes()[0];
+        // A chamfered rectangle: the cut replaces one corner, so five edges and five corners stand.
+        assert_eq!(envelope.outline.len(), 5, "the outline is the cut shape: {:?}", envelope.outline);
+        assert_eq!(envelope.corners.len(), 5, "two verticals stand at the cut: {:?}", envelope.corners);
+        assert!(
+            envelope.corners.iter().any(|point| (point.x - 680.0).abs() < 0.01 && point.y.abs() < 0.01)
+                && envelope
+                    .corners
+                    .iter()
+                    .any(|point| (point.x - 800.0).abs() < 0.01 && (point.y - 120.0).abs() < 0.01),
+            "the cut's two ends are corners: {:?}",
+            envelope.corners
+        );
+        assert!(
+            !envelope.outline.iter().any(|point| (point.x - 800.0).abs() < 0.01 && point.y.abs() < 0.01),
+            "the square corner is gone: {:?}",
+            envelope.outline
+        );
+        assert!(evaluated.bounds.radius().is_some_and(|radius| radius > 0.0), "the piece is framed");
     }
 
     #[test]

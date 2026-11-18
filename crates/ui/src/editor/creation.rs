@@ -168,7 +168,7 @@ impl Editor {
     pub fn create_product(&mut self, session: &mut Session, draft: ProductDraft, lang: Lang) -> Result<(), String> {
         let project = session.project();
         let root = project.root().id();
-        let placement = project.product_placement(draft.envelope);
+        let placement = project.product_placement(draft.envelope.clone());
         let base = draft.class.label().map(|label| label.text(lang)).unwrap_or(Message::CmdCreateProduct.text(lang));
         let name = project.unique_child_name(root, base);
         let params =

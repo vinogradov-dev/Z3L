@@ -479,7 +479,7 @@ impl ProductBox {
     /// A turned piece no longer has axis-aligned sides, so its eight corners are collected and the
     /// tightest box around them is used: placement is used for containment, never for a decision a
     /// maker reads off an axis.
-    fn of(envelope: Envelope, world: Placement) -> Option<Self> {
+    fn of(envelope: &Envelope, world: Placement) -> Option<Self> {
         let size =
             DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
         let mut min = DVec3::splat(f64::INFINITY);

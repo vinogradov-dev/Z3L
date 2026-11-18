@@ -1415,7 +1415,7 @@ fn creating_a_frame_opens_it_and_the_next_panel_lands_inside() {
     assert_eq!(container.placement().translation().length(), 0.0, "the first frame stands at the origin");
     assert_eq!(
         container.envelope(),
-        Some(Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid box"))
+        Some(&Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid box"))
     );
     assert_eq!(editor.selected_node(), Some(product), "the new frame is selected");
     assert_eq!(editor.creation_target(session.project()), product, "the frame is armed for parts");

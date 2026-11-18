@@ -168,7 +168,7 @@ mod tests {
         assert!(container.is_product());
         assert!(container.is_component(), "a product carries a class, so it is a component");
         assert_eq!(container.class(), class("10.01.02"));
-        assert_eq!(container.envelope(), Some(envelope(600, 320, 720)));
+        assert_eq!(container.envelope().cloned(), Some(envelope(600, 320, 720)));
         assert_eq!(project.parent_of(product), Some(root));
         assert_eq!(project.product_of(product), Some(product));
         assert_eq!(project.products(), vec![product]);
@@ -207,10 +207,10 @@ mod tests {
         let new_box = envelope(900, 560, 2000);
 
         assert_eq!(
-            project.set_product_envelope(product, new_box).expect("set envelope"),
+            project.set_product_envelope(product, new_box.clone()).expect("set envelope"),
             revision.checked_next().expect("revision")
         );
-        assert_eq!(project.container(product).expect("product").envelope(), Some(new_box));
+        assert_eq!(project.container(product).expect("product").envelope().cloned(), Some(new_box.clone()));
         assert_eq!(project.panel(shelf).expect("shelf").nominal_size(), sample_nominal());
         assert_eq!(project.set_product_envelope(shelf, new_box), Err(ProjectError::NotAProduct { id: shelf }));
     }
@@ -287,7 +287,7 @@ mod tests {
         project
             .set_property(product, SYSTEM_CLASS, PropertyValue::class(ClassCode::GENERAL_PRODUCT))
             .expect("another product class");
-        assert_eq!(project.container(product).expect("product").envelope(), Some(envelope(600, 560, 720)));
+        assert_eq!(project.container(product).expect("product").envelope().cloned(), Some(envelope(600, 560, 720)));
 
         // A component inside a product cannot become a second product.
         let inner = project.add_component(product, "Inner", Placement::IDENTITY).expect("add component");

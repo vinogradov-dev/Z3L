@@ -120,20 +120,22 @@ impl SceneFrame {
 
 /// The corner points of one product's authored box, in world space.
 ///
-/// The envelope stores three sides in the product's own frame, so the eight corners are the box a
-/// closed piece is picked and drawn by (ADR 0100).
+/// A band asks only whether a shape is covered, so the exact footprint is not needed: the eight
+/// corners of the box around the reserved space are the cheapest conservative answer, and a
+/// footprint cut inside that box can only be covered less. A malformed outline falls back to the
+/// product's own zero so the test is never a panic.
 fn envelope_corners(envelope: &crate::ProductEnvelope) -> [DVec3; 8] {
-    let size = envelope.size;
+    let (min, max) = envelope.local_bounds().unwrap_or((DVec3::ZERO, DVec3::ZERO));
     let corner = |x: f64, y: f64, z: f64| envelope.world_transform.transform_point3(DVec3::new(x, y, z));
     [
-        corner(0.0, 0.0, 0.0),
-        corner(size.x, 0.0, 0.0),
-        corner(size.x, size.y, 0.0),
-        corner(0.0, size.y, 0.0),
-        corner(0.0, 0.0, size.z),
-        corner(size.x, 0.0, size.z),
-        corner(size.x, size.y, size.z),
-        corner(0.0, size.y, size.z),
+        corner(min.x, min.y, min.z),
+        corner(max.x, min.y, min.z),
+        corner(max.x, max.y, min.z),
+        corner(min.x, max.y, min.z),
+        corner(min.x, min.y, max.z),
+        corner(max.x, min.y, max.z),
+        corner(max.x, max.y, max.z),
+        corner(min.x, max.y, max.z),
     ]
 }
 
@@ -436,12 +438,12 @@ mod tests {
         assert_eq!(frame.band_hits(camera, ASPECT, across), vec![(id(5), BandCoverage::Touched)]);
 
         // A closed product draws no shapes of its own, but its box is still what a band takes.
-        let envelope = ProductEnvelope {
-            id: id(6),
-            size: DVec3::new(400.0, 300.0, 500.0),
-            world_transform: DMat4::IDENTITY,
-            state: ProductEnvelopeState::ClosedWithParts,
-        };
+        let envelope = ProductEnvelope::rectangular(
+            id(6),
+            DVec3::new(400.0, 300.0, 500.0),
+            DMat4::IDENTITY,
+            ProductEnvelopeState::ClosedWithParts,
+        );
         let corners: Vec<DVec2> =
             envelope_corners(&envelope).into_iter().filter_map(|corner| camera.project_ndc(corner, ASPECT)).collect();
         let mut frame = SceneFrame::default();
