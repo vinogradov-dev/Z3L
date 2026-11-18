@@ -166,15 +166,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
    leaves the file untouched, and query tree prints the ids the fixture created.
   `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
-- `[ ]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
-  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
-   such row, so the back falls back to a number written in code, which is the one thing the
-   material rules forbid.
-  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
-   rule; the back type's planes read it, and an out-of-range material stays a refusal.
-  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
-   type still uses the 18 mm stock.
-  `files: app/src/scene_build.rs,crates/catalog/src/starter.rs`
 - `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
   Why: The prototype work needs three facts the document cannot store today: which container is
    a section, which prototype and card produced a node, so a command works while the library is
@@ -185,23 +176,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-- `[ ]` **O4** the directory crate holds the item envelope, the registries and the index
-  Why: The directory needs one item envelope, typed registries and an index before anything can
-   read it.
-  Shape: ItemId, kind and trait registry, property registry with typed values, families, an
-   index and the DirectorySource port; the mock, MaterialId and the old loader are deleted in
-   this change.
-  Done: A fixture package of every starter kind loads, a bad row is refused with its package
-   named, and the mock file is gone.
-  `files: crates/catalog/src/lib.rs,crates/catalog/src/directory.rs,crates/model/src/ids.rs,app/src/scene_build.rs`
-- `[ ]` **O5** the editor hot-reloads the directory
-  Why: The directory is edited elsewhere; the editor must apply a new revision without a
-   restart.
-  Shape: A revision watched off the frame path, a snapshot swapped whole at a frame boundary,
-   derived data recomputed and the undo history untouched.
-  Done: A changed fixture re-derives a panel's thickness and appearance live, and the undo
-   stack is intact.
-  `files: app/src/main.rs,crates/engine/src/session.rs,crates/engine/src/lib.rs`
 - `[ ]` **O6** the directory application edits a package
   Why: A directory nobody can edit is a file format.
   Shape: A second binary on the same stack: item tree, card, property editor, kind registry
@@ -270,6 +244,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **O5** the editor hot-reloads the directory
+  Why: The directory is edited elsewhere; the editor must apply a new revision without a
+   restart.
+  Shape: A revision watched off the frame path, a snapshot swapped whole at a frame boundary,
+   derived data recomputed and the undo history untouched.
+  Done: A changed fixture re-derives a panel's thickness and appearance live, and the undo
+   stack is intact.
+  `files: app/src/main.rs,crates/engine/src/session.rs,crates/engine/src/lib.rs` — `b0d1c49`
+
+- `[x]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
+  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
+   such row, so the back falls back to a number written in code, which is the one thing the
+   material rules forbid.
+  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
+   rule; the back type's planes read it, and an out-of-range material stays a refusal.
+  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
+   type still uses the 18 mm stock.
+  `files: app/src/scene_build.rs,crates/catalog/src/starter.rs` — `b0d1c49`
+
+- `[x]` **O4** the directory crate holds the item envelope, the registries and the index
+  Why: The directory needs one item envelope, typed registries and an index before anything can
+   read it.
+  Shape: ItemId, kind and trait registry, property registry with typed values, families, an
+   index and the DirectorySource port; the mock, MaterialId and the old loader are deleted in
+   this change.
+  Done: A fixture package of every starter kind loads, a bad row is refused with its package
+   named, and the mock file is gone.
+  `files: crates/catalog/src/lib.rs,crates/catalog/src/directory.rs,crates/model/src/ids.rs,app/src/scene_build.rs` — `b0d1c49`
 
 - `[x]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
   Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
