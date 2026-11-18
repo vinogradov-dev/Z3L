@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N20 state=idle base=373868a updated=2026-11-19
+STATE: milestone=M7 phase=T task=N20 state=idle base=b2a651b updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -15,6 +15,13 @@ The nomenclature directory is edited by a window of its own: `z3l directory
 save is one record plus the package's revision — written behind one lock, record
 first and the manifest last, so the editor re-derives the panels that name it at
 its next frame boundary (O6, ADR 0158, `nomenclature.md` §12–§14).
+
+A package travels as its folder: an export copies every file of it and its
+manifest last, an import lands the copy, checks it with the loader's own rows
+beside what is already connected, and writes the connected list last, so a
+window sees one change once the whole package is in place. Two folders that
+claim one number, or a manifest `requires` the set cannot meet, are refused with
+both packages named (O7).
 
 ## Next
 

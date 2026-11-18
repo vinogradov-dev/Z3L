@@ -82,7 +82,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
    test drives a gap through the arrow's field and asserts one command and one undo entry.
   `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs`
-
 ## Bugs
 - `[ ]` **X72** a moved part may come to rest inside another part
   Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
@@ -216,13 +215,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-- `[ ]` **O7** a package travels between workshops
-  Why: A workshop extends its directory and hands the extension to another workshop.
-  Shape: Package export and import as a folder, connect and disconnect, requires on registry
-   revisions, a refusal on a duplicated id.
-  Done: A package exports from one directory and imports into a second unchanged, and an id
-   clash is refused with both packages named.
-  `files: crates/catalog/src/source.rs,crates/project/src/lib.rs`
 - `[ ]` **O8** prices carry provenance and stock is an overlay
   Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
   Shape: Price with provenance and unit from the kind, a batched import as one history entry,
@@ -277,6 +269,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **O7** a package travels between workshops
+  Why: A workshop extends its directory and hands the extension to another workshop.
+  Shape: Package export and import as a folder, connect and disconnect, requires on registry
+   revisions, a refusal on a duplicated id.
+  Done: A package exports from one directory and imports into a second unchanged, and an id
+   clash is refused with both packages named.
+  `files: crates/catalog/src/source.rs,crates/project/src/lib.rs` — `b2a651b`
 
 - `[x]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
   Why: The owner: the frame kept the old card where the box has a typed height field, and the
