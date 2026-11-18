@@ -286,7 +286,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    projection gives at the take; an axis that points at the camera carries nothing; the rule,
    the fields and the capture are unchanged; the divider stops at its neighbour and the free
    move still crosses it; frame tests and cargo xtask ci are green.
-  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `2c52c44`
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `824859f`
+
+- `[x]` **X66** the carried piece's distance plates take the hand that carries it
+  Why: Observation: the gap plates of a carried piece take the hand. The card is anchored at
+   the pointer, so the plates sit where the hand is; a press on one does not put the piece
+   down, it starts the plate's scrub, which pins the number the drag passes through — the piece
+   then jumps to that gap and stops following the pointer, exactly as the owner's two
+   screenshots show. Expectation: while a piece is carried nothing between the hand and the
+   scene may take the pointer, because the press that ends a carry is the drop. Suspected
+   cause: `crates/ui/src/tool_card.rs` draws an interactive `egui::Area`, and the scrub of an
+   unfocused row commits live, so the plate's number is pinned by the drag.
+  Shape: The tool card of a carried piece is drawn without pointer interaction: it keeps the
+   keyboard (the field nearest the pointer still takes it, and typing a gap still pins) and
+   loses every pointer sense, so a press anywhere over it reaches the viewport and puts the
+   piece down. The card of every other gesture keeps its pointer, because those gestures have a
+   button in the hand and the plate is a deliberate target.
+  Done: A press over the carried piece's card puts the piece down and commits one placement; a
+   press-and-drag over the card scrubs nothing and pins nothing; typing a gap on that card
+   still pins the piece; the fill, box, extrude and sketch plates stay interactive; frame tests
+   and cargo xtask ci are green.
+  `files: crates/ui/src/tool_card.rs,crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs` — `824859f`
 
 - `[x]` **N25** a piece in hand blocks nothing, and the view may move under it
   Why: The owner, using N24: a piece in hand freezes the viewport. Orbit, pan and the wheel are
