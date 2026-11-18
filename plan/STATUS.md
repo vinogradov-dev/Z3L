@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N21 state=idle base=b2f83b7 updated=2026-11-18
+STATE: milestone=M7 phase=T task=N22 state=idle base=5499a93 updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,7 +45,8 @@ waits for four decisions before its ADR.
 
 ## Next
 
-N21 is next: snapping is a setting: the coordinate planes, the frames and the tolerance
+N22 is next: the furniture move is a tool of its own, and the free move keeps its hands off the
+rules
 
 ## Index
 

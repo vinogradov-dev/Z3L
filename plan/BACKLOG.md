@@ -43,30 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
-  Why: The owner: frames stick to each other, and the tolerance is the distance at which a
-   piece jumps to another, like a snap; frames stick to the floor and to walls, and until a
-   house-wall tool exists the virtual coordinate planes stand in for walls. Today the capture
-   is two constants in move_query.rs (a 5 mm snap radius and a 1 mm grid), no coordinate plane
-   is a candidate, and the maker cannot turn any of it off. Snapping is a taste and a workshop
-   standard, not a code literal, so it belongs in the workspace settings like the grid step and
-   the gizmo handle.
-  Shape: One Settings section for snapping (in the View page, beside the grid): the coordinate
-   planes on or off, the frames on or off, and the tolerance in millimetres that captures a
-   drag and makes the piece jump — it lands flush, because the tolerance is the distance at
-   which the snap fires and not a gap to keep. The move rule reads a SnapSettings value the
-   shell passes in instead of the constants; the candidates gain the X=0, Y=0 and Z=0 planes
-   (the floor included) beside the envelopes, the virtual faces and the part faces, and a
-   capture still lands the faces together. A captured face draws a line on the plane or the
-   neighbour and its field says the number, so a snap nobody can see is not a drag that feels
-   broken. One ADR records the settings, the planes as stand-in walls and the tolerance
-   reading.
-  Done: A workspace file round-trips planes, frames and tolerance; a frame dragged within the
-   tolerance of Y=0 jumps onto the plane and one dragged past it does not; two frames within
-   the tolerance meet flush and beyond it stay apart; turning the planes off leaves the piece
-   where the pointer put it; the field at the captured face shows the same number the rule
-   used; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
-  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs`
 - `[ ]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
   Why: The owner wants two tools: the move the editor has stays free and turns the furniture
    snapping off, and a furniture move moves the object by its own rules — a panel only along
@@ -253,6 +229,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
 
 ## Done
+
+- `[x]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
+  Why: The owner: frames stick to each other, and the tolerance is the distance at which a
+   piece jumps to another, like a snap; frames stick to the floor and to walls, and until a
+   house-wall tool exists the virtual coordinate planes stand in for walls. Today the capture
+   is two constants in move_query.rs (a 5 mm snap radius and a 1 mm grid), no coordinate plane
+   is a candidate, and the maker cannot turn any of it off. Snapping is a taste and a workshop
+   standard, not a code literal, so it belongs in the workspace settings like the grid step and
+   the gizmo handle.
+  Shape: One Settings section for snapping (in the View page, beside the grid): the coordinate
+   planes on or off, the frames on or off, and the tolerance in millimetres that captures a
+   drag and makes the piece jump — it lands flush, because the tolerance is the distance at
+   which the snap fires and not a gap to keep. The move rule reads a SnapSettings value the
+   shell passes in instead of the constants; the candidates gain the X=0, Y=0 and Z=0 planes
+   (the floor included) beside the envelopes, the virtual faces and the part faces, and a
+   capture still lands the faces together. A captured face draws a line on the plane or the
+   neighbour and its field says the number, so a snap nobody can see is not a drag that feels
+   broken. One ADR records the settings, the planes as stand-in walls and the tolerance
+   reading.
+  Done: A workspace file round-trips planes, frames and tolerance; a frame dragged within the
+   tolerance of Y=0 jumps onto the plane and one dragged past it does not; two frames within
+   the tolerance meet flush and beyond it stay apart; turning the planes off leaves the piece
+   where the pointer put it; the field at the captured face shows the same number the rule
+   used; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs` — `5499a93`
 
 - `[x]` **U112** the product card aligns its numbers and folds its class list
   Why: The card is the numeric path into `product.create` and it is about to grow fields
