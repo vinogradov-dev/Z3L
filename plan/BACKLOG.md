@@ -135,20 +135,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    distance, a palette command or the assistant can land a board inside another one as well.
    The live path the owner used is not yet identified; the two open ends are the free move and
    a panel outside a product.
-  Shape: The overlap is refused where the document is written, not only where a gesture runs.
+  shape: The overlap is refused where the document is written, not only where a gesture runs.
    The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
    with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
    shell that stays behind — touching faces are contact, not overlap, and a panel inside its
-   own frame's envelope stays legal. The placement commands (`node.placement.set`, `set_many`,
-   the fill's `panel.create`) ask it and refuse with a sentence naming the part that is in the
-   way; the gestures read the same answer first, so a piece stops at a neighbour instead of
-   reaching a refusal, and the free move stops too — X65's crossing clause is narrowed by a new
-   ADR, and the class rules, the axes and the snapping are untouched. A part that already
-   overlaps another (a file written before this rule) can still be dragged out of the overlap:
-   the test refuses a placement that makes an overlap worse, never one that makes it no worse.
-   The awkward cases are decisions, not accidents: a selection of several parts against one
-   neighbour, a shell inside a shell (a piece inside a case), a board that only touches, and a
-   part carried with the camera moving.
+   own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
+   rule is that a switched-off part is invisible to the eye and to the pointer, never to the
+   material (X73), so the guard asks the document, not the sight. The placement commands
+   (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
+   sentence naming the part that is in the way; the gestures read the same answer first, so a
+   piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
+   X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
+   snapping are untouched. A part that already overlaps another (a file written before this
+   rule) can still be dragged out of the overlap: the test refuses a placement that makes an
+   overlap worse, never one that makes it no worse. The awkward cases are decisions, not
+   accidents: a selection of several parts against one neighbour, a shell inside a shell (a
+   piece inside a case), a board that only touches, and a part carried with the camera moving.
   Done: A panel dragged into another panel stops at its face with both moves; a
    `node.placement.set` asked for the same overlap is refused with a sentence naming the part
    and writes nothing, so the revision does not move; a part already overlapping another can be
@@ -157,36 +159,46 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    lists it and X65's clause is amended; cargo xtask ci is green.
   `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs`
 - `[ ]` **X73** a hidden part is still in the way of the tools
-  Why: Observation, from the owner: he switched the facades of a frame off in the tree, armed
-   the shelf fill, and the ghost stuck in the phantom facades — a panel he cannot see still cut
-   the void. Expected, in the owner's words: if a part is switched off it is invisible to
-   everything. Today the hidden set is session view state (`ui::ViewFlags`, whose `hides` walks
-   the parent chain so a hidden container hides its subtree) and only the consumers that
-   project the whole tree ask it: the frame builder and the light rig
+  why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
+   shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
+   void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
+   to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
+   through the part itself — a hidden part "allows building through itself but not being
+   intersected": the part placed there stops at the hidden part's own faces. Today the hidden
+   set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
+   the consumers that project the whole tree ask it: the frame builder and the light rig
    (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
    model's own measurements walk the document, where the flag has no home: `Project::probe` and
    `Project::niche` measure every panel, object and shell
    (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
-   (`crates/ui/src/void.rs`), `Project::move_rule`'s obstacles stop a carried piece at a hidden
-   panel (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls.
-   So the drawing and the measuring disagree about what is there.
-  Shape: One sight value in the model, passed in the way `SnapSettings` is passed into
-   `move_rule`: the nodes the user switched off, plus the parent walk that makes a hidden
-   container hide its subtree (the walk `ViewFlags::hides` does today, moved where the model
-   can read it). Every query that looks at surfaces takes it — `probe`, `niche`, the move
-   rule's obstacles, the boxes a command measures against — and the shell passes
-   `editor.flags().hidden()` at each call site, so `Void::measure`, the fill plan, the distance
-   fields and the pick cannot disagree about what the pointer sees. A hidden part keeps its
-   document life: the file, the tree, undo, the order package and the panel diagnostics still
-   hold it, and showing it again restores every reading with no revision in either direction.
-   The overlap guard of X72 reads the same sight, which is the owner's own rule taken to its
-   end: a placement may go where a hidden part stands, and the clash shows when the part is
-   shown again — the question of whether that is wanted is filed for the owner.
-  Done: With a frame's facades hidden the shelf fill measures the void without them and the
-   ghost lands in the clear space; a carried panel passes a hidden panel and still stops at a
-   visible one; the niche row, the distance fields, the picking and the drawing name the same
-   parts in both states; showing a part again restores its walls everywhere with no document
-   revision; a hidden container hides its whole subtree for the tools as it does for the frame;
+   (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
+   (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
+   drawing and the measuring disagree about what is there.
+  shape: Two halves, which land together because either one alone is wrong. **The sight.** One
+   visibility value in the model — the nodes the user switched off plus the parent walk that
+   makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
+   in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
+   takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
+   rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
+   void that holds one is no longer refused as "not one convex cell". **The boundary.** The
+   part still stops at it: the hidden bodies a cell holds are walls for the material and not
+   for the ray. The plan trims the footprint at every hidden body's face on the axes the part
+   takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
+   X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
+   the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
+   decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
+   cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
+   than the board, a hidden facade that spans the whole opening (the part takes what is left,
+   and a void with nothing left says so), and a hidden container whose children are visible
+   (the subtree goes with it, as the frame already does).
+  done: With a frame's facades hidden the shelf fill measures the case's own void instead of
+   the phantom planes and the ghost lands in the clear space, its depth stopping at the
+   facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
+   while a part created or carried there stops at the hidden faces and never intersects them; a
+   hidden body standing inside a void is a boundary of the part and never a slice of it, in
+   both builds; the niche row, the distance fields, the picking and the drawing name the same
+   parts in both states; showing a part again restores every reading and changes no document
+   field; a hidden container hides its whole subtree for the tools as it does for the frame;
    cargo xtask ci is green.
   `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs`
 
