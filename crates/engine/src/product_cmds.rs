@@ -205,11 +205,11 @@ mod tests {
         assert!(session.dispatch(PRODUCT_CREATE_ID, &blank).is_err());
 
         let mut shelf_class = create_params(root, None);
-        shelf_class["class"] = serde_json::json!("30.11".parse::<ClassCode>().expect("class").value());
+        shelf_class["class"] = serde_json::json!("10.11".parse::<ClassCode>().expect("class").value());
         assert!(!create.enabled(&session, &shelf_class));
         assert_eq!(
             session.dispatch(PRODUCT_CREATE_ID, &shelf_class),
-            Err(CommandError::Model(ProjectError::NotAProductClass { class: "30.11".parse().expect("class") }))
+            Err(CommandError::Model(ProjectError::NotAProductClass { class: "10.11".parse().expect("class") }))
         );
 
         let unknown = serde_json::json!({"parent": root.get(), "name": "X", "envelope": {"x": 1}, "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}});
@@ -266,7 +266,7 @@ mod tests {
         let request = ProductCreate {
             parent: Id::new(1).expect("id"),
             name: "Wall cabinet".to_owned(),
-            class: Some("30.01.02".parse().expect("class")),
+            class: Some("10.01.02".parse().expect("class")),
             envelope: envelope(600, 320, 720),
             placement: Placement::IDENTITY,
         };

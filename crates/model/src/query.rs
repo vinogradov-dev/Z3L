@@ -126,11 +126,11 @@ mod tests {
     fn a_query_keeps_the_filters_it_was_given_and_round_trips() {
         let query = NodeQuery::any()
             .with_kind(StructuralKind::Panel)
-            .with_class_under("30.01".parse().expect("class"))
+            .with_class_under("10.01".parse().expect("class"))
             .with_property("width", PropertyValue::integer(600));
         assert!(!query.is_empty());
         assert_eq!(query.kind(), Some(StructuralKind::Panel));
-        assert_eq!(query.class().map(|value| value.value()), Some(300_100));
+        assert_eq!(query.class().map(|value| value.value()), Some(100_100));
         assert_eq!(query.property().map(|predicate| predicate.key()), Some("width"));
 
         let text = serde_json::to_string(&query).expect("serialize query");

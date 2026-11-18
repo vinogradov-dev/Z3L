@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=J1 state=idle base=17aee02 updated=2026-11-17
+STATE: milestone=M7 phase=T task=U113 state=idle base=cd44446 updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,8 +45,7 @@ waits for four decisions before its ADR.
 
 ## Next
 
-J1 is next: the editor can be driven from the command line — list its commands, run a recipe, ask
-the scene a question
+U113 gives the four transform modes their keys, and the status bar prints them
 
 ## Index
 

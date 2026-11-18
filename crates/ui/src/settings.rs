@@ -32,6 +32,21 @@ pub const MIN_GRID_STEP_MM: u32 = 1;
 /// The largest grid step the settings offer, in millimetres.
 pub const MAX_GRID_STEP_MM: u32 = 10_000;
 
+/// The smallest snap tolerance the settings offer, in millimetres.
+///
+/// One millimetre is the furniture grid itself, so the smallest setting still captures a drag that
+/// has already landed: below it the field would offer a number no drag can use.
+pub const MIN_SNAP_MM: u32 = 1;
+
+/// The largest snap tolerance the settings offer, in millimetres.
+///
+/// Five centimetres is a hand's width across the shop: past it a piece jumps to a surface it was
+/// nowhere near, and the drag stops feeling like the maker's own.
+pub const MAX_SNAP_MM: u32 = 50;
+
+/// The tolerance a fresh workspace snaps at, in millimetres.
+pub const DEFAULT_SNAP_MM: u32 = 5;
+
 /// The smallest hand-turn step of the roll ring, in degrees.
 pub const MIN_ROLL_STEP_DEGREES: u32 = 1;
 
@@ -366,6 +381,45 @@ impl GizmoSettings {
     }
 }
 
+/// The *Snapping* section: what a furniture drag captures, and how near it must come.
+///
+/// Snapping is a taste and a workshop standard, so the three values are the workspace's and never
+/// the document's: turning the planes off costs no undo entry and leaves no revision behind. The
+/// model owns what each value means (`model::SnapSettings`) and the shell hands it over once when a
+/// drag starts, so a change applies to the next drag and never to the one under the hand (ADR 0146).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SnapSettings {
+    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
+    ///
+    /// Until a house-wall tool exists they stand in for the walls of a room: a base cabinet against
+    /// the back wall of a shop and a piece standing on the floor are the same snap.
+    pub planes: bool,
+    /// Whether another product's envelope captures a drag with its virtual faces.
+    pub frames: bool,
+    /// How near a surface must be to capture a drag, in millimetres; zero captures nothing.
+    pub tolerance_mm: u32,
+}
+
+impl Default for SnapSettings {
+    fn default() -> Self {
+        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM }
+    }
+}
+
+impl SnapSettings {
+    /// The value the move rule reads: the same three facts, with the tolerance as the document's own
+    /// unit so the model never sees a millimetre as a number.
+    pub fn rule(&self) -> model::SnapSettings {
+        let tolerance = i64::from(self.tolerance_mm.clamp(MIN_SNAP_MM, MAX_SNAP_MM));
+        model::SnapSettings {
+            planes: self.planes,
+            frames: self.frames,
+            tolerance: units::Length::from_micrometres(tolerance * 1000),
+        }
+    }
+}
+
 /// The *Work cursor* section: the square the shell draws at the pointer over the scene.
 ///
 /// The size is a hand's preference, and a furniture maker lines two boards up across a view with
@@ -463,6 +517,8 @@ pub struct Settings {
     pub viewport: ViewportSettings,
     /// The size of the two transform gizmos.
     pub gizmo: GizmoSettings,
+    /// What a furniture drag snaps to, and how near.
+    pub snaps: SnapSettings,
     /// The size of the work cursor and whether it draws a crosshair.
     pub pointer: PointerSettings,
     /// Recently opened scenes, newest first.
@@ -480,6 +536,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             viewport: ViewportSettings::default(),
             gizmo: GizmoSettings::default(),
+            snaps: SnapSettings::default(),
             pointer: PointerSettings::default(),
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
@@ -571,6 +628,7 @@ impl Settings {
             self.viewport.roll_step_degrees.clamp(MIN_ROLL_STEP_DEGREES, MAX_ROLL_STEP_DEGREES);
         self.gizmo.handle_points = self.gizmo.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS);
         self.gizmo.ring_percent = self.gizmo.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT);
+        self.snaps.tolerance_mm = self.snaps.tolerance_mm.clamp(MIN_SNAP_MM, MAX_SNAP_MM);
         self.pointer.cursor_size = self.pointer.cursor_size.clamp(MIN_CURSOR_POINTS, MAX_CURSOR_POINTS);
         let mut seen = Vec::new();
         self.recent.retain(|path| {
@@ -957,6 +1015,25 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
                 .speed(5.0),
         )
         .changed();
+    // Snapping sits beside the grid because it is the other half of the same question: what a
+    // piece lands on when it is dragged (N21, ADR 0146).
+    ui.add_space(theme::STEP);
+    ui.label(egui::RichText::new(Message::Snapping.text(lang)).strong());
+    changed |= ui
+        .checkbox(&mut settings.snaps.planes, Message::SnapPlanes.text(lang))
+        .on_hover_text(Message::SnapPlanesHint.text(lang))
+        .changed();
+    changed |= ui
+        .checkbox(&mut settings.snaps.frames, Message::SnapFrames.text(lang))
+        .on_hover_text(Message::SnapFramesHint.text(lang))
+        .changed();
+    ui.horizontal(|ui| {
+        ui.label(Message::SnapTolerance.text(lang));
+        changed |= ui
+            .add(Scrub::new(&mut settings.snaps.tolerance_mm).range(MIN_SNAP_MM..=MAX_SNAP_MM).unit("mm").speed(0.5))
+            .on_hover_text(Message::SnapToleranceHint.text(lang))
+            .changed();
+    });
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64). The
@@ -1081,6 +1158,7 @@ mod tests {
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
+            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12 },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
@@ -1110,6 +1188,33 @@ mod tests {
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
         assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
+        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12 });
+    }
+
+    #[test]
+    fn the_snap_settings_default_to_the_maker_capture_and_are_clamped_on_read() {
+        let defaults = SnapSettings::default();
+        assert!(defaults.planes && defaults.frames, "a fresh workspace snaps to the planes and the frames");
+        assert_eq!(defaults.tolerance_mm, DEFAULT_SNAP_MM);
+        assert_eq!(DEFAULT_SNAP_MM, model::SnapSettings::DEFAULT_TOLERANCE_MM as u32, "one default, two crates");
+
+        // The rule reads the workspace value as the document's own unit, never as millimetres.
+        let rule = defaults.rule();
+        assert_eq!(rule.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
+        assert!(rule.planes && rule.frames);
+
+        // A hand-edited file cannot set a tolerance no field offers.
+        let json = r#"{"version":1,"snaps":{"planes":false,"frames":false,"tolerance_mm":0}}"#;
+        let settings = Settings::from_json(json).expect("parse and clamp");
+        assert_eq!(settings.snaps.tolerance_mm, MIN_SNAP_MM, "zero captures nothing, so it is not offered");
+        assert!(!settings.snaps.planes && !settings.snaps.frames, "the switches survive the clamp");
+        let json = r#"{"version":1,"snaps":{"tolerance_mm":900}}"#;
+        let settings = Settings::from_json(json).expect("parse and clamp");
+        assert_eq!(settings.snaps.tolerance_mm, MAX_SNAP_MM);
+
+        // A workspace written before the section existed snaps the way the editor always did.
+        let settings = Settings::from_json(r#"{"version":1}"#).expect("parse");
+        assert_eq!(settings.snaps, SnapSettings::default());
     }
 
     #[test]
@@ -1438,6 +1543,7 @@ mod tests {
         for key in [
             "ui_scale",
             "grid_step_mm",
+            "tolerance_mm",
             "roll_step_degrees",
             "panel_opacity",
             "accent",

@@ -832,17 +832,30 @@ fn one_wide_panel() -> (engine::Session, Id) {
 /// same point can be a handle in `Move` and a press in `Select`; picking the axis by where it lands
 /// keeps the fixture's camera out of the test.
 fn handle_point(harness: &Harness, node: Id) -> (egui::Pos2, egui::Vec2) {
-    let pivot = harness.app.tabs.active().session.project().pivot_world(node).expect("the part has a pivot");
+    handle_point_on(harness, node, gizmo_math::ALL_AXES, None).expect("a handle runs inside the scene rectangle")
+}
+
+/// A point on the handle of `node` along `axis`, for a tool that offers `axes`.
+///
+/// The `axes` are the ones the mode draws, so a test can ask where a handle *would* be in a mode that
+/// does not draw it: that is how the furniture move's refused directions are pressed (N22).
+fn handle_point_on(
+    harness: &Harness,
+    node: Id,
+    axes: [bool; 3],
+    only: Option<gizmo_math::Axis>,
+) -> Option<(egui::Pos2, egui::Vec2)> {
+    let pivot = harness.app.tabs.active().session.project().pivot_world(node)?;
     let rect = harness.scene();
     let camera = harness.camera();
     let length = harness.app.settings.gizmo.handle_length();
-    let origin = gizmo_math::screen_point(camera, rect, pivot).expect("the pivot is on screen");
-    let spec = gizmo_math::HandleSpec { axes: gizmo_math::ALL_AXES, length };
+    let origin = gizmo_math::screen_point(camera, rect, pivot)?;
+    let spec = gizmo_math::HandleSpec { axes, length };
     gizmo_math::axis_handles(camera, rect, pivot, origin, spec)
         .into_iter()
+        .filter(|handle| only.is_none_or(|axis| handle.axis == axis))
         .map(|handle| (origin + handle.direction * (length * 0.6), handle.direction))
         .find(|(at, _)| rect.contains(*at))
-        .expect("a handle runs inside the scene rectangle")
 }
 
 #[test]
@@ -858,8 +871,11 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     harness.settle();
     assert_eq!(harness.app.shell.mode, TransformMode::Select, "a fresh window opens in Select");
     assert!(
-        harness.drew(Message::Select.text(Lang::En)) && harness.drew(Message::Rotate.text(Lang::En)),
-        "the bar offers Select beside the two gestures"
+        harness.drew(Message::Select.text(Lang::En))
+            && harness.drew(Message::Move.text(Lang::En))
+            && harness.drew(Message::Furniture.text(Lang::En))
+            && harness.drew(Message::Rotate.text(Lang::En)),
+        "the bar offers Select beside the three gestures"
     );
 
     harness.app.tabs.active_mut().editor.select_node(Some(panel));
@@ -883,6 +899,113 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     let revision = harness.revision();
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
+}
+
+#[test]
+fn the_furniture_move_offers_a_panel_only_its_thickness_axis() {
+    // N22: the fourth mode is the tool that obeys the document's rules, and the first of them is that
+    // a board slides along its own thickness. The two in-plane directions have no handle at all, so a
+    // press where they would be is a pick and not an armed handle that refuses the drag (ADR 0113).
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-furniture-panel", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.tabs.active_mut().editor.select_node(Some(panel));
+    harness.settle();
+
+    let cell = harness.mode_cell(Message::Furniture.text(Lang::En));
+    harness.click(cell, egui::PointerButton::Primary);
+    assert_eq!(harness.app.shell.mode, TransformMode::Furniture, "the bar's cell arms the furniture move");
+    harness.settle();
+
+    let axes = harness.app.tabs.active().session.project().furniture_axes(&[panel]);
+    assert_eq!(axes, [false, false, true], "a board offers its own thickness and nothing else");
+    let across = handle_point_on(&harness, panel, gizmo_math::ALL_AXES, Some(gizmo_math::Axis::X))
+        .expect("the in-plane handle is on screen where the free move would draw it")
+        .0;
+    let (upright, up) =
+        handle_point_on(&harness, panel, axes, Some(gizmo_math::Axis::Z)).expect("the thickness handle is on screen");
+
+    // The in-plane handle is not drawn, so the press belongs to the viewport and no drag starts.
+    let revision = harness.revision();
+    harness.drag(across, egui::Vec2::new(30.0, 0.0), egui::PointerButton::Primary);
+    assert_eq!(harness.revision(), revision, "a press across the board moves nothing");
+
+    // The thickness handle is, and the same kind of drag slides the board along it.
+    harness.drag(upright, up * 40.0, egui::PointerButton::Primary);
+    assert_eq!(harness.revision().get(), revision.get() + 1, "the upright handle moves the board: one drag, one entry");
+}
+
+#[test]
+fn the_free_move_crosses_a_neighbour_the_furniture_move_stops_at() {
+    // The Done of N22 in one sentence: the same handle and the same drag, twice. The free move keeps
+    // the pointer's own distance and passes the panel beside it; the furniture move stops flush
+    // against that panel, because contact is the document's rule and a body stops at a body
+    // (ADR 0102, ADR 0147). Each drag is one revision, so the two tools share the whole gesture.
+    let (free_end, free_start, free_revision) = dragged_divider(TransformMode::Move, "frame-free-move");
+    assert!(
+        free_end > free_start,
+        "the free move passes the neighbour's low face at {free_start}: it ends at {free_end}"
+    );
+    let (stopped_end, neighbour_start, stopped_revision) =
+        dragged_divider(TransformMode::Furniture, "frame-furniture-move");
+    assert!(
+        (stopped_end - neighbour_start).abs() < 1.0e-6,
+        "the furniture move stops the board flush against the neighbour at {neighbour_start}: it ends at {stopped_end}"
+    );
+    assert_eq!(free_revision, stopped_revision, "both drags cost one undo entry");
+}
+
+/// Drags the divider of [`divider_beside_a_panel`] 150 points along its one handle and answers the
+/// face it left, the neighbour's low face and how many revisions the drag cost.
+fn dragged_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
+    let (session, divider, beside) = divider_beside_a_panel();
+    let mut harness = Harness::with_session(name, session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.tabs.active_mut().editor.select_node(Some(divider));
+    harness.app.shell.mode = mode;
+    harness.settle();
+    let project = harness.app.tabs.active().session.project();
+    let axes = project.furniture_axes(&[divider]);
+    assert_eq!(axes, [true, false, false], "a divider crosses the case, so X is the handle it offers");
+    let (at, direction) =
+        handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X)).expect("the divider's handle is on screen");
+    let revision = harness.revision();
+    harness.drag(at, direction * 150.0, egui::PointerButton::Primary);
+    let project = harness.app.tabs.active().session.project();
+    let ended = project.world_box(divider).expect("the divider has a box").1.x;
+    let neighbour = project.world_box(beside).expect("the neighbour has a box").0.x;
+    (ended, neighbour, harness.revision().get() - revision.get())
+}
+
+/// A `3000 x 600 x 720` frame holding a divider and the panel beside it, 50 mm apart.
+///
+/// The divider is turned a quarter about Y, so its thickness — and with it the only axis the
+/// furniture move offers it — runs along world X and the gap is measured across it (N22).
+fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
+    let envelope = Envelope::new(mm(3000), mm(600), mm(720)).expect("a frame");
+    let frame = project
+        .add_product(project.root().id(), "Case", class, envelope, model::Placement::IDENTITY)
+        .expect("a product");
+    let size = model::PanelNominalSize::new(mm(600), mm(560)).expect("a panel size");
+    let quarter = model::EulerAngles { y: units::Degrees::from_millidegrees(90_000), ..model::EulerAngles::default() };
+    let turned = model::Placement::IDENTITY
+        .with_rotation_euler(quarter)
+        .and_then(|placement| placement.with_translation(mm(1000), Length::ZERO, Length::ZERO))
+        .expect("a quarter-turned placement");
+    let divider = project.add_panel(frame, "Divider", size, None, mm(18), turned).expect("a divider");
+    let beside_at = model::Placement::IDENTITY
+        .with_translation(mm(1068), Length::ZERO, mm(-600))
+        .expect("a placement beside the divider");
+    let beside = project.add_panel(frame, "Beside", size, None, mm(18), beside_at).expect("a panel beside the divider");
+    (engine::Session::with_catalog(project, testkit::sample_catalog()), divider, beside)
 }
 
 #[test]

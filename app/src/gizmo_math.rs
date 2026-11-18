@@ -13,7 +13,7 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
 use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, Placement, Project};
+use model::{Id, MoveAxis, Placement, Project, SnapSettings};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use units::Length;
 
@@ -139,6 +139,41 @@ pub(crate) struct Target<'a> {
     pub(crate) project: &'a Project,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
+    /// What a furniture drag snaps to, as the workspace settings chose it (ADR 0146).
+    ///
+    /// It travels here rather than as another argument because a drag that starts reads it once,
+    /// with the camera and the selection it starts under.
+    pub(crate) snaps: SnapSettings,
+    /// Which move a translate drag is: the free one, or the furniture one that obeys the document's
+    /// rules and offers only the axes they allow (N22, ADR 0147).
+    pub(crate) move_kind: MoveKind,
+}
+
+/// Which move a translate drag makes.
+///
+/// The two tools share every other part of the gesture — the pivot, the preview, the exact-distance
+/// fields and the one `node.placement.set_many` on release — and differ in one question: does the
+/// document's rule measure the drag, or the pointer's own travel (N22, ADR 0147).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MoveKind {
+    /// The pointer's own distance, rounded to the document's micrometre: no contact and no snap.
+    Free,
+    /// The furniture rules: the axes they allow, contact at the neighbours, and the workspace's snaps.
+    Furniture,
+}
+
+impl MoveKind {
+    /// The axes a drag of this kind offers the selection.
+    ///
+    /// The free move keeps the three world axes everywhere; the furniture move asks the document
+    /// which axes the pieces may travel along, so a panel is held to its own thickness axis and a
+    /// floor-bound frame keeps its height (N22).
+    pub(crate) fn axes(self, project: &Project, selection: &[Id]) -> [bool; 3] {
+        match self {
+            Self::Free => ALL_AXES,
+            Self::Furniture => project.furniture_axes(selection),
+        }
+    }
 }
 
 impl Target<'_> {
@@ -983,7 +1018,13 @@ mod tests {
     }
 
     fn target<'a>(project: &'a Project, selection: &'a [Id]) -> Target<'a> {
-        Target { camera: Camera::default(), project, selection }
+        Target {
+            camera: Camera::default(),
+            project,
+            selection,
+            snaps: SnapSettings::default(),
+            move_kind: MoveKind::Free,
+        }
     }
 
     /// The handle length the tests draw and grab with, in points.
@@ -1554,7 +1595,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid envelope");
-        let class: ClassCode = "30.01.01".parse().expect("a base cabinet");
+        let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
         let product = project.add_product(root, "Cabinet", class, envelope, Placement::IDENTITY).expect("a product");
         let selection = [product];
         assert!(
@@ -1576,7 +1617,7 @@ mod tests {
         let origin = origin_screen(camera);
         assert_eq!(axis_handles(camera, viewport(), camera.target(), origin, spec(ALL_AXES)).len(), 3);
 
-        let (project, worktop) = classed_cube("70.01");
+        let (project, worktop) = classed_cube("20.01");
         let axes = editable_axes(&project, worktop);
         assert_eq!(axes, [true, false, false], "a worktop changes its length only");
         let handles = axis_handles(camera, viewport(), camera.target(), origin, spec(axes));

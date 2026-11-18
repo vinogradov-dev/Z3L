@@ -550,13 +550,13 @@ mod tests {
         // the same command: a click is one entry, not a create followed by an assignment.
         let mut session = product_session();
         let mut request = panel_create(&session, "Shelf");
-        request.class = Some("30.11".parse::<ClassCode>().expect("a shelf class"));
+        request.class = Some("10.11".parse::<ClassCode>().expect("a shelf class"));
         let params = json_params(&request);
         let before = session.project().revision();
 
         let outcome = session.dispatch("panel.create", &params).expect("create the shelf");
         let id = outcome.created_id().expect("an id");
-        let shelf = "30.11".parse::<ClassCode>().expect("a shelf class");
+        let shelf = "10.11".parse::<ClassCode>().expect("a shelf class");
         assert_eq!(session.project().class(id), Some(shelf));
         assert!(session.project().revision() > before, "the class is part of the same creation");
 
@@ -582,7 +582,7 @@ mod tests {
             Length::from_millimetres(560).expect("a width"),
         )
         .expect("a size");
-        let fill = "30.11".parse::<ClassCode>().expect("a shelf class");
+        let fill = "10.11".parse::<ClassCode>().expect("a shelf class");
         let request = PanelCreate {
             parent: product,
             name: "Shelf".to_owned(),
@@ -2407,7 +2407,7 @@ mod tests {
         assert!(ungroup.enabled(&session, &json_params(&NodeUngroup { node: group_id })));
         assert!(!convert.enabled(&session, &json_params(&NodeComponentConvertToGroup { node: group_id })));
 
-        let class: ClassCode = "30.11".parse().expect("class");
+        let class: ClassCode = "10.11".parse().expect("class");
         session
             .dispatch(
                 "node.property.set",
@@ -2784,7 +2784,7 @@ mod tests {
 
     #[test]
     fn a_worktop_resizes_by_length_only() {
-        let (mut session, panel) = classed_shelf("70.01");
+        let (mut session, panel) = classed_shelf("20.01");
         let registry = CommandRegistry::new();
         let resize = registry.get("panel.resize").expect("panel.resize is registered");
         let revision = session.project().revision();
@@ -2814,14 +2814,14 @@ mod tests {
 
     #[test]
     fn changing_the_class_flips_the_same_resize_command() {
-        let (mut session, panel) = classed_shelf("30.11");
+        let (mut session, panel) = classed_shelf("10.11");
         let registry = CommandRegistry::new();
         let resize = registry.get("panel.resize").expect("panel.resize is registered");
         let wider = resize_request(panel, 700, 600);
         assert!(resize.enabled(&session, &wider), "a horizontal panel resizes freely");
         session.dispatch("panel.resize", &wider).expect("widen the shelf");
 
-        let class: ClassCode = "70.01".parse().expect("the worktop code");
+        let class: ClassCode = "20.01".parse().expect("the worktop code");
         session
             .dispatch(
                 "node.property.set",
@@ -2871,7 +2871,7 @@ mod tests {
 
     #[test]
     fn a_class_without_cutouts_refuses_a_cutout() {
-        let (mut session, plinth) = classed_shelf("70.02");
+        let (mut session, plinth) = classed_shelf("20.02");
         let shape = CutoutShape::Rectangle(sample_cutout_rect());
         let params = json_params(&cutout_request(plinth, shape, CutoutDepth::Through, FaceSide::A));
         let registry = CommandRegistry::new();
@@ -2882,7 +2882,7 @@ mod tests {
             CommandError::ClassRefused { command: "panel.machining.add", refusal: ClassRefusal::Operation(_) }
         ));
 
-        let (mut session, worktop) = classed_shelf("70.01");
+        let (mut session, worktop) = classed_shelf("20.01");
         let params = json_params(&cutout_request(
             worktop,
             CutoutShape::Rectangle(sample_cutout_rect()),
@@ -2898,7 +2898,7 @@ mod tests {
         let mut session = sample_session();
         let drawer = Id::new(3).expect("drawer id");
         let front = Id::new(4).expect("front id");
-        let worktop: ClassCode = "70.01".parse().expect("the worktop code");
+        let worktop: ClassCode = "20.01".parse().expect("the worktop code");
         session
             .dispatch(
                 "node.property.set",

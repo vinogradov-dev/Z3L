@@ -43,6 +43,131 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **U113** select, move and rotate answer keys, and the status bar prints them
+  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
+   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
+   maker reaches for the mouse for the most repeated action in the editor. The one key table
+   already exists (ADR 0117); the modes are simply absent from it.
+  Shape: A binding for Select, Move, Rotate and the furniture mode in inventory KEYS on chords
+   no drawing tool owns: W, E and Q beside Shift+W for the furniture move, with R, M, A, C, N,
+   L, P, V, G, S, O and F already taken by the sketch, the view and the niche. The status bar
+   band carries four states and prints the key beside each label; the node context menu of the
+   tree and the viewport offers the four as session entries in the list node_actions already
+   keeps beside its command rows, because they are view state and write no document, so the
+   action has a place in the menu without inventing a command for it. The Settings page lists
+   the same four rows with the rest. This task waits for N22 to exist before it names the
+   fourth mode; the other three can land first.
+  Done: Each of the four modes answers its key from the shell and the status bar cell shows it;
+   the tree row menu and the viewport menu both offer the four; the Settings shortcut list
+   holds all four; the table test proves no two rows share a key and every binding prints in
+   both languages; cargo xtask ci is green.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/node_actions.rs,app/src/shortcuts.rs,app/src/status_bar.rs,app/src/main.rs,crates/text/src/messages.rs`
+- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
+   there, and should instead stop at it and jump past it into the free space beyond when the
+   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
+   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
+   the free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
+- `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
+  Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
+   with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
+   contour. Today an envelope is three lengths, and ADR 0097 says in so many words that a
+   sloped or reshaped one is a new field and a new decision, so neither the card nor the
+   gesture can offer a shape before that decision is recorded.
+  Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
+   rectangle with a cut at one or more corners, or a ring drawn on the plane, which is always a
+   reserved space and never a body. A cut stores offsets, not an angle: the offset along each
+   edge is what a maker measures on a board, and it reuses the panel corner language,
+   CornerFeatureKind (a chamfer of two setbacks), so one corner rule serves both. The corner
+   type is chosen first and names the row that follows: a chamfer offers its two offsets, a
+   fillet offers a radius only after the type is chosen. x and y stay the footprint bounds so
+   the readers, the export and the containment diagnostic keep an answer; the scene draws the
+   wireframe from the footprint, picking and the grips read it. An ADR records the footprint
+   and the corner rule (offsets for a chamfer, a radius for a fillet, the type first).
+  Done: A frame with a 45-degree and a frame with a 120-degree cut round-trip through the file
+   as their offsets, draw as the cut outline and are picked inside it; a fillet radius is
+   offered only after the corner type is chosen; a contour frame stores its ring as a reserved
+   space and pulls its height; a cut that eats an edge is a readable refusal; the ADR is
+   written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs`
+- `[ ]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
+  Why: The owner: the frame kept the old card where the box has a typed height field, and the
+   base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
+   labels its two base sides but takes no typed number, while the cuboid draws the sketch
+   rectangle with the sketch field plates and pulls on Z; and the frame pull shows a titled
+   pane with a check and a cancel where the cuboid shows the lettered H plate. Two gestures
+   that build one document read as two tools.
+  Shape: The frame drawn method arms the same rectangle tool the cuboid cell arms, differing
+   only in the owner of the commit (product.create against object.primitive.create) and in the
+   extras the tool card offers while the draft lives (the class, and later the footprint and
+   the position). The base plates, the height pull and its lettered H plate, Enter, Esc and the
+   one undo entry are the shared ones; BoxDraft keeps only what the envelope grips still read
+   from it, or retires with box_tool.rs.
+  Done: The frame cell and the cuboid cell draw the same base plates and the same H plate,
+   compared row for row in a headless test; Esc drops the frame draft with no history entry;
+   one undo takes the created frame; cargo xtask ci is green.
+  `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs`
+- `[ ]` **N20** the card says the position its class gives, and never asks
+  Why: The owner asked the card for a position, then settled it: the class already dictates how
+   the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
+   source of truth that record refuses. What is missing is only the sentence: the card names a
+   class code and says nothing about whether the piece stands or hangs, so a maker cannot tell
+   why a floor cabinet will not rise or why a wall cabinet does. No field and no filter: the
+   card reads the trait.
+  Shape: One row under the class: the position the chosen class carries, said in words (On the
+   floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
+   class list is not filtered and the class stays the only stored fact. A height above the
+   floor stays the makers placement, as ADR 0100 has it, so the row describes the rule and
+   never sets a height. Two messages carry the words in both languages.
+  Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
+   wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
+   xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs`
+
+## Bugs
+## Next
+- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
+  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
+   dissolve targets and the card, and no task may cite a decision that does not exist. Four
+   questions are still open, so the record waits for the owner's answers.
+  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
+   open questions in plan/questions.md.
+  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
+   plan/questions.md carries the four questions.
+  `files: docs/domain/prototypes.md,docs/decisions/README.md`
+- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
+  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
+   workshop, and today they are literals in a scenario. Where the file lives is an open
+   question, so the task waits for its answer.
+  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
+   validated on load, offering defaults to the card; a value outside its range is a sentence,
+   not a fallback.
+  Done: A test loads a standards file, a command takes its default from it, and a stale file is
+   a notice.
+  `files: app/src/settings_store.rs,crates/model/src/`
+- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
+  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
+   saying idle while four branches move. The worktree rule papers over the gap: the plan is
+   written in one checkout and a stream's progress lives only in its commits.
+  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
+   in-progress entry per stream in the order, and a status line that prints a row per stream.
+   The one-writer rule stays for the backlog file itself.
+  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
+   same stream, status prints one row per stream, and the backlog stays one file.
+  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
 - `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
   Why: The assistant and the prototype expander both need the document without a window, and
    only export reaches the engine from the command line today. A generator that writes the
@@ -76,39 +201,114 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
 
-## Bugs
-## Next
-- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
-  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
-   dissolve targets and the card, and no task may cite a decision that does not exist. Four
-   questions are still open, so the record waits for the owner's answers.
-  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
-   open questions in plan/questions.md.
-  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
-   plan/questions.md carries the four questions.
-  `files: docs/domain/prototypes.md,docs/decisions/README.md`
-- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
-  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
-   workshop, and today they are literals in a scenario. Where the file lives is an open
-   question, so the task waits for its answer.
-  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
-   validated on load, offering defaults to the card; a value outside its range is a sentence,
-   not a fallback.
-  Done: A test loads a standards file, a command takes its default from it, and a stale file is
-   a notice.
-  `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
-  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
-   saying idle while four branches move. The worktree rule papers over the gap: the plan is
-   written in one checkout and a stream's progress lives only in its commits.
-  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
-   in-progress entry per stream in the order, and a status line that prints a row per stream.
-   The one-writer rule stays for the backlog file itself.
-  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
-   same stream, status prints one row per stream, and the backlog stays one file.
-  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
-
 ## Done
+
+- `[x]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
+  Why: The owner wants two tools: the move the editor has stays free and turns the furniture
+   snapping off, and a furniture move moves the object by its own rules — a panel only along
+   its own Z, parallel to its AB planes, and a frame on all three axes but seeing its
+   neighbours and the walls — with the distance to the neighbour or the wall as a typed field.
+   Today one Move mode decides under the hand: the translate gizmo reads Project::move_rule and
+   applies it whenever the selection is furniture (ADR 0102, 0103), so the same handle is free
+   for a loose body and ruled for a cabinet, and no rule gives a panel its own axis at all.
+  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
+   never a document field (ADR 0113). The free Move drops the furniture rule and its snapping
+   and keeps the exact micrometre drag; the exact-distance fields stay in both modes, because
+   they are the typed path (ADR 0103) and the owner answer named the snapping alone. The
+   furniture mode reads Project::move_rule and adds the panel rule: a panel moves only along
+   its own local Z, the thickness axis, so it slides parallel to its AB planes and keeps them
+   parallel; a shelf rises and falls in its thickness direction, a divider crosses the case, a
+   back moves front and back. A frame moves on the three world axes subject to its class mount
+   (a floor piece keeps its height), and every drag sees the neighbours, the planes and the
+   walls of N21 through the distance fields of this mode, whose number is the gap to the face
+   that stops it. One undo entry per drag either way; an ADR records the mode, the panel axis
+   and what the free move no longer does.
+  Done: A selected shelf moves only along its own Z and the two in-plane directions are
+   refused; a divider moves across the case and a back moves in and out; a frame moves on three
+   axes, a floor frame keeps its height and a neighbour stops it; the free move keeps a 97.4 mm
+   drag where the furniture move stops at the wall, and the free move does not snap; a typed
+   gap lands the face where typed and the field shows the same number; each drag is one undo
+   entry; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/gizmo_math.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,app/src/frame_tests.rs,crates/model/src/project/move_query.rs,crates/text/src/messages.rs,crates/ui/src/distance.rs` — `cd44446`
+
+- `[x]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
+  Why: The owner: frames stick to each other, and the tolerance is the distance at which a
+   piece jumps to another, like a snap; frames stick to the floor and to walls, and until a
+   house-wall tool exists the virtual coordinate planes stand in for walls. Today the capture
+   is two constants in move_query.rs (a 5 mm snap radius and a 1 mm grid), no coordinate plane
+   is a candidate, and the maker cannot turn any of it off. Snapping is a taste and a workshop
+   standard, not a code literal, so it belongs in the workspace settings like the grid step and
+   the gizmo handle.
+  Shape: One Settings section for snapping (in the View page, beside the grid): the coordinate
+   planes on or off, the frames on or off, and the tolerance in millimetres that captures a
+   drag and makes the piece jump — it lands flush, because the tolerance is the distance at
+   which the snap fires and not a gap to keep. The move rule reads a SnapSettings value the
+   shell passes in instead of the constants; the candidates gain the X=0, Y=0 and Z=0 planes
+   (the floor included) beside the envelopes, the virtual faces and the part faces, and a
+   capture still lands the faces together. A captured face draws a line on the plane or the
+   neighbour and its field says the number, so a snap nobody can see is not a drag that feels
+   broken. One ADR records the settings, the planes as stand-in walls and the tolerance
+   reading.
+  Done: A workspace file round-trips planes, frames and tolerance; a frame dragged within the
+   tolerance of Y=0 jumps onto the plane and one dragged past it does not; two frames within
+   the tolerance meet flush and beyond it stay apart; turning the planes off leaves the piece
+   where the pointer put it; the field at the captured face shows the same number the rule
+   used; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs` — `5499a93`
+
+- `[x]` **U112** the product card aligns its numbers and folds its class list
+  Why: The card is the numeric path into `product.create` and it is about to grow fields
+   (shape, position, corners), so its layout is read before it grows. Today each row label is
+   as wide as its word, so the three number boxes start at three different x positions; the
+   class list is a flat scroll of seventeen rows with no fold, so a maker hunting a wall
+   cabinet reads the whole registry; and the paragraph under the title explains a rule the
+   maker learns from the frame itself and cannot act on.
+  Shape: A fixed label column (LABEL_WIDTH, at least one tree indent) with the shared scrub
+   field beside it, so Width, Depth and Height start on one x. The class list becomes the
+   registry tree the picker already builds: a foldable family caption, a foldable type row that
+   is itself selectable, and its variant rows under it, drawn with egui CollapsingState like
+   the scene tree; the type that holds the current class opens by default and a search opens
+   every group it keeps. `class_picker::product_rows` returns that tree instead of a flat list
+   of depths. The ProductCardHint message is deleted from the table in both languages.
+  Done: A headless test draws the card and finds the three fields labels and numbers on one
+   column; a closed type lists no variant and the type of the chosen class lists them; the hint
+   is gone from both languages; cargo xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/text/src/messages.rs` — `b2f83b7`
+
+- `[x]` **T10** the group digits follow the order of the work, so the case is 10 and the seat is 80
+  Why: T9 made the picker sort the families by a presentation constant, which leaves the stored
+   digits in the old order: a saved node still says 30.01 for a cabinet and 10.01 for a chair,
+   and every export, report and reader still meets the seating first. The order belongs in the
+   number, as the owner asked: the case starts at 10 and the seat ends at 80. No build has
+   shipped, so a code may still move (ADR 0094 immortalises a code only once it ships).
+  Shape: Remap the group digit of every class, host prefix, constant, doc table and test
+   literal: 30 to 10 storage, 70 to 20 boards and trim, 40 to 30 surfaces, 20 to 40 lying, 80
+   to 70 general, 10 to 80 seating; 50 and 60 keep their numbers. The type and variant digits
+   stay, so 30.01.02 becomes 10.01.02 and the old 10.01 cabinet of furntypes.md is true again.
+   presentation_rank and PRESENTATION_ORDER leave model, the picker and the product card walk
+   registry() again, and docs/domain/classes.md section 7 lists the families ascending, which
+   is now the order of the work. One ADR records that the digits follow the work and that group
+   10 names storage, not the product role of 0097.
+  Done: The cabinet is 10.01 and the chair is 80.01, the picker's first family is 10 and its
+   last is 80 with no sort in the way, and a test proves every stored code resolves to the row
+   the document gives it.
+  `files: crates/model/src/class.rs,docs/domain/classes.md,crates/ui/src/class_picker.rs` — `f0f8f68`
+
+- `[x]` **T9** the class list follows what a shop builds, not the order of the digits
+  Why: A person meets the chair and the stool first, because the registry is ordered by family
+   code, and the case a cabinet shop actually builds sits third while the placeholder product
+   sits last. The picker's tree and the product card's list are both drawn in that order, so
+   the first row of a new product is a scene prop.
+  Shape: A presentation order in model: a constant list of family codes and presentation_rank
+   by family, read by the class picker's tree and the product card's list; the table stays
+   ascending by code because ClassCode::row binary-searches it. The order is 80 general, 30
+   storage, 70 boards and trim, 40 surfaces, 20 lying, 50 fittings, 60 appliances, 10 seating.
+   docs/domain/classes.md section 7 lists the heading paragraph in that order, and the existing
+   family test compares the sequence instead of only the count.
+  Done: The picker's first family is 80 and seating is last, the product card's first row is
+   the placeholder and its last row is a seating class, and a family left out of the order
+   fails a test.
+  `files: crates/model/src/class.rs,crates/ui/src/class_picker.rs,docs/domain/classes.md` — `7322b60`
 
 - `[x]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
   Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:

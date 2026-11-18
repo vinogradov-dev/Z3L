@@ -259,7 +259,7 @@ mod tests {
         use model::{ClassCode, PropertyValue, SYSTEM_CLASS};
 
         let (mut session, object) = cube_session();
-        let class: ClassCode = "70.01".parse().expect("the worktop code");
+        let class: ClassCode = "20.01".parse().expect("the worktop code");
         let assignment = serde_json::json!({
             "node": object,
             "key": SYSTEM_CLASS,

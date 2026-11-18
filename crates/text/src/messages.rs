@@ -185,6 +185,17 @@ messages! {
     Move = ["Move", "Перемещение"],
     Select = ["Select", "Выбор"],
     Rotate = ["Rotate", "Вращение"],
+    Furniture = ["Furniture", "Мебель"],
+    SelectHint = ["Select: a click picks, a drag draws a band", "Выбор: щелчок выбирает, перетаскивание рисует рамку"],
+    MoveHint = [
+        "Move freely: the pointer's own distance, no snapping",
+        "Двигать свободно: расстояние по указателю, без привязок"
+    ],
+    FurnitureHint = [
+        "Move by furniture rules: a panel along its thickness, frames to their neighbours and the floor",
+        "Двигать по правилам мебели: панель вдоль своей толщины, каркасы — к соседям и полу"
+    ],
+    RotateHint = ["Turn the selection about its pivot", "Поворачивать выделение вокруг пивота"],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],
     MeshEditStatusFew = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершины"],
     MeshEditStatusMany = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершин"],
@@ -689,10 +700,6 @@ messages! {
 
     // ── Product card ────────────────────────────────────────────────────────
     ProductCardTitle = ["New product frame", "Новый каркас изделия"],
-    ProductCardHint = [
-        "The frame is created open, ready for parts on the floor beside the other pieces.",
-        "Каркас создаётся открытым, готовым для деталей на полу рядом с другими изделиями."
-    ],
     Height = ["Height", "Высота"],
 
     // ── Container card ──────────────────────────────────────────────────────
@@ -1085,6 +1092,22 @@ messages! {
         "Сцена скрывает системную стрелку и рисует этот квадрат; жест со своим курсором сохраняет его."
     ],
     ShowFloorGrid = ["Show the floor grid", "Показывать сетку пола"],
+    Snapping = ["Snapping", "Привязка"],
+    SnapPlanes = ["Coordinate planes", "Координатные плоскости"],
+    SnapPlanesHint = [
+        "X = 0, Y = 0 and Z = 0 capture a dragged piece, the floor included; until a wall tool exists they stand in for the walls of a room.",
+        "X = 0, Y = 0 и Z = 0 захватывают перетаскиваемую деталь, включая пол; пока нет инструмента стен, они заменяют стены комнаты."
+    ],
+    SnapFrames = ["Neighbouring frames", "Соседние корпуса"],
+    SnapFramesHint = [
+        "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
+        "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
+    ],
+    SnapTolerance = ["Tolerance", "Допуск"],
+    SnapToleranceHint = [
+        "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
+        "Насколько близко должна быть поверхность, чтобы захватить перетаскивание, в миллиметрах; деталь встаёт вплотную, потому что допуск — это расстояние срабатывания привязки."
+    ],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
         "Diagnostic: keeps the triangulation diagonals the form-edge view hides.",

@@ -2005,7 +2005,7 @@ mod tests {
             "an unclassified panel still offers banding: {free:?}"
         );
 
-        let (mut session, panel) = classed_panel_session(Some("70.01"));
+        let (mut session, panel) = classed_panel_session(Some("20.01"));
         let worktop = drawn_texts(&context, &mut session, panel);
         assert!(
             worktop.iter().any(|text| text.contains("resizes by length only")),

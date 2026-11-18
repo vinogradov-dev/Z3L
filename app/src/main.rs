@@ -73,6 +73,7 @@ use ui::{Palette, icons, theme};
 
 use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
+use crate::gizmo_math::MoveKind;
 use crate::header::{HeaderAction, HeaderState, TabView};
 use crate::scene_build::{empty_session, initial_session};
 
@@ -95,26 +96,35 @@ use crate::view_cluster::ViewCluster;
 /// Which transform gesture the viewport offers, if any.
 ///
 /// The mode is view state: it belongs to the window, it is never serialized into a scene and it
-/// adds no undo entry. `Select` is the third state and the one a window opens in, so a person who
-/// only wants to look, pick and read is never handed a handle they did not ask for (ADR 0113).
+/// adds no undo entry. `Select` is the state a window opens in, so a person who only wants to look,
+/// pick and read is never handed a handle they did not ask for (ADR 0113).
+///
+/// The two moves are two tools and not one tool that guesses (N22, ADR 0147): `Move` keeps the
+/// pointer's own distance and applies no rule, and `Furniture` moves a piece by the document's own
+/// rules — the axes they allow, the neighbours that stop it and the workspace's snapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransformMode {
     /// No transform: a click selects, shift adds, a double click enters a level.
     Select,
-    /// Three world-axis arrows move the selection.
+    /// Three world-axis arrows move the selection freely, with no rule and no snapping.
     Move,
+    /// The arrows move furniture by its own rules: a panel along its thickness, a frame to its
+    /// neighbours and the floor, and every drag landing on the workspace's snaps.
+    Furniture,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
 }
 
 /// The transform gesture a [`TransformMode`] offers.
 ///
-/// The two gestures read the same pivot and commit through the same command, and `Select` offers
-/// neither, so a caller asks the mode for one of these instead of matching three states twice.
+/// The three gestures read the same pivot and commit through the same command, and `Select` offers
+/// none, so a caller asks the mode for one of these instead of matching four states twice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
-    /// Three world-axis arrows move the selection.
+    /// Three world-axis arrows move the selection without a rule.
     Move,
+    /// The arrows move the selection by the document's furniture rules.
+    Furniture,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
 }
@@ -128,7 +138,19 @@ impl TransformMode {
         match self {
             Self::Select => None,
             Self::Move => Some(Transform::Move),
+            Self::Furniture => Some(Transform::Furniture),
             Self::Rotate => Some(Transform::Rotate),
+        }
+    }
+
+    /// Which of the two moves this mode makes, or the free one where the mode is not a move at all.
+    ///
+    /// A rotate has no use for it, and `Select` draws no gizmo, so the two answer the free move: the
+    /// question is only ever asked by a translate drag.
+    pub(crate) fn move_kind(self) -> MoveKind {
+        match self {
+            Self::Furniture => MoveKind::Furniture,
+            Self::Select | Self::Move | Self::Rotate => MoveKind::Free,
         }
     }
 }

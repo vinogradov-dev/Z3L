@@ -16,7 +16,7 @@ The owner's requirements ("a product, drawn as a wireframe frame in the scene, w
 before its parts") were written while the old `FurnType` registry was current, so they name a code
 group 10 for products. The class registry (0094) removed exactly that: the top level of the code is
 the function of the object, and the role an object plays in an assembly is a trait. A cabinet is a
-storage object (`30.01`) that plays the role of a product; a shelf is a storage object that plays the
+storage object (`10.01`) that plays the role of a product; a shelf is a storage object that plays the
 role of a part.
 
 ## Decision
@@ -32,12 +32,16 @@ computed on demand, never stored; a child that pokes out of the envelope is a di
 reason to resize it. This keeps the invariant that the document stores what a human decided and
 derives everything else (AGENTS.md §4.2).
 
-**The role is a trait, not a code range.** Group 10 is not revived. `level = Product` on the class is
+**The role is a trait, not a code range.** Group 10 is not revived as a *role*. `level = Product` on the class is
 what makes a container a product, and the class code names the product's function — a wall cabinet is
-`30.01.02`, a work table is `40.01.01`. A product is therefore discovered by a trait query, and an
+`10.01.02`, a work table is `30.01.01`. A product is therefore discovered by a trait query, and an
 export reader that needs the same answer reads `level` from the `classes` table. If a future external
 system wants "is this a product?" without our registry, the trait is the answer and the digits are
 not.
+
+*0145 later gave the group digits the order of the work, so `10` exists again — it names storage, the
+case, and not the product role this paragraph refuses. The trait reading above is unchanged; the two
+examples became `10.01.02` and `30.01.01` when that record landed.*
 
 **Mounting is a class trait.** `mount: Floor | Wall` says whether the piece stands on the floor or
 hangs, and the furniture move tool reads it (0098, §5 of the requirements). It is not a node field:

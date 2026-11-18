@@ -37,14 +37,14 @@ Six decimal digits, written `GG.TT.VV` and stored as one integer from `0` to `99
 
 | Level | Code | Question it answers |
 |---|---|---|
-| group | `GG.00.00` | the function family: seating, storage, work surface, fitting, appliance, board and trim |
+| group | `GG.00.00` | the function family: storage, board and trim, work surface, lying, fitting, appliance, seating |
 | type | `GG.TT.00` | the thing inside the family: cabinet, shelf, worktop, hinge |
 | variant | `GG.TT.VV` | the variant, **only when a rule differs**: hinged versus sliding, overlay versus inset, roller versus ball-bearing runner |
 
 `000000` means unclassified and is the default of every node. It is a sentinel, not the root of the
 tree: a query on it matches only nodes without a class.
 
-A zero suffix names the parent: `30.01.00` is the type, `30.00.00` the group, and the dotted form is
+A zero suffix names the parent: `10.01.00` is the type, `10.00.00` the group, and the dotted form is
 presentation only. `100103`, `10.01.03` and `10.01` all parse; display drops a zero variant and a zero
 type.
 
@@ -132,21 +132,21 @@ A class gets a code when **at least one rule differs** from its siblings, or whe
 drawing or a CNC program must name it separately**. When only the wording differs, it is one class
 with one label and an alias.
 
-- `30.11` horizontal panel and `30.01.01` base cabinet are both storage; the rules differ in `level`,
+- `10.11` horizontal panel and `10.01.01` base cabinet are both storage; the rules differ in `level`,
   so both exist.
-- `30.11` horizontal panel and a hypothetical "shelf for a shoe cabinet" have identical rules and the
+- `10.11` horizontal panel and a hypothetical "shelf for a shoe cabinet" have identical rules and the
   same line in every report; that is one class and an alias, and the node's own name says “shelf”.
 - A shelf, a bottom and a top are that one class for the same reason: the rules are identical and the
   parts specification carries the maker's names, so a second code would select nothing.
-- `30.10` vertical panel and `30.11` horizontal panel differ in `fill`, which the empty-space tool
+- `10.10` vertical panel and `10.11` horizontal panel differ in `fill`, which the empty-space tool
   reads: a post-like part takes height and depth, a shelf-like part width and depth.
-- `30.20` made hinged door and `30.21` bought hinged door are one shape in two channels: a made leaf is
+- `10.20` made hinged door and `10.21` bought hinged door are one shape in two channels: a made leaf is
   nested and bored here, a bought one is counted, never nested and not bored by us, so a rule differs
   and the two report lines differ too.
-- `30.15` tamburat panel is a class of its own although it is made of sheet parts: it is assembled
+- `10.15` tamburat panel is a class of its own although it is made of sheet parts: it is assembled
   here from a recipe, so it is counted once and never nested, while its skins are what the cutting
   list expands.
-- `70.01` worktop and `70.02` plinth are both `MadeFromLinear`; their `extent`, `operations` and report
+- `20.01` worktop and `20.02` plinth are both `MadeFromLinear`; their `extent`, `operations` and report
   line differ, so they are two classes. A bought postformed worktop is the same class as a made one:
   it is linear stock cut and cut out identically, and only the supplier changes.
 - `50.02` cup hinge with a damper is one class: the damper is an article property, not a rule.
@@ -189,32 +189,32 @@ That table is the answer to "why this row".
 
 ### 6.1 A kitchen
 
-A full set: base, wall and tall cabinets (`30.01.01`–`30.01.03`) with their vertical and horizontal
-panels (`30.10`, `30.11`) and backs (`30.12`); a worktop (`70.01`), a wall panel (`70.04`), a plinth
-(`70.02`), a cornice (`70.03`), a filler (`70.07`); made doors (`30.20`) and bought doors (`30.21`);
-made drawers (`30.30`) and bought drawer boxes (`30.31`); drawer fronts (`30.26`); hinges, runners,
+A full set: base, wall and tall cabinets (`10.01.01`–`10.01.03`) with their vertical and horizontal
+panels (`10.10`, `10.11`) and backs (`10.12`); a worktop (`20.01`), a wall panel (`20.04`), a plinth
+(`20.02`), a cornice (`20.03`), a filler (`20.07`); made doors (`10.20`) and bought doors (`10.21`);
+made drawers (`10.30`) and bought drawer boxes (`10.31`); drawer fronts (`10.26`); hinges, runners,
 handles, connectors and shelf pins (`50.01`–`50.06`); a basket (`50.10`); an LED profile (`50.09`);
 a sink, a hob, an oven, an extractor, a dishwasher and a refrigerator (`60.01`–`60.07`); a shaped
-tamburat door (`30.15`) and a bent end panel (`30.16`).
+tamburat door (`10.15`) and a bent end panel (`10.16`).
 
 Follow one object through the lines:
 
-- **A made door** (`30.20`) is sheet stock, so it is nested and its area is reported; it closes the
+- **A made door** (`10.20`) is sheet stock, so it is nested and its area is reported; it closes the
   opening, so the facade report carries it with its gaps; it admits the cup bore and the mounting
   pattern, so the CNC program gets those records; it is a component, so the parts specification
   groups it under its cabinet.
-- **A bought door** (`30.21`) has the same shape, the same gaps and the same mounting form, and is a
+- **A bought door** (`10.21`) has the same shape, the same gaps and the same mounting form, and is a
   different class for one rule: the shop does nothing to it. It is counted, never nested, and admits
   no in-house machining, so its hinge bores belong to the supplier's specification and its line
   belongs to the purchase list. That is the owner's “MDF with a plastic finish, bought ready or made
   here”.
-- **A tamburat door** (`30.15`) is made here, so it is counted once and never nested; its recipe —
+- **A tamburat door** (`10.15`) is made here, so it is counted once and never nested; its recipe —
   two 8 mm skins and the rails between them — is what the cutting list expands. The program draws
   one panel, the shop cuts five parts. A recipe is a production mechanism like the hardware model
   that generates machining, not a class: the class only has to say that this is ours to make.
-- **A bent end panel** (`30.16`) is the same story with a curved outline, which the contour already
+- **A bent end panel** (`10.16`) is the same story with a curved outline, which the contour already
   carries.
-- **The worktop** (`70.01`) is linear stock cut to length, measured by the metre, resized on its
+- **The worktop** (`20.01`) is linear stock cut to length, measured by the metre, resized on its
   length only; its sink and hob cutouts are `Cutout` operations; it never enters the cutting list.
   A bought postformed slab is the same class, because it is linear stock cut and cut out the same
   way — the supplier is the material, not the rule.
@@ -231,10 +231,10 @@ facade report split into made and bought; a banding report; and a CNC program.
 ### 6.2 A bedroom
 
 A wardrobe, a bed, a table, a nightstand and a chest. The rule *the trade name is the piece's own
-name, the class says what the piece is* settles them: the wardrobe is a tall cabinet (`30.01.03`),
-the nightstand and the chest are base cabinets (`30.01.01`), the table is `40.01.01`, and the bed is
-`20.01` with a bought mattress (`20.02`) inside it. The wardrobe's sliding doors are `30.22` or
-`30.23` and its hanging rail is `70.06`, hosted by the tall cabinet.
+name, the class says what the piece is* settles them: the wardrobe is a tall cabinet (`10.01.03`),
+the nightstand and the chest are base cabinets (`10.01.01`), the table is `30.01.01`, and the bed is
+`40.01` with a bought mattress (`40.02`) inside it. The wardrobe's sliding doors are `10.22` or
+`10.23` and its hanging rail is `20.06`, hosted by the tall cabinet.
 
 A bedroom report is therefore four product rows with their parts and their user names, not a
 vocabulary of trade classes that no rule reads.
@@ -243,7 +243,7 @@ vocabulary of trade classes that no rule reads.
 
 The system — the tracks, the rollers, the guides — is a bought set with a supplier, a price and a
 weight limit, so it is a fitting (`50.11`) hosted by the door and the cabinet. The door is ours:
-`30.22` made, with the groove for the track and the gap; or `30.23` bought, where the supplier cuts
+`10.22` made, with the groove for the track and the gap; or `10.23` bought, where the supplier cuts
 and drills it.
 
 That split is why the class does not carry the system: two wardrobes with different systems have the
@@ -258,8 +258,8 @@ rather than the article differ.
   cabinet, a base cabinet and a tall cabinet with the maker's name on them (6.2).
 - **Bottom, top and shelf as three classes**: identical rules and the same line in every report. The
   parts specification carries the maker's name and the cutting list groups by material, so they are
-  one class, `30.11` horizontal panel.
-- **Side and divider as two classes**: one class, `30.10` vertical panel; the void tool treats a
+  one class, `10.11` horizontal panel.
+- **Side and divider as two classes**: one class, `10.10` vertical panel; the void tool treats a
   post, a side and a divider alike.
 - **A second worktop class for the bought slab**: the same rules, only a different supplier.
 - **A class per sliding system**: the system is an article, not a rule of the door.
@@ -275,6 +275,11 @@ Status of the rows: **approved by the owner on 2026-11-13**, entry by entry, wit
 open — how a workshop-made part such as a tamburat panel is decomposed for production (§12). Practice
 with real orders revisits the rows; a change here is a registry change and needs the owner again.
 
+**The group digits were reassigned on 2026-11-17 (ADR 0145), before any build shipped.** The number
+carries the order of the work: the case starts at `10` and the seat ends at `80`. No type or variant
+digit moved, so a row keeps its place inside its family and only its group changed; no project file
+has ever stored a changed code, so nothing needs a migration (§8 of 0094).
+
 Read a row as a sentence: *this code names this thing; it is at this level; it comes from this
 supply; it is measured and nested this way; it may be resized this way; it admits these operations;
 it sits in these hosts; it closes an opening or it does not; it stands this way; and it fills a void
@@ -288,7 +293,7 @@ this way.*
 | `nesting` | `member`, `never` |
 | `extent` | `free` (every size), `length` (length only), `none` |
 | `ops` | `C` contour, `E` edge band, `H` holes, `G` grooves, `U` cup bore, `M` mounting pattern, `X` cutout; `—` admits no machining |
-| `host` | code prefixes it may sit in or on: `30` is every storage class, `30.2` every facade, `30.01` every cabinet form, `30.20` exactly one class; `—` has no furniture host |
+| `host` | code prefixes it may sit in or on: `10` is every storage class, `10.2` every facade, `10.01` every cabinet form, `10.20` exactly one class; `—` has no furniture host |
 | `opening` | `closes`, `—` |
 | `mount` | `floor`, `wall`, `—` |
 | `fill` | `w+d` width and depth, `h+d` height and depth, `—` not a void filler |
@@ -298,39 +303,16 @@ and an override is called out where it appears. Within every group, `TT = 90..99
 a workshop's local codes.
 
 A section is a **family**: its heading carries the code, the slug and the two labels, and every table
-row under it is an assignable class. The headings are listed here once so the tree is complete:
-`10` `seating` — Seating / «Места для сидения» · `20` `lying` — Lying / «Места для лежания» ·
-`30` `storage` — Storage / «Хранение» · `40` `surfaces` — Surfaces / «Поверхности» ·
+row under it is an assignable class. The digits carry the order of the work (ADR 0145): the case
+starts at `10`, the trim that goes with it follows at `20`, then the surfaces and the lying, then what
+is bought, then the placeholder, and the seat ends at `80`, because a chair or a sofa belongs to a
+scene rather than to a project. The headings are listed here once so the tree is complete:
+`10` `storage` — Storage / «Хранение» · `20` `boards-trim` — Boards and trim / «Плиты и погонаж» ·
+`30` `surfaces` — Surfaces / «Поверхности» · `40` `lying` — Lying / «Места для лежания» ·
 `50` `fittings` — Fittings / «Фурнитура» · `60` `appliances` — Appliances / «Бытовая техника» ·
-`70` `boards-trim` — Boards and trim / «Плиты и погонаж» · `80` `general` — General / «Общее».
+`70` `general` — General / «Общее» · `80` `seating` — Seating / «Места для сидения».
 
-### 7.1 Seating — `10`
-
-A piece a person sits on. The family's parts — a seat board, a back, a leg — arrive with the seating
-tools, because a part earns its row when a report must name it and a tool exists to create it.
-
-| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `10.01` | Chair / «Стул» | `chair` | product | shop | count | never | free | — | — | — | floor | — |
-| `10.02` | Stool / «Табурет» | `stool` | product | shop | count | never | free | — | — | — | floor | — |
-| `10.03` | Bench / «Скамья» | `bench` | product | shop | count | never | free | — | — | — | floor | — |
-| `10.04` | Sofa / «Диван» | `sofa` | product | shop | count | never | free | — | — | — | floor | — |
-
-A chair and a stool have the same rules and different report lines, so both exist; a dining chair, an
-office chair and a kitchen chair are one class with aliases.
-
-### 7.2 Lying — `20`
-
-| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `20.01` | Bed / «Кровать» | `bed` | product | shop | count | never | free | — | — | — | floor | — |
-| `20.02` | Mattress / «Матрас» | `mattress` | component | piece | count | never | none | — | `20.01` | — | — | — |
-
-A mattress is bought complete, never resized and never banded, and belongs to the bed. That it is a
-component and not a product shows the two axes are independent: `level` groups a report, `supply`
-says where the thing comes from.
-
-### 7.3 Storage — `30`
+### 7.1 Storage — `10`
 
 Products. The cabinet type is the parent of the three forms and the class for a cabinet whose form is
 not decided yet; the forms are variants because `mount` differs between a wall cabinet and a base one
@@ -340,29 +322,29 @@ and `chest` are search aliases of those rows, never separate classes.
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `30.01` | Cabinet / «Шкаф корпусный» | `cabinet` | product | shop | count | never | free | — | — | — | floor | — |
-| `30.01.01` | Base cabinet / «Шкаф нижний» | `base-cabinet` | product | shop | count | never | free | — | — | — | floor | — |
-| `30.01.02` | Wall cabinet / «Шкаф навесной» | `wall-cabinet` | product | shop | count | never | free | — | — | — | wall | — |
-| `30.01.03` | Tall cabinet / «Шкаф высокий» | `tall-cabinet` | product | shop | count | never | free | — | — | — | floor | — |
+| `10.01` | Cabinet / «Шкаф корпусный» | `cabinet` | product | shop | count | never | free | — | — | — | floor | — |
+| `10.01.01` | Base cabinet / «Шкаф нижний» | `base-cabinet` | product | shop | count | never | free | — | — | — | floor | — |
+| `10.01.02` | Wall cabinet / «Шкаф навесной» | `wall-cabinet` | product | shop | count | never | free | — | — | — | wall | — |
+| `10.01.03` | Tall cabinet / «Шкаф высокий» | `tall-cabinet` | product | shop | count | never | free | — | — | — | floor | — |
 
 Parts. The rule that separates a vertical panel from a horizontal one is `fill`: the void tool offers
-`30.10` for a post-like fill and `30.11` for a shelf-like one. The rule that separates the back is
+`10.10` for a post-like fill and `10.11` for a shelf-like one. The rule that separates the back is
 `ops`: it is the one sheet part that takes no banding. Tamburat and bent parts are made here from a
 recipe, so they are counted once and their components are what is nested — how that recipe is
 written down is still open (§12).
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `30.10` | Vertical panel / «Вертикальная панель» | `vertical-panel` | part | sheet | area | member | free | C E | `30.01` | — | — | h+d |
-| `30.11` | Horizontal panel / «Горизонтальная панель» | `horizontal-panel` | part | sheet | area | member | free | C E | `30.01` | — | — | w+d |
-| `30.12` | Back panel / «Задняя стенка» | `back-panel` | part | sheet | area | member | free | C | `30.01` | — | — | — |
-| `30.13` | Drawer box part / «Деталь ящика» | `drawer-box-part` | part | sheet | area | member | free | C E | `30.30` | — | — | — |
-| `30.14` | Glass shelf / «Стеклянная полка» | `glass-shelf` | part | piece | area | never | free | C | `30.01` | — | — | w+d |
-| `30.15` | Tamburat panel / «Плита тамбурат» | `tamburat-panel` | part | shop | count | never | free | C E | `30.01` | — | — | — |
-| `30.16` | Bent panel / «Гнутая панель» | `bent-panel` | part | shop | count | never | free | C E | `30.01` | — | — | — |
+| `10.10` | Vertical panel / «Вертикальная панель» | `vertical-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | h+d |
+| `10.11` | Horizontal panel / «Горизонтальная панель» | `horizontal-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | w+d |
+| `10.12` | Back panel / «Задняя стенка» | `back-panel` | part | sheet | area | member | free | C | `10.01` | — | — | — |
+| `10.13` | Drawer box part / «Деталь ящика» | `drawer-box-part` | part | sheet | area | member | free | C E | `10.30` | — | — | — |
+| `10.14` | Glass shelf / «Стеклянная полка» | `glass-shelf` | part | piece | area | never | free | C | `10.01` | — | — | w+d |
+| `10.15` | Tamburat panel / «Плита тамбурат» | `tamburat-panel` | part | shop | count | never | free | C E | `10.01` | — | — | — |
+| `10.16` | Bent panel / «Гнутая панель» | `bent-panel` | part | shop | count | never | free | C E | `10.01` | — | — | — |
 
-The aliases carry the workshop's own words, which are not classes: `30.10` is «боковина»,
-«перегородка» and «стойка»; `30.11` is «полка», «днище» and «крыша»; `30.13` is a drawer side, bottom
+The aliases carry the workshop's own words, which are not classes: `10.10` is «боковина»,
+«перегородка» and «стойка»; `10.11` is «полка», «днище» and «крыша»; `10.13` is a drawer side, bottom
 or back. The same rows answer to the English words a person may think in — `side`, `shelf`, `bottom`,
 `top`, `drawer side` — because the picker searches the label, the slug and the aliases in both
 languages. The glass shelf is the table's one override: glass is bought by area from the glazier, so
@@ -376,16 +358,16 @@ pair: a made one is a box of our own parts, a bought one is an article.
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `30.20` | Hinged door, made / «Дверь распашная, своя» | `hinged-door-made` | component | sheet | area | member | free | C E U M | `30.01` | closes | — | — |
-| `30.21` | Hinged door, bought / «Дверь распашная, покупная» | `hinged-door-bought` | component | piece | count | never | free | — | `30.01` | closes | — | — |
-| `30.22` | Sliding door, made / «Дверь раздвижная, своя» | `sliding-door-made` | component | sheet | area | member | free | C E G | `30.01` | closes | — | — |
-| `30.23` | Sliding door, bought / «Дверь раздвижная, покупная» | `sliding-door-bought` | component | piece | count | never | free | — | `30.01` | closes | — | — |
-| `30.24` | Lift-up front, made / «Откидной фасад, свой» | `lift-up-made` | component | sheet | area | member | free | C E M | `30.01` | closes | — | — |
-| `30.25` | Lift-up front, bought / «Откидной фасад, покупной» | `lift-up-bought` | component | piece | count | never | free | — | `30.01` | closes | — | — |
-| `30.26` | Drawer front, made / «Фасад ящика, свой» | `drawer-front-made` | component | sheet | area | member | free | C E M | `30.01` | closes | — | — |
-| `30.27` | Drawer front, bought / «Фасад ящика, покупной» | `drawer-front-bought` | component | piece | count | never | free | — | `30.01` | closes | — | — |
-| `30.30` | Drawer, made / «Ящик, свой» | `drawer-made` | component | shop | count | never | free | — | `30.01` | — | — | — |
-| `30.31` | Drawer, bought / «Ящик, покупной» | `drawer-bought` | component | piece | count | never | none | — | `30.01` | — | — | — |
+| `10.20` | Hinged door, made / «Дверь распашная, своя» | `hinged-door-made` | component | sheet | area | member | free | C E U M | `10.01` | closes | — | — |
+| `10.21` | Hinged door, bought / «Дверь распашная, покупная» | `hinged-door-bought` | component | piece | count | never | free | — | `10.01` | closes | — | — |
+| `10.22` | Sliding door, made / «Дверь раздвижная, своя» | `sliding-door-made` | component | sheet | area | member | free | C E G | `10.01` | closes | — | — |
+| `10.23` | Sliding door, bought / «Дверь раздвижная, покупная» | `sliding-door-bought` | component | piece | count | never | free | — | `10.01` | closes | — | — |
+| `10.24` | Lift-up front, made / «Откидной фасад, свой» | `lift-up-made` | component | sheet | area | member | free | C E M | `10.01` | closes | — | — |
+| `10.25` | Lift-up front, bought / «Откидной фасад, покупной» | `lift-up-bought` | component | piece | count | never | free | — | `10.01` | closes | — | — |
+| `10.26` | Drawer front, made / «Фасад ящика, свой» | `drawer-front-made` | component | sheet | area | member | free | C E M | `10.01` | closes | — | — |
+| `10.27` | Drawer front, bought / «Фасад ящика, покупной» | `drawer-front-bought` | component | piece | count | never | free | — | `10.01` | closes | — | — |
+| `10.30` | Drawer, made / «Ящик, свой» | `drawer-made` | component | shop | count | never | free | — | `10.01` | — | — | — |
+| `10.31` | Drawer, bought / «Ящик, покупной» | `drawer-bought` | component | piece | count | never | none | — | `10.01` | — | — | — |
 
 A front is a `Panel` body with a component-level class, not a new body: it admits the cup bore and the
 mounting pattern its hinges need. Which of the four forms it is — hinged, sliding, lift-up, drawer
@@ -394,19 +376,49 @@ way: each form comes made and bought, and a variant may not change `supply` (§3
 overlay, inset, half-overlay — is carried by the hinge class instead, because that is where the rule
 lives; a third axis below the variant would need a fourth level.
 
-### 7.4 Work and dining surfaces — `40`
+### 7.2 Boards and trim — `20`
+
+Linear stock cut to length, and the boards that belong to a surface rather than to a case. The family
+holds two supplies on purpose: a worktop is linear, a wall panel is sheet and is nested.
+
+| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `20.01` | Worktop / «Столешница» | `worktop` | part | linear | length | never | length | C X | `10.01.01`, `10.01.03` | — | — | — |
+| `20.02` | Plinth / «Цоколь» | `plinth` | part | linear | length | never | length | C | `10.01.01`, `10.01.03` | — | — | — |
+| `20.03` | Cornice / «Карниз» | `cornice` | part | linear | length | never | length | C | `10.01.02`, `10.01.03`, `10.02` | — | — | — |
+| `20.04` | Wall panel / «Стеновая панель» | `wall-panel` | part | sheet | area | member | free | C X E | — | — | — | — |
+| `20.05` | Edge profile / «Кромочный профиль» | `edge-profile` | part | linear | length | never | length | C | — | — | — | — |
+| `20.06` | Hanging rail / «Штанга» | `hanging-rail` | part | linear | length | never | length | H | `10.02` | — | — | — |
+| `20.07` | Filler strip / «Добор» | `filler` | part | linear | length | never | length | C | `10.01.01`, `10.01.02`, `10.01.03` | — | — | — |
+
+The worktop admits a cutout and the plinth does not; that one operation difference plus the report
+line earns both codes. A straight and an L-shaped worktop are one class: the shape is geometry, not
+a rule, and the report line is the same.
+
+### 7.3 Work and dining surfaces — `30`
 
 The type row is the parent of the two forms and the class for a table whose mount is not decided yet.
 A work table, a dining table and a desk are one class with the maker's name; only `mount` differs.
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `40.01` | Table / «Стол» | `table` | product | shop | count | never | free | — | — | — | floor | — |
-| `40.01.01` | Floor table / «Стол напольный» | `floor-table` | product | shop | count | never | free | — | — | — | floor | — |
-| `40.01.02` | Wall table / «Стол навесной» | `wall-table` | product | shop | count | never | free | — | — | — | wall | — |
+| `30.01` | Table / «Стол» | `table` | product | shop | count | never | free | — | — | — | floor | — |
+| `30.01.01` | Floor table / «Стол напольный» | `floor-table` | product | shop | count | never | free | — | — | — | floor | — |
+| `30.01.02` | Wall table / «Стол навесной» | `wall-table` | product | shop | count | never | free | — | — | — | wall | — |
 
 A top and a leg of a table are an ordinary horizontal panel and an ordinary leg and take their rows
 with the table tool.
+
+### 7.4 Lying — `40`
+
+| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `40.01` | Bed / «Кровать» | `bed` | product | shop | count | never | free | — | — | — | floor | — |
+| `40.02` | Mattress / «Матрас» | `mattress` | component | piece | count | never | none | — | `40.01` | — | — | — |
+
+A mattress is bought complete, never resized and never banded, and belongs to the bed. That it is a
+component and not a product shows the two axes are independent: `level` groups a report, `supply`
+says where the thing comes from.
 
 ### 7.5 Fittings — `50`
 
@@ -416,26 +428,26 @@ distinguishes one from another, and one of them is bought by the metre rather th
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `50.01` | Card hinge / «Петля карточная» | `card-hinge` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.01.01` | Card hinge, overlay / «накладная» | `card-hinge-overlay` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.01.02` | Card hinge, inset / «вкладная» | `card-hinge-inset` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.01.03` | Card hinge, half-overlay / «полунакладная» | `card-hinge-half` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.02` | Cup hinge / «Петля чашечная» | `cup-hinge` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.02.01` | Cup hinge, overlay / «накладная» | `cup-hinge-overlay` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.02.02` | Cup hinge, inset / «вкладная» | `cup-hinge-inset` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.02.03` | Cup hinge, half-overlay / «полунакладная» | `cup-hinge-half` | fitting | piece | count | never | none | — | `30.10`, `30.2` | — | — | — |
-| `50.03` | Runner / «Направляющая» | `runner` | fitting | piece | count | never | none | — | `30.10`, `30.3` | — | — | — |
-| `50.03.01` | Roller runner / «роликовая» | `runner-roller` | fitting | piece | count | never | none | — | `30.10`, `30.3` | — | — | — |
-| `50.03.02` | Ball-bearing runner / «шариковая» | `runner-ball` | fitting | piece | count | never | none | — | `30.10`, `30.3` | — | — | — |
-| `50.03.03` | Undermount runner / «скрытая» | `runner-undermount` | fitting | piece | count | never | none | — | `30.3` | — | — | — |
-| `50.04` | Handle / «Ручка» | `handle` | fitting | piece | count | never | none | — | `30.2` | — | — | — |
-| `50.05` | Cam connector / «Эксцентрик» | `cam-connector` | fitting | piece | count | never | none | — | `30.10`, `30.11`, `30.12` | — | — | — |
-| `50.06` | Shelf pin / «Полкодержатель» | `shelf-pin` | fitting | piece | count | never | none | — | `30.10` | — | — | — |
-| `50.07` | Lift mechanism / «Подъёмный механизм» | `lift-mechanism` | fitting | piece | count | never | none | — | `30.24`, `30.25` | — | — | — |
-| `50.08` | Lock / «Замок» | `lock` | fitting | piece | count | never | none | — | `30.2` | — | — | — |
-| `50.09` | Light profile / «Профиль подсветки» | `light-profile` | fitting | linear | length | never | length | C | `30.01.02` | — | — | — |
-| `50.10` | Accessory / «Аксессуар» | `accessory` | fitting | piece | count | never | none | — | `30.01` | — | — | — |
-| `50.11` | Sliding door system / «Система раздвижных дверей» | `sliding-system` | fitting | piece | count | never | none | — | `30.22`, `30.23`, `30.01.03` | — | — | — |
+| `50.01` | Card hinge / «Петля карточная» | `card-hinge` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.01.01` | Card hinge, overlay / «накладная» | `card-hinge-overlay` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.01.02` | Card hinge, inset / «вкладная» | `card-hinge-inset` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.01.03` | Card hinge, half-overlay / «полунакладная» | `card-hinge-half` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.02` | Cup hinge / «Петля чашечная» | `cup-hinge` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.02.01` | Cup hinge, overlay / «накладная» | `cup-hinge-overlay` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.02.02` | Cup hinge, inset / «вкладная» | `cup-hinge-inset` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.02.03` | Cup hinge, half-overlay / «полунакладная» | `cup-hinge-half` | fitting | piece | count | never | none | — | `10.10`, `10.2` | — | — | — |
+| `50.03` | Runner / «Направляющая» | `runner` | fitting | piece | count | never | none | — | `10.10`, `10.3` | — | — | — |
+| `50.03.01` | Roller runner / «роликовая» | `runner-roller` | fitting | piece | count | never | none | — | `10.10`, `10.3` | — | — | — |
+| `50.03.02` | Ball-bearing runner / «шариковая» | `runner-ball` | fitting | piece | count | never | none | — | `10.10`, `10.3` | — | — | — |
+| `50.03.03` | Undermount runner / «скрытая» | `runner-undermount` | fitting | piece | count | never | none | — | `10.3` | — | — | — |
+| `50.04` | Handle / «Ручка» | `handle` | fitting | piece | count | never | none | — | `10.2` | — | — | — |
+| `50.05` | Cam connector / «Эксцентрик» | `cam-connector` | fitting | piece | count | never | none | — | `10.10`, `10.11`, `10.12` | — | — | — |
+| `50.06` | Shelf pin / «Полкодержатель» | `shelf-pin` | fitting | piece | count | never | none | — | `10.10` | — | — | — |
+| `50.07` | Lift mechanism / «Подъёмный механизм» | `lift-mechanism` | fitting | piece | count | never | none | — | `10.24`, `10.25` | — | — | — |
+| `50.08` | Lock / «Замок» | `lock` | fitting | piece | count | never | none | — | `10.2` | — | — | — |
+| `50.09` | Light profile / «Профиль подсветки» | `light-profile` | fitting | linear | length | never | length | C | `10.01.02` | — | — | — |
+| `50.10` | Accessory / «Аксессуар» | `accessory` | fitting | piece | count | never | none | — | `10.01` | — | — | — |
+| `50.11` | Sliding door system / «Система раздвижных дверей» | `sliding-system` | fitting | piece | count | never | none | — | `10.22`, `10.23`, `10.01.03` | — | — | — |
 
 The hinge is the worked case. A card hinge and a cup hinge are two types: the first is screwed flat
 and the second bores a 35 mm cup through a mounting pattern, and the shop buys them as separate
@@ -459,47 +471,43 @@ variant. The search reads those words in both languages, so `inset sink`, `under
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `60.01` | Sink / «Мойка» | `sink` | component | piece | count | never | none | — | `70.01` | — | — | — |
-| `60.02` | Hob / «Варочная панель» | `hob` | component | piece | count | never | none | — | `70.01` | — | — | — |
-| `60.03` | Oven / «Духовой шкаф» | `oven` | component | piece | count | never | none | — | `30.01` | — | — | — |
+| `60.01` | Sink / «Мойка» | `sink` | component | piece | count | never | none | — | `20.01` | — | — | — |
+| `60.02` | Hob / «Варочная панель» | `hob` | component | piece | count | never | none | — | `20.01` | — | — | — |
+| `60.03` | Oven / «Духовой шкаф» | `oven` | component | piece | count | never | none | — | `10.01` | — | — | — |
 | `60.04` | Extractor / «Вытяжка» | `extractor` | component | piece | count | never | none | — | — | — | — | — |
-| `60.05` | Dishwasher / «Посудомоечная машина» | `dishwasher` | component | piece | count | never | none | — | `30.01.01` | — | — | — |
+| `60.05` | Dishwasher / «Посудомоечная машина» | `dishwasher` | component | piece | count | never | none | — | `10.01.01` | — | — | — |
 | `60.06` | Refrigerator / «Холодильник» | `refrigerator` | component | piece | count | never | none | — | — | — | — | — |
-| `60.07` | Washer / «Стиральная машина» | `washer` | component | piece | count | never | none | — | `30.01.01` | — | — | — |
+| `60.07` | Washer / «Стиральная машина» | `washer` | component | piece | count | never | none | — | `10.01.01` | — | — | — |
 
-### 7.7 Boards and trim — `70`
-
-Linear stock cut to length, and the boards that belong to a surface rather than to a case. The family
-holds two supplies on purpose: a worktop is linear, a wall panel is sheet and is nested.
+### 7.7 The placeholder and the reserved ranges
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `70.01` | Worktop / «Столешница» | `worktop` | part | linear | length | never | length | C X | `30.01.01`, `30.01.03` | — | — | — |
-| `70.02` | Plinth / «Цоколь» | `plinth` | part | linear | length | never | length | C | `30.01.01`, `30.01.03` | — | — | — |
-| `70.03` | Cornice / «Карниз» | `cornice` | part | linear | length | never | length | C | `30.01.02`, `30.01.03`, `30.02` | — | — | — |
-| `70.04` | Wall panel / «Стеновая панель» | `wall-panel` | part | sheet | area | member | free | C X E | — | — | — | — |
-| `70.05` | Edge profile / «Кромочный профиль» | `edge-profile` | part | linear | length | never | length | C | — | — | — | — |
-| `70.06` | Hanging rail / «Штанга» | `hanging-rail` | part | linear | length | never | length | H | `30.02` | — | — | — |
-| `70.07` | Filler strip / «Добор» | `filler` | part | linear | length | never | length | C | `30.01.01`, `30.01.02`, `30.01.03` | — | — | — |
-
-The worktop admits a cutout and the plinth does not; that one operation difference plus the report
-line earns both codes. A straight and an L-shaped worktop are one class: the shape is geometry, not
-a rule, and the report line is the same.
-
-### 7.8 The placeholder and the reserved ranges
-
-| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `80.01` | General product / «Изделие общего назначения» | `general-product` | product | shop | count | never | free | — | — | — | floor | — |
+| `70.01` | General product / «Изделие общего назначения» | `general-product` | product | shop | count | never | free | — | — | — | floor | — |
 
 `product.create` assigns this row when the card names no type, so a product always has a class
 (0097); the maker picks the real one later from the frame's card. It is `level = Product` and is
-never offered when the target is a part or a fitting. The family is named `80` «Общее» / “General”
+never offered when the target is a part or a fitting. The family is named `70` «Общее» / “General”
 and holds this row alone, because the placeholder has no function: putting it into a real family
 would make that family's report line lie, and a family that exists only to hold it costs one code.
 
 Group `90` is reserved for a workshop's own group, and `TT = 90..99` inside every group is reserved
 for its local classes; an official row never lands in either range.
+
+### 7.8 Seating — `80`
+
+A piece a person sits on. The family's parts — a seat board, a back, a leg — arrive with the seating
+tools, because a part earns its row when a report must name it and a tool exists to create it.
+
+| Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `80.01` | Chair / «Стул» | `chair` | product | shop | count | never | free | — | — | — | floor | — |
+| `80.02` | Stool / «Табурет» | `stool` | product | shop | count | never | free | — | — | — | floor | — |
+| `80.03` | Bench / «Скамья» | `bench` | product | shop | count | never | free | — | — | — | floor | — |
+| `80.04` | Sofa / «Диван» | `sofa` | product | shop | count | never | free | — | — | — | floor | — |
+
+A chair and a stool have the same rules and different report lines, so both exist; a dining chair, an
+office chair and a kitchen chair are one class with aliases.
 
 ## 8. Assignment and lifecycle
 
@@ -510,7 +518,7 @@ for its local classes; an official row never lands in either range.
   the scene loads. The registry is append-only, so this should never happen for a code that shipped.
 - Setting a class on a container marks it as a component; clearing removes the marker unless
   `prototype.id` or `component = true` is also present (0034).
-- A product always has a class. `product.create` assigns `80.01`, «изделие общего назначения» /
+- A product always has a class. `product.create` assigns `70.01`, «изделие общего назначения» /
   “general product”, when the card is not given a type; the placeholder is a `level = Product` row
   that is never offered for a part, and the maker changes it later from the frame's card.
 - A code, once in a released build, is **immortal**: never reused, never renumbered, never moved to
@@ -534,16 +542,16 @@ that pair is the one rule the scenarios added.
 
 | Object | Body | Class | Rules | Report line | Editor behaviour |
 |---|---|---|---|---|---|
-| Cabinet, base | `Container` | `30.01.01` | product, shop, floor | products, counted | frame drawn, opened, parts born inside, moves on the floor plane |
-| Shelf | `Panel` | `30.11` | sheet, area, member, free, C E, fill w+d | parts, area, nests | resizes freely, banding offered, offered by the void tool for a width+depth fill |
-| Side | `Panel` | `30.10` | sheet, area, member, free, C E, fill h+d | parts, area, nests | banding offered, offered by the void tool for a height+depth fill |
-| Back | `Panel` | `30.12` | sheet, area, member, free, C | parts, area, nests | no banding command, no void fill |
-| Door, hinged, made | `Panel` | `30.20` | component, sheet, area, member, free, C E U M, closes | facades, made, with gaps | closes an opening, admits cup bores and a mounting pattern, nested with the panels |
-| Door, hinged, bought | `Panel` | `30.21` | component, piece, count, never, —, closes | facades, bought | closes an opening, never nested, no in-house machining |
+| Cabinet, base | `Container` | `10.01.01` | product, shop, floor | products, counted | frame drawn, opened, parts born inside, moves on the floor plane |
+| Shelf | `Panel` | `10.11` | sheet, area, member, free, C E, fill w+d | parts, area, nests | resizes freely, banding offered, offered by the void tool for a width+depth fill |
+| Side | `Panel` | `10.10` | sheet, area, member, free, C E, fill h+d | parts, area, nests | banding offered, offered by the void tool for a height+depth fill |
+| Back | `Panel` | `10.12` | sheet, area, member, free, C | parts, area, nests | no banding command, no void fill |
+| Door, hinged, made | `Panel` | `10.20` | component, sheet, area, member, free, C E U M, closes | facades, made, with gaps | closes an opening, admits cup bores and a mounting pattern, nested with the panels |
+| Door, hinged, bought | `Panel` | `10.21` | component, piece, count, never, —, closes | facades, bought | closes an opening, never nested, no in-house machining |
 | Spring hinge, overlay | `Container` | `50.02.01` | piece, count, never, none | fittings, overlay | no resize, no banding, never nested |
 | Runner, undermount | `Container` | `50.03.03` | piece, count, never, none | fittings, undermount | no resize, no banding, never nested |
-| Worktop | `Panel` | `70.01` | linear, length, never, length, C X | parts, length, linear purchase | resizes by length only, cutouts allowed, never nested |
-| Plinth | `Panel` | `70.02` | linear, length, never, length, C | parts, length, linear purchase | resizes by length only, no cutout, never nested |
+| Worktop | `Panel` | `20.01` | linear, length, never, length, C X | parts, length, linear purchase | resizes by length only, cutouts allowed, never nested |
+| Plinth | `Panel` | `20.02` | linear, length, never, length, C | parts, length, linear purchase | resizes by length only, no cutout, never nested |
 
 ## 11. Export
 
@@ -558,15 +566,15 @@ table, not from our digits.
   decided. The reserved range exists so the answer can be yes later without touching official codes.
 - Whether an object may carry more than one class (hardware that is also a fitting family) is still
   open; a second class would need a rule for which one an algorithm reads.
-- `host` is written as a code prefix, so `30.2` means every facade and `30.01` every cabinet form.
+- `host` is written as a code prefix, so `10.2` means every facade and `10.01` every cabinet form.
   The mounting gate (T4) decides by prefix (`ClassCode::is_hosted_in`): a hinge sits on any facade
   and a runner under any drawer box, and a row that must not accept a sibling narrows its prefix
-  (`30.30` is the made drawer box alone) rather than gaining a second field. A prefix has proven
+  (`10.30` is the made drawer box alone) rather than gaining a second field. A prefix has proven
   enough; no rule needs an exact class yet.
 - A product kind beyond the ones listed (a sideboard, a shoe cabinet, a corner cabinet) takes its row
   when its rules or its report line differ from an existing row; a corner cabinet is a ruled
   difference of the envelope, not a class difference, so it may never need one.
-- **The recipe of a workshop-made part is open.** `30.15` tamburat and `30.16` bent are classes
+- **The recipe of a workshop-made part is open.** `10.15` tamburat and `10.16` bent are classes
   because the shop assembles them, and `supply = shop` keeps them counted once and out of the cutting
   list. Whether their components travel as a recipe on the object (two 8 mm skins and the rails,
   expanded by the exporter) or as ordinary sheet parts in the tree is not decided; the class rows do

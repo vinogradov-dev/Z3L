@@ -205,6 +205,9 @@ mod tests {
         settings.appearance.accent = Some([0x11, 0x99, 0x44]);
         settings.appearance.ui_scale = 125;
         settings.viewport.grid_step_mm = 25;
+        settings.snaps.planes = false;
+        settings.snaps.frames = true;
+        settings.snaps.tolerance_mm = 12;
         settings.appearance.panel_opacity = 70;
         settings.recent.push(PathBuf::from("/tmp/cabinet.z3l"));
         settings
@@ -231,6 +234,11 @@ mod tests {
         let loaded = store.load();
         assert_eq!(loaded.settings, settings);
         assert_eq!(loaded.notice, None);
+        assert_eq!(
+            (loaded.settings.snaps.planes, loaded.settings.snaps.frames, loaded.settings.snaps.tolerance_mm),
+            (false, true, 12),
+            "the snapping section survives the file"
+        );
         assert!(!directory.join(format!("{FILE_NAME}.tmp")).exists(), "the temporary file is renamed away");
     }
 

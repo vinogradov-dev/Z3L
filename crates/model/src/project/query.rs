@@ -611,11 +611,11 @@ mod tests {
         let group = project.group_nodes(&[Id::new(2).expect("id"), Id::new(3).expect("id")], "G").expect("group");
         assert!(!project.is_component(group));
 
-        project.set_property(group, SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        project.set_property(group, SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         assert!(project.is_component(group));
         project.set_property(group, SYSTEM_COMPONENT, PropertyValue::bool(false)).expect("false marker");
         assert!(project.is_component(group), "an explicit false does not erase the furniture type");
-        assert_eq!(project.class(group), Some(class("30.11")));
+        assert_eq!(project.class(group), Some(class("10.11")));
         assert_eq!(project.class(root), Some(ClassCode::UNCLASSIFIED));
 
         assert_eq!(project.ungroup_group(group), Err(ProjectError::NotAComponent { id: group }));
@@ -631,19 +631,19 @@ mod tests {
         let panel = Id::new(2).expect("panel");
         let front = Id::new(4).expect("front");
         let drawer = Id::new(3).expect("drawer");
-        project.set_property(drawer, SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        project.set_property(drawer, SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         project.set_property(panel, "role", PropertyValue::text("shelf")).expect("role");
 
         assert_eq!(project.query(&NodeQuery::any()), vec![panel, drawer, front]);
         assert_eq!(project.query(&NodeQuery::any().with_kind(StructuralKind::Container)), vec![drawer]);
         assert_eq!(project.query(&NodeQuery::any().with_kind(StructuralKind::Panel)), vec![panel, front]);
         assert_eq!(
-            project.query(&NodeQuery::any().with_class_under(class("30"))),
+            project.query(&NodeQuery::any().with_class_under(class("10"))),
             vec![drawer],
             "a query on a group matches every type below it"
         );
-        assert_eq!(project.query(&NodeQuery::any().with_class_under(class("30.11"))), vec![drawer]);
-        assert!(project.query(&NodeQuery::any().with_class_under(class("40"))).is_empty());
+        assert_eq!(project.query(&NodeQuery::any().with_class_under(class("10.11"))), vec![drawer]);
+        assert!(project.query(&NodeQuery::any().with_class_under(class("30"))).is_empty());
         assert_eq!(
             project.query(&NodeQuery::any().with_class_under(ClassCode::UNCLASSIFIED)),
             vec![panel, front],

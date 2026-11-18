@@ -46,7 +46,7 @@ pub enum ClassCodeError {
 ///
 /// The value is the stored integer code, from `0` (unclassified) to [`ClassCode::MAX`]. The dotted
 /// form is a presentation only: it is produced by [`fmt::Display`] and accepted by `FromStr`, never
-/// stored. A zero suffix names the parent: `30.01.00` is the type, `30.00.00` the family.
+/// stored. A zero suffix names the parent: `10.01.00` is the type, `10.00.00` the family.
 ///
 /// A code is valid whether or not the registry knows it: the shape is a property of the digits, the
 /// meaning arrives with the row (ADR 0094). An unknown code is kept on load and refused on
@@ -61,22 +61,22 @@ impl ClassCode {
     /// The editor's placeholder product class, «изделие общего назначения» / general product.
     ///
     /// `product.create` assigns it when the caller names no class, so a product always carries
-    /// one (ADR 0097); a test proves it is the `80.01.00` registry row with `level = Product`.
-    pub const GENERAL_PRODUCT: Self = Self(800_100);
+    /// one (ADR 0097); a test proves it is the `70.01` registry row with `level = Product`.
+    pub const GENERAL_PRODUCT: Self = Self(700_100);
 
     /// The `vertical panel` row, «вертикальная панель» / vertical panel, the class a post fills a
     /// niche with (ADR 0099).
     ///
     /// The fill tool is bound to the row, and the row's `fill` trait decides that a post takes the
     /// niche's height and depth. A test proves the constant still names that row.
-    pub const VERTICAL_PANEL: Self = Self(301_000);
+    pub const VERTICAL_PANEL: Self = Self(101_000);
 
     /// The `horizontal panel` row, «горизонтальная панель» / horizontal panel, the class a shelf
     /// fills a niche with (ADR 0099).
     ///
     /// A shelf takes the niche's width and depth; the row's `fill` trait is the one statement of
     /// that rule.
-    pub const HORIZONTAL_PANEL: Self = Self(301_100);
+    pub const HORIZONTAL_PANEL: Self = Self(101_100);
 
     /// The largest assignable code.
     pub const MAX: Self = Self(CLASS_MAX_CODE);
@@ -593,7 +593,7 @@ impl OperationSet {
 
 /// The leading digits of a code, the way `host` names the classes an object may sit in.
 ///
-/// `30` covers every storage class, `30.2` every facade and `30.20` exactly one class, so the rule
+/// `10` covers every storage class, `10.2` every facade and `10.20` exactly one class, so the rule
 /// keeps its prefix shape instead of listing every member (ADR 0094). A prefix never names a
 /// document value; it is the registry's way of writing a set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -605,7 +605,7 @@ pub struct ClassPrefix {
 impl ClassPrefix {
     /// Builds a prefix from the digits it holds, `digits` wide, without separators.
     ///
-    /// `30` is `of(30, 2)`, `30.2` is `of(302, 3)` and `30.01.01` is `of(300101, 6)`. The registry
+    /// `10` is `of(10, 2)`, `10.2` is `of(102, 3)` and `10.01.01` is `of(100101, 6)`. The registry
     /// test rejects a prefix outside `2..=6` digits or wider than its value.
     pub const fn of(value: u32, digits: u8) -> Self {
         Self { value, digits }
@@ -879,109 +879,13 @@ const fn traits(
 /// The table is the registry's content for version 1: a test compares it with
 /// `docs/domain/classes.md` row for row, so the prose cannot drift from what the program knows. A
 /// code is append-only and immortal once shipped; a change to an existing row's traits is a
-/// behaviour change and needs its own record (ADR 0094).
+/// behaviour change and needs its own record (ADR 0094). The group digits carry the order of the
+/// work — the case is `10` and the seat is `80` (ADR 0145) — so the table reads as the work order.
 const REGISTRY: &[ClassRow] = &[
-    // 10 — seating
-    ClassRow::family(100_000, "seating", Message::ClassFamilySeating),
+    // 10 — storage
+    ClassRow::family(100_000, "storage", Message::ClassFamilyStorage),
     ClassRow::class(
         100_100,
-        "chair",
-        Message::ClassChair,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    )
-    .with_aliases(&["dining chair", "office chair", "kitchen chair"]),
-    ClassRow::class(
-        100_200,
-        "stool",
-        Message::ClassStool,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    ClassRow::class(
-        100_300,
-        "bench",
-        Message::ClassBench,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    ClassRow::class(
-        100_400,
-        "sofa",
-        Message::ClassSofa,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    // 20 — lying
-    ClassRow::family(200_000, "lying", Message::ClassFamilyLying),
-    ClassRow::class(
-        200_100,
-        "bed",
-        Message::ClassBed,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    ClassRow::class(
-        200_200,
-        "mattress",
-        Message::ClassMattress,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(2001, 4)],
-    ),
-    // 30 — storage
-    ClassRow::family(300_000, "storage", Message::ClassFamilyStorage),
-    ClassRow::class(
-        300_100,
         "cabinet",
         Message::ClassCabinet,
         traits(
@@ -998,7 +902,7 @@ const REGISTRY: &[ClassRow] = &[
         &[],
     ),
     ClassRow::class(
-        300_101,
+        100_101,
         "base-cabinet",
         Message::ClassBaseCabinet,
         traits(
@@ -1016,7 +920,7 @@ const REGISTRY: &[ClassRow] = &[
     )
     .with_aliases(&["nightstand", "chest", "тумба", "комод"]),
     ClassRow::class(
-        300_102,
+        100_102,
         "wall-cabinet",
         Message::ClassWallCabinet,
         traits(
@@ -1033,7 +937,7 @@ const REGISTRY: &[ClassRow] = &[
         &[],
     ),
     ClassRow::class(
-        300_103,
+        100_103,
         "tall-cabinet",
         Message::ClassTallCabinet,
         traits(
@@ -1051,7 +955,7 @@ const REGISTRY: &[ClassRow] = &[
     )
     .with_aliases(&["wardrobe", "гардероб"]),
     ClassRow::class(
-        301_000,
+        101_000,
         "vertical-panel",
         Message::ClassVerticalPanel,
         traits(
@@ -1065,11 +969,11 @@ const REGISTRY: &[ClassRow] = &[
             None,
             Some(Fill::HeightAndDepth),
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     )
     .with_aliases(&["side", "side panel", "боковина", "перегородка", "стойка"]),
     ClassRow::class(
-        301_100,
+        101_100,
         "horizontal-panel",
         Message::ClassHorizontalPanel,
         traits(
@@ -1083,11 +987,11 @@ const REGISTRY: &[ClassRow] = &[
             None,
             Some(Fill::WidthAndDepth),
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     )
     .with_aliases(&["shelf", "bottom", "top", "полка", "полочка", "днище", "крыша"]),
     ClassRow::class(
-        301_200,
+        101_200,
         "back-panel",
         Message::ClassBackPanel,
         traits(
@@ -1101,10 +1005,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        301_300,
+        101_300,
         "drawer-box-part",
         Message::ClassDrawerBoxPart,
         traits(
@@ -1118,7 +1022,7 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3030, 4)],
+        &[ClassPrefix::of(1030, 4)],
     )
     .with_aliases(&[
         "drawer side",
@@ -1129,7 +1033,7 @@ const REGISTRY: &[ClassRow] = &[
         "задняя стенка ящика",
     ]),
     ClassRow::class(
-        301_400,
+        101_400,
         "glass-shelf",
         Message::ClassGlassShelf,
         traits(
@@ -1143,10 +1047,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             Some(Fill::WidthAndDepth),
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        301_500,
+        101_500,
         "tamburat-panel",
         Message::ClassTamburatPanel,
         traits(
@@ -1160,10 +1064,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        301_600,
+        101_600,
         "bent-panel",
         Message::ClassBentPanel,
         traits(
@@ -1177,10 +1081,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_000,
+        102_000,
         "hinged-door-made",
         Message::ClassHingedDoorMade,
         traits(
@@ -1194,10 +1098,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_100,
+        102_100,
         "hinged-door-bought",
         Message::ClassHingedDoorBought,
         traits(
@@ -1211,10 +1115,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_200,
+        102_200,
         "sliding-door-made",
         Message::ClassSlidingDoorMade,
         traits(
@@ -1228,10 +1132,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_300,
+        102_300,
         "sliding-door-bought",
         Message::ClassSlidingDoorBought,
         traits(
@@ -1245,10 +1149,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_400,
+        102_400,
         "lift-up-made",
         Message::ClassLiftUpMade,
         traits(
@@ -1262,10 +1166,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_500,
+        102_500,
         "lift-up-bought",
         Message::ClassLiftUpBought,
         traits(
@@ -1279,10 +1183,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_600,
+        102_600,
         "drawer-front-made",
         Message::ClassDrawerFrontMade,
         traits(
@@ -1296,10 +1200,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        302_700,
+        102_700,
         "drawer-front-bought",
         Message::ClassDrawerFrontBought,
         traits(
@@ -1313,10 +1217,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        303_000,
+        103_000,
         "drawer-made",
         Message::ClassDrawerMade,
         traits(
@@ -1330,281 +1234,19 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
     ClassRow::class(
-        303_100,
+        103_100,
         "drawer-bought",
         Message::ClassDrawerBought,
         traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3001, 4)],
+        &[ClassPrefix::of(1001, 4)],
     ),
-    // 40 — surfaces
-    ClassRow::family(400_000, "surfaces", Message::ClassFamilySurfaces),
+    // 20 — boards-trim
+    ClassRow::family(200_000, "boards-trim", Message::ClassFamilyBoardsTrim),
     ClassRow::class(
-        400_100,
-        "table",
-        Message::ClassTable,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    ClassRow::class(
-        400_101,
-        "floor-table",
-        Message::ClassFloorTable,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Floor),
-            None,
-        ),
-        &[],
-    ),
-    ClassRow::class(
-        400_102,
-        "wall-table",
-        Message::ClassWallTable,
-        traits(
-            Level::Product,
-            Supply::MadeInShop,
-            Measure::Count,
-            Nesting::Never,
-            Extent::Free,
-            &[],
-            None,
-            Some(Mount::Wall),
-            None,
-        ),
-        &[],
-    ),
-    // 50 — fittings
-    ClassRow::family(500_000, "fittings", Message::ClassFamilyFittings),
-    ClassRow::class(
-        500_100,
-        "card-hinge",
-        Message::ClassCardHinge,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_101,
-        "card-hinge-overlay",
-        Message::ClassCardHingeOverlay,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_102,
-        "card-hinge-inset",
-        Message::ClassCardHingeInset,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_103,
-        "card-hinge-half",
-        Message::ClassCardHingeHalf,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_200,
-        "cup-hinge",
-        Message::ClassCupHinge,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_201,
-        "cup-hinge-overlay",
-        Message::ClassCupHingeOverlay,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_202,
-        "cup-hinge-inset",
-        Message::ClassCupHingeInset,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_203,
-        "cup-hinge-half",
-        Message::ClassCupHingeHalf,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_300,
-        "runner",
-        Message::ClassRunner,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(303, 3)],
-    ),
-    ClassRow::class(
-        500_301,
-        "runner-roller",
-        Message::ClassRunnerRoller,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(303, 3)],
-    ),
-    ClassRow::class(
-        500_302,
-        "runner-ball",
-        Message::ClassRunnerBall,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(303, 3)],
-    ),
-    ClassRow::class(
-        500_303,
-        "runner-undermount",
-        Message::ClassRunnerUndermount,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(303, 3)],
-    ),
-    ClassRow::class(
-        500_400,
-        "handle",
-        Message::ClassHandle,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(302, 3)],
-    )
-    .with_aliases(&["bar", "knob", "profile handle"]),
-    ClassRow::class(
-        500_500,
-        "cam-connector",
-        Message::ClassCamConnector,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4), ClassPrefix::of(3011, 4), ClassPrefix::of(3012, 4)],
-    ),
-    ClassRow::class(
-        500_600,
-        "shelf-pin",
-        Message::ClassShelfPin,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3010, 4)],
-    ),
-    ClassRow::class(
-        500_700,
-        "lift-mechanism",
-        Message::ClassLiftMechanism,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3024, 4), ClassPrefix::of(3025, 4)],
-    ),
-    ClassRow::class(
-        500_800,
-        "lock",
-        Message::ClassLock,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(302, 3)],
-    ),
-    ClassRow::class(
-        500_900,
-        "light-profile",
-        Message::ClassLightProfile,
-        traits(
-            Level::Fitting,
-            Supply::MadeFromLinear,
-            Measure::Length,
-            Nesting::Never,
-            Extent::LengthOnly,
-            &[Operation::Contour],
-            None,
-            None,
-            None,
-        ),
-        &[ClassPrefix::of(300102, 6)],
-    ),
-    ClassRow::class(
-        501_000,
-        "accessory",
-        Message::ClassAccessory,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3001, 4)],
-    ),
-    ClassRow::class(
-        501_100,
-        "sliding-system",
-        Message::ClassSlidingSystem,
-        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3022, 4), ClassPrefix::of(3023, 4), ClassPrefix::of(300103, 6)],
-    ),
-    // 60 — appliances
-    ClassRow::family(600_000, "appliances", Message::ClassFamilyAppliances),
-    ClassRow::class(
-        600_100,
-        "sink",
-        Message::ClassSink,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(7001, 4)],
-    )
-    .with_aliases(&["inset sink", "under-mount sink", "врезная мойка"]),
-    ClassRow::class(
-        600_200,
-        "hob",
-        Message::ClassHob,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(7001, 4)],
-    )
-    .with_aliases(&["gas hob", "induction hob", "газовая панель", "индукционная панель"]),
-    ClassRow::class(
-        600_300,
-        "oven",
-        Message::ClassOven,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(3001, 4)],
-    ),
-    ClassRow::class(
-        600_400,
-        "extractor",
-        Message::ClassExtractor,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[],
-    ),
-    ClassRow::class(
-        600_500,
-        "dishwasher",
-        Message::ClassDishwasher,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(300101, 6)],
-    )
-    .with_aliases(&["integrated dishwasher", "free-standing dishwasher"]),
-    ClassRow::class(
-        600_600,
-        "refrigerator",
-        Message::ClassRefrigerator,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[],
-    )
-    .with_aliases(&["integrated refrigerator", "free-standing refrigerator"]),
-    ClassRow::class(
-        600_700,
-        "washer",
-        Message::ClassWasher,
-        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
-        &[ClassPrefix::of(300101, 6)],
-    )
-    .with_aliases(&["integrated washer", "free-standing washer"]),
-    // 70 — boards-trim
-    ClassRow::family(700_000, "boards-trim", Message::ClassFamilyBoardsTrim),
-    ClassRow::class(
-        700_100,
+        200_100,
         "worktop",
         Message::ClassWorktop,
         traits(
@@ -1618,11 +1260,11 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(300101, 6), ClassPrefix::of(300103, 6)],
+        &[ClassPrefix::of(100101, 6), ClassPrefix::of(100103, 6)],
     )
     .with_aliases(&["countertop", "postformed worktop"]),
     ClassRow::class(
-        700_200,
+        200_200,
         "plinth",
         Message::ClassPlinth,
         traits(
@@ -1636,10 +1278,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(300101, 6), ClassPrefix::of(300103, 6)],
+        &[ClassPrefix::of(100101, 6), ClassPrefix::of(100103, 6)],
     ),
     ClassRow::class(
-        700_300,
+        200_300,
         "cornice",
         Message::ClassCornice,
         traits(
@@ -1653,10 +1295,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(300102, 6), ClassPrefix::of(300103, 6), ClassPrefix::of(3002, 4)],
+        &[ClassPrefix::of(100102, 6), ClassPrefix::of(100103, 6), ClassPrefix::of(1002, 4)],
     ),
     ClassRow::class(
-        700_400,
+        200_400,
         "wall-panel",
         Message::ClassWallPanel,
         traits(
@@ -1673,7 +1315,7 @@ const REGISTRY: &[ClassRow] = &[
         &[],
     ),
     ClassRow::class(
-        700_500,
+        200_500,
         "edge-profile",
         Message::ClassEdgeProfile,
         traits(
@@ -1690,7 +1332,7 @@ const REGISTRY: &[ClassRow] = &[
         &[],
     ),
     ClassRow::class(
-        700_600,
+        200_600,
         "hanging-rail",
         Message::ClassHangingRail,
         traits(
@@ -1704,10 +1346,10 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(3002, 4)],
+        &[ClassPrefix::of(1002, 4)],
     ),
     ClassRow::class(
-        700_700,
+        200_700,
         "filler",
         Message::ClassFiller,
         traits(
@@ -1721,14 +1363,373 @@ const REGISTRY: &[ClassRow] = &[
             None,
             None,
         ),
-        &[ClassPrefix::of(300101, 6), ClassPrefix::of(300102, 6), ClassPrefix::of(300103, 6)],
+        &[ClassPrefix::of(100101, 6), ClassPrefix::of(100102, 6), ClassPrefix::of(100103, 6)],
     ),
-    // 80 — general
-    ClassRow::family(800_000, "general", Message::ClassFamilyGeneral),
+    // 30 — surfaces
+    ClassRow::family(300_000, "surfaces", Message::ClassFamilySurfaces),
     ClassRow::class(
-        800_100,
+        300_100,
+        "table",
+        Message::ClassTable,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    ClassRow::class(
+        300_101,
+        "floor-table",
+        Message::ClassFloorTable,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    ClassRow::class(
+        300_102,
+        "wall-table",
+        Message::ClassWallTable,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Wall),
+            None,
+        ),
+        &[],
+    ),
+    // 40 — lying
+    ClassRow::family(400_000, "lying", Message::ClassFamilyLying),
+    ClassRow::class(
+        400_100,
+        "bed",
+        Message::ClassBed,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    ClassRow::class(
+        400_200,
+        "mattress",
+        Message::ClassMattress,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(4001, 4)],
+    ),
+    // 50 — fittings
+    ClassRow::family(500_000, "fittings", Message::ClassFamilyFittings),
+    ClassRow::class(
+        500_100,
+        "card-hinge",
+        Message::ClassCardHinge,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_101,
+        "card-hinge-overlay",
+        Message::ClassCardHingeOverlay,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_102,
+        "card-hinge-inset",
+        Message::ClassCardHingeInset,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_103,
+        "card-hinge-half",
+        Message::ClassCardHingeHalf,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_200,
+        "cup-hinge",
+        Message::ClassCupHinge,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_201,
+        "cup-hinge-overlay",
+        Message::ClassCupHingeOverlay,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_202,
+        "cup-hinge-inset",
+        Message::ClassCupHingeInset,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_203,
+        "cup-hinge-half",
+        Message::ClassCupHingeHalf,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_300,
+        "runner",
+        Message::ClassRunner,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(103, 3)],
+    ),
+    ClassRow::class(
+        500_301,
+        "runner-roller",
+        Message::ClassRunnerRoller,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(103, 3)],
+    ),
+    ClassRow::class(
+        500_302,
+        "runner-ball",
+        Message::ClassRunnerBall,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(103, 3)],
+    ),
+    ClassRow::class(
+        500_303,
+        "runner-undermount",
+        Message::ClassRunnerUndermount,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(103, 3)],
+    ),
+    ClassRow::class(
+        500_400,
+        "handle",
+        Message::ClassHandle,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(102, 3)],
+    )
+    .with_aliases(&["bar", "knob", "profile handle"]),
+    ClassRow::class(
+        500_500,
+        "cam-connector",
+        Message::ClassCamConnector,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4), ClassPrefix::of(1011, 4), ClassPrefix::of(1012, 4)],
+    ),
+    ClassRow::class(
+        500_600,
+        "shelf-pin",
+        Message::ClassShelfPin,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1010, 4)],
+    ),
+    ClassRow::class(
+        500_700,
+        "lift-mechanism",
+        Message::ClassLiftMechanism,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1024, 4), ClassPrefix::of(1025, 4)],
+    ),
+    ClassRow::class(
+        500_800,
+        "lock",
+        Message::ClassLock,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(102, 3)],
+    ),
+    ClassRow::class(
+        500_900,
+        "light-profile",
+        Message::ClassLightProfile,
+        traits(
+            Level::Fitting,
+            Supply::MadeFromLinear,
+            Measure::Length,
+            Nesting::Never,
+            Extent::LengthOnly,
+            &[Operation::Contour],
+            None,
+            None,
+            None,
+        ),
+        &[ClassPrefix::of(100102, 6)],
+    ),
+    ClassRow::class(
+        501_000,
+        "accessory",
+        Message::ClassAccessory,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1001, 4)],
+    ),
+    ClassRow::class(
+        501_100,
+        "sliding-system",
+        Message::ClassSlidingSystem,
+        traits(Level::Fitting, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1022, 4), ClassPrefix::of(1023, 4), ClassPrefix::of(100103, 6)],
+    ),
+    // 60 — appliances
+    ClassRow::family(600_000, "appliances", Message::ClassFamilyAppliances),
+    ClassRow::class(
+        600_100,
+        "sink",
+        Message::ClassSink,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(2001, 4)],
+    )
+    .with_aliases(&["inset sink", "under-mount sink", "врезная мойка"]),
+    ClassRow::class(
+        600_200,
+        "hob",
+        Message::ClassHob,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(2001, 4)],
+    )
+    .with_aliases(&["gas hob", "induction hob", "газовая панель", "индукционная панель"]),
+    ClassRow::class(
+        600_300,
+        "oven",
+        Message::ClassOven,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(1001, 4)],
+    ),
+    ClassRow::class(
+        600_400,
+        "extractor",
+        Message::ClassExtractor,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[],
+    ),
+    ClassRow::class(
+        600_500,
+        "dishwasher",
+        Message::ClassDishwasher,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(100101, 6)],
+    )
+    .with_aliases(&["integrated dishwasher", "free-standing dishwasher"]),
+    ClassRow::class(
+        600_600,
+        "refrigerator",
+        Message::ClassRefrigerator,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[],
+    )
+    .with_aliases(&["integrated refrigerator", "free-standing refrigerator"]),
+    ClassRow::class(
+        600_700,
+        "washer",
+        Message::ClassWasher,
+        traits(Level::Component, Supply::BuyPiece, Measure::Count, Nesting::Never, Extent::None, &[], None, None, None),
+        &[ClassPrefix::of(100101, 6)],
+    )
+    .with_aliases(&["integrated washer", "free-standing washer"]),
+    // 70 — general
+    ClassRow::family(700_000, "general", Message::ClassFamilyGeneral),
+    ClassRow::class(
+        700_100,
         "general-product",
         Message::ClassGeneralProduct,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    // 80 — seating
+    ClassRow::family(800_000, "seating", Message::ClassFamilySeating),
+    ClassRow::class(
+        800_100,
+        "chair",
+        Message::ClassChair,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    )
+    .with_aliases(&["dining chair", "office chair", "kitchen chair"]),
+    ClassRow::class(
+        800_200,
+        "stool",
+        Message::ClassStool,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    ClassRow::class(
+        800_300,
+        "bench",
+        Message::ClassBench,
+        traits(
+            Level::Product,
+            Supply::MadeInShop,
+            Measure::Count,
+            Nesting::Never,
+            Extent::Free,
+            &[],
+            None,
+            Some(Mount::Floor),
+            None,
+        ),
+        &[],
+    ),
+    ClassRow::class(
+        800_400,
+        "sofa",
+        Message::ClassSofa,
         traits(
             Level::Product,
             Supply::MadeInShop,
@@ -1759,19 +1760,19 @@ mod tests {
 
     #[test]
     fn class_codes_encode_three_levels_and_parents() {
-        let cabinet = class("30.01.02");
-        assert_eq!(cabinet.value(), 300_102);
-        assert_eq!(cabinet.to_string(), "30.01.02");
-        assert_eq!(cabinet.parent(), class("30.01"));
-        assert_eq!(cabinet.parent().parent(), class("30"));
+        let cabinet = class("10.01.02");
+        assert_eq!(cabinet.value(), 100_102);
+        assert_eq!(cabinet.to_string(), "10.01.02");
+        assert_eq!(cabinet.parent(), class("10.01"));
+        assert_eq!(cabinet.parent().parent(), class("10"));
         assert_eq!(cabinet.parent().parent().parent(), ClassCode::UNCLASSIFIED);
         assert!(cabinet.is_ancestor_or_self(cabinet));
-        assert!(cabinet.is_ancestor_or_self(class("30")));
-        assert!(!class("30").is_ancestor_or_self(cabinet));
+        assert!(cabinet.is_ancestor_or_self(class("10")));
+        assert!(!class("10").is_ancestor_or_self(cabinet));
         assert!(!cabinet.is_ancestor_or_self(ClassCode::UNCLASSIFIED));
         assert!(ClassCode::UNCLASSIFIED.is_ancestor_or_self(ClassCode::UNCLASSIFIED));
-        assert_eq!(class("30").value(), 300_000);
-        assert_eq!(format!("{}", class("30")), "30");
+        assert_eq!(class("10").value(), 100_000);
+        assert_eq!(format!("{}", class("10")), "10");
         assert_eq!(format!("{}", ClassCode::UNCLASSIFIED), "0");
     }
 
@@ -1793,6 +1794,32 @@ mod tests {
     }
 
     #[test]
+    fn the_group_digits_follow_the_order_of_the_work() {
+        let families = registry()
+            .iter()
+            .filter(|row| row.is_family())
+            .map(|row| (row.code() / 10_000, row.slug()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            families,
+            vec![
+                (10, "storage"),
+                (20, "boards-trim"),
+                (30, "surfaces"),
+                (40, "lying"),
+                (50, "fittings"),
+                (60, "appliances"),
+                (70, "general"),
+                (80, "seating"),
+            ],
+            "the group digits carry the order of the work (ADR 0145)"
+        );
+        assert_eq!(class("10.01").slug(), Some("cabinet"), "the case opens the registry");
+        assert_eq!(class("80.01").slug(), Some("chair"), "a scene prop closes it");
+        assert_eq!(ClassCode::GENERAL_PRODUCT, class("70.01"));
+    }
+
+    #[test]
     fn the_general_product_placeholder_is_a_product_row() {
         let placeholder = ClassCode::GENERAL_PRODUCT;
         let row = placeholder.row().expect("the placeholder is a registry row");
@@ -1801,7 +1828,7 @@ mod tests {
         assert_eq!(row.traits().expect("a class row carries traits").level(), Level::Product);
         assert!(placeholder.is_assignable());
         assert!(placeholder.is_product_class());
-        assert!(!class("30.11").is_product_class(), "a shelf is a part, not a product");
+        assert!(!class("10.11").is_product_class(), "a shelf is a part, not a product");
     }
 
     #[test]
@@ -1810,28 +1837,28 @@ mod tests {
         assert_eq!(ClassCode::from_code(CLASS_MAX_CODE), Some(ClassCode::MAX));
         assert!("".parse::<ClassCode>().is_err());
         assert!("0.0.0".parse::<ClassCode>().is_err());
-        assert!("30.1.2.3".parse::<ClassCode>().is_err());
-        assert!("30.123".parse::<ClassCode>().is_err());
+        assert!("10.1.2.3".parse::<ClassCode>().is_err());
+        assert!("10.123".parse::<ClassCode>().is_err());
         assert!("thirty".parse::<ClassCode>().is_err());
-        assert_eq!("300102".parse::<ClassCode>().expect("bare code"), class("30.01.02"));
-        assert_eq!("30.01".parse::<ClassCode>().expect("type form"), class("30.01"));
-        assert_eq!("30".parse::<ClassCode>().expect("family form"), class("30"));
+        assert_eq!("100102".parse::<ClassCode>().expect("bare code"), class("10.01.02"));
+        assert_eq!("10.01".parse::<ClassCode>().expect("type form"), class("10.01"));
+        assert_eq!("10".parse::<ClassCode>().expect("family form"), class("10"));
     }
 
     #[test]
     fn class_codes_serialize_as_integers() {
-        let value = serde_json::to_value(class("30.01.02")).expect("serialize class");
-        assert_eq!(value, serde_json::json!(300_102));
+        let value = serde_json::to_value(class("10.01.02")).expect("serialize class");
+        assert_eq!(value, serde_json::json!(100_102));
         let decoded: ClassCode = serde_json::from_value(value).expect("deserialize class");
-        assert_eq!(decoded, class("30.01.02"));
+        assert_eq!(decoded, class("10.01.02"));
         assert!(serde_json::from_value::<ClassCode>(serde_json::json!(1_000_000)).is_err());
     }
 
     #[test]
     fn a_lookup_finds_the_row_at_every_level() {
-        let family = class("30");
-        let type_row = class("30.01");
-        let variant = class("30.01.02");
+        let family = class("10");
+        let type_row = class("10.01");
+        let variant = class("10.01.02");
 
         assert!(family.row().expect("family row").is_family());
         assert!(type_row.row().expect("type row").is_class());
@@ -1851,14 +1878,14 @@ mod tests {
         assert_eq!(unknown.traits(), None);
         assert!(!unknown.is_assignable());
         assert!(ClassCode::UNCLASSIFIED.is_assignable());
-        assert!(class("30.01.02").is_assignable());
-        assert!(!class("30").is_assignable(), "a family heading is never assigned");
+        assert!(class("10.01.02").is_assignable());
+        assert!(!class("10").is_assignable(), "a family heading is never assigned");
     }
 
     #[test]
     fn a_retired_row_still_renders_and_is_not_assignable() {
         let retired = ClassRow::class(
-            200_100,
+            400_100,
             "bed",
             Message::ClassBed,
             traits(
@@ -1880,7 +1907,7 @@ mod tests {
         assert!(!retired.is_assignable(), "a withdrawn class is never offered again");
         assert_eq!(retired.label(), Message::ClassBed, "it still renders under its own label");
         assert!(retired.traits().is_some(), "it still answers its traits");
-        assert!(!ClassRow::family(200_000, "lying", Message::ClassFamilyLying).is_assignable());
+        assert!(!ClassRow::family(400_000, "lying", Message::ClassFamilyLying).is_assignable());
     }
 
     #[test]
@@ -1893,7 +1920,7 @@ mod tests {
                 assert!(seen.insert(alias.to_lowercase()), "{} repeats the alias `{alias}`", row.slug());
             }
         }
-        let shelf = class("30.11").row().expect("the horizontal panel row");
+        let shelf = class("10.11").row().expect("the horizontal panel row");
         assert!(shelf.aliases().contains(&"shelf"));
         assert!(shelf.aliases().contains(&"полка"));
         assert!(shelf.aliases().contains(&"полочка"));
@@ -1901,7 +1928,7 @@ mod tests {
 
     #[test]
     fn a_class_answers_its_traits_and_hosts() {
-        let shelf = class("30.11");
+        let shelf = class("10.11");
         let traits = shelf.traits().expect("a shelf is a class");
         assert_eq!(traits.level(), Level::Part);
         assert_eq!(traits.supply(), Supply::MadeFromSheet);
@@ -1911,11 +1938,11 @@ mod tests {
         assert_eq!(traits.operations(), OperationSet::of(&[Operation::Contour, Operation::EdgeBand]));
         assert_eq!(traits.opening(), None);
         assert_eq!(traits.fill(), Some(Fill::WidthAndDepth));
-        assert!(shelf.is_hosted_in(class("30.01.01")));
-        assert!(shelf.is_hosted_in(class("30.01")));
-        assert!(!shelf.is_hosted_in(class("70.01")));
+        assert!(shelf.is_hosted_in(class("10.01.01")));
+        assert!(shelf.is_hosted_in(class("10.01")));
+        assert!(!shelf.is_hosted_in(class("20.01")));
 
-        let door = class("30.20");
+        let door = class("10.20");
         let door_traits = door.traits().expect("a door is a class");
         assert_eq!(door_traits.opening(), Some(Opening::Closes));
         assert_eq!(door_traits.operations().len(), 4);
@@ -1925,9 +1952,9 @@ mod tests {
         let hinge_traits = hinge.traits().expect("a hinge is a class");
         assert_eq!(hinge_traits.extent(), Extent::None);
         assert!(hinge_traits.operations().is_empty());
-        assert!(hinge.is_hosted_in(class("30.20")), "30.2 covers every facade");
-        assert!(hinge.is_hosted_in(class("30.10")));
-        assert!(!hinge.is_hosted_in(class("30.30")));
+        assert!(hinge.is_hosted_in(class("10.20")), "10.2 covers every facade");
+        assert!(hinge.is_hosted_in(class("10.10")));
+        assert!(!hinge.is_hosted_in(class("10.30")));
     }
 
     #[test]
@@ -1935,7 +1962,7 @@ mod tests {
         for row in registry() {
             let Some(traits) = row.traits() else { continue };
             // The glass shelf is the table's one documented override: glass is bought by area.
-            if row.code() == class("30.14").value() {
+            if row.code() == class("10.14").value() {
                 assert_eq!(traits.measure(), Measure::Area);
                 continue;
             }
@@ -1951,9 +1978,9 @@ mod tests {
 
     #[test]
     fn a_contradictory_override_is_rejected() {
-        let family = ClassRow::family(300_000, "storage", Message::ClassFamilyStorage);
+        let family = ClassRow::family(100_000, "storage", Message::ClassFamilyStorage);
         let door = ClassRow::class(
-            300_200,
+            100_200,
             "hinged-door-made",
             Message::ClassHingedDoorMade,
             traits(
@@ -1970,7 +1997,7 @@ mod tests {
             &[],
         );
         let agreeing = ClassRow::class(
-            300_201,
+            100_201,
             "hinged-door-narrow",
             Message::ClassHingedDoorMade,
             traits(
@@ -1989,7 +2016,7 @@ mod tests {
         assert!(check_table(&[family, door, agreeing]).is_ok());
 
         let contradicting = ClassRow::class(
-            300_201,
+            100_201,
             "hinged-door-never-nested",
             Message::ClassHingedDoorMade,
             traits(
@@ -2008,7 +2035,7 @@ mod tests {
         assert!(check_table(&[family, door, contradicting]).is_err(), "a stock trait may not change");
 
         let losing_an_operation = ClassRow::class(
-            300_201,
+            100_201,
             "hinged-door-unbored",
             Message::ClassHingedDoorMade,
             traits(
@@ -2067,7 +2094,7 @@ mod tests {
         let section = document_section();
         let start = section.find("The headings are listed").expect("the family paragraph");
         let paragraph = section[start..].split("\n\n").next().expect("a paragraph").replace('\n', " ");
-        let mut compared = 0;
+        let mut documented = Vec::new();
         for part in paragraph.split(" · ") {
             let fields = part.split('`').collect::<Vec<_>>();
             if fields.len() < 5 {
@@ -2086,12 +2113,18 @@ mod tests {
                 russian.trim_matches(|c| matches!(c, '«' | '»' | '.')),
                 "{code} Russian label"
             );
-            compared += 1;
+            documented.push(code);
         }
+        // The paragraph runs in code order, which is the order of the work (ADR 0145), so a reader
+        // meets the case a shop builds before the seating a scene props itself with.
         assert_eq!(
-            compared,
-            registry().iter().filter(|row| row.is_family()).count(),
-            "a family is missing from the paragraph"
+            documented,
+            registry()
+                .iter()
+                .filter(|row| row.is_family())
+                .map(|row| ClassCode::from_code(row.code()).expect("a family code"))
+                .collect::<Vec<_>>(),
+            "the document lists the families in another order than the registry holds them"
         );
     }
 
