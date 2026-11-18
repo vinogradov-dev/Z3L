@@ -181,8 +181,100 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
+- `[ ]` **O4** the directory crate holds the item envelope, the registries and the index
+  Why: The directory needs one item envelope, typed registries and an index before anything can
+   read it.
+  Shape: ItemId, kind and trait registry, property registry with typed values, families, an
+   index and the DirectorySource port; the mock, MaterialId and the old loader are deleted in
+   this change.
+  Done: A fixture package of every starter kind loads, a bad row is refused with its package
+   named, and the mock file is gone.
+  `files: crates/model/src/catalog.rs,crates/model/src/lib.rs,app/src/scene_build.rs`
+- `[ ]` **O5** the editor hot-reloads the directory
+  Why: The directory is edited elsewhere; the editor must apply a new revision without a
+   restart.
+  Shape: A revision watched off the frame path, a snapshot swapped whole at a frame boundary,
+   derived data recomputed and the undo history untouched.
+  Done: A changed fixture re-derives a panel's thickness and appearance live, and the undo
+   stack is intact.
+  `files: app/src/main.rs,crates/engine/src/session.rs,crates/engine/src/lib.rs`
+- `[ ]` **O6** the directory application edits a package
+  Why: A directory nobody can edit is a file format.
+  Shape: A second binary on the same stack: item tree, card, property editor, kind registry
+   view; one writer behind the lock, atomic writes, revision bumped last.
+  Done: A new item with properties is authored, saved and read back by the editor on a new
+   revision.
+  `files: app/src/cli.rs,crates/model/src/catalog.rs,app/Cargo.toml`
+- `[ ]` **O7** a package travels between workshops
+  Why: A workshop extends its directory and hands the extension to another workshop.
+  Shape: Package export and import as a folder, connect and disconnect, requires on registry
+   revisions, a refusal on a duplicated id.
+  Done: A package exports from one directory and imports into a second unchanged, and an id
+   clash is refused with both packages named.
+  `files: crates/model/src/catalog.rs,crates/project/src/lib.rs`
+- `[ ]` **O8** prices carry provenance and stock is an overlay
+  Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
+  Shape: Price with provenance and unit from the kind, a batched import as one history entry,
+   an on-hand overlay package, external keys with a system registry, a freshness notice.
+  Done: A CSV batch writes one history entry, and a price without a usable currency is refused.
+  `files: crates/model/src/catalog.rs,crates/export/src/rows.rs,app/src/settings_store.rs`
+- `[ ]` **O9** selection walks six steps and says why
+  Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
+   RGB.
+  Shape: Six ordered steps ending in a named diagnostic, family equality then rank, the
+   person's explicit choice stored on the node, results cached by revision.
+  Done: An oak corpus picks an oak plug, a white corpus re-picks it, and a miss names the step
+   that failed.
+  `files: crates/model/src/catalog.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **O10** holes are derived from the hardware that causes them
+  Why: A hole belongs to the hardware that causes it, and a panel must not store one.
+  Shape: Drilling objects resolved through instances, intersected with the panel body, ordered
+   in panel-local coordinates, cached by panel, placements and revision.
+  Done: A known hinge on a known door yields an exact hole set at exact coordinates, and an
+   untouched panel is not recomputed.
+  `files: crates/model/src/panel/machining.rs,crates/param/src/lib.rs,crates/mesh/src/lib.rs`
+- `[ ]` **O11** placement rules are typed tables
+  Why: System 32 and a supplier's hinge table are data a workshop owns, not code we write.
+  Shape: RuleTable with typed axes and cells, completeness and overlap checked on load,
+   precedence item then prototype then standard, one command and one undo entry.
+  Done: A 32-panel yields the expected positions, and an uncovered overlay or door thickness is
+   refused with the axis named.
+  `files: crates/model/src/catalog.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **O12** a contour names its cutter, a groove does not
+  Why: A contour milled with a 2 mm cutter has 2 mm corners, so the document must name the
+   tool; a groove only needs its width.
+  Shape: Milling stores a cutter ItemId, depth and offset; a groove stores width and depth;
+   tools are items and the park is its own package; a missing cutter is a diagnostic with the
+   last offsets.
+  Done: A milling record round-trips with its cutter and a cutter outside the park is a
+   diagnostic, never a narrowed cut.
+  `files: crates/model/src/panel/machining.rs,crates/model/src/catalog.rs,crates/kernel/src/lib.rs`
+- `[ ]` **O13** a part document is authored once and instantiated everywhere
+  Why: A door must pick up an edited hinge, and a copy frozen at insertion cannot.
+  Shape: A part-document contract checked on load, an instance node resolved with the cycle,
+   depth and budget guards, catalogue.detach, a placeholder from the recorded bounds, STL
+   import into an empty document.
+  Done: A changed hinge reaches two doors without a rebuild, a cycle is refused with its chain,
+   and detach turns an instance into nodes in one undo entry.
+  `files: crates/model/src/node.rs,crates/model/src/tree.rs,crates/project/src/lib.rs,crates/engine/src/scene_cmds.rs`
+- `[ ]` **O14** insertion and a fastener line are designed operations
+  Why: Inserting an item and adding a fastener line are gestures, not fields in a card.
+  Shape: Two operations by .pi/skills/design-operation: the armed state machine, the preview,
+   the cancel, one undo entry, the feedback budget and the cursor.
+  Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
+   and committed as one entry each.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **O3** the directory is decided: three records, the domain documents and the task seeds
+  Why: The catalogue outgrew two typed tables; the directory replaces it and every later task
+   reads this decision.
+  Shape: 0148, 0149 and 0150 plus the rewritten domain documents and a pointer where
+   materials.md was.
+  Done: The three records are accepted, the two domain documents state the directory, and the
+   task seeds exist.
+  `files: docs/domain/nomenclature.md,docs/domain/technology.md,docs/decisions/README.md` — `9fec8f9`
 
 - `[x]` **U113** select, move and rotate answer keys, and the status bar prints them
   Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
