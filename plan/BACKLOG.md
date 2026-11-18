@@ -43,25 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **U112** the product card aligns its numbers and folds its class list
-  Why: The card is the numeric path into `product.create` and it is about to grow fields
-   (shape, position, corners), so its layout is read before it grows. Today each row label is
-   as wide as its word, so the three number boxes start at three different x positions; the
-   class list is a flat scroll of seventeen rows with no fold, so a maker hunting a wall
-   cabinet reads the whole registry; and the paragraph under the title explains a rule the
-   maker learns from the frame itself and cannot act on.
-  Shape: A fixed label column (LABEL_WIDTH, at least one tree indent) with the shared scrub
-   field beside it, so Width, Depth and Height start on one x. The class list becomes the
-   registry tree the picker already builds: a foldable family caption, a foldable type row that
-   is itself selectable, and its variant rows under it, drawn with egui CollapsingState like
-   the scene tree; the type that holds the current class opens by default and a search opens
-   every group it keeps. `class_picker::product_rows` returns that tree instead of a flat list
-   of depths. The ProductCardHint message is deleted from the table in both languages.
-  Done: A headless test draws the card and finds the three fields labels and numbers on one
-   column; a closed type lists no variant and the type of the chosen class lists them; the hint
-   is gone from both languages; cargo xtask ci is green.
-  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/text/src/messages.rs`
-
 - `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
   Why: The assistant and the prototype expander both need the document without a window, and
    only export reaches the engine from the command line today. A generator that writes the
@@ -126,8 +107,81 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
    same stream, status prints one row per stream, and the backlog stays one file.
   `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
+- `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
+  Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
+   with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
+   contour. Today an envelope is three lengths, and ADR 0097 says in so many words that a
+   sloped or reshaped one is a new field and a new decision, so neither the card nor the
+   gesture can offer a shape before that decision is recorded.
+  Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
+   rectangle with a cut at one or more corners, or a ring drawn on the plane. A cut reuses the
+   panel corner language, CornerFeatureKind (a chamfer of two setbacks, which is any angle, or
+   a fillet radius), so a maker learns one corner rule in two places. x and y stay the
+   footprint bounds, so the readers, the export and the containment diagnostic keep an answer;
+   the scene draws the wireframe from the footprint and picking and the grips read it. An ADR
+   records the footprint, the corner parameter (an angle derived into setbacks, or the setbacks
+   themselves) and what a contour frame is: a reserved space extruded by the height, not a
+   body.
+  Done: A frame with one 45-degree chamfer round-trips through the file, draws as the cut
+   outline and is picked inside it; a contour frame stores its ring and pulls its height; a cut
+   that eats an edge is a readable refusal; the ADR is written and docs/decisions/README.md
+   lists it; cargo xtask ci is green.
+  `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs`
+- `[ ]` **N18** the card asks whether the piece stands on the floor or hangs on the wall
+  Why: The owner asks the card for a position: on the floor or on the wall. ADR 0097 made
+   mounting a class trait, mount: Floor | Wall, read by the furniture move tool, so a product
+   field would be the second source of truth that record refuses. The card shows only a class
+   code today, so a maker who wants a wall piece has to know which code that is before the list
+   helps at all.
+  Shape: The card offers the two positions as a filter over the registry product classes by the
+   class mount trait, and names the class it leaves; picking a class of the other mount moves
+   the toggle, so the class stays the only stored fact. The created placement stays
+   product_placement and a height above the floor stays the makers placement, as ADR 0100 has
+   it. If the owner instead wants a mount field on the product, that is a new decision and an
+   ADR, not a card edit.
+  Done: With On the wall chosen the list holds only wall classes and the placeholder is not
+   offered; the frame created from it carries a wall class and the move query keeps it at its
+   height; the toggle and the class cannot disagree in a headless test; cargo xtask ci is
+   green.
+  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/model/src/class.rs,docs/decisions/0097-a-product-is-a-container-with-an-authored-envelope.md`
+- `[ ]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
+  Why: The owner: the frame kept the old card where the box has a typed height field, and the
+   base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
+   labels its two base sides but takes no typed number, while the cuboid draws the sketch
+   rectangle with the sketch field plates and pulls on Z; and the frame pull shows a titled
+   pane with a check and a cancel where the cuboid shows the lettered H plate. Two gestures
+   that build one document read as two tools.
+  Shape: The frame drawn method arms the same rectangle tool the cuboid cell arms, differing
+   only in the owner of the commit (product.create against object.primitive.create) and in the
+   extras the tool card offers while the draft lives (the class, and later the footprint and
+   the position). The base plates, the height pull and its lettered H plate, Enter, Esc and the
+   one undo entry are the shared ones; BoxDraft keeps only what the envelope grips still read
+   from it, or retires with box_tool.rs.
+  Done: The frame cell and the cuboid cell draw the same base plates and the same H plate,
+   compared row for row in a headless test; Esc drops the frame draft with no history entry;
+   one undo takes the created frame; cargo xtask ci is green.
+  `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs`
 
 ## Done
+
+- `[x]` **U112** the product card aligns its numbers and folds its class list
+  Why: The card is the numeric path into `product.create` and it is about to grow fields
+   (shape, position, corners), so its layout is read before it grows. Today each row label is
+   as wide as its word, so the three number boxes start at three different x positions; the
+   class list is a flat scroll of seventeen rows with no fold, so a maker hunting a wall
+   cabinet reads the whole registry; and the paragraph under the title explains a rule the
+   maker learns from the frame itself and cannot act on.
+  Shape: A fixed label column (LABEL_WIDTH, at least one tree indent) with the shared scrub
+   field beside it, so Width, Depth and Height start on one x. The class list becomes the
+   registry tree the picker already builds: a foldable family caption, a foldable type row that
+   is itself selectable, and its variant rows under it, drawn with egui CollapsingState like
+   the scene tree; the type that holds the current class opens by default and a search opens
+   every group it keeps. `class_picker::product_rows` returns that tree instead of a flat list
+   of depths. The ProductCardHint message is deleted from the table in both languages.
+  Done: A headless test draws the card and finds the three fields labels and numbers on one
+   column; a closed type lists no variant and the type of the chosen class lists them; the hint
+   is gone from both languages; cargo xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/text/src/messages.rs` — `b2f83b7`
 
 - `[x]` **T10** the group digits follow the order of the work, so the case is 10 and the seat is 80
   Why: T9 made the picker sort the families by a presentation constant, which leaves the stored

@@ -53,3 +53,17 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
+- The product card position (on the floor or on the wall). ADR 0097 makes mounting a class trait
+  (`mount: Floor | Wall`), so the card can only filter the class list by it and the class stays the
+  one stored fact. Confirm that "on the wall" means a wall class, or say the piece needs a mount
+  field of its own: that is a second source of truth, and a new decision (N18).
+- A cut corner of the envelope. The panel's `CornerFeature` stores two setbacks (incoming and
+  outgoing), which expresses any angle, while a maker thinks in the angle of the cut (45°, 120°).
+  Confirm the card asks for the angle and derives the setbacks, and that a fillet asks for its radius
+  in the same row (N17).
+- The contour frame. A closed ring drawn on the plane becomes the reserved space of the product, a
+  footprint extruded by the height, and not a solid body. Confirm that a contour frame is always a
+  frame (N17).
+- A wall piece height. A product's height above the floor is its placement, and the `mount` trait
+  only keeps a floor product from being dragged vertically (ADR 0097, 0100). Confirm the card should
+  not ask for a mounting height when "on the wall" is chosen (N18).
