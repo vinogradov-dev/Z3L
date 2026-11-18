@@ -43,25 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
-  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
-   there, and should instead stop at it and jump past it into the free space beyond when the
-   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
-   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
-   the free-axis position inside the void and refuses a point outside the open product, so the
-   ghost sticks at the panel it meets and disappears at the envelope.
-  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
-   part re-plans into the cell beyond instead of clamping at the part; a point outside the
-   product clamps to the envelope inner face, so the ghost stays the last part it could place
-   and the click creates what was drawn. A refusal that is not about the pointer (a void
-   thinner than the board, a cell that is not convex, another product void) still says why. The
-   ghost stays the one measurement the click stores, so the picture, the numbers and the
-   panel.create cannot disagree.
-  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
-   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
-   void thinner than the board still refuses with its sentence; one click is one undo entry;
-   cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
 - `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
   Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
    with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
@@ -289,6 +270,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
+   there, and should instead stop at it and jump past it into the free space beyond when the
+   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
+   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
+   the free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs` — `0bede29`
 
 - `[x]` **X71** the carry's hand is the pointer the viewport hit-tests while it is displaced
   `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `0fc31df`
