@@ -1647,6 +1647,29 @@ fn the_ribbons_drawn_frame_method_arms_the_box_tool() {
 }
 
 #[test]
+fn the_ribbons_contour_method_draws_a_base_outline_and_hands_it_to_the_height_pull() {
+    let mut session = empty_editor_session();
+    let mut editor = Editor::new();
+    let outcome = editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrameContour], text::Lang::En)
+        .expect("the contour method arms");
+    assert_eq!(editor.drawing_intent(), crate::DrawIntent::Product, "the outline belongs to a product frame");
+    assert!(outcome.started_drawing, "the shell must expect the sketch's clicks");
+    assert!(editor.box_draft().is_none(), "the ring is drawn before any base exists");
+    assert_eq!(session.project().revision().get(), 0, "arming writes nothing");
+
+    for corner in [[0, 0], [600, 0], [600, 400], [0, 400]] {
+        editor.drawing_point([millimetres(corner[0]), millimetres(corner[1])]).expect("a point of the ring");
+    }
+    editor.start_product_pull(text::Lang::En).expect("the closed ring becomes the base");
+    assert!(editor.drawing().is_none(), "the sketch is finished");
+    let draft = editor.box_draft().expect("the height is being pulled");
+    assert!(draft.is_pulling(), "the pull owns the pointer");
+    assert!(draft.ring().is_some(), "the base is the drawn ring, not a rectangle");
+    assert_eq!(session.project().revision().get(), 0, "the ring and its height are still a draft");
+}
+
+#[test]
 fn the_card_and_the_drawn_gesture_produce_the_same_document() {
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     let mut carded = empty_editor_session();

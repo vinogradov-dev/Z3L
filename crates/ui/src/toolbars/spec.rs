@@ -48,6 +48,8 @@ pub enum ToolKind {
     Product,
     /// Draws the product frame's reserved box: base rectangle, then height, then `product.create`.
     ProductDraw,
+    /// Draws the product frame's base outline as a closed ring, then pulls its height.
+    ProductContour,
     /// Arms the free-outline tool whose closed ring becomes one panel cut to it.
     PanelContour,
     /// Arms the empty-space tool with `class`; its `fill` trait picks the size pair, and `mode`
@@ -838,12 +840,20 @@ const FURNITURE: [GroupSpec; 6] = [
             method: None,
             // The card is the numeric method and the drawn box the pointer method; the split cell
             // runs whichever the workspace pinned (U74, ADR 0101).
-            variants: &[VariantSpec {
-                id: "furniture.product.frame.draw",
-                label: Message::ToolProductFrameDraw,
-                icon: Some(icons::scene::PRODUCT),
-                run: Some(ToolKind::ProductDraw),
-            }],
+            variants: &[
+                VariantSpec {
+                    id: "furniture.product.frame.draw",
+                    label: Message::ToolProductFrameDraw,
+                    icon: Some(icons::scene::PRODUCT),
+                    run: Some(ToolKind::ProductDraw),
+                },
+                VariantSpec {
+                    id: "furniture.product.frame.contour",
+                    label: Message::ToolProductFrameContour,
+                    icon: Some(icons::scene::PRODUCT),
+                    run: Some(ToolKind::ProductContour),
+                },
+            ],
         }],
     },
     GroupSpec {
@@ -1354,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn the_frame_cell_offers_the_card_and_the_drawn_method() {
+    fn the_frame_cell_offers_the_card_and_the_two_drawn_methods() {
         let frame = tab("furniture")
             .expect("furniture")
             .live_groups()
@@ -1367,12 +1377,18 @@ mod tests {
             vec![
                 ("furniture.product.frame", Some(ToolKind::Product)),
                 ("furniture.product.frame.draw", Some(ToolKind::ProductDraw)),
+                ("furniture.product.frame.contour", Some(ToolKind::ProductContour)),
             ],
-            "the card is the tool's own method, the drawn box its second (ADR 0101)"
+            "the card is the tool's own method, the drawn box its second and the drawn outline its third (ADR 0101, ADR 0159)"
         );
-        let drawn = frame.variants.first().expect("the drawn method");
+        let drawn = frame.variants.first().expect("the drawn box");
         assert_eq!(drawn.label.text(text::Lang::En), "Frame by drawing");
-        assert!(drawn.run.is_some(), "the split cell only offers a method that runs");
+        let contour = frame.variants.get(1).expect("the drawn outline");
+        assert_eq!(contour.label.text(text::Lang::En), "Frame from contour");
+        assert!(
+            frame.variants.iter().all(|variant| variant.run.is_some()),
+            "the split cell only offers a method that runs"
+        );
     }
 
     #[test]
@@ -1383,6 +1399,7 @@ mod tests {
             ToolKind::Extrude,
             ToolKind::Product,
             ToolKind::ProductDraw,
+            ToolKind::ProductContour,
             ToolKind::PanelContour,
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },

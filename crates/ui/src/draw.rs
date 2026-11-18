@@ -68,6 +68,12 @@ pub enum DrawIntent {
     /// primitive's own number, so the sphere a maker draws is a parameter set from the first frame
     /// and its card edits the radius, the side count and the bands (ADR 0139).
     Primitive(PrimitiveKind),
+    /// The base outline of a product frame: the closed ring becomes the frame's footprint and the
+    /// height is then pulled from it.
+    ///
+    /// Nothing is written when the ring closes: the ring is a draft like the box tool's base, and the
+    /// pull's one `product.create` stores it with its height (ADR 0159).
+    Product,
 }
 
 /// The tool a drawing draft is building with.

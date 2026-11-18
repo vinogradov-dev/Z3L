@@ -120,6 +120,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
             action: Some(ToolAction::DrawProductFrame),
         },
+        ToolKind::ProductContour => Ready {
+            enabled: true,
+            armed: is_armed(active, kind),
+            // The drawn footprint is the sketch tool with the envelope as its owner: the ring is the
+            // frame's base, and its height is pulled from there (ADR 0159).
+            hint: Message::ProductContourDraw.with(lang, [tool.label.text(lang)]),
+            action: Some(ToolAction::DrawProductFrameContour),
+        },
         ToolKind::PanelContour => {
             // A contour panel is a part of the open product (ADR 0098) and takes its thickness from a
             // catalogue material; the cell then arms the free-outline tool, whose close is the one

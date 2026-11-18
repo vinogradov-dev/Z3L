@@ -1,12 +1,18 @@
-//! The card that creates a product frame: three sides and a type.
+//! The card that creates a product frame: three sides, the footprint they bound, and a type.
 //!
-//! A maker starts a piece by saying how big its reserved space is and what the piece is
-//! (ADR 0100). The card is the numeric path to `product.create`: it draws the three sides in whole
-//! millimetres on one label column, offers the registry's product classes as the same family/type
-//! tree the class picker draws — folded, so the case a shop builds is a row and not a scroll — and
-//! returns a [`ProductDraft`]. It never dispatches a command and never touches the document — the
-//! editor turns the draft into `product.create` and then opens the new frame as a session view
-//! operation (ADR 0098).
+//! A maker starts a piece by saying how big its reserved space is, what shape its base is cut to and
+//! what the piece is (ADR 0100, ADR 0159). The card is the numeric path to `product.create`: it draws
+//! the three sides in whole millimetres on one label column, offers the registry's product classes as
+//! the same family/type tree the class picker draws — folded, so the case a shop builds is a row and
+//! not a scroll — and returns a [`ProductDraft`]. It never dispatches a command and never touches the
+//! document — the editor turns the draft into `product.create` and then opens the new frame as a
+//! session view operation (ADR 0098).
+//!
+//! The footprint is four corner rows and the corner type is chosen first: a square corner asks for
+//! nothing, a fillet asks for its radius and a chamfer for its two setbacks, which is the offset a
+//! maker measures along each edge rather than an angle (ADR 0159). The drawer geometry is the panel's
+//! own rule, so a cut that eats the whole edge is refused with the panel's sentence, shown under the
+//! block instead of only on the status bar after a failed create.
 //!
 //! The drawn gesture (a base rectangle and a pulled height) reaches the same command through the
 //! box tool, which the ribbon offers as this tool's second method (ADR 0101): the two entries build
@@ -17,7 +23,7 @@
 
 use egui::collapsing_header::CollapsingState;
 use egui::{Button, Key, Modal, RichText, ScrollArea, TextEdit, Ui};
-use model::{ClassCode, Envelope};
+use model::{ClassCode, CornerFeatureKind, Envelope, EnvelopeError, Footprint, RectCorner};
 use text::Message;
 use units::Length;
 
@@ -56,6 +62,93 @@ fn max_side_mm() -> f64 {
     Envelope::MAX_SIDE.micrometres() as f64 / 1_000.0
 }
 
+/// The setback a corner row starts with, in millimetres, until the maker types another.
+pub const DEFAULT_CUT_MM: f64 = 50.0;
+
+/// One corner of the base rectangle as the card holds it, in whole millimetres.
+///
+/// The type is the row's first decision and the numbers follow it (ADR 0159): a chamfer stores the two
+/// setbacks a maker measures along the edges, a fillet its radius. Nothing here is a document value
+/// yet, so a half-typed cut cannot fail a command.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CornerDraft {
+    /// The corner is square: nothing is cut.
+    Square,
+    /// A fillet of this radius.
+    Radius {
+        /// The radius in millimetres.
+        radius: f64,
+    },
+    /// A straight cut with these two setbacks.
+    Chamfer {
+        /// The setback along the edge that ends at the corner, in millimetres.
+        incoming: f64,
+        /// The setback along the edge that starts there, in millimetres.
+        outgoing: f64,
+    },
+}
+
+/// The corner type as the three selectable labels offer it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CornerType {
+    Square,
+    Radius,
+    Chamfer,
+}
+
+impl CornerType {
+    const ALL: [Self; 3] = [Self::Square, Self::Radius, Self::Chamfer];
+
+    const fn label(self) -> Message {
+        match self {
+            Self::Square => Message::CornerNone,
+            Self::Radius => Message::CornerRadius,
+            Self::Chamfer => Message::CornerChamfer,
+        }
+    }
+
+    /// The draft this type starts as, with the default setback.
+    const fn default_draft(self) -> CornerDraft {
+        match self {
+            Self::Square => CornerDraft::Square,
+            Self::Radius => CornerDraft::Radius { radius: DEFAULT_CUT_MM },
+            Self::Chamfer => CornerDraft::Chamfer { incoming: DEFAULT_CUT_MM, outgoing: DEFAULT_CUT_MM },
+        }
+    }
+}
+
+impl CornerDraft {
+    /// The type of this row, so the labels draw the current choice.
+    const fn kind(self) -> CornerType {
+        match self {
+            Self::Square => CornerType::Square,
+            Self::Radius { .. } => CornerType::Radius,
+            Self::Chamfer { .. } => CornerType::Chamfer,
+        }
+    }
+
+    /// The corner treatment the document stores, or `None` for a square corner or a bad number.
+    fn feature(self) -> Option<CornerFeatureKind> {
+        match self {
+            Self::Square => None,
+            Self::Radius { radius } => Some(CornerFeatureKind::Radius { radius: positive_side(radius)? }),
+            Self::Chamfer { incoming, outgoing } => Some(CornerFeatureKind::Chamfer {
+                incoming: positive_side(incoming)?,
+                outgoing: positive_side(outgoing)?,
+            }),
+        }
+    }
+}
+
+/// A positive whole-millimetre length, or `None` when the number is not one.
+fn positive_side(millimetres: f64) -> Option<Length> {
+    if !millimetres.is_finite() || millimetres <= 0.0 {
+        return None;
+    }
+    let value = Length::from_millimetres(millimetres.round() as i64)?;
+    value.is_positive().then_some(value)
+}
+
 /// What the maker asked for, ready for `product.create`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductDraft {
@@ -75,6 +168,8 @@ pub struct ProductCard {
     width: f64,
     depth: f64,
     height: f64,
+    /// One cut per nominal corner, in [`RectCorner::ALL`] order; square until the maker says otherwise.
+    corners: [CornerDraft; 4],
     class: ClassCode,
     query: String,
 }
@@ -86,6 +181,7 @@ impl Default for ProductCard {
             width: DEFAULT_WIDTH_MM,
             depth: DEFAULT_DEPTH_MM,
             height: DEFAULT_HEIGHT_MM,
+            corners: [CornerDraft::Square; 4],
             class: ClassCode::GENERAL_PRODUCT,
             query: String::new(),
         }
@@ -114,11 +210,40 @@ impl ProductCard {
         self.open = false;
     }
 
-    /// The draft the fields describe, or `None` when a side is not a valid envelope.
-    pub fn draft(&self) -> Option<ProductDraft> {
+    /// The envelope the fields describe, or the refusal that says why they do not describe one.
+    ///
+    /// The sides are rounded to the millimetre the field steps by, so a frame is never half a
+    /// millimetre out; the footprint is validated against those sides, which is where a cut that
+    /// consumes a whole edge is refused.
+    pub fn envelope(&self) -> Result<Envelope, EnvelopeError> {
         let side = |millimetres: f64| Length::from_millimetres(millimetres.round() as i64);
-        let envelope = Envelope::new(side(self.width)?, side(self.depth)?, side(self.height)?).ok()?;
+        let missing = |side: &'static str| EnvelopeError::NonPositive { side, value: Length::ZERO };
+        let width = side(self.width).ok_or_else(|| missing("width"))?;
+        let depth = side(self.depth).ok_or_else(|| missing("depth"))?;
+        let height = side(self.height).ok_or_else(|| missing("height"))?;
+        let mut cuts = [None; 4];
+        for (index, corner) in self.corners.iter().enumerate() {
+            let Some(slot) = cuts.get_mut(index) else {
+                continue;
+            };
+            *slot = match corner.kind() {
+                CornerType::Square => None,
+                CornerType::Radius | CornerType::Chamfer => Some(corner.feature().ok_or_else(|| missing("corner"))?),
+            };
+        }
+        let footprint = if cuts.iter().all(Option::is_none) { Footprint::rectangle() } else { Footprint::cut(cuts) };
+        Envelope::with_footprint(width, depth, height, footprint)
+    }
+
+    /// The draft the fields describe, or `None` when they do not describe a valid envelope.
+    pub fn draft(&self) -> Option<ProductDraft> {
+        let envelope = self.envelope().ok()?;
         Some(ProductDraft { envelope, class: self.class })
+    }
+
+    /// Whether a corner is cut, so an unusable shape is worth explaining under the block.
+    fn has_cut(&self) -> bool {
+        self.corners.iter().any(|corner| corner.kind() != CornerType::Square)
     }
 
     /// Draws the open card and reports the draft the maker confirmed.
@@ -169,6 +294,74 @@ impl ProductCard {
                         ui.end_row();
                     }
                 });
+
+            ui.separator();
+            // The footprint: four corner rows, and the type is each row's first decision. A square
+            // corner asks for nothing, so the card stays three numbers until a maker cuts something.
+            ui.label(Message::SectionFootprint.text(lang));
+            egui::Grid::new("product-frame-card.corners")
+                .num_columns(2)
+                .min_col_width(LABEL_WIDTH)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    for (index, corner) in RectCorner::ALL.into_iter().enumerate() {
+                        let Some(current) = self.corners.get(index).copied() else {
+                            continue;
+                        };
+                        let mut draft = current;
+                        ui.label(Message::CornerWith.with(lang, [corner.label()]));
+                        ui.horizontal(|ui| {
+                            for option in CornerType::ALL {
+                                let chosen = draft.kind() == option;
+                                if ui.selectable_label(chosen, option.label().text(lang)).clicked() && !chosen {
+                                    draft = option.default_draft();
+                                }
+                            }
+                            match draft {
+                                CornerDraft::Square => {}
+                                CornerDraft::Radius { mut radius } => {
+                                    crate::scrub::Scrub::new(&mut radius)
+                                        .speed(0.5)
+                                        .range(0.1..=max_side_mm())
+                                        .decimals(0)
+                                        .unit("mm")
+                                        .show(ui);
+                                    draft = CornerDraft::Radius { radius };
+                                }
+                                CornerDraft::Chamfer { mut incoming, mut outgoing } => {
+                                    ui.label(Message::Inward.text(lang));
+                                    crate::scrub::Scrub::new(&mut incoming)
+                                        .speed(0.5)
+                                        .range(0.1..=max_side_mm())
+                                        .decimals(0)
+                                        .unit("mm")
+                                        .show(ui);
+                                    ui.label(Message::Outward.text(lang));
+                                    crate::scrub::Scrub::new(&mut outgoing)
+                                        .speed(0.5)
+                                        .range(0.1..=max_side_mm())
+                                        .decimals(0)
+                                        .unit("mm")
+                                        .show(ui);
+                                    draft = CornerDraft::Chamfer { incoming, outgoing };
+                                }
+                            }
+                        });
+                        if draft != current
+                            && let Some(slot) = self.corners.get_mut(index)
+                        {
+                            *slot = draft;
+                        }
+                        ui.end_row();
+                    }
+                });
+            // A cut that leaves no straight edge is the panel's own refusal, said here while the
+            // numbers are still being chosen instead of only after a create that never ran.
+            if self.has_cut()
+                && let Err(error) = self.envelope()
+            {
+                ui.label(RichText::new(error.to_string()).color(theme::danger(ui)));
+            }
 
             ui.separator();
             ui.horizontal(|ui| {
@@ -385,6 +578,86 @@ mod tests {
         assert!(
             !texts.iter().any(|text| text.contains("ready for parts")),
             "the paragraph under the title is gone: {texts:?}"
+        );
+    }
+
+    /// How many number fields the card draws: each one paints its unit.
+    fn fields(texts: &[String]) -> usize {
+        texts.iter().filter(|text| text.as_str() == "mm").count()
+    }
+
+    #[test]
+    fn a_corner_asks_for_its_numbers_only_after_its_type_is_chosen() {
+        let mut card = ProductCard::new();
+        card.start();
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(texts.iter().any(|text| text == "Base outline"), "the footprint is captioned: {texts:?}");
+        for label in ["Corner 1", "Corner 2", "Corner 3", "Corner 4"] {
+            assert!(texts.iter().any(|text| text == label), "the card names {label}: {texts:?}");
+        }
+        for kind in ["None", "Radius", "Chamfer"] {
+            assert!(texts.iter().any(|text| text == kind), "the corner type offers {kind}: {texts:?}");
+        }
+        assert_eq!(fields(&texts), 3, "three sides ask for a number and a square corner asks for none: {texts:?}");
+
+        // The fillet is chosen first and only then does its radius appear.
+        card.corners[1] = CornerDraft::Radius { radius: 80.0 };
+        let (texts, _) = present(&mut card, Lang::En);
+        assert_eq!(fields(&texts), 4, "a fillet asks for one radius: {texts:?}");
+        assert!(texts.iter().any(|text| text == "80"), "the radius is the number chosen: {texts:?}");
+
+        // A chamfer asks for its two setbacks along the edges, never for an angle.
+        card.corners[1] = CornerDraft::Chamfer { incoming: 120.0, outgoing: 70.0 };
+        let (texts, _) = present(&mut card, Lang::En);
+        assert_eq!(fields(&texts), 5, "a chamfer asks for two offsets: {texts:?}");
+        for label in ["in", "out"] {
+            assert!(texts.iter().any(|text| text == label), "the chamfer names the edge {label}: {texts:?}");
+        }
+        assert!(texts.iter().any(|text| text == "120") && texts.iter().any(|text| text == "70"), "{texts:?}");
+    }
+
+    #[test]
+    fn the_draft_carries_the_cut_offsets_and_no_footprint_when_every_corner_is_square() {
+        let mut card = ProductCard::new();
+        card.start();
+        let plain = card.draft().expect("the defaults are a valid envelope");
+        assert!(plain.envelope.footprint().is_rectangle(), "a plain frame stores no footprint at all");
+
+        card.corners[1] = CornerDraft::Chamfer { incoming: 120.0, outgoing: 70.0 };
+        card.corners[3] = CornerDraft::Radius { radius: 60.0 };
+        let cut = card.draft().expect("an oblique corner is a valid envelope");
+        let corners = cut.envelope.footprint().cuts();
+        assert_eq!(
+            corners,
+            [
+                None,
+                Some(CornerFeatureKind::Chamfer {
+                    incoming: Length::from_millimetres(120).expect("a side"),
+                    outgoing: Length::from_millimetres(70).expect("a side"),
+                }),
+                None,
+                Some(CornerFeatureKind::Radius { radius: Length::from_millimetres(60).expect("a side") }),
+            ],
+            "the offsets travel as lengths, in RectCorner order"
+        );
+        assert_eq!(
+            cut.envelope.footprint().corner_cut(RectCorner::TopLeft),
+            Some(CornerFeatureKind::Radius { radius: Length::from_millimetres(60).expect("a side") })
+        );
+    }
+
+    #[test]
+    fn a_cut_that_eats_a_whole_edge_is_refused_in_the_card() {
+        let mut card = ProductCard::new();
+        card.start();
+        // Two 350 mm setbacks on one 600 mm edge leave nothing straight between them.
+        card.corners[0] = CornerDraft::Chamfer { incoming: 10.0, outgoing: 350.0 };
+        card.corners[1] = CornerDraft::Chamfer { incoming: 350.0, outgoing: 10.0 };
+        assert!(card.draft().is_none(), "an unusable cut makes no draft, so Create stays disabled");
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(
+            texts.iter().any(|text| text.contains("no straight edge")),
+            "the card says why the cut is refused: {texts:?}"
         );
     }
 

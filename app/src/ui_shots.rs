@@ -478,7 +478,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     }
     {
         let document = app.tabs.active_mut();
-        let draft = document.editor.box_draft().copied().expect("the gesture is pulling its height");
+        let draft = document.editor.box_draft().cloned().expect("the gesture is pulling its height");
         assert!(draft.is_pulling() && draft.height().is_positive(), "the height follows the pointer");
         assert!(document.tool_card_is_up(), "the height pull draws its tool card: {draft:?}");
     }

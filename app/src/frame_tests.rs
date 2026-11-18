@@ -1786,6 +1786,49 @@ fn the_drawn_frame_lands_as_one_product_of_exactly_the_ghost_size() {
     assert_eq!(document.editor.creation_target(document.session.project()), frame, "the next part lands inside");
 }
 
+#[test]
+fn a_contour_frame_stores_its_ring_and_pulls_its_height() {
+    // A frame drawn from a closed outline (ADR 0159): the sketch ring is the reserved space's base,
+    // and the height is pulled from it exactly as the drawn box's is. Nothing is written until the
+    // pull is accepted, so the ring and the height are one command and one undo entry.
+    let mut harness = Harness::new("frame-contour-product");
+    harness.settle();
+    let before = harness.revision();
+    let mm = testkit::millimetres;
+    let ring = [[0, 0], [600, 0], [600, 400], [0, 400]];
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.start_product_drawing();
+        for [x, y] in ring {
+            document.editor.drawing_point([mm(x), mm(y)]).expect("a point of the outline");
+        }
+        assert_eq!(document.session.project().revision(), before, "the ring is a draft, not a node");
+        document.commit_drawing(Lang::En).expect("the ring becomes the base and the pull starts");
+        assert_eq!(
+            document.session.project().revision(),
+            before,
+            "the height is still being pulled, so nothing is written"
+        );
+        assert!(
+            document.editor.box_draft().is_some_and(ui::BoxDraft::is_pulling),
+            "the pull owns the pointer once the outline is finished"
+        );
+        document.editor.pull_box_height(mm(500)).expect("the pull");
+        document.finish_box(Lang::En).expect("the ✓ commits the drawn frame");
+    }
+    let document = harness.app.tabs.active();
+    let frame = document.session.active_product().expect("the drawn frame is opened for its parts");
+    let envelope = document.session.project().container(frame).expect("a container").envelope().expect("an envelope");
+    assert!(envelope.footprint().is_ring(), "the reserved space keeps the ring it was drawn from");
+    assert_eq!(
+        envelope.components(),
+        [mm(600), mm(400), mm(500)],
+        "the height is the pull's, the sides the ring's bounds"
+    );
+    assert_eq!(harness.revision().get(), before.get() + 1, "the whole gesture is one command");
+    assert_eq!(document.editor.selected_nodes(), [frame], "the new frame is selected");
+}
+
 /// The signed volume of a closed polygon mesh, in cubic millimetres.
 fn solid_volume(mesh: &model::Mesh) -> f64 {
     let corner = |index: u32| {

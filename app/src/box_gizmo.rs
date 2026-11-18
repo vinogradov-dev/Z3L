@@ -1,11 +1,13 @@
-//! The frame tool: the base rectangle, the pulled height and the grips of a selected frame.
+//! The frame tool: the base outline, the pulled height and the grips of a selected frame.
 //!
-//! A product frame reserves a box and is drawn the way the extrusion is (ADR 0101): the first click
+//! A product frame reserves a prism and is drawn the way the extrusion is (ADR 0101): the first click
 //! anchors the base rectangle on the active work plane, the second fixes it, the pointer then pulls
 //! the height along the plane's normal, and the click after that — or the command bar's ✓ — commits
-//! one `product.create`. Nothing reaches the document before the commit, so Escape costs nothing, and
-//! the wireframe prism the pointer pulls is shell paint: an overlay entry is keyed by the id of a node
-//! the document holds, and a frame that does not exist yet has none (ADR 0093, ADR 0104).
+//! one `product.create`. A base outline drawn in the sketch arrives the same way: the ring becomes the
+//! draft's base and the pull continues from it (ADR 0159). Nothing reaches the document before the
+//! commit, so Escape costs nothing, and the wireframe prism the pointer pulls is shell paint: an
+//! overlay entry is keyed by the id of a node the document holds, and a frame that does not exist yet
+//! has none (ADR 0093, ADR 0104).
 //!
 //! A solid box is not drawn here: it is a profile swept on Z, so its body is an extrusion and its
 //! grips are the contour's corner grips (ADR 0138).
@@ -29,7 +31,7 @@ use engine::node_cmds::NODE_PLACEMENT_SET_ID;
 use engine::product_cmds::{PRODUCT_ENVELOPE_SET_ID, ProductEnvelopeSet};
 use engine::{EditScope, NodePlacementSet, Session};
 use geom::{DVec2, DVec3};
-use model::{Envelope, Id, Placement, Project};
+use model::{Envelope, Id, Placement, Project, RectCorner};
 use scene::Camera;
 use ui::{BoxDraft, Editor};
 use units::Length;
@@ -48,6 +50,12 @@ const SIZE_BACKGROUND: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 19
 const GRIP_RADIUS: f32 = 4.5;
 /// Pointer distance that grabs a grip, in points.
 const GRIP_HIT_RADIUS: f32 = 9.0;
+/// The tolerance a drawn ring is flattened with when its ghost is painted, in millimetres.
+///
+/// The scene samples a footprint at the same quarter millimetre, so the wireframe the pointer pulls
+/// and the one the document draws are the same ring.
+const RING_SAMPLE_MM: f64 = 0.25;
+
 /// Smallest side a grip or a pull leaves, in millimetres: a box keeps three positive sides.
 pub(crate) const MIN_SIDE_MM: i64 = 1;
 
@@ -109,15 +117,36 @@ pub(crate) fn pulled_height(
     Length::from_millimetres(whole)
 }
 
-/// The work plane's frame with its origin on the box's own zero: the base rectangle's minimum corner.
+/// The work plane's frame with its origin on the frame's own zero: the base's minimum corner.
 pub(crate) fn base_placement(plane: WorkPlane, draft: &BoxDraft) -> Option<Placement> {
-    let base = draft.base()?;
-    plane.placement_at(plane_millimetres(base.corner))
+    plane.placement_at(plane_millimetres(draft.base_corner()?))
 }
 
-/// The frame and the three sides the ✓ would commit — exactly what the ghost shows.
-pub(crate) fn commit_frame(plane: WorkPlane, draft: &BoxDraft) -> Option<(Placement, [Length; 3])> {
-    Some((base_placement(plane, draft)?, draft.sizes()?))
+/// The frame and the envelope the ✓ would commit — exactly what the ghost shows.
+///
+/// A rectangle base and a drawn ring both answer one envelope, so the ghost and the command never
+/// disagree about which shape is being made (ADR 0159).
+pub(crate) fn commit_frame(plane: WorkPlane, draft: &BoxDraft) -> Option<(Placement, Envelope)> {
+    let envelope = draft.envelope()?.ok()?;
+    Some((base_placement(plane, draft)?, envelope))
+}
+
+/// The ring's outline sampled into plane millimetres: the shape the pointer's prism is drawn from.
+///
+/// The tolerance is the same quarter millimetre the scene flattens a footprint with, so the ghost the
+/// pointer pulls and the wireframe the document later draws trace the same ring.
+fn ring_outline(draft: &BoxDraft) -> Option<(Vec<DVec2>, Vec<DVec2>)> {
+    let ring = draft.ring()?;
+    let outline = ring.contour.to_geometry().ok()?;
+    let points = outline.sample(RING_SAMPLE_MM).ok()?;
+    let mut corners = Vec::new();
+    for (index, segment) in outline.segments().iter().enumerate() {
+        if outline.joint_is_smooth(index, geom::DEFAULT_TANGENT_TOLERANCE) == Some(true) {
+            continue;
+        }
+        corners.push(segment.start());
+    }
+    Some((points, corners))
 }
 
 /// Reads one click of the box creation gesture.
@@ -158,7 +187,7 @@ fn rectangle_corners(first: [Length; 2], second: [Length; 2]) -> [[Length; 2]; 4
     [point(min_x, min_y), point(max_x, min_y), point(max_x, max_y), point(min_x, max_y)]
 }
 
-/// Paints the base rectangle being drawn and the prism its height pulls.
+/// Paints the base outline being drawn and the prism its height pulls.
 pub(crate) fn paint_box(
     ui: &Ui,
     viewport: egui::Rect,
@@ -178,7 +207,7 @@ pub(crate) fn paint_box(
     };
     // The base rectangle while it is being drawn; once it is fixed the prism's bottom ring is the
     // same rectangle, so drawing it again would only hide it.
-    if draft.base().is_none() {
+    if draft.base().is_none() && draft.ring().is_none() {
         let mut base = Vec::with_capacity(5);
         for corner in rectangle_corners(first, draft.live().unwrap_or(first)) {
             match project(corner, Length::ZERO) {
@@ -190,6 +219,40 @@ pub(crate) fn paint_box(
             base.push(first_point);
             painter.add(egui::Shape::line(base, Stroke::new(1.6, BASE_COLOR)));
         }
+        return;
+    }
+    // A drawn ring: its own outline twice, and a vertical where the shape turns.
+    if draft.ring().is_some() {
+        let drawn = |draft: &BoxDraft| -> Option<()> {
+            let (outline, corners) = ring_outline(draft)?;
+            let height = draft.height();
+            let stroke = Stroke::new(1.8, BOX_COLOR);
+            for level in [Length::ZERO, height] {
+                let mut ring: Vec<Pos2> = Vec::with_capacity(outline.len() + 1);
+                for point in &outline {
+                    let corner = [length_micrometres(point.x)?, length_micrometres(point.y)?];
+                    ring.push(project(corner, level)?);
+                }
+                if let Some(&first_point) = ring.first() {
+                    ring.push(first_point);
+                    painter.add(egui::Shape::line(ring, stroke));
+                }
+            }
+            for corner in &corners {
+                let point = [length_micrometres(corner.x)?, length_micrometres(corner.y)?];
+                let (low, high) = (project(point, Length::ZERO)?, project(point, height)?);
+                painter.line_segment([low, high], stroke);
+            }
+            if let Some(pointer) = pointer
+                && let Some(Ok(envelope)) = draft.envelope()
+            {
+                let [width, depth] = [envelope.x(), envelope.y()].map(Length::millimetres_f64);
+                let label = format!("{} × {} × {}", width, depth, height.millimetres_f64());
+                paint_size(&painter, pointer, &label);
+            }
+            Some(())
+        };
+        drawn(draft);
         return;
     }
     let Some(sizes) = draft.sizes() else {
@@ -247,7 +310,7 @@ pub(crate) fn commit_box(
     plane: WorkPlane,
     lang: text::Lang,
 ) -> Result<Id, String> {
-    let draft = editor.box_draft().copied().ok_or_else(|| "No box is being drawn.".to_owned())?;
+    let draft = editor.box_draft().cloned().ok_or_else(|| "No box is being drawn.".to_owned())?;
     let (placement, _) =
         commit_frame(plane, &draft).ok_or_else(|| "The box has no base corner or height.".to_owned())?;
     editor.commit_box(session, placement, lang)
@@ -305,7 +368,7 @@ pub(crate) enum BoxGrip {
     },
 }
 
-/// A selected frame read from the document: the node, its frames and its three sides.
+/// A selected frame read from the document: the node, its frames, its three sides and its shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BoxBody {
     /// The node whose envelope the grips edit.
@@ -316,6 +379,10 @@ pub(crate) struct BoxBody {
     world: Placement,
     /// The stored width, depth and height.
     sides: [Length; 3],
+    /// Which nominal corners are cut, in [`RectCorner::ALL`] order.
+    cut: [bool; 4],
+    /// Whether the footprint is a drawn ring, whose horizontal shape is not a rectangle.
+    ring: bool,
 }
 
 /// Whether one node is a box the grips can edit.
@@ -328,8 +395,11 @@ impl BoxBody {
     pub(crate) fn read(project: &Project, node: Id) -> Option<Self> {
         let world = project.world_placement(node)?;
         let container = project.container(node).filter(|container| container.is_product())?;
-        let sides = container.envelope()?.components();
-        Some(Self { node, placement: container.placement(), world, sides })
+        let envelope = container.envelope()?;
+        let sides = envelope.components();
+        let footprint = envelope.footprint();
+        let cut = RectCorner::ALL.map(|corner| footprint.corner_cut(corner).is_some());
+        Some(Self { node, placement: container.placement(), world, sides, cut, ring: footprint.is_ring() })
     }
 
     /// The local point of a grip handle, in millimetres.
@@ -358,25 +428,45 @@ impl BoxBody {
         self.local_point(grip).map(|local| self.world.transform_point(local))
     }
 
-    /// Every grip a selected frame shows: its eight corners and its six faces.
+    /// Every grip a selected frame shows.
+    ///
+    /// A frame reserves a tall space whose top corners are the ones at eye level, so it carries all
+    /// eight — except the corners that are cut away: a cut corner's grip would stand in empty space,
+    /// outside the piece it edits (ADR 0159). A drawn ring shows only its two height faces, because
+    /// its horizontal shape is drawn rather than dragged; each corner drags in its own horizontal
+    /// plane and changes the same two sides (docs/domain/products.md §9).
     pub(crate) fn grips(&self) -> Vec<BoxGrip> {
-        // A frame reserves a tall space whose top corners are the ones at eye level, so it carries
-        // all eight; each corner drags in its own horizontal plane and changes the same two sides
-        // (docs/domain/products.md §9).
         let mut grips = Vec::with_capacity(8 + 6);
-        for top in [false, true] {
-            for min_x in [true, false] {
-                for min_y in [true, false] {
+        if !self.ring {
+            for top in [false, true] {
+                for (index, corner) in RectCorner::ALL.into_iter().enumerate() {
+                    if self.cut.get(index).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let (min_x, min_y) = corner_sides(corner);
                     grips.push(BoxGrip::Corner { min_x, min_y, top });
                 }
             }
         }
         for side in [BoxSide::Width, BoxSide::Depth, BoxSide::Height] {
+            if self.ring && side != BoxSide::Height {
+                continue;
+            }
             for max in [true, false] {
                 grips.push(BoxGrip::Face { side, max });
             }
         }
         grips
+    }
+}
+
+/// Which two sides a nominal corner sits on: whether it is the minimum X one and the minimum Y one.
+fn corner_sides(corner: RectCorner) -> (bool, bool) {
+    match corner {
+        RectCorner::BottomLeft => (true, true),
+        RectCorner::BottomRight => (false, true),
+        RectCorner::TopRight => (false, false),
+        RectCorner::TopLeft => (true, false),
     }
 }
 
@@ -664,6 +754,74 @@ mod tests {
         );
     }
 
+    /// A product whose base is a rectangle with its right-hand near corner cut by a chamfer.
+    fn corner_product_project() -> (Project, Id) {
+        let mut project = testkit::sample_project();
+        let root = project.root().id();
+        let footprint = model::Footprint::cut([
+            None,
+            Some(model::CornerFeatureKind::Chamfer { incoming: millimetres(120), outgoing: millimetres(70) }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(560), millimetres(720), footprint)
+            .expect("a corner cabinet");
+        let id = project
+            .add_product(root, "Corner", model::ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("the product is added");
+        (project, id)
+    }
+
+    /// A product whose base is a drawn ring rather than a rectangle.
+    fn ring_product_project() -> (Project, Id) {
+        let mut project = testkit::sample_project();
+        let root = project.root().id();
+        let ring = model::Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(500), Length::ZERO],
+                [millimetres(500), millimetres(400)],
+                [Length::ZERO, millimetres(400)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a drawn frame");
+        let id = project
+            .add_product(root, "Table", model::ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("the product is added");
+        (project, id)
+    }
+
+    #[test]
+    fn a_cut_corner_shows_no_grip_and_a_ring_shows_only_its_height() {
+        let (project, id) = corner_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        let grips = body.grips();
+        assert_eq!(grips.len(), 12, "the cut corner takes its base and its top grip with it");
+        assert!(
+            !grips.iter().any(|grip| matches!(grip, BoxGrip::Corner { min_x: false, min_y: true, .. })),
+            "a grip would stand in the empty corner, outside the piece: {grips:?}"
+        );
+        assert!(
+            grips.iter().any(|grip| matches!(grip, BoxGrip::Corner { min_x: true, min_y: false, .. })),
+            "the three square corners keep theirs: {grips:?}"
+        );
+
+        let (project, id) = ring_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        assert_eq!(
+            body.grips(),
+            vec![
+                BoxGrip::Face { side: BoxSide::Height, max: true },
+                BoxGrip::Face { side: BoxSide::Height, max: false },
+            ],
+            "a drawn ring moves by its height only: its shape is drawn, not dragged"
+        );
+    }
+
     #[test]
     fn a_node_that_reserves_nothing_shows_no_grips() {
         let (project, _id) = sample_product_project();
@@ -713,9 +871,10 @@ mod tests {
         editor.click_box([millimetres(600), millimetres(400)]).expect("anchor");
         editor.click_box([millimetres(0), millimetres(0)]).expect("base");
         editor.pull_box_height(millimetres(720)).expect("pull");
-        let (placement, sizes) =
+        let (placement, envelope) =
             commit_frame(WorkPlane::WORLD_XY, editor.box_draft().expect("a draft")).expect("frame");
-        assert_eq!(sizes, [millimetres(600), millimetres(400), millimetres(720)]);
+        assert_eq!(envelope.components(), [millimetres(600), millimetres(400), millimetres(720)]);
+        assert!(envelope.footprint().is_rectangle(), "a drawn rectangle reserves a plain box");
         assert!(placement.translation().length() < 1.0e-9, "the base corner is the plane origin here");
     }
 

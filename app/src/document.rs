@@ -1107,6 +1107,9 @@ impl Document {
     /// is not finished here: the shell starts the height pull on the path it just committed, in the
     /// same edit scope, so the box or cylinder is built on Z by the one gesture (ADR 0138).
     pub(crate) fn commit_drawing(&mut self, lang: Lang) -> Result<(), String> {
+        if self.product_draft_running() {
+            return self.start_frame_pull(lang);
+        }
         let placement = self.drawing_placement()?;
         let drawn = self.editor.commit_drawing(&mut self.session, placement, lang)?;
         let profile = (drawn.intent == ui::DrawIntent::Body)
@@ -1143,8 +1146,28 @@ impl Document {
     /// The ring is closed before the commit and reopened if the document refuses it, so a refusal
     /// leaves the shape the user drew editable instead of a finished draft that cannot be changed.
     pub(crate) fn close_draft(&mut self, lang: Lang) -> Result<(), String> {
+        if self.product_draft_running() {
+            return self.start_frame_pull(lang);
+        }
         let placement = self.drawing_placement()?;
         self.editor.close_and_commit_drawing(&mut self.session, placement, lang)?;
+        self.end_drawing()
+    }
+
+    /// Whether the running drawing is a product frame's base outline rather than a path or a body.
+    ///
+    /// A frame's base is finished by its height pull, not by a command of its own (ADR 0159), so the
+    /// shell hands it to the box draft instead of committing a node.
+    fn product_draft_running(&self) -> bool {
+        self.editor.drawing_intent() == ui::DrawIntent::Product
+    }
+
+    /// Closes the frame's base outline and hands it to the height pull.
+    ///
+    /// The ring becomes the box draft's base, so the pull, its preview and its one `product.create`
+    /// are the drawn frame's own; nothing is written until that pull is accepted (ADR 0101, ADR 0159).
+    fn start_frame_pull(&mut self, lang: Lang) -> Result<(), String> {
+        self.editor.start_product_pull(lang)?;
         self.end_drawing()
     }
 
@@ -1383,7 +1406,7 @@ impl Document {
     /// The last click, or the command bar's ✓, is the one command the gesture writes (ADR 0101).
     fn update_box(&mut self, ui: &mut egui::Ui, response: &egui::Response, rect: egui::Rect) {
         let plane = WorkPlane::from_camera(self.scene.camera);
-        let Some(draft) = self.editor.box_draft().copied() else {
+        let Some(draft) = self.editor.box_draft().cloned() else {
             return;
         };
         let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
@@ -1392,8 +1415,8 @@ impl Document {
             // pointer may not overwrite it, and leaving the field hands the height back to the
             // hand (ADR 0119).
             if !ui.ctx().text_edit_focused()
-                && let (Some(pointer), Some(base)) = (pointer, draft.base())
-                && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, base.corner, pointer)
+                && let (Some(pointer), Some(corner)) = (pointer, draft.base_corner())
+                && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, corner, pointer)
                 && let Err(error) = self.editor.pull_box_height(height)
             {
                 self.last_error = Some(error.to_string());
@@ -2000,7 +2023,7 @@ impl Document {
     /// niche's gaps are drawn by `update_fill` from the same [`Distances`], and every tool reaches
     /// the inspector through [`Self::tool_view`].
     fn height_view(&self) -> Option<ToolView> {
-        if let Some(draft) = self.editor.box_draft().copied().filter(BoxDraft::is_pulling) {
+        if let Some(draft) = self.editor.box_draft().cloned().filter(BoxDraft::is_pulling) {
             let maximum = box_gizmo::MAX_SIDE_MM as f64;
             // A frame's pull is the height it reserves, not a solid's edge (ADR 0101).
             let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
@@ -3083,7 +3106,7 @@ impl Document {
                 }
                 Err(error) => self.last_error = Some(error),
             }
-        } else if let Some(draft) = self.editor.box_draft().copied() {
+        } else if let Some(draft) = self.editor.box_draft().cloned() {
             let plane = WorkPlane::from_camera(self.scene.camera);
             box_gizmo::paint_box(ui, rect, self.scene.camera, plane, response.hover_pos(), &draft);
         } else if let Some(object) = mesh_object {

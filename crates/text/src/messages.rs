@@ -448,6 +448,9 @@ messages! {
     MissingMaterial = ["Missing material {}", "Материал {} отсутствует"],
     NoMaterial = ["No material", "Нет материала"],
     SectionOutline = ["Outline", "Контур"],
+    SectionFootprint = ["Base outline", "Контур основания"],
+    ProductFrameNeedsHeight = ["A frame's outline is finished by its height pull.", "Контур каркаса завершается вытягиванием высоты."],
+    ProductContourDraw = ["Draw the {} base outline on the plane, then pull its height.", "Нарисуйте контур основания {} на плоскости, затем вытяните высоту."],
     PanelContourRingOne = ["Contour ring · {} segment", "Контурное кольцо · {} сегмент"],
     PanelContourRingFew = ["Contour ring · {} segments", "Контурное кольцо · {} сегмента"],
     PanelContourRingMany = ["Contour ring · {} segments", "Контурное кольцо · {} сегментов"],
@@ -888,6 +891,7 @@ messages! {
     // The ribbon's tools (U68); a planned row is named here before its command exists.
     ToolProductFrame = ["Product frame", "Каркас изделия"],
     ToolProductFrameDraw = ["Frame by drawing", "Каркас по чертежу"],
+    ToolProductFrameContour = ["Frame from contour", "Каркас по контуру"],
     ToolPanel = ["Panel", "Панель"],
     ToolPost = ["Post", "Стойка"],
     ToolVoid = ["Niche", "Ниша"],

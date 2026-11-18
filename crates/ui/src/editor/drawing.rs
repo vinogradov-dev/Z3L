@@ -25,6 +25,7 @@ use super::Editor;
 use crate::contour_edit::ContourTarget;
 use model::PathShape;
 
+use crate::box_tool::BoxDraft;
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 
 /// The name a drawn body commits under: the cell the profile belongs to, not the tool.
@@ -92,6 +93,42 @@ impl Editor {
     pub fn start_body_drawing(&mut self, tool: DrawTool) {
         self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
         self.drawing_intent = DrawIntent::Body;
+    }
+
+    /// Arms the base outline of a product frame: the ring its reserved space stands on.
+    ///
+    /// The free-outline tool draws any closed ring, because a frame is not always a rectangle: a
+    /// corner cabinet and a drawn end table are the same gesture with a different base (ADR 0159).
+    /// The ring is view state until the height is pulled from it, and nothing is written before that
+    /// pull's one `product.create`.
+    pub fn start_product_drawing(&mut self) {
+        self.start_drawing_with(DrawTool::Polyline, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Product;
+    }
+
+    /// Turns the closed ring a frame draft drew into the box draft whose height is pulled.
+    ///
+    /// The ring becomes the draft's base, anchored at its own minimum corner so the frame's zero is
+    /// that corner and the sides are its bounds (ADR 0082, ADR 0159). The height pull and its commit
+    /// are the drawn frame's own, so a drawn footprint and a drawn box end in one command. A ring that
+    /// is still open is refused with the sentence the *Close* operation would give, and the draft
+    /// stays editable.
+    pub fn start_product_pull(&mut self, lang: Lang) -> Result<(), String> {
+        if self.drawing.is_none() {
+            return Err(DrawDraftError::NotStarted.to_string());
+        }
+        self.close_drawing().map_err(|_| Message::PanelContourOpen.text(lang).to_owned())?;
+        let Some(draft) = self.drawing.as_ref() else {
+            return Err(DrawDraftError::NotStarted.to_string());
+        };
+        let path = draft.to_path().map_err(|error| error.to_string())?;
+        let contour = path.to_contour().map_err(|error| error.to_string())?;
+        let (min, _) = contour.bounds_micrometres();
+        let corner = [Length::from_micrometres(min[0]), Length::from_micrometres(min[1])];
+        self.box_draft = Some(BoxDraft::from_ring(corner, contour));
+        self.drawing = None;
+        self.drawing_intent = DrawIntent::Path;
+        Ok(())
     }
 
     /// Arms a primitive's placement: the circle a sphere is built around (ADR 0139).
@@ -221,6 +258,9 @@ impl Editor {
             }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
             DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind, scope)?,
+            // A frame's base is not a node: the ring waits for the height pull and the one
+            // `product.create` that the shell runs from the box draft (ADR 0159).
+            DrawIntent::Product => return Err(Message::ProductFrameNeedsHeight.text(Lang::En).to_owned()),
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;

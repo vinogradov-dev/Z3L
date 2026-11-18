@@ -1,11 +1,15 @@
-//! The frame tool's draft: a base rectangle on the work plane and the height pulled from it.
+//! The frame tool's draft: a base on the work plane and the height pulled from it.
 //!
-//! A product frame reserves a box, and it is drawn the way the extrusion works: the base rectangle on
-//! the active work plane, fixed, then the height pulled along the plane's normal (ADR 0101). The
-//! draft is view state until its one commit — the two base corners in work-plane millimetres and the
-//! pulled height — and nothing reaches the document until `commit_box` dispatches `product.create`.
-//! Escape costs nothing because nothing was written. A solid box is not drawn here: it is a profile
-//! swept on Z (ADR 0138).
+//! A product frame reserves a prism, and it is drawn the way the extrusion works: the base on the
+//! active work plane, fixed, then the height pulled along the plane's normal (ADR 0101). The draft is
+//! view state until its one commit — the two base corners or the drawn ring, in work-plane
+//! millimetres, and the pulled height — and nothing reaches the document until `commit_box`
+//! dispatches `product.create`. Escape costs nothing because nothing was written. A solid box is not
+//! drawn here: it is a profile swept on Z (ADR 0138).
+//!
+//! The base is either the rectangle two clicks fix or a closed ring drawn on the plane, which is the
+//! footprint a frame reserves when the piece is not a box (ADR 0159): the two bases share the draft,
+//! the height pull and the one command, so a corner cabinet and an end table are one gesture.
 //!
 //! The base rectangle names the frame's own frame: its minimum corner in the plane becomes the node's
 //! origin, its sides become width and depth, and the normal becomes the height, so the space the
@@ -21,6 +25,8 @@
 
 use thiserror::Error;
 use units::Length;
+
+use model::{Contour, Envelope, EnvelopeError};
 
 /// The smallest height a pull leaves, in millimetres.
 pub const MIN_BOX_HEIGHT_MM: i64 = 1;
@@ -50,8 +56,17 @@ pub struct BoxBase {
     pub depth: Length,
 }
 
-/// The base rectangle being drawn and the height pulled from it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A base that is a ring drawn on the plane, anchored at its own minimum corner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RingBase {
+    /// The corner of the ring's bounds, in work-plane millimetres: the frame's own zero.
+    pub corner: [Length; 2],
+    /// The closed ring, in work-plane millimetres, starting at `corner`.
+    pub contour: Contour,
+}
+
+/// The base the height is pulled from and the height itself.
+#[derive(Clone, Debug, PartialEq)]
 pub struct BoxDraft {
     /// The first corner, once it is clicked.
     first: Option<[Length; 2]>,
@@ -59,6 +74,8 @@ pub struct BoxDraft {
     live: Option<[Length; 2]>,
     /// The base rectangle once it is fixed.
     base: Option<BoxBase>,
+    /// The drawn ring once its outline is finished.
+    ring: Option<RingBase>,
     /// The height the pull currently shows.
     height: Length,
 }
@@ -72,7 +89,7 @@ impl Default for BoxDraft {
 impl BoxDraft {
     /// An empty draft, waiting for the first corner of the base.
     pub const fn new() -> Self {
-        Self { first: None, live: None, base: None, height: Length::ZERO }
+        Self { first: None, live: None, base: None, ring: None, height: Length::ZERO }
     }
 
     /// The first corner of the base, when it is already on the plane.
@@ -90,8 +107,22 @@ impl BoxDraft {
     /// The shell maps the pointer onto the work plane every frame, so the rectangle the user sees is
     /// the rectangle the next click would fix.
     pub fn set_live(&mut self, corner: [Length; 2]) {
-        if self.base.is_none() {
+        if self.base.is_none() && self.ring.is_none() {
             self.live = Some(corner);
+        }
+    }
+
+    /// A draft whose base is a ring already drawn on the plane, waiting for its height.
+    ///
+    /// The ring is stored as drawn; [`BoxDraft::envelope`] anchors it through the envelope's own rule,
+    /// so the frame's zero is the ring's minimum corner and the sides are its bounds (ADR 0159).
+    pub fn from_ring(corner: [Length; 2], contour: Contour) -> Self {
+        Self {
+            first: Some(corner),
+            live: Some(corner),
+            base: None,
+            ring: Some(RingBase { corner, contour }),
+            height: Length::ZERO,
         }
     }
 
@@ -100,7 +131,7 @@ impl BoxDraft {
     /// Returns whether this click fixed the base, which is when the height pull begins. A click that
     /// would leave a flat rectangle is refused and leaves the draft waiting for another one.
     pub fn click(&mut self, corner: [Length; 2]) -> Result<bool, BoxDraftError> {
-        if self.base.is_some() {
+        if self.is_pulling() {
             return Ok(false);
         }
         let Some(first) = self.first else {
@@ -119,9 +150,32 @@ impl BoxDraft {
         self.base
     }
 
+    /// The drawn ring, once its outline is finished.
+    pub const fn ring(&self) -> Option<&RingBase> {
+        self.ring.as_ref()
+    }
+
+    /// The corner of the base on the work plane, whichever base the draft holds.
+    ///
+    /// It is the frame's own zero, so the shell projects the pointer from it when the height is pulled
+    /// (ADR 0082, ADR 0101).
+    pub fn base_corner(&self) -> Option<[Length; 2]> {
+        self.base.map(|base| base.corner).or_else(|| self.ring.as_ref().map(|ring| ring.corner))
+    }
+
+    /// The envelope the ✓ would commit, once both the base and a height exist.
+    ///
+    /// A rectangle base is three sides and a ring base is its ring and the height, so the two methods
+    /// of the tool reach one command with one value and neither invents a shape (ADR 0159).
+    pub fn envelope(&self) -> Option<Result<Envelope, EnvelopeError>> {
+        self.base
+            .map(|base| Envelope::new(base.width, base.depth, self.height))
+            .or_else(|| self.ring.as_ref().map(|ring| Envelope::with_ring(&ring.contour, self.height)))
+    }
+
     /// Whether the base is fixed and the gesture is pulling the height.
     pub const fn is_pulling(&self) -> bool {
-        self.base.is_some()
+        self.base.is_some() || self.ring.is_some()
     }
 
     /// The height the pull shows.
@@ -134,7 +188,7 @@ impl BoxDraft {
     /// The step is the gesture's own: a pull moves in millimetres and the document keeps
     /// micrometres, so the draft rounds once, here, instead of letting a float reach the command.
     pub fn set_height(&mut self, height: Length) -> Result<(), BoxDraftError> {
-        if self.base.is_none() {
+        if !self.is_pulling() {
             return Err(BoxDraftError::NoBase);
         }
         if height <= Length::ZERO {
@@ -146,6 +200,9 @@ impl BoxDraft {
     }
 
     /// The three sides the committed box will have: width, depth and height.
+    ///
+    /// A drawn ring has no three sides of its own; [`BoxDraft::envelope`] is what it commits, and the
+    /// shell labels a rectangle's pull with this.
     pub fn sizes(&self) -> Option<[Length; 3]> {
         let base = self.base?;
         Some([base.width, base.depth, self.height])
@@ -179,6 +236,36 @@ mod tests {
 
     fn point(x: i64, y: i64) -> [Length; 2] {
         [millimetres(x), millimetres(y)]
+    }
+
+    #[test]
+    fn a_drawn_ring_is_the_base_and_the_envelope_carries_it() {
+        let ring = model::Path::polyline(
+            vec![
+                [millimetres(100), millimetres(50)],
+                [millimetres(700), millimetres(50)],
+                [millimetres(700), millimetres(450)],
+                [millimetres(100), millimetres(450)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let mut draft = BoxDraft::from_ring([millimetres(100), millimetres(50)], ring);
+        assert!(draft.is_pulling(), "the ring is the base, so the height is what is missing");
+        assert_eq!(draft.sizes(), None, "a drawn ring has no three sides of its own");
+        assert_eq!(draft.base_corner(), Some([millimetres(100), millimetres(50)]), "the pull starts at its corner");
+        assert!(!draft.click(point(0, 0)).expect("a click while pulling"), "a click cannot re-anchor the ring");
+
+        draft.set_height(millimetres(720)).expect("the pull");
+        let envelope = draft.envelope().expect("a base").expect("a valid ring");
+        assert!(envelope.footprint().is_ring(), "the envelope keeps the ring");
+        assert_eq!(
+            envelope.components(),
+            [millimetres(600), millimetres(400), millimetres(720)],
+            "the sides are the ring's bounds and the height is the pull's"
+        );
     }
 
     #[test]

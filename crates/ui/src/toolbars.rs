@@ -86,6 +86,8 @@ pub enum ToolAction {
     /// Arms the box tool with the frame as its owner: the next clicks draw the reserved box and the
     /// ✓ dispatches `product.create`.
     DrawProductFrame,
+    /// Arms the free-outline tool whose closed ring becomes a frame's base outline.
+    DrawProductFrameContour,
     /// Arms the free-outline tool, whose closed ring becomes one panel cut to it.
     DrawPanelContour,
     /// Arms the empty-space tool with the class whose `fill` trait picks the axis pair.
@@ -182,6 +184,8 @@ pub enum ToolActivity {
     Primitive(PrimitiveKind),
     /// The box tool is drawing a product frame's reserved box.
     ProductFrame,
+    /// A drawing tool is building the base outline of a product frame.
+    ProductContour,
     /// The empty-space tool is armed with a fill class and its mode.
     Fill {
         /// The class the armed cell fills the void with.
@@ -211,6 +215,7 @@ pub fn tool_activity(
         (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
         (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
+        (Some((_, DrawIntent::Product)), _, _, _, _) => Some(ToolActivity::ProductContour),
         // A primitive's placement is a draft like any other, so the pressed cell is the sphere's.
         (Some((_, DrawIntent::Primitive(kind))), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
         (None, true, _, _, _) => Some(ToolActivity::ProductFrame),
@@ -234,6 +239,7 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
         // pressed state and the cell shows it through the list (U74).
         (Some(ToolActivity::ProductFrame), ToolKind::ProductDraw) => true,
+        (Some(ToolActivity::ProductContour), ToolKind::ProductContour) => true,
         (Some(ToolActivity::Fill { class: armed, mode: armed_mode }), ToolKind::Fill { class, mode }) => {
             armed == class && armed_mode == mode
         }

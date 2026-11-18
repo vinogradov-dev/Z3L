@@ -252,16 +252,17 @@ impl Editor {
     /// create does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo
     /// entry.
     pub fn commit_box(&mut self, session: &mut Session, placement: Placement, lang: Lang) -> Result<Id, String> {
-        let Some(draft) = self.box_draft else {
+        let Some(draft) = self.box_draft.clone() else {
             return Err(BoxDraftError::NoBase.to_string());
         };
-        let Some([width, depth, height]) = draft.sizes() else {
-            return Err(BoxDraftError::NoBase.to_string());
-        };
+        // A rectangle base and a drawn ring both arrive as one envelope, so the command never learns
+        // which method drew the frame (ADR 0101, ADR 0159).
+        let envelope =
+            draft.envelope().ok_or_else(|| BoxDraftError::NoBase.to_string())?.map_err(|error| error.to_string())?;
         // A frame is a top-level piece: its parent is the root whatever container is armed.
         let parent = session.project().root().id();
         let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-        self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
+        self.create_drawn_product(session, parent, envelope, placement, lang)?;
         self.box_draft = None;
         self.selection.primary().ok_or_else(|| "The box command created no node.".to_owned())
     }
@@ -277,12 +278,10 @@ impl Editor {
         &mut self,
         session: &mut Session,
         parent: Id,
-        sizes: [Length; 3],
+        envelope: Envelope,
         placement: Placement,
         lang: Lang,
     ) -> Result<(), String> {
-        let [width, depth, height] = sizes;
-        let envelope = Envelope::new(width, depth, height).map_err(|error| error.to_string())?;
         let class = ProductCreate::PLACEHOLDER_CLASS;
         let name = class.label().map_or_else(|| Message::CmdCreateProduct.text(lang), |label| label.text(lang));
         let params = json(&ProductCreate { parent, name: name.to_owned(), class: Some(class), envelope, placement })?;
