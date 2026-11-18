@@ -36,7 +36,12 @@ pub struct Session {
     undo: Vec<Project>,
     redo: Vec<Project>,
     dirty: bool,
+    /// The workshop's directory, shared with every tab of the window: a reload swaps one `Arc`.
     directory: Arc<Directory>,
+    /// How often the shell installed a newer directory. The directory is not the document, so a
+    /// reload moves no document revision; the frame follows this counter instead
+    /// (`docs/domain/nomenclature.md` §13).
+    directory_version: u64,
     edit: Option<OpenEdit>,
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
@@ -56,7 +61,10 @@ impl Session {
     }
 
     /// Creates a clean session around a document and its read-only nomenclature directory.
-    pub fn with_directory(project: Project, directory: Directory) -> Self {
+    ///
+    /// The directory arrives as one value or as an `Arc` of one: a new tab hands over the snapshot
+    /// the window is already on rather than copying every record of it.
+    pub fn with_directory(project: Project, directory: impl Into<Arc<Directory>>) -> Self {
         let saved_project = project.clone();
         Self {
             project,
@@ -64,7 +72,8 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             dirty: false,
-            directory: Arc::new(directory),
+            directory: directory.into(),
+            directory_version: 0,
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
@@ -149,6 +158,31 @@ impl Session {
     /// The session-scoped, read-only nomenclature directory.
     pub fn directory(&self) -> &Directory {
         &self.directory
+    }
+
+    /// The directory as the one value every tab shares, for a tab that is about to open.
+    pub fn directory_shared(&self) -> Arc<Directory> {
+        Arc::clone(&self.directory)
+    }
+
+    /// How often a newer directory was installed, so the shell knows its frame is stale.
+    pub fn directory_version(&self) -> u64 {
+        self.directory_version
+    }
+
+    /// Installs a newer snapshot of the directory.
+    ///
+    /// The directory is not the document: this swaps one value, writes no field of the project,
+    /// pushes no undo entry and leaves the saved-content marker alone, so a directory that changed
+    /// underneath the editor invalidates nothing a person did (`docs/domain/nomenclature.md` §13,
+    /// ADR 0148). What was derived from the old rows is not thrown away either: the panel meshes are
+    /// keyed by the thicknesses they were built from, so a rebuild follows the rows that moved. The
+    /// preview a running operation filled does not survive, because its geometry was measured
+    /// against the rows that are gone.
+    pub fn set_directory(&mut self, directory: Arc<Directory>) {
+        self.directory = directory;
+        self.preview.clear();
+        self.directory_version = self.directory_version.wrapping_add(1);
     }
 
     /// Resolves one panel's geometry against the session directory.
@@ -1073,6 +1107,67 @@ mod tests {
         let mut object = value.as_object().cloned().expect("object");
         object.insert("extra".to_owned(), Value::Bool(true));
         assert!(serde_json::from_value::<PanelRename>(Value::Object(object)).is_err());
+    }
+
+    #[test]
+    fn a_new_directory_re_derives_the_panel_and_leaves_the_history_alone() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        for name in ["Side", "Shelf 2"] {
+            session
+                .dispatch("panel.rename", &json_params(&PanelRename { panel: panel_id, name: name.to_owned() }))
+                .expect("rename the panel");
+        }
+        session
+            .dispatch(
+                "panel.material.set",
+                &json_params(&PanelMaterialSet { panel: panel_id, material: sample_material_id() }),
+            )
+            .expect("the panel is cut from the fixture board");
+        session.mark_saved();
+        let stored = session.project().clone();
+        let thickness = session.panel_geometry(panel_id).expect("resolved geometry").thickness();
+        assert_eq!(thickness, testkit::sample_panel_thickness(), "the fixture board is 18 mm");
+
+        session.set_directory(Arc::new(testkit::sample_catalog_with_thickness(
+            Length::from_millimetres(25).expect("25 mm"),
+        )));
+
+        assert_eq!(
+            session.panel_geometry(panel_id).expect("resolved geometry").thickness(),
+            Length::from_millimetres(25).expect("25 mm"),
+            "a panel's thickness follows the board its document names"
+        );
+        assert!(session.project().same_content(&stored), "the directory writes no field of the document");
+        assert!(!session.is_dirty(), "nor does it make a saved scene dirty");
+        assert!(session.can_undo(), "a directory update takes no undo entry away");
+        assert_eq!(session.directory_version(), 1, "the shell is told the frame it holds is stale");
+
+        // The three steps the history held before the swap are still the three it holds after it.
+        session.undo().expect("the material is still undoable");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf 2");
+        session.undo().expect("and the second rename too");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Side");
+        session.undo().expect("and the first one");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf");
+        assert!(session.can_redo(), "the redo branch survives the swap as well");
+    }
+
+    #[test]
+    fn a_new_directory_drops_the_preview_measured_against_the_old_rows() {
+        let mut session = sample_session();
+        let node = Id::new(2).expect("id");
+        session.set_preview_geometry(
+            node,
+            Geometry::Mesh(testkit::cube_mesh(Length::from_millimetres(10).expect("10 mm"))),
+        );
+        assert!(session.drawn_geometry(node).is_some(), "the overlay is what the viewport draws");
+
+        session.set_directory(Arc::new(testkit::sample_catalog_with_thickness(
+            Length::from_millimetres(25).expect("25 mm"),
+        )));
+
+        assert!(session.preview().geometry(node).is_none(), "a preview was measured against rows that are gone");
     }
 
     #[test]

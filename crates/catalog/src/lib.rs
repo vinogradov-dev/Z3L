@@ -48,7 +48,7 @@ pub use kind::{Kind, KindCode, KindRegistry, Trait};
 pub use money::{Currency, CurrencyError, Money};
 pub use property::{Date, Property, PropertyCode, PropertyType, PropertyValue, Rgb};
 pub use slug::{MAX_SLUG_CHARS, Slug};
-pub use source::{DirectorySource, FolderSource, LoadError};
+pub use source::{DirectorySource, FolderSource, LoadError, Revision};
 pub use starter::{GROUP_SLUG, MATERIAL_SLUG, PRICE_SLUG, Starter, default_directory};
 pub use view::{
     BandingView, BoardView, COLOR_SLUG, SHEET_LENGTH_SLUG, SHEET_WIDTH_SLUG, SheetView, StockView, THICKNESS_SLUG,

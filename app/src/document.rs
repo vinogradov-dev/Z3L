@@ -309,6 +309,12 @@ pub(crate) struct Document {
     /// (ADR 0098), so the rebuild watches it here: opening a piece repaints its envelope ink
     /// without touching the document.
     scene_product: Option<Id>,
+    /// The session's directory version the frame was built from.
+    ///
+    /// The directory is not the document, so a reload moves no revision (ADR 0148 §13); the rebuild
+    /// watches the session's own counter instead, so a board whose thickness changed re-derives its
+    /// panels without a restart and without pretending the person edited anything.
+    scene_directory: u64,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
     /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
@@ -429,6 +435,7 @@ impl Document {
             scene_visibility: 0,
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
+            scene_directory: session.directory_version(),
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
@@ -482,12 +489,12 @@ impl Document {
         settings: &Settings,
         shell: &Shell,
         path: &Path,
-        directory: &catalog::Directory,
+        directory: Arc<catalog::Directory>,
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let project = scene.into_document();
-        let session = Session::with_directory(project, directory.clone());
+        let session = Session::with_directory(project, directory);
         let mut document = Self::new(render_state, settings, shell, session, extra)?;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -828,6 +835,18 @@ impl Document {
             || self.editor.visibility_revision() != self.scene_visibility
             || self.session.preview_version() != self.scene_preview
             || self.session.active_product() != self.scene_product
+            || self.session.directory_version() != self.scene_directory
+    }
+
+    /// Installs a newer snapshot of the workshop's directory in this tab's session.
+    ///
+    /// The tab keeps nothing else: its frame is re-derived on the next [`Document::sync_scene`],
+    /// because the session's directory version moved, and its cached meshes are keyed by the
+    /// thicknesses they were built from, so only the panels of a changed board are rebuilt. The
+    /// selection, the tools and the undo history are the document's, which a directory never
+    /// touches (ADR 0148, `docs/domain/nomenclature.md` §13).
+    pub(crate) fn set_directory(&mut self, directory: Arc<catalog::Directory>) {
+        self.session.set_directory(directory);
     }
 
     /// Takes the window's display state and rebuilds the frame when the document moved.
@@ -871,10 +890,12 @@ impl Document {
         let visibility = self.editor.visibility_revision();
         let preview = self.session.preview_version();
         let product = self.session.active_product();
+        let directory = self.session.directory_version();
         if revision == self.scene_revision
             && visibility == self.scene_visibility
             && preview == self.scene_preview
             && product == self.scene_product
+            && directory == self.scene_directory
         {
             return Ok(());
         }
@@ -895,6 +916,7 @@ impl Document {
         self.scene_visibility = visibility;
         self.scene_preview = preview;
         self.scene_product = product;
+        self.scene_directory = directory;
         let uploaded = self.upload_scene();
         let elapsed = started.elapsed();
         self.rebuild.record(elapsed);

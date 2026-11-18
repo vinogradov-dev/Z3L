@@ -16,9 +16,12 @@
 //! Every refusal names the package and the file: a package arrives from a supplier, and a person has
 //! to open the line the reader complains about.
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
 
@@ -86,13 +89,41 @@ pub enum LoadError {
     },
 }
 
+/// The stamp of the files a directory is read from.
+///
+/// A directory is edited by another application, so a reader needs one cheap value that moves when
+/// any file it reads changes and stays put when none did: the shell polls it off the frame path and
+/// reads a new snapshot only when it moved (`docs/domain/nomenclature.md` §13).
+///
+/// It is the hash of every file's name, size and modification time, so it moves when a file is
+/// added, removed or rewritten. It is compared, never stored and never written to a file, so a
+/// build may change its value without a migration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Revision(u64);
+
+impl Revision {
+    /// The number itself, for a log line or a test that prints it.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 /// A source of directory snapshots.
 ///
 /// A reader hands over one value and never a live store (`§15`), so a consumer cannot hold half a
-/// directory or accidentally depend on a package.
+/// directory or accidentally depend on a package. The two halves are separate on purpose: a
+/// revision costs one stat of each file, a snapshot parses and validates all of them, so the shell
+/// polls the first far more often than it reads the second (`§13`).
 pub trait DirectorySource {
     /// Reads the directory as one validated snapshot.
     fn snapshot(&self) -> Result<Directory, LoadError>;
+
+    /// The stamp of the files [`DirectorySource::snapshot`] would read, without reading them.
+    ///
+    /// A file that is not there is part of the stamp too: a folder that gained its first package
+    /// and one that lost one both move it, and a reader that cannot tell `NotFound` from a file it
+    /// failed to stat cannot watch a folder at all.
+    fn revision(&self) -> Result<Revision, LoadError>;
 }
 
 /// The names of the packages a directory lists, in the order they load.
@@ -156,7 +187,43 @@ struct Loaded<T> {
     value: T,
 }
 
+impl FolderSource {
+    /// The files a snapshot reads: the connected list, then every package's manifest, registry and
+    /// records, in the order the loader reads them.
+    ///
+    /// A folder that is missing a level contributes no files instead of failing: the stamp exists
+    /// to notice a change, and the snapshot is what refuses a package that is not there.
+    fn watched(&self) -> Result<Vec<PathBuf>, LoadError> {
+        let mut files = vec![self.root.join(DIRECTORY_FILE)];
+        for package in self.packages()? {
+            let folder = self.root.join(PACKAGES_DIR).join(&package);
+            files.push(folder.join(MANIFEST_FILE));
+            files.push(folder.join(REGISTRY_FILE));
+            let items = folder.join(ITEMS_DIR);
+            let names = json_names(&items).map_err(|error| LoadError::Read {
+                path: items.clone(),
+                reason: format!("package `{package}`: {error}"),
+            })?;
+            for name in names.unwrap_or_default() {
+                files.push(items.join(name));
+            }
+        }
+        Ok(files)
+    }
+}
+
 impl DirectorySource for FolderSource {
+    fn revision(&self) -> Result<Revision, LoadError> {
+        let mut hasher = DefaultHasher::new();
+        for path in self.watched()? {
+            path.hash(&mut hasher);
+            let (modified, len) = stamp(&path)?;
+            modified.hash(&mut hasher);
+            len.hash(&mut hasher);
+        }
+        Ok(Revision(hasher.finish()))
+    }
+
     fn snapshot(&self) -> Result<Directory, LoadError> {
         let mut kinds = Vec::new();
         let mut properties = Vec::new();
@@ -275,20 +342,48 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, package: &str) -> Result
 
 /// The `*.json` files of one folder, in name order, so two loads of one directory agree.
 fn read_dir(folder: &Path, package: &str) -> Result<Vec<String>, LoadError> {
-    let entries = fs::read_dir(folder).map_err(|error| LoadError::Read {
+    let named = |reason: String| LoadError::Read {
         path: folder.to_path_buf(),
-        reason: format!("package `{package}`: {error}"),
-    })?;
+        reason: format!("package `{package}`: {reason}"),
+    };
+    match json_names(folder) {
+        Ok(Some(names)) => Ok(names),
+        Ok(None) => Err(named("the folder is not there".to_owned())),
+        Err(error) => Err(named(error.to_string())),
+    }
+}
+
+/// The `*.json` files of one folder in name order, or `None` when the folder is not there.
+fn json_names(folder: &Path) -> io::Result<Option<Vec<String>>> {
+    let entries = match fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
     let mut names = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|error| LoadError::Read { path: folder.to_path_buf(), reason: error.to_string() })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let name = entry?.file_name().to_string_lossy().into_owned();
         if name.ends_with(".json") {
             names.push(name);
         }
     }
     names.sort();
-    Ok(names)
+    Ok(Some(names))
+}
+
+/// The modification time and the size of one file, or zeroes when it is not there.
+///
+/// A file that cannot be stat'ed for any other reason is a refusal: a reader that silently stamped
+/// `NotFound` over a permission error would reload the folder on every poll of a broken mount.
+fn stamp(path: &Path) -> Result<(u128, u64), LoadError> {
+    match fs::metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+            Ok((modified.map_or(0, |elapsed| elapsed.as_nanos()), metadata.len()))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok((0, 0)),
+        Err(error) => Err(LoadError::Read { path: path.to_path_buf(), reason: error.to_string() }),
+    }
 }
 
 #[cfg(test)]
@@ -399,6 +494,39 @@ mod tests {
         let temp = TempDir::new("empty");
         let directory = FolderSource::at(&temp.0).snapshot().expect("nothing to load");
         assert!(directory.is_empty(), "a workspace that connected nothing has no records");
+    }
+
+    #[test]
+    fn the_revision_moves_when_a_file_the_loader_reads_changes() {
+        let temp = TempDir::new("revision");
+        let source = FolderSource::at(&temp.0);
+        // Nothing is connected yet, so the stamp describes a folder that will refuse a package and
+        // a folder that holds none alike; either way it is one value the shell can poll.
+        let empty = source.revision().expect("a revision of a folder with nothing in it");
+        assert_eq!(
+            empty,
+            source.revision().expect("a second read of an untouched folder"),
+            "an idle folder keeps its stamp"
+        );
+
+        let package = starter_folder(&temp.0);
+        let connected = source.revision().expect("a revision of a connected folder");
+        assert_ne!(connected, empty, "connecting a package moves the stamp");
+
+        let record = package.join(ITEMS_DIR).join("board-1.json");
+        let text = fs::read_to_string(&record).expect("read the record");
+        fs::write(&record, text.replace("18000", "25000")).expect("write the record");
+        assert_ne!(source.revision().expect("a revision"), connected, "editing a record moves the stamp");
+
+        fs::remove_file(&record).expect("remove the record");
+        assert!(source.revision().is_ok(), "a file that is gone is part of the stamp, not a refusal");
+    }
+
+    #[test]
+    fn the_revision_of_a_folder_nobody_created_is_a_value_and_not_a_failure() {
+        let temp = TempDir::new("absent");
+        let source = FolderSource::at(temp.0.join("never-created"));
+        assert!(source.revision().is_ok(), "a workspace that connected no folder still has a stamp to poll");
     }
 
     #[test]

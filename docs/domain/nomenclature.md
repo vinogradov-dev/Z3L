@@ -307,6 +307,9 @@ needs: kinds, properties, families), the part documents it carries and the rule 
   a person did. A person's explicit choices live on the document and survive.
 - A failed load keeps the old snapshot and shows the refusal; the editor never runs on half a
   directory.
+- A folder that lists no package — a first run, or a workshop that disconnected everything — is the
+  starter package, because the editor needs rows to offer and the starter is the one every workshop
+  has. Which packages are connected is stated by the directory application, not by an empty editor.
 
 ## 14. Storage and the port
 
@@ -332,6 +335,12 @@ nomenclature/
 - writes are atomic per file through the existing writer (temporary file, then rename), and a write
   that changes several files bumps the revision last;
 - one writer at a time, guarded by the lock file; readers never lock and never write;
+- the folder's `revision()` is the hash of every file a snapshot reads — its name, size and
+  modification time — so it needs no file of its own and a folder edited by hand is watched like one
+  written by the application. A file that is not there is part of it too: a folder that gained its
+  first package moves the stamp, and a reader that cannot tell `NotFound` from a failed stat cannot
+  watch a folder at all. A store that keeps a numbered revision behind the same port is free to; the
+  editor compares the value and never interprets it;
 - the folder copies as a folder — a workshop moves its directory by copying it — and an archive of one
   package is its folder;
 - an embedded pure-Rust store may replace the implementation behind the same port when the schema

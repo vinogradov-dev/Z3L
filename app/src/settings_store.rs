@@ -84,6 +84,15 @@ impl SettingsStore {
         self.path.as_deref()
     }
 
+    /// The folder the workshop's nomenclature directory lives in, beside the settings file.
+    ///
+    /// Settings and the directory sit beside each other in the application's config folder, so a
+    /// workshop moves both by copying one folder — and a test that hands the shell a scratch settings
+    /// file hands it a scratch directory too, instead of reaching into the developer's own.
+    pub(crate) fn directory_root(&self) -> Option<PathBuf> {
+        self.path().and_then(Path::parent).map(|folder| folder.join(crate::directory_watch::DIRECTORY_DIR))
+    }
+
     /// Reads the settings, or returns defaults with the reason they were used.
     ///
     /// A first run has no file yet; that is the ordinary case, not an error, and the notice simply

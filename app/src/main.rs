@@ -23,6 +23,8 @@ mod box_gizmo;
 /// The command line: `z3l export` runs before the window exists (K3).
 mod cli;
 mod contour_gizmo;
+/// The workshop's directory, read again when another application changes it (O5).
+mod directory_watch;
 mod document;
 mod draw_gizmo;
 mod extrude_gizmo;
@@ -61,6 +63,7 @@ mod void_gizmo;
 mod work_cursor;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use eframe::egui;
 use eframe::egui_wgpu;
@@ -74,7 +77,7 @@ use ui::{Palette, TransformMode, icons, theme};
 use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::header::{HeaderAction, HeaderState, TabView};
-use crate::scene_build::{empty_session, initial_session};
+use crate::scene_build::empty_session_with;
 
 /// The machine identity of the application: its window class and the directory its settings live in.
 ///
@@ -252,6 +255,11 @@ struct App {
     settings: Settings,
     /// Where [`Settings`] is read from and written to.
     settings_store: SettingsStore,
+    /// The worker that hands over a newer nomenclature directory, and its channel to this frame.
+    ///
+    /// The frame only takes what the worker finished: polling the folder's revision and validating
+    /// the packages both happen off the frame path (`docs/domain/nomenclature.md` §13).
+    watch: directory_watch::Watch,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
     /// Whether the Settings window is open.
@@ -282,7 +290,32 @@ impl App {
         let (preference, preset, accent) = loaded.settings.install_args();
         theme::install_with(&cc.egui_ctx, preference, preset, accent);
         cc.egui_ctx.set_zoom_factor(ui_scale::factor(loaded.settings.appearance.ui_scale));
-        Self::build(&cc.egui_ctx, Some(render_state), settings_store, loaded, initial_session()?)
+        Self::compose(&cc.egui_ctx, Some(render_state), settings_store, loaded)
+    }
+
+    /// Composes the window around the workshop's directory: the rows a session starts from, and the
+    /// worker that reloads them when the folder changes underneath the editor.
+    ///
+    /// The folder is read once, on the startup path, and watched from there: the stamp is taken
+    /// before the snapshot, so a write that lands between them is a reload and not a lost edit. A
+    /// directory that could not be read keeps the starter rows and says so in the status bar, which
+    /// is the one place the window reports a workspace-level failure.
+    fn compose(
+        ctx: &egui::Context,
+        render_state: Option<egui_wgpu::RenderState>,
+        settings_store: SettingsStore,
+        loaded: crate::settings_store::Loaded,
+    ) -> Result<Self, String> {
+        let root = settings_store.directory_root();
+        let start = directory_watch::open(root.as_deref());
+        let watch = directory_watch::Watch::start(root, start.revision);
+        let session = empty_session_with(start.directory)?;
+        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        if let Some(refusal) = start.refusal {
+            log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
+            app.failed(refusal);
+        }
+        Ok(app)
     }
 
     /// Builds the application without a window and without a GPU.
@@ -317,7 +350,13 @@ impl App {
         theme::install_with(ctx, preference, preset, accent);
         ctx.set_zoom_factor(ui_scale::factor(settings.appearance.ui_scale));
         let loaded = crate::settings_store::Loaded { settings, notice: None };
-        Self::build(ctx, render_state, SettingsStore::at(settings_path), loaded, session)
+        let settings_store = SettingsStore::at(settings_path);
+        // A test drives the same worker the window drives, over the folder beside its own settings
+        // file. The stamp is taken now, so the folder the test wrote before it built the shell is
+        // the state the shell starts from and only a later write is a reload (O5).
+        let root = settings_store.directory_root();
+        let watch = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
+        Self::build(ctx, render_state, settings_store, loaded, session, watch)
     }
 
     /// Composes the shell around one document, one workspace and, when the window has one, its GPU.
@@ -330,6 +369,7 @@ impl App {
         settings_store: SettingsStore,
         loaded: crate::settings_store::Loaded,
         session: engine::Session,
+        watch: directory_watch::Watch,
     ) -> Result<Self, String> {
         let settings = loaded.settings;
         let shell = Shell {
@@ -344,6 +384,7 @@ impl App {
             shell,
             settings,
             settings_store,
+            watch,
             settings_section: SettingsSection::default(),
             settings_open: false,
             home_open: false,
@@ -361,6 +402,29 @@ impl App {
     /// leaves the neighbours alone.
     fn failed(&mut self, error: String) {
         self.tabs.active_mut().last_error = Some(error);
+    }
+
+    /// Swaps in the directory the worker finished since the last frame.
+    ///
+    /// The folder is the workshop's, so every open tab takes the same snapshot in the same frame,
+    /// and each tab re-derives only what its own cache says changed. Nothing here writes a document:
+    /// a directory update is not an edit, and a scene that was dirty before it is dirty after it
+    /// (`docs/domain/nomenclature.md` §13). A revision that could not be read keeps the rows in use
+    /// and says why in the status bar.
+    fn take_directory(&mut self) {
+        while let Some(reload) = self.watch.take() {
+            match reload {
+                directory_watch::Reload::Loaded(directory) => {
+                    for (_, document) in self.tabs.iter_mut() {
+                        document.set_directory(Arc::clone(&directory));
+                    }
+                }
+                directory_watch::Reload::Refused(refusal) => {
+                    log::warn!("the workshop directory could not be read; the rows in use stay: {refusal}");
+                    self.failed(refusal);
+                }
+            }
+        }
     }
 
     /// Performs the header action the row returned.
@@ -447,15 +511,15 @@ impl App {
             self.tabs.activate(id);
             return Ok(());
         }
-        let catalog = self.tabs.active().session.directory().clone();
-        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, &catalog)?;
+        let catalog = self.tabs.active().session.directory_shared();
+        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog)?;
         self.tabs.add(document);
         Ok(())
     }
 
     /// Opens an empty *Untitled* scene in a new tab.
     fn new_tab(&mut self) -> Result<(), String> {
-        let session = empty_session()?;
+        let session = empty_session_with(self.tabs.active().session.directory_shared())?;
         let settings = &self.settings;
         let shell = &self.shell;
         let document = Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new())?;
@@ -563,7 +627,8 @@ impl App {
 
     /// Replaces the last tab with an empty *Untitled* scene.
     fn empty_tab(&mut self, id: TabId) {
-        let built = empty_session().and_then(|session| {
+        let directory = self.tabs.active().session.directory_shared();
+        let built = empty_session_with(directory).and_then(|session| {
             Document::new(self.render_state.as_ref(), &self.settings, &self.shell, session, PreservedSections::new())
         });
         match built {
@@ -844,6 +909,10 @@ impl App {
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        // A directory another application finished writing is swapped in here, at the frame
+        // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
+        // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
+        self.take_directory();
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.

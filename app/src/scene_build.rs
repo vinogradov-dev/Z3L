@@ -237,46 +237,44 @@ pub fn demo_session() -> Result<Session, String> {
     Ok(Session::with_directory(project, default_catalog()?))
 }
 
-/// The session the window opens with: an empty scene and the default catalogue.
-pub fn initial_session() -> Result<Session, String> {
-    empty_session()
+/// Builds an empty scene around the default catalogue: a root container with no children.
+///
+/// The window opens its first tab through `App::compose` and a new tab through the
+/// snapshot the workspace is on, so this is the fixture path — a test or a shot that wants an empty
+/// document and the starter rows without a workspace around it. The catalogue is not scene data and
+/// is never written to the file, so the rows only decide what the inspector can offer.
+#[cfg(test)]
+pub fn empty_session() -> Result<Session, String> {
+    empty_session_with(default_catalog()?)
 }
 
-/// Builds an empty scene: a root container with no children.
+/// Builds an empty scene around a directory the window already holds.
 ///
-/// A new document still carries the session catalogue; the catalogue is not scene data and is
-/// never written to the file, so starting from the default materials only affects what the
-/// inspector can offer, not what a save contains.
-pub fn empty_session() -> Result<Session, String> {
+/// A new tab takes the snapshot the workspace is on instead of reading the folder again: the folder
+/// is watched off the frame path, and a second read here would give the tab rows the window has
+/// already replaced.
+pub fn empty_session_with(directory: impl Into<std::sync::Arc<catalog::Directory>>) -> Result<Session, String> {
     let root = Container::new(id(1)?, "Scene", Placement::IDENTITY, Vec::new());
     let project = Project::new(root).map_err(describe)?;
-    Ok(Session::with_directory(project, default_catalog()?))
+    Ok(Session::with_directory(project, directory))
 }
 
 /// Builds the directory a new session starts from: the workshop's packages, or the starter one.
 ///
 /// The shell reads `nomenclature/` beside `settings.json`, so a workshop's directory replaces the
 /// starter rows without a rebuild, and a failure is reported rather than swallowed: the editor keeps
-/// working on the starter package and says in the log which file was refused
-/// (`docs/domain/nomenclature.md` §13; the status-bar sentence and the hot reload belong to O5).
+/// working on the starter package and says which file was refused (`docs/domain/nomenclature.md`
+/// §13). A caller that watches the folder — the window — reads it through `directory_watch`
+/// instead and keeps the refusal for the status bar; this one is the command line's and the
+/// fixtures' way in.
 pub fn default_catalog() -> Result<catalog::Directory, String> {
-    let starter = catalog::default_directory().map_err(describe)?;
-    let Some(config) = crate::settings_store::config_dir() else {
-        return Ok(starter);
-    };
-    let source = catalog::FolderSource::at(config.join(DIRECTORY_DIR));
-    match catalog::DirectorySource::snapshot(&source) {
-        Ok(directory) if !directory.is_empty() => Ok(directory),
-        Ok(_) => Ok(starter),
-        Err(error) => {
-            log::warn!("the workshop directory could not be read; the starter rows are in use: {error}");
-            Ok(starter)
-        }
+    let root = crate::settings_store::config_dir().map(|folder| folder.join(crate::directory_watch::DIRECTORY_DIR));
+    let start = crate::directory_watch::open(root.as_deref());
+    if let Some(refusal) = &start.refusal {
+        log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
     }
+    Ok(start.directory)
 }
-
-/// The folder, beside `settings.json`, that holds the connected nomenclature packages.
-const DIRECTORY_DIR: &str = "nomenclature";
 
 /// Evaluates a constructive object into world-space drawables and product envelopes.
 ///
@@ -967,10 +965,46 @@ mod tests {
     }
 
     #[test]
+    fn a_new_directory_rebuilds_the_panels_of_the_board_it_changed() {
+        // A directory revision is not a document revision, so the cache is the only thing that
+        // decides what to rebuild: a panel is keyed by the thickness it resolved, which is exactly
+        // what a changed board row moves (ADR 0053, ADR 0148).
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let size = panel_nominal_size(600, 400).expect("a panel");
+        let fallback = millimetres(18).expect("18 mm");
+        let cut_from = |project: &mut Project, name: &str, serial: u32| {
+            let material = material_id(serial).expect("an item id");
+            project.add_panel(root, name, size, Some(material), fallback, Placement::IDENTITY).expect("a panel")
+        };
+        let changed = cut_from(&mut project, "Side", 1);
+        let untouched = cut_from(&mut project, "Shelf", 2);
+        let mut session = Session::with_directory(project, testkit::sample_catalog());
+
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let before = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("the frame");
+        assert_eq!(top_of(&before, changed), 18.0, "the fixture board is 18 mm");
+
+        session.set_directory(std::sync::Arc::new(testkit::sample_catalog_with_thickness(
+            millimetres(25).expect("25 mm"),
+        )));
+        let after = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("the frame");
+
+        assert_eq!(top_of(&after, changed), 25.0, "the panel of the changed board is cut again, from the new row");
+        assert!(!Arc::ptr_eq(mesh_of(&before, changed), mesh_of(&after, changed)), "as a new mesh");
+        assert!(
+            Arc::ptr_eq(mesh_of(&before, untouched), mesh_of(&after, untouched)),
+            "and a panel nothing in the directory touched keeps the mesh it had"
+        );
+    }
+
+    #[test]
     fn the_editor_opens_a_document_with_nothing_in_it() {
-        // The launcher calls this function; a demonstration scene there would put three panels, a
-        // group and a drawer in front of the maker's first piece.
-        let session = initial_session().expect("the initial session");
+        // The window opens its first tab from an empty session; a demonstration scene there would
+        // put three panels, a group and a drawer in front of the maker's first piece.
+        let session = empty_session().expect("the initial session");
         assert!(session.project().root().children().is_empty(), "a new document has no object");
         assert!(!session.is_dirty(), "opening a document is not an edit");
         assert!(

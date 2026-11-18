@@ -302,6 +302,28 @@ impl Harness {
             .unwrap_or_else(|| panic!("the status bar drew no cell named {caption}"))
     }
 
+    /// Runs frames until `done` holds, the way a window left open does while something outside it
+    /// finishes.
+    ///
+    /// A hot reload is a worker thread's answer, so a test waits for the frame it lands in instead
+    /// of assuming one. The wait is bounded and returns whether the condition holds, so a condition
+    /// that never holds fails the assertion the test already wrote instead of hanging the suite.
+    fn until(&mut self, mut done: impl FnMut(&App) -> bool) -> bool {
+        for _ in 0..400 {
+            if done(&self.app) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.frame();
+        }
+        done(&self.app)
+    }
+
+    /// The thickness the session resolves for `panel`: what the last rebuild cut the panel from.
+    fn thickness(&self, panel: Id) -> Length {
+        self.app.tabs.active().session.panel_geometry(panel).expect("a panel resolves").thickness()
+    }
+
     /// The middle of the control the last frame published as `label`.
     ///
     /// A test presses the middle of a face, so the point is what it asks for and the rectangle stays
@@ -4290,4 +4312,54 @@ fn a_band_is_drawn_only_while_the_pointer_drags_on_empty_space() {
     harness.release_at(to, egui::PointerButton::Primary);
     harness.settle();
     assert_eq!(harness.selected(), level, "the dropped band selects nothing and changes no level");
+}
+
+#[test]
+fn a_board_changed_in_the_directory_reaches_the_open_scene() {
+    // The directory is edited in its own application, so the window has to apply a new revision by
+    // itself: the panel is cut from the new board, the card names it, and the history is the one the
+    // person left, because a directory is not the document (ADR 0148, `nomenclature.md` §13, O5).
+    let size = model::PanelNominalSize::new(testkit::millimetres(600), testkit::millimetres(400)).expect("a panel");
+    let root = model::Container::new(Id::new(1).expect("id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let panel = project
+        .add_panel(
+            root,
+            "Side",
+            size,
+            Some(testkit::sample_material_id()),
+            testkit::millimetres(18),
+            model::Placement::IDENTITY,
+        )
+        .expect("a panel cut from the sample board");
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    session
+        .dispatch("panel.rename", &serde_json::json!({ "panel": panel, "name": "Side 2" }))
+        .expect("one edit, so the history has something to lose");
+    let mut harness = Harness::with_session("frame-directory-row", session);
+    harness.app.tabs.active_mut().editor.select_node(Some(panel));
+    harness.settle();
+    assert!(harness.drew("Chipboard"), "the card names the board the panel is cut from");
+    assert_eq!(harness.thickness(panel), testkit::millimetres(18), "and the panel is 18 mm thick");
+
+    // Another application writes the workshop's folder while the window is open.
+    let folder =
+        harness.path.parent().expect("the settings file has a folder").join(crate::directory_watch::DIRECTORY_DIR);
+    crate::test_support::write_sample_folder(&folder, testkit::millimetres(25), "Graphite oak");
+    let board = testkit::sample_material_id();
+    let reloaded = harness
+        .until(|app| app.tabs.active().session.directory().board(board).is_some_and(|row| row.name == "Graphite oak"));
+    assert!(reloaded, "the window reads the new rows without a restart");
+
+    harness.settle();
+    assert!(harness.drew("Graphite oak"), "the card names the board the directory now holds");
+    assert_eq!(harness.thickness(panel), testkit::millimetres(25), "and the panel is cut again, from it");
+    assert!(harness.app.tabs.active().can_undo(), "the history is the one the person left");
+    harness.app.tabs.active_mut().undo();
+    assert_eq!(
+        harness.app.tabs.active().session.project().panel(panel).expect("panel").name(),
+        "Side",
+        "and it takes back the person's edit, not the directory's"
+    );
 }
