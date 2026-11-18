@@ -151,6 +151,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0143](0143-the-shadow-map-is-the-key-lights-depth-pass.md) | The shadow map is the key light's depth pass, read by every face | Accepted |
 | [0144](0144-the-floor-plate-is-blended-so-it-tints-what-stands-under-it.md) | The floor plate is blended, so it tints what stands under it and keeps its shadow | Accepted |
 | [0145](0145-the-group-digits-follow-the-order-of-the-work.md) | The group digits follow the order of the work | Accepted; reassigns the group digits of 0094 and supersedes the group-10 sentence of 0097 |
+| [0146](0146-snapping-is-a-workspace-setting-and-the-coordinate-planes-stand-in-for-walls.md) | Snapping is a workspace setting, and the coordinate planes stand in for walls | Accepted; the snap constants of 0102 and 0103 become settings, and the floor snap joins the three planes |
 
 ## Format
 

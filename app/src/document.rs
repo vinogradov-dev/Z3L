@@ -101,6 +101,9 @@ const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
 
+/// How far the line of a snapped drag reaches past the moved box, in millimetres.
+const CAPTURE_OVERHANG_MM: f64 = 12.0;
+
 /// The display state the window owns and every frame of this tab is built with.
 ///
 /// The floor grid, the edge list, the ground shadow's strength, the floor's opacity and the colours
@@ -1739,9 +1742,27 @@ impl Document {
         let delta = self.translate_gizmo.drag_delta().dot(direction);
         let low = measure.start_low + delta;
         let high = low + measure.extent;
-        measure.distances.sync(measure.wall_low, measure.wall_high, low, high);
+        let capture = self.translate_gizmo.capture();
+        let (wall_low, wall_high) = captured_walls(measure, capture);
+        measure.distances.sync(wall_low, wall_high, low, high);
         let low_face = measure.low_face + direction * delta;
         let high_face = measure.high_face + direction * delta;
+        // The snap moved the piece on its own, so it draws the surface the face landed on.
+        if let Some(capture) = capture {
+            let centre = match capture.end {
+                model::SnapEnd::Low => low_face,
+                model::SnapEnd::High => high_face,
+            };
+            paint_capture(
+                &ui.painter().with_clip_rect(rect),
+                self.scene.camera,
+                rect,
+                measure,
+                centre,
+                axis,
+                ui::theme::helper(ui),
+            );
+        }
         // The walls stay where the start measurement found them; only the faces travel.
         let low_wall_point = measure.wall_low.map(|wall| measure.low_face + direction * (wall - measure.start_low));
         let high_wall_point =
@@ -2450,6 +2471,7 @@ impl Document {
             camera: self.scene.camera,
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
+            snaps: settings.snaps.rule(),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
@@ -2849,6 +2871,7 @@ impl Document {
             camera: self.scene.camera,
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
+            snaps: settings.snaps.rule(),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
         if let Some(edit) = self.editor.contour_edit() {
@@ -3588,6 +3611,8 @@ struct MoveDistances {
     /// The world centres of the two start faces.
     low_face: geom::DVec3,
     high_face: geom::DVec3,
+    /// The moved box's own size, so a captured line can be drawn across it.
+    size: geom::DVec3,
     /// The surfaces that stop the two faces, in the axis's world coordinates.
     wall_low: Option<f64>,
     wall_high: Option<f64>,
@@ -3624,10 +3649,59 @@ fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<M
         extent: high - low,
         low_face,
         high_face,
+        size: max - min,
         wall_low,
         wall_high,
         distances,
     })
+}
+
+/// The surfaces the drag's fields measure against, with a captured one standing where the rule put it.
+///
+/// The probe answers the first surface a ray meets, which is not necessarily the surface a snap
+/// used: a coordinate plane has no body behind it, so the field would measure a wall the piece never
+/// touched, or find none at all. The capture names the surface the rule used, so its coordinate
+/// replaces the probe's answer on that face and the field shows the same surface the release
+/// landed on (ADR 0146).
+fn captured_walls(measure: &MoveDistances, capture: Option<model::Capture>) -> (Option<f64>, Option<f64>) {
+    match capture {
+        Some(capture) if capture.end == model::SnapEnd::Low => (Some(capture.at_mm), measure.wall_high),
+        Some(capture) => (measure.wall_low, Some(capture.at_mm)),
+        None => (measure.wall_low, measure.wall_high),
+    }
+}
+
+/// Draws the surface a snap landed the piece on, across the face that met it.
+///
+/// A coordinate plane has no neighbour to look at, so a drag that jumped to it would otherwise show
+/// only a number that moved on its own. The line lies in the captured surface and runs across the
+/// moved box, in the helper ink the other guide geometry uses (ADR 0146).
+fn paint_capture(
+    painter: &egui::Painter,
+    camera: Camera,
+    viewport: egui::Rect,
+    measure: &MoveDistances,
+    centre: geom::DVec3,
+    axis: gizmo_math::Axis,
+    ink: egui::Color32,
+) {
+    let (first, second) = match axis {
+        gizmo_math::Axis::X => (geom::DVec3::Y, geom::DVec3::Z),
+        gizmo_math::Axis::Y => (geom::DVec3::X, geom::DVec3::Z),
+        gizmo_math::Axis::Z => (geom::DVec3::X, geom::DVec3::Y),
+    };
+    let half = measure.size * 0.5;
+    let stroke = egui::Stroke::new(1.0, ink);
+    for (unit, reach) in [(first, half.dot(first)), (second, half.dot(second))] {
+        let end = unit * (reach + CAPTURE_OVERHANG_MM);
+        let (Some(from), Some(to)) = (
+            gizmo_math::screen_point(camera, viewport, centre - end),
+            gizmo_math::screen_point(camera, viewport, centre + end),
+        ) else {
+            continue;
+        };
+        painter.line_segment([from, to], stroke);
+    }
 }
 
 /// The world axis a product-frame axis index names.
@@ -3843,6 +3917,34 @@ mod tests {
         assert!((distances.low() - 300.0).abs() < 1.0e-9, "{:?}", distances.low());
         let pinned = distances.pinned_low().expect("the typed distance pins the low face");
         assert!((pinned - measure.start_low - 300.0).abs() < 1.0e-9, "the drag delta is the typed gap");
+    }
+
+    #[test]
+    fn the_field_at_a_captured_face_measures_the_surface_the_rule_used() {
+        // A piece two millimetres off the Y = 0 plane: the rule snaps it flush, and the field has to
+        // measure the plane the release landed on. The probe finds no wall there — a coordinate plane
+        // has no body behind it — so without the capture the field would say the piece is free.
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root_id = project.root().id();
+        let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+        let at = Placement::new(DVec3::new(0.0, 1500.0, 0.0), DQuat::IDENTITY).expect("a placement");
+        let piece = project.add_product(root_id, "Piece", ClassCode::GENERAL_PRODUCT, envelope, at).expect("a product");
+        let measure = measure_move(&project, piece, gizmo_math::Axis::Y).expect("two faces");
+        assert_eq!(measure.wall_low, None, "nothing stands below the piece");
+
+        let rule = project.move_rule(&[piece], model::SnapSettings::default()).expect("a furniture drag");
+        let limit = rule.limit(model::MoveAxis::Y, -1498.0);
+        let capture = limit.capture.expect("the plane captured the drag");
+        let (wall_low, wall_high) = captured_walls(&measure, Some(capture));
+        assert_eq!(wall_low, Some(capture.at_mm), "the field measures the surface the rule named");
+        assert_eq!(wall_high, measure.wall_high, "the other side keeps its probe");
+
+        let mut distances = measure.distances;
+        let low = measure.start_low + limit.distance_mm;
+        distances.sync(wall_low, wall_high, low, low + measure.extent);
+        assert_eq!(distances.value(Side::Low), Some(0.0), "the piece landed flush on the plane");
+        assert_eq!(distances.low(), capture.at_mm, "the face is where the number says it is");
     }
 
     #[test]

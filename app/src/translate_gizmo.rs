@@ -8,9 +8,10 @@
 //!
 //! A furniture drag is cut by the document's own rule (`Project::move_rule`): a floor-bound product
 //! keeps its height, a shell stops at another shell and a body at another body, and the moved box
-//! lands on the floor, on a neighbouring face or on the 1 mm grid (ADR 0102, ADR 0103). The rule is
-//! applied to the preview, and the release commits that same distance, so a drag is one undo entry
-//! and the preview is not a promise the command breaks.
+//! lands on a coordinate plane, on a neighbouring face or on the 1 mm grid (ADR 0102, ADR 0103). What
+//! the drag snaps to, and how near, is the workspace's `SnapSettings`, read once when the drag
+//! starts (ADR 0146). The rule is applied to the preview, and the release commits that same
+//! distance, so a drag is one undo entry and the preview is not a promise the command breaks.
 //!
 //! Handles keep a constant screen length. An axis within about ten degrees of the view direction is
 //! not drawn: its projected direction is unstable and a pointer drag would move it by metres.
@@ -18,7 +19,7 @@
 use eframe::egui;
 use egui::{Response, Ui};
 use geom::DVec3;
-use model::{Id, MoveRule};
+use model::{Capture, Id, MoveRule};
 use scene::MAX_DISTANCE_MM;
 
 use crate::gizmo_math::{
@@ -33,6 +34,8 @@ struct Drag {
     axis: Axis,
     /// The furniture rule this drag was measured against when it started, if any.
     rule: Option<MoveRule>,
+    /// The surface the face landed on this frame, when a snap — and not the pointer — placed it.
+    capture: Option<Capture>,
     drawables: Vec<Id>,
     targets: Vec<MoveTarget>,
     start_origin: DVec3,
@@ -95,6 +98,14 @@ impl TranslateGizmo {
         self.drag.as_ref().map_or(DVec3::ZERO, |drag| drag.delta)
     }
 
+    /// The surface this frame's drag landed on, when a snap placed it (ADR 0146).
+    ///
+    /// The shell draws the line where that surface stands and measures the drag's fields from it,
+    /// so the picture, the numbers and the release name one surface.
+    pub(crate) fn capture(&self) -> Option<Capture> {
+        self.drag.as_ref().and_then(|drag| drag.capture)
+    }
+
     /// Whether the drag's axis may carry a typed distance.
     ///
     /// A floor-bound product keeps its height, so the vertical axis has no free distance to state;
@@ -140,8 +151,9 @@ impl TranslateGizmo {
                 self.consumed_click = true;
                 return Ok(None);
             }
-            let distance = match pinned {
-                Some(pinned) => pinned.is_finite().then_some(pinned),
+            let (distance, capture) = match pinned {
+                // A typed distance is the maker's own number, so no snap moves it.
+                Some(pinned) => (pinned.is_finite().then_some(pinned), None),
                 None => pointer
                     .and_then(|pointer| {
                         ray_to(pointer, viewport, target.camera)
@@ -150,10 +162,12 @@ impl TranslateGizmo {
                     .map(|parameter| {
                         let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
                         constrained_distance(drag.rule.as_ref(), drag.axis, scalar)
-                    }),
+                    })
+                    .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
             };
             if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
                 drag.delta = drag.axis.direction() * distance;
+                drag.capture = capture;
             }
             if !down {
                 self.consumed_click = true;
@@ -194,11 +208,12 @@ impl TranslateGizmo {
         };
 
         let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
-        let rule = target.project.move_rule(&moving);
+        let rule = target.project.move_rule(&moving, target.snaps);
         self.drag = Some(Drag {
             node: anchor.node,
             axis,
             rule,
+            capture: None,
             drawables: target.drawables(),
             targets,
             start_origin: origin_world,
@@ -234,13 +249,17 @@ impl TranslateGizmo {
     }
 }
 
-/// The distance a drag may travel: the pointer's own distance, cut by the furniture move rule.
+/// The distance a drag may travel, and the surface it landed on: the pointer's own distance, cut by
+/// the furniture move rule.
 ///
-/// The rule was read from the document when the drag started and the document still holds those
-/// placements, so the preview and the release read the same answer. A drag outside furniture has no
-/// rule and keeps its exact micrometre distance.
-fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> f64 {
-    rule.map_or(distance, |rule| rule.limit(axis.move_axis(), distance).distance_mm)
+/// The rule, and the snap settings inside it, were read from the workspace and the document when the
+/// drag started and the document still holds those placements, so the preview and the release read
+/// the same answer. A drag outside furniture has no rule and keeps its exact micrometre distance.
+fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> (f64, Option<Capture>) {
+    rule.map_or((distance, None), |rule| {
+        let limit = rule.limit(axis.move_axis(), distance);
+        (limit.distance_mm, limit.capture)
+    })
 }
 
 #[cfg(test)]
@@ -251,7 +270,7 @@ mod tests {
 
     use egui::Pos2;
     use geom::DQuat;
-    use model::{ClassCode, Envelope, Placement};
+    use model::{ClassCode, Envelope, Placement, SnapSettings};
     use scene::Camera;
     use testkit::{millimetres, sample_project};
     use units::Length;
@@ -345,9 +364,10 @@ mod tests {
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
         // The pointer pulls 1000 mm, the neighbour's wall is at 1000: the drag keeps 400.
-        let rule = project.move_rule(&[cabinet]).expect("a furniture drag");
-        let distance = constrained_distance(Some(&rule), Axis::X, 1000.0);
+        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("a furniture drag");
+        let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 1000.0);
         assert_eq!(distance, 400.0);
+        assert_eq!(capture, None, "a stop is the contact's, not a snap's");
 
         // The release commits exactly the previewed distance, so the preview is no lie.
         let targets = move_targets(&project, &[cabinet]);
@@ -365,8 +385,26 @@ mod tests {
     fn a_drag_outside_furniture_keeps_its_exact_distance() {
         let project = sample_project();
         let loose = Id::new(2).expect("id");
-        assert!(project.move_rule(&[loose]).is_none());
-        assert_eq!(constrained_distance(None, Axis::X, 97.4), 97.4);
+        assert!(project.move_rule(&[loose], SnapSettings::default()).is_none());
+        assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None));
+    }
+
+    #[test]
+    fn a_snapped_drag_reports_the_surface_the_release_lands_on() {
+        // Two cabinets 400 mm apart. A 398 mm drag would leave a 2 mm gap, and the contact alone
+        // would have stopped it at 400 a few frames later; the snap closes the gap under the hand
+        // and says which surface it met, so the shell can draw the line and measure the field from
+        // it (ADR 0146).
+        let mut project = sample_project();
+        let cabinet = add_cabinet(&mut project, 0);
+        let neighbour = add_cabinet(&mut project, 1000);
+        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("a furniture drag");
+        let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 398.0);
+        assert_eq!(distance, 400.0, "the drag jumps the 2 mm gap");
+        let capture = capture.expect("a frame face captured it");
+        assert_eq!(capture.at_mm, 1000.0);
+        assert_eq!(capture.end, model::SnapEnd::High);
+        assert_eq!(capture.surface, model::SnapSurface::Frame(neighbour));
     }
 
     #[test]

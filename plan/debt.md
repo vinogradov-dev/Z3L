@@ -91,8 +91,9 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `docs/domain/furntypes.md`.
 - `[types]` Queries exist in the model and the scene tree selects a furniture-type subtree, but there
   is no engine command or saved report over a query yet.
-- `[gizmo]` The gizmos do not snap: translate and rotate angles are free, and snapping is not
-  implemented yet.
+- `[gizmo]` The rotate rings do not snap: an angle is the pointer's own. A translate drag snaps to
+  the coordinate planes, the frames and the part faces inside the workspace's tolerance (ADR 0146);
+  no angle has a step the maker can set.
 - `[gizmo]` The rotate rings are world-aligned only; a local-axis mode is not implemented.
 - `[gizmo]` The pivot is edited only in the inspector; there is no viewport pivot-pick tool yet.
 - `[gizmo]` The orientation widget is hidden in a viewport smaller than 124 pt wide plus margins

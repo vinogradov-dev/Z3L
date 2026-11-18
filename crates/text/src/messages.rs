@@ -1081,6 +1081,22 @@ messages! {
         "Сцена скрывает системную стрелку и рисует этот квадрат; жест со своим курсором сохраняет его."
     ],
     ShowFloorGrid = ["Show the floor grid", "Показывать сетку пола"],
+    Snapping = ["Snapping", "Привязка"],
+    SnapPlanes = ["Coordinate planes", "Координатные плоскости"],
+    SnapPlanesHint = [
+        "X = 0, Y = 0 and Z = 0 capture a dragged piece, the floor included; until a wall tool exists they stand in for the walls of a room.",
+        "X = 0, Y = 0 и Z = 0 захватывают перетаскиваемую деталь, включая пол; пока нет инструмента стен, они заменяют стены комнаты."
+    ],
+    SnapFrames = ["Neighbouring frames", "Соседние корпуса"],
+    SnapFramesHint = [
+        "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
+        "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
+    ],
+    SnapTolerance = ["Tolerance", "Допуск"],
+    SnapToleranceHint = [
+        "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
+        "Насколько близко должна быть поверхность, чтобы захватить перетаскивание, в миллиметрах; деталь встаёт вплотную, потому что допуск — это расстояние срабатывания привязки."
+    ],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
         "Diagnostic: keeps the triangulation diagonals the form-edge view hides.",

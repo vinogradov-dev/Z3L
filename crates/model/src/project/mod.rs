@@ -27,7 +27,7 @@ mod wire;
 
 pub use error::ProjectError;
 pub use fill::{FillMode, FillPlan, FillRefusal, FillRequest, free_axis};
-pub use move_query::{MoveAxis, MoveLimit, MoveRule};
+pub use move_query::{Capture, MoveAxis, MoveLimit, MoveRule, SnapEnd, SnapSettings, SnapSurface};
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
 pub use surface::SurfaceKind;
 pub(crate) use wire::ProjectWire;

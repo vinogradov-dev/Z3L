@@ -13,7 +13,7 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
 use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, Placement, Project};
+use model::{Id, MoveAxis, Placement, Project, SnapSettings};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use units::Length;
 
@@ -139,6 +139,11 @@ pub(crate) struct Target<'a> {
     pub(crate) project: &'a Project,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
+    /// What a furniture drag snaps to, as the workspace settings chose it (ADR 0146).
+    ///
+    /// It travels here rather than as another argument because a drag that starts reads it once,
+    /// with the camera and the selection it starts under.
+    pub(crate) snaps: SnapSettings,
 }
 
 impl Target<'_> {
@@ -983,7 +988,7 @@ mod tests {
     }
 
     fn target<'a>(project: &'a Project, selection: &'a [Id]) -> Target<'a> {
-        Target { camera: Camera::default(), project, selection }
+        Target { camera: Camera::default(), project, selection, snaps: SnapSettings::default() }
     }
 
     /// The handle length the tests draw and grab with, in points.
