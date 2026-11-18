@@ -170,7 +170,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    rule; the back type's planes read it, and an out-of-range material stays a refusal.
   Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
    type still uses the 18 mm stock.
-  `files: app/src/scene_build.rs,crates/model/src/catalog.rs`
+  `files: app/src/scene_build.rs,crates/catalog/src/starter.rs`
 - `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
   Why: The prototype work needs three facts the document cannot store today: which container is
    a section, which prototype and card produced a node, so a command works while the library is
@@ -189,7 +189,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    this change.
   Done: A fixture package of every starter kind loads, a bad row is refused with its package
    named, and the mock file is gone.
-  `files: crates/model/src/catalog.rs,crates/model/src/lib.rs,app/src/scene_build.rs`
+  `files: crates/catalog/src/lib.rs,crates/catalog/src/directory.rs,crates/model/src/ids.rs,app/src/scene_build.rs`
 - `[ ]` **O5** the editor hot-reloads the directory
   Why: The directory is edited elsewhere; the editor must apply a new revision without a
    restart.
@@ -204,20 +204,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    view; one writer behind the lock, atomic writes, revision bumped last.
   Done: A new item with properties is authored, saved and read back by the editor on a new
    revision.
-  `files: app/src/cli.rs,crates/model/src/catalog.rs,app/Cargo.toml`
+  `files: crates/catalog/src/source.rs,crates/catalog/src/wire.rs,app/src/cli.rs,app/Cargo.toml`
 - `[ ]` **O7** a package travels between workshops
   Why: A workshop extends its directory and hands the extension to another workshop.
   Shape: Package export and import as a folder, connect and disconnect, requires on registry
    revisions, a refusal on a duplicated id.
   Done: A package exports from one directory and imports into a second unchanged, and an id
    clash is refused with both packages named.
-  `files: crates/model/src/catalog.rs,crates/project/src/lib.rs`
+  `files: crates/catalog/src/source.rs,crates/project/src/lib.rs`
 - `[ ]` **O8** prices carry provenance and stock is an overlay
   Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
   Shape: Price with provenance and unit from the kind, a batched import as one history entry,
    an on-hand overlay package, external keys with a system registry, a freshness notice.
   Done: A CSV batch writes one history entry, and a price without a usable currency is refused.
-  `files: crates/model/src/catalog.rs,crates/export/src/rows.rs,app/src/settings_store.rs`
+  `files: crates/catalog/src/view.rs,crates/export/src/rows.rs,app/src/settings_store.rs`
 - `[ ]` **O9** selection walks six steps and says why
   Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
    RGB.
@@ -225,7 +225,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    person's explicit choice stored on the node, results cached by revision.
   Done: An oak corpus picks an oak plug, a white corpus re-picks it, and a miss names the step
    that failed.
-  `files: crates/model/src/catalog.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs`
+  `files: crates/catalog/src/view.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **O10** holes are derived from the hardware that causes them
   Why: A hole belongs to the hardware that causes it, and a panel must not store one.
   Shape: Drilling objects resolved through instances, intersected with the panel body, ordered
@@ -239,7 +239,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    precedence item then prototype then standard, one command and one undo entry.
   Done: A 32-panel yields the expected positions, and an uncovered overlay or door thickness is
    refused with the axis named.
-  `files: crates/model/src/catalog.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
+  `files: crates/catalog/src/directory.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **O12** a contour names its cutter, a groove does not
   Why: A contour milled with a 2 mm cutter has 2 mm corners, so the document must name the
    tool; a groove only needs its width.
@@ -248,7 +248,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    last offsets.
   Done: A milling record round-trips with its cutter and a cutter outside the park is a
    diagnostic, never a narrowed cut.
-  `files: crates/model/src/panel/machining.rs,crates/model/src/catalog.rs,crates/kernel/src/lib.rs`
+  `files: crates/model/src/panel/machining.rs,crates/catalog/src/property.rs,crates/kernel/src/lib.rs`
 - `[ ]` **O13** a part document is authored once and instantiated everywhere
   Why: A door must pick up an edited hinge, and a copy frozen at insertion cannot.
   Shape: A part-document contract checked on load, an instance node resolved with the cycle,
@@ -1897,7 +1897,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A package carries a per-sheet cutting plan for one material and a price per line; the
    columns are additive; the golden file records them; cargo xtask ci is green.
   now: export: the parts price, the sheets table and the manifest rules and money blocks
-  `files: crates/model/src/catalog.rs` — `2a634da`
+  `files: crates/export/src/rows.rs,crates/catalog/src/view.rs` — `2a634da`
 
 - `[x]` **K3** the order package is written from a command line, without opening a window
   Why: A package is useless if producing it needs a window and a person. The report pipeline

@@ -18,6 +18,13 @@ circle by diameter and an arc by radius (0130), and a sphere is drawn around its
 panel outline resolves to one `geom::Region` and machining is one ordered list of anchored records
 (0044–0046, schema 16); `crates/mesh` caches by derivation inputs, so a rebuild reuses every
 untouched node and a collapsed object keeps its shape (0053).
+- The nomenclature directory replaces the two typed material tables (O4, 0148): `crates/catalog`
+holds the item envelope, the kind/trait, property and family registries a package carries, and one
+validated `Directory` snapshot indexed by id, kind and slug; a panel and a band store a
+`model::ItemId`, the views answer a board or a banding by the kind's traits, and a package is read
+from `nomenclature/` as a folder — one snapshot or one refusal naming the package and the file.
+`MaterialId`, `Catalog` and the mock loader are gone; the scene schema is 26 and the order package
+names a material by its item id, written `package-serial`.
 - The editor: U45 opens several scenes as header tabs, and history, selection, camera and split
 layout travel with one (0081); U38–U42 landed the visual pass — `theme.rs` owns two palettes and the
 type scale (0063, 0069), the ribbon (0066), the folded side panels, `settings.json` and *Home*
@@ -37,7 +44,7 @@ whole plan tool — gate, report, writer, dashboard, ADR index (P4–P7, P9, 008
 layering rules and `ci` (P8); the plan gate follows every `files:` hint, a closed entry's ADR, the
 `STATE:` keys and a stale `base`; `dev` feeds `main` through one merge; the tree is split into four
 streams in four worktrees (the application in the primary checkout, the agent, the catalogue and the
-prototypes), and `plan/` is written only in the primary checkout (`AGENTS.md` §6.2).
+prototypes), and `plan/` is written in one checkout (`AGENTS.md` §6.2).
 
 - The prototype mechanism, MCP and the materials catalogue carry their own letters (`J`, `O`, `Q`)
 and their first tasks; the prototype design is written down in `docs/domain/prototypes.md` §0–18 and
