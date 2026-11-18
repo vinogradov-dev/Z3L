@@ -267,6 +267,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **N25** a piece in hand blocks nothing, and the view may move under it
+  Why: The owner, using N24: a piece in hand freezes the viewport. Orbit, pan and the wheel are
+   refused while the furniture move carries a piece, so a maker who took a shelf cannot turn
+   the case to see where it goes — the one thing the gesture needs. The hold owns no button, so
+   nothing about it justifies owning the view.
+  Shape: The carried piece blocks nothing. The camera keeps orbiting, panning and zooming under
+   it, and when the view moves the hold re-anchors instead of dragging the piece along: the
+   piece keeps the distance it has and the hand continues from the pointer's new place. A tool
+   that takes the pointer — a draft, a pull, a grip, the ruler, the niche — or a command that
+   lands under the hand (undo, delete, a rename) ends the hold and puts the piece back, because
+   the hold is not a mode. A held handle drag keeps freezing the camera, because the button
+   under the hand is the drag.
+  Done: The camera orbits, pans and zooms while a piece is in hand, and the piece keeps its
+   distance through all three; the next click commits exactly the distance the pointer added
+   after the view moved; a running tool or a command under the hand puts the piece back and
+   writes nothing; a held handle drag is unchanged; frame tests and cargo xtask ci are green.
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,docs/decisions` — `fb6bbc0`
+
 - `[x]` **N24** the furniture move takes the piece by a click and follows the pointer
   Why: The owner, after using the furniture move: the axis handles are the wrong affordance for
    it. A maker takes a board by its body, not by a three-point arrow, and holding the button
