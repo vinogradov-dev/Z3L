@@ -157,6 +157,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
 | [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
 | [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147 |
+| [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) | A piece in hand blocks nothing, and the view moves under it | Accepted; narrows 0151 |
 
 ## Format
 

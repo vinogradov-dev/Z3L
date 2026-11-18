@@ -31,7 +31,7 @@ use eframe::egui;
 use egui::{Response, Ui};
 use geom::DVec3;
 use model::{Capture, Id, MoveRule};
-use scene::MAX_DISTANCE_MM;
+use scene::{Camera, MAX_DISTANCE_MM};
 
 use crate::gizmo_math::{
     Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
@@ -90,9 +90,30 @@ struct Drag {
     drawables: Vec<Id>,
     targets: Vec<MoveTarget>,
     start_origin: DVec3,
-    /// The pointer's parameter along the latched axis at the moment the hold started.
+    /// The pointer's parameter along the latched axis the distance is measured from.
+    ///
+    /// It is set when the piece is taken and re-anchored whenever the view moves under the hand, so
+    /// the piece keeps the distance it already has and the camera never drags it along (N25).
     start_parameter: f64,
     delta: DVec3,
+    /// The document the targets and the rule were read from.
+    ///
+    /// A command that lands under the hand makes both stale, so the hold ends rather than committing
+    /// a distance measured against a scene that is no longer there (N25).
+    revision: model::Revision,
+    /// The view the hold was last measured in, so a camera move re-anchors instead of moving the
+    /// piece under the hand (N25).
+    view: View,
+}
+
+/// The viewport a hold is measured in: the camera and the rectangle the rays are cast through.
+///
+/// Both are stored, because a panel that folds or a split that moves changes the ray of the same
+/// pointer exactly as an orbit does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct View {
+    camera: Camera,
+    viewport: egui::Rect,
 }
 
 /// Persistent state of the translate gizmo.
@@ -118,6 +139,23 @@ impl TranslateGizmo {
     /// Whether a piece is carried by the pointer rather than by a held handle.
     pub(crate) fn is_following(&self) -> bool {
         self.drag.as_ref().is_some_and(|drag| drag.hold.follows())
+    }
+
+    /// Whether a physical button holds the drag, which is the one state that freezes the camera.
+    ///
+    /// A carried piece is not held: the viewport keeps orbiting, panning and zooming under it, and
+    /// the hold re-anchors to whatever the view became (N25).
+    pub(crate) fn is_held(&self) -> bool {
+        self.drag.as_ref().is_some_and(|drag| !drag.hold.follows())
+    }
+
+    /// Drops the hold without writing anything, so the piece goes back where it was taken.
+    ///
+    /// The shell calls this when a tool takes the pointer: the furniture move blocks nothing, and a
+    /// piece in hand is not a mode the rest of the editor has to wait for (N25).
+    pub(crate) fn cancel(&mut self) {
+        self.drag = None;
+        self.request = None;
     }
 
     /// Takes the piece under `pointer` in hand, for the furniture move to carry (ADR 0151).
@@ -299,6 +337,12 @@ impl TranslateGizmo {
             self.consumed_click = true;
             return Ok(None);
         }
+        // A command that landed under the hand — an undo, a delete, a rename from the tree — moved
+        // the document the targets and the rule were read from, so the piece goes back instead of
+        // committing a distance measured against a scene that is no longer there (N25).
+        if target.project.revision() != drag.revision {
+            return Ok(None);
+        }
         // The piece is put down by a click whether or not the hand ever named a direction: a piece
         // taken and put back without travelling is no move, and the click still ends the hold.
         if response.clicked_by(egui::PointerButton::Primary) {
@@ -335,6 +379,29 @@ impl TranslateGizmo {
             };
             drag.start_parameter = parameter;
             drag.hold = Hold::Following { axis: Some(axis), at };
+            drag.view = View { camera: target.camera, viewport };
+        }
+        // The view may move under the hand — an orbit, a pan, the wheel, a folded panel — because the
+        // hold owns no button. While the hand is driving the camera the piece stands still: the
+        // pointer travels to turn the view, and none of that travel belongs to the piece. The piece
+        // keeps the distance it has and the hand continues from the pointer's new place, so moving
+        // the camera never moves it (N25).
+        // The camera gestures are the middle and the right button and the wheel; the viewport is the
+        // one place that turns them into a camera move, and these are the same three it reads.
+        let navigating = ui.input(|input| {
+            input.pointer.middle_down()
+                || input.pointer.secondary_down()
+                || input.smooth_scroll_delta != egui::Vec2::ZERO
+        });
+        if navigating || drag.view != (View { camera: target.camera, viewport }) {
+            let current = drag.delta.dot(axis.direction());
+            let reanchored = pointer.and_then(|pointer| {
+                ray_to(pointer, viewport, target.camera).closest_parameter_on_line(drag.start_origin, axis.direction())
+            });
+            if let Some(parameter) = reanchored {
+                drag.start_parameter = parameter - current;
+                drag.view = View { camera: target.camera, viewport };
+            }
         }
         let (distance, capture) = match pinned {
             // A typed distance is the maker's own number on the carried piece too.
@@ -405,6 +472,8 @@ impl TranslateGizmo {
                 start_origin: origin_world,
                 start_parameter: 0.0,
                 delta: DVec3::ZERO,
+                revision: target.project.revision(),
+                view: View { camera: target.camera, viewport },
             });
             return Ok(None);
         }
@@ -444,6 +513,8 @@ impl TranslateGizmo {
             start_origin: origin_world,
             start_parameter: parameter,
             delta: DVec3::ZERO,
+            revision: target.project.revision(),
+            view: View { camera: target.camera, viewport },
         });
         if !ui.input(|input| input.pointer.primary_down()) {
             self.drag = None;

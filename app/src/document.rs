@@ -2234,7 +2234,8 @@ impl Document {
         // A pointer on the chrome owns the pointer only while no gesture is live: a panel or the
         // ribbon band is not the scene, so a press there never starts a gizmo, a draft, a selection
         // rectangle or a navigation drag. A gesture that already started keeps the pointer even if
-        // the user drags it over a panel, so releasing there still commits the move.
+        // the user drags it over a panel, so releasing there still commits the move — a carried
+        // piece included, because its own distance fields are chrome around the hand (N24, N25).
         let capturing = self.translate_gizmo.is_dragging()
             || self.rotate_gizmo.is_dragging()
             || self.box_grips.is_dragging()
@@ -2486,6 +2487,21 @@ impl Document {
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
         // node, so the missing handles read as a refusal instead of a bug.
         let locked_selection = self.editor.locked_selection(self.session.project());
+        // The hold is not a mode: a tool that takes the pointer puts the piece back, because a piece
+        // in hand may not hold a click back from a running draft, a pull, a grip or the ruler (N25).
+        if self.translate_gizmo.is_following()
+            && (contour_editing
+                || drawing
+                || boxing
+                || pulling
+                || filling
+                || measuring
+                || voiding
+                || mesh_object.is_some()
+                || locked_selection.is_some())
+        {
+            self.translate_gizmo.cancel();
+        }
         let update: Result<Option<PlacementCommit>, String> = if !interactive
             || contour_editing
             || drawing
@@ -2535,6 +2551,9 @@ impl Document {
         // A camera or a light has no drawable, so its glyph and its contribution to the frame are
         // driven by this list rather than by the uploaded geometry.
         let previewed = self.previewed_scene_placements();
+        // A drag that holds a button freezes the camera, because the axis and the parameter under
+        // the hand are read through it. A carried piece holds nothing, so the view keeps working
+        // under it and the hold re-anchors to whatever the camera became (N25).
         let dragging = if contour_editing {
             self.contour_gizmo.is_dragging()
         } else if pulling {
@@ -2542,7 +2561,7 @@ impl Document {
         } else if mesh_object.is_some() {
             self.vertex_gizmo.is_dragging()
         } else {
-            self.translate_gizmo.is_dragging() || self.rotate_gizmo.is_dragging()
+            self.translate_gizmo.is_held() || self.rotate_gizmo.is_dragging()
         };
         let consumed_click = if contour_editing
             || drawing

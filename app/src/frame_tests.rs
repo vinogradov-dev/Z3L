@@ -1131,6 +1131,97 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
 }
 
 #[test]
+fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
+    // N25: the hold owns no button, so nothing about it may own the viewport. The camera keeps
+    // orbiting, panning and zooming under a piece in hand, and a view that moves re-anchors the hold
+    // instead of dragging the piece along with it.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-furniture-view", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    // The pointer carries the piece, so every move of the test's pointer is a move of the piece: the
+    // camera gestures below start from where the hand already is.
+    let at = body + egui::vec2(50.0, -70.0);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.z > 0.0, "the pointer carried it along its thickness: {carried:?}");
+
+    // Orbit: the camera moves, the piece does not.
+    let camera = harness.camera();
+    let orbit = egui::vec2(60.0, 25.0);
+    harness.drag(at, orbit, egui::PointerButton::Middle);
+    assert_ne!(harness.camera(), camera, "the camera orbits under a piece in hand");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-6, "and the piece is not dragged along: {kept:?} from {carried:?}");
+    assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand after the orbit");
+
+    // Zoom: the same answer for the wheel.
+    let camera = harness.camera();
+    let wheel = |points: f32| egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    harness.run(vec![egui::Event::PointerMoved(at + orbit), wheel(-40.0)]);
+    harness.settle();
+    assert_ne!(harness.camera(), camera, "the wheel zooms under a piece in hand");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-6, "and the piece keeps its distance: {kept:?} from {carried:?}");
+
+    // The click that puts it down commits the distance the hand added, and only that.
+    let revision = harness.revision();
+    harness.click(at + orbit, egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "the click puts it down");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one carried piece is one undo entry");
+}
+
+#[test]
+fn a_tool_or_a_command_under_the_hand_puts_the_piece_back() {
+    // N25: a hold is not a mode. A tool that takes the pointer, or a command that lands under the
+    // hand, ends it and writes nothing — the same answer Escape gives.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-furniture-not-a-mode", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+    let body = harness.node_point(panel);
+    let revision = harness.revision();
+
+    // The ruler takes the pointer, so the piece goes back.
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body + egui::vec2(40.0, -60.0));
+    assert!(harness.app.tabs.active().holding_piece());
+    harness.press(egui::Key::M, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().holding_piece(), "the ruler puts the piece back");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+    harness.press(egui::Key::M, egui::Modifiers::NONE);
+
+    // A command under the hand does the same: the document the rule was read from is gone. One piece
+    // is put down first, so the undo has a placement to take back.
+    harness.carry(body, egui::vec2(40.0, -60.0));
+    let placed = harness.revision();
+    assert_eq!(placed.get(), revision.get() + 1, "the first piece landed");
+    let at = harness.node_point(panel);
+    harness.click(at, egui::PointerButton::Primary);
+    harness.hover(at + egui::vec2(40.0, -60.0));
+    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand again");
+    harness.press(egui::Key::Z, egui::Modifiers::CTRL);
+    assert!(!harness.app.tabs.active().holding_piece(), "an undo puts the piece back");
+    assert!(harness.revision() != placed, "and the undo is the one the key asked for");
+}
+
+#[test]
 fn each_tab_keeps_its_own_open_product() {
     // Openness is session view state (ADR 0098), and a tab owns its session: a new tab starts with
     // every product closed, and the first tab still works in the frame it opened.

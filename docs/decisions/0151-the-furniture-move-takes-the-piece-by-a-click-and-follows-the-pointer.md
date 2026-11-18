@@ -1,7 +1,8 @@
 # 0151. The furniture move takes the piece by a click and follows the pointer
 
 - Status: Accepted; supersedes the handle half of ADR 0147 — the furniture move draws no arrow and
-  is not held by a button
+  is not held by a button. Its frozen camera is narrowed by
+  [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md)
 - Date: 2026-11-18
 
 ## Context
@@ -40,8 +41,9 @@ direction whatever the hand does.
 
 **Escape, the mode and the camera answer the hold.** Escape puts the piece back and writes nothing;
 leaving the furniture move cancels the hold the same way, because a hand reaching for another tool has
-not said where the piece goes; and the camera is frozen while a piece is in hand, as it is during a
-handle drag, so the distance under the hand never changes because the view did.
+not said where the piece goes. The camera is frozen while a piece is in hand — narrowed by
+[0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md), which lets the view move
+and re-anchors the hold instead.
 
 **Everything else the tool had, it keeps.** The document's rule still cuts the distance: contact,
 coordinate planes, frame faces and the 1 mm grid (ADR 0102, 0103, 0146). The exact-distance fields
