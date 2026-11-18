@@ -267,6 +267,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X70** the carry's hand is the drawn pointer, not the system one
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/main.rs,app/src/work_cursor.rs` — `58c2988`
+
 - `[x]` **X69** the camera gesture hides the pointer and returns it to the middle of the piece
   `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `3de9d3f`
 
