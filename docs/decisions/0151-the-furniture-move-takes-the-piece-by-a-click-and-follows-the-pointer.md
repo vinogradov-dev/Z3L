@@ -2,7 +2,8 @@
 
 - Status: Accepted; supersedes the handle half of ADR 0147 — the furniture move draws no arrow and
   is not held by a button. Its frozen camera is narrowed by
-  [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md)
+  [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) and its distance mapping
+  replaced by [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md)
 - Date: 2026-11-18
 
 ## Context
@@ -36,8 +37,10 @@ the one whose projected screen direction lies nearest the pointer's travel from 
 was taken wins, skipping the axes that point at the camera exactly as the handles do. It is latched at
 the first movement past four points and kept for the hold, so the piece never changes direction under
 the hand; the sign comes from the ray's projection along that axis, so a piece follows the hand in
-both directions. A piece with one direction — the board, the shelf, the divider — is taken in that
-direction whatever the hand does.
+both directions — replaced by
+[0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md), which measures the hand's own
+travel, because that projection is unstable away from the axis line. A piece with one direction — the
+board, the shelf, the divider — is taken in that direction whatever the hand does.
 
 **Escape, the mode and the camera answer the hold.** Escape puts the piece back and writes nothing;
 leaving the furniture move cancels the hold the same way, because a hand reaching for another tool has

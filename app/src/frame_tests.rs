@@ -1131,6 +1131,43 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
 }
 
 #[test]
+fn a_sideways_hand_never_carries_a_piece_away() {
+    // The defect a maker reported: the panel ran away from the cursor. The distance was the ray's
+    // projection onto the axis line, and a pointer that strayed sideways from that line met it at an
+    // arbitrary place. A carry is measured by the hand's own travel along the axis, so a move across
+    // it is no move at all (N25).
+    let (session, divider, _beside) = divider_beside_a_panel();
+    let mut harness = Harness::with_session("frame-carry-sideways", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+    let axes = harness.app.tabs.active().session.project().furniture_axes(&[divider]);
+    assert_eq!(axes, [true, false, false], "the divider crosses the case, so X is the only way it travels");
+    let (_, along) = handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X))
+        .expect("the direction X runs in is on screen");
+    let across = egui::vec2(-along.y, along.x);
+    let body = harness.node_point(divider);
+
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "the divider is in hand");
+    // Away from the neighbour, so the rule does not clamp either measurement.
+    harness.hover(body - along * 40.0);
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.length() > 0.0, "the hand along the axis carried it: {carried:?}");
+
+    for step in [40.0_f32, 120.0, 240.0] {
+        harness.hover(body - along * 40.0 + across * step);
+        let sideways = harness.app.tabs.active().carried_delta();
+        assert!(
+            (sideways - carried).length() < 1.0,
+            "a hand {step} points across the axis moves nothing: {sideways:?} from {carried:?}"
+        );
+    }
+}
+
+#[test]
 fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     // N25: the hold owns no button, so nothing about it may own the viewport. The camera keeps
     // orbiting, panning and zooming under a piece in hand, and a view that moves re-anchors the hold

@@ -899,25 +899,26 @@ pub(crate) fn hit_axis(
 
 /// The axis a hand's travel names, for a tool that draws no handle.
 ///
-/// The furniture move is taken by the piece's body rather than by an arrow (N24), so the direction
-/// has to be read from the pointer itself: each axis the tool may travel is projected at the piece's
-/// pivot and the one whose screen direction lies nearest to `travel` wins, whichever way the travel
-/// points, because the sign comes from the projection of the ray and not from this choice. An axis
-/// that points at the camera is not a candidate, exactly as it draws no handle.
+/// The furniture move is taken by the piece's body rather than by an arrow (N24, ADR 0151), so the
+/// direction has to be read from the pointer itself: each axis the tool may travel is projected at
+/// the piece's pivot and the one whose screen direction lies nearest to `travel` wins, whichever way
+/// the travel points, because the sign is the hand's and not this choice. An axis that points at the
+/// camera is not a candidate, exactly as it draws no handle.
 ///
-/// `travel` is the pointer's movement since the piece was taken, in points; a travel shorter than
-/// [`screen_direction`] accepts names nothing, so the piece does not jump on the first frame.
+/// The handle it answers with carries the axis' screen direction, which is what the carry measures
+/// the hand against. `travel` is the pointer's movement since the piece was taken, in points; a
+/// travel too short to have a direction names nothing, so the piece does not jump on the first frame.
 pub(crate) fn named_axis(
     camera: Camera,
     viewport: egui::Rect,
     origin_world: DVec3,
     travel: Vec2,
     axes: [bool; 3],
-) -> Option<Axis> {
+) -> Option<AxisHandle> {
     let travel = screen_direction(travel)?;
     let origin = screen_point(camera, viewport, origin_world)?;
     let step = (camera.distance() * 0.01).max(1.0);
-    let mut best: Option<(f32, Axis)> = None;
+    let mut best: Option<(f32, AxisHandle)> = None;
     for axis in Axis::ALL {
         if !axis_allowed(axes, axis) || axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
             continue;
@@ -928,10 +929,40 @@ pub(crate) fn named_axis(
         let Some(direction) = screen_direction(end - origin) else { continue };
         let score = direction.dot(travel).abs();
         if best.is_none_or(|(nearest, _)| score > nearest) {
-            best = Some((score, axis));
+            best = Some((score, AxisHandle { axis, tip: origin, direction }));
         }
     }
-    best.map(|(_, axis)| axis)
+    best.map(|(_, handle)| handle)
+}
+
+/// The screen frame a carried piece's hand travel is read in: the axis' unit direction at the
+/// pivot, and the millimetres along the axis one point of travel in it means.
+///
+/// The furniture move carries a piece by the hand, not by a rail the pointer points at: the ray of
+/// a pointer that strayed sideways from the axis' screen line meets that line at an arbitrary and
+/// wildly unstable place, so the distance is the hand's *screen* travel along the axis' direction,
+/// scaled where it was taken. A piece then never runs away from the hand that carries it (N25).
+pub(crate) fn travel_frame(
+    camera: Camera,
+    viewport: egui::Rect,
+    origin_world: DVec3,
+    axis: Axis,
+    pointer: Pos2,
+) -> Option<(Vec2, f64)> {
+    // An axis that points at the camera has neither a direction on screen nor a distance to travel.
+    if axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
+        return None;
+    }
+    let origin = screen_point(camera, viewport, origin_world)?;
+    let step = (camera.distance() * 0.01).max(1.0);
+    let along = screen_point(camera, viewport, origin_world + axis.direction() * step)?;
+    let direction = screen_direction(along - origin)?;
+    let parameter =
+        |pointer: Pos2| ray_to(pointer, viewport, camera).closest_parameter_on_line(origin_world, axis.direction());
+    // The local slope of the projection, one point along the axis' screen direction, which is exact
+    // where the hand took the piece and linear from there.
+    let scale = parameter(pointer + direction)? - parameter(pointer)?;
+    (scale.is_finite() && scale.abs() > f64::EPSILON).then_some((direction, scale))
 }
 
 /// The hit radius of a handle of `length` points.
@@ -1107,41 +1138,65 @@ mod tests {
         for axis in Axis::ALL {
             let travel = direction(axis) * 40.0;
             assert_eq!(
-                named_axis(camera, viewport(), origin, travel, ALL_AXES),
+                named_axis(camera, viewport(), origin, travel, ALL_AXES).map(|handle| handle.axis),
                 Some(axis),
                 "a travel along {axis:?} names {axis:?}"
             );
-            // The same travel, backwards: the axis is the same and the sign comes from the ray.
+            // The same travel, backwards: the axis is the same and the sign comes from the hand.
             assert_eq!(
-                named_axis(camera, viewport(), origin, -travel, ALL_AXES),
+                named_axis(camera, viewport(), origin, -travel, ALL_AXES).map(|handle| handle.axis),
                 Some(axis),
                 "and so does its opposite"
             );
         }
+        // The handle carries the axis' own screen direction, which the carry measures the hand by.
+        let named = named_axis(camera, viewport(), origin, direction(Axis::Z) * 40.0, ALL_AXES).expect("an axis");
+        assert!(
+            (named.direction - direction(Axis::Z)).length() < 1.0e-5,
+            "the named handle keeps the projected direction"
+        );
         // Only one axis is offered, so the hand's travel is not consulted at all.
         let travel = direction(Axis::Z) * 40.0;
-        assert_eq!(named_axis(camera, viewport(), origin, travel, [true, false, false]), Some(Axis::X));
+        assert_eq!(
+            named_axis(camera, viewport(), origin, travel, [true, false, false]).map(|handle| handle.axis),
+            Some(Axis::X)
+        );
         // Nothing offered, nothing named.
-        assert_eq!(named_axis(camera, viewport(), origin, travel, [false; 3]), None);
+        assert!(named_axis(camera, viewport(), origin, travel, [false; 3]).is_none(), "no axis is offered");
         // A hand that has not moved says nothing, so a taken piece never jumps on its first frame.
-        assert_eq!(named_axis(camera, viewport(), origin, Vec2::ZERO, ALL_AXES), None);
-        assert_eq!(named_axis(camera, viewport(), origin, Vec2::new(0.3, 0.0), ALL_AXES), None);
+        assert!(named_axis(camera, viewport(), origin, Vec2::ZERO, ALL_AXES).is_none(), "a still hand names nothing");
+        assert!(named_axis(camera, viewport(), origin, Vec2::new(0.3, 0.0), ALL_AXES).is_none(), "so does a stray");
     }
 
     #[test]
-    fn an_axis_that_points_at_the_camera_is_no_direction_a_hand_can_name() {
-        // The same rule the handles obey: a view down Z has no Z direction on screen, and a travel
-        // along the screen's up direction names the axis that is actually drawn there.
-        let camera = orthographic_view(DVec3::new(0.0, 0.0, 1.0));
+    fn the_travel_is_the_hand_s_own_and_the_ray_s_is_unstable() {
+        // N25: a carried piece is measured by the hand's screen travel along the axis, scaled where
+        // it was taken. The defect this replaces was the ray's projection onto the axis line, which
+        // ran away as soon as the pointer strayed sideways from that line.
+        let camera = Camera::default();
         let origin = camera.target();
-        let travel = Vec2::new(0.0, -40.0);
-        let named = named_axis(camera, viewport(), origin, travel, ALL_AXES).expect("one of the plane axes");
-        assert_ne!(named, Axis::Z, "Z points at the camera, so it is no candidate");
-        assert_eq!(
-            named_axis(camera, viewport(), origin, travel, [false, false, true]),
-            None,
-            "and alone it names nothing"
-        );
+        let handles = axis_handles(camera, viewport(), origin, origin_screen(camera), spec(ALL_AXES));
+        let direction =
+            |axis: Axis| handles.iter().find(|h| h.axis == axis).map(|h| h.direction).expect("a drawn axis");
+        let at = origin_screen(camera) + Vec2::new(20.0, 15.0);
+        let (screen, per_point) = travel_frame(camera, viewport(), origin, Axis::Z, at).expect("Z has a frame");
+        assert!((screen - direction(Axis::Z)).length() < 1.0e-5, "the frame keeps the axis' screen direction");
+        assert!(per_point > 0.0, "up the screen is up the world in the default view: {per_point}");
+
+        // Sideways is none of the piece's business: the frame is the axis' and does not move with the
+        // pointer, while the ray's projection onto the axis line jumps by hundreds of millimetres.
+        let sideways = Vec2::new(-screen.y, screen.x);
+        let (side, _) = travel_frame(camera, viewport(), origin, Axis::Z, at + sideways * 200.0).expect("a frame");
+        assert!((side - screen).length() < 1.0e-5, "the frame is the axis', not the pointer's");
+        let parameter =
+            |pointer: Pos2| ray_to(pointer, viewport(), camera).closest_parameter_on_line(origin, Axis::Z.direction());
+        let from = parameter(at).expect("a ray through the axis");
+        let jumped = parameter(at + sideways * 200.0).expect("a ray through the axis") - from;
+        assert!(jumped.abs() > 10.0, "the ray's projection moves {jumped} mm for a sideways move of the hand");
+
+        // An axis that points at the camera has no frame at all.
+        let top = orthographic_view(DVec3::new(0.0, 0.0, 1.0));
+        assert!(travel_frame(top, viewport(), top.target(), Axis::Z, at).is_none());
     }
 
     #[test]

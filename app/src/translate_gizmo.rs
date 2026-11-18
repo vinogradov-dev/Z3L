@@ -35,7 +35,7 @@ use scene::{Camera, MAX_DISTANCE_MM};
 
 use crate::gizmo_math::{
     Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
-    named_axis, paint_axis_handles, ray_to,
+    named_axis, paint_axis_handles, ray_to, travel_frame,
 };
 
 /// The smallest travel, in points, that names an axis.
@@ -55,12 +55,44 @@ enum Hold {
     Following {
         /// The axis the travel named, once the pointer moved far enough for the hand to say so.
         axis: Option<Axis>,
-        /// Where the click took the piece, in viewport points.
-        ///
-        /// The travel that names the axis and the distance the rule measures are both read from
-        /// here, so taking a piece never moves it and the first frame of the hold is already exact.
-        at: egui::Pos2,
+        /// The hand's travel along that axis, which the distance is measured from.
+        travel: Travel,
     },
+}
+
+/// The hand's travel while a piece is carried, and the screen scale it is read with.
+///
+/// The distance is the hand's *screen* travel along the axis' projected direction, scaled where the
+/// piece was anchored. It is deliberately not the projection of the pointer's ray onto the axis
+/// line: a pointer that strays sideways from that line meets it at an arbitrary place, so the piece
+/// would run away from the hand that carries it (N25).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Travel {
+    /// The pointer the travel is measured from, in viewport points.
+    from: egui::Pos2,
+    /// The millimetres along the axis the piece had already travelled when anchored here.
+    covered: f64,
+    /// The axis' unit screen direction at the pivot.
+    direction: egui::Vec2,
+    /// The millimetres along the axis one point of travel in `direction` means.
+    per_point: f64,
+}
+
+impl Travel {
+    /// The travel of a hand that has not moved, for the frame the piece is taken.
+    const fn idle(from: egui::Pos2) -> Self {
+        Self { from, covered: 0.0, direction: egui::Vec2::ZERO, per_point: 0.0 }
+    }
+
+    /// Whether the axis has been named, which is whether this travel has a scale at all.
+    fn is_anchored(self) -> bool {
+        self.per_point != 0.0
+    }
+
+    /// The millimetres along the axis this pointer's travel means, added to what was covered.
+    fn distance(self, pointer: egui::Pos2) -> f64 {
+        self.covered + f64::from((pointer - self.from).dot(self.direction)) * self.per_point
+    }
 }
 
 impl Hold {
@@ -350,17 +382,28 @@ impl TranslateGizmo {
             let commit = commit_translation(&drag.targets, drag.delta)?;
             return Ok(commit);
         }
-        let Hold::Following { axis, at } = drag.hold else {
+        let Hold::Following { axis: held, mut travel } = drag.hold else {
             return Ok(None);
         };
         let axes = target.move_kind.axes(target.project, target.selection);
-        let axis = match axis {
+        let view = View { camera: target.camera, viewport };
+        // The camera gestures are the middle and the right button and the wheel: the viewport turns
+        // those three into a camera move, and none of that travel belongs to the piece.
+        let navigating = ui.input(|input| {
+            input.pointer.middle_down()
+                || input.pointer.secondary_down()
+                || input.smooth_scroll_delta != egui::Vec2::ZERO
+        });
+        // The axis is named once, by the first movement of the hand past a stray point, and kept: a
+        // piece that re-decided every frame would flip near 45° and its distance would restart.
+        let axis = match held {
             Some(axis) => Some(axis),
             None => pointer.and_then(|pointer| {
-                let travel = pointer - at;
-                (travel.length() >= NAMING_TRAVEL)
-                    .then(|| named_axis(target.camera, viewport, drag.start_origin, travel, axes))
+                let named = pointer - travel.from;
+                (named.length() >= NAMING_TRAVEL)
+                    .then(|| named_axis(target.camera, viewport, drag.start_origin, named, axes))
                     .flatten()
+                    .map(|handle| handle.axis)
             }),
         };
         let Some(axis) = axis else {
@@ -368,53 +411,28 @@ impl TranslateGizmo {
             self.drag = Some(drag);
             return Ok(None);
         };
-        if drag.hold.axis() != Some(axis) {
-            // The axis was named this frame: its distance is measured from the point the piece was
-            // taken at, so the first movement of the hand is the distance it meant.
-            let Some(parameter) =
-                ray_to(at, viewport, target.camera).closest_parameter_on_line(drag.start_origin, axis.direction())
+        // An anchor is where the hand's travel is read from: the frame the axis is named, and every
+        // frame that drives the camera. The piece keeps the distance it has across one, so a view
+        // that moves never moves the piece (N25).
+        if !travel.is_anchored() || navigating || drag.view != view {
+            let named = !travel.is_anchored();
+            let covered = if named { 0.0 } else { drag.delta.dot(axis.direction()) };
+            let from = if named { travel.from } else { pointer.unwrap_or(travel.from) };
+            let Some((direction, per_point)) = travel_frame(target.camera, viewport, drag.start_origin, axis, from)
             else {
                 self.drag = Some(drag);
                 return Ok(None);
             };
-            drag.start_parameter = parameter;
-            drag.hold = Hold::Following { axis: Some(axis), at };
-            drag.view = View { camera: target.camera, viewport };
+            travel = Travel { from, covered, direction, per_point };
+            drag.view = view;
         }
-        // The view may move under the hand — an orbit, a pan, the wheel, a folded panel — because the
-        // hold owns no button. While the hand is driving the camera the piece stands still: the
-        // pointer travels to turn the view, and none of that travel belongs to the piece. The piece
-        // keeps the distance it has and the hand continues from the pointer's new place, so moving
-        // the camera never moves it (N25).
-        // The camera gestures are the middle and the right button and the wheel; the viewport is the
-        // one place that turns them into a camera move, and these are the same three it reads.
-        let navigating = ui.input(|input| {
-            input.pointer.middle_down()
-                || input.pointer.secondary_down()
-                || input.smooth_scroll_delta != egui::Vec2::ZERO
-        });
-        if navigating || drag.view != (View { camera: target.camera, viewport }) {
-            let current = drag.delta.dot(axis.direction());
-            let reanchored = pointer.and_then(|pointer| {
-                ray_to(pointer, viewport, target.camera).closest_parameter_on_line(drag.start_origin, axis.direction())
-            });
-            if let Some(parameter) = reanchored {
-                drag.start_parameter = parameter - current;
-                drag.view = View { camera: target.camera, viewport };
-            }
-        }
+        drag.hold = Hold::Following { axis: Some(axis), travel };
         let (distance, capture) = match pinned {
             // A typed distance is the maker's own number on the carried piece too.
             Some(pinned) => (pinned.is_finite().then_some(pinned), None),
             None => pointer
-                .and_then(|pointer| {
-                    ray_to(pointer, viewport, target.camera)
-                        .closest_parameter_on_line(drag.start_origin, axis.direction())
-                })
-                .map(|parameter| {
-                    let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
-                    constrained_distance(drag.rule.as_ref(), axis, scalar)
-                })
+                .map(|pointer| travel.distance(pointer).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM))
+                .map(|scalar| constrained_distance(drag.rule.as_ref(), axis, scalar))
                 .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
         };
         if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
@@ -464,7 +482,7 @@ impl TranslateGizmo {
             let rule = target.project.move_rule(&moving, target.snaps);
             self.drag = Some(Drag {
                 node: anchor.node,
-                hold: Hold::Following { axis: None, at },
+                hold: Hold::Following { axis: None, travel: Travel::idle(at) },
                 rule,
                 capture: None,
                 drawables: target.drawables(),
