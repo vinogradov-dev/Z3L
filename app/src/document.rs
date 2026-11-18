@@ -66,7 +66,7 @@ use crate::vertex_gizmo;
 use crate::vertex_gizmo::{MeshVertexCommit, VertexGizmo, VertexPreview};
 use crate::view_cluster;
 use crate::view_cluster::{ClusterAction, ClusterView, NavigationMode, ViewCluster};
-use crate::view_layout::{Layout, LayoutKind};
+use crate::view_layout::{Layout, LayoutKind, LeafId};
 use crate::void_gizmo::{self, VoidGizmo};
 use crate::{Shell, Transform, theme};
 
@@ -791,7 +791,7 @@ impl Document {
     pub(crate) fn zoom_active_view(&mut self, factor: f64) {
         let active = self.layout.active();
         if let Some(leaf) = self.layout.leaf_mut(active) {
-            leaf.zoom(factor);
+            leaf.zoom_about(factor, None);
         }
     }
 
@@ -2094,6 +2094,30 @@ impl Document {
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 
+    /// Zooms one view about the point under the pointer, which keeps that point where it is.
+    ///
+    /// The wheel and every drag that zooms go through here: a zoom about the view's centre slides
+    /// everything the maker is looking at out from under the pointer, and a piece carried by that
+    /// pointer left the hand on every step (X67).
+    fn zoom_about_pointer(&mut self, leaf: LeafId, viewport: egui::Rect, pointer: egui::Pos2, factor: f64) {
+        let Some(leaf) = self.layout.leaf_mut(leaf) else {
+            return;
+        };
+        let anchor = gizmo_math::view_plane_point(pointer, viewport, leaf.camera());
+        leaf.zoom_about(factor, anchor);
+    }
+
+    /// Turns the active view to a standard preset, the way the corner widget and the view menu do.
+    ///
+    /// The preset writes the camera's direction and its projection, so this is view state and no
+    /// command (ADR 0049); the shell's camera is refreshed here so one entry point cannot leave the
+    /// two disagreeing.
+    pub(crate) fn apply_view_preset(&mut self, preset: ui::display::OpeningView) {
+        self.layout.active_leaf_mut().apply_preset(preset);
+        let camera = self.layout.active_camera();
+        self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
+    }
+
     /// Switches the active view's projection and refreshes the camera the viewport draws with.
     ///
     /// The ribbon, the Display popover and the corner widget all end here, so the three entry points
@@ -2607,9 +2631,14 @@ impl Document {
         if navigable && response.hovered() && pointer_over_active && !dragging {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             if scroll != 0.0
-                && let Some(leaf) = self.layout.leaf_mut(target_leaf)
+                && let Some(at) = ui.input(|input| input.pointer.hover_pos())
             {
-                leaf.zoom((-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp());
+                self.zoom_about_pointer(
+                    target_leaf,
+                    target_rect,
+                    at,
+                    (-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp(),
+                );
             }
         }
 
@@ -2637,8 +2666,13 @@ impl Document {
                     }
                 }
                 Some(NavigationMode::Zoom) => {
-                    if let Some(leaf) = self.layout.leaf_mut(target_leaf) {
-                        leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
                     }
                 }
                 None => {}
@@ -2652,7 +2686,14 @@ impl Document {
                 if modifiers.shift {
                     leaf.pan_pixels(f64::from(drag.x), f64::from(drag.y), f64::from(navigation_rect.height()));
                 } else if modifiers.ctrl {
-                    leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
+                    }
                 } else {
                     leaf.orbit(
                         -f64::from(drag.x) * ORBIT_RADIANS_PER_POINT,
@@ -3045,11 +3086,7 @@ impl Document {
             Some(ClusterAction::ToggleProjection) => self.toggle_view_projection(),
             Some(ClusterAction::SetLayout(kind)) => self.set_layout(kind),
             Some(ClusterAction::ToggleMaximize) => self.layout.toggle_maximized(),
-            Some(ClusterAction::SetPreset(preset)) => {
-                self.layout.active_leaf_mut().apply_preset(preset);
-                let camera = self.layout.active_camera();
-                self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
-            }
+            Some(ClusterAction::SetPreset(preset)) => self.apply_view_preset(preset),
             Some(ClusterAction::SetStyle(style)) => {
                 self.layout.set_active_style(style);
                 // The style is frame data the renderer reads per view at draw time, so no upload.
@@ -3152,6 +3189,8 @@ impl Document {
     ///
     /// The preview lives in the session overlay and the document is untouched until the drop, so a
     /// test cannot read the moved box from the project.
+    #[cfg(test)]
+    /// The world distance the carried piece has travelled, for a test that reads the hold.
     #[cfg(test)]
     pub(crate) fn carried_delta(&self) -> geom::DVec3 {
         self.translate_gizmo.drag_delta()

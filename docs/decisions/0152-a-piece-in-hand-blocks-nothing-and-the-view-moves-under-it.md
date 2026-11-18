@@ -1,6 +1,7 @@
 # 0152. A piece in hand blocks nothing, and the view moves under it
 
-- Status: Accepted; narrows ADR 0151, whose hold froze the camera
+- Status: Accepted; narrows ADR 0151, whose hold froze the camera; the "a view that moves keeps
+  the piece's millimetres" reading is replaced by ADR 0155
 - Date: 2026-11-18
 
 ## Context

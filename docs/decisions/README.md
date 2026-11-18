@@ -159,6 +159,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147 |
 | [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) | A piece in hand blocks nothing, and the view moves under it | Accepted; narrows 0151 |
 | [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md) | A carried piece is measured by the hand, not by the ray that points at it | Accepted; replaces 0151's distance mapping |
+| [0154](0154-the-wheel-zooms-towards-the-pointer.md) | The wheel zooms towards the pointer | Accepted |
+| [0155](0155-a-carried-piece-keeps-its-place-under-the-hand.md) | A carried piece keeps its place under the hand | Accepted; replaces 0152's world-place reading |
 
 ## Format
 

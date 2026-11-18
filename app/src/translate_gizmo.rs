@@ -31,11 +31,11 @@ use eframe::egui;
 use egui::{Response, Ui};
 use geom::DVec3;
 use model::{Capture, Id, MoveRule};
-use scene::MAX_DISTANCE_MM;
+use scene::{Camera, MAX_DISTANCE_MM};
 
 use crate::gizmo_math::{
     Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
-    named_axis, paint_axis_handles, ray_to, travel_frame,
+    named_axis, paint_axis_handles, ray_to, screen_point, travel_frame,
 };
 
 /// The smallest travel, in points, that names an axis.
@@ -66,6 +66,9 @@ enum Hold {
 /// piece was anchored. It is deliberately not the projection of the pointer's ray onto the axis
 /// line: a pointer that strays sideways from that line meets it at an arbitrary place, so the piece
 /// would run away from the hand that carries it (N25).
+///
+/// The hand is not the eye: a camera change is corrected apart from this travel, so a zoom, a view
+/// preset or Home slides the piece along its axis and leaves it where the hand held it (X67).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Travel {
     /// The pointer the travel is measured from, in viewport points.
@@ -147,6 +150,12 @@ pub(crate) struct TranslateGizmo {
     /// frame: it names the pointer here and the hold starts on the next frame, from that point, so
     /// the piece is measured where the hand took it and not where the pointer has drifted to.
     request: Option<egui::Pos2>,
+    /// The camera and the viewport the last frame drew through.
+    ///
+    /// A carried piece keeps the *screen* place the hand gave it, so the gizmo has to know how the
+    /// projection moved under it: a zoom, a view preset or Home changes the camera and not the hand,
+    /// and a piece that kept its millimetres would be torn out of the hand (X67).
+    last_view: Option<(Camera, egui::Rect)>,
 }
 
 impl TranslateGizmo {
@@ -272,13 +281,18 @@ impl TranslateGizmo {
         handle_length: f32,
     ) -> Result<Option<PlacementCommit>, String> {
         self.consumed_click = false;
-        if let Some(drag) = self.drag.take() {
-            return match drag.hold {
+        let outcome = if let Some(drag) = self.drag.take() {
+            match drag.hold {
                 Hold::Handle(axis) => self.continue_handle(ui, viewport, target, drag, axis, pinned),
                 Hold::Following { .. } => self.continue_follow(ui, response, viewport, target, drag, pinned),
-            };
-        }
-        self.begin(ui, response, viewport, target, pointer_over_widget, handle_length)
+            }
+        } else {
+            self.begin(ui, response, viewport, target, pointer_over_widget, handle_length)
+        };
+        // The next frame compares the camera against this one, so the view of the frame that was
+        // just drawn is the one it must keep the piece in.
+        self.last_view = Some((target.camera, viewport));
+        outcome
     }
 
     /// Carries on a held handle: the pointer's distance along the axis, cut by the rule, and the
@@ -417,11 +431,16 @@ impl TranslateGizmo {
             _ => {}
         }
         drag.hold = Hold::Following { axis: Some(axis), travel };
+        // The eye is not the hand: a camera change moves the projection under a piece that keeps its
+        // millimetres, which is how a zoom or a view switch tore the piece out of the hand (X67).
+        let kept = pointer
+            .map(|pointer| travel.distance(pointer).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM))
+            .map(|distance| self.keeps_its_place(viewport, target.camera, drag.start_origin, axis, distance))
+            .and_then(|distance| distance);
         let (distance, capture) = match pinned {
             // A typed distance is the maker's own number on the carried piece too.
             Some(pinned) => (pinned.is_finite().then_some(pinned), None),
-            None => pointer
-                .map(|pointer| travel.distance(pointer).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM))
+            None => kept
                 .map(|scalar| constrained_distance(drag.rule.as_ref(), axis, scalar))
                 .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
         };
@@ -437,6 +456,43 @@ impl TranslateGizmo {
         drag.hold = Hold::Following { axis: Some(axis), travel };
         self.drag = Some(drag);
         Ok(None)
+    }
+
+    /// The distance a carried piece needs so that a camera change leaves it where the hand held it.
+    ///
+    /// The screen place is the invariant, not the millimetres: a zoom, a view preset or Home moves
+    /// the projection, and the piece slides along its axis to stay in the hand. The answer is solved
+    /// for, because a projection is not linear in depth: each step measures the error the piece has
+    /// left on screen and takes it out with the axis' own scale there. An axis that points at the
+    /// camera has no screen place to keep, so the distance is left as it is.
+    fn keeps_its_place(
+        &self,
+        viewport: egui::Rect,
+        camera: Camera,
+        origin: DVec3,
+        axis: Axis,
+        distance: f64,
+    ) -> Option<f64> {
+        let (previous, _) = self.last_view?;
+        if previous == camera {
+            return Some(distance);
+        }
+        let before = screen_point(previous, viewport, origin + axis.direction() * distance)?;
+        let mut guess = distance;
+        for _ in 0..8 {
+            let at = screen_point(camera, viewport, origin + axis.direction() * guess)?;
+            let error = before - at;
+            if error.length() < 0.25 {
+                break;
+            }
+            let (direction, per_point) = travel_frame(camera, viewport, origin + axis.direction() * guess, axis)?;
+            let step = f64::from(error.dot(direction)) * per_point;
+            if !step.is_finite() {
+                return None;
+            }
+            guess = (guess + step).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
+        }
+        guess.is_finite().then_some(guess)
     }
 
     /// Starts a hold: a handle taken by a press, or a piece taken by a click on its body.
@@ -585,7 +641,6 @@ mod tests {
     use egui::Pos2;
     use geom::DQuat;
     use model::{ClassCode, Envelope, Placement, SnapSettings};
-    use scene::Camera;
     use testkit::{millimetres, sample_project};
     use units::Length;
 

@@ -1256,9 +1256,10 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
         );
     }
 
-    // Zooming out under the carry keeps the distance and does not lose the hand.
+    // A zoom under the carry is the eye's and not the hand's: the wheel zooms towards the pointer,
+    // and the piece keeps both the screen place and the hand it was carried with (X67).
     let at = fingers.last().expect("three steps").0;
-    let carried = harness.app.tabs.active().carried_delta();
+    let kept = piece(&harness);
     let wheel = |points: f32| egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
         delta: egui::vec2(0.0, points),
@@ -1270,25 +1271,33 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
         harness.run(vec![egui::Event::PointerMoved(at), wheel(-80.0)]);
         harness.settle();
     }
-    assert_eq!(harness.app.tabs.active().carried_delta(), carried, "a zoom does not move the piece");
-    // The wheel smooths itself over a few frames; the hand carries the piece again once it settles.
+    let zoomed = piece(&harness);
+    // The wheel zooms towards the pointer, so the piece keeps the place the hand gave it: what is
+    // left is the share across the piece's own axis, which no carried piece can take out.
+    let drift = (zoomed - at) - (kept - at);
+    assert!(
+        drift.length() < 25.0 && drift.y.abs() < 3.0,
+        "the piece keeps its place under the hand through a zoom: it was {:?} from the hand, is {:?}, drift {drift:?}",
+        kept - at,
+        zoomed - at
+    );
+    // The wheel smooths itself over a few frames, and the hand carries the piece again after it.
     for _ in 0..8 {
         harness.run(Vec::new());
     }
     harness.settle();
-    let before = harness.app.tabs.active().carried_delta();
+    let before = piece(&harness);
     harness.hover(at - egui::vec2(0.0, 40.0));
-    assert!(
-        (harness.app.tabs.active().carried_delta() - before).length() > 1.0,
-        "after the zoom the hand carries the piece again"
-    );
+    let carried_on = (piece(&harness).y - before.y).abs();
+    assert!(carried_on > 4.0, "after the zoom the hand carries the piece again: {carried_on} pt");
 }
 
 #[test]
-fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
-    // N25: the hold owns no button, so nothing about it may own the viewport. The camera keeps
-    // orbiting, panning and zooming under a piece in hand, and a view that moves re-anchors the hold
-    // instead of dragging the piece along with it.
+fn a_piece_in_hand_blocks_no_view_and_stays_under_the_hand() {
+    // N25, X67: the hold owns no button, so nothing about it may own the viewport. The camera keeps
+    // orbiting, panning and zooming under a piece in hand, and the piece keeps the place on screen
+    // the hand gave it: the hand is not the eye, so a view that moves slides the piece along its own
+    // axis rather than tearing it out of the hand.
     let (session, panel) = one_wide_panel();
     let mut harness = Harness::with_session("frame-furniture-view", session);
     harness.settle();
@@ -1307,16 +1316,25 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     let carried = harness.app.tabs.active().carried_delta();
     assert!(carried.z > 0.0, "the pointer carried it along its thickness: {carried:?}");
 
-    // Orbit: the camera moves, the piece does not.
+    let screen = |harness: &Harness| {
+        let project = harness.app.tabs.active().session.project();
+        let moved = project.pivot_world(panel).expect("a pivot") + harness.app.tabs.active().carried_delta();
+        gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+    };
+
+    // Orbit: the camera orbits, its own drag carries nothing, and the piece keeps the place on
+    // screen the hand gave it. The share across the piece's axis is the projection's: a board only
+    // rises and falls, so its own axis is all it can hold.
     let camera = harness.camera();
     let orbit = egui::vec2(60.0, 25.0);
+    let was = screen(&harness);
     harness.drag(at, orbit, egui::PointerButton::Middle);
     assert_ne!(harness.camera(), camera, "the camera orbits under a piece in hand");
-    let kept = harness.app.tabs.active().carried_delta();
-    assert!((kept - carried).length() < 1.0e-6, "and the piece is not dragged along: {kept:?} from {carried:?}");
+    let now = screen(&harness);
+    assert!((now.y - was.y).abs() < 6.0, "the piece kept its place along its axis: {now:?} from {was:?}");
     assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand after the orbit");
 
-    // Zoom: the same answer for the wheel.
+    // Zoom: the wheel zooms towards the pointer, so the piece keeps the place the hand gave it.
     let camera = harness.camera();
     let wheel = |points: f32| egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
@@ -1325,11 +1343,16 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
         phase: egui::TouchPhase::Move,
         source: egui::MouseWheelSource::Wheel,
     };
-    harness.run(vec![egui::Event::PointerMoved(at + orbit), wheel(-40.0)]);
+    let hand = at + orbit;
+    let was = screen(&harness);
+    harness.run(vec![egui::Event::PointerMoved(hand), wheel(-40.0)]);
     harness.settle();
     assert_ne!(harness.camera(), camera, "the wheel zooms under a piece in hand");
-    let kept = harness.app.tabs.active().carried_delta();
-    assert!((kept - carried).length() < 1.0e-6, "and the piece keeps its distance: {kept:?} from {carried:?}");
+    let now = screen(&harness);
+    assert!(
+        ((now - hand) - (was - hand)).length() < 25.0,
+        "the zoomed piece is still beside the hand: {now:?} against {hand:?}, it was {was:?}"
+    );
 
     // The click that puts it down commits the distance the hand added, and only that.
     let revision = harness.revision();
@@ -4290,4 +4313,52 @@ fn a_band_is_drawn_only_while_the_pointer_drags_on_empty_space() {
     harness.release_at(to, egui::PointerButton::Primary);
     harness.settle();
     assert_eq!(harness.selected(), level, "the dropped band selects nothing and changes no level");
+}
+
+#[test]
+fn a_view_preset_and_home_leave_the_piece_in_the_hand() {
+    // X67: the owner moved a panel, switched the view to *Front* and then pressed Home, and the panel
+    // was nowhere near the pointer. A camera change is the eye's and not the hand's, so the piece
+    // keeps the screen place the hand gave it: the camera may move under it and the piece slides
+    // along its own axis to stay in the hand.
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-view-preset-carry", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    let screen = |harness: &Harness| {
+        let project = harness.app.tabs.active().session.project();
+        let moved = project.pivot_world(panel).expect("a pivot") + harness.app.tabs.active().carried_delta();
+        gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+    };
+    let at = body + egui::vec2(70.0, -90.0);
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
+    let was = screen(&harness);
+
+    // *Front* is a direction and a projection at once: the piece keeps its own axis' place on screen.
+    harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Front);
+    harness.settle();
+    let now = screen(&harness);
+    assert!((now.y - was.y).abs() < 6.0, "the piece stayed in the hand through the preset: {now:?} from {was:?}");
+    assert!(harness.app.tabs.active().holding_piece(), "the preset does not end the carry");
+
+    // Home turns the view back to the axonometric preset under the same rule.
+    let was = screen(&harness);
+    harness.app.tabs.active_mut().home_view();
+    harness.settle();
+    let now = screen(&harness);
+    assert!((now.y - was.y).abs() < 6.0, "the piece stayed in the hand through Home: {now:?} from {was:?}");
+
+    // The gaps the card reads are the piece's own, wherever the view put it.
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.z.is_finite(), "the carry kept a distance: {carried:?}");
+    assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand");
 }
