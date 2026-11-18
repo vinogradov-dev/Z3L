@@ -152,6 +152,25 @@ impl FolderSource {
         &self.root
     }
 
+    /// The manifest of one connected package: the number its item ids carry, its name and the
+    /// version its writer bumps on every committed write.
+    ///
+    /// A writer needs the number before it can name the record it is about to write, and an editor
+    /// needs the readable name to offer the package at all.
+    pub fn manifest(&self, package: &str) -> Result<ManifestWire, LoadError> {
+        let path = self.root.join(PACKAGES_DIR).join(package).join(MANIFEST_FILE);
+        let manifest: ManifestWire = read_json(&path, package)?;
+        if manifest.version != MANIFEST_VERSION {
+            return Err(LoadError::Version {
+                package: package.to_owned(),
+                path,
+                found: manifest.version,
+                expected: MANIFEST_VERSION,
+            });
+        }
+        Ok(manifest)
+    }
+
     /// The packages a connected directory lists, in load order.
     ///
     /// A missing `directory.json` is an empty directory, not a failure: a workspace that has never
