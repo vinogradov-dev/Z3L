@@ -495,6 +495,58 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     println!("the box tool is in {}", path.display());
 }
 
+/// Draws the product card in both theme variants: its number column and its folded class tree.
+///
+/// The picture answers the two questions a rectangle cannot: whether the three fields start on one
+/// x with their unit outside the box, and whether a fold reads as the scene tree's fold rather than
+/// as an indent. The card is the numeric path into `product.create` (ADR 0100), so a picture of it
+/// is read before the fields it is about to grow are added.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/product-card-{dark,light}.png"]
+fn the_product_card_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    for variant in VARIANTS {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join("product-card-workspace.json");
+        let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        // The picture is the settled card, not a frame of its fade-in: an `Area` fades over the
+        // style's animation time, which the shot's rapid frames never reach.
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        app.product_card.start();
+        let jobs = settle(&mut app, &ctx, &render_state, screen);
+        assert!(app.product_card.is_open(), "the card is up");
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the card paints");
+        let name = match variant {
+            ThemeChoice::Light => "product-card-light.png",
+            ThemeChoice::Dark | ThemeChoice::System => "product-card-dark.png",
+        };
+        let path = directory.join(name);
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        let picture = Picture { width: size[0], height: size[1], rgba };
+        assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+        println!("the product card is in {}", path.display());
+    }
+}
+
 /// Draws a cone's base round and its pull card into one picture.
 ///
 /// The cone cell draws the base circle and hands the pointer to the pull, whose card carries the

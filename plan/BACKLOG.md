@@ -43,6 +43,25 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **U112** the product card aligns its numbers and folds its class list
+  Why: The card is the numeric path into `product.create` and it is about to grow fields
+   (shape, position, corners), so its layout is read before it grows. Today each row label is
+   as wide as its word, so the three number boxes start at three different x positions; the
+   class list is a flat scroll of seventeen rows with no fold, so a maker hunting a wall
+   cabinet reads the whole registry; and the paragraph under the title explains a rule the
+   maker learns from the frame itself and cannot act on.
+  Shape: A fixed label column (LABEL_WIDTH, at least one tree indent) with the shared scrub
+   field beside it, so Width, Depth and Height start on one x. The class list becomes the
+   registry tree the picker already builds: a foldable family caption, a foldable type row that
+   is itself selectable, and its variant rows under it, drawn with egui CollapsingState like
+   the scene tree; the type that holds the current class opens by default and a search opens
+   every group it keeps. `class_picker::product_rows` returns that tree instead of a flat list
+   of depths. The ProductCardHint message is deleted from the table in both languages.
+  Done: A headless test draws the card and finds the three fields labels and numbers on one
+   column; a closed type lists no variant and the type of the chosen class lists them; the hint
+   is gone from both languages; cargo xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/text/src/messages.rs`
+
 - `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
   Why: The assistant and the prototype expander both need the document without a window, and
    only export reaches the engine from the command line today. A generator that writes the

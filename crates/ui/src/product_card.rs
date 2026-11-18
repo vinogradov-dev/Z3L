@@ -2,23 +2,26 @@
 //!
 //! A maker starts a piece by saying how big its reserved space is and what the piece is
 //! (ADR 0100). The card is the numeric path to `product.create`: it draws the three sides in whole
-//! millimetres, offers the registry's product classes behind one search field, and returns a
-//! [`ProductDraft`]. It never dispatches a command and never touches the document — the editor
-//! turns the draft into `product.create` and then opens the new frame as a session view operation
-//! (ADR 0098).
+//! millimetres on one label column, offers the registry's product classes as the same family/type
+//! tree the class picker draws — folded, so the case a shop builds is a row and not a scroll — and
+//! returns a [`ProductDraft`]. It never dispatches a command and never touches the document — the
+//! editor turns the draft into `product.create` and then opens the new frame as a session view
+//! operation (ADR 0098).
 //!
 //! The drawn gesture (a base rectangle and a pulled height) reaches the same command through the
 //! box tool, which the ribbon offers as this tool's second method (ADR 0101): the two entries build
 //! one document, and this card is not a second creation path, only the typed one.
 //!
-//! Changes when: the product frame gains a field, the class list changes how it is searched, or the
-//! numeric defaults move.
+//! Changes when: the product frame gains a field, the class tree changes how it is folded or
+//! searched, or the numeric defaults move.
 
-use egui::{Button, Key, Modal, RichText, ScrollArea, TextEdit, Vec2};
+use egui::collapsing_header::CollapsingState;
+use egui::{Button, Key, Modal, RichText, ScrollArea, TextEdit, Ui};
 use model::{ClassCode, Envelope};
 use text::Message;
 use units::Length;
 
+use crate::class_picker::{ProductFamily, ProductType};
 use crate::theme;
 
 /// The width the card draws at, in points.
@@ -27,11 +30,17 @@ const WIDTH: f32 = 380.0;
 /// The height one class row takes, in points.
 const ROW_HEIGHT: f32 = 22.0;
 
-/// How far one class level indents its row, in points.
-const INDENT: f32 = 12.0;
+/// The width the label column of the card's number block at least takes, in points.
+///
+/// The grid sizes the column to its widest word, so every field beside it starts on one x: a label
+/// as wide as its own word is what made the three boxes wander.
+const LABEL_WIDTH: f32 = 96.0;
 
 /// The tallest the class list grows before it scrolls, in points.
-const MAX_LIST_HEIGHT: f32 = 220.0;
+///
+/// Tall enough for the whole registry with every type folded: the fold is what keeps the list short,
+/// so the card should not open on a scrollbar.
+const MAX_LIST_HEIGHT: f32 = 264.0;
 
 /// The width of a new frame's base, in millimetres, until the maker types another.
 pub const DEFAULT_WIDTH_MM: f64 = 600.0;
@@ -130,32 +139,42 @@ impl ProductCard {
         Modal::new(egui::Id::unique("product-frame-card")).show(ctx, |ui| {
             ui.set_width(WIDTH);
             ui.heading(Message::ProductCardTitle.text(lang));
-            ui.label(RichText::new(Message::ProductCardHint.text(lang)).color(theme::text_dim(ui)));
             ui.separator();
 
             // Three sides in whole millimetres: the field rounds a drag and a typed value alike to
-            // the step the document stores, so a frame is never half a millimetre out.
-            for (label, value) in [
-                (Message::Width, &mut self.width),
-                (Message::Depth, &mut self.depth),
-                (Message::Height, &mut self.height),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.label(label.text(lang));
-                    crate::scrub::Scrub::new(value)
-                        .speed(0.5)
-                        .range(1.0..=max_side_mm())
-                        .decimals(0)
-                        .unit("mm")
-                        .show(ui);
+            // the step the document stores, so a frame is never half a millimetre out. A grid sizes
+            // the label column once, so the three boxes start on one x and a number is read down a
+            // column instead of being hunted past a longer word.
+            egui::Grid::new("product-frame-card.sides")
+                .num_columns(2)
+                .min_col_width(LABEL_WIDTH)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    for (label, value) in [
+                        (Message::Width, &mut self.width),
+                        (Message::Depth, &mut self.depth),
+                        (Message::Height, &mut self.height),
+                    ] {
+                        ui.label(label.text(lang));
+                        // The field and its unit are one horizontal: the shared box draws the unit
+                        // beside itself, and a grid cell cannot take that space.
+                        ui.horizontal(|ui| {
+                            crate::scrub::Scrub::new(value)
+                                .speed(0.5)
+                                .range(1.0..=max_side_mm())
+                                .decimals(0)
+                                .unit("mm")
+                                .show(ui);
+                        });
+                        ui.end_row();
+                    }
                 });
-            }
 
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(Message::PropertyKindClass.text(lang));
-                // The chosen class is named beside the list, so the placeholder it defaults to is
-                // visible even while the list is scrolled away from its row.
+                // The chosen class is named beside the tree, so the placeholder it defaults to is
+                // visible even while the tree is folded away from its row.
                 let current = self.class.label().map(|label| label.text(lang)).unwrap_or_default();
                 ui.label(RichText::new(current).strong());
             });
@@ -165,25 +184,15 @@ impl ProductCard {
                     .desired_width(f32::INFINITY),
             );
             let rows = crate::class_picker::product_rows(&self.query, lang);
+            let force_open = !self.query.trim().is_empty();
             ui.spacing_mut().item_spacing.y = 2.0;
             ScrollArea::vertical().max_height(MAX_LIST_HEIGHT).show(ui, |ui| {
                 if rows.is_empty() {
                     ui.label(RichText::new(Message::ClassPickerNoMatch.text(lang)).color(theme::text_dim(ui)));
                     return;
                 }
-                for (code, text, depth) in rows {
-                    ui.horizontal(|ui| {
-                        ui.add_space(f32::from(depth.saturating_sub(1)) * INDENT);
-                        let row = ui.add(
-                            Button::new(text)
-                                .selected(code == self.class)
-                                .truncate()
-                                .min_size(Vec2::new(WIDTH - INDENT, ROW_HEIGHT)),
-                        );
-                        if row.clicked() {
-                            self.class = code;
-                        }
-                    });
+                for family in &rows {
+                    self.show_family(ui, family, force_open);
                 }
             });
 
@@ -205,6 +214,96 @@ impl ProductCard {
         }
         chosen
     }
+
+    /// Draws one family of the class tree and the types folded under it.
+    ///
+    /// The family is a caption, not a class a piece can take, so its row folds on a click instead of
+    /// selecting. A search opens every group it kept: a matching row hidden behind a fold is a
+    /// result the maker cannot see.
+    fn show_family(&mut self, ui: &mut Ui, family: &ProductFamily, force_open: bool) {
+        let mut folded = false;
+        let mut header =
+            CollapsingState::load_with_default_open(ui.ctx(), fold_id(family.code), true).show_header(ui, |ui| {
+                let caption = ui.label(RichText::new(&family.label).strong().color(theme::text_dim(ui)));
+                folded = caption.clicked();
+            });
+        if force_open {
+            header.set_open(true);
+        } else if folded {
+            header.toggle();
+        }
+        let _ = header.body(|ui| {
+            for kind in &family.types {
+                self.show_type(ui, kind, force_open);
+            }
+        });
+    }
+
+    /// Draws one product type: a selectable row, and the variants folded under it.
+    ///
+    /// A type is a class in its own right — the cabinet is one before it is a base or a wall
+    /// cabinet — so the row selects it and the arrow alone folds the variants away. The type that
+    /// holds the chosen class starts open, so the card never hides the row it says is current.
+    fn show_type(&mut self, ui: &mut Ui, kind: &ProductType, force_open: bool) {
+        if kind.variants.is_empty() {
+            self.class_row(ui, kind.code, &kind.label);
+            return;
+        }
+        let default_open = self.class.is_ancestor_or_self(kind.code);
+        let mut header = CollapsingState::load_with_default_open(ui.ctx(), fold_id(kind.code), default_open)
+            .show_header(ui, |ui| {
+                self.class_row(ui, kind.code, &kind.label);
+            });
+        if force_open {
+            header.set_open(true);
+        }
+        let _ = header.body(|ui| {
+            for (code, label) in &kind.variants {
+                self.class_row(ui, *code, label);
+            }
+        });
+    }
+
+    /// One selectable class row, drawn like a scene-tree row.
+    ///
+    /// A flat row with a wash on hover and on the class the piece carries, and the label at the
+    /// left: the tree the owner reads it beside puts its words on one column, and a centred button
+    /// would put the cabinet under the middle of the card instead.
+    fn class_row(&mut self, ui: &mut Ui, code: ClassCode, label: &str) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::hover());
+        let id = ui.make_persistent_id(("product.card.row", code.value()));
+        let response = ui.interact(rect, id, egui::Sense::click());
+        let selected = code == self.class;
+        let hovered = ui.rect_contains_pointer(rect);
+        let visuals = ui.style().interact_selectable(&response, selected);
+        if selected || hovered {
+            ui.painter().rect_filled(rect, egui::CornerRadius::same(theme::RADIUS), visuals.weak_bg_fill);
+        }
+        let padding = ui.spacing().button_padding.x;
+        let galley = egui::WidgetText::from(RichText::new(label)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            (rect.width() - 2.0 * padding).max(0.0),
+            egui::TextStyle::Button,
+        );
+        let elided = galley.elided;
+        let position = egui::pos2(rect.left() + padding, rect.center().y - 0.5 * galley.size().y);
+        ui.painter().with_clip_rect(rect).galley(position, galley, visuals.text_color());
+        if response.clicked() {
+            self.class = code;
+        }
+        if elided {
+            response.on_hover_text(label);
+        }
+    }
+}
+
+/// The id the class tree remembers one row's fold under.
+///
+/// A global id, not `ui.make_persistent_id`: the card is drawn in one place, so the fold survives a
+/// closed and reopened card and a test can set it without knowing the modal's generated id.
+fn fold_id(code: ClassCode) -> egui::Id {
+    egui::Id::unique(("product.card.class", code.value()))
 }
 
 #[cfg(test)]
@@ -222,11 +321,14 @@ mod tests {
         }
     }
 
-    fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+    fn drawn_text_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Rect)> {
         use egui::epaint::Shape;
-        fn walk(shape: &Shape, out: &mut Vec<String>) {
+        fn walk(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {
             match shape {
-                Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                Shape::Text(text) => {
+                    let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                    out.push((text.galley.text().to_owned(), rect));
+                }
                 Shape::Vec(shapes) => {
                     for shape in shapes {
                         walk(shape, out);
@@ -240,6 +342,10 @@ mod tests {
             walk(&clipped.shape, &mut out);
         }
         out
+    }
+
+    fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+        drawn_text_rects(shapes).into_iter().map(|(text, _rect)| text).collect()
     }
 
     /// Draws the card for a few frames and returns every text the last one painted.
@@ -276,6 +382,70 @@ mod tests {
         );
         assert!(texts.iter().any(|text| text == "Class"), "the list is captioned: {texts:?}");
         assert!(texts.iter().any(|text| text == "Create"), "the card can be confirmed: {texts:?}");
+        assert!(
+            !texts.iter().any(|text| text.contains("ready for parts")),
+            "the paragraph under the title is gone: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn the_three_sides_share_one_label_column_and_one_field_column() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        crate::set_language(&ctx, Lang::En);
+        let mut card = ProductCard::new();
+        card.start();
+        let mut painted = Vec::new();
+        for _ in 0..2 {
+            let output = ctx.run_ui(screen(), |_ui| {
+                let _ = card.show(&ctx);
+            });
+            painted = drawn_text_rects(&output.shapes);
+            output.drop_without_applying_deltas();
+        }
+        let rect = |text: &str| {
+            painted
+                .iter()
+                .find(|(painted, _rect)| painted == text)
+                .map(|(_text, rect)| *rect)
+                .unwrap_or_else(|| panic!("the card paints {text:?}: {painted:?}"))
+        };
+
+        let width = rect("Width");
+        let depth = rect("Depth");
+        let height = rect("Height");
+        assert_eq!(depth.left(), width.left(), "the labels share one column: {width:?} {depth:?}");
+        assert_eq!(height.left(), width.left(), "the labels share one column: {width:?} {height:?}");
+
+        let first = rect("600");
+        let second = rect("560");
+        let third = rect("720");
+        assert_eq!(second.right(), first.right(), "the fields share one column: {first:?} {second:?}");
+        assert_eq!(third.right(), first.right(), "the fields share one column: {first:?} {third:?}");
+    }
+
+    #[test]
+    fn a_folded_type_lists_no_variant_and_the_chosen_branch_opens() {
+        let mut card = ProductCard::new();
+        card.start();
+        // The card opens on the placeholder, which is a leaf, so the cabinet's variants are folded.
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(texts.iter().any(|text| text.contains("Cabinet")), "the type row is listed: {texts:?}");
+        assert!(!texts.iter().any(|text| text.contains("Base cabinet")), "a folded type lists no variant: {texts:?}");
+
+        // The type of the chosen class opens by itself, so the row the card calls current is never
+        // hidden behind a fold.
+        card.class = "10.01.02".parse().expect("the wall cabinet");
+        let (texts, _) = present(&mut card, Lang::En);
+        for row in ["Base cabinet", "Wall cabinet", "Tall cabinet"] {
+            assert!(texts.iter().any(|text| text.contains(row)), "{row} is under the open type: {texts:?}");
+        }
+
+        // A search opens every group it kept: a match behind a fold is a result nobody can see.
+        card.class = ClassCode::GENERAL_PRODUCT;
+        card.query = "cabinet".to_owned();
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(texts.iter().any(|text| text.contains("Base cabinet")), "a matched group opens: {texts:?}");
     }
 
     #[test]

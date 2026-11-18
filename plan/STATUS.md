@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=J1 state=idle base=f0f8f68 updated=2026-11-18
+STATE: milestone=M7 phase=T task=U112 state=doing base=f0f8f68 updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -45,8 +45,7 @@ waits for four decisions before its ADR.
 
 ## Next
 
-J1 is next: the editor can be driven from the command line — list its commands, run a recipe, ask
-the scene a question
+U112 is next: the product card aligns its numbers and folds its class list
 
 ## Index
 

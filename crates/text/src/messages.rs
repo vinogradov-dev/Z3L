@@ -689,10 +689,6 @@ messages! {
 
     // ── Product card ────────────────────────────────────────────────────────
     ProductCardTitle = ["New product frame", "Новый каркас изделия"],
-    ProductCardHint = [
-        "The frame is created open, ready for parts on the floor beside the other pieces.",
-        "Каркас создаётся открытым, готовым для деталей на полу рядом с другими изделиями."
-    ],
     Height = ["Height", "Высота"],
 
     // ── Container card ──────────────────────────────────────────────────────
