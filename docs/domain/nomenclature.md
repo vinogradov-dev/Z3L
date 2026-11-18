@@ -281,11 +281,14 @@ A price is an item property with provenance: `value` in whole minor units, `unit
 
 ## 12. Packages
 
-A manifest declares `id`, `name`, `version`, `requires` (package ids and the registry revisions it
-needs: kinds, properties, families), the part documents it carries and the rule tables it carries.
+A manifest declares `id`, `name`, `version`, `requires`, the part documents it carries and the rule
+tables it carries. `requires` names the packages it was written against — their number, the name a
+person reads and the content version it needs — because the kinds, properties and families it
+resolves through live inside those packages, so one version names them all.
 
 - **connect / disconnect** — a package is enabled or disabled as a unit; disabling it makes its items
-  absent (§9.3), which is visible, not silent;
+  absent (§9.3), which is visible, not silent. The list is written only when the loader accepts what
+  would remain, so a package another one requires cannot be withdrawn silently;
 - **export / import** — a package travels as a folder: the manifest, its records, its part documents,
   its rule tables; a workshop extends its directory by importing a package and exporting its own;
 - **conflicts refuse**: an id claimed twice, a package whose `requires` cannot be satisfied, a part
@@ -351,7 +354,12 @@ nomenclature/
   watch a folder at all. A store that keeps a numbered revision behind the same port is free to; the
   editor compares the value and never interprets it;
 - the folder copies as a folder — a workshop moves its directory by copying it — and an archive of one
-  package is its folder;
+  package is its folder: an export copies every file of it — records, registry, part documents, rule
+  tables — and its manifest last, so a reader pointed at the copy never sees a package missing one of
+  its files; an import lands the copy in `packages/<name>`, checks it with the loader's own rows
+  together with what is already connected, and writes `directory.json` last, so a directory a window
+  polls moves once, after the whole package is in place. A copy the loader refuses is removed again
+  and the directory is exactly as it was;
 - an embedded pure-Rust store may replace the implementation behind the same port when the schema
   settles or the directory outgrows a load-into-memory snapshot; the model is normalized so its
   tables map one to one. A store that binds C is refused by `AGENTS.md` §2.
