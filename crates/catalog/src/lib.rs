@@ -32,13 +32,19 @@ mod error;
 mod family;
 mod item;
 mod kind;
+mod money;
 mod property;
 mod slug;
+mod view;
 
 pub use directory::Directory;
 pub use error::CatalogError;
 pub use family::{Family, FamilyCode, FamilyRegistry};
 pub use item::{ExternalKey, ExternalSystemId, MAX_EXTERNAL_KEYS, MAX_ITEM_NAME_CHARS, NomenclatureItem};
 pub use kind::{Kind, KindCode, KindRegistry, Trait};
+pub use money::{Currency, CurrencyError, Money};
 pub use property::{Date, Property, PropertyCode, PropertyType, PropertyValue, Rgb};
 pub use slug::{MAX_SLUG_CHARS, Slug};
+pub use view::{
+    BandingView, BoardView, COLOR_SLUG, SHEET_LENGTH_SLUG, SHEET_WIDTH_SLUG, SheetView, THICKNESS_SLUG, WIDTH_SLUG,
+};

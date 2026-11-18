@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use model::{ItemId, Money};
+use model::ItemId;
 use serde::{Deserialize, Serialize};
 use units::Length;
 
 use crate::error::CatalogError;
+use crate::money::Money;
 use crate::slug::Slug;
 
 /// A property's code, allocated by the package that declares the row.
