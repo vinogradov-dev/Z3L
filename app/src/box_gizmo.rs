@@ -369,7 +369,7 @@ pub(crate) enum BoxGrip {
 }
 
 /// A selected frame read from the document: the node, its frames, its three sides and its shape.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BoxBody {
     /// The node whose envelope the grips edit.
     node: Id,
@@ -379,6 +379,8 @@ pub(crate) struct BoxBody {
     world: Placement,
     /// The stored width, depth and height.
     sides: [Length; 3],
+    /// The stored footprint, so a grip that moves one side keeps the shape the maker chose.
+    footprint: model::Footprint,
     /// Which nominal corners are cut, in [`RectCorner::ALL`] order.
     cut: [bool; 4],
     /// Whether the footprint is a drawn ring, whose horizontal shape is not a rectangle.
@@ -399,7 +401,15 @@ impl BoxBody {
         let sides = envelope.components();
         let footprint = envelope.footprint();
         let cut = RectCorner::ALL.map(|corner| footprint.corner_cut(corner).is_some());
-        Some(Self { node, placement: container.placement(), world, sides, cut, ring: footprint.is_ring() })
+        Some(Self {
+            node,
+            placement: container.placement(),
+            world,
+            sides,
+            footprint: footprint.clone(),
+            cut,
+            ring: footprint.is_ring(),
+        })
     }
 
     /// The local point of a grip handle, in millimetres.
@@ -552,7 +562,7 @@ impl BoxGrips {
                 self.drag = None;
                 return GripUpdate::Idle;
             };
-            let edit = self.edit_for(drag, body, camera, viewport, pointer);
+            let edit = self.edit_for(drag, &body, camera, viewport, pointer);
             if !ui.input(|input| input.pointer.primary_down()) {
                 // The release keeps what the last move wrote: one drag is one edit, one undo entry.
                 self.drag = None;
@@ -585,7 +595,7 @@ impl BoxGrips {
     fn edit_for(
         &self,
         drag: GripDrag,
-        body: BoxBody,
+        body: &BoxBody,
         camera: Camera,
         viewport: egui::Rect,
         pointer: Pos2,
@@ -636,7 +646,9 @@ impl BoxGrips {
             return None;
         }
         let [width, depth, height] = sides;
-        let change = BoxChange::Envelope(Envelope::new(width, depth, height).ok()?);
+        // The footprint travels with the sides: a face grip resizes the reserved space and never
+        // turns a cut corner or a drawn ring back into a plain box (ADR 0159).
+        let change = BoxChange::Envelope(Envelope::with_footprint(width, depth, height, body.footprint.clone()).ok()?);
         let placement = if shift.length_squared() > 0.0 {
             let moved = body.placement.transform_vector(shift);
             Placement::new(body.placement.translation() + moved, body.placement.rotation()).ok()
@@ -879,6 +891,35 @@ mod tests {
     }
 
     #[test]
+    fn a_grip_keeps_the_footprint_it_resizes() {
+        // A face grip changes the sides and never the shape: a cut corner stays cut and a drawn ring
+        // stays a ring (ADR 0159). Both are one drag on a height or width face.
+        let (project, id) = corner_product_project();
+        let mut session = Session::with_directory(project, sample_catalog());
+        let project = session.project().clone();
+        let camera = Camera::new(DVec3::new(300.0, 200.0, 360.0), 3_000.0).expect("camera");
+        let grips = BoxGrips::default();
+        let scope = session.edit_scope();
+        let body = BoxBody::read(&project, id).expect("a box body");
+        let pointer = screen_point(camera, viewport(), DVec3::new(300.0, 280.0, 820.0)).expect("on screen");
+        let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: true }, scope };
+        let edit = grips.edit_for(drag, &body, camera, viewport(), pointer).expect("a taller frame");
+        let BoxChange::Envelope(envelope) = &edit.change;
+        assert!(!envelope.footprint().is_rectangle(), "the cut corner survives a grip: {envelope:?}");
+        assert_eq!(envelope.footprint().cuts(), body.footprint.cuts());
+
+        let (project, id) = ring_product_project();
+        let session = Session::with_directory(project, sample_catalog());
+        let project = session.project().clone();
+        let body = BoxBody::read(&project, id).expect("a box body");
+        let pointer = screen_point(camera, viewport(), DVec3::new(250.0, 200.0, 820.0)).expect("on screen");
+        let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: true }, scope };
+        let edit = grips.edit_for(drag, &body, camera, viewport(), pointer).expect("a taller frame");
+        let BoxChange::Envelope(envelope) = &edit.change;
+        assert!(envelope.footprint().is_ring(), "the drawn ring survives a grip: {envelope:?}");
+    }
+
+    #[test]
     fn a_corner_grip_moves_two_sides_and_a_face_grip_one() {
         let (project, id) = sample_product_project();
         let mut session = Session::with_directory(project, sample_catalog());
@@ -898,15 +939,16 @@ mod tests {
 
         // The far corner of the base: both horizontal sides follow it.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: false }, scope };
-        let edit =
-            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0))).expect("an edit");
+        let edit = grips
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0)))
+            .expect("an edit");
         close(&edit, [700.0, 660.0, 720.0]);
         assert_eq!(edit.placement, None, "a maximum corner does not move the frame's zero");
 
         // One face centre: one side follows it, the other two stay.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Width, max: true }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 280.0, 360.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 280.0, 360.0)))
             .expect("an edit");
         close(&edit, [700.0, 560.0, 720.0]);
         assert_eq!(edit.placement, None);
@@ -914,7 +956,7 @@ mod tests {
         // The floor moves down: the height grows and the box's zero moves with the floor.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: false }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 280.0, -100.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(300.0, 280.0, -100.0)))
             .expect("an edit");
         close(&edit, [600.0, 560.0, 820.0]);
         let placement = edit.placement.expect("the floor moved, so the zero did too");
@@ -943,8 +985,9 @@ mod tests {
 
         // A base corner: width and depth follow the pointer, the height stays.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: false }, scope };
-        let edit =
-            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0))).expect("an edit");
+        let edit = grips
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0)))
+            .expect("an edit");
         let sides = edited_sides(&edit);
         assert!((sides[0] - 700.0).abs() <= 5.0, "the width follows the corner: {sides:?}");
         assert!((sides[1] - 660.0).abs() <= 5.0, "the depth follows the corner: {sides:?}");
@@ -954,7 +997,7 @@ mod tests {
         // The top corner drags in the plane through the top: the same two sides, not the height.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: true }, scope };
         let top = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(640.0, 600.0, 720.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(640.0, 600.0, 720.0)))
             .expect("an edit");
         let top_sides = edited_sides(&top);
         assert!((top_sides[0] - 640.0).abs() <= 5.0, "a top corner reads the ceiling: {top_sides:?}");
@@ -964,7 +1007,7 @@ mod tests {
         // One face: one side, the other two stay.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Depth, max: true }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 700.0, 360.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(300.0, 700.0, 360.0)))
             .expect("an edit");
         let sides = edited_sides(&edit);
         assert_eq!((sides[0], sides[2]), (600.0, 720.0), "a face moves one side: {sides:?}");
