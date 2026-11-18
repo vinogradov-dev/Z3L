@@ -387,9 +387,13 @@ impl Leaf {
         self.camera.pan_pixels(delta_x, delta_y, viewport_height);
     }
 
-    /// Zooms the leaf; the view direction and its preset name are untouched.
-    pub(crate) fn zoom(&mut self, factor: f64) {
-        self.camera.zoom(factor);
+    /// Zooms the leaf about a world point, which keeps that point where it is on screen.
+    ///
+    /// The wheel goes through here so the maker zooms towards the pointer: the point under it stays,
+    /// and a piece held in the hand stays in it (X67). A shade with no point to keep — a shot that
+    /// only needs the frame — passes `None` and gets the plain zoom about the target.
+    pub(crate) fn zoom_about(&mut self, factor: f64, anchor: Option<geom::DVec3>) {
+        self.camera.zoom_about(factor, anchor);
     }
 
     /// Switches the projection, which is not a change of direction.

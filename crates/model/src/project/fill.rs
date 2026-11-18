@@ -53,8 +53,9 @@ const MAX_FILL_BEVEL: Degrees = Degrees::from_millidegrees(45_000);
 /// The numbers one fill asks with, so the plan's signature stays a request rather than a list.
 ///
 /// The five travel together because they are one gesture: the point the pointer named, the class's
-/// axis pair, the mode the cell ran, the material's thickness and the free-axis position a typed
-/// field pinned. A fill plan, its refusal and the ghost a maker sees all read this value.
+/// axis pair, the mode the cell ran, the material's thickness and the free-axis position the tool
+/// chose — a typed field's number, or the hand's place on the axis. A fill plan, its refusal and the
+/// ghost a maker sees all read this value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FillRequest {
     /// The point the pointer named inside the open product.
@@ -65,7 +66,11 @@ pub struct FillRequest {
     pub mode: FillMode,
     /// The material's thickness, which is the part's third side.
     pub thickness: Length,
-    /// The free-axis position a typed field pinned, or `None` while the pointer picks it.
+    /// The free-axis position the tool chose, or `None` while the point under the pointer picks it.
+    ///
+    /// A typed field pins the number and a moving hand drives it; a caller that holds neither leaves
+    /// the point's own coordinate to answer. Either way it is rounded to whole millimetres and kept
+    /// between the cell's walls (ADR 0103).
     pub free: Option<f64>,
 }
 
@@ -155,9 +160,10 @@ impl Project {
     /// Answers the part one click at `point` would create in `product`.
     ///
     /// `fill` is the class's own axis pair, `thickness` the material's thickness, `mode` how the
-    /// section is read and `free` the pinned free-axis position — `None` while the pointer picks it
-    /// in whole millimetres, `Some` when a typed distance fixed it (ADR 0103). The result is the
-    /// whole plan, so the caller never measures the void a second time.
+    /// section is read and `free` the free-axis position the tool chose — `None` while the point
+    /// under the pointer picks it in whole millimetres, `Some` when a typed distance or the hand
+    /// fixed it (ADR 0103). The result is the whole plan, so the caller never measures the void a
+    /// second time.
     pub fn fill_plan(&self, product: Id, request: FillRequest) -> Result<FillPlan, FillRefusal> {
         let niche = self.niche(request.point).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
@@ -320,7 +326,9 @@ fn board(
     if high < low {
         return Err(FillRefusal::TooThin);
     }
-    let value = free.map_or_else(|| follow(local[stance.t], low, high), |free| free.clamp(low, high));
+    // A typed number is whole millimetres already and the hand's place is not: one rule measures
+    // both, so the plan never stores a fraction the document cannot hold (ADR 0103).
+    let value = follow(free.unwrap_or(local[stance.t]), low, high);
     let (stance, polygon, angles) = match mode {
         FillMode::Fit => {
             let footprint =
@@ -811,8 +819,14 @@ fn vertical_span(points: &[DVec2], x: f64) -> Option<(f64, f64)> {
     (high > low).then_some((low, high))
 }
 
-/// The pointer's place along the free axis: whole millimetres, kept inside the void.
+/// The part's place along the free axis: whole millimetres, kept inside the void.
+///
+/// A number that is not finite names no place at all, so it answers the cell's low wall — the one
+/// position the walls are known to hold — instead of a coordinate the document cannot store.
 fn follow(value: f64, low: f64, high: f64) -> f64 {
+    if !value.is_finite() || !low.is_finite() || !high.is_finite() {
+        return low;
+    }
     value.round().clamp(low, high)
 }
 

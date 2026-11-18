@@ -43,25 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
-  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
-   there, and should instead stop at it and jump past it into the free space beyond when the
-   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
-   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
-   the free-axis position inside the void and refuses a point outside the open product, so the
-   ghost sticks at the panel it meets and disappears at the envelope.
-  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
-   part re-plans into the cell beyond instead of clamping at the part; a point outside the
-   product clamps to the envelope inner face, so the ghost stays the last part it could place
-   and the click creates what was drawn. A refusal that is not about the pointer (a void
-   thinner than the board, a cell that is not convex, another product void) still says why. The
-   ghost stays the one measurement the click stores, so the picture, the numbers and the
-   panel.create cannot disagree.
-  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
-   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
-   void thinner than the board still refuses with its sentence; one click is one undo entry;
-   cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs`
 - `[ ]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
   Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
    with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
@@ -117,6 +98,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
    xtask ci is green.
   `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs`
+- `[ ]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
+  why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
+   owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
+   nearest object, with the editable gap in the middle of the arrow (reference picture:
+   Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
+   lags while a number is typed, drifts away from the pieces it measures after a camera gesture
+   and covers the pointer (X66, X69).
+  shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
+   from the piece's face along the free axis to the surface the model probe answered (the
+   neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
+   each end and the gap's own field sitting in the middle of the run. The field keeps the
+   behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
+   the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
+   the face and the opposite face follows. The floating card stops being drawn for the
+   furniture move; the inspector still shows the same two rows from the same Distances (ADR
+   0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
+   area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
+   axis points at the camera. Dimension grammar comes from the drafting skill.
+  done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
+   and Escape behave as the rows do today; the furniture move draws no card; the inspector
+   still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
+   test drives a gap through the arrow's field and asserts one command and one undo entry.
+  `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs`
 
 ## Bugs
 ## Next
@@ -266,6 +270,41 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
+   there, and should instead stop at it and jump past it into the free space beyond when the
+   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
+   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
+   the free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs` — `0bede29`
+
+- `[x]` **X71** the carry's hand is the pointer the viewport hit-tests while it is displaced
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `0fc31df`
+
+- `[x]` **X70** the carry's hand is the drawn pointer, not the system one
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/main.rs,app/src/work_cursor.rs` — `58c2988`
+
+- `[x]` **X69** the camera gesture hides the pointer and returns it to the middle of the piece
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `3de9d3f`
+
+- `[x]` **X68** a camera change keeps the piece and returns the pointer to it
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/scene/src/camera.rs` — `58324e5`
+
+- `[x]` **X67** a camera change leaves the carried piece in the hand
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/document.rs,app/src/view_layout.rs,crates/scene/src/camera.rs` — `bac9750`
 
 - `[x]` **X65** a carried piece runs away from the cursor when the hand strays off its axis
   Why: Observation: a board carried by the furniture move runs away from the cursor —

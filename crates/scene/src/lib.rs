@@ -1051,6 +1051,36 @@ mod tests {
     }
 
     #[test]
+    fn a_zoom_about_a_point_leaves_that_point_on_screen() {
+        // X67: the wheel zooms towards the pointer. A zoom about the target slides everything the
+        // maker is looking at out from under the pointer — a carried piece leaves the hand on the
+        // first wheel step — so the anchor keeps its own place in both projections.
+        for orthographic in [false, true] {
+            let mut camera = Camera::default();
+            camera.orbit(0.6, 0.35);
+            if orthographic {
+                camera.set_orthographic();
+            }
+            let anchor = camera.target() + camera.right() * 400.0 + camera.up() * 220.0;
+            let before = camera.project_ndc(anchor, 1.6).expect("the anchor is on screen");
+            for factor in [0.5, 0.8, 1.0, 1.4, 2.0] {
+                let mut zoomed = camera;
+                zoomed.zoom_about(factor, Some(anchor));
+                let after = zoomed.project_ndc(anchor, 1.6).expect("the anchor is still on screen");
+                assert!(
+                    (after - before).length() < 1.0e-9,
+                    "a zoom by {factor} keeps the point: {after:?} from {before:?}"
+                );
+                assert_eq!(zoomed.distance(), camera.distance() * factor, "the wheel still zooms");
+            }
+            // A point on the view's own axis has nowhere to slide to, and a plain zoom is the answer.
+            let mut centred = camera;
+            centred.zoom_about(0.5, None);
+            assert_eq!(centred.target(), camera.target(), "a zoom with no anchor moves only the distance");
+        }
+    }
+
+    #[test]
     fn pan_moves_the_target_with_the_pointer() {
         let mut camera = Camera::default();
         let before = camera.target();

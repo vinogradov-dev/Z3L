@@ -461,6 +461,22 @@ pub(crate) fn screen_point(camera: Camera, viewport: egui::Rect, point: DVec3) -
     (x.is_finite() && y.is_finite()).then_some(Pos2::new(x, y))
 }
 
+/// The world point under the pointer, taken on the plane through the camera's target.
+///
+/// The wheel zooms about this point, so what the maker is looking at keeps its place: a zoom about
+/// the view's centre slid a carried piece out of the hand on every step (X67). The plane through the
+/// target is where the projection's scale is exact for both projections; a ray along the view
+/// direction has no point on it, which is the answer `None`.
+pub(crate) fn view_plane_point(pointer: Pos2, viewport: egui::Rect, camera: Camera) -> Option<DVec3> {
+    let ray = ray_to(pointer, viewport, camera);
+    let forward = camera.forward();
+    let facing = ray.direction().dot(forward);
+    (facing.abs() > f64::EPSILON).then(|| {
+        let depth = (camera.target() - ray.origin()).dot(forward) / facing;
+        ray.origin() + ray.direction() * depth
+    })
+}
+
 /// The reference guide as screen polylines: the axis and the sweep sampled on the work plane and
 /// projected point by point.
 ///

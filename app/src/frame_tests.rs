@@ -113,6 +113,8 @@ impl Harness {
         self.cursor = output.platform_output.cursor_icon;
         self.faces = accessible_faces(&output);
         self.last_scene = self.app.tabs.active().scene_rect();
+        // A window applies the viewport commands it is given; a headless run has to play that part,
+        // or a carry that asks the pointer back onto its piece never gets an answer (ADR 0156).
         output.textures_delta.clear();
         chrome.expect("the frame drew the interface")
     }
@@ -1278,7 +1280,8 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
         );
     }
 
-    // Zooming out under the carry keeps the distance and does not lose the hand.
+    // A zoom under the carry is the eye's and not the hand's: the wheel zooms towards the pointer, the
+    // piece keeps its millimetres, and the pointer is what comes back to it (X67, ADR 0156).
     let at = fingers.last().expect("three steps").0;
     let carried = harness.app.tabs.active().carried_delta();
     let wheel = |points: f32| egui::Event::MouseWheel {
@@ -1292,25 +1295,30 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
         harness.run(vec![egui::Event::PointerMoved(at), wheel(-80.0)]);
         harness.settle();
     }
-    assert_eq!(harness.app.tabs.active().carried_delta(), carried, "a zoom does not move the piece");
-    // The wheel smooths itself over a few frames; the hand carries the piece again once it settles.
-    for _ in 0..8 {
+    assert_eq!(harness.app.tabs.active().carried_delta(), carried, "a zoom carries nothing");
+    // The wheel smooths itself over a few frames; then the carry puts its hand back on the piece and
+    // the mouse carries it again from there.
+    for _ in 0..16 {
         harness.run(Vec::new());
     }
-    harness.settle();
+    assert_eq!(harness.app.tabs.active().carried_delta(), carried, "and the piece still stands where it was");
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a zoom");
+    let back = hand - piece_middle(&harness, panel);
+    assert!(back.length() < 3.0, "the hand is back in the middle of the board: {back:?}");
+
     let before = harness.app.tabs.active().carried_delta();
     harness.hover(at - egui::vec2(0.0, 40.0));
     assert!(
         (harness.app.tabs.active().carried_delta() - before).length() > 1.0,
-        "after the zoom the hand carries the piece again"
+        "after the zoom the mouse carries the piece again from the hand"
     );
 }
 
 #[test]
 fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
-    // N25: the hold owns no button, so nothing about it may own the viewport. The camera keeps
-    // orbiting, panning and zooming under a piece in hand, and a view that moves re-anchors the hold
-    // instead of dragging the piece along with it.
+    // N25, X67: the hold owns no button, so nothing about it may own the viewport. The camera keeps
+    // orbiting, panning and zooming under a piece in hand — and none of that moves the piece: a view
+    // gesture writes nothing, and the pointer is what comes back to the piece afterwards (ADR 0156).
     let (session, panel) = one_wide_panel();
     let mut harness = Harness::with_session("frame-furniture-view", session);
     harness.settle();
@@ -1328,6 +1336,7 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
     let carried = harness.app.tabs.active().carried_delta();
     assert!(carried.z > 0.0, "the pointer carried it along its thickness: {carried:?}");
+    let placed = harness.app.tabs.active().session.project().world_placement(panel).expect("a world frame");
 
     // Orbit: the camera moves, the piece does not.
     let camera = harness.camera();
@@ -1335,7 +1344,7 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     harness.drag(at, orbit, egui::PointerButton::Middle);
     assert_ne!(harness.camera(), camera, "the camera orbits under a piece in hand");
     let kept = harness.app.tabs.active().carried_delta();
-    assert!((kept - carried).length() < 1.0e-6, "and the piece is not dragged along: {kept:?} from {carried:?}");
+    assert!((kept - carried).length() < 1.0e-3, "and the piece is not dragged along: {kept:?} from {carried:?}");
     assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand after the orbit");
 
     // Zoom: the same answer for the wheel.
@@ -1347,15 +1356,32 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
         phase: egui::TouchPhase::Move,
         source: egui::MouseWheelSource::Wheel,
     };
-    harness.run(vec![egui::Event::PointerMoved(at + orbit), wheel(-40.0)]);
+    // The wheel goes through the scene, so the pointer stays clear of the card the carry draws.
+    let wheel_at = at + orbit + egui::vec2(60.0, 40.0);
+    harness.run(vec![egui::Event::PointerMoved(wheel_at), wheel(-40.0)]);
     harness.settle();
     assert_ne!(harness.camera(), camera, "the wheel zooms under a piece in hand");
     let kept = harness.app.tabs.active().carried_delta();
-    assert!((kept - carried).length() < 1.0e-6, "and the piece keeps its distance: {kept:?} from {carried:?}");
+    assert!((kept - carried).length() < 1.0e-3, "and the piece keeps its distance: {kept:?}");
+    assert_eq!(
+        harness.app.tabs.active().session.project().world_placement(panel),
+        Some(placed),
+        "no view gesture moved the board in the room"
+    );
+
+    // The gesture is over — the wheel smooths itself out over a few frames — so the carry's hand
+    // comes back to the piece instead of the piece to it.
+    for _ in 0..12 {
+        harness.run(Vec::new());
+    }
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a gesture");
+    let back = hand - piece_middle(&harness, panel);
+    assert!(back.length() < 3.0, "the hand is back on the piece: {back:?}");
+    assert!((harness.app.tabs.active().carried_delta() - carried).length() < 1.0e-3, "and the piece has not moved");
 
     // The click that puts it down commits the distance the hand added, and only that.
     let revision = harness.revision();
-    harness.click(at + orbit, egui::PointerButton::Primary);
+    harness.click(hand, egui::PointerButton::Primary);
     assert!(!harness.app.tabs.active().holding_piece(), "the click puts it down");
     assert_eq!(harness.revision().get(), revision.get() + 1, "one carried piece is one undo entry");
 }
@@ -1508,6 +1534,14 @@ fn collect_panels<'a>(children: &'a [model::Node], panels: &mut Vec<&'a model::P
 }
 
 /// A product of 600 x 560 x 720 mm holding one 500 x 400 mm side panel, and both ids.
+/// The middle of a piece's world box, in the points the viewport draws it at.
+fn piece_middle(harness: &Harness, node: Id) -> egui::Pos2 {
+    let project = harness.app.tabs.active().session.project();
+    let (low, high) = project.world_box(node).expect("the piece has a box");
+    let moved = (low + high) * 0.5 + harness.app.tabs.active().carried_delta();
+    gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+}
+
 fn product_with_a_side_panel() -> (model::Project, Id, Id) {
     let mm = testkit::millimetres;
     let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
@@ -4362,4 +4396,273 @@ fn a_board_changed_in_the_directory_reaches_the_open_scene() {
         "Side",
         "and it takes back the person's edit, not the directory's"
     );
+}
+
+#[test]
+fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
+    // X70's follow-up: while the carry's hand is displaced the square is not where the system pointer
+    // is, and everything hit-tested at the system pointer would disagree with what the maker sees.
+    // The wheel works under the hand all the same, and leaving the work area hands the pointer back.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-hand-leaves", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    let at = body + egui::vec2(40.0, -60.0);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the panel is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+
+    // A pan puts the hand on the piece; it is not where the system pointer is any more.
+    let pan = egui::vec2(300.0, 20.0);
+    harness.drag(at, pan, egui::PointerButton::Secondary);
+    harness.run(Vec::new());
+    assert!(harness.app.tabs.active().carry_hand().is_some(), "the hand came back to the piece");
+
+    // The wheel still zooms under that hand, and it zooms about it.
+    let camera = harness.camera();
+    let wheel = |points: f32| egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    harness.run(vec![wheel(-60.0)]);
+    harness.settle();
+    assert_ne!(harness.camera(), camera, "the wheel zooms with a carried piece in hand");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-3, "and the piece keeps its gaps: {kept:?} from {carried:?}");
+
+    // The mouse leaves the work area for a panel: the hand goes back to the pointer, and the piece
+    // stays where it is rather than jumping to it.
+    let chrome = harness.settle();
+    // Any point outside the work area will do: the ribbon's own band is one, and it is always up.
+    let panel_row = chrome.panels.left.map_or_else(|| egui::pos2(60.0, 60.0), |tree| tree.center());
+    let panel_row = if harness.scene().contains(panel_row) { egui::pos2(60.0, 60.0) } else { panel_row };
+    harness.hover(panel_row);
+    assert!(!harness.scene().contains(panel_row), "the tree is outside the work area");
+    assert!(harness.app.tabs.active().carry_hand().is_none(), "the hand is the pointer again");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-3, "the piece did not jump to it: {kept:?}");
+}
+
+#[test]
+fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
+    // X67: the owner moved a panel, switched the view to *Front* and then pressed Home, and the panel
+    // was nowhere near the pointer. A view preset is the eye's, not the hand's: the panel keeps its
+    // distance to its neighbour, and the pointer is what comes back onto the panel (ADR 0156).
+    let (project, product, panel) = product_with_a_side_panel();
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-view-preset-carry", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    let at = body + egui::vec2(70.0, -90.0);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+    let placed = harness.app.tabs.active().session.project().world_placement(panel).expect("a world frame");
+
+    for name in ["Front", "Home"] {
+        if name == "Front" {
+            harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Front);
+        } else {
+            harness.app.tabs.active_mut().home_view();
+        }
+        harness.settle();
+        assert!(harness.app.tabs.active().holding_piece(), "{name} does not end the carry");
+        let kept = harness.app.tabs.active().carried_delta();
+        assert!((kept - carried).length() < 1.0e-3, "{name} moves no piece: {kept:?} from {carried:?}");
+        assert_eq!(
+            harness.app.tabs.active().session.project().world_placement(panel),
+            Some(placed),
+            "{name} leaves the board where it stands in the room"
+        );
+
+        // The hand comes back onto the piece, which is what the maker sees as "still in hand".
+        harness.run(Vec::new());
+        let hand =
+            harness.app.tabs.active().carry_hand().unwrap_or_else(|| panic!("the carry has its own hand after {name}"));
+        let back = hand - piece_middle(&harness, panel);
+        assert!(back.length() < 3.0, "the hand is back in the middle of the board after {name}: {back:?}");
+    }
+
+    assert!(harness.app.tabs.active().holding_piece(), "the piece is still in hand");
+}
+
+#[test]
+fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
+    // X67, the owner's own sequence: take a panel, pan the view a long way with the right button, and
+    // come back to the panel. The pan must not move the panel — its distance to its neighbour is a
+    // document value and a view gesture writes nothing — so the *pointer* is what comes back to the
+    // piece, on the frame the gesture ends (ADR 0156).
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-pan-carry", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let screen = |harness: &Harness| {
+        let project = harness.app.tabs.active().session.project();
+        let moved = project.pivot_world(panel).expect("a pivot") + harness.app.tabs.active().carried_delta();
+        gizmo_math::screen_point(harness.camera(), harness.scene(), moved).expect("the piece is on screen")
+    };
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    let at = body + egui::vec2(40.0, -60.0);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the panel is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+    let placed = harness.app.tabs.active().session.project().world_placement(panel).expect("a world frame");
+
+    // A long sideways pan with the right button: the view slides under the hand, the piece does not.
+    let pan = egui::vec2(420.0, 30.0);
+    harness.press_at(at, egui::PointerButton::Secondary);
+    for step in 1..=8 {
+        harness.run(vec![egui::Event::PointerMoved(at + pan * (step as f32 / 8.0))]);
+        // While the gesture runs the pointer is hidden: a cursor standing still while the world
+        // slides under it is the picture of a piece being left behind, and it is not what happens.
+        if step == 4 {
+            // The work area draws its own square, so hiding the pointer is not drawing it: a square
+            // standing still over the scene sliding under it is the picture of a piece left behind.
+            assert!(harness.app.tabs.active().hides_pointer(), "the pointer is hidden for the pan");
+            assert!(harness.app.shell.work_cursor.is_none(), "and its square is not drawn");
+            assert_eq!(harness.cursor, egui::CursorIcon::None, "and no system arrow shows in its place");
+        }
+    }
+    harness.release_at(at + pan, egui::PointerButton::Secondary);
+    harness.run(Vec::new());
+    assert!(harness.app.tabs.active().holding_piece(), "the pan leaves the move mode alone");
+    let after_pan = harness.app.tabs.active().carried_delta();
+    assert!((after_pan - carried).length() < 1.0e-3, "the pan carried nothing: {after_pan:?} from {carried:?}");
+    assert_eq!(
+        harness.app.tabs.active().session.project().world_placement(panel),
+        Some(placed),
+        "and it moved the panel nowhere"
+    );
+    // The pan slides the world under the pointer, so the piece slides on screen with it; what the
+    // pan must not do is move the piece in the room, which the two lines above check.
+    let apart = (screen(&harness) - (at + pan)).length();
+    assert!(apart.is_finite(), "the piece is still on screen: {apart}");
+
+    // The gesture is over, so the carry puts its own hand back on the piece: the square is drawn in
+    // the middle of the board, which is where a maker reaches for it, and the piece has not moved.
+    harness.run(Vec::new());
+    assert!(!harness.app.tabs.active().hides_pointer(), "the pointer comes back when the gesture ends");
+    assert!(harness.app.tabs.active().holding_piece(), "the panel is still in hand");
+    let after_home = harness.app.tabs.active().carried_delta();
+    assert!((after_home - carried).length() < 1.0e-3, "and has not moved: {after_home:?}");
+    let middle = piece_middle(&harness, panel);
+    let hand = harness.app.tabs.active().carry_hand().expect("the carry has its own hand after a pan");
+    let back = hand - middle;
+    assert!(back.length() < 3.0, "the hand is back in the middle of the board: {back:?} from {middle:?}");
+
+    // Carrying on from there: the mouse moves the hand by its own movement, and the hand carries the
+    // piece 1:1 — the pointer never jumped, so the piece does not either.
+    let before = harness.app.tabs.active().carried_delta();
+    harness.hover(at + pan + egui::vec2(0.0, -30.0));
+    let carried_on = (harness.app.tabs.active().carried_delta() - before).length();
+    assert!(carried_on > 1.0, "the mouse carries the piece again from the hand: {carried_on} mm");
+}
+
+/// The empty-space ghost passes the board its ray meets and holds at the frame's envelope (N23).
+///
+/// The point under the pointer cannot read the hand's place on a face square to the free axis — a
+/// shelf's top names one height for the whole face — so the tool carries the part from the place
+/// that face named and moves it with every millimetre the hand goes. A pointer that leaves the
+/// piece keeps the ghost, so the click still creates what was drawn.
+#[test]
+fn the_fill_ghost_passes_the_board_it_meets_and_holds_at_the_frame_envelope() {
+    // An empty scene: the sample session's loose parts stand inside a frame created at the origin,
+    // and a void holding a part is refused by the niche (ADR 0106).
+    let mut harness = Harness::with_session("frame-fill-passes", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let (product, rect, camera) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        // A shelf 350 mm above the frame's floor, spanning the whole footprint the card made.
+        let nominal =
+            model::PanelNominalSize::new(testkit::millimetres(600), testkit::millimetres(560)).expect("a shelf size");
+        let placement = model::Placement::IDENTITY
+            .with_translation(Length::ZERO, Length::ZERO, testkit::millimetres(350))
+            .expect("a placement");
+        document
+            .editor
+            .create_panel_sized(
+                &mut document.session,
+                product,
+                "Shelf".to_owned(),
+                nominal,
+                None,
+                Vec::new(),
+                placement,
+                Some(ClassCode::HORIZONTAL_PANEL),
+            )
+            .expect("the shelf lands in the open frame");
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+        (product, document.scene_rect().expect("a scene rectangle"), document.camera())
+    };
+    let pointer_at = |world: geom::DVec3| {
+        let pointer = gizmo_math::screen_point(camera, rect, world).expect("the frame is on screen");
+        assert!(rect.contains(pointer), "{pointer:?} is on the scene");
+        pointer
+    };
+    let ghost = |harness: &Harness| harness.app.tabs.active().fill_gizmo.ghost().cloned();
+
+    // Under the shelf the ray meets the frame's near wall, which runs along the height, so the point
+    // itself reads the hand: the part stands where the pointer is.
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 520.0, 250.0)));
+    let below = ghost(&harness).expect("the void under the shelf takes a ghost").free_low;
+    assert!((120.0..350.0).contains(&below), "the part stands under the shelf where the hand is: {below}");
+
+    // Over the shelf's own top face the point names one height for the whole face; the hand carries
+    // the part past the board instead of sticking it there.
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 500.0, 368.0)));
+    let near = ghost(&harness).expect("the cell above the shelf takes a ghost").free_low;
+    assert!(near >= 367.5, "the part jumps into the cell above the shelf: {near}");
+    harness.hover(pointer_at(geom::DVec3::new(300.0, 260.0, 368.0)));
+    let far = ghost(&harness).expect("the ghost stays in the cell above the shelf").free_low;
+    assert!(far > near + 50.0, "the part passes the board as the hand does: {near} then {far}");
+    let carried = ghost(&harness).expect("the ghost holds a measurement");
+
+    // A pointer past the frame's envelope names no cell: the ghost holds the last part it could
+    // place, and the click writes exactly that part.
+    let model = model_screen_rect(&harness);
+    let outside = free_scene_point(&mut harness, model);
+    harness.hover(outside);
+    assert_eq!(ghost(&harness).map(|ghost| ghost.placement), Some(carried.placement), "the ghost holds");
+    let before = harness.revision();
+    harness.click(outside, egui::PointerButton::Primary);
+
+    let document = harness.app.tabs.active();
+    let created = document.editor.selected_node().expect("the click created a part");
+    let panel = document.session.project().panel(created).expect("it is a panel");
+    assert_eq!(panel.placement(), carried.placement, "the click writes the ghost that was drawn");
+    assert_eq!(panel.nominal_size(), carried.nominal_size, "and its size");
+    assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+    assert!(harness.revision() > before, "the click is the one write of the gesture");
+
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the part");
 }

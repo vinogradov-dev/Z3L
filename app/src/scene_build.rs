@@ -268,6 +268,11 @@ pub fn empty_session_with(directory: impl Into<std::sync::Arc<catalog::Directory
 /// instead and keeps the refusal for the status bar; this one is the command line's and the
 /// fixtures' way in.
 pub fn default_catalog() -> Result<catalog::Directory, String> {
+    // A test never reads the machine's folder: one `nomenclature/` beside `settings.json` would change
+    // what a fixture builds, so the starter rows are the only directory a test opens.
+    if cfg!(test) {
+        return catalog::default_directory().map_err(describe);
+    }
     let root = crate::settings_store::config_dir().map(|folder| folder.join(crate::directory_watch::DIRECTORY_DIR));
     let start = crate::directory_watch::open(root.as_deref());
     if let Some(refusal) = &start.refusal {

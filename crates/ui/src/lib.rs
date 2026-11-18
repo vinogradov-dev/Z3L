@@ -79,7 +79,7 @@ pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, To
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use transform::TransformMode;
 pub use view_flags::ViewFlags;
-pub use void::{Void, VoidRefusal, pointer_point};
+pub use void::{FreePlace, PointerPoint, Void, VoidRefusal, free_place, pointer_face, pointer_point};
 
 /// The `egui` memory key the shell publishes the workspace language under.
 ///

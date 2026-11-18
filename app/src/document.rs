@@ -66,7 +66,7 @@ use crate::vertex_gizmo;
 use crate::vertex_gizmo::{MeshVertexCommit, VertexGizmo, VertexPreview};
 use crate::view_cluster;
 use crate::view_cluster::{ClusterAction, ClusterView, NavigationMode, ViewCluster};
-use crate::view_layout::{Layout, LayoutKind};
+use crate::view_layout::{Layout, LayoutKind, LeafId};
 use crate::void_gizmo::{self, VoidGizmo};
 use crate::{Shell, Transform, theme};
 
@@ -347,6 +347,8 @@ pub(crate) struct Document {
     /// save so an older build never silently destroys a newer build's data.
     extra: PreservedSections,
     translate_gizmo: TranslateGizmo,
+    /// Whether the window is currently hiding the pointer for the carry (ADR 0156).
+    cursor_hidden: bool,
     rotate_gizmo: RotateGizmo,
     vertex_gizmo: VertexGizmo,
     pub(crate) contour_gizmo: ContourGizmo,
@@ -369,6 +371,8 @@ pub(crate) struct Document {
     pub(crate) distance_fields: DistanceFields,
     /// The measurement the fields draw, rebuilt from the ghost every frame (ADR 0103).
     pub(crate) distances: Option<Distances>,
+    /// The face the fill's free axis is carried on, if the hand is carrying it (N23).
+    fill_carriage: Option<Carriage>,
     /// The exact distances of the translate drag in progress, measured once when it starts.
     move_distances: Option<MoveDistances>,
     /// The corner orientation widget, which owns the roll-ring drag across frames.
@@ -454,6 +458,7 @@ impl Document {
             file: FileMenu::new(),
             extra,
             translate_gizmo: TranslateGizmo::default(),
+            cursor_hidden: false,
             rotate_gizmo: RotateGizmo::default(),
             vertex_gizmo: VertexGizmo::default(),
             contour_gizmo: ContourGizmo::default(),
@@ -466,6 +471,7 @@ impl Document {
             band: None,
             distance_fields: DistanceFields::default(),
             distances: None,
+            fill_carriage: None,
             move_distances: None,
             gizmo: gizmo::Gizmo::default(),
             draft_menu: ui::DraftMenu::default(),
@@ -798,7 +804,7 @@ impl Document {
     pub(crate) fn zoom_active_view(&mut self, factor: f64) {
         let active = self.layout.active();
         if let Some(leaf) = self.layout.leaf_mut(active) {
-            leaf.zoom(factor);
+            leaf.zoom_about(factor, None);
         }
     }
 
@@ -1472,6 +1478,47 @@ impl Document {
         self.editor.cancel_box();
     }
 
+    /// The place along the fill's free axis for this frame, read from what the pointer says.
+    ///
+    /// A typed number pins it, above everything the hand does (ADR 0103). Otherwise the face under
+    /// the pointer decides: a face that runs along the axis names the hand's place exactly, so the
+    /// point itself answers. A face square to the axis names one place for the whole face, and the
+    /// point would freeze the part at the board however far the hand travelled over it; there the
+    /// carriage carries the part instead — the place the face named when the hand met it, moved by
+    /// every millimetre the hand has gone since — so the part passes the board as the hand does and
+    /// only the cell's walls, the frame's envelope included, stop it (N23).
+    ///
+    /// A pointer that names no point at all answers `None`, which leaves the part where the tool
+    /// already holds it.
+    fn fill_place(
+        &mut self,
+        product: Id,
+        niche: &model::Niche,
+        axis: usize,
+        pointer: egui::Pos2,
+        rect: egui::Rect,
+    ) -> Option<f64> {
+        let camera = self.scene.camera;
+        let aim = void_gizmo::free_at(self.session.project(), product, niche, axis, camera, rect, pointer)?;
+        let Some((face, offset)) = aim.face.filter(|_| aim.square) else {
+            self.fill_carriage = None;
+            return Some(aim.point);
+        };
+        let carried = self
+            .fill_carriage
+            .filter(|carried| carried.face == face && (carried.offset - offset).abs() <= CARRIAGE_FACE_MM);
+        let Some(carried) = carried else {
+            self.fill_carriage = Some(Carriage { face, offset, hand: aim.hand, place: aim.point });
+            return Some(aim.point);
+        };
+        let place = carried.place + (aim.hand - carried.hand);
+        if !place.is_finite() {
+            return None;
+        }
+        self.fill_carriage = Some(Carriage { hand: aim.hand, place, ..carried });
+        Some(place)
+    }
+
     /// Measures the void under the pointer and keeps the ghost the next click would create.
     ///
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
@@ -1508,29 +1555,36 @@ impl Document {
             .hover_pos()
             .or_else(|| response.interact_pointer_pos())
             .or_else(|| ui.input(|input| input.pointer.hover_pos()).filter(|pointer| on_field(*pointer)));
-        let card_anchor = self.card_anchor(pointer, card_before);
-        let point = pointer.and_then(|pointer| {
-            void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer)
-        });
-        let Some(point) = point.or_else(|| {
-            // The card sits beside the pointer now and then over the envelope's silhouette; the
-            // gesture keeps the point it was measured at rather than dropping the ghost under the
-            // maker's cursor.
-            ui.input(|input| input.pointer.hover_pos())
-                .filter(|pointer| on_field(*pointer))
-                .and_then(|_| self.editor.void().point())
-        }) else {
+        let Some(pointer) = pointer else {
             self.reset_fill(ui.ctx());
             return;
         };
+        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        // The point under the pointer names the cell. A pointer that names none — the hand left the
+        // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
+        // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
+        // vanishing, and the click creates what was drawn (N23).
+        let named = void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer);
         // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
         // row and the part the click creates, so the pointer names one space in this frame.
-        let measured = self.editor.void_measure(self.session.project(), point);
+        let measured = named.is_some_and(|point| self.editor.void_measure(self.session.project(), point));
+        let Some(point) = named.or_else(|| self.editor.void().point()) else {
+            self.reset_fill(ui.ctx());
+            return;
+        };
         let niche = self.editor.void().niche().cloned();
+        let axis = model::free_axis(arm.fill);
         let planned = match niche.as_ref() {
             Some(niche) => {
-                // A number typed into a field pins the free position; the pointer drives it otherwise.
-                let free = self.distances.as_ref().and_then(Distances::pinned_low);
+                // A number typed into a field pins the free place; the hand carries it otherwise.
+                // A pointer that names no cell holds the ghost: the plan then reads the point's own
+                // place, and the cell the tool still holds is the one that keeps it on the screen.
+                let free = match self.distances.as_ref().and_then(Distances::pinned_low) {
+                    Some(pinned) => Some(pinned),
+                    None if named.is_some() => self.fill_place(product, niche, axis, pointer, rect),
+                    // The pointer names no cell, so the ghost holds the place the tool already has.
+                    None => self.fill_carriage.map(|carried| carried.place),
+                };
                 self.fill_gizmo.hover(
                     self.session.project(),
                     product,
@@ -1561,7 +1615,6 @@ impl Document {
             self.tool_card_rect = None;
             return;
         };
-        let axis = model::free_axis(arm.fill);
         let unit = axis_unit(axis);
         let low_wall = ghost.niche.local_min[axis];
         let high_wall = ghost.niche.local_max()[axis];
@@ -1634,6 +1687,7 @@ impl Document {
     /// Drops the empty-space ghost and the exact-distance card that measured it.
     fn reset_fill(&mut self, ctx: &egui::Context) {
         self.fill_gizmo.reset();
+        self.fill_carriage = None;
         self.distance_fields.dismiss(ctx);
         self.distances = None;
         self.tool_card_rect = None;
@@ -1761,6 +1815,8 @@ impl Document {
             self.clear_move_distances(ui.ctx());
             return;
         }
+        // The carry's own hand is read before the measurement is borrowed: the card hangs from it.
+        let hand = self.carry_hand();
         if self.move_distances.as_ref().is_none_or(|measured| measured.node != node || measured.axis != axis) {
             self.distance_fields.dismiss(ui.ctx());
             self.move_distances = self.measure_move(node, axis);
@@ -1822,7 +1878,10 @@ impl Document {
             );
             placements.push(FieldPlacement { side, position });
         }
-        let anchor = ui.input(|input| input.pointer.hover_pos()).unwrap_or_else(|| rect.center());
+        // The card hangs from the carry's own hand while it is away from the system pointer: after a
+        // camera gesture the hand is on the piece, and a card left at the pointer would sit across
+        // the room from the gaps it names (X69).
+        let anchor = hand.or_else(|| ui.input(|input| input.pointer.hover_pos())).unwrap_or_else(|| rect.center());
         // The furniture move carries a piece with no button held, so its card keeps the keyboard and
         // never the pointer: a press over it is the drop, not a scrub (X66). Every other gesture
         // reaches this function too, so the flag is the hold's own.
@@ -2116,6 +2175,30 @@ impl Document {
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 
+    /// Zooms one view about the point under the pointer, which keeps that point where it is.
+    ///
+    /// The wheel and every drag that zooms go through here: a zoom about the view's centre slides
+    /// everything the maker is looking at out from under the pointer, and a piece carried by that
+    /// pointer left the hand on every step (X67).
+    fn zoom_about_pointer(&mut self, leaf: LeafId, viewport: egui::Rect, pointer: egui::Pos2, factor: f64) {
+        let Some(leaf) = self.layout.leaf_mut(leaf) else {
+            return;
+        };
+        let anchor = gizmo_math::view_plane_point(pointer, viewport, leaf.camera());
+        leaf.zoom_about(factor, anchor);
+    }
+
+    /// Turns the active view to a standard preset, the way the corner widget and the view menu do.
+    ///
+    /// The preset writes the camera's direction and its projection, so this is view state and no
+    /// command (ADR 0049); the shell's camera is refreshed here so one entry point cannot leave the
+    /// two disagreeing.
+    pub(crate) fn apply_view_preset(&mut self, preset: ui::display::OpeningView) {
+        self.layout.active_leaf_mut().apply_preset(preset);
+        let camera = self.layout.active_camera();
+        self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
+    }
+
     /// Switches the active view's projection and refreshes the camera the viewport draws with.
     ///
     /// The ribbon, the Display popover and the corner widget all end here, so the three entry points
@@ -2163,7 +2246,12 @@ impl Document {
         // float over it and folding one moves no view and no camera (U72). A pointer on the chrome
         // is never a viewport hit.
         shell.pointer_position = ui.input(|input| input.pointer.hover_pos());
-        let pointer = shell.pointer_position;
+        // The carry's own hand is where the maker sees the pointer: after a camera gesture the square
+        // sits on the piece while the system pointer is somewhere else, and every decision the
+        // viewport takes about a pointer — a pick, chrome under it, the wheel's own anchor — has to
+        // be taken about the square, or the two disagree (X70's follow-up).
+        let hand = self.carry_hand();
+        let pointer = hand.or(shell.pointer_position);
         // A press outside the open context menu dismisses it and picks nothing, the way a question
         // answers itself with no second click: the menu owns the press that closes it (U92). A
         // press inside is chrome through `Chrome::covers`, so the entry under the pointer is what
@@ -2574,6 +2662,14 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
+        // The camera gestures are the input of a move of the eye: the middle button, the right
+        // button and the wheel, whatever tool holds the piece.
+        let gesture = ui.input(|input| {
+            input.pointer.middle_down()
+                || input.pointer.secondary_down()
+                || input.smooth_scroll_delta != egui::Vec2::ZERO
+        });
+        self.carry_cursor(ui.ctx(), gesture || navigating);
         if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Furniture))
             && self.translate_gizmo.is_dragging()
         {
@@ -2629,9 +2725,14 @@ impl Document {
         if navigable && response.hovered() && pointer_over_active && !dragging {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             if scroll != 0.0
-                && let Some(leaf) = self.layout.leaf_mut(target_leaf)
+                && let Some(at) = ui.input(|input| input.pointer.hover_pos())
             {
-                leaf.zoom((-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp());
+                self.zoom_about_pointer(
+                    target_leaf,
+                    target_rect,
+                    at,
+                    (-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp(),
+                );
             }
         }
 
@@ -2659,8 +2760,13 @@ impl Document {
                     }
                 }
                 Some(NavigationMode::Zoom) => {
-                    if let Some(leaf) = self.layout.leaf_mut(target_leaf) {
-                        leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
                     }
                 }
                 None => {}
@@ -2674,7 +2780,14 @@ impl Document {
                 if modifiers.shift {
                     leaf.pan_pixels(f64::from(drag.x), f64::from(drag.y), f64::from(navigation_rect.height()));
                 } else if modifiers.ctrl {
-                    leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
+                    }
                 } else {
                     leaf.orbit(
                         -f64::from(drag.x) * ORBIT_RADIANS_PER_POINT,
@@ -3067,11 +3180,7 @@ impl Document {
             Some(ClusterAction::ToggleProjection) => self.toggle_view_projection(),
             Some(ClusterAction::SetLayout(kind)) => self.set_layout(kind),
             Some(ClusterAction::ToggleMaximize) => self.layout.toggle_maximized(),
-            Some(ClusterAction::SetPreset(preset)) => {
-                self.layout.active_leaf_mut().apply_preset(preset);
-                let camera = self.layout.active_camera();
-                self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
-            }
+            Some(ClusterAction::SetPreset(preset)) => self.apply_view_preset(preset),
             Some(ClusterAction::SetStyle(style)) => {
                 self.layout.set_active_style(style);
                 // The style is frame data the renderer reads per view at draw time, so no upload.
@@ -3168,6 +3277,35 @@ impl Document {
     /// Whether the furniture move is carrying a piece, for the status bar's own words (N24).
     pub(crate) fn holding_piece(&self) -> bool {
         self.translate_gizmo.is_following()
+    }
+
+    /// Settles what the carry asks of the pointer this frame (X69).
+    ///
+    /// The work area draws its own square and hides the system arrow (X40), so the carry asks the
+    /// *window* for nothing at all: on a Wayland session the system pointer cannot be moved
+    /// (`set_cursor_position` answers `NotSupported`), and a cursor shown through a viewport command
+    /// fights `egui-winit`'s own icon, which re-shows it on every icon change. The carry keeps a hand
+    /// of its own instead — [`Document::carry_hand`] — and the pointer is simply not drawn while a
+    /// camera gesture slides the view under the piece it holds.
+    pub(crate) fn carry_cursor(&mut self, _ctx: &egui::Context, gesture: bool) {
+        self.cursor_hidden = gesture && self.translate_gizmo.is_following();
+    }
+
+    /// Whether the carry has put the pointer away this frame, for the shell's own square.
+    ///
+    /// Hiding the pointer is a question of not drawing it: a square standing still over a scene
+    /// sliding under it is the picture of a piece being left behind, and it is not what happens.
+    pub(crate) fn hides_pointer(&self) -> bool {
+        self.cursor_hidden
+    }
+
+    /// Where the carry's hand is on screen, when it is not where the system pointer is.
+    ///
+    /// A camera gesture moves the view and the piece stays, so the hand is put back on the middle of
+    /// the piece and the square is drawn there; the mouse then moves that hand by its own movement,
+    /// so dragging carries the piece from the piece (X69).
+    pub(crate) fn carry_hand(&self) -> Option<egui::Pos2> {
+        self.translate_gizmo.hand()
     }
 
     /// The world distance the carried piece has travelled, for a test that watches the preview.
@@ -3975,6 +4113,33 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
     let data = object_mesh(&moved).map_err(|error| error.to_string())?;
     Ok(frame.with_drawable_mesh(preview.object, Arc::new(data)))
 }
+
+/// The face a fill's free axis is carried on, and the two numbers the hand turns it with.
+///
+/// A face square to the free axis names one place for the whole face, so a part measured off it
+/// sticks at the board while the pointer travels over it. The carriage is what the tool holds
+/// instead: the part's place and the hand's own place, one step behind, so every millimetre the hand
+/// travels moves the part by one. It starts at the place the face itself named, which is why the part
+/// never jumps when the carriage begins, and the face is remembered as its normal and offset, which
+/// is what keeps the same wall carrying and starts a new one at a new wall (N23).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Carriage {
+    /// The face's outward normal, in the world.
+    face: geom::DVec3,
+    /// The face's plane offset along that normal, in world millimetres.
+    offset: f64,
+    /// The hand's place along the free axis this step.
+    hand: f64,
+    /// The part's place this step, which the hand moves next step.
+    place: f64,
+}
+
+/// How far the point may drift within one face and still be the same face, in millimetres.
+///
+/// The point rests a micrometre on the free side of the face it met, and the probe answers whole
+/// micrometres, so one wall's offset moves by that much between frames; a hundredth of a millimetre
+/// separates two walls that are not the same wall.
+const CARRIAGE_FACE_MM: f64 = 0.01;
 
 /// Whether `node` offers the three-length grips when it is the only selection.
 ///
