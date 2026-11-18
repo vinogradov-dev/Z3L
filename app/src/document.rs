@@ -2173,7 +2173,12 @@ impl Document {
         // float over it and folding one moves no view and no camera (U72). A pointer on the chrome
         // is never a viewport hit.
         shell.pointer_position = ui.input(|input| input.pointer.hover_pos());
-        let pointer = shell.pointer_position;
+        // The carry's own hand is where the maker sees the pointer: after a camera gesture the square
+        // sits on the piece while the system pointer is somewhere else, and every decision the
+        // viewport takes about a pointer — a pick, chrome under it, the wheel's own anchor — has to
+        // be taken about the square, or the two disagree (X70's follow-up).
+        let hand = self.carry_hand();
+        let pointer = hand.or(shell.pointer_position);
         // A press outside the open context menu dismisses it and picks nothing, the way a question
         // answers itself with no second click: the menu owns the press that closes it (U92). A
         // press inside is chrome through `Chrome::covers`, so the entry under the pointer is what

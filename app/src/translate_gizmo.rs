@@ -425,8 +425,15 @@ impl TranslateGizmo {
         let mut hand = hand;
         let moved = pointer - hand.seen;
         hand.seen = pointer;
-        if hand.displaced {
+        if hand.displaced && viewport.contains(pointer) {
             hand.at += moved;
+        } else if hand.displaced {
+            // The mouse left the work area, where the system pointer takes over again: the hand goes
+            // back to it and the bond is re-read, so the piece stays where it is and nothing that is
+            // hit-tested at the system pointer can disagree with the square (X70).
+            hand.at = pointer;
+            hand.displaced = false;
+            hand.offset = None;
         } else {
             hand.at = pointer;
         }

@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N23 state=idle base=58c2988 updated=2026-11-18
+STATE: milestone=M7 phase=T task=X71 state=doing base=58c2988 updated=2026-11-18
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -11,7 +11,7 @@ hide it and put it back on the piece without touching the window's pointer (ADR 
 
 ## Next
 
-N23 is next: the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+X71 is next: the carry's hand is the pointer the viewport hit-tests while it is displaced
 
 ## Index
 

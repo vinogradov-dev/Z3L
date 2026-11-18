@@ -4327,6 +4327,60 @@ fn a_band_is_drawn_only_while_the_pointer_drags_on_empty_space() {
 }
 
 #[test]
+fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
+    // X70's follow-up: while the carry's hand is displaced the square is not where the system pointer
+    // is, and everything hit-tested at the system pointer would disagree with what the maker sees.
+    // The wheel works under the hand all the same, and leaving the work area hands the pointer back.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-hand-leaves", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    let at = body + egui::vec2(40.0, -60.0);
+    harness.hover(at);
+    assert!(harness.app.tabs.active().holding_piece(), "the panel is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+
+    // A pan puts the hand on the piece; it is not where the system pointer is any more.
+    let pan = egui::vec2(300.0, 20.0);
+    harness.drag(at, pan, egui::PointerButton::Secondary);
+    harness.run(Vec::new());
+    assert!(harness.app.tabs.active().carry_hand().is_some(), "the hand came back to the piece");
+
+    // The wheel still zooms under that hand, and it zooms about it.
+    let camera = harness.camera();
+    let wheel = |points: f32| egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    harness.run(vec![wheel(-60.0)]);
+    harness.settle();
+    assert_ne!(harness.camera(), camera, "the wheel zooms with a carried piece in hand");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-3, "and the piece keeps its gaps: {kept:?} from {carried:?}");
+
+    // The mouse leaves the work area for a panel: the hand goes back to the pointer, and the piece
+    // stays where it is rather than jumping to it.
+    let chrome = harness.settle();
+    // Any point outside the work area will do: the ribbon's own band is one, and it is always up.
+    let panel_row = chrome.panels.left.map_or_else(|| egui::pos2(60.0, 60.0), |tree| tree.center());
+    let panel_row = if harness.scene().contains(panel_row) { egui::pos2(60.0, 60.0) } else { panel_row };
+    harness.hover(panel_row);
+    assert!(!harness.scene().contains(panel_row), "the tree is outside the work area");
+    assert!(harness.app.tabs.active().carry_hand().is_none(), "the hand is the pointer again");
+    let kept = harness.app.tabs.active().carried_delta();
+    assert!((kept - carried).length() < 1.0e-3, "the piece did not jump to it: {kept:?}");
+}
+
+#[test]
 fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     // X67: the owner moved a panel, switched the view to *Front* and then pressed Home, and the panel
     // was nowhere near the pointer. A view preset is the eye's, not the hand's: the panel keeps its

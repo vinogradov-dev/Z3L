@@ -98,3 +98,17 @@ So the carry keeps a **hand of its own**:
   from it. The system pointer stays where the desktop put it, which costs one thing: a press is
   hit-tested at the system pointer. In the work area that is the click that puts the piece down
   anywhere, so the cost is invisible; over a panel the press belongs to the panel, as it should.
+
+## The hand is the pointer while it is displaced
+
+A displaced hand and the system pointer disagree, and every decision the viewport takes about a
+pointer is taken at the system one: a pick, a press on chrome, the wheel's own anchor. The owner met
+the disagreement as "the wheel sometimes does not zoom" and "the cursor went to a panel and then
+everything desynced".
+
+- While the hand is displaced, the document reads **the hand** wherever it reads a pointer: the pick,
+  `Chrome::covers`, the card's rectangle, the wheel's anchor for `zoom_about_pointer`. What the maker
+  sees and what the app hit-tests are then one thing.
+- The displacement ends the moment the mouse leaves the work area, where the system pointer and the
+  system cursor take over again: the hand goes back to the pointer and the bond is re-read, so the
+  piece stays where it is and nothing jumps.
