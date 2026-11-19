@@ -195,6 +195,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X81** a report names the part that was in the way
+  Why: The second logged session ends with a panel clamped at 466 mm while the hand asks for
+   2000 and the line names only Id(3). The numbers prove a cut and say nothing about what cut
+   it: a bare id, no kind, no box, and the take line names a bare Id(2) as well. The owner
+   reads the same log and reports that the mechanism works wrongly; neither side can settle it
+   while the obstacle is anonymous.
+  Shape: The take line names the piece: its kind, its name, its world box and its axes. The
+   carry line gains blocked=…, read from MoveRule::blocked_at — one function beside free_at, so
+   the log cannot disagree with the drag — naming the first part the destination would rest
+   inside, its kind and its box. The node itself is never printed, because it carries geometry.
+  Done: A take line says kind, name, box and axes of the piece; every cut names the obstacle
+   with its kind and world box; the log and the drag ask one predicate; the log line still
+   carries no geometry, and the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, docs/decisions/0170-a-report-names-the-part-that-was-in-the-way.md` — `6cb53d6`
+
 - `[x]` **X80** what the log said: a typed zero, a lost bond and a stale hold
   Why: The owner ran the first logged session and said "плохо. проверь логи". The file answered
    it in three lines: a typed zero in the carry distance field pinned the piece where it
