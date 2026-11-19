@@ -181,6 +181,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0173](0173-a-cut-is-measured-from-where-the-piece-stands.md) | A cut is measured from where the piece stands | Accepted; completes 0171's axis walk, so a piece resting past a body is not pulled back across it |
 | [0174](0174-the-move-answers-places-and-the-jump-stays.md) | The move answers places, and the jump stays | Accepted; the reference record of the move at `21d94d2`, and the owner's call that the jump crosses material too |
 | [0175](0175-a-hidden-part-is-sight-not-material.md) | A hidden part is sight, not material: the tools pass it and the part stops at its faces | Accepted |
+| [0176](0176-the-plan-shows-a-stream-and-one-line-keeps-one-writer.md) | The plan shows a stream, and one line keeps one writer | Accepted; amends 0085's one-live-task rule |
 
 ## Format
 

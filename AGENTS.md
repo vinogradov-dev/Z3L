@@ -57,7 +57,10 @@ The contract is a template, not prose duplicated here: read
 `state-contract/templates/AGENTS.section.md` before answering a request for the next step. In short:
 `STATE` and `## Now` decide the answer, an interrupted session resumes at `now:` instead of starting
 over, and a broken plan is repaired with the tool (`--repair` on a write) rather than answered around
-or edited by hand.
+or edited by hand. The plan declares the streams beside the state line (`STREAMS: agent=J catalog=O
+prototypes=Q`): `state=` and `task=` are the `app` stream's — this checkout's — and each declared
+stream is read from its own `[~]` entry, its own `plan/SESSION.<key>.md` and its row in
+`cargo xtask status` (ADR 0176).
 
 ### 1.2 Reading code with the language server
 
@@ -314,10 +317,13 @@ the writer would not produce or an id whose prefix letter the legend does not de
 that is not a `YYYY-MM-DD` calendar date or is earlier than the `base` commit's date, a `base` that
 is not an ancestor of `HEAD`, and an `idle` plan whose `base` lags commits that touched anything but
 `plan/` (`HEAD` is a legal `base` while the plan edit itself is still uncommitted); `state=doing`
-without exactly one `[~]` task in `## Now` and a `plan/SESSION.md` carrying `task:`, `goal:`, `now:`
-and `run:`; `state=idle` with a `[~]` task or a leftover session note; a `STATE: task=` that is done,
-sits outside `## Now` or is not the first unfinished task there; `task=-` while `## Now` still holds
-an unfinished task; a `## Next` paragraph that does not name the current task, or — when no task is
+without exactly one `[~]` task of the `app` stream in `## Now` and a `plan/SESSION.md` carrying
+`task:`, `goal:`, `now:` and `run:`, and a declared stream working a task without its own
+`plan/SESSION.<key>.md` or with two `[~]` entries of one stream; `state=idle` with a `[~]` task of
+the `app` stream or a leftover session note; a `STATE: task=` that is done,
+sits outside `## Now`, belongs to another stream, or is not the first unfinished `app` task there;
+`task=-` while `## Now` still holds an unfinished task of the `app` stream; a `## Next` paragraph that
+does not name the current task, or — when no task is
 scheduled — does not open with `Nothing is scheduled`; a duplicated task id; a `[x]` task outside `## Done`, or a `## Done` entry that is
 not `[x]`; a finished task without a commit hash that exists, or with an ADR citation
 `docs/decisions/` does not hold; a task line without a `**bold**` id; a task without a `files:` hint,
@@ -365,14 +371,16 @@ The commit closes the operation; the plan files close it too, in the same change
 2. Rewrite `plan/STATUS.md`: a new `STATE:` line (`task` = the next task, `updated` = today, `base` =
    the commit whose tree the plan describes — `HEAD` when the plan edit is its own commit, the parent
    when the edit rides in the commit it describes) and a new `Next` paragraph. Never append to it.
-3. Delete `plan/SESSION.md`; set `state=idle`.
+3. Delete the session note — `plan/SESSION.md`, or `plan/SESSION.<key>.md` for a declared stream,
+   whose marker the close clears and whose `plan/STATUS.md` it leaves alone — and set `state=idle`.
 4. Move a newly discovered gap to `plan/debt.md` and an owner decision to `plan/questions.md`. Neither
    file grows unless something new is found; do not re-copy entries that are already there.
 5. If the feature moved (a new module, a rename), update its row in `plan/map.md`; if the feature is
    new, add a row. A stale row is a defect the reader fixes.
 
 Starting a task is the mirror image: `cargo xtask task start <ID>` sets `[~]`, `state=doing` and
-writes `plan/SESSION.md` from the entry in one validated step; while `## Now` is empty it also takes
+writes `plan/SESSION.md` from the entry in one validated step — a declared stream's task writes
+`plan/SESSION.<key>.md` and leaves `plan/STATUS.md` untouched, because one line has one writer; while `## Now` is empty it also takes
 the head of `## Next` into the order, which is where the old `take` then `start` pair came from. A
 task that arrives out of the work
 order — an owner-directed interjection — is filed with `cargo xtask task add --at top`, which puts it
@@ -408,6 +416,7 @@ checkout — which is how a plan line and a source file were lost once.
 - **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so four branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
 - A worktree builds its own copy of the plan tool: the binary records its workspace root when it is compiled, so one build directory shared by two checkouts makes the tool write the other checkout's plan. Run the tool from the worktree whose plan it edits.
 - The lock file lives inside a checkout, so nothing enforces the one-writer rule across worktrees but the rule itself.
+- A stream's live task is written down even though only this checkout writes `plan/`: `cargo xtask task start J1` marks the `[~]` entry and writes `plan/SESSION.<key>.md`, so three checkouts do not hide behind an idle state line (P17, ADR 0176).
 
 ## 7. Anti-patterns
 

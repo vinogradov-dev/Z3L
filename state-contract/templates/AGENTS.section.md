@@ -19,14 +19,23 @@ is a fallback for one case only — `SESSION.md` is missing or contradicts `STAT
 for the paths the task names. Research a session had to do goes into `plan/notes/<ID>.md`
 (`templates/NOTE.md`): the task report prints it, so the next session does not repeat the search.
 
+A project that works in several checkouts declares them under the state line (`STREAMS: agent=J
+catalog=O`), and then the plan holds one live task per stream: a task belongs to a stream by the phase
+letter of its id, the primary stream `app` owns every letter no other stream names, and each declared
+stream keeps its own note (`plan/SESSION.<key>.md`). `STATE: task=` and `state=` speak about `app`
+alone — that is the checkout the plan is written from — so a stream beside it is read from its `[~]`
+entry, its note and its row in the status block, never from the state line.
+
 A request for the next step is answered from the plan files alone, in this order. Stop at the first
 case that applies.
 
 1. **An interrupted session.** `state=doing`, `plan/SESSION.md` exists, `STATE: base` differs from
    `HEAD`, and `steps` still has an open item. Say so and offer to continue, quoting the note's
    `task:`, `now:`, `blocked:` and `run:`. Resume at `now:` instead of starting the task over.
-2. **A task left in progress.** `state=idle` but `## Now` still holds a `[~]` task. Ask whether to
-   continue it or put it back to `[ ]`; do not pick the next task silently.
+2. **A stream left in progress.** `## Now` holds a `[~]` entry: the plan's own stream's while
+   `state=doing`, or a declared one's whatever the state line says. Ask whether to continue it or put
+   it back to `[ ]`; do not pick the next task silently, and do not take a declared stream's entry
+   for the plan's own.
 3. **A contradiction.** A `[x]` without a commit hash, a `base` that is not an ancestor of `HEAD`, a
    `files:` path that does not exist, a `SESSION.md` without `goal`/`now`/`run`. Report what is
    broken and fix it with the tool before answering: the plan gate names every case, and

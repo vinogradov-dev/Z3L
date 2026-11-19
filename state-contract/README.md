@@ -14,12 +14,19 @@ The contract is three files under `plan/`:
 - `SESSION.md` — the live note while a task is in progress: `task`, `goal`, `steps`, `now`, `blocked`,
   `run`.
 
+A project that works in several checkouts adds one optional line under the state line —
+`STREAMS: agent=J catalog=O` — and then each declared stream keeps its own note
+(`plan/SESSION.agent.md`) and its own entry in progress; the primary stream is `app`, it owns every
+phase no other stream names, and `STATE: task=` and `state=` speak about it alone. Without the line
+there is one stream and the contract is the one above.
+
 `plan/notes/<ID>.md` is an optional fourth thing: the research note of one task. It carries what a
 session measured and ruled out — file and line pointers, dead ends, choices — never status, a
 `files:` hint or a commit, so it cannot contradict the plan. `task` prints it; nothing else reads it.
 
 `state_contract::check(root)` parses them, cross-checks them and returns a `Summary` — including
-whether the session looks interrupted — or every violation as a readable sentence. `state_contract::task(root, id, opts)` returns everything the plan
+whether the session looks interrupted — or every violation as a readable sentence. `Summary.streams`
+holds one row per stream: its key, the task it is working, and its parsed note. `state_contract::task(root, id, opts)` returns everything the plan
 says about one task, framed for a human, and `state_contract::task_view(root, id)` returns the same
 as data for a host that adds facts of its own (git, file sizes, decisions). `state_contract::status(root)` returns the block a task runner
 prints at the start of a session: the state line, the head commit, the session note's
@@ -36,13 +43,13 @@ table, so one help lists everything.
 | Command | Does |
 |---|---|
 | `plan` | the gate: the plan files, the notes, the map, the debt tags and the base against git |
-| `status` | the session-start block: `STATE`, `head`, the note's fields, `interrupted`, the next tasks |
+| `status` | the session-start block: `STATE`, `head`, the note's fields, one row per stream, `interrupted`, the next tasks |
 | `task [<id>]` | one task in full: fields, files with line counts and last commits, map rows, notes, `RELATED`, debt, questions, ADRs, the closing commit |
 | `task list` | one line per task, filtered by `--section`, `--status`, `--phase` and `--grep` |
 | `task --md` / `--paths` | the same task for an agent, or one path per line for a shell loop |
 | `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none |
 | `task phase <L> --name <text>` / `task phase --declare L=text …` | the phase legend: one clause per id prefix, declared or updated in the same gated write; several letters travel in one call because a plan whose ids name an undeclared phase is refused |
-| `state set k=v` / `state next` / `state where` | one field of the `STATE:` line, the `## Next` paragraph, or the `## Where we are` prose; `state next --task <id>` moves the paragraph and the current task in one write |
+| `state set k=v` / `state streams` / `state next` / `state where` | one field of the `STATE:` line, the `STREAMS:` declaration (`state streams agent=J catalog=O`, no pairs puts the plan back on one stream), the `## Next` paragraph, or the `## Where we are` prose; `state next --task <id>` moves the paragraph and the current task in one write |
 | `file <plan/map.md\|…>` | one reference file (`map`, `debt`, `questions`, `refactor`, `rename`, the template) through the same gate and diff |
 | `dashboard [--task <id>]` | the framed overview, optionally with one task expanded |
 | `docs` | the decisions `README.md` against the files it indexes |
@@ -180,12 +187,13 @@ session note without `now:` turns a resume into a rewrite.
 | state history | `updated=` is earlier than the date of the `base` commit |
 | backlog shape | no `## Now`/`## Done`; a duplicated id; `[x]` outside `## Done`; a `## Done` entry without `[x]`; a task line without a `**bold**` id |
 | files hints | an unfinished task without a `files:` hint, or a hint naming a path that does not exist |
-| session note | `doing` without exactly one `[~]` task in `## Now`, without a `plan/SESSION.md`, or with a note about another task; a note missing `task`, `goal`, `now` or `run`; `idle` with a note or a `[~]` task |
+| session note | a stream with two `[~]` entries in `## Now`; the plan's own stream `doing` without a `[~]` task, without a `plan/SESSION.md`, or with a note about another task; a declared stream working a task without its `plan/SESSION.<key>.md`; a note missing `task`, `goal`, `now` or `run`; a note no stream is working under, or one whose path names no declared stream |
+| stream line | a `STREAMS:` line that is not one `key=letters` pair per stream, a key that is not lowercase, `app` declared again, a phase owned twice, or a stream that owns no phase |
 | notes | a `plan/notes/` file that is not `<task id>.md`, one named after a task the backlog does not have, an empty note, or a note over 150 lines |
 | next paragraph | the `## Next` section of `plan/STATUS.md` names another task than `STATE: task=`, or names none while the section exists |
 | feature map | a `plan/map.md` row names a path that does not exist |
 | debt tags | a `plan/debt.md` entry carries a tag the `Tags:` line does not declare, or tags without a `Tags:` line |
-| budget | `STATUS.md` over 70 lines, `SESSION.md` over 50 — a warning nobody reads is not a check |
+| budget | `STATUS.md` over 70 lines, any session note over 50 — a warning nobody reads is not a check |
 | history | a done task without a commit hash, or a hash that is not a commit in the repository |
 | base | `base` is not a commit, or is not an ancestor of `HEAD`; `HEAD` itself is legal while the plan edit is uncommitted |
 | readme | `README.md` carries a `Status:` line or an `M<digit>` milestone: a README describes the product, the state lives in `plan/STATUS.md` |
