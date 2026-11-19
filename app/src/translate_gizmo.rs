@@ -598,10 +598,22 @@ impl TranslateGizmo {
                 // no longer pending, or it would fire the moment the number is released (X80).
                 drag.jump = None;
             }
+            // A jump is taken only once the hand has left the body it is passing: a piece held at a
+            // face waits while the pointer is still over that body, and goes the frame the pointer
+            // comes out on the far side. The rule answers which body that is, so the log and the hold
+            // ask one question (ADR 0172).
+            let waiting = drag.rule.as_ref().zip(hand_world).and_then(|(rule, point)| rule.enclosing(point));
+            // A place beyond a body the piece would pass through is a crossing, whatever the hand's
+            // own speed: the rule answers where the piece lands, so a quick hand leaves no frame in
+            // which the piece is seen at the face (ADR 0172). Only a place the rule grants whole is a
+            // crossing — an answer cut at a face *is* the face, and the piece is already seen there.
+            let granted = (delta - proposed).length() <= 1.0;
+            let crossing = drag.rule.as_ref().filter(|_| granted).and_then(|rule| rule.crossing(drag.delta, proposed));
             if typed.is_none() {
                 let dt = ui.input(|input| input.stable_dt);
                 let hand_step = (proposed - drag.asked).length();
-                let (settled, jump) = settled_carry(drag.delta, delta, hand_step, drag.jump, dt);
+                let (settled, jump) =
+                    settled_carry(drag.delta, delta, hand_step, drag.jump, dt, waiting.is_some(), crossing.is_some());
                 delta = settled;
                 drag.jump = jump;
                 drag.asked = proposed;
@@ -610,7 +622,7 @@ impl TranslateGizmo {
                 target: "z3l::move",
                 "carry node={:?} piece=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) hand={} \
                  asked=({:.3},{:.3},{:.3}) resolved=({:.3},{:.3},{:.3}) delta=({:.3},{:.3},{:.3}) \
-                 typed={:?} held={held_now} offset={} jump={:?} contact={:?} blocked={}",
+                 typed={:?} held={held_now} offset={} jump={:?} waiting={:?} crossing={:?} contact={:?} blocked={}",
                 drag.node,
                 drag.start_origin.x + delta.x,
                 drag.start_origin.y + delta.y,
@@ -633,6 +645,8 @@ impl TranslateGizmo {
                 typed,
                 offset.is_some(),
                 drag.jump.map(|(_, age)| age),
+                waiting,
+                crossing,
                 limits.map(|limits| [
                     (limits[0].contact, limits[0].capture),
                     (limits[1].contact, limits[1].capture),
@@ -959,15 +973,25 @@ fn settled_carry(
     hand_step: f64,
     pending: Option<(DVec3, f32)>,
     dt: f32,
+    waiting: bool,
+    crossing: bool,
 ) -> (DVec3, Option<(DVec3, f32)>) {
     let step = (asked - previous).length();
-    let jump = step.is_finite() && step > hand_step + JUMP_MM;
-    if !jump {
+    let leaps = step.is_finite() && step > hand_step + JUMP_MM;
+    if !crossing && !leaps {
         return (asked, None);
     }
-    let (held, age) = pending.filter(|(held, _)| (*held - asked).length() <= JUMP_MM).unwrap_or((asked, 0.0));
+    // The hand is still over the body the piece would cross: the piece stays on the face it reached
+    // and the request keeps no age, so the wait does not turn into a head start. The cursor crossing
+    // the body's thickness is the owner's own answer to when a crossing may be taken (ADR 0172).
+    if waiting {
+        return (previous, Some((previous, 0.0)));
+    }
+    // A crossing is held from the frame it is first asked for, whatever the hand does next: a quick
+    // hand that jumps past a whole body in one frame still sees the piece rest on the face first.
+    let (held, age) = pending.unwrap_or((previous, 0.0));
     let age = if age.is_finite() { age + dt } else { dt };
-    if age >= JUMP_HOLD { (asked, None) } else { (previous, Some((held, age))) }
+    if age >= JUMP_HOLD { (asked, None) } else { (held, Some((held, age))) }
 }
 
 /// The distance a drag may travel, and the surface it landed on: the pointer's own distance, cut by
@@ -1020,26 +1044,50 @@ mod tests {
         // so a hand that merely brushed the face does not flip the piece over it.
         let start = DVec3::ZERO;
         let past = DVec3::new(400.0, 0.0, 0.0);
-        let (settled, pending) = settled_carry(start, past, 1.0, None, 0.016);
+        let (settled, pending) = settled_carry(start, past, 1.0, None, 0.016, false, false);
         assert_eq!(settled, start, "the first frame asks: the piece stays at the face");
         let pending = pending.expect("the request is kept");
-        let (settled, pending) = settled_carry(start, past, 0.5, Some(pending), 0.05);
+        let (settled, pending) = settled_carry(start, past, 0.5, Some(pending), 0.05, false, false);
         assert_eq!(settled, start, "a tenth of a second is still a pause");
-        let (settled, pending) = settled_carry(start, past, 0.5, pending, 0.08);
+        let (settled, pending) = settled_carry(start, past, 0.5, pending, 0.08, false, false);
         assert_eq!(settled, past, "a sixth of a second takes the place the hand kept naming");
         assert!(pending.is_none(), "and the request is spent");
 
         // A hand that travelled that far itself is travel, not a jump — however far the answer is.
-        let (settled, _) = settled_carry(start, past, 400.0, None, 0.016);
+        let (settled, _) = settled_carry(start, past, 400.0, None, 0.016, false, false);
         assert_eq!(settled, past, "the piece follows a hand that travelled the distance");
         // An ordinary step of a few millimetres is never a jump.
         let step = DVec3::new(3.0, 0.0, 0.0);
-        assert_eq!(settled_carry(start, step, 3.0, None, 0.016).0, step);
-        // A hand that asks for a different place clears the request it was holding.
-        let (settled, pending) = settled_carry(start, past, 1.0, None, 0.016);
-        assert_eq!(settled, start);
-        let (settled, _) = settled_carry(start, DVec3::new(0.0, 300.0, 0.0), 1.0, pending, 0.016);
-        assert_eq!(settled, start, "another request starts its own pause");
+        assert_eq!(settled_carry(start, step, 3.0, None, 0.016, false, false).0, step);
+    }
+
+    #[test]
+    fn a_crossing_is_held_even_when_the_hand_is_quick() {
+        // X83: the previous test's jump was recognised by comparing the answer with the hand's own
+        // travel, so a hand that crossed a body's whole thickness in one frame was read as ordinary
+        // travel and the piece passed the face without ever being seen on it. A crossing named by the
+        // rule is held whatever the hand did, and the hand being over the body holds it further.
+        let start = DVec3::ZERO;
+        let past = DVec3::new(600.0, 0.0, 0.0);
+        let (settled, pending) = settled_carry(start, past, 600.0, None, 0.016, false, true);
+        assert_eq!(settled, start, "the piece rests on the face the path crosses");
+        let pending = pending.expect("the crossing is kept");
+        let (settled, _) = settled_carry(start, past, 0.2, Some(pending), 0.05, false, true);
+        assert_eq!(settled, start, "a tenth of a second is still the face");
+
+        // The hand is still over the body: the wait does not run, and keeps no head start.
+        let (settled, pending) = settled_carry(start, past, 0.2, None, 0.5, true, true);
+        assert_eq!(settled, start, "the hand is over the body: the piece holds the face");
+        let pending = pending.expect("the request is kept");
+        assert_eq!(pending.1, 0.0, "and it keeps no age");
+        let (settled, pending) = settled_carry(start, past, 0.2, Some(pending), 0.5, true, true);
+        assert_eq!(settled, start, "half a second over the body is still the face");
+        // The cursor comes out on the far side, the hold runs, and the piece goes.
+        let (settled, _) = settled_carry(start, past, 0.2, pending, JUMP_HOLD, false, true);
+        assert_eq!(settled, past, "the frame the hand comes out, the crossing is taken");
+        // A path that crosses nothing follows the hand at once, however far it goes.
+        let (settled, _) = settled_carry(start, past, 600.0, None, 0.016, false, false);
+        assert_eq!(settled, past, "no body on the road: the piece follows");
     }
 
     fn origin_screen(camera: Camera) -> Pos2 {

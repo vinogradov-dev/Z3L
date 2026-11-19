@@ -772,6 +772,65 @@ impl MoveRule {
         None
     }
 
+    /// The body the hand is standing inside, when it is inside one.
+    ///
+    /// A carry crosses a body only once the hand itself has left it: a piece stopped at a face waits
+    /// while the pointer is still over the body it is passing, and goes the frame the pointer comes
+    /// out on the far side. That is the cursor crossing the thickness, which the owner named as the
+    /// honest moment for a jump, and it reads the same in both directions instead of depending on how
+    /// far the piece's own length has to travel (ADR 0172).
+    ///
+    /// A product's envelope does not gate: work happens inside a case, and a hand over a carcass is
+    /// not a hand inside a body. Only a panel or an object does, and only one that is not a
+    /// legitimate home of the carried piece.
+    pub fn enclosing(&self, point: DVec3) -> Option<Id> {
+        if !point.is_finite() {
+            return None;
+        }
+        self.obstacles
+            .iter()
+            .filter(|obstacle| !obstacle.is_shell())
+            .find(|obstacle| obstacle.contains(point))
+            .map(|obstacle| obstacle.id)
+    }
+
+    /// The first body a straight carry from `from` to `to` passes through, when it passes one.
+    ///
+    /// A destination may be free while the road to it is not: the rule answers the place the piece
+    /// lands (ADR 0166), so a piece whose whole body fits beyond a neighbour leaps there in one frame.
+    /// With a quick hand that leap reads as passing through the neighbour, and there is no frame in
+    /// which the piece is seen at the face it crossed. This query names that body, so the shell can
+    /// rest the piece on the face for a moment before it takes the place (ADR 0172).
+    ///
+    /// The reading is the one the axis drag uses, on the moving box's own faces; a pair the document
+    /// already holds overlapping is the maker's to repair and is not a crossing, and a piece sliding
+    /// along a face crosses nothing.
+    pub fn crossing(&self, from: DVec3, to: DVec3) -> Option<Id> {
+        let direction = to - from;
+        let reach = direction.length();
+        if !direction.is_finite() || reach <= 0.0 {
+            return None;
+        }
+        for mover in &self.movers {
+            let start = mover.box_.shifted(from)?;
+            for obstacle in &self.obstacles {
+                if nested(start, *obstacle, mover.product) {
+                    continue;
+                }
+                if mover.box_.meets(*obstacle) {
+                    // The pair already shares a volume, so the path is not the tool's to police.
+                    continue;
+                }
+                if let Some(touch) = blocking_along(direction, &start, obstacle)
+                    && touch < reach
+                {
+                    return Some(obstacle.id);
+                }
+            }
+        }
+        None
+    }
+
     fn free_at(&self, delta: DVec3) -> bool {
         if !delta.is_finite() {
             return false;
@@ -954,7 +1013,23 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &
 /// never smaller: a box contains its body, so the coarse reading stops the drag early and can never
 /// let it through.
 fn blocking_faces(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBox) -> Option<f64> {
-    let direction = axis.direction() * sign;
+    blocking_along(axis.direction() * sign, moving, obstacle)
+}
+
+/// The same face test for a translation in any direction, which is what a path needs.
+///
+/// `direction` is the whole travel of the moving box, so the answer is the distance at which the two
+/// solids first touch along that path. Nothing else changes: the axes of the test, the contact
+/// threshold and the reading of a pair that already shares an axis are the ones the axis drag uses.
+fn blocking_along(direction: DVec3, moving: &SurfaceBox, obstacle: &SurfaceBox) -> Option<f64> {
+    // The answer is millimetres, so the rate the gaps close at is read from a unit direction: a path
+    // of any length is the same road, and the distances it reports are the ones a caller compares
+    // with its own length.
+    let length = direction.length();
+    if !length.is_finite() || length <= 0.0 {
+        return None;
+    }
+    let direction = direction / length;
     let mut reach: Option<f64> = None;
     for normal in separating_axes(*moving, *obstacle) {
         let (moving_low, moving_high) = extent(*moving, normal);
@@ -1334,6 +1409,49 @@ mod tests {
             MoveLimit { distance_mm: -94.0, contact: Some(standing), capture: None },
             "in line with it the board meets its face and goes no further"
         );
+    }
+
+    #[test]
+    fn a_path_that_passes_a_body_is_named_and_a_slide_along_it_is_not() {
+        // X83: a destination may be free while the road to it is not, and with a quick hand no frame
+        // shows the piece at the face it crossed. The rule names that body, so the carry can rest the
+        // piece on the face first; a path that stops short of it, or slides along a face, crosses
+        // nothing and is ordinary travel.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((300.0, 0.0, 0.0)));
+        let beyond = rule(&project, &[body]);
+        assert_eq!(
+            beyond.crossing(DVec3::ZERO, DVec3::new(500.0, 0.0, 0.0)),
+            Some(neighbour),
+            "a place beyond the neighbour crosses it"
+        );
+        assert_eq!(
+            beyond.crossing(DVec3::ZERO, DVec3::new(150.0, 0.0, 0.0)),
+            None,
+            "a place short of the neighbour crosses nothing"
+        );
+        assert_eq!(
+            beyond.crossing(DVec3::new(0.0, -400.0, 0.0), DVec3::new(0.0, 400.0, 0.0)),
+            None,
+            "a slide beside the neighbour crosses nothing"
+        );
+        // Beside a face and touching it: a slide in Y is along the face, not through it.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((250.0, 0.0, 0.0)));
+        let touching = rule(&project, &[body]);
+        assert_eq!(touching.crossing(DVec3::ZERO, DVec3::new(0.0, 300.0, 0.0)), None, "a face is not a road");
+        assert_eq!(
+            touching.crossing(DVec3::ZERO, DVec3::new(400.0, 0.0, 0.0)),
+            Some(neighbour),
+            "and the same neighbour is crossed in X"
+        );
+        // The hand over a body is named too: that is the cursor gate the carry waits on.
+        assert_eq!(touching.enclosing(DVec3::new(300.0, 0.0, 0.0)), Some(neighbour), "the hand is over it");
+        assert_eq!(touching.enclosing(DVec3::new(0.0, -400.0, 0.0)), None, "and here it is not");
     }
 
     #[test]

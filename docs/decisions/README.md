@@ -177,6 +177,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0169](0169-what-the-move-log-said.md) | What the move log said: a typed zero, a lost bond, and a stale hold | Accepted; fixes what 0168's first session showed, carries 0092's zero convention into the carry |
 | [0170](0170-a-report-names-the-part-that-was-in-the-way.md) | A report names the part that was in the way | Accepted; extends what 0168 writes, so a cut names the obstacle and a take names the piece |
 | [0171](0171-the-place-the-hand-names-is-asked-before-the-axes.md) | The place the hand names is asked before the axes | Accepted; narrows how 0166 resolves a blocked destination, so a free slot is taken whole |
+| [0172](0172-a-crossing-rests-on-the-face-before-it-is-taken.md) | A crossing rests on the face before it is taken | Accepted; replaces 0167's step comparison with a geometric crossing and a cursor gate |
 
 ## Format
 
