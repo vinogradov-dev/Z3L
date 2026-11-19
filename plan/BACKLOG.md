@@ -195,6 +195,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X78** a jump is held for a moment, and the object move has its icon
+  Why: Two reports from the owner on one screenshot of a room. A post carried up to a slab's
+   underside flips above the slab instead of resting on its face, which is the destination rule
+   (ADR 0166) crossing a solid in one frame as soon as a place beyond it fits; the owner asks
+   for a pause or a tolerance. And the object move has no icon while the band that names it is
+   text only, though the drawn drafts were approved.
+  Shape: The carry holds a crossing for a sixth of a second: a delta that changes by more than
+   a jump while the pointer barely moved keeps the previous place, and the same request
+   accepted for 0.12 s takes it, so a hand that brushed a face never flips the piece over it. A
+   face that already touches and is carried into is a stop at zero rather than a separation
+   that never closes, which is what made a post touching a slab report no contact at all. The
+   approved drawing becomes assets/icons/transform/object.svg on the 24 grid with the model and
+   modify inks, a transform theme in the icon module, a row in assets/README.md, a glyph beside
+   the object move's word in the status band, and the fallback to the word alone while the
+   asset is a placeholder.
+  Done: A post whose top touches a slab's underside stays on the face while the hand asks for a
+   few millimetres into the slab, and only a continuing request carries it past; a jump is held
+   for a sixth of a second and a fast hand takes it at once; the object move's band cell draws
+   the cube and the arrow, the other three cells stay words, and the narrowest window still
+   holds the band; every contact test keeps its answer where the face is already touched, and
+   the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, assets/icons/transform/object.svg, crates/ui/src/icons.rs, app/src/status_bar.rs` — `5f156d1`
+
 - `[x]` **X77** the move answers the place the piece lands, not the path it crosses
   Why: Reported by the owner with screenshots of a room: two plain solids side by side stop at
    each other and cannot be carried into the empty place beyond, a post cannot be carried past
