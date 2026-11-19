@@ -29,12 +29,13 @@
 //! document's answer: a panel offers only the axis its own thickness points at, so a shelf rises and
 //! falls in its thickness direction and never across its own faces, and that one axis is the one the
 //! hand's travel names, latched at the first movement so the piece cannot change direction under the
-//! hand. A product, a body or a group offers two or three axes: the hand takes it on the camera's own
-//! plane and the document measures the proposed world delta axis by axis, so a floor-bound frame
-//! crosses the floor while it keeps its height and a hung one moves everywhere (X74). A contact stops
-//! only the axis it meets, so the piece slides along the face rather than stopping dead. Both tools
-//! keep the exact-distance fields, which are the typed path to the same distance (ADR 0103), on the
-//! axis a multi-axis carry travels furthest along.
+//! hand. A product, a body or a group offers two or three axes: the hand meets the piece on the plane
+//! its class allows — the floor for a floor-bound frame, the camera's own plane for a piece no axis
+//! holds back — and the document measures the proposed world delta axis by axis, so a floor-bound
+//! frame crosses the floor while it keeps its height and a hung one moves everywhere (X74, X75). A
+//! contact stops only the axis it meets, so the piece slides along the face rather than stopping
+//! dead. Both tools keep the exact-distance fields, which are the typed path to the same distance
+//! (ADR 0103), on the axis a multi-axis carry travels furthest along.
 
 use eframe::egui;
 use egui::{Response, Ui};
@@ -43,9 +44,9 @@ use model::{Capture, Id, MoveRule};
 use scene::{Camera, MAX_DISTANCE_MM};
 
 use crate::gizmo_math::{
-    Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation,
-    dominant_axis, hit_axis, named_axis, paint_axis_handles, planar, ray_to, screen_point, travel_frame,
-    view_plane_through,
+    Axis, CarryPlane, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target,
+    commit_translation, dominant_axis, hit_axis, named_axis, paint_axis_handles, planar, ray_to, screen_point,
+    travel_frame,
 };
 
 /// The smallest travel, in points, that names an axis.
@@ -81,17 +82,21 @@ enum Follow {
     /// One allowed axis: the hand's travel names it and the hand's distance along it is the move
     /// (N22, ADR 0153).
     Axis,
-    /// Two or three allowed axes: the pointer meets the camera's own plane through the pivot, and the
-    /// world difference from where it took the piece is the delta the document answers axis by axis
-    /// (X74). `grab` is the point the hand took, relative to the pivot at the take.
-    Plane { grab: DVec3 },
+    /// Two or three allowed axes: the hand's screen place, moved by the offset the click gave the
+    /// pivot, meets the plane the piece may move in, and the world difference from the pivot is the
+    /// delta the document answers axis by axis (X74, X75).
+    Plane {
+        /// The plane the piece travels in — the floor, or the camera's own plane.
+        plane: CarryPlane,
+    },
 }
 
 /// The screen bond between the hand and the piece it carries.
 ///
 /// The pointer *hangs* the piece from itself: the pivot keeps the offset on screen that the click
-/// gave it, and the distance along the axis is solved for that offset every frame. What the distance
-/// is deliberately not:
+/// gave it, and every frame's distance is read at that offset — solved for along one axis, or met
+/// with the carry plane when the piece may travel on more than one (X75). What the bond is
+/// deliberately not:
 ///
 /// - the projection of the pointer's ray onto the axis line, which is unstable a hundred points off
 ///   the line and made the piece run away from the hand (ADR 0153);
@@ -106,7 +111,9 @@ struct Hand {
     /// The pivot's offset from the hand, in points: the bond the piece hangs by.
     ///
     /// The click lands on the body, so the pivot is not under the pointer; snapping it there would
-    /// jump the piece by its own half-size on the frame the axis is named.
+    /// jump the piece by its own half-size on the frame the axis is named. The offset is kept in
+    /// points and not in millimetres, because a carry plane meets the eye at a slant: a world
+    /// difference measured at the take stops matching the hand as the piece changes depth (X75).
     offset: Option<egui::Vec2>,
     /// Where the hand is on screen now.
     ///
@@ -160,7 +167,7 @@ struct Drag {
     ///
     /// It is set when the piece is taken and re-anchored whenever the view moves under the hand, so
     /// the piece keeps the distance it already has and the camera never drags it along (N25). A
-    /// multi-axis carry reads its grab from [`Follow::Plane`] instead.
+    /// multi-axis carry reads the hand's bond from [`Hand::offset`] instead, on its own plane.
     start_parameter: f64,
     delta: DVec3,
     /// The document the targets and the rule were read from.
@@ -472,17 +479,24 @@ impl TranslateGizmo {
         let rehome = !navigating && (camera_moved || self.moved_by_gesture);
         let held_now = navigating || rehome;
 
-        // A piece free on two or three axes is carried on the camera's own plane through its pivot:
-        // the pointer meets that plane at one world point, and the world difference from the take is
-        // the delta the document answers axis by axis. A contact then stops only the axis it meets,
-        // so the other axes keep carrying the piece along the face (X74).
-        if let Follow::Plane { mut grab } = follow {
+        // A piece free on two or three axes is carried on the plane its class allows through its
+        // pivot: the hand's screen place, moved by the offset the click gave the pivot, meets that
+        // plane at one world point, and the world difference from the pivot is the delta the document
+        // answers axis by axis. A contact then stops only the axis it meets, so the other axes keep
+        // carrying the piece along the face (X74).
+        if let Follow::Plane { plane } = follow {
             let mut delta = drag.delta;
             let mut capture = drag.capture;
             let typed = pinned.filter(|distance| distance.is_finite());
             let mut limits = None;
-            if !held_now && let Some(hit) = view_plane_through(hand.at, viewport, target.camera, drag.start_origin) {
-                let proposed = hit - (drag.start_origin + grab);
+            // The bond is the screen offset the click gave the pivot, so the piece keeps the place it
+            // hangs at in *points* and not in millimetres: a plane meets the eye at a slant, and a
+            // world delta that matches the pointer's travel at the take only shrinks the piece's own
+            // screen travel as the piece changes depth (X75).
+            if let (false, Some(offset)) = (held_now, hand.offset)
+                && let Some(hit) = plane.point(hand.at + offset, viewport, target.camera, drag.start_origin)
+            {
+                let proposed = bounded(hit - drag.start_origin);
                 limits = drag.rule.as_ref().map(|rule| rule.limits(proposed));
                 delta = limits.map_or(proposed, |limits| {
                     DVec3::new(
@@ -512,9 +526,8 @@ impl TranslateGizmo {
                 };
             }
             // The gesture is over and the camera moved under the piece: put the hand back on the
-            // middle of the piece, which is where a maker reaches for it (X67, X69). The camera's
-            // plane turned with the view, so the grab is read again against the place the piece
-            // already stands and the frame the hand moved carries nothing.
+            // middle of the piece, which is where a maker reaches for it (X67, X69), and read the
+            // bond again there so the frame that ends the gesture carries nothing.
             if rehome {
                 self.moved_by_gesture = false;
                 let middle = target
@@ -524,9 +537,6 @@ impl TranslateGizmo {
                 if let Some(want) = screen_point(target.camera, viewport, middle).filter(|at| viewport.contains(*at)) {
                     hand.at = want;
                     hand.displaced = true;
-                    if let Some(hit) = view_plane_through(hand.at, viewport, target.camera, drag.start_origin) {
-                        grab = hit - (drag.start_origin + delta);
-                    }
                     hand.offset = screen_point(target.camera, viewport, drag.start_origin + delta).map(|at| at - want);
                 }
             } else if navigating && camera_moved {
@@ -534,7 +544,7 @@ impl TranslateGizmo {
             }
             drag.delta = delta;
             drag.capture = capture;
-            drag.hold = Hold::Following { axis: measured, follow: Follow::Plane { grab }, hand };
+            drag.hold = Hold::Following { axis: measured, follow: Follow::Plane { plane }, hand };
             self.drag = Some(drag);
             return Ok(None);
         }
@@ -685,17 +695,12 @@ impl TranslateGizmo {
             // The rule and the snap settings are read once, when the piece is taken, exactly as a
             // held drag reads them at the press: the preview and the drop then measure one document.
             let rule = target.project.move_rule(&moving, target.snaps);
-            // A piece that may travel on more than one axis is carried on the camera's own plane:
-            // the pointer meets that plane at the take, and every later frame differs from it. A
-            // one-axis piece is measured along its axis instead.
+            // A piece that may travel on more than one axis is carried on the plane its class
+            // allows, met where the hand is and where the pivot is: the plane is read at the take and
+            // every later frame holds the piece by the offset the click gave it. A one-axis piece is
+            // measured along its axis instead.
             let axes = target.move_kind.axes(target.project, target.selection);
-            let follow = if planar(axes) {
-                let grab = view_plane_through(at, viewport, target.camera, origin_world)
-                    .map_or(DVec3::ZERO, |hit| hit - origin_world);
-                Follow::Plane { grab }
-            } else {
-                Follow::Axis
-            };
+            let follow = if planar(axes) { Follow::Plane { plane: CarryPlane::of(axes) } } else { Follow::Axis };
             // The grab is measured against the click and not against the frame the axis is named:
             // by then the hand has already travelled far enough to name one, and an offset read
             // there would swallow that travel and leave the piece standing still (X67).
@@ -801,6 +806,16 @@ fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> (
         let limit = rule.limit(axis.move_axis(), distance);
         (limit.distance_mm, limit.capture)
     })
+}
+
+/// A proposed world delta kept inside the distance a drag may travel along any axis.
+///
+/// The pointer meets a plane at one point, and a ray that grazes that plane meets it very far away:
+/// a view barely above the floor would otherwise throw the piece kilometres on one frame. The bound
+/// is the one the one-axis carry takes, so both tools stop at the same distance.
+fn bounded(delta: DVec3) -> DVec3 {
+    let inside = |value: f64| value.clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
+    DVec3::new(inside(delta.x), inside(delta.y), inside(delta.z))
 }
 
 #[cfg(test)]

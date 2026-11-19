@@ -1162,6 +1162,10 @@ fn a_frames_class_decides_whether_it_may_be_hung() {
     assert!(harness.app.tabs.active().holding_piece(), "the hung cabinet is in hand");
     let carried = harness.app.tabs.active().carried_delta();
     assert!(carried.z > 1.0, "a wall cabinet hangs where the hand puts it: {carried:?}");
+    // X75: and it keeps the hand while it rises, because a piece no axis holds back is met on the
+    // camera's own plane and that plane is the one it travels in.
+    let shown = carried_screen(&harness, pivot);
+    assert!((shown - upward).length() < 1.5, "the hung cabinet keeps the hand: {shown:?} vs {upward:?}");
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
 }
 
@@ -5109,4 +5113,108 @@ fn the_fill_ghost_passes_the_board_it_meets_and_holds_at_the_frame_envelope() {
     let document = harness.app.tabs.active_mut();
     document.session.undo().expect("one undo step");
     assert!(document.session.project().panel(created).is_none(), "one undo removes the part");
+}
+
+/// The screen places the eight corners of `node`'s world box would take, plus `delta`.
+///
+/// The bit order is the one the brackets promise: bit 0 picks the `x` maximum, bit 1 the `y` and bit
+/// 2 the `z`, so a box's own bracket and its corner are read in one order in a test and in the shell.
+fn box_corners(harness: &Harness, node: Id, delta: geom::DVec3) -> Vec<egui::Pos2> {
+    let (low, high) = harness.app.tabs.active().session.project().world_box(node).expect("the node has a box");
+    let camera = harness.camera();
+    let scene = harness.scene();
+    (0..8)
+        .filter_map(|index| {
+            let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+            let corner = geom::DVec3::new(pick(1, low.x, high.x), pick(2, low.y, high.y), pick(4, low.z, high.z));
+            gizmo_math::screen_point(camera, scene, corner + delta)
+        })
+        .collect()
+}
+
+/// The screen travel a carried piece has shown, measured from the pivot at the take.
+fn carried_screen(harness: &Harness, pivot: geom::DVec3) -> egui::Vec2 {
+    let delta = harness.app.tabs.active().carried_delta();
+    let at =
+        gizmo_math::screen_point(harness.camera(), harness.scene(), pivot + delta).expect("the pivot is on screen");
+    at - gizmo_math::screen_point(harness.camera(), harness.scene(), pivot).expect("the pivot was on screen")
+}
+
+#[test]
+fn a_floor_frame_keeps_the_hand_on_both_floor_directions() {
+    // X75: the owner's report. A floor frame was sluggish under the hand — the cursor ran away from
+    // it — because a multi-axis carry met the pointer on the camera's plane and the rule then kept
+    // only the horizontal part of that delta: 120 points across the screen and 80 up moved the piece
+    // 113 and 21. The plane a carried piece is met on is now the one its class allows (ADR 0164), so
+    // the piece keeps the screen offset the click gave it on both directions of the floor.
+    let (session, frame) = one_floor_frame("10.01.01");
+    let mut harness = Harness::with_session("frame-carry-under-hand", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let pivot = harness.app.tabs.active().session.project().pivot_world(frame).expect("a pivot");
+    let body = piece_middle(&harness, frame);
+    harness.click(body, egui::PointerButton::Primary);
+    // The hand travels in steps, the way a person's does, and the piece keeps it at every one.
+    let mut travel = egui::Vec2::ZERO;
+    for step in [egui::vec2(40.0, -30.0), egui::vec2(60.0, 20.0), egui::vec2(-25.0, -45.0)] {
+        travel += step;
+        harness.hover(body + travel);
+        let shown = carried_screen(&harness, pivot);
+        assert!((shown - travel).length() < 1.5, "the frame keeps the hand at {travel:?}: it moved {shown:?}");
+        let height = harness.app.tabs.active().session.project().pivot_world(frame).expect("a pivot").z;
+        assert!(height.abs() < 1.0e-6, "and its class keeps it on the floor: {height}");
+    }
+    assert!(harness.app.tabs.active().holding_piece(), "the frame is still in hand");
+    assert!(
+        (harness.app.tabs.active().session.project().revision()).get() == harness.revision().get(),
+        "a carry writes nothing before the click that puts it down"
+    );
+}
+
+#[test]
+fn a_frames_brackets_travel_with_the_piece_in_hand() {
+    // X75: the level that is open brackets its box from the frame the document still holds, so a
+    // carried frame left its eight corner marks at the old place. The overlay reads the drag's
+    // preview now, as the renderer does, and the marks come back with the piece on Escape.
+    let (mut session, frame) = one_floor_frame("10.01.01");
+    assert!(session.open_product(frame), "the frame opens");
+    let mut harness = Harness::with_session("frame-carry-brackets", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+    assert_eq!(harness.app.tabs.active().brackets.len(), 8, "the open frame brackets its authored box");
+
+    let body = piece_middle(&harness, frame);
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body + egui::vec2(90.0, -60.0));
+    let delta = harness.app.tabs.active().carried_delta();
+    assert!(delta.length() > 1.0, "the frame is in hand and moved: {delta:?}");
+
+    let moved = box_corners(&harness, frame, delta);
+    let brackets = harness.app.tabs.active().brackets.clone();
+    assert_eq!(brackets.len(), moved.len(), "every corner of the box keeps its bracket");
+    for (bracket, corner) in brackets.iter().zip(&moved) {
+        assert!(
+            (bracket.corner - *corner).length() < 0.5,
+            "a bracket sits on the carried corner: {:?} vs {corner:?}",
+            bracket.corner
+        );
+    }
+
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    let home = box_corners(&harness, frame, geom::DVec3::ZERO);
+    let brackets = harness.app.tabs.active().brackets.clone();
+    for (bracket, corner) in brackets.iter().zip(&home) {
+        assert!(
+            (bracket.corner - *corner).length() < 0.5,
+            "Escape puts the marks back too: {:?} vs {corner:?}",
+            bracket.corner
+        );
+    }
 }

@@ -168,7 +168,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0160](0160-a-frames-box-is-the-box-tools-and-a-drawn-rectangle-is-the-plain-envelope.md) | A frame's box is the box tool's, and a drawn rectangle is the plain envelope | Accepted; amends the creation gesture of 0101, refines 0138 and 0159 |
 | [0161](0161-a-carried-pieces-gaps-are-dimensioned-in-the-scene.md) | A carried piece's gaps are dimensioned in the scene | Accepted; amends 0119's placement for the furniture move, refines 0103 |
 | [0162](0162-a-placement-may-not-put-a-part-inside-another.md) | A placement may not put a part inside another part | Accepted; carries 0102's contact rules into the write, narrows 0147's free move and X65's crossing clause |
-| [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) | The furniture move carries a piece on every axis its class allows | Accepted; supersedes the single-axis latch of 0151 and narrows the one-axis carry of 0153 |
+| [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) | The furniture move carries a piece on every axis its class allows | Accepted; supersedes the single-axis latch of 0151 and narrows the one-axis carry of 0153; its camera-plane carry is superseded by 0164 |
+| [0164](0164-a-carried-piece-is-met-on-the-plane-its-class-allows.md) | A carried piece is met on the plane its class allows | Accepted; supersedes 0163's camera-plane carry |
 
 ## Format
 

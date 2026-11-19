@@ -413,6 +413,18 @@ impl Preview<'_> {
         }
     }
 
+    /// The world point a preview puts `point` at.
+    ///
+    /// It is the rigid transform the drawables take, applied to one point: an overlay that marks a
+    /// carried node — the corner brackets of the level that is open — reads this instead of the
+    /// placement the document still holds (X75).
+    pub(crate) fn moved_point(&self, point: DVec3) -> DVec3 {
+        match self {
+            Self::Translation { delta, .. } => point + *delta,
+            Self::Rotation { pivot, rotation, .. } => *pivot + *rotation * (point - *pivot),
+        }
+    }
+
     /// The world placement a node would have if the preview were committed.
     ///
     /// A camera or a light has no drawable, so the scene frame cannot preview it through its
@@ -477,22 +489,69 @@ pub(crate) fn screen_point(camera: Camera, viewport: egui::Rect, point: DVec3) -
 /// target is where the projection's scale is exact for both projections; a ray along the view
 /// direction has no point on it, which is the answer `None`.
 pub(crate) fn view_plane_point(pointer: Pos2, viewport: egui::Rect, camera: Camera) -> Option<DVec3> {
-    view_plane_through(pointer, viewport, camera, camera.target())
+    plane_point(pointer, viewport, camera, camera.target(), camera.forward())
 }
 
-/// The world point where the pointer's ray meets the plane through `origin` that faces the camera.
+/// The world point where the pointer's ray meets the plane through `origin` with `normal`.
 ///
-/// A carried piece that may travel on more than one axis is taken on this plane: the pointer meets
+/// A carried piece that may travel on more than one axis is met on such a plane: the pointer meets
 /// it at one world point, and the difference of two such points is the delta the document's rule
-/// measures axis by axis. A ray parallel to the plane has no point on it, which is the answer `None`.
-pub(crate) fn view_plane_through(pointer: Pos2, viewport: egui::Rect, camera: Camera, origin: DVec3) -> Option<DVec3> {
+/// measures axis by axis. A plane the ray runs along, or one that lies behind the eye, has no point
+/// on it — a pointer can only meet a plane it looks at — which is the answer `None`.
+pub(crate) fn plane_point(
+    pointer: Pos2,
+    viewport: egui::Rect,
+    camera: Camera,
+    origin: DVec3,
+    normal: DVec3,
+) -> Option<DVec3> {
     let ray = ray_to(pointer, viewport, camera);
-    let forward = camera.forward();
-    let facing = ray.direction().dot(forward);
-    (facing.abs() > f64::EPSILON).then(|| {
-        let depth = (origin - ray.origin()).dot(forward) / facing;
-        ray.origin() + ray.direction() * depth
-    })
+    let facing = ray.direction().dot(normal);
+    if facing.abs() <= f64::EPSILON {
+        return None;
+    }
+    let depth = (origin - ray.origin()).dot(normal) / facing;
+    (depth > 0.0 && depth.is_finite()).then(|| ray.origin() + ray.direction() * depth)
+}
+
+/// The plane a carried piece travels in while its class lets it move on more than one axis.
+///
+/// The hand keeps the piece: the pointer meets this plane at one world point, and the difference of
+/// two such points is the delta the document's rule answers axis by axis. Which plane that is
+/// decides whether the piece stays under the pointer, so the plane is the one the piece may really
+/// move in and not the one facing the eye (X75): a floor-bound frame is met on the floor, and only a
+/// piece whose three axes are free — a camera, a light, a body — is met on the camera's own plane,
+/// where a delta in depth is a delta the piece can take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CarryPlane {
+    /// The plane that faces the camera, for a piece no axis holds back.
+    Camera,
+    /// The plane across the one axis the piece may not travel on — the floor for a floor-bound
+    /// product, whose height its class keeps.
+    Across(Axis),
+}
+
+impl CarryPlane {
+    /// The plane a piece whose axes are `allowed` is carried in, from the axes the tool offers.
+    ///
+    /// One allowed axis is not a plane and never reaches here (a panel keeps the hand-travel latch);
+    /// three leave nothing to hold the piece back, and two are met across the axis they refuse.
+    pub(crate) fn of(allowed: [bool; 3]) -> Self {
+        let mut refused = Axis::ALL.into_iter().filter(|axis| !axis_allowed(allowed, *axis));
+        match (refused.next(), refused.next()) {
+            (Some(axis), None) => Self::Across(axis),
+            _ => Self::Camera,
+        }
+    }
+
+    /// The world point the pointer holds the piece at on this plane through `origin`.
+    pub(crate) fn point(self, pointer: Pos2, viewport: egui::Rect, camera: Camera, origin: DVec3) -> Option<DVec3> {
+        let normal = match self {
+            Self::Camera => camera.forward(),
+            Self::Across(axis) => axis.direction(),
+        };
+        plane_point(pointer, viewport, camera, origin, normal)
+    }
 }
 
 /// The reference guide as screen polylines: the axis and the sweep sampled on the work plane and
@@ -1494,6 +1553,36 @@ mod tests {
 
         let parallel = Ray::new(DVec3::new(0.0, 0.0, 10.0), DVec3::X).expect("ray");
         assert!(ray_plane(parallel, DVec3::ZERO, DVec3::Z).is_none());
+    }
+
+    #[test]
+    fn a_carried_piece_is_met_on_the_plane_its_class_allows() {
+        // X75: the plane decides whether the piece stays under the hand. Two allowed axes are met
+        // across the axis the class refuses — the floor, for a floor-bound product — and only a piece
+        // with all three free is met on the camera's own plane.
+        assert_eq!(CarryPlane::of([true, true, false]), CarryPlane::Across(Axis::Z));
+        assert_eq!(CarryPlane::of([false, true, true]), CarryPlane::Across(Axis::X));
+        assert_eq!(CarryPlane::of([true, false, true]), CarryPlane::Across(Axis::Y));
+        assert_eq!(CarryPlane::of([true, true, true]), CarryPlane::Camera);
+
+        // The pointer meets the floor at the point a maker sees there, so the piece's own screen
+        // travel is the hand's: the projection of the hit is the pointer again.
+        let camera = Camera::default();
+        let viewport = egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(800.0, 600.0));
+        let origin = DVec3::new(100.0, -200.0, 0.0);
+        for pointer in [Pos2::new(400.0, 300.0), Pos2::new(260.0, 520.0)] {
+            let hit =
+                CarryPlane::Across(Axis::Z).point(pointer, viewport, camera, origin).expect("the hand meets the floor");
+            assert!(hit.z.abs() < 1.0e-9, "the floor keeps the height: {hit:?}");
+            let shown = screen_point(camera, viewport, hit).expect("the hit is in front of the camera");
+            assert!((shown - pointer).length() < 0.5, "the hand is on the piece: {shown:?} vs {pointer:?}");
+        }
+        // A camera turned away from the plane leaves the plane's own point behind the ray: the answer
+        // is `None`, and the carry keeps the distance it has instead of throwing the piece out.
+        let mut behind = Camera::default();
+        behind.orbit(std::f64::consts::PI, 0.0);
+        let above = origin + DVec3::Z * 5000.0;
+        assert!(CarryPlane::Across(Axis::Z).point(Pos2::new(400.0, 300.0), viewport, behind, above).is_none());
     }
 
     #[test]

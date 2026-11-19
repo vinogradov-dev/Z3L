@@ -3077,11 +3077,14 @@ impl Document {
             }
         }
         // The overlaid feedback is drawn per view, with that view's camera and rectangle, so a
-        // camera glyph or a selection outline lands where its own pass drew the model.
+        // camera glyph or a selection outline lands where its own pass drew the model. A piece in
+        // hand takes its brackets with it: the overlay reads the drag's preview, as the renderer
+        // does, and not the placements the document still holds (X75).
         let open_boxes = open_frame::OpenBoxes::collect(
             &self.level_bounds,
             self.editor.open_containers(),
             self.scene.product_envelopes(),
+            self.preview(),
         );
         self.brackets.clear();
         for (leaf, view_rect) in &regions {

@@ -1,7 +1,8 @@
 # 0163. The furniture move carries a piece on every axis its class allows
 
 - Status: Accepted; supersedes the single-axis latch of [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md)
-  and narrows the one-axis carry of [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md)
+  and narrows the one-axis carry of [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md);
+  its camera-plane carry is superseded by [0164](0164-a-carried-piece-is-met-on-the-plane-its-class-allows.md)
 - Date: 2026-11-19
 
 ## Context
