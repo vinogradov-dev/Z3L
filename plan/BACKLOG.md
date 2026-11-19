@@ -195,6 +195,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X80** what the log said: a typed zero, a lost bond and a stale hold
+  Why: The owner ran the first logged session and said "плохо. проверь логи". The file answered
+   it in three lines: a typed zero in the carry distance field pinned the piece where it
+   started (0156 frames with asked far from delta and typed=Some(0.0)); the hand-to-pivot bond
+   was lost on 135 frames and the plane branch never read it again, so the carry stood still;
+   and the jump hold was skipped under a typed number, leaving a pending request that would
+   fire on release. The file also carried 13 megabytes of winit tracing spans because the sink
+   passed every crate at debug.
+  Shape: A typed zero releases the face in Distances::place, as every other typed field of the
+   editor already does (0092, 0126), so the pointer takes the face back instead of the part
+   being pinned against the wall. The carry reads the hand-to-pivot offset again when it is
+   missing, from the piece pivot and the hand. A typed number clears the pending jump. The sink
+   passes another crate target only at a warning, and the carry line gains typed, held, offset
+   and the hold age so the next report separates a rule cut from a pin from a hold.
+  Done: A zero typed into a carried piece distance field gives the axis back to the hand and
+   the piece follows again; a camera gesture or a pointer that leaves the work area no longer
+   freezes the carry; a pending jump does not fire when a typed number is released; the log of
+   a session is kilobytes of our own lines and no winit spans; every existing carry and
+   distance test keeps its answer, and the gate is green.
+  `files: crates/ui/src/distance.rs, app/src/translate_gizmo.rs, app/src/logging.rs, docs/decisions/0169-what-the-move-log-said.md` — `352e7da`
+
 - `[x]` **X79** the shell logs the carry, and a jump is measured against the hand
   Why: The owner asks for a logging system that carries what a bug report needs: the moved
    object, its coordinate and the cursor's coordinate, so a gesture's behaviour can be read
