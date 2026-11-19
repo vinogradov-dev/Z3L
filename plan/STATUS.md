@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=4423489 updated=2026-11-19
+STATE: milestone=M7 phase=T task=- state=idle base=b369337 updated=2026-11-19
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -27,9 +27,9 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-Nothing is scheduled: `## Next` opens with Q2, which waits on the owner's four answers, then O2 and
-J1; X85 is the application stream's head (a body measured by its own surface), and Q1 waits behind
-it.
+Nothing is scheduled: the two remaining move tasks wait on the owner. X86 needs its answer — pop a
+piece that is already inside another out at once, or only refuse a deeper place — and X85 needs its
+port's home; X87 landed as the invisible floor (ADR 0177).
 
 ## Index
 

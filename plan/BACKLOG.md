@@ -175,7 +175,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A piece standing inside another moves out and never deeper while it still overlaps; a
    pair that only touches is untouched; the gate is green.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs`
-- `[ ]` **X87** an invisible floor stops every body unless the workspace turns it off
+## Done
+
+- `[x]` **X87** an invisible floor stops every body unless the workspace turns it off
   Why: In a perspective or axonometric view a body dragged on a horizontal carry plane can end
    up below the floor, and nothing in the document says there is one: only a floor-bound
    product class keeps its height. The owner wants an invisible floor by default that stops any
@@ -192,9 +194,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    names it; the checkbox turns the floor off for the next drag, costs no undo entry and
    survives a restart; a floor-bound product behaves exactly as before; a wall or ceiling class
    is unaffected; the gate is green.
-  `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md`
-
-## Done
+  `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md` — `b369337`
 
 - `[x]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
   Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
