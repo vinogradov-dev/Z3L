@@ -464,10 +464,8 @@ impl TranslateGizmo {
         // the hand is put back on it: a frame that moves the view must never move the piece (X67).
         let rehome = !navigating && (camera_moved || self.moved_by_gesture);
         let held = navigating || rehome;
-        let carried = match (offset, pinned) {
-            // A typed distance is the maker's own number on the carried piece too.
-            (_, Some(pinned)) => pinned.is_finite().then_some(pinned),
-            (Some(offset), None) if !held => self.hangs_from(
+        let carried = match offset {
+            Some(offset) if pinned.is_none() && !held => self.hangs_from(
                 viewport,
                 target.camera,
                 drag.start_origin,
@@ -477,10 +475,16 @@ impl TranslateGizmo {
             ),
             _ => None,
         };
-        let (distance, capture) = carried
-            .map(|scalar| scalar.clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM))
-            .map(|scalar| constrained_distance(drag.rule.as_ref(), axis, scalar))
-            .map_or((None, None), |(distance, capture)| (Some(distance), capture));
+        // A typed distance is the maker's own number, and neither the rule nor a snap moves it: it
+        // is the same branch a held handle takes, so a gap types the same in both tools (ADR 0103,
+        // N26). The pointer's own answer is the only one the document's rule may cut.
+        let (distance, capture) = match pinned.filter(|distance| distance.is_finite()) {
+            Some(typed) => (Some(typed), None),
+            None => carried
+                .map(|scalar| scalar.clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM))
+                .map(|scalar| constrained_distance(drag.rule.as_ref(), axis, scalar))
+                .map_or((None, None), |(distance, capture)| (Some(distance), capture)),
+        };
         if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
             drag.delta = axis.direction() * distance;
             drag.capture = capture;

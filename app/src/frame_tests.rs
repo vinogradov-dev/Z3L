@@ -1155,52 +1155,119 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
 }
 
 #[test]
-fn a_press_on_the_carried_piece_s_card_takes_the_hand_and_puts_it_down() {
-    // X66: at the edge of the work area the card is pulled back over the pointer, so its plates must
-    // not take the hand — the press there is the click that ends the carry, and a drag across a plate
-    // must not scrub a gap the piece would then jump to.
-    let (project, product, panel) = product_with_a_side_panel();
-    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
-    assert!(session.open_product(product), "the fixture product opens");
-    let mut harness = Harness::with_session("frame-carry-card", session);
+fn a_carried_piece_measures_its_gaps_in_the_scene_and_a_press_over_one_puts_it_down() {
+    // N26: a carried piece's two gaps are dimensioned where they are measured, so the furniture move
+    // draws no card at all — the numbers are one field in the middle of each arrow and the words are
+    // the inspector's. X66 still holds: a field that sits in the scene covers the very press that
+    // puts the piece down, so it takes the keyboard and never the pointer.
+    let (session, shelf) = a_raised_shelf();
+    let mut harness = Harness::with_session("frame-carry-gaps", session);
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Furniture;
     harness.settle();
+    let axes = harness.app.tabs.active().session.project().furniture_axes(&[shelf]);
+    let (_, up) = handle_point_on(&harness, shelf, axes, Some(gizmo_math::Axis::Z))
+        .expect("the direction Z runs in is on screen");
+    let body = harness.node_point(shelf);
 
-    // The panels are put away, so the corner of the work area is clear of them: a pointer there
-    // cannot hang the card below itself or to its right, and the card is pulled back over the hand.
-    harness.app.shell.panels.toggle_hide_all();
-    harness.settle();
+    // The hand travels down, so the gap to the floor is the field beside it.
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body - up * 10.0);
+    assert!(harness.app.tabs.active().holding_piece(), "the shelf is in hand");
+    assert!(!harness.app.tabs.active().tool_card_is_up(), "a carried piece draws no card");
+    let chrome = harness.settle();
     let scene = harness.scene();
-    let corner = egui::pos2(scene.right() - 24.0, scene.bottom() - 20.0);
-    harness.click(harness.node_point(panel), egui::PointerButton::Primary);
-    harness.hover(corner);
-    assert!(harness.app.tabs.active().holding_piece(), "the board is in hand");
-    let card = harness.app.tabs.active().tool_card_rect().expect("the card drew");
-    assert!(card.contains(corner), "the card was pulled back over the pointer: {card:?} holds {corner:?}");
-    let carried = harness.app.tabs.active().carried_delta();
+    let fields: Vec<egui::Rect> = harness
+        .drawn_rects
+        .iter()
+        .filter(|(rect, text)| scene.contains_rect(*rect) && text == "mm")
+        .map(|(rect, _)| *rect)
+        .filter(|rect| !chrome.panels.panels().any(|panel| panel.contains_rect(*rect)))
+        .collect();
+    assert_eq!(fields.len(), 2, "one field per gap, drawn in the scene: {fields:?}");
+    assert!(harness.drew(Message::ToolGapLow.text(Lang::En)), "the inspector names the low gap");
+    assert!(harness.drew(Message::ToolGapHigh.text(Lang::En)), "and the high one");
 
-    // A drag across the card is the viewport's: it carries the piece and scrubs nothing.
-    harness.press_at(card.center(), egui::PointerButton::Primary);
-    harness.run(vec![egui::Event::PointerMoved(card.center() + egui::vec2(30.0, 0.0))]);
-    harness.release_at(card.center() + egui::vec2(30.0, 0.0), egui::PointerButton::Primary);
-    harness.settle();
-    assert!(harness.app.tabs.active().holding_piece(), "a drag over the card ends nothing");
-
-    // The hand comes back, and so does the piece: no number pinned it.
-    harness.hover(corner);
-    harness.settle();
-    let back = harness.app.tabs.active().carried_delta();
-    assert!((back - carried).length() < 1.0, "the piece is where the hand put it: {back:?} from {carried:?}");
-
-    // A click on the card puts the piece down, as it does anywhere else in the scene.
-    let card = harness.app.tabs.active().tool_card_rect().expect("the card followed the pointer");
+    // The press over a field is the scene's, not the plate's: the piece is put down where the hand
+    // holds it, as one undo entry, rather than the number under it being scrubbed.
     let revision = harness.revision();
-    harness.click(card.center(), egui::PointerButton::Primary);
-    assert!(!harness.app.tabs.active().holding_piece(), "the click over the card puts the piece down");
+    harness.click(fields[0].center(), egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "the press over a field puts the piece down");
     assert_eq!(harness.revision().get(), revision.get() + 1, "and commits it as one undo entry");
+}
+
+#[test]
+fn a_gap_typed_into_a_scene_field_lands_where_it_was_typed_as_one_undo_entry() {
+    // The Done of N26: the arrow's own field is the typed path to the gap. A number pins the face
+    // against the pointer, the opposite face follows, and the click that puts the piece down is the
+    // one command — one undo entry for the whole gesture (ADR 0103).
+    let (session, shelf) = a_raised_shelf();
+    let mut harness = Harness::with_session("frame-carry-typed-gap", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+    let start = harness.app.tabs.active().session.project().world_placement(shelf).expect("a world frame");
+    let axes = harness.app.tabs.active().session.project().furniture_axes(&[shelf]);
+    let (_, up) = handle_point_on(&harness, shelf, axes, Some(gizmo_math::Axis::Z))
+        .expect("the direction Z runs in is on screen");
+    let body = harness.node_point(shelf);
+    // The document still holds the shelf where it was taken, so a reading of the gap adds the
+    // carry's own preview to the stored face (a drag previews and the click commits it).
+    let gap = |harness: &Harness| {
+        let document = harness.app.tabs.active();
+        let stored = document.session.project().world_box(shelf).expect("a box").0.z;
+        stored + document.carried_delta().z
+    };
+
+    // The hand travels down, so the field that opens is the gap to the floor.
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body - up * 10.0);
+    assert!(harness.app.tabs.active().holding_piece(), "the shelf is in hand");
+    let revision = harness.revision();
+    type_text(&mut harness, "5");
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(
+        (gap(&harness) - 5.0).abs() < 1.0,
+        "the typed number pinned the face 5 mm off the floor: {}",
+        gap(&harness)
+    );
+    assert_eq!(harness.revision(), revision, "typing writes nothing on its own");
+
+    harness.click(body - up * 10.0, egui::PointerButton::Primary);
+    assert!(!harness.app.tabs.active().holding_piece(), "the click puts the piece down");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one carried piece is one undo entry");
+    let landed = harness.app.tabs.active().session.project().world_box(shelf).expect("a box").0.z;
+    assert!((landed - 5.0).abs() < 1.0, "and the document holds the gap that was typed: {landed}");
+    harness.press(egui::Key::Z, egui::Modifiers::CTRL);
+    assert_eq!(
+        harness.app.tabs.active().session.project().world_placement(shelf),
+        Some(start),
+        "one undo takes the whole gesture back"
+    );
+}
+
+/// A cabinet holding one shelf raised 100 mm off its floor: a piece with a gap on both sides.
+///
+/// The shelf's thickness runs along world Z, so the furniture move offers it that one axis and both
+/// of its gaps have a surface to measure against (N26).
+fn a_raised_shelf() -> (engine::Session, Id) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("a frame");
+    let frame = project
+        .add_product(project.root().id(), "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, model::Placement::IDENTITY)
+        .expect("a product");
+    let size = model::PanelNominalSize::new(mm(500), mm(400)).expect("a panel size");
+    let raised = model::Placement::IDENTITY.with_translation(mm(50), mm(80), mm(100)).expect("a raised placement");
+    let shelf = project.add_panel(frame, "Shelf", size, None, mm(18), raised).expect("a shelf");
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(frame), "the fixture product opens");
+    (session, shelf)
 }
 
 #[test]

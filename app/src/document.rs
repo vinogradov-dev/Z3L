@@ -35,9 +35,8 @@ use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneC
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
-    ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue, MeshElement,
-    Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode, ViewFlags,
-    tool_card,
+    ContourGrip, DistanceFields, Distances, DrawDraft, Editor, FieldPlacement, GripValue, MeshElement, Message,
+    PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode, ViewFlags, tool_card,
 };
 use units::Length;
 
@@ -103,6 +102,20 @@ const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied
 
 /// How far the line of a snapped drag reaches past the moved box, in millimetres.
 const CAPTURE_OVERHANG_MM: f64 = 12.0;
+
+/// How near the pointer must be to a measured gap, in points, for its dimension to be lit.
+const GAP_REACH: f32 = 26.0;
+
+/// How far a dimension recedes while the pointer is elsewhere: one tone of the same ink, never a
+/// second colour (N26).
+const GAP_DIM: f32 = 0.55;
+
+/// The length of one arrowhead of a dimension, in points, and its half-width.
+///
+/// The drafting grammar's terminator: a solid head whose tip touches the witness, thin enough to
+/// read as a dimension over a board and not as a second object (N26).
+const GAP_ARROW_LENGTH: f32 = 8.0;
+const GAP_ARROW_HALF_WIDTH: f32 = 2.6;
 
 /// The display state the window owns and every frame of this tab is built with.
 ///
@@ -1664,9 +1677,9 @@ impl Document {
             painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
             placements.push(FieldPlacement { side, position: middle_screen });
         }
-        let outcome: DistanceOutcome =
-            // A fill holds the pointer with its own gesture, so its plates are a deliberate target.
-            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity, true);
+        // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
+        let outcome =
+            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity);
         self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
@@ -1815,6 +1828,11 @@ impl Document {
     }
 
     /// Draws the exact-distance fields of the translate drag and reads their numbers.
+    ///
+    /// One measurement, two layouts: a held handle keeps the card beside the pointer (ADR 0119) and a
+    /// carried piece dimensions its gaps in the scene, one field in the middle of each arrow
+    /// (N26, ADR 0161). Both read the same [`Distances`], so the inspector and the scene cannot show
+    /// two numbers for one face.
     fn show_move_distances(&mut self, ui: &mut egui::Ui, rect: egui::Rect, opacity: u32) {
         let (Some(axis), Some(node)) = (self.translate_gizmo.axis(), self.translate_gizmo.anchor()) else {
             self.clear_move_distances(ui.ctx());
@@ -1864,48 +1882,52 @@ impl Document {
         let high_wall_point =
             measure.wall_high.map(|wall| measure.high_face + direction * (wall - (measure.start_low + measure.extent)));
         let painter = ui.painter().with_clip_rect(rect);
+        // The hand is where the maker sees the pointer, and after a camera gesture it is the carry's
+        // own square and not the system pointer (X69, ADR 0156).
+        let pointer = hand.or_else(|| ui.input(|input| input.pointer.hover_pos()));
+        let ink = ui::theme::helper(ui);
         let mut placements = Vec::new();
         for (side, face, wall_point) in
             [(Side::Low, low_face, low_wall_point), (Side::High, high_face, high_wall_point)]
         {
-            let middle = wall_point.map_or(face, |wall_point| {
-                let (Some(face_screen), Some(wall_screen)) = (
-                    gizmo_math::screen_point(self.scene.camera, rect, face),
-                    gizmo_math::screen_point(self.scene.camera, rect, wall_point),
-                ) else {
-                    return face;
-                };
-                painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
-                (face + wall_point) * 0.5
-            });
-            let Some(middle_screen) = gizmo_math::screen_point(self.scene.camera, rect, middle) else {
+            let Some(wall_point) = wall_point else {
                 continue;
             };
-            let position = egui::Pos2::new(
-                middle_screen.x.clamp(rect.left() + 90.0, (rect.right() - 90.0).max(rect.left() + 90.0)),
-                middle_screen.y.clamp(rect.top() + 26.0, (rect.bottom() - 26.0).max(rect.top() + 26.0)),
-            );
-            placements.push(FieldPlacement { side, position });
+            // An axis that points at the eye has no run on screen: the arrow would be a dot, so the
+            // scene draws neither the gap nor its field and the inspector keeps the two numbers
+            // (N26). The probe answered both faces of one box, so both sides take this answer.
+            if gizmo_math::travel_frame(self.scene.camera, rect, face, axis).is_none() {
+                continue;
+            }
+            let (Some(face_screen), Some(wall_screen)) = (
+                gizmo_math::screen_point(self.scene.camera, rect, face),
+                gizmo_math::screen_point(self.scene.camera, rect, wall_point),
+            ) else {
+                continue;
+            };
+            // The gap under the hand is the one lit; a pointer elsewhere in the room leaves the
+            // dimension thin and dim, so two numbers never shout over the model (N26).
+            let lit = pointer.is_some_and(|pointer| distance_to_run(pointer, face_screen, wall_screen) <= GAP_REACH);
+            paint_gap_arrow(&painter, face_screen, wall_screen, if lit { ink } else { ink.gamma_multiply(GAP_DIM) });
+            placements.push(FieldPlacement { side, position: face_screen + (wall_screen - face_screen) * 0.5 });
         }
-        // The card hangs from the carry's own hand while it is away from the system pointer: after a
-        // camera gesture the hand is on the piece, and a card left at the pointer would sit across
-        // the room from the gaps it names (X69).
-        let anchor = hand.or_else(|| ui.input(|input| input.pointer.hover_pos())).unwrap_or_else(|| rect.center());
-        // The furniture move carries a piece with no button held, so its card keeps the keyboard and
-        // never the pointer: a press over it is the drop, not a scrub (X66). Every other gesture
-        // reaches this function too, so the flag is the hold's own.
-        let sense_pointer = !self.translate_gizmo.is_following();
-        let outcome = self.distance_fields.show(
-            ui,
-            &mut measure.distances,
-            &placements,
-            rect,
-            anchor,
-            None,
-            opacity,
-            sense_pointer,
-        );
-        self.tool_card_rect = outcome.rect;
+        let outcome = if self.translate_gizmo.is_following() {
+            // A carried piece is measured where the gaps are (N26, ADR 0161): the field sits in the
+            // middle of its own arrow and no card follows the hand, so nothing covers the pointer
+            // and no number drifts away from the run it measures. The plate takes no pointer, which
+            // is why a press over it is still the click that puts the piece down (X66).
+            let outcome = self.distance_fields.show_in_scene(ui, &mut measure.distances, &placements, rect, opacity);
+            self.tool_card_rect = None;
+            outcome
+        } else {
+            // A held drag keeps its card: the hand is on the handle, so a plate beside the pointer is
+            // a deliberate target and its fields take both the hand and the keyboard (ADR 0119).
+            let anchor = hand.or(pointer).unwrap_or_else(|| rect.center());
+            let outcome =
+                self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
+            self.tool_card_rect = outcome.rect;
+            outcome
+        };
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
         }
@@ -1980,7 +2002,7 @@ impl Document {
         // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
         // owns the number instead of the pointer (`update_box`, ADR 0119).
         let focus = self.extrude_gizmo.take_focus().then_some(ToolParam::Height);
-        let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity, true);
+        let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity);
         // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.
         self.tool_card_rect = Some(rect);
@@ -2033,14 +2055,23 @@ impl Document {
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
     /// the two gaps of a niche. Two surfaces read one draft, so they cannot show two numbers for one
-    /// face.
+    /// face. A move's two gaps are the third instance: a carried piece draws its fields in the scene
+    /// (N26) and the inspector is where the same rows keep the words and the refusal, because the
+    /// plates there are one number in the middle of an arrow and cannot say which gap they measure.
     pub(crate) fn tool_view(&self) -> Option<ToolView> {
         if let Some(height) = self.height_view() {
             return Some(height);
         }
-        let arm = self.editor.fill_arm()?;
-        let distances = self.distances.as_ref()?;
-        Some(ToolView { title: arm.class.label(), rows: distances.rows(), commit: ui::ToolCommit::Gesture })
+        if let Some(arm) = self.editor.fill_arm() {
+            let distances = self.distances.as_ref()?;
+            return Some(ToolView {
+                title: arm.class.label(),
+                rows: distances.rows(),
+                commit: ui::ToolCommit::Gesture,
+            });
+        }
+        let measured = self.move_distances.as_ref()?;
+        Some(ToolView { title: None, rows: measured.distances.rows(), commit: ui::ToolCommit::Gesture })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
@@ -2083,16 +2114,24 @@ impl Document {
         {
             self.last_error = Some(error);
         }
-        if (reported.edits.iter().any(|edit| edit.param != ToolParam::Height)
+        // A gap belongs to whichever gesture measured it: the niche's void, or the move's own drag,
+        // whose rows the inspector draws while a piece is in hand or on a handle (N26). The two
+        // fields are told apart at the borrow, so one number still has one refusal and one pin.
+        let gaps = reported.edits.iter().any(|edit| matches!(edit.param, ToolParam::LowGap | ToolParam::HighGap))
             || reported.lock.is_some()
-            || reported.centre.is_some())
-            && let Some(distances) = self.distances.as_mut()
-        {
-            if self.distance_fields.apply(distances, &reported) {
-                ctx.request_repaint();
-            }
-            if let Some(message) = self.distance_fields.error() {
-                self.last_error = Some(message.text(ui::language(ctx)).to_owned());
+            || reported.centre.is_some();
+        if gaps {
+            let measured = match self.distances.as_mut() {
+                Some(distances) => Some(distances),
+                None => self.move_distances.as_mut().map(|measure| &mut measure.distances),
+            };
+            if let Some(distances) = measured {
+                if self.distance_fields.apply(distances, &reported) {
+                    ctx.request_repaint();
+                }
+                if let Some(message) = self.distance_fields.error() {
+                    self.last_error = Some(message.text(ui::language(ctx)).to_owned());
+                }
             }
         }
         match reported.action {
@@ -3965,6 +4004,39 @@ fn paint_capture(
         };
         painter.line_segment([from, to], stroke);
     }
+}
+
+/// Draws one measured gap as a dimension: a thin line along the run and an arrowhead at each end.
+///
+/// The grammar is the drafting skill's: the run is the dimension line between the two witnesses the
+/// model probe found, the heads point at those witnesses, and the gap's own field is the text that
+/// sits in the middle of it (N26). The ink is the guide amber the program draws its help in, dimmed
+/// by the caller while the pointer is elsewhere, and a run too short to hold two heads draws the
+/// line alone rather than a pair of overlapping triangles.
+fn paint_gap_arrow(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, ink: egui::Color32) {
+    painter.line_segment([from, to], egui::Stroke::new(1.0, ink));
+    let run = to - from;
+    let length = run.length();
+    if length <= GAP_ARROW_LENGTH * 2.0 || length <= f32::EPSILON {
+        return;
+    }
+    let along = run / length;
+    let across = egui::vec2(-along.y, along.x) * GAP_ARROW_HALF_WIDTH;
+    for (tip, towards) in [(from, along), (to, -along)] {
+        let base = tip + towards * GAP_ARROW_LENGTH;
+        painter.add(egui::Shape::convex_polygon(vec![tip, base + across, base - across], ink, egui::Stroke::NONE));
+    }
+}
+
+/// How far `point` lies from the segment `from..to`, in points.
+fn distance_to_run(point: egui::Pos2, from: egui::Pos2, to: egui::Pos2) -> f32 {
+    let run = to - from;
+    let length = run.length();
+    if length <= f32::EPSILON {
+        return point.distance(from);
+    }
+    let along = ((point - from).dot(run) / (length * length)).clamp(0.0, 1.0);
+    point.distance(from + run * along)
 }
 
 /// The world axis a product-frame axis index names.
