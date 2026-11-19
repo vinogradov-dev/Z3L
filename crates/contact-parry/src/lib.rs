@@ -23,7 +23,10 @@
     clippy::unreachable
 )]
 
-use geom::{Contact, DVec3, Penetration, Pose, Prepared, Shape};
+use geom::{Contact, DVec3, Penetration, Pose, Shape, Shared, Solid};
+use std::any::Any;
+use std::sync::Arc;
+
 use parry3d_f64::math::{Pose as ParryPose, Rot3, Vec3};
 use parry3d_f64::query::{ShapeCastOptions, cast_shapes, contact as parry_contact};
 use parry3d_f64::shape::SharedShape;
@@ -35,23 +38,45 @@ const MAX_TRAVEL_MM: f64 = 10_000.0;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Parry;
 
-/// One shape as parry holds it.
+/// One body as parry holds it: the shape and the pose it stands at.
+///
+/// A rule keeps as many of these as it measures, so the conversion from a Z3L shape happens once per
+/// gesture; `shifted` moves the pose and shares the shape.
 #[derive(Debug)]
-struct Body(SharedShape);
+struct Body {
+    shape: SharedShape,
+    pose: ParryPose,
+}
 
 impl Contact for Parry {
-    fn prepare(&self, shape: &Shape) -> Option<Prepared> {
-        let body = match shape {
+    fn prepare(&self, shape: &Shape, pose: Pose) -> Option<Shared> {
+        let shape = match shape {
             Shape::Convex(points) => SharedShape::convex_hull(&points.iter().copied().map(vector).collect::<Vec<_>>())?,
             Shape::Mesh { vertices, triangles } => {
                 SharedShape::trimesh(vertices.iter().copied().map(vector).collect(), triangles.clone()).ok()?
             }
         };
-        Some(Prepared::new(Body(body)))
+        Some(Arc::new(Body { shape, pose: parry_pose(pose) }) as Shared)
+    }
+}
+
+impl Solid for Body {
+    fn bounds(&self) -> (DVec3, DVec3) {
+        let aabb = self.shape.compute_aabb(&self.pose);
+        (point(aabb.mins), point(aabb.maxs))
     }
 
-    fn travel(&self, a: &Prepared, at_a: Pose, direction: DVec3, b: &Prepared, at_b: Pose) -> Option<f64> {
-        let (body_a, body_b) = (a.get::<Body>()?, b.get::<Body>()?);
+    fn shifted(&self, delta: DVec3) -> Option<Shared> {
+        if !delta.is_finite() {
+            return None;
+        }
+        let pose = ParryPose::from_parts(self.pose.translation + vector(delta), self.pose.rotation);
+        Some(Arc::new(Body { shape: self.shape.clone(), pose }) as Shared)
+    }
+
+    fn travel(&self, other: &dyn Solid, direction: DVec3) -> Option<f64> {
+        let body_b = as_body(other)?;
+        let body_a = self;
         // The heading is taken as a heading: the answer is a distance in millimetres whatever the
         // vector's own length, which is what a caller passing a world axis and a caller passing the
         // vector between two places both mean.
@@ -68,12 +93,12 @@ impl Contact for Parry {
             compute_impact_geometry_on_penetration: false,
         };
         let hit = cast_shapes(
-            &parry_pose(at_a),
+            &body_a.pose,
             vector(direction / length),
-            &*body_a.0,
-            &parry_pose(at_b),
+            &*body_a.shape,
+            &body_b.pose,
             Vec3::ZERO,
-            &*body_b.0,
+            &*body_b.shape,
             options,
         )
         .ok()??;
@@ -81,17 +106,25 @@ impl Contact for Parry {
         travel.is_finite().then_some(travel)
     }
 
-    fn penetration(&self, a: &Prepared, at_a: Pose, b: &Prepared, at_b: Pose) -> Option<Penetration> {
-        let (body_a, body_b) = (a.get::<Body>()?, b.get::<Body>()?);
+    fn penetration(&self, other: &dyn Solid) -> Option<Penetration> {
+        let body_b = as_body(other)?;
         // A zero prediction asks for the touching pair as well, so a face that only touches answers a
         // distance of zero and is left to the caller's slack.
-        let found = parry_contact(&parry_pose(at_a), &*body_a.0, &parry_pose(at_b), &*body_b.0, 0.0).ok()??;
+        let found = parry_contact(&self.pose, &*self.shape, &body_b.pose, &*body_b.shape, 0.0).ok()??;
         if found.dist >= 0.0 {
             return None;
         }
         let depth_mm = -found.dist;
         depth_mm.is_finite().then_some(Penetration { depth_mm, normal: point(found.normal1) })
     }
+}
+
+/// This adapter's own body, when the other side of a pair was built by it.
+///
+/// A contract is not a licence to guess: a body of another adapter answers `None` rather than being
+/// measured as something it is not.
+fn as_body(solid: &dyn Solid) -> Option<&Body> {
+    (solid as &dyn Any).downcast_ref::<Body>()
 }
 
 /// A Z3L millimetre point as parry's vector: the same three numbers, and the same type in the double
@@ -156,8 +189,8 @@ mod tests {
         Shape::convex(points).expect("a ball is a convex shape")
     }
 
-    fn prepared(shape: &Shape) -> Prepared {
-        Parry.prepare(shape).expect("parry measures a closed shape")
+    fn prepared(shape: &Shape, pose: Pose) -> Shared {
+        Parry.prepare(shape, pose).expect("parry measures a closed shape")
     }
 
     fn at(x: f64, y: f64, z: f64) -> Pose {
@@ -166,32 +199,27 @@ mod tests {
 
     #[test]
     fn a_box_pair_answers_its_sunk_depth() {
-        let (a, b) = (prepared(&cube(100.0)), prepared(&cube(100.0)));
-        let sunk = Parry.penetration(&a, at(0.0, 0.0, 0.0), &b, at(50.0, 0.0, 0.0)).expect("the cubes overlap");
+        let (a, b) = (prepared(&cube(100.0), at(0.0, 0.0, 0.0)), prepared(&cube(100.0), at(50.0, 0.0, 0.0)));
+        let sunk = a.penetration(&*b).expect("the cubes overlap");
         assert!((sunk.depth_mm - 50.0).abs() < 1.0e-6, "was {sunk:?}");
         assert!(sunk.normal.x.abs() > 0.99, "and the way out is along X: {sunk:?}");
         assert!(sunk.is_overlap(0.001), "one micrometre is the document's rounding");
 
         // A pair that only touches is contact, and one that stands apart shares nothing.
-        assert_eq!(Parry.penetration(&a, at(0.0, 0.0, 0.0), &b, at(100.0, 0.0, 0.0)), None);
-        assert_eq!(Parry.penetration(&a, at(0.0, 0.0, 0.0), &b, at(400.0, 0.0, 0.0)), None);
+        assert_eq!(a.penetration(&*prepared(&cube(100.0), at(100.0, 0.0, 0.0))), None, "a face is contact");
+        assert_eq!(a.penetration(&*prepared(&cube(100.0), at(400.0, 0.0, 0.0))), None, "and this pair is apart");
+        assert!(geom::overlap(&*a, &*b, 0.001), "50 mm is deeper than the document's rounding");
     }
 
     #[test]
     fn a_cast_stops_where_the_shapes_first_touch() {
-        let (a, b) = (prepared(&cube(100.0)), prepared(&cube(100.0)));
-        let travel = Parry.travel(&a, at(0.0, 0.0, 0.0), DVec3::X, &b, at(300.0, 0.0, 0.0));
+        let a = prepared(&cube(100.0), at(0.0, 0.0, 0.0));
+        let b = prepared(&cube(100.0), at(300.0, 0.0, 0.0));
+        let travel = a.travel(&*b, DVec3::X);
         assert_eq!(travel.map(|mm| mm.round()), Some(200.0), "the near faces meet after 200 mm");
-        assert_eq!(
-            Parry.travel(&a, at(0.0, 0.0, 0.0), DVec3::NEG_X, &b, at(300.0, 0.0, 0.0)),
-            None,
-            "the other way is clear"
-        );
+        assert_eq!(a.travel(&*b, DVec3::NEG_X), None, "the other way is clear");
         // The heading is a heading: a vector twice as long names the same touch.
-        assert_eq!(
-            Parry.travel(&a, at(0.0, 0.0, 0.0), DVec3::X * 7.0, &b, at(300.0, 0.0, 0.0)).map(|mm| mm.round()),
-            Some(200.0)
-        );
+        assert_eq!(a.travel(&*b, DVec3::X * 7.0).map(|mm| mm.round()), Some(200.0));
     }
 
     #[test]
@@ -207,12 +235,11 @@ mod tests {
                 }
             }
         }
-        let board = prepared(&Shape::convex(points).expect("a board is a convex shape"));
         let quarter = std::f64::consts::FRAC_PI_4;
         let turned = Pose::new(DVec3::ZERO, DQuat::from_rotation_z(quarter));
-        let block = prepared(&cube(100.0));
-        let travel =
-            Parry.travel(&board, turned, DVec3::X, &block, at(500.0, 0.0, 0.0)).expect("the board meets the block");
+        let board = prepared(&Shape::convex(points).expect("a board is a convex shape"), turned);
+        let block = prepared(&cube(100.0), at(500.0, 0.0, 0.0));
+        let travel = board.travel(&*block, DVec3::X).expect("the board meets the block");
         // The world box around the board reaches x = 77.78, so a box reading stops it at 372.22; the
         // board's own edge at the block's corner y = 50 only reaches x = 64.14, so it travels to
         // 450 - 64.14 = 385.86. The difference is the corner the box would have invented.
@@ -223,15 +250,14 @@ mod tests {
 
     #[test]
     fn a_ball_slips_through_a_hole_and_rubs_its_rim() {
-        let plate = prepared(&plate_with_a_hole(60.0));
-        let ball = prepared(&ball(20.0));
+        let plate = prepared(&plate_with_a_hole(60.0), Pose::IDENTITY);
         // A ball 20 mm across the hole's 60 mm falls through it: the way is clear.
-        assert_eq!(Parry.travel(&ball, at(0.0, 0.0, 200.0), DVec3::NEG_Z, &plate, Pose::IDENTITY), None);
+        let straight = prepared(&ball(20.0), at(0.0, 0.0, 200.0));
+        assert_eq!(straight.travel(&*plate, DVec3::NEG_Z), None);
         // Moved onto the rim it meets the plate's own corner, where its surface is 20 mm from the
         // centre: the ball's centre comes down to z = 25, so it travels 175 mm and no further.
-        let rub = Parry
-            .travel(&ball, at(30.0, 0.0, 200.0), DVec3::NEG_Z, &plate, Pose::IDENTITY)
-            .expect("the ball meets the rim");
+        let rubbed = prepared(&ball(20.0), at(30.0, 0.0, 200.0));
+        let rub = rubbed.travel(&*plate, DVec3::NEG_Z).expect("the ball meets the rim");
         assert!((rub - 175.0).abs() < 1.0, "the rim is 20 mm from the ball's centre: {rub}");
     }
 

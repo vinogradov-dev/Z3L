@@ -27,8 +27,10 @@ never leaves its adapter and a test can answer contact with a stub.
 ## Decision
 
 **The port is a module of `geom`.** `geom::contact` holds `Shape` (a convex hull or a closed triangle
-surface, in the body's own frame, millimetres), `Pose`, `Penetration`, `Prepared` and the `Contact`
-trait with `prepare`, `travel` and `penetration` (`overlap` is provided from them). `geom` is the L0
+surface, in the body's own frame, millimetres), `Pose`, `Penetration` and two traits: `Contact`, which
+the adapter implements and which is asked **once** per gesture to turn a shape and its pose into a
+prepared body, and `Solid`, which that body implements — `bounds`, `shifted`, `travel`, `penetration`,
+with `overlap` a free function over the last one. `geom` is the L0
 crate every layer already depends on, it already speaks millimetres at the geometry boundary, and it
 already holds operations rather than only primitives (`boolean`). The port crate the entry imagined
 would have been a same-layer edge into `geom`, which the gate forbids and which nothing else needed.
@@ -45,13 +47,17 @@ speaks millimetres here with no conversion, because the port's unit *is* a milli
 `glam` is one minor version behind the workspace's, so a rotation crosses that boundary as four
 numbers.
 
-**A prepared shape, not a rebuilt one.** `Contact::prepare` returns the adapter's own representation in
-an opaque `Prepared` handle, so a drag converts each body once when its rule is built and asks the same
-two shapes on every frame. A handle of the wrong type answers `None`, never a panic.
+**A prepared body, and no trait object in the rule.** `Contact::prepare` returns `Shared` — an
+`Arc<dyn Solid>` the adapter made — so a drag converts each body once when its rule is built and asks
+the same bodies on every frame. The rule stores bodies, not shapes and not an adapter: a `&dyn
+Contact` threaded through `MoveRule` would put a lifetime on a type the shell keeps across frames, and
+every question about a pair needs the adapter only because the shapes were not prepared yet. A body of
+another adapter answers `None` from a pair query, never a panic.
 
 **Three questions, not five.** `travel` (how far the mover goes along a heading before it first
 touches), `penetration` (how deep the two are sunk and along which normal) and `overlap` (penetration
-against the document's own rounding) are what a drag, the write guard and their log read today. A gap
+against the document's own rounding) are what a drag, the write guard and their log read today;
+`bounds` and `shifted` exist so a rule can keep one body and move it per proposal. A gap
 distance and a broad phase are filed for the stage that needs them: an unused query is a promise the
 code cannot keep, and the frame budget is measured before a cache is designed.
 

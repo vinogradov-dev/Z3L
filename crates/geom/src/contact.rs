@@ -11,22 +11,23 @@
 //! The document builds it from the node's own parametric data and never from the render mesh: what is
 //! drawn is a tessellation chosen for the screen, and a measurement must not follow that choice.
 //!
-//! The port is an adapter-shaped trait, like `kernel` for geometry: this module holds the types and
-//! the contract, `contact-parry` (L2) does the arithmetic, and the document never sees the
-//! third-party type. Two roads are deliberately absent until a caller needs
-//! them: a gap distance, and a broad phase. A drag asks
+//! The port is an adapter-shaped pair of traits, like `kernel` for geometry. [`Contact`] is asked
+//! **once**, when a rule is built: it turns a [`Shape`] and the place it stands at into a [`Shared`]
+//! body the adapter owns, so a drag asks a body every frame without a trait object threaded through
+//! the rule. [`Solid`] is that body, and it answers two questions about a pair:
 //!
-//! - [`Contact::travel`] — how far the mover goes along a direction before it first touches the other
-//!   body, which is the cut a drag makes and the crossing a jump rests on;
-//! - [`Contact::penetration`] — how deeply the two are sunk and along which normal, which is the
+//! - [`Solid::travel`] — how far this body goes along a direction before it first touches another,
+//!   which is the cut a drag makes and the crossing a jump rests on;
+//! - [`Solid::penetration`] — how deeply the two are sunk and along which normal, which is the
 //!   destination test and the depth a pair the document already holds overlapping may not exceed;
-//! - [`Contact::overlap`] — the penetration against the document's own rounding, which is the one
-//!   predicate both of those questions reduce to.
+//!   [`overlap`] turns it into the one predicate a refusal asks, against the document's own rounding.
 //!
-//! The answer is pure: nothing is stored here and nothing is mutated, so a rule may ask it once per
-//! frame and take the same answer as the release asks.
+//! A gap distance and a broad phase are deliberately absent until a caller needs them: an unused
+//! query is a promise the code cannot keep. The answer is pure — nothing is stored and nothing is
+//! mutated — so a rule may ask it once per frame and take the same answer as the release asks.
 use std::any::Any;
 use std::fmt;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -175,62 +176,59 @@ impl Penetration {
     }
 }
 
-/// One shape as the loaded adapter holds it: built once, asked many times.
+/// One body's own surface, prepared by an adapter and posed in the world.
 ///
-/// A drag asks the same two shapes every frame, so the adapter converts each of them once when the
-/// rule is built and keeps its own representation here. The box is opaque to this crate — the adapter
-/// that made it is the only code that reads it back, and a wrong type answers `None` rather than a
-/// panic.
-pub struct Prepared(Box<dyn Any>);
+/// It is what a rule carries instead of a shape: the adapter built it once, the body knows where it
+/// stands, and every question about a pair is asked of the two bodies themselves. No trait object
+/// travels through the document, so a rule stores its bodies and its callers never see the adapter.
+pub trait Solid: fmt::Debug + Any {
+    /// The world bounds of this body, in millimetres: its own faces, not the box an adapter uses.
+    fn bounds(&self) -> (DVec3, DVec3);
 
-impl Prepared {
-    /// Wraps the adapter's own representation of one shape.
-    pub fn new<T: Any>(body: T) -> Self {
-        Self(Box::new(body))
-    }
+    /// The same body moved rigidly by `delta` millimetres, or `None` when the move is not finite.
+    fn shifted(&self, delta: DVec3) -> Option<Shared>;
 
-    /// The adapter's representation, when this handle was made by that adapter.
-    pub fn get<T: Any>(&self) -> Option<&T> {
-        self.0.downcast_ref::<T>()
-    }
-}
-
-impl fmt::Debug for Prepared {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Prepared")
-    }
-}
-
-/// The questions a drag asks of two bodies' own surfaces.
-///
-/// Every method is pure and takes the whole question as arguments: the two prepared shapes and the
-/// poses they stand at, so one rule may measure many pairs without a second call and a settings change
-/// can never bend an answer the release would not give.
-pub trait Contact: fmt::Debug {
-    /// The adapter's own representation of `shape`, or `None` when it cannot measure that shape.
-    ///
-    /// A shape the adapter refuses is the caller's to handle: the document falls back to the reading it
-    /// always had, so a hostile or degenerate body never blocks a drag.
-    fn prepare(&self, shape: &Shape) -> Option<Prepared>;
-
-    /// How far shape `a`, standing at `at_a`, travels along `direction` before it first touches `b`.
+    /// How far this body travels along `direction` before it first touches `other`.
     ///
     /// The answer is in millimetres whatever the length of `direction`: the direction is taken as a
     /// heading, so a caller may pass a world axis or the vector between two places. `None` means the
-    /// heading never meets `b` — the way is clear, or the two can never touch along it — and a pair
-    /// that already penetrates answers zero, because it is touching now.
-    fn travel(&self, a: &Prepared, at_a: Pose, direction: DVec3, b: &Prepared, at_b: Pose) -> Option<f64>;
+    /// heading never meets the other body, and a pair that already penetrates answers zero, because it
+    /// is touching now. A body another adapter made answers `None`: a contract is not a licence to
+    /// guess.
+    fn travel(&self, other: &dyn Solid, direction: DVec3) -> Option<f64>;
 
-    /// How deeply the two shapes are sunk, and along which normal.
+    /// How deeply this body is sunk into `other`, and along which normal it comes out.
     ///
     /// `None` when they only touch or stand apart: a face is contact and never an overlap, exactly as
     /// the document's placement guard reads it (ADR 0162).
-    fn penetration(&self, a: &Prepared, at_a: Pose, b: &Prepared, at_b: Pose) -> Option<Penetration>;
+    fn penetration(&self, other: &dyn Solid) -> Option<Penetration>;
+}
 
-    /// Whether the two shapes overlap more deeply than `slack_mm`, the document's own rounding.
-    fn overlap(&self, a: &Prepared, at_a: Pose, b: &Prepared, at_b: Pose, slack_mm: f64) -> bool {
-        self.penetration(a, at_a, b, at_b).is_some_and(|penetration| penetration.is_overlap(slack_mm))
-    }
+/// A prepared body, shared by the rule it belongs to.
+pub type Shared = Arc<dyn Solid>;
+
+/// Whether two bodies overlap more deeply than `slack_mm` millimetres, the document's own rounding.
+///
+/// A pair that only touches is contact and never an overlap, so the answer is strict: the depth must
+/// be more than the slack, which is the micrometre the document stores and rounds to. The slack is
+/// plain millimetres because this module lives at the geometry boundary, where a length is a number of
+/// millimetres; the document converts its own unit before asking.
+pub fn overlap(a: &dyn Solid, b: &dyn Solid, slack_mm: f64) -> bool {
+    a.penetration(b).is_some_and(|penetration| penetration.depth_mm > slack_mm)
+}
+
+/// The adapter: what turns a [`Shape`] into a body it can measure.
+///
+/// One implementation exists — `contact-parry` — and the shell constructs it once. A rule asks it for
+/// every body it will measure when the rule is built, and never again: the expensive conversion
+/// happens once per gesture, and a stub answers contact in a test without a collision engine.
+pub trait Contact: fmt::Debug {
+    /// This adapter's own representation of `shape` standing at `pose`, or `None` when it cannot
+    /// measure that shape.
+    ///
+    /// A shape the adapter refuses is the caller's to handle: the document falls back to the reading
+    /// it always had, so a hostile or degenerate body never blocks a drag.
+    fn prepare(&self, shape: &Shape, pose: Pose) -> Option<Shared>;
 }
 
 #[cfg(test)]
@@ -259,6 +257,67 @@ mod tests {
         .expect("a cube is a convex shape")
     }
 
+    /// A body that is a box and answers from its own extents, so the port's contract is testable
+    /// without a collision engine.
+    #[derive(Debug)]
+    struct Block {
+        pose: Pose,
+        half: DVec3,
+    }
+
+    /// The stub's own body, when the other side of a pair is one too.
+    fn as_block(solid: &dyn Solid) -> Option<&Block> {
+        (solid as &dyn Any).downcast_ref::<Block>()
+    }
+
+    impl Solid for Block {
+        fn bounds(&self) -> (DVec3, DVec3) {
+            (self.pose.translation - self.half, self.pose.translation + self.half)
+        }
+
+        fn shifted(&self, delta: DVec3) -> Option<Shared> {
+            delta.is_finite().then(|| {
+                Arc::new(Self { pose: Pose::new(self.pose.translation + delta, self.pose.rotation), half: self.half })
+                    as Shared
+            })
+        }
+
+        fn travel(&self, other: &dyn Solid, direction: DVec3) -> Option<f64> {
+            let other = as_block(other)?;
+            let heading = direction.normalize_or_zero();
+            let reach = other.pose.translation - self.pose.translation;
+            let axis = (0..3).find(|axis| heading[*axis].abs() > 0.5)?;
+            let gap = (reach[axis].abs() - self.half[axis] - other.half[axis]).max(0.0);
+            (reach[axis].signum() == heading[axis].signum()).then_some(gap)
+        }
+
+        fn penetration(&self, other: &dyn Solid) -> Option<Penetration> {
+            let other = as_block(other)?;
+            let reach = other.pose.translation - self.pose.translation;
+            let mut least = f64::INFINITY;
+            let mut normal = DVec3::X;
+            for axis in 0..3 {
+                let depth = self.half[axis] + other.half[axis] - reach[axis].abs();
+                if depth < least {
+                    least = depth;
+                    normal = if reach[axis] < 0.0 { -DVec3::AXES[axis] } else { DVec3::AXES[axis] };
+                }
+            }
+            (least > 0.0).then_some(Penetration { depth_mm: least, normal })
+        }
+    }
+
+    /// The test adapter: it makes the stub body above and remembers nothing.
+    #[derive(Debug)]
+    struct Stub;
+
+    impl Contact for Stub {
+        fn prepare(&self, shape: &Shape, pose: Pose) -> Option<Shared> {
+            let (low, high) = shape.bounds()?;
+            Some(Arc::new(Block { pose, half: (high - low) / 2.0 }) as Shared)
+        }
+    }
+
     #[test]
     fn a_convex_shape_needs_four_finite_points() {
         assert_eq!(Shape::convex(vec![DVec3::ZERO; 3]), Err(ShapeError::TooFewPoints));
@@ -283,10 +342,18 @@ mod tests {
     }
 
     #[test]
-    fn a_prepared_shape_is_only_read_by_the_adapter_that_made_it() {
-        let prepared = Prepared::new(7_u32);
-        assert_eq!(prepared.get::<u32>(), Some(&7));
-        assert_eq!(prepared.get::<u64>(), None, "another adapter's representation is no answer");
+    fn a_body_a_rule_carries_answers_its_own_pairs() {
+        let stub = Stub;
+        let cube = stub.prepare(&cube(100.0), Pose::IDENTITY).expect("a cube is measurable");
+        assert_eq!(cube.bounds(), (DVec3::splat(-50.0), DVec3::splat(50.0)));
+        let away = cube.shifted(DVec3::new(200.0, 0.0, 0.0)).expect("a finite move");
+        assert_eq!(cube.travel(&*away, DVec3::X), Some(100.0), "the faces meet after 100 mm");
+        assert_eq!(cube.travel(&*away, DVec3::NEG_X), None, "the way back is clear");
+        assert_eq!(cube.penetration(&*away), None, "a pair that stands apart is no overlap");
+        let inside = cube.shifted(DVec3::new(50.0, 0.0, 0.0)).expect("a finite move");
+        assert_eq!(cube.penetration(&*inside).map(|sunk| sunk.depth_mm), Some(50.0));
+        assert!(overlap(&*cube, &*inside, 0.001), "sunk 50 mm is deeper than the document's rounding");
+        assert!(!overlap(&*cube, &*away, 0.001), "a pair that stands apart is no overlap");
     }
 
     #[test]
