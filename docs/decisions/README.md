@@ -184,6 +184,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0176](0176-the-plan-shows-a-stream-and-one-line-keeps-one-writer.md) | The plan shows a stream, and one line keeps one writer | Accepted; amends 0085's one-live-task rule |
 | [0177](0177-the-invisible-floor-stops-a-body-and-not-a-drag-only-snap.md) | The invisible floor stops a body, and it is not the floor snap | Accepted; amends 0146's scope to dragging |
 | [0178](0178-a-piece-the-document-holds-inside-another-may-only-come-out.md) | A piece the document holds inside another may only come out | Accepted; amends 0162's exemption and 0166's answer |
+| [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
 
 ## Format
 

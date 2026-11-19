@@ -15,6 +15,7 @@ rust-version = "1.95"
 units = { path = "crates/units" }
 text = { path = "crates/text" }
 geom = { path = "crates/geom" }
+contact-parry = { path = "crates/contact-parry" }
 kernel = { path = "crates/kernel" }
 model = { path = "crates/model" }
 catalog = { path = "crates/catalog" }
@@ -49,6 +50,9 @@ serde_json = { version = "1.0", features = ["float_roundtrip"] }
 syn = { version = "2.0", features = ["full", "visit"] }
 thiserror = "2.0"
 truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation"] }
+# The collision engine behind the contact port: Apache-2.0, pure Rust, no build
+# script, glam-based, and the double build the document's micrometres need.
+parry3d-f64 = "0.31"
 truck-modeling = "0.6"
 truck-shapeops = { version = "0.4", default-features = false }
 wgpu = "30.0"

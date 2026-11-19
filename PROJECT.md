@@ -250,11 +250,12 @@ only when the crates exist.
 |---|---|---|---|
 | L0 | `text` | The interface's words: `Lang::{En, Ru}`, one `Message` per user-facing string, its `[&str; Lang::COUNT]` table, and counted messages that pick the Russian one/few/many form | — |
 | L0 | `units` | `Length` in micrometres and `Degrees` in millidegrees, thickness helpers, parsing and formatting in mm and degrees | serde |
-| L0 | `geom` | `glam` re-exports, `Frame`, indexed `MeshData`; bounds and planes as features need them | glam, serde |
+| L0 | `geom` | `glam` re-exports, `Frame`, indexed `MeshData`; bounds, planes and the **contact port** (`Shape`, `Pose`, `Penetration`, `Contact`) a body is measured through | glam, serde, thiserror |
 | L1 | `kernel` | Geometry kernel **port**: `Profile`, opaque `BodyId`, extrusion (linear sweep), booleans, tessellation, measures. No third-party kernel types | geom, thiserror |
 | L1 | `model` | Document data: `Project`, `Container`, `Object`, `Geometry`, `Properties`, `ClassCode` and its registry, `Placement`, `Panel`, `Material`, `Hardware`, `Id`, `Revision`; invariants and typed errors | units, geom, text, serde |
 | L2 | `catalog` | The nomenclature directory: the item envelope `NomenclatureItem`, the `Kind`/`Trait`/`Property`/`Family` registries a package carries, and the validated `Directory` snapshot its consumers query. No file I/O, no scene, no renderer | model, units, text, serde, thiserror |
 | L2 | `kernel-truck` | Geometry kernel **adapter** implemented with `truck` (Apache-2.0). The only crate allowed to depend on `truck` | kernel, geom, truck-modeling, truck-shapeops, truck-meshalgo |
+| L2 | `contact-parry` | Contact **adapter** implemented with `parry3d-f64` (Apache-2.0, pure Rust, double precision). The only crate allowed to depend on `parry`; it answers `geom`'s contact port with a body's own surface, in millimetres | geom, parry3d-f64 |
 | L2 | `param` | Compiles document features into kernel operations: panel features, placements, panel machining | model, kernel, geom, units |
 | L2 | `project` | Scene file envelope: format identity and version, read, atomic write, preserved unknown sections | model, serde, serde_json, thiserror |
 | L3 | `export` | Order package writer: one manifest and twelve flat JSON Lines tables, with CSV copies and a single-file form, for programs we do not control | model, text, units, geom, serde, serde_json, thiserror |
@@ -282,7 +283,7 @@ kernel-truck (adapter) ── kernel + truck   (only place truck is allowed)
 render (wgpu) ────────── scene (what to draw) ── mesh, geom, model
 ```
 
-A crate may depend only on crates in lower layers. `kernel-truck` is the only crate that may depend on `truck`; `model`, `param`, `engine` and `ui` see only the `kernel` port. `engine` never sees `wgpu` or `egui`; `ui` never writes to the document.
+A crate may depend only on crates in lower layers. `kernel-truck` is the only crate that may depend on `truck` and `contact-parry` the only one that may depend on `parry3d-f64`; `model`, `param`, `engine` and `ui` see only the `kernel` and contact ports. `engine` never sees `wgpu` or `egui`; `ui` never writes to the document.
 
 `truck-shapeops` is vendored in `vendor/truck-shapeops` with one Cargo.toml change: its `truck-meshalgo` dependency is narrowed to `analyzers` and `tessellation`, so the VTK I/O stack and its C compression backend are not part of Z3L. The Rust source has only a lint allowance; see `vendor/truck-shapeops/PATCH.md` and `ATTRIBUTION.md`.
 
