@@ -195,6 +195,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X82** the free slot is not refused by the staircase
+  Why: The third logged session has the hand at (-171, 236) and the answer at (-94, 236), held
+   while the pointer kept travelling, and its own blocked=none proves the destination was free.
+   resolve walks the axes one at a time and never asks the placement they add up to, so a free
+   slot in front of a standing body is refused whenever every single axis to it is blocked. The
+   owner reports exactly that: a vertical part passes neither in front of nor behind a
+   horizontal one, though the space is there.
+  Shape: resolve asks the whole proposal first: if the piece may rest there, all three axes are
+   taken and no contact is reported. Only a refused destination is walked axis by axis, as 0166
+   decided, and the walk runs up to three passes so an axis cut on the first pass is asked
+   again once the axes after it have moved the piece. The boxes of the log become a test: the
+   slot in front, the slot behind, and the face when there is none.
+  Done: The whole destination is asked before the axes and taken when free; a cut axis is
+   re-asked after the other axes move; the reported board passes the standing body in front of
+   it and behind it; in line with it, it still stops at its face; the gate is green.
+  `files: crates/model/src/project/move_query.rs, docs/decisions/0171-the-place-the-hand-names-is-asked-before-the-axes.md` — `c6eb56a`
+
 - `[x]` **X81** a report names the part that was in the way
   Why: The second logged session ends with a panel clamped at 466 mm while the hand asks for
    2000 and the line names only Id(3). The numbers prove a cut and say nothing about what cut
