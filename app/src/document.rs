@@ -2176,6 +2176,9 @@ impl Document {
             return Err(format!("{name} is locked. Unlock it in the scene tree to move it."));
         }
         let request = NodePlacementSetMany {
+            // A gesture the document did not measure — the free move and the rotation — writes what
+            // it showed; a drag of the object tool is refused where the bodies refuse it (ADR 0180).
+            unmeasured: !commit.measured,
             placements: commit
                 .changes
                 .iter()
@@ -4721,7 +4724,8 @@ mod tests {
         let shelf = Id::new(2).expect("shelf id");
         let mut editor = Editor::new();
         let placement = Placement::IDENTITY;
-        let commit = PlacementCommit { changes: vec![gizmo_math::PlacementChange { node: shelf, placement }] };
+        let commit =
+            PlacementCommit { changes: vec![gizmo_math::PlacementChange { node: shelf, placement }], measured: true };
 
         assert_eq!(locked_change(&project, &commit, &editor), None, "an unlocked node moves");
         editor.set_locked(shelf, true);

@@ -427,6 +427,8 @@ impl SnapSettings {
                 tolerance: units::Length::from_micrometres(tolerance * 1000),
             }),
             floor: self.floor,
+            // The snapping section feeds the object tool, which is the one the document measures.
+            measured: true,
         }
     }
 }

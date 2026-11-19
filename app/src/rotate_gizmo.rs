@@ -366,6 +366,16 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_is_never_measured_by_the_documents_bodies() {
+        // A rotation changes where a body lies without asking any other body: the commit says so, and
+        // the shell's write is the one the guard does not refuse (ADR 0180).
+        let target = move_target(2, Placement::IDENTITY, Placement::IDENTITY, DVec3::ZERO);
+        let turn = DQuat::from_axis_angle(Axis::Z.direction(), 0.5);
+        let commit = commit_rotation(&[target], world_pivot(&target), turn).expect("valid rotation").expect("a turn");
+        assert!(!commit.measured, "a turn is the maker's own hand");
+    }
+
+    #[test]
     fn a_zero_or_full_turn_dispatches_nothing() {
         let target = move_target(2, Placement::IDENTITY, Placement::IDENTITY, DVec3::ZERO);
         let pivot = world_pivot(&target);

@@ -259,21 +259,29 @@ pub struct MoveSettings {
     pub snaps: Option<SnapSettings>,
     /// Whether the workspace's invisible floor at Z = 0 is a lower bound on every moved body.
     pub floor: bool,
+    /// Whether the document's bodies measure this drag at all.
+    ///
+    /// The object tool is the one that obeys the body rules: it snaps, it stops at a neighbour and it
+    /// keeps the floor. The free move is the maker's own hand — a body goes where the pointer puts it,
+    /// through a neighbour and below the floor — and a rotation is never measured (X85, ADR 0180).
+    pub measured: bool,
 }
 
 impl Default for MoveSettings {
     fn default() -> Self {
-        Self { axes: MoveAxes::Document, snaps: Some(SnapSettings::default()), floor: true }
+        Self { axes: MoveAxes::Document, snaps: Some(SnapSettings::default()), floor: true, measured: true }
     }
 }
 
 impl MoveSettings {
-    /// The same workspace choice as the free move reads it: all three axes and nothing to snap to.
+    /// The free move's own reading: every axis, nothing to snap to, and nothing to measure.
     ///
-    /// The floor is the workspace's stop and not the object move's taste, so the free move keeps it
-    /// while it drops the planes, the frames and the grid (ADR 0162, ADR 0177).
+    /// The free move is not the object tool: it carries a body by the pointer's own distance, through
+    /// whatever stands in the way and below the workspace's floor, because the control belongs to the
+    /// tool that obeys the document's rules and not to the hand that does not (ADR 0180). It keeps the
+    /// object tool's pivots, its preview and its one undo entry, and nothing else.
     pub const fn free(self) -> Self {
-        Self { axes: MoveAxes::Every, snaps: None, ..self }
+        Self { axes: MoveAxes::Every, snaps: None, floor: false, measured: false }
     }
 }
 
@@ -324,11 +332,16 @@ impl Project {
             return None;
         }
         let floor = settings.floor.then(|| floor_bound(&movers)).flatten();
-        let obstacles = self
-            .obstacle_boxes(targets)
-            .into_iter()
-            .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
-            .collect();
+        // A drag the document does not measure carries no obstacles at all: the free move goes where
+        // the hand puts it and only the pointer's own distance reaches the placement (ADR 0180).
+        let obstacles = if settings.measured {
+            self.obstacle_boxes(targets)
+                .into_iter()
+                .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps })
     }
 
@@ -1495,9 +1508,10 @@ mod tests {
         let ball = primitive_object(&mut project, "Ball", place((0.0, 0.0, 0.0)), 50);
         let other = block_object(&mut project, "Block", place((300.0, 80.0, 0.0)), (100.0, 100.0, 100.0));
 
-        let free = MoveSettings::default().free();
-        let boxed = project.move_rule(&[ball], free, None).expect("a box rule");
-        let measured = project.move_rule(&[ball], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        // The object tool's own reading without snapping: measured, and every axis free.
+        let measured_free = MoveSettings { snaps: None, ..MoveSettings::default() };
+        let boxed = project.move_rule(&[ball], measured_free, None).expect("a box rule");
+        let measured = project.move_rule(&[ball], measured_free, Some(&contact_parry::Parry)).expect("a measured rule");
         let (by_box, _) = stops(boxed.limit(MoveAxis::X, 300.0));
         let (by_surface, contact) = stops(measured.limit(MoveAxis::X, 300.0));
         assert!((by_box - 200.0).abs() < 0.05, "the box around the ball meets the block at 200: {by_box}");
@@ -1534,10 +1548,10 @@ mod tests {
         block_object(&mut project, "Wall", place((400.0, -100.0, -100.0)), (20.0, 400.0, 400.0));
         let floor = block_object(&mut project, "Floor", place((100.0, 200.0, -100.0)), (600.0, 20.0, 400.0));
 
-        let free = MoveSettings::default().free();
+        let measured_free = MoveSettings { snaps: None, ..MoveSettings::default() };
         let diagonal = DVec3::new(300.0, 200.0, 0.0);
-        let boxed = project.move_rule(&[cone], free, None).expect("a box rule");
-        let measured = project.move_rule(&[cone], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        let boxed = project.move_rule(&[cone], measured_free, None).expect("a box rule");
+        let measured = project.move_rule(&[cone], measured_free, Some(&contact_parry::Parry)).expect("a measured rule");
         let by_box = boxed.limits(diagonal);
         let by_surface = measured.limits(diagonal);
         let travel = |limits: [MoveLimit; 3]| (limits[0].distance_mm.powi(2) + limits[1].distance_mm.powi(2)).sqrt();
@@ -1581,6 +1595,32 @@ mod tests {
     }
 
     #[test]
+    fn the_free_move_is_the_makers_hand_and_measures_nothing() {
+        // Control belongs to the object tool (ADR 0180): the free move carries a body by the pointer's
+        // own distance, through a neighbour and below the workspace's floor, and reports no contact.
+        let mut project = empty_project();
+        let ball = primitive_object(&mut project, "Ball", place((0.0, 0.0, 0.0)), 50);
+        block_object(&mut project, "Block", place((300.0, 0.0, 0.0)), (100.0, 100.0, 100.0));
+        let hand = MoveSettings::default().free();
+        let carried = project.move_rule(&[ball], hand, Some(&contact_parry::Parry)).expect("a free rule");
+        let into = carried.limit(MoveAxis::X, 300.0);
+        assert_eq!(into.distance_mm, 300.0, "the hand's own distance reaches the block's middle");
+        assert_eq!(into.contact, None, "and nothing is named as standing in the way");
+        let down = carried.limit(MoveAxis::Z, -500.0);
+        assert_eq!(down.distance_mm, -500.0, "the workspace's floor does not stop the hand either");
+        assert_eq!(down.contact, None);
+        // The same distances asked of the object tool are cut and stopped (ADR 0162, ADR 0177).
+        let measured = MoveSettings { snaps: None, ..MoveSettings::default() };
+        let rule = project.move_rule(&[ball], measured, Some(&contact_parry::Parry)).expect("a measured rule");
+        assert!(
+            rule.limit(MoveAxis::X, 300.0).distance_mm < 300.0,
+            "the object move stops at the block: {:?}",
+            rule.limit(MoveAxis::X, 300.0)
+        );
+        assert_eq!(rule.limit(MoveAxis::Z, -500.0).distance_mm, 0.0, "and on the floor");
+    }
+
+    #[test]
     fn the_write_reads_the_same_surface_the_drag_reads() {
         // The guard is the drag's own question asked before a placement lands. With the port it
         // grants the place the ball's own surface leaves free, which the box around it refuses
@@ -1588,8 +1628,8 @@ mod tests {
         let mut project = empty_project();
         let ball = primitive_object(&mut project, "Ball", place((0.0, 0.0, 0.0)), 50);
         block_object(&mut project, "Block", place((300.0, 80.0, 0.0)), (100.0, 100.0, 100.0));
-        let free = MoveSettings::default().free();
-        let measured = project.move_rule(&[ball], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        let measured_free = MoveSettings { snaps: None, ..MoveSettings::default() };
+        let measured = project.move_rule(&[ball], measured_free, Some(&contact_parry::Parry)).expect("a measured rule");
         let landing = measured.limit(MoveAxis::X, 300.0).distance_mm;
         let placed = place((landing, 0.0, 0.0));
 

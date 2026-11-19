@@ -85,7 +85,43 @@ fn mesh_shape(mesh: &Mesh) -> Option<Shape> {
     if triangles.is_empty() {
         return None;
     }
+    // A convex body is a hull, and the difference is not cosmetic: a triangle surface is a skin, so a
+    // body that lies wholly inside another would share no face with it and read as no overlap at all.
+    // A box, a wedge and a turned board are all convex, so this is the common case and it is exact.
+    if convex(&vertices, &triangles) {
+        return Shape::convex(vertices).ok();
+    }
     Shape::mesh(vertices, triangles).ok()
+}
+
+/// Whether a triangle surface is the boundary of a convex body.
+///
+/// Every vertex must lie on or behind every oriented triangle's plane; one vertex in front of one
+/// plane is a dent, and a dent is what makes a surface a skin rather than a solid. The test is
+/// quadratic, so it runs only for a mesh small enough to be worth it: a face count past the cap
+/// answers `false` and the mesh is measured as the surface it is.
+fn convex(vertices: &[DVec3], triangles: &[[u32; 3]]) -> bool {
+    const MAX_CONVEXITY_WORK: usize = 200_000;
+    if vertices.len().saturating_mul(triangles.len()) > MAX_CONVEXITY_WORK {
+        return false;
+    }
+    const SLACK_MM: f64 = 1.0e-6;
+    let mut volume = 0.0;
+    for triangle in triangles {
+        let [a, b, c] = triangle.map(|index| vertices.get(index as usize).copied().unwrap_or_default());
+        let normal = (b - a).cross(c - a);
+        if !normal.is_finite() || normal.length_squared() <= f64::EPSILON {
+            return false;
+        }
+        let plane = normal.dot(a);
+        if vertices.iter().any(|vertex| normal.dot(*vertex) - plane > SLACK_MM) {
+            return false;
+        }
+        volume += a.dot(b.cross(c)) / 6.0;
+    }
+    // A flat sheet is behind every one of its own planes and encloses nothing: a hull of it is no
+    // body, so the surface is the honest answer and the port measures the sheet it is.
+    volume.abs() > SLACK_MM
 }
 
 /// A primitive as the convex hull of its own surface.
@@ -199,18 +235,44 @@ mod tests {
         assert_eq!(points[12], DVec3::new(0.0, 0.0, 100.0), "the apex is its own point");
     }
 
+    /// An outline in millimetres, extruded 20 mm up: a closed body with a dent in it.
+    fn extruded(outline: &[(f64, f64)]) -> Mesh {
+        let mut positions: Vec<[Length; 3]> = Vec::new();
+        for (x, y) in outline {
+            positions.push([millimetres(*x as i64), millimetres(*y as i64), Length::ZERO]);
+        }
+        for (x, y) in outline {
+            positions.push([millimetres(*x as i64), millimetres(*y as i64), millimetres(20)]);
+        }
+        let count = u32::try_from(outline.len()).expect("a short outline");
+        let mut faces: Vec<Vec<u32>> = Vec::new();
+        let mut bottom: Vec<u32> = (0..count).collect();
+        bottom.reverse();
+        faces.push(bottom);
+        faces.push((count..2 * count).collect());
+        for index in 0..count {
+            let next = (index + 1) % count;
+            faces.push(vec![index, next, next + count, index + count]);
+        }
+        Mesh::new(positions, faces).expect("an extrusion")
+    }
+
     #[test]
-    fn a_baked_mesh_is_measured_by_its_own_triangles() {
-        let mesh = Mesh::cuboid([Length::ZERO; 3], [millimetres(100); 3]).expect("a cube");
+    fn a_baked_mesh_is_a_hull_when_it_is_convex_and_a_surface_when_it_is_not() {
         let mut project = empty_project();
         let root = project.root().id();
-        let id = project.add_object(root, "Block", Placement::IDENTITY, Geometry::Mesh(mesh)).expect("add the block");
-        let shape = super::node_shape(&project, id, DVec3::ZERO, DVec3::splat(100.0)).expect("a mesh is measured");
-        let geom::Shape::Mesh { triangles, .. } = &shape else {
-            panic!("a baked mesh is a triangle surface");
-        };
-        assert_eq!(triangles.len(), 12, "six faces, two triangles each");
+        let cube = Mesh::cuboid([Length::ZERO; 3], [millimetres(100); 3]).expect("a cube");
+        let block = project.add_object(root, "Block", Placement::IDENTITY, Geometry::Mesh(cube)).expect("a block");
+        let shape = super::node_shape(&project, block, DVec3::ZERO, DVec3::splat(100.0)).expect("a mesh is measured");
+        assert!(matches!(shape, geom::Shape::Convex(_)), "a box is a hull, so a body inside it is no hidden hole");
         assert_eq!(bounds(&shape), (DVec3::ZERO, DVec3::splat(100.0)));
+
+        // An L-shaped block: a dent in the outline, so the surface is the answer and not the hull
+        // that would fill the dent in.
+        let dented = extruded(&[(0.0, 0.0), (100.0, 0.0), (100.0, 40.0), (40.0, 40.0), (40.0, 100.0), (0.0, 100.0)]);
+        let outline = project.add_object(root, "L", Placement::IDENTITY, Geometry::Mesh(dented)).expect("an L");
+        let shape = super::node_shape(&project, outline, DVec3::ZERO, DVec3::splat(100.0)).expect("a mesh is measured");
+        assert!(matches!(shape, geom::Shape::Mesh { .. }), "a dented body is a surface");
     }
 
     #[test]

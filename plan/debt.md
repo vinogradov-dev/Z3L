@@ -110,11 +110,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   the coordinate planes, the frames and the part faces inside the workspace's tolerance (ADR 0146);
   no angle has a step the maker can set.
 - `[gizmo]` The rotate rings are world-aligned only; a local-axis mode is not implemented.
-- `[gizmo]` The rotate gizmo does not read the document's contact rule before its release: a turn
-  that sweeps a board into a neighbour is refused by `node.placement.set_many` with a sentence naming
-  the part, and the piece goes back, where a translate drag is cut at the contact instead (X72,
-  ADR 0162). The same pre-release read — the rule asked on every frame, the release never refused —
-  is owed to the rings, and it needs an angle clamp per obstacle rather than a distance.
 - `[gizmo]` A panel's furniture drag runs along the world axis its thickness points most nearly at,
   not along its exact normal, because every surface the rule measures is a world box (ADR 0102); a
   board turned off the world axes therefore travels in one of the three directions. Measuring a

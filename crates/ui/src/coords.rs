@@ -47,7 +47,7 @@ mod tests {
     }
 
     fn set(session: &mut Session, node: Id, placement: Placement) {
-        let params = serde_json::to_value(NodePlacementSet { node, placement }).expect("params");
+        let params = serde_json::to_value(NodePlacementSet { node, placement, unmeasured: false }).expect("params");
         session.dispatch(NODE_PLACEMENT_SET_ID, &params).expect("set placement");
     }
 

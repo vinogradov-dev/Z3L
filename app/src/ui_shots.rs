@@ -1298,7 +1298,9 @@ fn the_floor_at_full_and_at_forty_percent_shows_what_stands_under_it() {
                 .expect("the demo scene holds the loose shelf");
         let below =
             model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
-        let params = serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below }).expect("params");
+        let params =
+            serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below, unmeasured: false })
+                .expect("params");
         session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
         let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
             .expect("the application builds");

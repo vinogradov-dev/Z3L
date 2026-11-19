@@ -160,6 +160,11 @@ struct Drag {
     hold: Hold,
     /// The furniture rule this drag was measured against when it started, if any.
     rule: Option<MoveRule>,
+    /// Whether the document's bodies measured this drag.
+    ///
+    /// Only the object tool asks the rule; the free move carries the piece where the pointer puts it
+    /// and its write is not refused by the body rules (ADR 0180).
+    measured: bool,
     /// The surface the face landed on this frame, when a snap — and not the pointer — placed it.
     capture: Option<Capture>,
     drawables: Vec<Id>,
@@ -420,7 +425,7 @@ impl TranslateGizmo {
         }
         if !down {
             self.consumed_click = true;
-            let commit = commit_translation(&drag.targets, drag.delta)?;
+            let commit = commit_translation(&drag.targets, drag.delta, drag.measured)?;
             return Ok(commit);
         }
         self.drag = Some(drag);
@@ -472,7 +477,7 @@ impl TranslateGizmo {
                 drag.delta.y,
                 drag.delta.z
             );
-            let commit = commit_translation(&drag.targets, drag.delta)?;
+            let commit = commit_translation(&drag.targets, drag.delta, drag.measured)?;
             return Ok(commit);
         }
         let Hold::Following { axis: held, follow, hand } = drag.hold else {
@@ -858,6 +863,7 @@ impl TranslateGizmo {
                 node: anchor.node,
                 hold: Hold::Following { axis: None, follow, hand },
                 rule,
+                measured: true,
                 capture: None,
                 drawables: target.drawables(),
                 targets,
@@ -890,18 +896,19 @@ impl TranslateGizmo {
         };
 
         let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
-        // The free move snaps to nothing — the furniture snapping of ADR 0146 is the other tool's,
-        // and a loose body keeps the pointer's own distance (N22) — but it stops at a neighbour all
-        // the same, because contact is the document's rule and not a taste (X72, ADR 0162), and at
-        // the workspace's floor, which is a stop rather than a snap (X87, ADR 0177).
-        let rule = match target.move_kind {
-            MoveKind::Free => target.project.move_rule(&moving, target.moves.free(), Some(target.contact)),
-            MoveKind::Object => target.project.move_rule(&moving, target.moves, Some(target.contact)),
+        // The free move is the maker's own hand: it snaps to nothing, it does not stop at a
+        // neighbour and it does not stop on the floor, because control belongs to the object tool and
+        // not to the hand that does not ask for it (X85, ADR 0180). The rule it does get is the
+        // pointer's own distance on the axes it offers.
+        let (rule, measured) = match target.move_kind {
+            MoveKind::Free => (target.project.move_rule(&moving, target.moves.free(), Some(target.contact)), false),
+            MoveKind::Object => (target.project.move_rule(&moving, target.moves, Some(target.contact)), true),
         };
         self.drag = Some(Drag {
             node: anchor.node,
             hold: Hold::Handle(axis),
             rule,
+            measured,
             capture: None,
             drawables: target.drawables(),
             targets,
@@ -1122,7 +1129,7 @@ mod tests {
     fn a_world_delta_is_converted_into_a_rotated_parent_frame() {
         let target = move_target(2, DQuat::from_rotation_z(FRAC_PI_2), Placement::IDENTITY);
         let commit =
-            commit_translation(&[target], DVec3::new(10.0, 0.0, 0.0)).expect("valid placement").expect("a move");
+            commit_translation(&[target], DVec3::new(10.0, 0.0, 0.0), true).expect("valid placement").expect("a move");
         assert_eq!(commit.changes.len(), 1);
         let change = commit.changes[0];
         let expected = DVec3::new(0.0, -10.0, 0.0);
@@ -1145,7 +1152,7 @@ mod tests {
                 Placement::new(DVec3::new(1.0, 2.0, 3.0), DQuat::IDENTITY).expect("placement"),
             ),
         ];
-        let commit = commit_translation(&targets, DVec3::new(10.0, 4.0, 0.0)).expect("valid").expect("a move");
+        let commit = commit_translation(&targets, DVec3::new(10.0, 4.0, 0.0), true).expect("valid").expect("a move");
         assert_eq!(commit.changes.len(), 2);
         assert_eq!(commit.changes[0].node, Id::new(2).expect("id"));
         assert_eq!(commit.changes[1].node, Id::new(3).expect("id"));
@@ -1165,9 +1172,9 @@ mod tests {
     #[test]
     fn a_zero_delta_or_a_rounded_out_delta_dispatches_nothing() {
         let target = move_target(2, DQuat::IDENTITY, Placement::IDENTITY);
-        assert_eq!(commit_translation(&[target], DVec3::ZERO).expect("no error"), None);
-        assert_eq!(commit_translation(&[target], DVec3::new(1.0e-7, 0.0, 0.0)).expect("no error"), None);
-        assert_eq!(commit_translation(&[], DVec3::new(1.0, 0.0, 0.0)).expect("no error"), None);
+        assert_eq!(commit_translation(&[target], DVec3::ZERO, true).expect("no error"), None);
+        assert_eq!(commit_translation(&[target], DVec3::new(1.0e-7, 0.0, 0.0), true).expect("no error"), None);
+        assert_eq!(commit_translation(&[], DVec3::new(1.0, 0.0, 0.0), true).expect("no error"), None);
     }
 
     /// A `600 x 560 x 720` millimetre base cabinet at `x` millimetres, on the floor.
@@ -1194,7 +1201,7 @@ mod tests {
 
         // The release commits exactly the previewed distance, so the preview is no lie.
         let targets = move_targets(&project, &[cabinet]);
-        let commit = commit_translation(&targets, Axis::X.direction() * distance)
+        let commit = commit_translation(&targets, Axis::X.direction() * distance, true)
             .expect("a valid placement")
             .expect("the drag moved the cabinet");
         assert_eq!(commit.changes.len(), 1, "one drag is one placement and one undo entry");
@@ -1205,16 +1212,17 @@ mod tests {
     }
 
     #[test]
-    fn the_free_move_keeps_its_distance_and_stops_at_a_neighbour() {
-        // No snapping is the free tool's, and no grid; contact is the document's (X72, ADR 0162).
+    fn the_free_move_keeps_its_distance_and_does_not_stop_at_a_neighbour() {
+        // No snapping and no grid is the free tool's, and no contact either: the bodies of the
+        // document measure the object tool, not the hand that asks for nothing (ADR 0180).
         let mut project = sample_project();
         let loose = Id::new(2).expect("id");
         assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None), "no rule is the pointer's own travel");
         let free =
             project.move_rule(&[loose], MoveSettings::default().free(), None).expect("a loose board is still measured");
         assert_eq!(constrained_distance(Some(&free), Axis::Y, 97.4), (97.4, None), "and it snaps to nothing");
-        // The sample shelf and the drawer's front share one box: a third board beside them stops at
-        // the face of the first it meets, and the touch itself is allowed.
+        // A third board beside the sample shelf is carried straight through it: nothing stands in a
+        // free move's way.
         let root = project.root().id();
         let beside = project
             .add_panel(
@@ -1228,22 +1236,30 @@ mod tests {
             .expect("a board beside the sample ones");
         let free =
             project.move_rule(&[beside], MoveSettings::default().free(), None).expect("the board has a contact rule");
-        assert_eq!(constrained_distance(Some(&free), Axis::X, -500.0), (-200.0, None), "it stops at the shelf");
+        assert_eq!(
+            constrained_distance(Some(&free), Axis::X, -500.0),
+            (-500.0, None),
+            "it passes the shelf instead of stopping at it"
+        );
     }
 
     #[test]
-    fn the_free_move_keeps_its_three_axes_and_the_workspace_floor() {
-        // The free tool draws all three arrows whatever the piece is (ADR 0151), and the floor is the
-        // workspace's stop rather than the object move's snap, so it stops this drag too (X87).
+    fn the_free_move_keeps_its_three_axes_and_no_control_at_all() {
+        // The free tool draws all three arrows whatever the piece is (ADR 0151) and measures nothing:
+        // it is the maker's own hand, so a body goes where the pointer puts it — below the floor and
+        // through a neighbour — and only the object tool obeys the document's rules (ADR 0180).
         let project = sample_project();
         let loose = Id::new(2).expect("id");
-        let free =
-            project.move_rule(&[loose], MoveSettings::default().free(), None).expect("a loose board is measured");
+        let free = project.move_rule(&[loose], MoveSettings::default().free(), None).expect("a loose board is carried");
         assert_eq!(free.axes(), [true, true, true], "the free move refuses no axis");
-        let answer = free.limit(model::MoveAxis::Z, -500.0);
-        assert_eq!(answer.distance_mm, 0.0, "a board standing on the floor goes no deeper");
-        assert_eq!(answer.contact, Some(model::Stop::Floor), "and the answer names the floor, not a node");
-        assert_eq!(stop_text(model::Stop::Floor), "Some(Floor)", "which is what the log writes");
+        let down = free.limit(model::MoveAxis::Z, -500.0);
+        assert_eq!(down.distance_mm, -500.0, "the floor does not stop the free move");
+        assert_eq!(down.contact, None, "and nothing is reported as standing in the way");
+        assert_eq!(
+            stop_text(model::Stop::Floor),
+            "Some(Floor)",
+            "the log still names the floor the object tool stops on"
+        );
     }
 
     #[test]

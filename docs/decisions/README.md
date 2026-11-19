@@ -185,6 +185,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0177](0177-the-invisible-floor-stops-a-body-and-not-a-drag-only-snap.md) | The invisible floor stops a body, and it is not the floor snap | Accepted; amends 0146's scope to dragging |
 | [0178](0178-a-piece-the-document-holds-inside-another-may-only-come-out.md) | A piece the document holds inside another may only come out | Accepted; amends 0162's exemption and 0166's answer |
 | [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
+| [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
 
 ## Format
 

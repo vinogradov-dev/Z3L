@@ -2551,7 +2551,7 @@ mod tests {
             serde_json::json!({"translation": [10.0, 20.0, 30.0], "rotation": [0.0, 0.0, 0.0, 1.0]}),
         )
         .expect("placement");
-        let request = NodePlacementSet { node: panel, placement };
+        let request = NodePlacementSet { node: panel, placement, unmeasured: false };
         session.dispatch("node.placement.set", &json_params(&request)).expect("place panel");
         assert_eq!(session.project().panel(panel).expect("panel").placement(), placement);
         session.undo().expect("undo placement");
@@ -2580,12 +2580,12 @@ mod tests {
         let front = Id::new(4).expect("front id");
         // The sample scene holds the shelf and the drawer's front in one box, which no rule polices
         // after the fact; pulling the shelf clear is a legal move out of that overlap.
-        let clear = NodePlacementSet { node: shelf, placement: placement(1000.0, 0.0, 0.0) };
+        let clear = NodePlacementSet { node: shelf, placement: placement(1000.0, 0.0, 0.0), unmeasured: false };
         session.dispatch("node.placement.set", &json_params(&clear)).expect("the shelf comes clear");
         let revision = session.project().revision();
 
         // 500 puts 200 mm of the shelf inside the front, which is more than the nothing it shared.
-        let sinking = NodePlacementSet { node: shelf, placement: placement(500.0, 0.0, 0.0) };
+        let sinking = NodePlacementSet { node: shelf, placement: placement(500.0, 0.0, 0.0), unmeasured: false };
         let error = session
             .dispatch("node.placement.set", &json_params(&sinking))
             .expect_err("a board may not come to rest inside another");
@@ -2603,6 +2603,7 @@ mod tests {
         // The batch asks the same rule, so a selection cannot smuggle an overlap past it: the second
         // entry is a legal move and it is refused with the first, because a batch is one change.
         let batch = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: shelf, placement: placement(500.0, 0.0, 0.0) },
                 NodePlacement { node: loose, placement: placement(2500.0, 0.0, 0.0) },
@@ -2634,6 +2635,7 @@ mod tests {
         let moved = placement(10.0, 0.0, 0.0);
         let raised = placement(0.0, 0.0, 25.0);
         let request = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: drawer, placement: raised },
@@ -2712,7 +2714,10 @@ mod tests {
         }))
         .expect("turned placement");
         session
-            .dispatch("node.placement.set", &json_params(&NodePlacementSet { node: panel, placement: turned }))
+            .dispatch(
+                "node.placement.set",
+                &json_params(&NodePlacementSet { node: panel, placement: turned, unmeasured: false }),
+            )
             .expect("place the panel");
 
         let spec = CommandRegistry::new().get("node.placement.world_zero").expect("registered");
@@ -2743,11 +2748,12 @@ mod tests {
         let spec = CommandRegistry::new().get("node.placement.set_many").expect("registered");
         let revision = session.project().revision();
 
-        let empty = NodePlacementSetMany { placements: Vec::new() };
+        let empty = NodePlacementSetMany { placements: Vec::new(), unmeasured: false };
         assert!(!spec.enabled(&session, &json_params(&empty)));
         assert!(session.dispatch("node.placement.set_many", &json_params(&empty)).is_err());
 
         let duplicate = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: panel, placement: moved },
@@ -2757,6 +2763,7 @@ mod tests {
         assert!(session.dispatch("node.placement.set_many", &json_params(&duplicate)).is_err());
 
         let with_root = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: root, placement: moved },
@@ -2766,6 +2773,7 @@ mod tests {
         assert!(session.dispatch("node.placement.set_many", &json_params(&with_root)).is_err());
 
         let with_missing = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: missing, placement: moved },
@@ -3279,6 +3287,26 @@ mod contact_tests {
         session.dispatch(NODE_PLACEMENT_SET_ID, &params).expect("the ball's own surface passes the block's corner");
         assert_eq!(session.project().world_placement(ball), Some(grazing()), "and the place is written");
         assert!(session.project().world_box(ball).is_some(), "and the document holds the ball");
+    }
+
+    #[test]
+    fn the_makers_own_hand_is_not_refused() {
+        // A free move or a rotation writes what the gesture showed: the same placement the guard
+        // refuses is granted when the write says it was not measured (ADR 0180).
+        let (mut session, ball) = ball_and_block(Arc::new(contact_parry::Parry));
+        let measured = json!({ "node": ball, "placement": Placement::IDENTITY.with_translation(millimetres(0), Length::ZERO, Length::ZERO).expect("a place") });
+        assert!(session.dispatch(NODE_PLACEMENT_SET_ID, &measured).is_ok(), "a zero move is no change");
+        let inside =
+            Placement::IDENTITY.with_translation(millimetres(300), Length::ZERO, Length::ZERO).expect("a place");
+        let asked = json!({ "node": ball, "placement": inside });
+        assert!(
+            session.dispatch(NODE_PLACEMENT_SET_ID, &asked).is_err(),
+            "a measured write is refused inside the block"
+        );
+
+        let unmeasured = json!({ "node": ball, "placement": inside, "unmeasured": true });
+        session.dispatch(NODE_PLACEMENT_SET_ID, &unmeasured).expect("the hand is not refused");
+        assert_eq!(session.project().world_placement(ball), Some(inside), "and the place is written");
     }
 
     #[test]

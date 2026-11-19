@@ -469,6 +469,7 @@ mod tests {
         .expect("placement");
         let before = session.project().revision();
         let value = serde_json::to_value(NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: camera, placement: moved },
                 NodePlacement { node: light, placement: moved },

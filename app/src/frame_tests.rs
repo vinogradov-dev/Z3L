@@ -1244,25 +1244,36 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
 }
 
 #[test]
-fn both_moves_answer_the_place_the_board_lands_and_never_inside_its_neighbour() {
-    // X72 gave both tools the same contact, and X77 makes it a rule about the place the board lands:
+fn the_object_move_answers_the_place_the_board_lands_and_never_inside_its_neighbour() {
+    // X72 gave the object move its contact, and X77 makes it a rule about the place the board lands:
     // a drag whose destination is inside the neighbour stops flush on its face, and a drag whose
     // destination is beyond the neighbour carries the board past it and lands in the free place
-    // there. What neither may do is come to rest inside.
-    for mode in [TransformMode::Move, TransformMode::Object] {
-        let (ended, low, _high, revisions) = moved_divider(mode, 60.0, "frame-free-move");
-        assert!(
-            (ended - low).abs() < 1.0e-6,
-            "{mode:?} stops the board flush against the neighbour at {low}: it ends at {ended}"
-        );
-        assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
-        let (ended, low, high, revisions) = moved_divider(mode, 400.0, "frame-carry-beyond");
-        assert!(
-            ended >= high - 1.0e-6,
-            "{mode:?} lands the board in the free place beyond the neighbour at {high}: it ends at {ended} (low {low})"
-        );
-        assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
-    }
+    // there. What it may not do is come to rest inside. The free move is not measured at all
+    // (ADR 0180), so it is not asked here.
+    let mode = TransformMode::Object;
+    let (ended, low, _high, revisions) = moved_divider(mode, 60.0, "frame-object-flush");
+    assert!(
+        (ended - low).abs() < 1.0e-6,
+        "{mode:?} stops the board flush against the neighbour at {low}: it ends at {ended}"
+    );
+    assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
+    let (ended, low, high, revisions) = moved_divider(mode, 400.0, "frame-carry-beyond");
+    assert!(
+        ended >= high - 1.0e-6,
+        "{mode:?} lands the board in the free place beyond the neighbour at {high}: it ends at {ended} (low {low})"
+    );
+    assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
+}
+
+#[test]
+fn the_free_move_carries_the_board_through_its_neighbour() {
+    // The free move is the maker's own hand: no snap, no stop and no refusal, so the board goes
+    // where the pointer puts it and its write is not turned back (ADR 0180). The drag that would
+    // stop the object move flush on the neighbour's face passes it here, and one undo entry is what
+    // it costs.
+    let (ended, low, _high, revisions) = moved_divider(TransformMode::Move, 60.0, "frame-free-through");
+    assert!(ended > low + 1.0, "the free move passes the face the object move stops on ({low}): it ends at {ended}");
+    assert_eq!(revisions, 1, "and costs one undo entry");
 }
 
 /// Moves the divider of [`divider_beside_a_panel`] `points` along world X and answers the face it

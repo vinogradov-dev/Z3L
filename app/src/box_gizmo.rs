@@ -692,7 +692,7 @@ pub(crate) fn apply_grip_edit(session: &mut Session, edit: GripEdit, scope: Edit
         }
     }
     if let Some(placement) = edit.placement {
-        let params = serde_json::to_value(NodePlacementSet { node: edit.node, placement })
+        let params = serde_json::to_value(NodePlacementSet { node: edit.node, placement, unmeasured: false })
             .map_err(|error| format!("could not encode the placement: {error}"))?;
         session.dispatch_in(scope, NODE_PLACEMENT_SET_ID, &params).map_err(|error| error.to_string())?;
     }

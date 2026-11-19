@@ -330,6 +330,14 @@ pub struct NodePlacementSet {
     pub node: Id,
     /// The new rigid placement.
     pub placement: Placement,
+    /// Whether this write is the maker's own hand rather than a measured placement.
+    ///
+    /// The free move and the rotation carry a body where the pointer puts it — through a neighbour and
+    /// below the workspace's floor — so the write they ask for is not refused by the body rules. Every
+    /// other writer, the inspector's fields included, leaves it false and keeps the refusal (ADR 0162,
+    /// ADR 0180).
+    #[serde(default)]
+    pub unmeasured: bool,
 }
 
 /// The `node.placement.set` command.
@@ -354,7 +362,9 @@ fn node_placement_set_run(
     contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSet>(params, NODE_PLACEMENT_SET_ID)?;
-    refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)], contact)?;
+    if !params.unmeasured {
+        refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)], contact)?;
+    }
     project.set_node_placement(params.node, params.placement)?;
     Ok(CommandOutcome::changed())
 }
@@ -452,6 +462,12 @@ pub struct NodePlacement {
 pub struct NodePlacementSetMany {
     /// The nodes to place; at least one, each listed once, none the root.
     pub placements: Vec<NodePlacement>,
+    /// Whether this write is the maker's own hand rather than a measured placement.
+    ///
+    /// A finished free move or rotation sets it: the body goes where the gesture put it and the write
+    /// is not refused by the body rules. A drag of the object tool leaves it false (ADR 0162, ADR 0180).
+    #[serde(default)]
+    pub unmeasured: bool,
 }
 
 /// The `node.placement.set_many` command.
@@ -481,7 +497,9 @@ fn node_placement_set_many_run(
     let params = parse::<NodePlacementSetMany>(params, NODE_PLACEMENT_SET_MANY_ID)?;
     let placements: Vec<(Id, Placement)> =
         params.placements.iter().map(|entry| (entry.node, entry.placement)).collect();
-    refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements, contact)?;
+    if !params.unmeasured {
+        refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements, contact)?;
+    }
     project.set_node_placements(&placements)?;
     Ok(CommandOutcome::changed())
 }

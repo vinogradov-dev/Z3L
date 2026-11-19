@@ -1103,7 +1103,8 @@ fn a_body_keeps_the_paths_placement_and_frame() {
             Length::ZERO,
         )
         .expect("placement");
-    let params = crate::command::json(&engine::NodePlacementSet { node: path, placement }).expect("params");
+    let params =
+        crate::command::json(&engine::NodePlacementSet { node: path, placement, unmeasured: false }).expect("params");
     session.dispatch(engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
     editor
         .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)

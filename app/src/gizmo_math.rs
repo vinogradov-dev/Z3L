@@ -291,6 +291,12 @@ pub(crate) struct PlacementChange {
 pub(crate) struct PlacementCommit {
     /// The changed nodes; never empty.
     pub(crate) changes: Vec<PlacementChange>,
+    /// Whether the document's bodies measured this gesture.
+    ///
+    /// A drag of the object tool is measured and its write is refused when it lands a body inside
+    /// another; the free move and the rotation are the maker's own hand and write what they showed
+    /// (ADR 0180).
+    pub(crate) measured: bool,
 }
 
 /// Converts a world-space shift into one placement per target, or `None` when nothing moved.
@@ -301,6 +307,7 @@ pub(crate) struct PlacementCommit {
 pub(crate) fn commit_translation(
     targets: &[MoveTarget],
     delta_world: DVec3,
+    measured: bool,
 ) -> Result<Option<PlacementCommit>, String> {
     if delta_world == DVec3::ZERO {
         return Ok(None);
@@ -322,7 +329,7 @@ pub(crate) fn commit_translation(
             changes.push(PlacementChange { node: target.node, placement });
         }
     }
-    Ok(unchanged_or(changes))
+    Ok(unchanged_or(changes, measured))
 }
 
 /// Converts a world-space turn about `pivot_world` into one placement per target.
@@ -373,12 +380,12 @@ pub(crate) fn commit_rotation(
             changes.push(PlacementChange { node: target.node, placement });
         }
     }
-    Ok(unchanged_or(changes))
+    Ok(unchanged_or(changes, false))
 }
 
 /// Packs the changed nodes into a commit, or `None` when a drag ended where it started.
-fn unchanged_or(changes: Vec<PlacementChange>) -> Option<PlacementCommit> {
-    if changes.is_empty() { None } else { Some(PlacementCommit { changes }) }
+fn unchanged_or(changes: Vec<PlacementChange>, measured: bool) -> Option<PlacementCommit> {
+    if changes.is_empty() { None } else { Some(PlacementCommit { changes, measured }) }
 }
 
 /// Rounds a placement's translation to whole micrometres at the editing boundary.
@@ -1492,7 +1499,7 @@ mod tests {
         let targets = move_targets(&project, &selection);
         let delta = DVec3::new(10.0, 4.0, -2.0);
 
-        let commit = commit_translation(&targets, delta).expect("valid").expect("a move");
+        let commit = commit_translation(&targets, delta, true).expect("valid").expect("a move");
         assert_eq!(commit.changes.len(), 2);
         for (change, target) in commit.changes.iter().zip(&targets) {
             let before = target.parent.transform_point(target.start_local.translation());
@@ -1532,9 +1539,9 @@ mod tests {
         let project = nested_project();
         let targets = move_targets(&project, &[id(4), id(3)]);
 
-        assert_eq!(commit_translation(&targets, DVec3::ZERO).expect("no error"), None);
+        assert_eq!(commit_translation(&targets, DVec3::ZERO, true).expect("no error"), None);
         assert_eq!(commit_rotation(&targets, DVec3::ZERO, DQuat::IDENTITY).expect("no error"), None);
-        assert_eq!(commit_translation(&[], DVec3::X).expect("no error"), None);
+        assert_eq!(commit_translation(&[], DVec3::X, true).expect("no error"), None);
         assert_eq!(commit_rotation(&[], DVec3::ZERO, DQuat::from_rotation_z(0.5)).expect("no error"), None);
     }
 

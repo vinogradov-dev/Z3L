@@ -330,7 +330,7 @@ fn apply_axis(
     if placement.same_transform(current) {
         return Ok(());
     }
-    let params = json(&NodePlacementSet { node, placement })?;
+    let params = json(&NodePlacementSet { node, placement, unmeasured: false })?;
     session.dispatch_in(scope, NODE_PLACEMENT_SET_ID, &params).map(|_| ()).map_err(|error| error.to_string())
 }
 
@@ -353,7 +353,7 @@ mod tests {
     use super::*;
 
     fn set_placement(session: &mut Session, node: Id, placement: Placement) {
-        let params = json(&NodePlacementSet { node, placement }).expect("command parameters");
+        let params = json(&NodePlacementSet { node, placement, unmeasured: false }).expect("command parameters");
         dispatch(session, NODE_PLACEMENT_SET_ID, &params).expect("set placement");
     }
 
