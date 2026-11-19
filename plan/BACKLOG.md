@@ -192,6 +192,38 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+- `[ ]` **X85** a body is measured by its own surface and not by the box around it
+  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
+   apex reaches the corner between two plates, which is the owner report of the sixth session.
+   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
+   The owner asked for near-physical interaction: any surface lives by its faces, never by the
+   box around it.
+  Shape: Stage 1: a body carries a convex hull built from its own parametric data in geom (a
+   cone from its two circles and apex, a cylinder two circles, a box eight corners, a panel its
+   contour times its thickness), and the rule measures hull pairs instead of boxes: distance
+   and containment by GJK/EPA, the swept first touch by a ray cast against the Minkowski
+   difference. A product keeps its envelope as a shell and its parts do the work. A non-convex
+   panel contributes its convex hull until a later stage refines it. Stage 2, only if a notch
+   must be felt: convex decomposition of a panel contour or a triangle BVH with a
+   hull-vs-triangle test. Both stages keep the rule pure and stateless in model; the mesh never
+   decides contact.
+  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
+   surface allows and stops on the plate face; a cylinder rests its barrel on a face; a box and
+   a panel answer exactly as today; the drag, the release guard and the log read one
+   measurement; the gate is green.
+  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs`
+- `[ ]` **X86** a piece already inside another may only come out
+  Why: Today a pair the document already holds overlapping is exempt for the whole drag: a
+   piece left inside another by a hand edit or a typed coordinate can be dragged deeper as
+   easily as out. The owner asked that choosing the object move on such a piece makes it come
+   out.
+  Shape: The exemption of a pair that already overlaps is kept only while the overlap does not
+   grow: the destination is measured against the start depth and refused when it is deeper, so
+   every motion of the drag is a way out. The depth is the shared volume the rule already reads
+   for a box pair and the penetration EPA answers for hulls.
+  Done: A piece standing inside another moves out and never deeper while it still overlaps; a
+   pair that only touches is untouched; the gate is green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs`
 
 ## Done
 

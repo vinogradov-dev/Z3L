@@ -53,3 +53,9 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
+- Contact by a body's own surface (X85): a convex hull answers exactly for a cone, a cylinder, a
+  box and a convex panel, and a notch is filled — a panel contour with holes, a cut-notch or a
+  concave object would still be measured by its convex silhouette. Confirm whether Stage 1 is
+  enough in practice, or whether a notch must be felt before the model is real (Stage 2).
+- A piece found inside another (X86): should the object move pop it out at once, one undo entry,
+  or only refuse every destination that is deeper, so the maker walks it out by hand?
