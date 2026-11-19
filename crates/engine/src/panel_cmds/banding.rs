@@ -14,6 +14,7 @@
 //! that.
 
 use catalog::Directory;
+use geom::Contact;
 use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow, EdgeId, Id, ItemId,
     Operation, Project, ProjectError, RingBanding, VertexId,
@@ -78,6 +79,7 @@ fn edge_banding_set_run(
     project: &mut Project,
     catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelEdgeBandingSet::parse(params)?;
     class_allows(project, params.panel, EDGE_BANDING_SET_ID, Operation::EdgeBand)?;
@@ -136,6 +138,7 @@ fn edge_banding_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelEdgeBandingClear::parse(params)?;
     project.clear_edge_banding(params.panel, params.edge)?;
@@ -197,6 +200,7 @@ fn corner_banding_set_run(
     project: &mut Project,
     catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerBandingSet::parse(params)?;
     class_allows(project, params.panel, CORNER_BANDING_SET_ID, Operation::EdgeBand)?;
@@ -254,6 +258,7 @@ fn corner_banding_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerBandingClear::parse(params)?;
     project.clear_corner_banding(params.panel, params.corner)?;
@@ -311,6 +316,7 @@ fn ring_banding_set_run(
     project: &mut Project,
     catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelRingBandingSet::parse(params)?;
     class_allows(project, params.panel, RING_BANDING_SET_ID, Operation::EdgeBand)?;
@@ -366,6 +372,7 @@ fn ring_banding_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelRingBandingClear::parse(params)?;
     project.clear_ring_banding(params.panel, params.segment)?;
@@ -423,7 +430,12 @@ fn corner_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_corner_feature(params.panel, feature).is_ok()
 }
 
-fn corner_set_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn corner_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerSet::parse(params)?;
     class_allows(project, params.panel, CORNER_SET_ID, Operation::Contour)?;
     project.set_corner_feature(params.panel, params.feature()?)?;
@@ -468,6 +480,7 @@ fn corner_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCornerClear::parse(params)?;
     project.clear_corner_feature(params.panel, params.corner)?;
@@ -523,7 +536,12 @@ fn bow_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_edge_bow(params.panel, bow).is_ok()
 }
 
-fn bow_set_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bow_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelBowSet::parse(params)?;
     class_allows(project, params.panel, BOW_SET_ID, Operation::Contour)?;
     project.set_edge_bow(params.panel, params.bow()?)?;
@@ -564,7 +582,12 @@ fn bow_clear_enabled(session: &Session, params: &Value) -> bool {
     session.project().panel(params.panel).is_some_and(|panel| panel.edge_bow(params.edge).is_some())
 }
 
-fn bow_clear_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bow_clear_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelBowClear::parse(params)?;
     project.clear_edge_bow(params.panel, params.edge)?;
     Ok(CommandOutcome::changed())

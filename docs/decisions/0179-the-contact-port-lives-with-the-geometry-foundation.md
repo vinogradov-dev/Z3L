@@ -54,14 +54,14 @@ container — is the box the rule already measured. A body the document cannot d
 payload, a drawn path, a mesh past the port's caps) answers `None`, and the caller keeps the box. A
 fallback that measures less precisely is honest; a shape invented from a screen tessellation is not.
 
-**One seam, and `None` is the reading of the day.** `Project::move_rule` and
-`Project::resting_conflict` take `Option<&dyn Contact>`. `None` means no adapter is installed and every
-pair is measured by its world box, which is what the document did before the port existed. The drag
-and the guard must be handed an adapter together: a preview measured by a surface and a release
-measured by a box would refuse the place the drag just showed (ADR 0166). The engine's write guard
-passes `None` today, so both still read boxes; handing the adapter to a session is the step that flips
-them, and the furniture reading — a panel inside a case is a slab in a frame — is deliberately left on
-the box (ADR 0165).
+**One seam: the session owns the adapter.** `Project::move_rule` and `Project::resting_conflict` take
+`Option<&dyn Contact>`, and the session is what fills it. `Session::contact` holds an
+`Arc<dyn Contact>` — the shell installs the real one once, and a session that never had one keeps
+`NoContact`, which prepares nothing, so every pair falls back to the world box the document has always
+measured. Every command receives the session's adapter, so the write's guard and the drag's rule ask
+one reading: a preview measured by a surface and a release measured by a box would refuse the place
+the drag just showed (ADR 0166). The furniture reading — a panel inside a case is a slab in a frame —
+is deliberately left on the box (ADR 0165).
 
 **A prepared body, and no trait object in the rule.** `Contact::prepare` returns `Shared` — an
 `Arc<dyn Solid>` the adapter made — so a drag converts each body once when its rule is built and asks
@@ -88,6 +88,9 @@ code cannot keep, and the frame budget is measured before a cache is designed.
   refusing to open a file.
 - `geom` gains `thiserror` and one module that mentions a `dyn Any` handle; the crate's doc says what
   the module is for.
-- The world-box reading is not deleted in this step: the shape build, the `MoveRule` wiring, the probe
-  and the per-revision caches land behind it, and only then does the box stop deciding contact (X85
-  stage A and B).
+- Every command carries one more parameter, `&dyn Contact`. It is the price of the seam being the
+  session rather than an ambient global: a command that writes a placement cannot mean two different
+  things in two processes.
+- The probe (`niche`) and the per-revision shape caches are not in this step: a shape is rebuilt per
+  gesture today, and the frame budget of a big scene is what decides whether a cache is needed (X85
+  stage B).

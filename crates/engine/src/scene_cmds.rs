@@ -7,6 +7,7 @@
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
 use catalog::Directory;
+use geom::Contact;
 use model::{CameraProjection, Id, LightKind, LightNode, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +52,7 @@ fn camera_create_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<CameraCreate>(params, CAMERA_CREATE_ID)?;
     validate_name(&params.name, CAMERA_CREATE_ID)?;
@@ -100,6 +102,7 @@ fn light_create_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<LightCreate>(params, LIGHT_CREATE_ID)?;
     validate_name(&params.name, LIGHT_CREATE_ID)?;
@@ -156,6 +159,7 @@ fn scene_active_camera_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<SceneActiveCameraSet>(params, SCENE_ACTIVE_CAMERA_SET_ID)?;
     project.set_active_camera(params.camera)?;
@@ -197,6 +201,7 @@ fn camera_projection_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<CameraProjectionSet>(params, CAMERA_PROJECTION_SET_ID)?;
     project.set_camera_projection(params.camera, params.projection)?;
@@ -238,6 +243,7 @@ fn light_params_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<LightParamsSet>(params, LIGHT_PARAMS_SET_ID)?;
     if !valid_color(params.color) {

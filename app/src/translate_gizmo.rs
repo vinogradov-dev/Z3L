@@ -814,7 +814,7 @@ impl TranslateGizmo {
             let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
             // The rule and the snap settings are read once, when the piece is taken, exactly as a
             // held drag reads them at the press: the preview and the drop then measure one document.
-            let rule = target.project.move_rule(&moving, target.moves, None);
+            let rule = target.project.move_rule(&moving, target.moves, Some(target.contact));
             // A piece that may travel on more than one axis is carried on the plane its class
             // allows, met where the hand is and where the pivot is: the plane is read at the take and
             // every later frame holds the piece by the offset the click gave it. A one-axis piece is
@@ -895,8 +895,8 @@ impl TranslateGizmo {
         // the same, because contact is the document's rule and not a taste (X72, ADR 0162), and at
         // the workspace's floor, which is a stop rather than a snap (X87, ADR 0177).
         let rule = match target.move_kind {
-            MoveKind::Free => target.project.move_rule(&moving, target.moves.free(), None),
-            MoveKind::Object => target.project.move_rule(&moving, target.moves, None),
+            MoveKind::Free => target.project.move_rule(&moving, target.moves.free(), Some(target.contact)),
+            MoveKind::Object => target.project.move_rule(&moving, target.moves, Some(target.contact)),
         };
         self.drag = Some(Drag {
             node: anchor.node,

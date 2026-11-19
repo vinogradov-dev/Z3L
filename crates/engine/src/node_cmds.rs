@@ -8,6 +8,7 @@
 //! in world space. `node.ungroup` refuses a component; `node.component.convert_to_group` clears the
 //! marker first.
 
+use geom::Contact;
 use std::collections::HashSet;
 
 use catalog::Directory;
@@ -59,6 +60,7 @@ fn assembly_create_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<AssemblyCreate>(params, ASSEMBLY_CREATE_ID)?;
     validate_name(&params.name, ASSEMBLY_CREATE_ID)?;
@@ -97,6 +99,7 @@ fn node_rename_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeRename>(params, NODE_RENAME_ID)?;
     validate_name(&params.name, NODE_RENAME_ID)?;
@@ -136,6 +139,7 @@ fn node_delete_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDelete>(params, NODE_DELETE_ID)?;
     project.remove_node(params.node)?;
@@ -176,6 +180,7 @@ fn node_delete_many_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDeleteMany>(params, NODE_DELETE_MANY_ID)?;
     let targets = delete_targets(project, &params.nodes);
@@ -228,6 +233,7 @@ fn node_duplicate_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDuplicate>(params, NODE_DUPLICATE_ID)?;
     let id = project.duplicate_node(params.node)?;
@@ -261,7 +267,12 @@ fn node_group_enabled(session: &Session, params: &Value) -> bool {
     valid_name(&params.name) && session.project().validate_group(&params.nodes).is_ok()
 }
 
-fn node_group_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn node_group_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeGroup>(params, NODE_GROUP_ID)?;
     validate_name(&params.name, NODE_GROUP_ID)?;
     let id = project.group_nodes(&params.nodes, params.name)?;
@@ -298,6 +309,7 @@ fn node_ungroup_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeUngroup>(params, NODE_UNGROUP_ID)?;
     project.ungroup_group(params.node)?;
@@ -339,9 +351,10 @@ fn node_placement_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSet>(params, NODE_PLACEMENT_SET_ID)?;
-    refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)])?;
+    refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)], contact)?;
     project.set_node_placement(params.node, params.placement)?;
     Ok(CommandOutcome::changed())
 }
@@ -357,11 +370,9 @@ pub(crate) fn refuse_resting(
     project: &Project,
     command: &'static str,
     placements: &[(Id, Placement)],
+    contact: &dyn Contact,
 ) -> Result<(), CommandError> {
-    // No contact adapter reaches a command yet, so the guard reads the world box the document has
-    // always kept (ADR 0179, X85): the drag reads the same until the adapter is handed to a session,
-    // and the two must switch together so a release never refuses a place the preview showed.
-    match project.resting_conflict(placements, None) {
+    match project.resting_conflict(placements, Some(contact)) {
         Some(resting) => Err(CommandError::resting(command, project, resting)),
         None => Ok(()),
     }
@@ -404,6 +415,7 @@ fn node_placement_world_zero_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementWorldZero>(params, NODE_PLACEMENT_WORLD_ZERO_ID)?;
     if params.node == project.root().id() {
@@ -464,11 +476,12 @@ fn node_placement_set_many_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSetMany>(params, NODE_PLACEMENT_SET_MANY_ID)?;
     let placements: Vec<(Id, Placement)> =
         params.placements.iter().map(|entry| (entry.node, entry.placement)).collect();
-    refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements)?;
+    refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements, contact)?;
     project.set_node_placements(&placements)?;
     Ok(CommandOutcome::changed())
 }
@@ -514,6 +527,7 @@ fn node_pivot_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePivotSet>(params, NODE_PIVOT_SET_ID)?;
     project.set_node_pivot(params.node, params.pivot)?;
@@ -550,6 +564,7 @@ fn node_pivot_center_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePivotCenter>(params, NODE_PIVOT_CENTER_ID)?;
     project.center_node_pivot(params.node)?;
@@ -592,6 +607,7 @@ fn node_origin_rebase_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeOriginRebase>(params, NODE_ORIGIN_REBASE_ID)?;
     project.rebase_origin(params.node, params.strategy)?;
@@ -652,6 +668,7 @@ fn property_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertySet>(params, NODE_PROPERTY_SET_ID)?;
     class_allows_parent(project, params.node, &params.key, &params.value, NODE_PROPERTY_SET_ID)?;
@@ -710,6 +727,7 @@ fn property_set_many_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertySetMany>(params, NODE_PROPERTY_SET_MANY_ID)?;
     for entry in &params.properties {
@@ -751,6 +769,7 @@ fn property_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertyClear>(params, NODE_PROPERTY_CLEAR_ID)?;
     project.clear_property(params.node, &params.key)?;
@@ -785,6 +804,7 @@ fn component_convert_to_group_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeComponentConvertToGroup>(params, NODE_COMPONENT_CONVERT_TO_GROUP_ID)?;
     project.convert_to_group(params.node)?;

@@ -7,6 +7,7 @@
 //! size: the content bounds of the parts are derived when asked and never stored.
 
 use catalog::Directory;
+use geom::Contact;
 use model::{ClassCode, Envelope, Id, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -73,6 +74,7 @@ fn product_create_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductCreate>(params, PRODUCT_CREATE_ID)?;
     validate_name(&params.name, PRODUCT_CREATE_ID)?;
@@ -116,6 +118,7 @@ fn product_envelope_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductEnvelopeSet>(params, PRODUCT_ENVELOPE_SET_ID)?;
     project.set_product_envelope(params.node, params.envelope)?;

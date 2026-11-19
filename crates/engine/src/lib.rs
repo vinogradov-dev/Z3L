@@ -18,6 +18,7 @@ mod class_rules;
 mod commands;
 mod diagnostics;
 pub mod mesh_cmds;
+mod no_contact;
 pub mod node_cmds;
 pub mod object_cmds;
 pub mod panel_cmds;
@@ -33,6 +34,7 @@ pub use class_rules::{
 pub use commands::{CommandError, CommandOutcome, CommandRegistry, CommandSpec, Creation};
 pub use diagnostics::{PanelDiagnostic, diagnose_panel};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
+pub use no_contact::NoContact;
 pub use node_cmds::{
     AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter,
     NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero, NodeProperty,

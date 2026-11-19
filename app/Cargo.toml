@@ -23,6 +23,7 @@ export = { workspace = true }
 geom = { workspace = true }
 kernel = { workspace = true }
 kernel-truck = { workspace = true }
+contact-parry = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
 catalog = { workspace = true }

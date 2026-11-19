@@ -234,7 +234,7 @@ pub fn demo_session() -> Result<Session, String> {
         .map_err(describe)?;
 
     project.validate().map_err(describe)?;
-    Ok(Session::with_directory(project, default_catalog()?))
+    Ok(Session::with_directory(project, default_catalog()?).with_contact(contact_engine()))
 }
 
 /// Builds an empty scene around the default catalogue: a root container with no children.
@@ -256,7 +256,16 @@ pub fn empty_session() -> Result<Session, String> {
 pub fn empty_session_with(directory: impl Into<std::sync::Arc<catalog::Directory>>) -> Result<Session, String> {
     let root = Container::new(id(1)?, "Scene", Placement::IDENTITY, Vec::new());
     let project = Project::new(root).map_err(describe)?;
-    Ok(Session::with_directory(project, directory))
+    Ok(Session::with_directory(project, directory).with_contact(contact_engine()))
+}
+
+/// The contact adapter every session of this shell measures a body with.
+///
+/// One adapter for the window: the drag's rule and the write's guard ask the same one, so a release
+/// cannot refuse a place the preview showed (ADR 0166, ADR 0179). It is a value, not a service: the
+/// engine holds it behind an `Arc` and no state changes under it.
+pub fn contact_engine() -> Arc<dyn geom::Contact> {
+    Arc::new(contact_parry::Parry)
 }
 
 /// Builds the directory a new session starts from: the workshop's packages, or the starter one.

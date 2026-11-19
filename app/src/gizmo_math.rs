@@ -147,6 +147,9 @@ pub(crate) struct Target<'a> {
     pub(crate) camera: Camera,
     /// The document whose nodes are being placed.
     pub(crate) project: &'a Project,
+    /// The contact adapter the document's rule measures a body with, exactly as the write's guard
+    /// asks it: one adapter, so a preview cannot show a place the release refuses (ADR 0179).
+    pub(crate) contact: &'a dyn geom::Contact,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
     /// What an object drag snaps to and stops at, as the workspace settings chose it (ADR 0146,
@@ -1221,6 +1224,7 @@ mod tests {
         Target {
             camera: Camera::default(),
             project,
+            contact: &engine::NoContact,
             selection,
             moves: MoveSettings::default(),
             move_kind: MoveKind::Free,

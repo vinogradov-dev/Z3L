@@ -9,6 +9,7 @@
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 
+use geom::Contact;
 use mesh::{evaluate_constructive, evaluate_primitive};
 use model::{
     Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
@@ -79,6 +80,7 @@ fn object_primitive_create_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveCreate>(params, OBJECT_PRIMITIVE_CREATE_ID)?;
     validate_name(&params.name, OBJECT_PRIMITIVE_CREATE_ID)?;
@@ -115,6 +117,7 @@ fn object_primitive_replace_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveReplace>(params, OBJECT_PRIMITIVE_REPLACE_ID)?;
     project.set_object_primitive(params.object, params.primitive)?;
@@ -170,6 +173,7 @@ fn object_extrude_create_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeCreate>(params, OBJECT_EXTRUDE_CREATE_ID)?;
     validate_name(&params.name, OBJECT_EXTRUDE_CREATE_ID)?;
@@ -236,6 +240,7 @@ fn object_contour_replace_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectContourReplace>(params, OBJECT_CONTOUR_REPLACE_ID)?;
     // Validate the new ring before the document changes: a path that is not a ring or whose cap
@@ -295,6 +300,7 @@ fn object_path_extrude_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathExtrude>(params, OBJECT_PATH_EXTRUDE_ID)?;
     if !valid_extrusion_height(params.height) {
@@ -355,6 +361,7 @@ fn object_extrude_height_set_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectExtrudeHeightSet>(params, OBJECT_EXTRUDE_HEIGHT_SET_ID)?;
     if !valid_extrusion_height(params.height) {
@@ -410,6 +417,7 @@ fn object_path_create_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathCreate>(params, OBJECT_PATH_CREATE_ID)?;
     validate_name(&params.name, OBJECT_PATH_CREATE_ID)?;
@@ -454,6 +462,7 @@ fn object_path_replace_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPathReplace>(params, OBJECT_PATH_REPLACE_ID)?;
     project.set_object_path(params.object, params.path)?;
@@ -494,6 +503,7 @@ fn object_collapse_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectCollapse>(params, OBJECT_COLLAPSE_ID)?;
     let geometry = project

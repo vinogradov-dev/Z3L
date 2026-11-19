@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+geom = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
 catalog = { workspace = true }
@@ -20,4 +21,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# The real contact adapter, so a session test proves the seam: the write's guard measures a body by
+# its own surface exactly as the drag does (ADR 0179).
+contact-parry = { workspace = true }
 testkit = { workspace = true }

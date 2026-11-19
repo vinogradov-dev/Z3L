@@ -15,6 +15,7 @@
 //! (`machining.rs`), or any geometry derivation.
 
 use catalog::Directory;
+use geom::Contact;
 use model::{
     ClassCode, Contour, EdgeBevel, EdgeRef, Id, ItemId, Level, Operation, Panel, PanelNominalSize, PanelOutline,
     Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
@@ -200,6 +201,7 @@ fn contour_create_run(
     project: &mut Project,
     catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelContourCreate::parse(params)?;
     params.validate_name()?;
@@ -268,7 +270,12 @@ fn bevel_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_panel_bevel(params.panel, bevel).is_ok()
 }
 
-fn bevel_set_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bevel_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelBevelSet::parse(params)?;
     let bevel = params.bevel()?;
     class_allows_contour(project, params.panel, BEVEL_SET_ID)?;
@@ -314,6 +321,7 @@ fn bevel_clear_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelBevelClear::parse(params)?;
     project.clear_panel_bevel(params.panel, params.source)?;
@@ -381,6 +389,7 @@ fn outline_set_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelOutlineSet::parse(params)?;
     class_allows_contour(project, params.panel, OUTLINE_SET_ID)?;
@@ -429,6 +438,7 @@ fn outline_contour_run(
     project: &mut Project,
     _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelOutlineToContour::parse(params)?;
     class_allows_contour(project, params.panel, OUTLINE_CONTOUR_ID)?;
@@ -446,7 +456,12 @@ fn create_enabled(session: &Session, params: &Value) -> bool {
         && session.directory().board(params.material).is_some()
 }
 
-fn create_run(project: &mut Project, catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn create_run(
+    project: &mut Project,
+    catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelCreate::parse(params)?;
     params.validate_name()?;
     let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
@@ -556,7 +571,12 @@ fn rename_enabled(session: &Session, params: &Value) -> bool {
     params.validate_name().is_ok() && session.project().panel(params.panel).is_some()
 }
 
-fn rename_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn rename_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelRename::parse(params)?;
     params.validate_name()?;
     project.rename_panel(params.panel, params.name)?;
@@ -597,7 +617,12 @@ fn resize_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_panel_resize(params.panel, params.nominal_size).is_ok()
 }
 
-fn resize_run(project: &mut Project, _catalog: &Directory, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn resize_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelResize::parse(params)?;
     class_allows_resize(project, params.panel, params.nominal_size)?;
     project.set_panel_nominal_size(params.panel, params.nominal_size)?;
@@ -673,6 +698,7 @@ fn material_set_run(
     project: &mut Project,
     catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelMaterialSet::parse(params)?;
     let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;

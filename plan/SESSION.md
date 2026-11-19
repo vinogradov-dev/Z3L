@@ -7,8 +7,8 @@ goal: a body is measured by its own surface and not by the box around it
 steps:
   [ ] starting the task
 
-now: the shapes come from parametric data and the rule asks the port when both bodies are prepared
+now: the session owns the adapter and every command measures a body by its own surface
 blocked: nothing
 run: cargo xtask task X85
-resume: flip the drag and the guard together: the adapter must reach a session and every placement write
+resume: the probe and the per-revision caches, then the entry's three Done cases as one test each
 ```

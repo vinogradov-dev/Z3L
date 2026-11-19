@@ -3,12 +3,14 @@
 use std::sync::Arc;
 
 use catalog::Directory;
+use geom::Contact;
 use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
 use param::EdgeBandProfile;
 use serde_json::Value;
 
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
+use crate::no_contact::NoContact;
 use crate::preview::Preview;
 use crate::resolve;
 
@@ -46,6 +48,12 @@ pub struct Session {
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
     preview: Preview,
+    /// The contact adapter every command and every drag of this session measures a body with.
+    ///
+    /// The shell installs the real one once ([`Session::with_contact`]); a session that never had it
+    /// installed keeps the world-box reading, which is what the document did before the port existed
+    /// (ADR 0179).
+    contact: Arc<dyn Contact>,
     /// The one product the user is working in, or `None` while every product is closed.
     ///
     /// Openness is view state per session (ADR 0098, ADR 0029): it is opened and closed by a view
@@ -77,8 +85,23 @@ impl Session {
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
+            contact: Arc::new(NoContact),
             active_product: None,
         }
+    }
+
+    /// The same session, measuring contact with the adapter the shell built.
+    ///
+    /// It is set once, when the window is composed, and never swapped while a document is open: a
+    /// session measures one way, so a drag and the write it commits cannot disagree (ADR 0179).
+    pub fn with_contact(mut self, contact: Arc<dyn Contact>) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// The contact adapter this session measures a body with.
+    pub fn contact(&self) -> &dyn Contact {
+        &*self.contact
     }
 
     /// The one open product, or `None` when every product is closed (ADR 0098).
@@ -330,7 +353,7 @@ impl Session {
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
-        let outcome = spec.run(&mut working, &self.directory, params)?;
+        let outcome = spec.run(&mut working, &self.directory, params, &*self.contact)?;
         spec.creation_refusal(self, params).map_err(|refusal| CommandError::creation(spec.id(), refusal))?;
         let previous = std::mem::replace(&mut self.project, working);
         Ok((outcome, previous))
@@ -3187,5 +3210,83 @@ mod product_tests {
 
         session.undo().expect("undo the first product");
         assert_eq!(session.active_product(), None, "the open product left with the undo");
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    #![allow(clippy::expect_used)]
+
+    use std::sync::Arc;
+
+    use geom::DVec3;
+    use model::{Geometry, Id, Placement, Primitive};
+    use serde_json::json;
+    use units::Length;
+
+    use crate::{CommandRegistry, NoContact, Session, node_cmds::NODE_PLACEMENT_SET_ID};
+
+    fn millimetres(value: i64) -> Length {
+        Length::from_millimetres(value).expect("a length")
+    }
+
+    /// A session holding one ball and one block: the block stands 30 mm off the ball's line, so the
+    /// box around the ball meets it while the ball's own surface passes it.
+    fn ball_and_block(contact: Arc<dyn geom::Contact>) -> (Session, Id) {
+        let root_node = model::Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = model::Project::new(root_node).expect("an empty project");
+        let root = project.root().id();
+        let ball = project
+            .add_object(
+                root,
+                "Ball",
+                Placement::IDENTITY,
+                Geometry::Primitive(Primitive::sphere(millimetres(50), 16, 8).expect("a ball")),
+            )
+            .expect("add the ball");
+        let block_mesh = model::Mesh::cuboid([millimetres(-50); 3], [millimetres(50); 3]).expect("a cube");
+        project
+            .add_object(
+                root,
+                "Block",
+                Placement::IDENTITY.with_translation(millimetres(300), millimetres(80), Length::ZERO).expect("a place"),
+                Geometry::Mesh(block_mesh),
+            )
+            .expect("add the block");
+        (Session::with_directory(project, testkit::sample_catalog()).with_contact(contact), ball)
+    }
+
+    /// A placement 211 mm along X, which the ball's own surface leaves free and its box does not.
+    fn grazing() -> Placement {
+        Placement::IDENTITY.with_translation(millimetres(210), Length::ZERO, Length::ZERO).expect("a place")
+    }
+
+    #[test]
+    fn the_write_refuses_a_place_the_box_around_the_body_covers() {
+        let (mut session, ball) = ball_and_block(Arc::new(NoContact));
+        let params = json!({ "node": ball, "placement": grazing() });
+        assert!(
+            session.dispatch(NODE_PLACEMENT_SET_ID, &params).is_err(),
+            "a session with no adapter measures the box, and the box puts the ball inside the block"
+        );
+        assert_eq!(session.project().world_placement(ball), Some(Placement::IDENTITY), "nothing was written");
+    }
+
+    #[test]
+    fn the_write_grants_the_place_the_body_itself_leaves_free() {
+        let (mut session, ball) = ball_and_block(Arc::new(contact_parry::Parry));
+        let params = json!({ "node": ball, "placement": grazing() });
+        session.dispatch(NODE_PLACEMENT_SET_ID, &params).expect("the ball's own surface passes the block's corner");
+        assert_eq!(session.project().world_placement(ball), Some(grazing()), "and the place is written");
+        assert!(session.project().world_box(ball).is_some(), "and the document holds the ball");
+    }
+
+    #[test]
+    fn a_session_without_an_adapter_is_the_world_it_always_was() {
+        let registry = CommandRegistry;
+        assert!(registry.get(NODE_PLACEMENT_SET_ID).is_some(), "the placement command exists");
+        let (session, _) = ball_and_block(Arc::new(NoContact));
+        let hull = geom::Shape::convex(vec![DVec3::ZERO; 4]).expect("a hull");
+        assert!(session.contact().prepare(&hull, geom::Pose::IDENTITY).is_none(), "no adapter, no body");
     }
 }

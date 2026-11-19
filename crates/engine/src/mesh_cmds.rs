@@ -7,6 +7,7 @@
 //!
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 
+use geom::Contact;
 use model::{Id, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,6 +65,7 @@ fn mesh_vertices_move_run(
     project: &mut Project,
     _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<MeshVerticesMove>(params)?;
     if params.moves.is_empty() {

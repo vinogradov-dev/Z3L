@@ -510,7 +510,7 @@ impl Document {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let project = scene.into_document();
-        let session = Session::with_directory(project, directory);
+        let session = Session::with_directory(project, directory).with_contact(crate::scene_build::contact_engine());
         let mut document = Self::new(render_state, settings, shell, session, extra)?;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -2668,6 +2668,7 @@ impl Document {
         let target = gizmo_math::Target {
             camera: self.scene.camera,
             project: self.session.project(),
+            contact: self.session.contact(),
             selection: self.editor.selected_nodes(),
             moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),
@@ -3127,6 +3128,7 @@ impl Document {
         let paint_target = gizmo_math::Target {
             camera: self.scene.camera,
             project: self.session.project(),
+            contact: self.session.contact(),
             selection: self.editor.selected_nodes(),
             moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),

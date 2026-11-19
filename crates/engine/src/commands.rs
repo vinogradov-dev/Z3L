@@ -1,6 +1,7 @@
 //! Command metadata, the static registry and dispatch errors.
 
 use catalog::Directory;
+use geom::Contact;
 use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
 use serde_json::Value;
 use text::Message;
@@ -82,7 +83,7 @@ pub struct CommandSpec {
     id: &'static str,
     label: Message,
     enabled_fn: fn(&Session, &Value) -> bool,
-    run_fn: fn(&mut Project, &Directory, &Value) -> Result<CommandOutcome, CommandError>,
+    run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     creation: Option<Creation>,
 }
 
@@ -92,7 +93,7 @@ impl CommandSpec {
         id: &'static str,
         label: Message,
         enabled_fn: fn(&Session, &Value) -> bool,
-        run_fn: fn(&mut Project, &Directory, &Value) -> Result<CommandOutcome, CommandError>,
+        run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     ) -> Self {
         Self { id, label, enabled_fn, run_fn, creation: None }
     }
@@ -140,13 +141,19 @@ impl CommandSpec {
         class_rules::allow_creation(session.project(), parent, session.active_product())
     }
 
+    /// Runs the command on a working copy of the document.
+    ///
+    /// `contact` is the session's contact adapter: the placement guard measures a body by its own
+    /// surface through it, and the drag's rule is handed the same one, so a release never refuses a
+    /// place the preview showed (ADR 0166, ADR 0179).
     pub(crate) fn run(
         self,
         project: &mut Project,
         catalog: &Directory,
         params: &Value,
+        contact: &dyn Contact,
     ) -> Result<CommandOutcome, CommandError> {
-        (self.run_fn)(project, catalog, params)
+        (self.run_fn)(project, catalog, params, contact)
     }
 }
 

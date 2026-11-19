@@ -190,6 +190,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "catalog",
+ "contact-parry",
  "eframe",
  "engine",
  "export",
@@ -1108,6 +1109,8 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "catalog",
+ "contact-parry",
+ "geom",
  "mesh",
  "model",
  "param",
