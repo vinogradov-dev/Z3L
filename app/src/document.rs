@@ -2669,7 +2669,7 @@ impl Document {
             camera: self.scene.camera,
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
-            snaps: settings.snaps.rule(),
+            moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
@@ -3128,7 +3128,7 @@ impl Document {
             camera: self.scene.camera,
             project: self.session.project(),
             selection: self.editor.selected_nodes(),
-            snaps: settings.snaps.rule(),
+            moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
@@ -4324,7 +4324,7 @@ mod tests {
         let measure = measure_move(&project, piece, gizmo_math::Axis::Y).expect("two faces");
         assert_eq!(measure.wall_low, None, "nothing stands below the piece");
 
-        let rule = project.move_rule(&[piece], model::SnapSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[piece], model::MoveSettings::default()).expect("an object drag");
         let limit = rule.limit(model::MoveAxis::Y, -1498.0);
         let capture = limit.capture.expect("the plane captured the drag");
         let (wall_low, wall_high) = captured_walls(&measure, Some(capture));

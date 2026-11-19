@@ -381,12 +381,14 @@ impl GizmoSettings {
     }
 }
 
-/// The *Snapping* section: what an object drag captures, and how near it must come.
+/// The *Snapping* section: what an object drag captures and stops at, and how near it must come.
 ///
-/// Snapping is a taste and a workshop standard, so the three values are the workspace's and never
-/// the document's: turning the planes off costs no undo entry and leaves no revision behind. The
-/// model owns what each value means (`model::SnapSettings`) and the shell hands it over once when a
-/// drag starts, so a change applies to the next drag and never to the one under the hand (ADR 0146).
+/// Snapping is a taste and a workshop standard, so the values are the workspace's and never the
+/// document's: turning the planes off costs no undo entry and leaves no revision behind. The model
+/// owns what each value means (`model::SnapSettings`, `model::MoveSettings`) and the shell hands them
+/// over once when a drag starts, so a change applies to the next drag and never to the one under the
+/// hand (ADR 0146). The floor is a stop beside them rather than a capture: it answers whether a body
+/// may sink below Z = 0 at all (X87, ADR 0177).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SnapSettings {
@@ -399,23 +401,32 @@ pub struct SnapSettings {
     pub frames: bool,
     /// How near a surface must be to capture a drag, in millimetres; zero captures nothing.
     pub tolerance_mm: u32,
+    /// Whether the invisible floor at Z = 0 stops every moved body.
+    ///
+    /// It is a stop and not a snap, so it holds whatever the two switches above say, and a workspace
+    /// that turns it off has no floor at all (ADR 0177).
+    pub floor: bool,
 }
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM }
+        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true }
     }
 }
 
 impl SnapSettings {
-    /// The value the move rule reads: the same three facts, with the tolerance as the document's own
-    /// unit so the model never sees a millimetre as a number.
-    pub fn rule(&self) -> model::SnapSettings {
+    /// The value the move rule reads: the same facts, with the tolerance as the document's own unit so
+    /// the model never sees a millimetre as a number.
+    pub fn move_settings(&self) -> model::MoveSettings {
         let tolerance = i64::from(self.tolerance_mm.clamp(MIN_SNAP_MM, MAX_SNAP_MM));
-        model::SnapSettings {
-            planes: self.planes,
-            frames: self.frames,
-            tolerance: units::Length::from_micrometres(tolerance * 1000),
+        model::MoveSettings {
+            axes: model::MoveAxes::Document,
+            snaps: Some(model::SnapSettings {
+                planes: self.planes,
+                frames: self.frames,
+                tolerance: units::Length::from_micrometres(tolerance * 1000),
+            }),
+            floor: self.floor,
         }
     }
 }
@@ -1034,6 +1045,13 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
             .on_hover_text(Message::SnapToleranceHint.text(lang))
             .changed();
     });
+    // The floor follows the captures because it answers the same question, and is one line apart
+    // from them because it is not a capture: a body is not carried under the bench by accident, and
+    // a workspace with no floor says so here (X87, ADR 0177).
+    changed |= ui
+        .checkbox(&mut settings.snaps.floor, Message::FloorStop.text(lang))
+        .on_hover_text(Message::FloorStopHint.text(lang))
+        .changed();
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64). The
@@ -1158,7 +1176,7 @@ mod tests {
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
-            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12 },
+            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
@@ -1188,26 +1206,30 @@ mod tests {
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
         assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
-        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12 });
+        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false });
     }
 
     #[test]
     fn the_snap_settings_default_to_the_maker_capture_and_are_clamped_on_read() {
         let defaults = SnapSettings::default();
         assert!(defaults.planes && defaults.frames, "a fresh workspace snaps to the planes and the frames");
+        assert!(defaults.floor, "and keeps its floor, so a body is not carried under the bench");
         assert_eq!(defaults.tolerance_mm, DEFAULT_SNAP_MM);
         assert_eq!(DEFAULT_SNAP_MM, model::SnapSettings::DEFAULT_TOLERANCE_MM as u32, "one default, two crates");
 
         // The rule reads the workspace value as the document's own unit, never as millimetres.
-        let rule = defaults.rule();
-        assert_eq!(rule.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
-        assert!(rule.planes && rule.frames);
+        let settings = defaults.move_settings();
+        assert!(settings.floor);
+        let Some(snaps) = settings.snaps else { panic!("the object move snaps") };
+        assert_eq!(snaps.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
+        assert!(snaps.planes && snaps.frames);
 
         // A hand-edited file cannot set a tolerance no field offers.
         let json = r#"{"version":1,"snaps":{"planes":false,"frames":false,"tolerance_mm":0}}"#;
         let settings = Settings::from_json(json).expect("parse and clamp");
         assert_eq!(settings.snaps.tolerance_mm, MIN_SNAP_MM, "zero captures nothing, so it is not offered");
         assert!(!settings.snaps.planes && !settings.snaps.frames, "the switches survive the clamp");
+        assert!(settings.snaps.floor, "and a file written before the floor existed keeps it on");
         let json = r#"{"version":1,"snaps":{"tolerance_mm":900}}"#;
         let settings = Settings::from_json(json).expect("parse and clamp");
         assert_eq!(settings.snaps.tolerance_mm, MAX_SNAP_MM);

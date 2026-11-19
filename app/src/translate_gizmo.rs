@@ -9,9 +9,11 @@
 //! A object drag is cut by the document's own rule (`Project::move_rule`): a floor-bound product
 //! keeps its height, a shell stops at another shell and a body at another body, and the moved box
 //! lands on a coordinate plane, on a neighbouring face or on the 1 mm grid (ADR 0102, ADR 0103). What
-//! the drag snaps to, and how near, is the workspace's `SnapSettings`, read once when the drag
-//! starts (ADR 0146). The rule is applied to the preview, and the release commits that same
-//! distance, so a drag is one undo entry and the preview is not a promise the command breaks.
+//! the drag snaps to, and how near, is the workspace's `MoveSettings`, read once when the drag
+//! starts (ADR 0146). The same value carries the workspace's floor, which stops a body at Z = 0
+//! whatever the snapping says (X87, ADR 0177). The rule is applied to the preview, and the release
+//! commits that same distance, so a drag is one undo entry and the preview is not a promise the
+//! command breaks.
 //!
 //! The two tools are held differently (N22, N24, ADR 0147, ADR 0151). The free `Move` keeps its three
 //! arrows: a press on a handle and the release are one drag, and the pointer's own micrometre
@@ -21,8 +23,8 @@
 //!
 //! Both tools stop at a neighbour, and both stop for one reason: contact is the document's rule, and
 //! the write refuses what a drag would have crossed, so a piece stops at a face instead of reaching a
-//! sentence (X72, ADR 0162). The free move reads `Project::contact_rule` — no snapping, every axis,
-//! contact — and the object move reads `Project::move_rule`.
+//! sentence (X72, ADR 0162). Both tools read `Project::move_rule`: the free move drops the snaps and
+//! keeps every axis and the floor, and the object move hands over the workspace's own settings.
 //!
 //! The object move draws **no handle at all**: a click on a piece's body takes it, the pointer
 //! carries it with no button held, and the next click puts it down. What it may travel is the
@@ -658,10 +660,7 @@ impl TranslateGizmo {
                 drag.rule
                     .as_ref()
                     .and_then(|rule| rule.blocked_at(proposed))
-                    .map_or_else(|| "none".to_owned(), |(id, kind, low, high)| format!(
-                        "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
-                        low.x, low.y, low.z, high.x, high.y, high.z
-                    )),
+                    .map_or_else(|| "none".to_owned(), stop_text),
             );
             drag.delta = delta;
             drag.capture = capture;
@@ -815,7 +814,7 @@ impl TranslateGizmo {
             let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
             // The rule and the snap settings are read once, when the piece is taken, exactly as a
             // held drag reads them at the press: the preview and the drop then measure one document.
-            let rule = target.project.move_rule(&moving, target.snaps);
+            let rule = target.project.move_rule(&moving, target.moves);
             // A piece that may travel on more than one axis is carried on the plane its class
             // allows, met where the hand is and where the pivot is: the plane is read at the take and
             // every later frame holds the piece by the offset the click gave it. A one-axis piece is
@@ -893,10 +892,11 @@ impl TranslateGizmo {
         let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
         // The free move snaps to nothing — the furniture snapping of ADR 0146 is the other tool's,
         // and a loose body keeps the pointer's own distance (N22) — but it stops at a neighbour all
-        // the same, because contact is the document's rule and not a taste (X72, ADR 0162).
+        // the same, because contact is the document's rule and not a taste (X72, ADR 0162), and at
+        // the workspace's floor, which is a stop rather than a snap (X87, ADR 0177).
         let rule = match target.move_kind {
-            MoveKind::Free => target.project.contact_rule(&moving),
-            MoveKind::Object => target.project.move_rule(&moving, target.snaps),
+            MoveKind::Free => target.project.move_rule(&moving, target.moves.free()),
+            MoveKind::Object => target.project.move_rule(&moving, target.moves),
         };
         self.drag = Some(Drag {
             node: anchor.node,
@@ -1016,6 +1016,18 @@ fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> (
 /// The pointer meets a plane at one point, and a ray that grazes that plane meets it very far away:
 /// a view barely above the floor would otherwise throw the piece kilometres on one frame. The bound
 /// is the one the one-axis carry takes, so both tools stop at the same distance.
+/// What stopped a drag, written as the log's own field: the part with its kind and world box, or the
+/// workspace's floor, which has neither (X70, X87, ADR 0170, ADR 0177).
+fn stop_text(stop: model::Stop) -> String {
+    match stop {
+        model::Stop::Floor => "Some(Floor)".to_owned(),
+        model::Stop::Node { id, kind, min, max } => format!(
+            "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
+            min.x, min.y, min.z, max.x, max.y, max.z
+        ),
+    }
+}
+
 fn bounded(delta: DVec3) -> DVec3 {
     let inside = |value: f64| value.clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
     DVec3::new(inside(delta.x), inside(delta.y), inside(delta.z))
@@ -1029,7 +1041,7 @@ mod tests {
 
     use egui::Pos2;
     use geom::DQuat;
-    use model::{ClassCode, Envelope, PanelNominalSize, Placement, SnapSettings};
+    use model::{ClassCode, Envelope, MoveSettings, PanelNominalSize, Placement};
     use testkit::{millimetres, sample_project};
     use units::Length;
 
@@ -1175,7 +1187,7 @@ mod tests {
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
         // The pointer pulls 1000 mm, the neighbour's wall is at 1000: the drag keeps 400.
-        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[cabinet], MoveSettings::default()).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 1000.0);
         assert_eq!(distance, 400.0);
         assert_eq!(capture, None, "a stop is the contact's, not a snap's");
@@ -1198,7 +1210,8 @@ mod tests {
         let mut project = sample_project();
         let loose = Id::new(2).expect("id");
         assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None), "no rule is the pointer's own travel");
-        let free = project.contact_rule(&[loose]).expect("a loose board is still measured");
+        let free =
+            project.move_rule(&[loose], MoveSettings::default().free()).expect("a loose board is still measured");
         assert_eq!(constrained_distance(Some(&free), Axis::Y, 97.4), (97.4, None), "and it snaps to nothing");
         // The sample shelf and the drawer's front share one box: a third board beside them stops at
         // the face of the first it meets, and the touch itself is allowed.
@@ -1213,8 +1226,22 @@ mod tests {
                 Placement::IDENTITY.with_translation(millimetres(900), Length::ZERO, Length::ZERO).expect("a place"),
             )
             .expect("a board beside the sample ones");
-        let free = project.contact_rule(&[beside]).expect("the board has a contact rule");
+        let free = project.move_rule(&[beside], MoveSettings::default().free()).expect("the board has a contact rule");
         assert_eq!(constrained_distance(Some(&free), Axis::X, -500.0), (-200.0, None), "it stops at the shelf");
+    }
+
+    #[test]
+    fn the_free_move_keeps_its_three_axes_and_the_workspace_floor() {
+        // The free tool draws all three arrows whatever the piece is (ADR 0151), and the floor is the
+        // workspace's stop rather than the object move's snap, so it stops this drag too (X87).
+        let project = sample_project();
+        let loose = Id::new(2).expect("id");
+        let free = project.move_rule(&[loose], MoveSettings::default().free()).expect("a loose board is measured");
+        assert_eq!(free.axes(), [true, true, true], "the free move refuses no axis");
+        let answer = free.limit(model::MoveAxis::Z, -500.0);
+        assert_eq!(answer.distance_mm, 0.0, "a board standing on the floor goes no deeper");
+        assert_eq!(answer.contact, Some(model::Stop::Floor), "and the answer names the floor, not a node");
+        assert_eq!(stop_text(model::Stop::Floor), "Some(Floor)", "which is what the log writes");
     }
 
     #[test]
@@ -1226,7 +1253,7 @@ mod tests {
         let mut project = sample_project();
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
-        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[cabinet], MoveSettings::default()).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 398.0);
         assert_eq!(distance, 400.0, "the drag jumps the 2 mm gap");
         let capture = capture.expect("a frame face captured it");

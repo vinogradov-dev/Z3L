@@ -182,6 +182,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0174](0174-the-move-answers-places-and-the-jump-stays.md) | The move answers places, and the jump stays | Accepted; the reference record of the move at `21d94d2`, and the owner's call that the jump crosses material too |
 | [0175](0175-a-hidden-part-is-sight-not-material.md) | A hidden part is sight, not material: the tools pass it and the part stops at its faces | Accepted |
 | [0176](0176-the-plan-shows-a-stream-and-one-line-keeps-one-writer.md) | The plan shows a stream, and one line keeps one writer | Accepted; amends 0085's one-live-task rule |
+| [0177](0177-the-invisible-floor-stops-a-body-and-not-a-drag-only-snap.md) | The invisible floor stops a body, and it is not the floor snap | Accepted; amends 0146's scope to dragging |
 
 ## Format
 

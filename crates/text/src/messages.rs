@@ -1141,6 +1141,11 @@ messages! {
         "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
         "Насколько близко должна быть поверхность, чтобы захватить перетаскивание, в миллиметрах; деталь встаёт вплотную, потому что допуск — это расстояние срабатывания привязки."
     ],
+    FloorStop = ["Floor stops every body", "Пол останавливает любое тело"],
+    FloorStopHint = [
+        "A dragged body stops at the invisible floor at Z = 0 whatever the two switches above say; a class that keeps its height is unchanged either way.",
+        "Перетаскиваемое тело останавливается на невидимом полу Z = 0, что бы ни говорили два переключателя выше; изделие, которое держит высоту по классу, не меняется."
+    ],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
         "Diagnostic: keeps the triangulation diagonals the form-edge view hides.",

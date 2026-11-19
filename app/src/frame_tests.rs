@@ -391,6 +391,21 @@ fn a_headless_run_leaves_the_workspace_file_alone() {
 }
 
 #[test]
+fn the_floor_switch_is_the_workspace_and_costs_no_undo_entry() {
+    // The floor sits with the snapping boxes because it answers the same question — where a dragged
+    // body may come to rest — but it is a workspace value and not document data: turning it off
+    // applies to the next drag, writes no placement and leaves no undo entry (ADR 0146, ADR 0177).
+    let mut harness = Harness::new("frame-floor");
+    harness.frame();
+    let revision = harness.revision();
+    let can_undo = harness.app.tabs.active().session.can_undo();
+    harness.app.settings.snaps.floor = false;
+    harness.frame();
+    assert_eq!(harness.revision(), revision, "a workspace switch writes no document");
+    assert_eq!(harness.app.tabs.active().session.can_undo(), can_undo, "and pushes no undo entry");
+}
+
+#[test]
 fn the_scene_rectangle_and_its_camera_hold_in_every_panel_and_ribbon_state() {
     // The regression U72 fixed: a fold, a hide or a restore moved the scene rectangle and therefore
     // the camera aspect, so the model panned when a panel was folded. Only the frame can prove it:

@@ -13,7 +13,7 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
 use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, Placement, Project, SnapSettings};
+use model::{Id, MoveAxis, MoveSettings, Placement, Project};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use ui::TransformMode;
 use units::Length;
@@ -149,11 +149,12 @@ pub(crate) struct Target<'a> {
     pub(crate) project: &'a Project,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
-    /// What an object drag snaps to, as the workspace settings chose it (ADR 0146).
+    /// What an object drag snaps to and stops at, as the workspace settings chose it (ADR 0146,
+    /// ADR 0177).
     ///
     /// It travels here rather than as another argument because a drag that starts reads it once,
     /// with the camera and the selection it starts under.
-    pub(crate) snaps: SnapSettings,
+    pub(crate) moves: MoveSettings,
     /// Which move a translate drag is: the free one, or the furniture one that obeys the document's
     /// rules and offers only the axes they allow (N22, ADR 0147).
     pub(crate) move_kind: MoveKind,
@@ -1221,7 +1222,7 @@ mod tests {
             camera: Camera::default(),
             project,
             selection,
-            snaps: SnapSettings::default(),
+            moves: MoveSettings::default(),
             move_kind: MoveKind::Free,
         }
     }

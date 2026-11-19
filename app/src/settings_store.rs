@@ -218,6 +218,7 @@ mod tests {
         settings.snaps.planes = false;
         settings.snaps.frames = true;
         settings.snaps.tolerance_mm = 12;
+        settings.snaps.floor = false;
         settings.appearance.panel_opacity = 70;
         settings.recent.push(PathBuf::from("/tmp/cabinet.z3l"));
         settings
@@ -245,9 +246,14 @@ mod tests {
         assert_eq!(loaded.settings, settings);
         assert_eq!(loaded.notice, None);
         assert_eq!(
-            (loaded.settings.snaps.planes, loaded.settings.snaps.frames, loaded.settings.snaps.tolerance_mm),
-            (false, true, 12),
-            "the snapping section survives the file"
+            (
+                loaded.settings.snaps.planes,
+                loaded.settings.snaps.frames,
+                loaded.settings.snaps.tolerance_mm,
+                loaded.settings.snaps.floor,
+            ),
+            (false, true, 12, false),
+            "the snapping section and its floor survive the file"
         );
         assert!(!directory.join(format!("{FILE_NAME}.tmp")).exists(), "the temporary file is renamed away");
     }
