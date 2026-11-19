@@ -195,6 +195,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X84** a cut is measured from where the piece stands
+  Why: In the fourth session the block was carried past the bar and then pulled 1330 mm back
+   across it when the pointer drifted 1 mm into the bar: every axis cut is resolved against the
+   piece start box, though the piece has been carried since. The owner reads it as the block
+   jumping left when it should have stood still.
+  Shape: limits_from(from, proposed) resolves the same proposal from the place the piece was
+   drawn last frame; limits(proposed) stays limits_from(ZERO) so the axis handle and every
+   existing answer keep their meaning. The destination is still asked whole first; a retry pass
+   may free an axis but never lose the face the drag rests on, and a sliver thinner than
+   CONTACT_MM at a face is a touch, not an overlap.
+  Done: A piece resting past a body stays at its face when the hand drifts into the body; the
+   near side is still reachable when the destination is there; both directions along one body
+   answer the same; the gate is green.
+  `files: crates/model/src/project/move_query.rs, app/src/translate_gizmo.rs, docs/decisions/0173-a-cut-is-measured-from-where-the-piece-stands.md` — `21d94d2`
+
 - `[x]` **X83** a crossing rests on the face
   Why: The owner pushes a horizontal block butt-first into a vertical one: it passes to the
    other side at once, though it should rest on the face and wait for the cursor to cross the
