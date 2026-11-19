@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=62359069e020e41ac4475d0cf4085e166cf83b1a updated=2026-11-19
+STATE: milestone=M7 phase=T task=- state=idle base=36a1cd4 updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -25,7 +25,8 @@ both packages named (O7).
 
 ## Next
 
-Nothing is scheduled. X73 is next: a hidden part is still in the way of the tools.
+Nothing is scheduled. `## Next` opens with Q2, which waits on the owner's four answers, then O2, P17
+and J1; X85 is the application stream's head (a body measured by its own surface).
 
 ## Index
 

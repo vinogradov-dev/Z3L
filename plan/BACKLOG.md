@@ -44,49 +44,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X73** a hidden part is still in the way of the tools
-  why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
-   shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
-   void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
-   to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
-   through the part itself — a hidden part "allows building through itself but not being
-   intersected": the part placed there stops at the hidden part's own faces. Today the hidden
-   set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
-   the consumers that project the whole tree ask it: the frame builder and the light rig
-   (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
-   model's own measurements walk the document, where the flag has no home: `Project::probe` and
-   `Project::niche` measure every panel, object and shell
-   (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
-   (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
-   (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
-   drawing and the measuring disagree about what is there.
-  shape: Two halves, which land together because either one alone is wrong. **The sight.** One
-   visibility value in the model — the nodes the user switched off plus the parent walk that
-   makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
-   in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
-   takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
-   rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
-   void that holds one is no longer refused as "not one convex cell". **The boundary.** The
-   part still stops at it: the hidden bodies a cell holds are walls for the material and not
-   for the ray. The plan trims the footprint at every hidden body's face on the axes the part
-   takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
-   X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
-   the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
-   decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
-   cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
-   than the board, a hidden facade that spans the whole opening (the part takes what is left,
-   and a void with nothing left says so), and a hidden container whose children are visible
-   (the subtree goes with it, as the frame already does).
-  done: With a frame's facades hidden the shelf fill measures the case's own void instead of
-   the phantom planes and the ghost lands in the clear space, its depth stopping at the
-   facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
-   while a part created or carried there stops at the hidden faces and never intersects them; a
-   hidden body standing inside a void is a boundary of the part and never a slice of it, in
-   both builds; the niche row, the distance fields, the picking and the drawing name the same
-   parts in both states; showing a part again restores every reading and changes no document
-   field; a hidden container hides its whole subtree for the tools as it does for the frame;
-   cargo xtask ci is green.
-  `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs`
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
@@ -248,6 +205,50 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md`
 
 ## Done
+
+- `[x]` **X73** a hidden part is still in the way of the tools
+  why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
+   shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
+   void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
+   to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
+   through the part itself — a hidden part "allows building through itself but not being
+   intersected": the part placed there stops at the hidden part's own faces. Today the hidden
+   set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
+   the consumers that project the whole tree ask it: the frame builder and the light rig
+   (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
+   model's own measurements walk the document, where the flag has no home: `Project::probe` and
+   `Project::niche` measure every panel, object and shell
+   (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
+   (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
+   (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
+   drawing and the measuring disagree about what is there.
+  shape: Two halves, which land together because either one alone is wrong. **The sight.** One
+   visibility value in the model — the nodes the user switched off plus the parent walk that
+   makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
+   in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
+   takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
+   rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
+   void that holds one is no longer refused as "not one convex cell". **The boundary.** The
+   part still stops at it: the hidden bodies a cell holds are walls for the material and not
+   for the ray. The plan trims the footprint at every hidden body's face on the axes the part
+   takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
+   X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
+   the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
+   decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
+   cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
+   than the board, a hidden facade that spans the whole opening (the part takes what is left,
+   and a void with nothing left says so), and a hidden container whose children are visible
+   (the subtree goes with it, as the frame already does).
+  done: With a frame's facades hidden the shelf fill measures the case's own void instead of
+   the phantom planes and the ghost lands in the clear space, its depth stopping at the
+   facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
+   while a part created or carried there stops at the hidden faces and never intersects them; a
+   hidden body standing inside a void is a boundary of the part and never a slice of it, in
+   both builds; the niche row, the distance fields, the picking and the drawing name the same
+   parts in both states; showing a part again restores every reading and changes no document
+   field; a hidden container hides its whole subtree for the tools as it does for the frame;
+   cargo xtask ci is green.
+  `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs` — `36a1cd4`
 
 - `[x]` **X84** a cut is measured from where the piece stands
   Why: In the fourth session the block was carried past the bar and then pulled 1330 mm back

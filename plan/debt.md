@@ -16,6 +16,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
   of `app/src/directory_app.rs` then (ADR 0158).
 
+- `[view-state]` The fill trims a hidden body by the box around it in the open product's frame, so a
+  turned hidden part cuts a little more than it must (X73, ADR 0175). Trim by the body's own faces
+  when a maker reports a shelf that is shorter than the void behind a leaned hidden wall.
+
+- `[view-state]` The fill trims a hidden body on the board's own two axes only, so a hidden board
+  lying across the board's thickness at the same height cuts the footprint instead of moving the
+  free axis (X73, ADR 0175). `TooSmall` is the honest answer today; a fill that steps over a hidden
+  slab is a tool of its own.
+
 - `[release]` The product name leaves the code before the first release: R1 is the measured
   four-commit procedure in `plan/rename.md`, deferred out of the work order until then so a release
   does not wait for the whole order. Run `cargo xtask task take R1` and the four commits first.
