@@ -64,16 +64,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test loads a standards file, a command takes its default from it, and a stale file is
    a notice.
   `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
-  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
-   saying idle while four branches move. The worktree rule papers over the gap: the plan is
-   written in one checkout and a stream's progress lives only in its commits.
-  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
-   in-progress entry per stream in the order, and a status line that prints a row per stream.
-   The one-writer rule stays for the backlog file itself.
-  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
-   same stream, status prints one row per stream, and the backlog stays one file.
-  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs`
 - `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
   Why: The assistant and the prototype expander both need the document without a window, and
    only export reaches the engine from the command line today. A generator that writes the
@@ -205,6 +195,17 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md`
 
 ## Done
+
+- `[x]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
+  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
+   saying idle while four branches move. The worktree rule papers over the gap: the plan is
+   written in one checkout and a stream's progress lives only in its commits.
+  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
+   in-progress entry per stream in the order, and a status line that prints a row per stream.
+   The one-writer rule stays for the backlog file itself.
+  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
+   same stream, status prints one row per stream, and the backlog stays one file.
+  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs` — `4423489`
 
 - `[x]` **X73** a hidden part is still in the way of the tools
   why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
