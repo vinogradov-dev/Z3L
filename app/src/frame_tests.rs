@@ -5218,3 +5218,42 @@ fn a_frames_brackets_travel_with_the_piece_in_hand() {
         );
     }
 }
+
+/// The sides of the frame's reserved box, for a test that watches a grip write nothing.
+fn frame_sides(harness: &Harness, frame: Id) -> Option<[units::Length; 3]> {
+    let project = harness.app.tabs.active().session.project();
+    project.container(frame).and_then(|container| container.envelope()).map(|envelope| envelope.components())
+}
+
+#[test]
+fn a_carried_frames_old_grip_is_no_target() {
+    // X76: the frame's fourteen grip rings were read from the document, so a carried frame left them
+    // behind and a press that landed in one of them started a grip drag on the piece the furniture
+    // move was carrying. The grips ride with the piece now, and a piece in hand is no grip's target:
+    // the press belongs to the carry.
+    let (mut session, frame) = one_floor_frame("10.01.01");
+    assert!(session.open_product(frame), "the frame is the one open product, the level its grips edit");
+    let mut harness = Harness::with_session("frame-carry-grip", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let high = harness.app.tabs.active().session.project().world_box(frame).expect("the frame has a box").1;
+    let grip = gizmo_math::screen_point(harness.camera(), harness.scene(), high).expect("the top grip is on screen");
+    let sides = frame_sides(&harness, frame);
+    let body = piece_middle(&harness, frame);
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "the click took the frame");
+    harness.hover(body + egui::vec2(70.0, -40.0));
+
+    // The press lands in a ring of the old place and drags: the piece keeps its sides.
+    harness.press_at(grip, egui::PointerButton::Primary);
+    harness.hover(grip + egui::vec2(45.0, 0.0));
+    harness.release_at(grip + egui::vec2(45.0, 0.0), egui::PointerButton::Primary);
+    harness.settle();
+    assert_eq!(frame_sides(&harness, frame), sides, "a carried piece's stale grip resizes nothing");
+    assert!(harness.app.tabs.active().holding_piece(), "and the piece is still in the hand");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+}

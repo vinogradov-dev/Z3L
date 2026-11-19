@@ -36,7 +36,7 @@ use scene::Camera;
 use ui::{BoxDraft, Editor};
 use units::Length;
 
-use crate::gizmo_math::{ACTIVE_COLOR, WorkPlane, ray_plane, ray_to, screen_point};
+use crate::gizmo_math::{ACTIVE_COLOR, Preview, WorkPlane, ray_plane, ray_to, screen_point};
 
 /// Colour of the pulled prism and of an idle grip.
 const BOX_COLOR: Color32 = Color32::from_rgb(255, 220, 96);
@@ -355,6 +355,20 @@ impl BoxBody {
         })
     }
 
+    /// The same frame as a drag preview puts it, so its grips ride with a piece in hand.
+    ///
+    /// Only the world frame moves: a preview is a rigid transform of the node, and the sides, the
+    /// footprint and the local placement are what the document holds until the release (X76).
+    fn carried(self, carried: Option<Preview<'_>>) -> Self {
+        let Some(preview) = carried.filter(|preview| preview.drawables().contains(&self.node)) else {
+            return self;
+        };
+        match preview.moved_world(self.world) {
+            Some(world) => Self { world, ..self },
+            None => self,
+        }
+    }
+
     /// The local point of a grip handle, in millimetres.
     fn local_point(&self, grip: BoxGrip) -> Option<DVec3> {
         let [width, depth, height] = self.sides.map(Length::millimetres_f64);
@@ -616,9 +630,22 @@ impl BoxGrips {
         best.map(|(_, grip)| grip)
     }
 
-    /// Paints the grips of the selected box.
-    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, camera: Camera, project: &Project, selected: Option<Id>) {
-        let Some(body) = selected.and_then(|node| BoxBody::read(project, node)) else {
+    /// Paints the grips of the selected box, where the drag preview puts it.
+    ///
+    /// `carried` is the drag a gizmo is previewing: a carried frame's rings ride with the piece and
+    /// come back with it, as its corner brackets do, instead of staying at the place it was taken
+    /// (X76). A held handle and a rotate ring move the same body, so the grips follow them too.
+    pub(crate) fn paint(
+        &self,
+        ui: &Ui,
+        viewport: egui::Rect,
+        camera: Camera,
+        project: &Project,
+        selected: Option<Id>,
+        carried: Option<Preview<'_>>,
+    ) {
+        let Some(body) = selected.and_then(|node| BoxBody::read(project, node)).map(|body| body.carried(carried))
+        else {
             return;
         };
         let painter = ui.painter().with_clip_rect(viewport);
@@ -707,6 +734,36 @@ mod tests {
             Some(DVec3::new(300.0, 280.0, 720.0)),
             "the centre of the top face"
         );
+    }
+
+    #[test]
+    fn a_carried_frames_grips_ride_with_it() {
+        // X76: the grips were read from the document while the body followed the drag preview, so a
+        // carried frame left its fourteen rings at the place it was taken. The rings now read the
+        // same preview the renderer takes: a translation carries them and a turn turns them.
+        let (project, id) = sample_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        let corner = BoxGrip::Corner { min_x: false, min_y: false, top: true };
+        let standing = body.grip_point(corner).expect("a grip point");
+
+        let delta = DVec3::new(120.0, -80.0, 0.0);
+        let carried = body.clone().carried(Some(Preview::Translation { drawables: &[id], delta }));
+        let moved = carried.grip_point(corner).expect("a grip point");
+        assert!((moved - (standing + delta)).length() < 1.0e-9, "the ring travels with the piece: {moved:?}");
+
+        // A turn about the box's own base corner swings the far top corner round it.
+        let pivot = body.grip_point(BoxGrip::Corner { min_x: true, min_y: true, top: false }).expect("a pivot");
+        let turn = geom::DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2);
+        let turned = body.clone().carried(Some(Preview::Rotation { drawables: &[id], pivot, rotation: turn }));
+        let want = pivot + turn * (standing - pivot);
+        let at = turned.grip_point(corner).expect("a grip point");
+        assert!((at - want).length() < 1.0e-9, "a turn swings the rings: {at:?} vs {want:?}");
+
+        // A drag that carries something else leaves this frame's grips where they are.
+        let other = Id::new(99).expect("an id");
+        let untouched = body.clone().carried(Some(Preview::Translation { drawables: &[other], delta }));
+        assert_eq!(untouched.grip_point(corner), Some(standing));
+        assert_eq!(body.carried(None).grip_point(corner), Some(standing));
     }
 
     /// A product whose base is a rectangle with its right-hand near corner cut by a chamfer.

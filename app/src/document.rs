@@ -2616,6 +2616,8 @@ impl Document {
 
         // A grip drag resizes a selected box in place: a press mints the edit scope that makes the
         // whole drag one undo entry, and every move writes the sides the pointer reaches (ADR 0092).
+        // A piece in hand is not a target: the next press is the click that puts it down, so no grip
+        // may take it and resize the piece the maker is carrying (X76).
         let gripping = interactive
             && !contour_editing
             && !drawing
@@ -2624,6 +2626,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !self.translate_gizmo.is_following()
             && self.grip_target().is_some();
         if gripping {
             self.update_box_grips(ui, &response, rect);
@@ -3167,8 +3170,16 @@ impl Document {
             // handles because the drag it would start is refused.
         } else {
             // A box shows its grips instead of nothing: the faces and the base corners are the
-            // three-side editor, and the placement handles still act beside them.
-            self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
+            // three-side editor, and the placement handles still act beside them. The grips read the
+            // drag's preview, so a carried frame's rings ride with it (X76).
+            self.box_grips.paint(
+                ui,
+                rect,
+                self.scene.camera,
+                self.session.project(),
+                self.grip_target(),
+                self.preview(),
+            );
             match Transform::of(shell.mode) {
                 None => {}
                 Some(Transform::Move | Transform::Furniture) => {
