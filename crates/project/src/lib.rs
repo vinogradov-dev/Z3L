@@ -183,6 +183,14 @@ impl SceneFile {
         Self::parse(&text)
     }
 
+    /// A scene around a document this build built, with no sections it does not understand.
+    ///
+    /// It is how a fixture or a tool writes the same envelope the editor writes: one format, one
+    /// version, one set of preserved sections — empty here because this build authored all of it.
+    pub const fn from_document(document: Project) -> Self {
+        Self { document, extra: BTreeMap::new() }
+    }
+
     /// The document carried by the file.
     pub const fn document(&self) -> &Project {
         &self.document

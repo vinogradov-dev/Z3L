@@ -15,4 +15,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# The real contact adapter and the geometry foundation, so the committed scene is verified through
+# the port the editor uses (X85, ADR 0179).
+contact-parry = { workspace = true }
+geom = { workspace = true }
 units = { workspace = true }

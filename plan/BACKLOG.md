@@ -43,30 +43,30 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X85** a body is measured by its own surface and not by the box around it
-  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
-   apex reaches the corner between two plates, which is the owner report of the sixth session.
-   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
-   The owner asked for near-physical interaction: any surface lives by its faces, never by the
-   box around it.
-  Shape: Stage A: a new `contact` port crate (L1, next to `kernel`) with a `Shape` (convex
-   polyhedron or triangle mesh), a pose, and four queries — overlap, distance, first touch
-   along a direction, penetration depth and normal — implemented by a `contact-parry` adapter
-   over parry3d 0.31 (Apache-2.0, pure Rust, glam-based, f64 build): a cone, a cylinder, a ball
-   and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
-   notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
-   `model` builds the shape of a node from its own parametric data — never from the render mesh
-   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
-   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
-   material, and the hold still rests the piece on the face first — only what counts as a face
-   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
-   budget. The mesh never decides contact; the rule stays pure and stateless.
-  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
-   surface allows and stops on the plate face; a ball slips through a hole in a blob when its
-   place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
-   and a panel answer exactly as today; the drag, the release guard and the log read one
-   measurement; the frame budget is tested; the gate is green.
-  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs`
+- `[~]` **X89** a scene with a plate that has a hole, to carry a ball through it
+  Why: There are no boolean operations in the workspace, so a maker cannot cut a hole to try
+   the contact port on. The owner asked for a scene that proves a body passes through a hole in
+   another body (owner, 2026-11-19).
+  Shape: A scene file under assets/scenes built from a ring mesh: a 300 x 300 plate 10 mm thick
+   with a 120 mm square hole through it, a 60 mm ball above the hole and a turned board beside
+   it, so the object move can carry the ball down through the hole and stop where the plate's
+   own faces stop it. A project-side test writes the file from the model API and reads it back,
+   so the scene is verified rather than drawn by hand.
+  Done: The scene opens in the editor; the object move carries the ball through the hole and
+   the drag is not stopped by the plate; a test builds and re-reads the file; the gate is
+   green.
+  `files: assets/scenes, crates/project/src/lib.rs, crates/model/src/mesh.rs`
+- `[ ]` **X90** the probe and the frame budget, the two clauses X85 leaves
+  Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
+   clause and its frame budget are a separate piece of work that needs its own shape (the port
+   has no ray query yet).
+  Shape: The probe asks the same shapes: a ray case through the port, a face hit derived from
+   the port's answer, and the niche cell measured against the body's own faces; then a
+   per-revision shape cache and a broad phase, with a measured budget for a scene of a few
+   hundred bodies.
+  Done: The niche probe meets a turned body's own face and not the box around it; a rule built
+   over a few hundred bodies keeps its frame budget; the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/move_query.rs, plan/notes/X85.md`
 
 ## Bugs
 ## Next
@@ -164,7 +164,48 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+- `[ ]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
+  Why: The owner asked for a rotation tool that honours the bodies: turning a door into its
+   carcass must stop at the frame, and the simulation of an opening front needs the same rule
+   (owner, 2026-11-19).
+  Shape: A fifth transform mode, object rotate, beside rotate: the rings turn the selection
+   about its pivot and stop where a body meets another, read from the contact port. A rotate
+   rule on the project answers a turn the way the move rule answers a carry - the destination
+   first, then a bisection of the angle against the same free-place predicate - and it reuses
+   the mover, obstacle and measured values, so the drag, the release and the write read one
+   measurement. The inventory carries the row, the key and the words; no icon until the artwork
+   exists.
+  Done: A turn of a board into a neighbour stops on its face and the log names it; a turn away
+   from it is granted whole; a free rotation still passes through (ADR 0180); the gate is
+   green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
+
 ## Done
+
+- `[x]` **X85** a body is measured by its own surface and not by the box around it
+  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
+   apex reaches the corner between two plates, which is the owner report of the sixth session.
+   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
+   The owner asked for near-physical interaction: any surface lives by its faces, never by the
+   box around it.
+  Shape: Stage A: a new `contact` port crate (L1, next to `kernel`) with a `Shape` (convex
+   polyhedron or triangle mesh), a pose, and four queries — overlap, distance, first touch
+   along a direction, penetration depth and normal — implemented by a `contact-parry` adapter
+   over parry3d 0.31 (Apache-2.0, pure Rust, glam-based, f64 build): a cone, a cylinder, a ball
+   and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
+   notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
+   `model` builds the shape of a node from its own parametric data — never from the render mesh
+   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
+   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
+   material, and the hold still rests the piece on the face first — only what counts as a face
+   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
+   budget. The mesh never decides contact; the rule stays pure and stateless.
+  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
+   surface allows and stops on the plate face; a ball slips through a hole in a blob when its
+   place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
+   and a panel answer exactly as today; the drag, the release guard and the log read one
+   measurement; the frame budget is tested; the gate is green.
+  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs` — `df5cf5b`
 
 - `[x]` **X86** a piece already inside another may only come out
   Why: Today a pair the document already holds overlapping is exempt for the whole drag: a
