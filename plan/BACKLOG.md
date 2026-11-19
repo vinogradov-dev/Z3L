@@ -205,9 +205,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
    notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
    `model` builds the shape of a node from its own parametric data — never from the render mesh
-   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. Stage B: a broad
-   phase and per-revision shape caches so a big scene keeps its frame budget. The mesh never
-   decides contact; the rule stays pure and stateless.
+   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
+   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
+   material, and the hold still rests the piece on the face first — only what counts as a face
+   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
+   budget. The mesh never decides contact; the rule stays pure and stateless.
   Done: A turned cone reaches with its apex into a corner between two plates as far as its own
    surface allows and stops on the plate face; a ball slips through a hole in a blob when its
    place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
@@ -226,6 +228,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A piece standing inside another moves out and never deeper while it still overlaps; a
    pair that only touches is untouched; the gate is green.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs`
+- `[ ]` **X87** an invisible floor stops every body unless the workspace turns it off
+  Why: In a perspective or axonometric view a body dragged on a horizontal carry plane can end
+   up below the floor, and nothing in the document says there is one: only a floor-bound
+   product class keeps its height. The owner wants an invisible floor by default that stops any
+   body, with a checkbox that turns it off, and the furniture classes unchanged — a lower
+   cabinet already never sinks below the floor.
+  Shape: The move rule gains a virtual floor at Z = 0 as a lower bound on every moved body,
+   reported as a contact of its own kind so the log says Floor and not a node id. It is a stop
+   and not a capture, so it does not depend on the snap planes being on; a floor-bound product
+   keeps its class rules exactly as now. The workspace owns the switch — a checkbox beside the
+   snapping boxes, a new text message with a hint, default on, persisted with the other
+   settings, applied to the next drag and never to the one under the hand (ADR 0146) — and off
+   means no floor at all. An ADR records the rule and its scope.
+  Done: A body dragged down in a perspective view stops on the invisible floor and the log
+   names it; the checkbox turns the floor off for the next drag, costs no undo entry and
+   survives a restart; a floor-bound product behaves exactly as before; a wall or ceiling class
+   is unaffected; the gate is green.
+  `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md`
 
 ## Done
 
