@@ -542,7 +542,10 @@ impl TranslateGizmo {
                 let asked = bounded(hit - drag.start_origin);
                 proposed = asked;
                 hand_world = Some(hit);
-                limits = drag.rule.as_ref().map(|rule| rule.limits(asked));
+                // The cut is measured from where the piece stands, not from the start of the drag: a
+                // piece resting on the far face of a body must not be pulled back across it when the
+                // hand drifts a millimetre into the body (X84, ADR 0173).
+                limits = drag.rule.as_ref().map(|rule| rule.limits_from(drag.delta, asked));
                 delta = limits.map_or(asked, |limits| {
                     DVec3::new(
                         limits[Axis::X.index()].distance_mm,

@@ -178,6 +178,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0170](0170-a-report-names-the-part-that-was-in-the-way.md) | A report names the part that was in the way | Accepted; extends what 0168 writes, so a cut names the obstacle and a take names the piece |
 | [0171](0171-the-place-the-hand-names-is-asked-before-the-axes.md) | The place the hand names is asked before the axes | Accepted; narrows how 0166 resolves a blocked destination, so a free slot is taken whole |
 | [0172](0172-a-crossing-rests-on-the-face-before-it-is-taken.md) | A crossing rests on the face before it is taken | Accepted; replaces 0167's step comparison with a geometric crossing and a cursor gate |
+| [0173](0173-a-cut-is-measured-from-where-the-piece-stands.md) | A cut is measured from where the piece stands | Accepted; completes 0171's axis walk, so a piece resting past a body is not pulled back across it |
 
 ## Format
 

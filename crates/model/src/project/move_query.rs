@@ -610,7 +610,7 @@ impl MoveRule {
         // only a destination that is not free is cut at the first contact (ADR 0166).
         let mut asks = [0.0; 3];
         asks[axis.index()] = snapped;
-        let (distances, contacts) = self.resolve(asks);
+        let (distances, contacts) = self.resolve(asks, DVec3::ZERO);
         // A contact that cuts the snapped distance stops the piece short of the captured surface, so
         // the face landed on the contact and not on the snap: the stop is the answer, reported on its
         // own, and a capture would name a surface the piece never reached.
@@ -626,6 +626,17 @@ impl MoveRule {
     /// boxes the rule holds are the start boxes, so every slot is answered from one snapshot. A slot
     /// of an axis the drag does not offer is zero, exactly as [`MoveRule::limit`] answers it.
     pub fn limits(&self, proposed: DVec3) -> [MoveLimit; 3] {
+        self.limits_from(DVec3::ZERO, proposed)
+    }
+
+    /// The same answer, resolved from the place the piece already stands at.
+    ///
+    /// A drag's proposal is measured from the start of the drag, but the piece is not there any more:
+    /// it has been carried. A cut is measured from the hand's own previous place, so a piece resting
+    /// on the far face of a body is not pulled back across that body to the near face when the hand
+    /// drifts a millimetre into it — which is what made a block leap the whole width of a bar and
+    /// back (ADR 0173). `from` is where the piece was drawn on the frame before.
+    pub fn limits_from(&self, from: DVec3, proposed: DVec3) -> [MoveLimit; 3] {
         let proposed = [proposed.x, proposed.y, proposed.z];
         let mut limits = [MoveLimit { distance_mm: 0.0, contact: None, capture: None }; 3];
         let mut asks = [0.0_f64; 3];
@@ -643,7 +654,8 @@ impl MoveRule {
         // The whole destination is answered once, not axis by axis: a per-axis answer is exact for
         // each axis alone and can still combine into a place inside a turned neighbour, which is how
         // a diagonal carry used to cut a corner (ADR 0166).
-        let (distances, contacts) = self.resolve(asks);
+        let from = if from.is_finite() { from } else { DVec3::ZERO };
+        let (distances, contacts) = self.resolve(asks, from);
         for axis in MoveAxis::ALL {
             let index = axis.index();
             let capture = if contacts[index].is_some() { None } else { captures[index] };
@@ -670,7 +682,7 @@ impl MoveRule {
     /// The contact is the distance to the touch and is reported per axis, so the shell can say what
     /// stopped the drag. A pair that already overlaps is the maker's to repair and is no new overlap:
     /// such a piece can always be dragged out of it, as the write's own guard reads it (ADR 0162).
-    fn resolve(&self, asks: [f64; 3]) -> ([f64; 3], [Option<Id>; 3]) {
+    fn resolve(&self, asks: [f64; 3], from: DVec3) -> ([f64; 3], [Option<Id>; 3]) {
         let whole = DVec3::new(asks[0], asks[1], asks[2]);
         // The destination first, as one placement: a slot the hand names is free even when every
         // single axis on the way to it is not, and refusing it axis by axis is how a board beside a
@@ -678,10 +690,12 @@ impl MoveRule {
         if whole.is_finite() && self.free_at(whole) {
             return (asks, [None; 3]);
         }
-        let mut distances = [0.0; 3];
+        // The piece stands where it stands, not where the drag started: every cut below is measured
+        // from here, and an axis the hand does not move keeps its place.
+        let mut distances = [from.x, from.y, from.z];
         let mut contacts: [Option<Id>; 3] = [None; 3];
-        let mut delta = DVec3::ZERO;
-        for _pass in 0..3 {
+        let mut delta = from;
+        for pass in 0..3 {
             let mut changed = false;
             for axis in MoveAxis::ALL {
                 let index = axis.index();
@@ -705,20 +719,27 @@ impl MoveRule {
                     .iter()
                     .filter_map(|mover| mover.box_.shifted(delta).map(|box_| Mover { box_, ..*mover }))
                     .collect();
-                let limit = stop_at_contact(axis, ask, &standing, &self.obstacles);
-                let mut cut = limit.distance_mm;
+                // The travel still to make from where the piece stands, and the face that stops it.
+                let limit = stop_at_contact(axis, ask - delta[index], &standing, &self.obstacles);
+                let mut cut = delta[index] + limit.distance_mm;
                 candidate[index] = cut;
                 // The contact is the face the piece meets; should the cut land it in a corner the
                 // axis could not see on its own, the axis keeps the piece where it stood and says
                 // nothing about a face it never reached. An axis that does not move is honest; a
                 // preview the release refuses is not.
-                let contact = if cut != 0.0 && !self.free_at(candidate) {
-                    cut = 0.0;
-                    candidate[index] = 0.0;
+                let contact = if !self.free_at(candidate) {
+                    cut = delta[index];
+                    candidate[index] = cut;
                     None
                 } else {
                     limit.contact
                 };
+                // A retry asks a cut axis again once the axes beside it have moved, and takes the
+                // answer only when it is closer to the hand's own request: a pass may free an axis,
+                // never lose a face the drag already rests on (X84).
+                if pass > 0 && (cut - ask).abs() >= (delta[index] - ask).abs() {
+                    continue;
+                }
                 if distances[index] != cut || contacts[index] != contact {
                     changed = true;
                 }
@@ -1096,10 +1117,13 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
         shells && inside && contains(obstacle_first, moving_first) && contains(obstacle_second, moving_second);
     let containing =
         shells && holds && contains(moving_first, obstacle_first) && contains(moving_second, obstacle_second);
+    // A sliver thinner than the document's own contact threshold is a touch after rounding, not a
+    // pair already sunk into one another: measuring from a place the piece has just been stopped at
+    // must not read as an overlap, or the retry pass would lose the face the drag rests on (X84).
     let distance = if sign >= 0.0 {
-        if moving_span.max <= obstacle_span.min {
-            obstacle_span.min - moving_span.max
-        } else if moving_span.min >= obstacle_span.max {
+        if moving_span.max <= obstacle_span.min + crate::project::surface::CONTACT_MM {
+            (obstacle_span.min - moving_span.max).max(0.0)
+        } else if moving_span.min >= obstacle_span.max - crate::project::surface::CONTACT_MM {
             return None;
         } else if contained {
             obstacle_span.max - moving_span.max
@@ -1108,9 +1132,9 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
         } else {
             return None;
         }
-    } else if moving_span.min >= obstacle_span.max {
-        moving_span.min - obstacle_span.max
-    } else if moving_span.max <= obstacle_span.min {
+    } else if moving_span.min >= obstacle_span.max - crate::project::surface::CONTACT_MM {
+        (moving_span.min - obstacle_span.max).max(0.0)
+    } else if moving_span.max <= obstacle_span.min + crate::project::surface::CONTACT_MM {
         return None;
     } else if contained {
         moving_span.min - obstacle_span.min
@@ -1452,6 +1476,37 @@ mod tests {
         // The hand over a body is named too: that is the cursor gate the carry waits on.
         assert_eq!(touching.enclosing(DVec3::new(300.0, 0.0, 0.0)), Some(neighbour), "the hand is over it");
         assert_eq!(touching.enclosing(DVec3::new(0.0, -400.0, 0.0)), None, "and here it is not");
+    }
+
+    #[test]
+    fn a_piece_resting_past_a_body_stays_there_and_is_not_pulled_back_across_it() {
+        // X84: the case from the log. The piece is 60 wide and 950 deep, the bar 1270 long and 70
+        // deep; the piece's two homes are the bar's near face (delta 200) and its far face (delta
+        // 1530). The pointer drifted one millimetre back into the bar and the answer was measured
+        // from the start of the drag, so the piece was pulled across the whole bar to the near face
+        // and flew 1330 mm to the left. A cut is measured from where the piece stands.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let piece = solid_box(&mut project, root, "Piece", (60, 950, 100), place((-630.0, -490.0, 0.0)));
+        let bar = solid_box(&mut project, root, "Bar", (1270, 70, 100), place((-370.0, -510.0, 0.0)));
+        let rule = rule(&project, &[piece]);
+        let straight = rule.limits(DVec3::new(1529.0, 0.0, 0.0));
+        assert_eq!(
+            straight[MoveAxis::X.index()],
+            MoveLimit { distance_mm: 200.0, contact: Some(bar), capture: None },
+            "a drag that starts on the near side stops at the near face"
+        );
+        let standing = DVec3::new(1530.0, 0.0, 0.0);
+        let drift = rule.limits_from(standing, DVec3::new(1529.0, 0.0, 0.0));
+        assert_eq!(
+            drift[MoveAxis::X.index()],
+            MoveLimit { distance_mm: 1530.0, contact: Some(bar), capture: None },
+            "a piece resting on the far face stays at it when the hand drifts into the bar"
+        );
+        let onward = rule.limits_from(standing, DVec3::new(1600.0, 0.0, 0.0));
+        assert_eq!(onward[MoveAxis::X.index()].distance_mm, 1600.0, "and follows the hand onward");
+        let back = rule.limits_from(standing, DVec3::new(100.0, 0.0, 0.0));
+        assert_eq!(back[MoveAxis::X.index()].distance_mm, 100.0, "the near side is still reachable");
     }
 
     #[test]
