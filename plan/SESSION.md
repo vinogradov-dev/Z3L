@@ -7,8 +7,8 @@ goal: a body is measured by its own surface and not by the box around it
 steps:
   [ ] starting the task
 
-now: the contact port in geom and the parry3d-f64 adapter land as the first commit
+now: the shapes come from parametric data and the rule asks the port when both bodies are prepared
 blocked: nothing
 run: cargo xtask task X85
-resume: build node shapes and wire MoveRule, the write guard and the probe to the port
+resume: flip the drag and the guard together: the adapter must reach a session and every placement write
 ```

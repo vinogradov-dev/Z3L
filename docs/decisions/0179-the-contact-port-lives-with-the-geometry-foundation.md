@@ -47,6 +47,22 @@ speaks millimetres here with no conversion, because the port's unit *is* a milli
 `glam` is one minor version behind the workspace's, so a rotation crosses that boundary as four
 numbers.
 
+**The shape comes from the parameters, never from the render mesh.** `model` builds it in
+`project::contact_shape`: an object with a baked mesh is its triangles, an object with a primitive is
+the convex hull of the surface those parameters name, and everything else — a panel, an envelope, any
+container — is the box the rule already measured. A body the document cannot describe (a constructive
+payload, a drawn path, a mesh past the port's caps) answers `None`, and the caller keeps the box. A
+fallback that measures less precisely is honest; a shape invented from a screen tessellation is not.
+
+**One seam, and `None` is the reading of the day.** `Project::move_rule` and
+`Project::resting_conflict` take `Option<&dyn Contact>`. `None` means no adapter is installed and every
+pair is measured by its world box, which is what the document did before the port existed. The drag
+and the guard must be handed an adapter together: a preview measured by a surface and a release
+measured by a box would refuse the place the drag just showed (ADR 0166). The engine's write guard
+passes `None` today, so both still read boxes; handing the adapter to a session is the step that flips
+them, and the furniture reading — a panel inside a case is a slab in a frame — is deliberately left on
+the box (ADR 0165).
+
 **A prepared body, and no trait object in the rule.** `Contact::prepare` returns `Shared` — an
 `Arc<dyn Solid>` the adapter made — so a drag converts each body once when its rule is built and asks
 the same bodies on every frame. The rule stores bodies, not shapes and not an adapter: a `&dyn

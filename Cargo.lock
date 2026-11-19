@@ -2224,6 +2224,7 @@ dependencies = [
 name = "model"
 version = "0.1.0"
 dependencies = [
+ "contact-parry",
  "geom",
  "serde",
  "serde_json",

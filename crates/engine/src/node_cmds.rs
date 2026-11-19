@@ -358,7 +358,10 @@ pub(crate) fn refuse_resting(
     command: &'static str,
     placements: &[(Id, Placement)],
 ) -> Result<(), CommandError> {
-    match project.resting_conflict(placements) {
+    // No contact adapter reaches a command yet, so the guard reads the world box the document has
+    // always kept (ADR 0179, X85): the drag reads the same until the adapter is handed to a session,
+    // and the two must switch together so a release never refuses a place the preview showed.
+    match project.resting_conflict(placements, None) {
         Some(resting) => Err(CommandError::resting(command, project, resting)),
         None => Ok(()),
     }

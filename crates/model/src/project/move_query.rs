@@ -58,6 +58,9 @@
 
 use geom::DVec3;
 
+use geom::{Contact, Pose, Shared, overlap as overlaps};
+
+use super::contact_shape;
 use super::surface::{CONTACT_MM, Span, SurfaceBox, SurfaceKind, extent, separating_axes, surface_box};
 use crate::project::Project;
 use crate::tree::{object_bounds_mm, panel_bounds};
@@ -292,13 +295,13 @@ impl Project {
     /// snaps (ADR 0165). What each moved node allows, and how its contact is measured, is decided by
     /// the node: a furniture piece keeps its class rules and the world-box reading, any other solid
     /// body is free in all three axes and is measured by its own faces.
-    pub fn move_rule(&self, moving: &[Id], settings: MoveSettings) -> Option<MoveRule> {
+    pub fn move_rule(&self, moving: &[Id], settings: MoveSettings, contact: Option<&dyn Contact>) -> Option<MoveRule> {
         let targets = self.moved_targets(moving);
         let axes = match settings.axes {
             MoveAxes::Document => self.axes_of(&targets),
             MoveAxes::Every => ALL_MOVE_AXES,
         };
-        self.rule_of(&targets, axes, settings)
+        self.rule_of(&targets, axes, settings, contact)
     }
 
     /// The rule that measures a drag of `targets` under the workspace's settings.
@@ -306,16 +309,27 @@ impl Project {
     /// The axes are the caller's: the object tool hands the intersection of what every moved node
     /// allows, so a loose board keeps its own thickness axis wherever it stands (N22, ADR 0147), and
     /// the free tool hands all three.
-    fn rule_of(&self, targets: &[Id], axes: [bool; 3], settings: MoveSettings) -> Option<MoveRule> {
+    fn rule_of(
+        &self,
+        targets: &[Id],
+        axes: [bool; 3],
+        settings: MoveSettings,
+        contact: Option<&dyn Contact>,
+    ) -> Option<MoveRule> {
         if targets.is_empty() {
             return None;
         }
-        let movers = self.movers(targets);
+        let movers = self.movers(targets, contact);
         if movers.is_empty() {
             return None;
         }
         let floor = settings.floor.then(|| floor_bound(&movers)).flatten();
-        Some(MoveRule { axes, obstacles: self.obstacle_boxes(targets), floor, movers, snaps: settings.snaps })
+        let obstacles = self
+            .obstacle_boxes(targets)
+            .into_iter()
+            .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
+            .collect();
+        Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps })
     }
 
     /// The part a proposed placement change would put inside another part, if any.
@@ -333,13 +347,17 @@ impl Project {
     /// stands at is the deepest it may keep, so every placement that sinks it further is refused while
     /// every way out is granted. A file written before this rule still opens and is repaired by hand
     /// (X86, ADR 0178).
-    pub fn resting_conflict(&self, placements: &[(Id, Placement)]) -> Option<Resting> {
+    pub fn resting_conflict(&self, placements: &[(Id, Placement)], contact: Option<&dyn Contact>) -> Option<Resting> {
         let asked: Vec<Id> = placements.iter().map(|(id, _)| *id).collect();
         let targets = self.moved_targets(&asked);
         if targets.is_empty() {
             return None;
         }
-        let obstacles = self.obstacle_boxes(&targets);
+        let obstacles: Vec<Obstacle> = self
+            .obstacle_boxes(&targets)
+            .into_iter()
+            .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
+            .collect();
         for moved in &targets {
             let Some(lands) =
                 self.world_placement_with(*moved, placements).and_then(|world| self.box_at(*moved, world))
@@ -348,9 +366,17 @@ impl Project {
             };
             let stood = self.mover_box(*moved);
             let product = self.product_of(*moved);
-            if let Some(standing) = obstacles.iter().find(|obstacle| resting_inside(stood, lands, **obstacle, product))
-            {
-                return Some(Resting { moved: *moved, standing: standing.id });
+            // The guard reads what the drag reads: a solid body by its own faces when the port can
+            // describe it, a furniture piece by the world box it has always been measured by.
+            let faces = !self.is_furniture(*moved);
+            let landed = Measured::new(lands, faces.then(|| self.solid_of(lands, contact)).flatten());
+            let held = stood.map(|box_| Measured::new(box_, faces.then(|| self.solid_of(box_, contact)).flatten()));
+            let found = obstacles.iter().position(|obstacle| {
+                let standing = Measured::new(obstacle.box_, obstacle.solid.clone());
+                resting_inside(held.clone(), &landed, &standing, product)
+            });
+            if let Some(index) = found {
+                return Some(Resting { moved: *moved, standing: obstacles.get(index)?.box_.id });
             }
         }
         None
@@ -450,18 +476,34 @@ impl Project {
         self.container(id).is_some_and(Container::is_product) || self.product_of(id).is_some()
     }
 
-    /// The world box each moved node carries, and whether its contact is measured by its own faces.
-    fn movers(&self, targets: &[Id]) -> Vec<Mover> {
+    /// The world box each moved node carries, whether its contact is measured by its own faces, and
+    /// the body the contact port measures when a drag has one.
+    fn movers(&self, targets: &[Id], contact: Option<&dyn Contact>) -> Vec<Mover> {
         targets
             .iter()
             .filter_map(|id| {
-                self.mover_box(*id).map(|box_| Mover {
-                    box_,
-                    faces: !self.is_furniture(*id),
-                    product: self.product_of(*id),
+                self.mover_box(*id).map(|box_| {
+                    let faces = !self.is_furniture(*id);
+                    Mover {
+                        box_,
+                        faces,
+                        // Only a body measured by its own faces is handed to the port: a furniture
+                        // piece keeps the world-box reading the trade has always used (ADR 0165).
+                        solid: faces.then(|| self.solid_of(box_, contact)).flatten(),
+                        product: self.product_of(*id),
+                    }
                 })
             })
             .collect()
+    }
+
+    /// One surface's own body, prepared by the contact adapter, or `None` when the document cannot
+    /// describe its shape or no adapter is installed and the box reading stays.
+    fn solid_of(&self, surface: SurfaceBox, contact: Option<&dyn Contact>) -> Option<Shared> {
+        let contact = contact?;
+        let shape = contact_shape::node_shape(self, surface.id, surface.local_min, surface.local_max)
+            .or_else(|| contact_shape::box_between(surface.local_min, surface.local_max))?;
+        contact.prepare(&shape, Pose::new(surface.world.translation(), surface.world.rotation()))
     }
 
     /// The world axis-aligned box a node occupies, in millimetres.
@@ -580,19 +622,55 @@ pub struct Resting {
 /// types where it goes. The drag's own rule (`MoveRule::limit`) stops a furniture piece at the
 /// world-box contact and a solid body at its exact face contact, and neither reading is later than
 /// this answer, so a drag reaches a contact before it reaches a refusal (ADR 0165).
-fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox, product: Option<Id>) -> bool {
+fn resting_inside(was: Option<Measured>, now: &Measured, obstacle: &Measured, product: Option<Id>) -> bool {
     // A legitimate nesting is not an overlap: a piece in its own case and a unit inside another stay
     // legal wherever they stand, and the drag's own destination test reads the same rule (X77).
-    if nested(now, obstacle, product) {
+    if nested(now.box_, obstacle.box_, product) {
         return false;
     }
     // A pair the document already holds overlapping is no new overlap only while the part is no
     // deeper: the depth it stands at is the most it may keep, so every motion is a way out
     // (X86, ADR 0178).
     if let Some(was) = was.filter(|was| was.meets(obstacle)) {
-        return now.depth(obstacle) > was.depth(obstacle) + CONTACT_MM;
+        return now.sunk(obstacle) > was.sunk(obstacle) + CONTACT_MM;
     }
     now.meets(obstacle)
+}
+
+/// One surface as both the world box and, when the contact port measured it, its own body.
+///
+/// The port is asked first and the box is the fallback: a body the document cannot describe, a
+/// furniture piece and a session with no adapter installed all keep the reading they had (ADR 0179).
+#[derive(Clone, Debug)]
+struct Measured {
+    /// The world box the rule already keeps for this surface.
+    box_: SurfaceBox,
+    /// The body the contact port prepared, when it could.
+    solid: Option<Shared>,
+}
+
+impl Measured {
+    /// One surface, with the body the port prepared for it when there is one.
+    const fn new(box_: SurfaceBox, solid: Option<Shared>) -> Self {
+        Self { box_, solid }
+    }
+
+    /// Whether the two are sunk into one another at all, by the port when both bodies exist.
+    fn meets(&self, other: &Self) -> bool {
+        match (self.solid.as_deref(), other.solid.as_deref()) {
+            (Some(mine), Some(theirs)) => overlaps(mine, theirs, CONTACT_MM),
+            _ => self.box_.meets(other.box_),
+        }
+    }
+
+    /// How deeply this surface is sunk into `other`, in millimetres, by the same reading as
+    /// [`Measured::meets`].
+    fn sunk(&self, other: &Self) -> f64 {
+        match (self.solid.as_deref(), other.solid.as_deref()) {
+            (Some(mine), Some(theirs)) => mine.penetration(theirs).map_or(0.0, |sunk| sunk.depth_mm),
+            _ => self.box_.depth(other.box_),
+        }
+    }
 }
 
 /// Whether one box legitimately holds the other, so the pair is no collision.
@@ -620,10 +698,17 @@ fn nested(held: SurfaceBox, holder: SurfaceBox, product: Option<Id>) -> bool {
 /// (ADR 0147, ADR 0162). Any other solid body is measured by its own faces, because the box around a
 /// turned chair is not the chair: it stops the drag by the slack the turn adds, so the chair could not
 /// be brought flush to an angled neighbour (ADR 0165).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Mover {
     /// The world box the node occupies at the start of the drag.
     box_: SurfaceBox,
+    /// The body the contact port measures, when the node is a solid body and an adapter is installed.
+    ///
+    /// A body's own surface is what a drag stops at, so a turned cone reaches the corner between two
+    /// plates where its box would have stopped it a slack short (X85, ADR 0179). `None` keeps the
+    /// world-box reading: a furniture piece, a body the document cannot describe, and a session with
+    /// no adapter installed.
+    solid: Option<Shared>,
     /// Whether contact with this node is measured by its own faces rather than by the world box.
     faces: bool,
     /// The product this node is a piece of, when it is one.
@@ -631,6 +716,21 @@ struct Mover {
     /// A piece is legal inside its own case and nowhere else: a shelf inside its cabinet is a body
     /// in a shell, while a lamp pushed into the same cabinet is a body in a way (X77).
     product: Option<Id>,
+}
+
+/// One surface that stays behind, and the body the contact port measures it as.
+#[derive(Clone, Debug)]
+struct Obstacle {
+    box_: SurfaceBox,
+    solid: Option<Shared>,
+}
+
+impl std::ops::Deref for Obstacle {
+    type Target = SurfaceBox;
+
+    fn deref(&self) -> &SurfaceBox {
+        &self.box_
+    }
 }
 
 /// What one drag is measured against, taken once when the drag starts.
@@ -642,8 +742,9 @@ struct Mover {
 pub struct MoveRule {
     /// Each moved node's world box at the start of the drag, and how its contact is measured.
     movers: Vec<Mover>,
-    /// The surfaces that stay behind: the other products' envelopes, panels and objects.
-    obstacles: Vec<SurfaceBox>,
+    /// The surfaces that stay behind: the other products' envelopes, panels and objects, each with
+    /// the body the contact port measures when the node can be described (`None` otherwise).
+    obstacles: Vec<Obstacle>,
     /// Which world axes the drag offers, in [`MoveAxis`] order.
     ///
     /// It is the intersection of what every moved node allows, taken once when the drag starts: a
@@ -807,7 +908,11 @@ impl MoveRule {
                 let standing: Vec<Mover> = self
                     .movers
                     .iter()
-                    .filter_map(|mover| mover.box_.shifted(delta).map(|box_| Mover { box_, ..*mover }))
+                    .filter_map(|mover| {
+                        let box_ = mover.box_.shifted(delta)?;
+                        let solid = mover.solid.as_ref().and_then(|solid| solid.shifted(delta));
+                        Some(Mover { box_, solid, faces: mover.faces, product: mover.product })
+                    })
                     .collect();
                 // The travel still to make from where the piece stands, and the face that stops it.
                 let limit = stop_at_contact(axis, ask - delta[index], &standing, &self.obstacles);
@@ -885,8 +990,12 @@ impl MoveRule {
                 // itself, so a caller that reads the log still sees what refused the move.
                 return Some(Stop::part(mover.box_));
             };
+            // The body the port measures at the destination, and the one it measures where the piece
+            // stands: the same two readings the furniture guard compares, so a drag never previews a
+            // place the release refuses (ADR 0166, ADR 0179).
+            let carried = mover.solid.as_ref().and_then(|solid| solid.shifted(delta));
             for obstacle in &self.obstacles {
-                if nested(moved, *obstacle, mover.product) {
+                if nested(moved, obstacle.box_, mover.product) {
                     continue;
                 }
                 // The place the piece stands in is the deepest one it may keep: a pair that already
@@ -894,14 +1003,17 @@ impl MoveRule {
                 // deeper than the start is refused and the piece has one way out and no way further
                 // in (X86, ADR 0178). A nested piece is not that pair: it keeps its holder's walls
                 // and is cut at one when it straddles it (ADR 0102).
-                if !nested(mover.box_, *obstacle, mover.product)
-                    && moved.depth(*obstacle) <= mover.box_.depth(*obstacle) + CONTACT_MM
+                let landed = Measured::new(moved, carried.clone());
+                let stood = Measured::new(mover.box_, mover.solid.clone());
+                let standing = Measured::new(obstacle.box_, obstacle.solid.clone());
+                if !nested(mover.box_, obstacle.box_, mover.product)
+                    && landed.sunk(&standing) <= stood.sunk(&standing) + CONTACT_MM
                 {
                     continue;
                 }
-                let blocked = if mover.faces { moved.meets(*obstacle) } else { moved.overlaps_box(*obstacle) };
+                let blocked = if mover.faces { landed.meets(&standing) } else { moved.overlaps_box(obstacle.box_) };
                 if blocked {
-                    return Some(Stop::part(*obstacle));
+                    return Some(Stop::part(obstacle.box_));
                 }
             }
         }
@@ -950,10 +1062,10 @@ impl MoveRule {
         for mover in &self.movers {
             let start = mover.box_.shifted(from)?;
             for obstacle in &self.obstacles {
-                if nested(start, *obstacle, mover.product) {
+                if nested(start, obstacle.box_, mover.product) {
                     continue;
                 }
-                if mover.box_.depth(*obstacle) > CONTACT_MM {
+                if mover.box_.depth(obstacle.box_) > CONTACT_MM {
                     // The pair already shares a volume, so the path is not the tool's to police: the
                     // piece leaves it and never goes deeper, which `blocked_at` measures (ADR 0178).
                     continue;
@@ -1006,7 +1118,7 @@ fn covered_by(project: &Project, node: Id, targets: &[Id]) -> bool {
 fn snap_distance(
     axis: MoveAxis,
     movers: &[Mover],
-    obstacles: &[SurfaceBox],
+    obstacles: &[Obstacle],
     proposed: f64,
     snaps: SnapSettings,
 ) -> (f64, Option<Capture>) {
@@ -1081,7 +1193,7 @@ fn round_to_grid(value: f64) -> f64 {
 }
 
 /// The snapped distance cut at the first surface in its way.
-fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &[SurfaceBox]) -> MoveLimit {
+fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &[Obstacle]) -> MoveLimit {
     let sign = if distance < 0.0 { -1.0 } else { 1.0 };
     if distance == 0.0 {
         return MoveLimit { distance_mm: 0.0, contact: None, capture: None };
@@ -1091,16 +1203,22 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &
         for obstacle in obstacles {
             // A body stops at a body, a shell at a shell, and a carcass at a solid body that is not
             // its own piece: only a legitimate nesting is exempt, and `blocking` knows that wall.
+            // A body measured by its own faces is cut where its own surface first touches the other
+            // body, and only a body the port cannot describe falls back to the box around it (X85).
+            let faces = match (mover.solid.as_ref(), obstacle.solid.as_ref()) {
+                (Some(moving), Some(standing)) => moving.travel(&**standing, axis.direction() * sign),
+                _ => blocking_faces(axis, sign, &mover.box_, obstacle),
+            };
             let blocked = if mover.faces {
-                blocking_faces(axis, sign, &mover.box_, obstacle)
+                faces
             } else {
-                blocking(axis, sign, &mover.box_, obstacle, nested(mover.box_, *obstacle, mover.product))
+                blocking(axis, sign, &mover.box_, obstacle, nested(mover.box_, obstacle.box_, mover.product))
             };
             let Some(limit) = blocked else {
                 continue;
             };
             if nearest.is_none_or(|(best, _)| limit < best) {
-                nearest = Some((limit, Stop::part(*obstacle)));
+                nearest = Some((limit, Stop::part(obstacle.box_)));
             }
         }
     }
@@ -1338,11 +1456,80 @@ mod tests {
     }
 
     fn rule_with(project: &Project, moving: &[Id], snaps: SnapSettings) -> MoveRule {
-        project.move_rule(moving, settings(snaps)).expect("an object move")
+        project.move_rule(moving, settings(snaps), None).expect("an object move")
     }
 
     fn limit(project: &Project, moving: &[Id], axis: MoveAxis, proposed: f64) -> MoveLimit {
         rule(project, moving).limit(axis, proposed)
+    }
+
+    /// A box object: a baked mesh of `size` millimetres, centred on its own frame.
+    fn block_object(project: &mut Project, name: &str, placement: Placement, size: (f64, f64, f64)) -> Id {
+        let half = DVec3::new(size.0 / 2.0, size.1 / 2.0, size.2 / 2.0);
+        let mesh = crate::Mesh::cuboid(
+            [-half.x as i64, -half.y as i64, -half.z as i64]
+                .map(|value| Length::from_millimetres(value).unwrap_or_default()),
+            [half.x as i64, half.y as i64, half.z as i64]
+                .map(|value| Length::from_millimetres(value).unwrap_or_default()),
+        )
+        .expect("a box mesh");
+        let root = project.root().id();
+        project.add_object(root, name, placement, crate::Geometry::Mesh(mesh)).expect("an object")
+    }
+
+    /// A primitive body: a ball of `radius` millimetres, centred on its own frame.
+    fn primitive_object(project: &mut Project, name: &str, placement: Placement, radius: i64) -> Id {
+        let primitive =
+            crate::Primitive::sphere(Length::from_millimetres(radius).expect("a radius"), 16, 8).expect("a ball");
+        let root = project.root().id();
+        project.add_object(root, name, placement, crate::Geometry::Primitive(primitive)).expect("an object")
+    }
+
+    #[test]
+    fn a_ball_is_measured_by_its_own_surface_and_not_by_the_box_around_it() {
+        // A 100 mm ball dragged beside a block that stands 30 mm off its line. The box around the
+        // ball reaches y = 50 and meets the block at x = 200; the ball's own surface passes the
+        // block's near corner at (250, 30), which is 50 mm from the centre at x = 210. The ten
+        // millimetres between the two answers are the corner the box invented (X85, ADR 0179).
+        let mut project = empty_project();
+        let ball = primitive_object(&mut project, "Ball", place((0.0, 0.0, 0.0)), 50);
+        let other = block_object(&mut project, "Block", place((300.0, 80.0, 0.0)), (100.0, 100.0, 100.0));
+
+        let free = MoveSettings::default().free();
+        let boxed = project.move_rule(&[ball], free, None).expect("a box rule");
+        let measured = project.move_rule(&[ball], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        let (by_box, _) = stops(boxed.limit(MoveAxis::X, 300.0));
+        let (by_surface, contact) = stops(measured.limit(MoveAxis::X, 300.0));
+        assert!((by_box - 200.0).abs() < 0.05, "the box around the ball meets the block at 200: {by_box}");
+        // A ball is the hull of the tessellation its parameters name, so its surface is a facet
+        // inside the ideal sphere and it meets the corner a millimetre later than the ideal 210.
+        assert!((by_surface - 211.0).abs() < 1.0, "the ball's own surface meets it at 211: {by_surface}");
+        assert_eq!(contact, Some(other), "and the block is what it meets");
+        assert!(by_surface > by_box, "the box is a smaller answer than the body it holds");
+    }
+
+    #[test]
+    fn the_write_reads_the_same_surface_the_drag_reads() {
+        // The guard is the drag's own question asked before a placement lands. With the port it
+        // grants the place the ball's own surface leaves free, which the box around it refuses
+        // (ADR 0166, ADR 0179).
+        let mut project = empty_project();
+        let ball = primitive_object(&mut project, "Ball", place((0.0, 0.0, 0.0)), 50);
+        block_object(&mut project, "Block", place((300.0, 80.0, 0.0)), (100.0, 100.0, 100.0));
+        let free = MoveSettings::default().free();
+        let measured = project.move_rule(&[ball], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        let landing = measured.limit(MoveAxis::X, 300.0).distance_mm;
+        let placed = place((landing, 0.0, 0.0));
+
+        assert!(
+            project.resting_conflict(&[(ball, placed)], None).is_some(),
+            "the box around the ball puts it inside the block"
+        );
+        assert_eq!(
+            project.resting_conflict(&[(ball, placed)], Some(&contact_parry::Parry)),
+            None,
+            "and its own surface leaves it free, which is the place the drag showed"
+        );
     }
 
     #[test]
@@ -1641,7 +1828,7 @@ mod tests {
         let proposed = DVec3::new(380.0, -10.0, 0.0);
         let direct = place((proposed.x, proposed.y, proposed.z));
         assert!(
-            project.resting_conflict(&[(body, direct)]).is_some(),
+            project.resting_conflict(&[(body, direct)], None).is_some(),
             "the hand's own diagonal would land the body inside the turned board"
         );
         let body_rule = rule(&project, &[body]);
@@ -1653,7 +1840,7 @@ mod tests {
         );
         let landing = place((delta.x, delta.y, delta.z));
         assert_eq!(
-            project.resting_conflict(&[(body, landing)]),
+            project.resting_conflict(&[(body, landing)], None),
             None,
             "the preview the rule answers is a placement the write accepts"
         );
@@ -1733,16 +1920,16 @@ mod tests {
         let root = project.root().id();
         let a = panel(&mut project, root, "Left", (0, 0, 0));
         let b = panel(&mut project, root, "Right", (720, 0, 0));
-        assert_eq!(project.resting_conflict(&[(b, place((720.0, 0.0, 0.0)))]), None, "the board is where it is");
-        assert_eq!(project.resting_conflict(&[(b, place((700.0, 0.0, 0.0)))]), None, "and touching is contact");
+        assert_eq!(project.resting_conflict(&[(b, place((720.0, 0.0, 0.0)))], None), None, "the board is where it is");
+        assert_eq!(project.resting_conflict(&[(b, place((700.0, 0.0, 0.0)))], None), None, "and touching is contact");
         assert_eq!(
-            project.resting_conflict(&[(b, place((650.0, 0.0, 0.0)))]),
+            project.resting_conflict(&[(b, place((650.0, 0.0, 0.0)))], None),
             Some(Resting { moved: b, standing: a }),
             "half a board inside its neighbour is a refusal"
         );
         // A move of the whole selection keeps their relation and is no overlap at all.
         assert_eq!(
-            project.resting_conflict(&[(a, place((0.0, -100.0, 0.0))), (b, place((720.0, -100.0, 0.0)))]),
+            project.resting_conflict(&[(a, place((0.0, -100.0, 0.0))), (b, place((720.0, -100.0, 0.0)))], None),
             None,
             "a selection that moves rigidly stays as it was"
         );
@@ -1760,15 +1947,15 @@ mod tests {
         let shelf = panel(&mut project, root, "Shelf", (0, 0, 0));
         panel(&mut project, root, "Neighbour", (600, 0, 0));
         // 100 mm of the shelf's 700 is inside the neighbour's 700, and the pair shares its thickness.
-        assert_eq!(project.resting_conflict(&[(shelf, place((-650.0, 0.0, 0.0)))]), None, "sliding out is legal");
-        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 0.0)))]), None, "staying is legal");
+        assert_eq!(project.resting_conflict(&[(shelf, place((-650.0, 0.0, 0.0)))], None), None, "sliding out is legal");
+        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 0.0)))], None), None, "staying is legal");
         assert_eq!(
-            project.resting_conflict(&[(shelf, place((0.0, -100.0, 0.0)))]),
+            project.resting_conflict(&[(shelf, place((0.0, -100.0, 0.0)))], None),
             None,
             "sliding along the face is legal too"
         );
         assert_eq!(
-            project.resting_conflict(&[(shelf, place((50.0, 0.0, 0.0)))]),
+            project.resting_conflict(&[(shelf, place((50.0, 0.0, 0.0)))], None),
             None,
             "and so is sliding further behind it, which sinks the boards no deeper"
         );
@@ -1793,9 +1980,9 @@ mod tests {
         );
         // …while the way out is the whole distance, in the drag and in the write alike.
         assert_eq!(rule.limit(MoveAxis::X, -400.0), moved(-400.0), "coming out is granted whole");
-        assert_eq!(project.resting_conflict(&[(body, place((-400.0, 0.0, 0.0)))]), None, "and so is the write");
+        assert_eq!(project.resting_conflict(&[(body, place((-400.0, 0.0, 0.0)))], None), None, "and so is the write");
         assert_eq!(
-            project.resting_conflict(&[(body, place((40.0, 0.0, 0.0)))]),
+            project.resting_conflict(&[(body, place((40.0, 0.0, 0.0)))], None),
             Some(Resting { moved: body, standing: host }),
             "while the same place is refused by the write's own guard"
         );
@@ -1809,16 +1996,16 @@ mod tests {
         let mut project = empty_project();
         let case = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
         let shelf = panel(&mut project, case, "Shelf", (0, 0, 0));
-        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 100.0)))]), None, "a shelf in its case");
+        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 100.0)))], None), None, "a shelf in its case");
         let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (2000, 0, 0));
         assert_eq!(
-            project.resting_conflict(&[(neighbour, place((400.0, 0.0, 0.0)))]),
+            project.resting_conflict(&[(neighbour, place((400.0, 0.0, 0.0)))], None),
             Some(Resting { moved: neighbour, standing: case }),
             "a cabinet driven half into another's envelope is refused"
         );
         let nested = product(&mut project, "10.01.02", (300, 300, 300), (2050, 50, 50));
         assert_eq!(
-            project.resting_conflict(&[(nested, place((2100.0, 80.0, 60.0)))]),
+            project.resting_conflict(&[(nested, place((2100.0, 80.0, 60.0)))], None),
             None,
             "a cabinet wholly inside another's envelope stays legal"
         );
@@ -1861,7 +2048,7 @@ mod tests {
         let root = project.root().id();
         let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
         let unsnapped = project
-            .move_rule(&[body], MoveSettings { snaps: None, ..MoveSettings::default() })
+            .move_rule(&[body], MoveSettings { snaps: None, ..MoveSettings::default() }, None)
             .expect("a body is measured without a snap");
         assert_eq!(
             unsnapped.limit(MoveAxis::Z, -80.0).contact,
@@ -1871,7 +2058,7 @@ mod tests {
         assert_eq!(unsnapped.limit(MoveAxis::Z, -80.0).distance_mm, 0.0, "a body on the floor stays on it");
 
         let open = project
-            .move_rule(&[body], MoveSettings { floor: false, ..MoveSettings::default() })
+            .move_rule(&[body], MoveSettings { floor: false, ..MoveSettings::default() }, None)
             .expect("a body is measured without a floor");
         assert_eq!(open.limit(MoveAxis::Z, -80.0), moved(-80.0), "with the floor off the body goes below it");
         assert_eq!(open.blocked_at(DVec3::new(0.0, 0.0, -80.0)), None, "and nothing is in the way");
@@ -1965,7 +2152,7 @@ mod tests {
     fn a_multi_axis_proposal_slides_along_the_axis_a_contact_leaves_free() {
         let (mut project, cabinet) = product_project("10.01.01");
         let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
-        let rule = project.move_rule(&[cabinet], settings(SnapSettings::default())).expect("a furniture rule");
+        let rule = project.move_rule(&[cabinet], settings(SnapSettings::default()), None).expect("a furniture rule");
 
         let limits = rule.limits(DVec3::new(1000.0, 120.0, 30.0));
         assert_eq!(stops(limits[MoveAxis::X.index()]), (400.0, Some(neighbour)), "the neighbour stops X at its face");
@@ -1984,12 +2171,12 @@ mod tests {
     #[test]
     fn the_class_decides_every_axis_of_a_multi_axis_proposal() {
         let (mut project, id) = product_project("10.01.01");
-        let floor = project.move_rule(&[id], settings(SnapSettings::default())).expect("a floor rule");
+        let floor = project.move_rule(&[id], settings(SnapSettings::default()), None).expect("a floor rule");
         assert_eq!(floor.axes(), [true, true, false], "a base cabinet keeps its height");
         assert_eq!(floor.limits(DVec3::new(0.0, 0.0, 120.0))[MoveAxis::Z.index()].distance_mm, 0.0);
 
         project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class("10.01.02"))).expect("a wall class");
-        let wall = project.move_rule(&[id], settings(SnapSettings::default())).expect("a wall rule");
+        let wall = project.move_rule(&[id], settings(SnapSettings::default()), None).expect("a wall rule");
         assert_eq!(wall.axes(), [true, true, true], "the same frame may be hung once its class says so");
         assert_eq!(
             wall.limits(DVec3::new(0.0, 0.0, 120.0))[MoveAxis::Z.index()].distance_mm,
@@ -2120,7 +2307,7 @@ mod tests {
         );
 
         // The free move keeps its own reading: no grid, no plane, no face, the pointer's distance.
-        let free = project.move_rule(&[body], MoveSettings::default().free()).expect("a solid body");
+        let free = project.move_rule(&[body], MoveSettings::default().free(), None).expect("a solid body");
         assert_eq!(free.limit(MoveAxis::Z, 40.4), moved(40.4), "the free move snaps to nothing");
     }
 

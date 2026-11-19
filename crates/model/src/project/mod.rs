@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 mod camera_light_cmds;
+mod contact_shape;
 mod error;
 mod fill;
 #[cfg(test)]

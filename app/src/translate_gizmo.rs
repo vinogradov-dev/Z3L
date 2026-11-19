@@ -814,7 +814,7 @@ impl TranslateGizmo {
             let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
             // The rule and the snap settings are read once, when the piece is taken, exactly as a
             // held drag reads them at the press: the preview and the drop then measure one document.
-            let rule = target.project.move_rule(&moving, target.moves);
+            let rule = target.project.move_rule(&moving, target.moves, None);
             // A piece that may travel on more than one axis is carried on the plane its class
             // allows, met where the hand is and where the pivot is: the plane is read at the take and
             // every later frame holds the piece by the offset the click gave it. A one-axis piece is
@@ -895,8 +895,8 @@ impl TranslateGizmo {
         // the same, because contact is the document's rule and not a taste (X72, ADR 0162), and at
         // the workspace's floor, which is a stop rather than a snap (X87, ADR 0177).
         let rule = match target.move_kind {
-            MoveKind::Free => target.project.move_rule(&moving, target.moves.free()),
-            MoveKind::Object => target.project.move_rule(&moving, target.moves),
+            MoveKind::Free => target.project.move_rule(&moving, target.moves.free(), None),
+            MoveKind::Object => target.project.move_rule(&moving, target.moves, None),
         };
         self.drag = Some(Drag {
             node: anchor.node,
@@ -1187,7 +1187,7 @@ mod tests {
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
         // The pointer pulls 1000 mm, the neighbour's wall is at 1000: the drag keeps 400.
-        let rule = project.move_rule(&[cabinet], MoveSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[cabinet], MoveSettings::default(), None).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 1000.0);
         assert_eq!(distance, 400.0);
         assert_eq!(capture, None, "a stop is the contact's, not a snap's");
@@ -1211,7 +1211,7 @@ mod tests {
         let loose = Id::new(2).expect("id");
         assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None), "no rule is the pointer's own travel");
         let free =
-            project.move_rule(&[loose], MoveSettings::default().free()).expect("a loose board is still measured");
+            project.move_rule(&[loose], MoveSettings::default().free(), None).expect("a loose board is still measured");
         assert_eq!(constrained_distance(Some(&free), Axis::Y, 97.4), (97.4, None), "and it snaps to nothing");
         // The sample shelf and the drawer's front share one box: a third board beside them stops at
         // the face of the first it meets, and the touch itself is allowed.
@@ -1226,7 +1226,8 @@ mod tests {
                 Placement::IDENTITY.with_translation(millimetres(900), Length::ZERO, Length::ZERO).expect("a place"),
             )
             .expect("a board beside the sample ones");
-        let free = project.move_rule(&[beside], MoveSettings::default().free()).expect("the board has a contact rule");
+        let free =
+            project.move_rule(&[beside], MoveSettings::default().free(), None).expect("the board has a contact rule");
         assert_eq!(constrained_distance(Some(&free), Axis::X, -500.0), (-200.0, None), "it stops at the shelf");
     }
 
@@ -1236,7 +1237,8 @@ mod tests {
         // workspace's stop rather than the object move's snap, so it stops this drag too (X87).
         let project = sample_project();
         let loose = Id::new(2).expect("id");
-        let free = project.move_rule(&[loose], MoveSettings::default().free()).expect("a loose board is measured");
+        let free =
+            project.move_rule(&[loose], MoveSettings::default().free(), None).expect("a loose board is measured");
         assert_eq!(free.axes(), [true, true, true], "the free move refuses no axis");
         let answer = free.limit(model::MoveAxis::Z, -500.0);
         assert_eq!(answer.distance_mm, 0.0, "a board standing on the floor goes no deeper");
@@ -1253,7 +1255,7 @@ mod tests {
         let mut project = sample_project();
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
-        let rule = project.move_rule(&[cabinet], MoveSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[cabinet], MoveSettings::default(), None).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 398.0);
         assert_eq!(distance, 400.0, "the drag jumps the 2 mm gap");
         let capture = capture.expect("a frame face captured it");

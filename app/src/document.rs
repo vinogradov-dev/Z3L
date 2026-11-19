@@ -4324,7 +4324,7 @@ mod tests {
         let measure = measure_move(&project, piece, gizmo_math::Axis::Y).expect("two faces");
         assert_eq!(measure.wall_low, None, "nothing stands below the piece");
 
-        let rule = project.move_rule(&[piece], model::MoveSettings::default()).expect("an object drag");
+        let rule = project.move_rule(&[piece], model::MoveSettings::default(), None).expect("an object drag");
         let limit = rule.limit(model::MoveAxis::Y, -1498.0);
         let capture = limit.capture.expect("the plane captured the drag");
         let (wall_low, wall_high) = captured_walls(&measure, Some(capture));

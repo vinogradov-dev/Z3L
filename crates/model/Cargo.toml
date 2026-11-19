@@ -16,6 +16,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+# The real contact adapter, so a test measures a body by its own surface instead of the box around
+# it. A dev-dependency only: the document never holds an adapter (ADR 0179).
+contact-parry = { workspace = true }
+
 [features]
 # Test support: `testkit` re-exports `testing`'s fixtures and this crate's own tests use
 # them, so the shared fixtures have one definition (S8). Off in a release build.
