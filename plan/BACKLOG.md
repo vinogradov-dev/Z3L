@@ -195,6 +195,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X76** a carried frame leaves its grips behind, and a grip steals the press that puts it down
+  why: Observation, from the owner's screenshot of a carried frame: the frame moved and its
+   fourteen grip rings — eight corners and six face centres — stayed at the place it was taken.
+   The grips are read from the document (`BoxGrips::paint` calls `BoxBody::read(project,
+   node)`) while the body itself follows the drag preview, so the overlay and the picture
+   disagree for the whole gesture. The same defect has a second half: a press within the grip
+   radius of a carried piece arms a grip resize instead of putting the piece down, because the
+   shell's `gripping` test does not know a piece is in hand. Expected: a carried frame's grips
+   ride with it as its corner brackets do, and a press while a piece is in hand is the click
+   that puts it down.
+  shape: The grips read the drag preview the way the brackets and the renderer do: the body's
+   world placement goes through `Preview::moved_world` before a grip is projected, so a
+   translation carries the rings and a rotation turns them. The shell does not arm a grip while
+   the furniture move holds a piece — the next press belongs to the carry.
+  done: The grips of a frame in hand sit on the previewed body in both tools, a translation and
+   a rotation; a press over a carried piece's old grip position puts the piece down instead of
+   resizing it; the envelope's sides are unchanged by that press; `cargo xtask ci` is green.
+  `files: app/src/box_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs` — `0d85cba`
+
 - `[x]` **X75** a carried frame lags the hand and leaves its brackets behind
   Why: Observation, from the owner, on the furniture move of a product frame bound to the
    floor: the piece is sluggish — the hand runs away from it — and the corners of the open

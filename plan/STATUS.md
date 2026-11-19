@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=c718acb updated=2026-11-19
+STATE: milestone=M7 phase=T task=- state=idle base=0d85cba updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
