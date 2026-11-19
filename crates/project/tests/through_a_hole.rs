@@ -3,8 +3,10 @@
 //! exactly the case the port was built for: a box around the plate would stop the ball, a plate with
 //! a hole lets it through (X85, ADR 0179).
 //!
-//! The file under `assets/scenes/` is authored by the ignored test below and read by the ordinary
-//! one, so the committed scene is the one that is verified.
+//! Nothing is committed: the scene is a fixture, and a scene belongs to the maker's disk and not to
+//! the repository. The ordinary test writes it to a temporary file, reads it back and measures it, so
+//! the format and the behaviour are verified together; the ignored test writes the same scene to a
+//! fixed temporary path and prints it, which is how a person opens it in the editor.
 #![allow(clippy::expect_used)]
 
 use std::path::PathBuf;
@@ -14,9 +16,9 @@ use model::{Container, Geometry, Id, Mesh, MoveAxis, MoveSettings, Placement, Pr
 use project::SceneFile;
 use units::Length;
 
-/// The committed scene.
+/// Where the fixture is written: the system's temporary directory, never the repository.
 fn scene_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/scenes/through-a-hole.json")
+    std::env::temp_dir().join(format!("z3l-through-a-hole.{}", project::EXTENSION))
 }
 
 fn millimetres(value: i64) -> Length {
@@ -104,15 +106,20 @@ fn ball(project: &Project) -> Id {
 }
 
 #[test]
-#[ignore = "authors the committed scene; run it after changing the fixture"]
+#[ignore = "writes the fixture to a temporary file to open in the editor"]
 fn write_the_scene() {
-    let scene = SceneFile::from_document(through_a_hole());
-    scene.write(&scene_path()).expect("the scene is written");
+    let path = scene_path();
+    SceneFile::from_document(through_a_hole()).write(&path).expect("the scene is written");
+    println!("scene: {}", path.display());
 }
 
 #[test]
 fn the_scene_carries_a_ball_through_the_hole_and_no_further_than_a_face() {
-    let text = std::fs::read_to_string(scene_path()).expect("the committed scene");
+    // Written, read back and measured, so the fixture is checked as a file and not only in memory:
+    // the temporary file is removed with the test process and never enters the repository.
+    let path = scene_path();
+    SceneFile::from_document(through_a_hole()).write(&path).expect("the scene is written");
+    let text = std::fs::read_to_string(&path).expect("the scene is readable");
     let scene = SceneFile::parse(&text).expect("a readable scene");
     let project = scene.document();
     let ball = ball(project);

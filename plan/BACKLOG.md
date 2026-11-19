@@ -54,6 +54,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: The niche probe meets a turned body's own face and not the box around it; a rule built
    over a few hundred bodies keeps its frame budget; the gate is green.
   `files: crates/model/src/project/niche.rs, crates/model/src/project/move_query.rs, plan/notes/X85.md`
+- `[ ]` **X91** opening and saving ask the system file manager instead of a path typed into a field
+  Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
+   deletes two characters and the cursor moves by two, so a path can be edited only by retyping
+   it. A path is chosen in a file manager, not typed into a string (owner, 2026-11-19).
+  Shape: The open and save dialogs ask the operating system's own file manager instead of a
+   text field: the system picker through a permissive, pure-Rust binding to the platform's
+   dialog (the portal on Linux, the native sheet on macOS, the common item dialog on Windows),
+   narrowed to the scene extension and started in the folder of the open document. The text
+   field and the nearby-scenes list leave with it; the modal keeps the title, the
+   open-as-a-new-tab hint and the Cancel button. A dependency that compiles C is refused by the
+   rules, so the picker is either an OS binding loaded at run time or a small Rust dialog over
+   the platform API, and the choice is recorded in an ADR.
+  Done: Open and Save as show the system file manager, filtered to scene files and started
+   where the document lives; a cancelled picker writes and opens nothing; the path is never
+   typed; the double-delete defect cannot occur because there is no text field; the gate is
+   green.
+  `files: app/src/file_menu.rs, crates/text/src/messages.rs, crates/ui/src/inventory.rs`
 
 ## Bugs
 ## Next
@@ -181,7 +198,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: The scene opens in the editor; the object move carries the ball through the hole and
    the drag is not stopped by the plate; a test builds and re-reads the file; the gate is
    green.
-  `files: assets/scenes, crates/project/src/lib.rs, crates/model/src/mesh.rs` — `f92b4b8`
+  `files: crates/project/tests/through_a_hole.rs, crates/project/src/lib.rs, crates/model/src/mesh.rs` — `f92b4b8`
 
 - `[x]` **X85** a body is measured by its own surface and not by the box around it
   Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
