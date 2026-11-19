@@ -652,55 +652,83 @@ impl MoveRule {
         limits
     }
 
-    /// The travel the document allows for a proposal, resolved once in world-axis order.
+    /// The travel the document allows for a proposal, answered for the destination first.
     ///
-    /// Each axis is decided against the piece **standing where the axes before it put it**: an axis
-    /// whose destination is free is taken whole, and one whose destination is not is cut at the first
-    /// face in its way from there. That is what keeps a diagonal carry honest — the three answers are
-    /// one placement, tested as one, so no combination of them can land the piece inside a turned
-    /// neighbour (ADR 0166) — while a free axis still slides the piece along the face that stopped the
-    /// axis before it.
+    /// The whole proposal is one placement and is asked as one: if the piece may rest where all three
+    /// axes together put it, all three are taken. Only a destination the document refuses is resolved
+    /// axis by axis, each decided against the piece **standing where the axes before it put it** — an
+    /// axis whose step is free is taken whole, and one whose step is not is cut at the first face in
+    /// its way. That keeps a diagonal carry honest (no combination of the answers lands the piece
+    /// inside a turned neighbour, ADR 0166) while a free axis still slides the piece along the face
+    /// that stopped the axis before it (ADR 0171).
+    ///
+    /// The axis walk runs up to three passes, one per axis, so an axis cut on the first pass is asked
+    /// again once the axes after it have moved the piece: a board whose X is stopped by a neighbour
+    /// standing beside it is let through as soon as the carry's own Y clears that neighbour's face —
+    /// the free place the hand is pointing at.
     ///
     /// The contact is the distance to the touch and is reported per axis, so the shell can say what
     /// stopped the drag. A pair that already overlaps is the maker's to repair and is no new overlap:
     /// such a piece can always be dragged out of it, as the write's own guard reads it (ADR 0162).
     fn resolve(&self, asks: [f64; 3]) -> ([f64; 3], [Option<Id>; 3]) {
+        let whole = DVec3::new(asks[0], asks[1], asks[2]);
+        // The destination first, as one placement: a slot the hand names is free even when every
+        // single axis on the way to it is not, and refusing it axis by axis is how a board beside a
+        // neighbour was never let past it.
+        if whole.is_finite() && self.free_at(whole) {
+            return (asks, [None; 3]);
+        }
         let mut distances = [0.0; 3];
         let mut contacts: [Option<Id>; 3] = [None; 3];
         let mut delta = DVec3::ZERO;
-        for axis in MoveAxis::ALL {
-            let index = axis.index();
-            let ask = asks[index];
-            if ask == 0.0 || !ask.is_finite() {
-                continue;
-            }
-            let mut candidate = delta;
-            candidate[index] = ask;
-            if self.free_at(candidate) {
+        for _pass in 0..3 {
+            let mut changed = false;
+            for axis in MoveAxis::ALL {
+                let index = axis.index();
+                let ask = asks[index];
+                if ask == 0.0 || !ask.is_finite() || distances[index] == ask {
+                    continue;
+                }
+                let mut candidate = delta;
+                candidate[index] = ask;
+                if self.free_at(candidate) {
+                    if delta.x != candidate.x || delta.y != candidate.y || delta.z != candidate.z {
+                        changed = true;
+                    }
+                    delta = candidate;
+                    distances[index] = ask;
+                    contacts[index] = None;
+                    continue;
+                }
+                let standing: Vec<Mover> = self
+                    .movers
+                    .iter()
+                    .filter_map(|mover| mover.box_.shifted(delta).map(|box_| Mover { box_, ..*mover }))
+                    .collect();
+                let limit = stop_at_contact(axis, ask, &standing, &self.obstacles);
+                let mut cut = limit.distance_mm;
+                candidate[index] = cut;
+                // The contact is the face the piece meets; should the cut land it in a corner the
+                // axis could not see on its own, the axis keeps the piece where it stood and says
+                // nothing about a face it never reached. An axis that does not move is honest; a
+                // preview the release refuses is not.
+                let contact = if cut != 0.0 && !self.free_at(candidate) {
+                    cut = 0.0;
+                    candidate[index] = 0.0;
+                    None
+                } else {
+                    limit.contact
+                };
+                if distances[index] != cut || contacts[index] != contact {
+                    changed = true;
+                }
+                distances[index] = cut;
+                contacts[index] = contact;
                 delta = candidate;
-                distances[index] = ask;
-                continue;
             }
-            let standing: Vec<Mover> = self
-                .movers
-                .iter()
-                .filter_map(|mover| mover.box_.shifted(delta).map(|box_| Mover { box_, ..*mover }))
-                .collect();
-            let limit = stop_at_contact(axis, ask, &standing, &self.obstacles);
-            let mut cut = limit.distance_mm;
-            candidate[index] = cut;
-            // The contact is the face the piece meets; should the cut land it in a corner the axis
-            // could not see on its own, the axis keeps the piece where it stood and says nothing
-            // about a face it never reached. An axis that does not move is honest; a preview the
-            // release refuses is not.
-            if cut != 0.0 && !self.free_at(candidate) {
-                cut = 0.0;
-                candidate[index] = 0.0;
-            } else {
-                contacts[index] = limit.contact;
+            if !changed {
+                break;
             }
-            distances[index] = cut;
-            delta = candidate;
         }
         (distances, contacts)
     }
@@ -1268,6 +1296,44 @@ mod tests {
             "the board rises past its neighbour and lands in the free place beyond"
         );
         assert!(above == above);
+    }
+
+    #[test]
+    fn a_board_beside_a_standing_one_passes_it_where_the_hand_names_free_space() {
+        // X82: the log of the third session had the hand at (-171, 236) and the answer at (-94, 236),
+        // held for a second and a half while the pointer kept travelling. The destination was free —
+        // the board had cleared the standing one in Y — but every single axis on its own was not, and
+        // the axis walk never asked the whole vector. The place the hand names is asked first now.
+        let mut project = empty_project();
+        let root = project.root().id();
+        // The boxes of the log: the board is 620 x 90 x 100 at (-210,-110,0), the standing body
+        // 60 x 400 x 100 at (-364,-309,0), and they overlap on 26 mm of Y and all of Z.
+        let board = solid_box(&mut project, root, "Board", (620, 90, 100), place((-210.0, -110.0, 0.0)));
+        let standing = solid_box(&mut project, root, "Standing", (60, 400, 100), place((-364.0, -309.0, 0.0)));
+        let rule = rule(&project, &[board]);
+        let asked = DVec3::new(-171.0, 236.0, 0.0);
+        let limits = rule.limits(asked);
+        let travelled = DVec3::new(
+            limits[MoveAxis::X.index()].distance_mm,
+            limits[MoveAxis::Y.index()].distance_mm,
+            limits[MoveAxis::Z.index()].distance_mm,
+        );
+        assert_eq!(travelled, asked, "the slot in front of the standing board is taken whole");
+        assert!(limits.iter().all(|limit| limit.contact.is_none()));
+        // Behind it is the same free slot, and the other way round the standing board.
+        let far = rule.limits(DVec3::new(-171.0, -347.0, 0.0));
+        assert_eq!(
+            DVec3::new(far[0].distance_mm, far[1].distance_mm, far[2].distance_mm),
+            DVec3::new(-171.0, -347.0, 0.0),
+            "the space behind the standing board is the same jump"
+        );
+        // Without the clearing Y there is no slot: the board stops at the standing one's face.
+        let straight = rule.limits(DVec3::new(-171.0, 0.0, 0.0));
+        assert_eq!(
+            straight[MoveAxis::X.index()],
+            MoveLimit { distance_mm: -94.0, contact: Some(standing), capture: None },
+            "in line with it the board meets its face and goes no further"
+        );
     }
 
     #[test]
