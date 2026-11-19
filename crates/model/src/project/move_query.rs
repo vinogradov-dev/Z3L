@@ -713,6 +713,37 @@ impl MoveRule {
     /// another — is no overlap; a carcass and a body beside it are measured like two bodies; and the
     /// predicate is the same one the write's guard asks, so a drag never previews a place the release
     /// refuses.
+    /// The first part the destination would come to rest inside, for the log.
+    ///
+    /// It is [`MoveRule::free_at`] with a name attached: the answer is the same one the drag uses, and
+    /// the shell writes it when a drag is cut so a report says what stood in the way and how big it
+    /// is, instead of leaving the reader to guess from the numbers (ADR 0170).
+    pub fn blocked_at(&self, delta: DVec3) -> Option<(Id, SurfaceKind, DVec3, DVec3)> {
+        if !delta.is_finite() {
+            return None;
+        }
+        for mover in &self.movers {
+            let moved = mover.box_.shifted(delta)?;
+            for obstacle in &self.obstacles {
+                if nested(moved, *obstacle, mover.product) {
+                    continue;
+                }
+                if !nested(mover.box_, *obstacle, mover.product) {
+                    let was =
+                        if mover.faces { mover.box_.meets(*obstacle) } else { mover.box_.overlaps_box(*obstacle) };
+                    if was {
+                        continue;
+                    }
+                }
+                let blocked = if mover.faces { moved.meets(*obstacle) } else { moved.overlaps_box(*obstacle) };
+                if blocked {
+                    return Some((obstacle.id, obstacle.kind, obstacle.min, obstacle.max));
+                }
+            }
+        }
+        None
+    }
+
     fn free_at(&self, delta: DVec3) -> bool {
         if !delta.is_finite() {
             return false;

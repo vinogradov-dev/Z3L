@@ -610,7 +610,7 @@ impl TranslateGizmo {
                 target: "z3l::move",
                 "carry node={:?} piece=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) hand={} \
                  asked=({:.3},{:.3},{:.3}) resolved=({:.3},{:.3},{:.3}) delta=({:.3},{:.3},{:.3}) \
-                 typed={:?} held={held_now} offset={} jump={:?} contact={:?}",
+                 typed={:?} held={held_now} offset={} jump={:?} contact={:?} blocked={}",
                 drag.node,
                 drag.start_origin.x + delta.x,
                 drag.start_origin.y + delta.y,
@@ -638,6 +638,13 @@ impl TranslateGizmo {
                     (limits[1].contact, limits[1].capture),
                     (limits[2].contact, limits[2].capture),
                 ]),
+                drag.rule
+                    .as_ref()
+                    .and_then(|rule| rule.blocked_at(proposed))
+                    .map_or_else(|| "none".to_owned(), |(id, kind, low, high)| format!(
+                        "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
+                        low.x, low.y, low.z, high.x, high.y, high.z
+                    )),
             );
             drag.delta = delta;
             drag.capture = capture;
@@ -803,13 +810,30 @@ impl TranslateGizmo {
             // there would swallow that travel and leave the piece standing still (X67).
             let offset = screen_point(target.camera, viewport, origin_world).map(|pivot| pivot - at);
             let hand = Hand { offset, ..Hand::taken(at) };
+            // What was taken, by name and kind: a report names a node id the reader cannot place,
+            // and the piece's own box is what every later judgement is measured from (ADR 0170).
+            let taken = target.project.node(anchor.node).map_or_else(
+                || "none".to_owned(),
+                |node| {
+                    let kind = match node {
+                        model::Node::Panel(_) => "panel",
+                        model::Node::Object(_) => "object",
+                        model::Node::Container(container) if container.is_product() => "product",
+                        model::Node::Container(_) => "container",
+                        model::Node::Camera(_) => "camera",
+                        model::Node::Light(_) => "light",
+                    };
+                    format!("kind={kind} name={:?}", node.name())
+                },
+            );
             log::info!(
                 target: "z3l::move",
-                "take node={:?} pivot=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) axes={:?}",
+                "take node={:?} {taken} pivot=({:.3},{:.3},{:.3}) box={:?} cursor=({:.1},{:.1}) axes={:?}",
                 anchor.node,
                 origin_world.x,
                 origin_world.y,
                 origin_world.z,
+                target.project.world_box(anchor.node),
                 at.x,
                 at.y,
                 axes
