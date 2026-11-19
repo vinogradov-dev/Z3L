@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N26 state=idle base=2cb817d updated=2026-11-19
+STATE: milestone=M7 phase=T task=- state=idle base=4870510 updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -25,7 +25,7 @@ both packages named (O7).
 
 ## Next
 
-N26 is next: a carried piece measures its gaps with arrows in the scene, not with a card at the hand
+Nothing is scheduled: 14 open tasks wait in `## Next`.
 
 ## Index
 

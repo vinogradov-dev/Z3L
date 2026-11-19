@@ -43,29 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
-  why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
-   owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
-   nearest object, with the editable gap in the middle of the arrow (reference picture:
-   Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
-   lags while a number is typed, drifts away from the pieces it measures after a camera gesture
-   and covers the pointer (X66, X69).
-  shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
-   from the piece's face along the free axis to the surface the model probe answered (the
-   neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
-   each end and the gap's own field sitting in the middle of the run. The field keeps the
-   behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
-   the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
-   the face and the opposite face follows. The floating card stops being drawn for the
-   furniture move; the inspector still shows the same two rows from the same Distances (ADR
-   0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
-   area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
-   axis points at the camera. Dimension grammar comes from the drafting skill.
-  done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
-   and Escape behave as the rows do today; the furniture move draws no card; the inspector
-   still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
-   test drives a gap through the arrow's field and asserts one command and one undo entry.
-  `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs`
 ## Bugs
 - `[ ]` **X72** a moved part may come to rest inside another part
   Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
@@ -253,6 +230,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
+  why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
+   owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
+   nearest object, with the editable gap in the middle of the arrow (reference picture:
+   Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
+   lags while a number is typed, drifts away from the pieces it measures after a camera gesture
+   and covers the pointer (X66, X69).
+  shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
+   from the piece's face along the free axis to the surface the model probe answered (the
+   neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
+   each end and the gap's own field sitting in the middle of the run. The field keeps the
+   behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
+   the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
+   the face and the opposite face follows. The floating card stops being drawn for the
+   furniture move; the inspector still shows the same two rows from the same Distances (ADR
+   0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
+   area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
+   axis points at the camera. Dimension grammar comes from the drafting skill.
+  done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
+   and Escape behave as the rows do today; the furniture move draws no card; the inspector
+   still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
+   test drives a gap through the arrow's field and asserts one command and one undo entry.
+  `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs` — `4870510`
 
 - `[x]` **N20** the card says the position its class gives, and never asks
   Why: The owner asked the card for a position, then settled it: the class already dictates how
