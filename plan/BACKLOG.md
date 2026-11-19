@@ -44,41 +44,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
 ## Bugs
-- `[ ]` **X72** a moved part may come to rest inside another part
-  Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
-   may not come to rest inside another part. Reproduced paths around the rule, not inside it:
-   the rule itself does stop a body at a body (`stop_at_contact` and `blocking` in
-   `move_query.rs`), but it lives in the two gestures and nowhere else. The free `Move` applies
-   no rule at all — ADR 0147 took the furniture rule out of it on purpose and X65's `Done` asks
-   that "the free move still crosses it" — and `Project::move_rule` answers `None` for a panel
-   that is not inside a product (`is_furniture`), so the furniture tool also carries a loose
-   board through anything. Nothing checks the placement a command is asked to write, so a typed
-   distance, a palette command or the assistant can land a board inside another one as well.
-   The live path the owner used is not yet identified; the two open ends are the free move and
-   a panel outside a product.
-  shape: The overlap is refused where the document is written, not only where a gesture runs.
-   The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
-   with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
-   shell that stays behind — touching faces are contact, not overlap, and a panel inside its
-   own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
-   rule is that a switched-off part is invisible to the eye and to the pointer, never to the
-   material (X73), so the guard asks the document, not the sight. The placement commands
-   (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
-   sentence naming the part that is in the way; the gestures read the same answer first, so a
-   piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
-   X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
-   snapping are untouched. A part that already overlaps another (a file written before this
-   rule) can still be dragged out of the overlap: the test refuses a placement that makes an
-   overlap worse, never one that makes it no worse. The awkward cases are decisions, not
-   accidents: a selection of several parts against one neighbour, a shell inside a shell (a
-   piece inside a case), a board that only touches, and a part carried with the camera moving.
-  Done: A panel dragged into another panel stops at its face with both moves; a
-   `node.placement.set` asked for the same overlap is refused with a sentence naming the part
-   and writes nothing, so the revision does not move; a part already overlapping another can be
-   dragged out of it and a touch is never a refusal; a piece inside a case's envelope and a
-   selection of several parts are unchanged; the ADR is written, `docs/decisions/README.md`
-   lists it and X65's clause is amended; cargo xtask ci is green.
-  `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs`
 - `[ ]` **X73** a hidden part is still in the way of the tools
   why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
    shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
@@ -230,6 +195,42 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **X72** a moved part may come to rest inside another part
+  Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
+   may not come to rest inside another part. Reproduced paths around the rule, not inside it:
+   the rule itself does stop a body at a body (`stop_at_contact` and `blocking` in
+   `move_query.rs`), but it lives in the two gestures and nowhere else. The free `Move` applies
+   no rule at all — ADR 0147 took the furniture rule out of it on purpose and X65's `Done` asks
+   that "the free move still crosses it" — and `Project::move_rule` answers `None` for a panel
+   that is not inside a product (`is_furniture`), so the furniture tool also carries a loose
+   board through anything. Nothing checks the placement a command is asked to write, so a typed
+   distance, a palette command or the assistant can land a board inside another one as well.
+   The live path the owner used is not yet identified; the two open ends are the free move and
+   a panel outside a product.
+  shape: The overlap is refused where the document is written, not only where a gesture runs.
+   The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
+   with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
+   shell that stays behind — touching faces are contact, not overlap, and a panel inside its
+   own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
+   rule is that a switched-off part is invisible to the eye and to the pointer, never to the
+   material (X73), so the guard asks the document, not the sight. The placement commands
+   (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
+   sentence naming the part that is in the way; the gestures read the same answer first, so a
+   piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
+   X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
+   snapping are untouched. A part that already overlaps another (a file written before this
+   rule) can still be dragged out of the overlap: the test refuses a placement that makes an
+   overlap worse, never one that makes it no worse. The awkward cases are decisions, not
+   accidents: a selection of several parts against one neighbour, a shell inside a shell (a
+   piece inside a case), a board that only touches, and a part carried with the camera moving.
+  Done: A panel dragged into another panel stops at its face with both moves; a
+   `node.placement.set` asked for the same overlap is refused with a sentence naming the part
+   and writes nothing, so the revision does not move; a part already overlapping another can be
+   dragged out of it and a touch is never a refusal; a piece inside a case's envelope and a
+   selection of several parts are unchanged; the ADR is written, `docs/decisions/README.md`
+   lists it and X65's clause is amended; cargo xtask ci is green.
+  `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs` — `f9209e6`
 
 - `[x]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
   why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
@@ -411,7 +412,8 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    distance from the line; a pointer that moves along it carries the piece at the scale the
    projection gives at the take; an axis that points at the camera carries nothing; the rule,
    the fields and the capture are unchanged; the divider stops at its neighbour and the free
-   move still crosses it; frame tests and cargo xtask ci are green.
+   move crosses it (amended by X72, ADR 0162: the free move stops at the neighbour too, and the
+   clause is the one X72's `Done` carries).
   `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `824859f`
 
 - `[x]` **X66** the carried piece's distance plates take the hand that carries it
