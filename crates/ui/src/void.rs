@@ -21,7 +21,7 @@
 //! the point inside the product changes.
 
 use geom::DVec3;
-use model::{Id, Niche, NicheRefusal, Project, SurfaceKind};
+use model::{Id, Niche, NicheRefusal, Project, Sight, SurfaceKind};
 use scene::Ray;
 use text::Message;
 use units::Length;
@@ -103,13 +103,16 @@ impl Void {
     /// The step is the pointer's own resolution, not the document's: a hand that holds still gains no
     /// new answer, and a measured point that stays inside the same cell keeps the value it has. A
     /// point that is not finite is the model's refusal, not a panic.
-    pub fn measure(&mut self, project: &Project, point: DVec3) -> bool {
+    ///
+    /// `sight` is what the cell is measured through: a part the user switched off is invisible to the
+    /// eye and to the pointer, so the void behind it is the void the maker reaches (X73).
+    pub fn measure(&mut self, project: &Project, point: DVec3, sight: Sight<'_>) -> bool {
         if let Some(measured) = &self.measured
             && (measured.point - point).length() < MEASURE_STEP_MM
         {
             return false;
         }
-        let niche = project.niche(point).map_err(VoidRefusal::of);
+        let niche = project.niche(point, sight).map_err(VoidRefusal::of);
         self.measured = Some(Measured { point, niche });
         true
     }
@@ -174,14 +177,14 @@ pub struct PointerPoint {
 /// cursor, so the void is measured a micrometre in front of it; a ray that meets nothing but the
 /// envelope answers the entry point, which is the whole reserved space. A pointer outside the
 /// product answers `None`.
-pub fn pointer_point(project: &Project, product: Id, ray: Ray) -> Option<DVec3> {
-    pointer_face(project, product, ray).map(|found| found.point)
+pub fn pointer_point(project: &Project, product: Id, ray: Ray, sight: Sight<'_>) -> Option<DVec3> {
+    pointer_face(project, product, ray, sight).map(|found| found.point)
 }
 
 /// The point in the open product the pointer points at, with the face it rests on.
 ///
 /// [`pointer_point`] is this rule without the face, for the tools that only need the cell.
-pub fn pointer_face(project: &Project, product: Id, ray: Ray) -> Option<PointerPoint> {
+pub fn pointer_face(project: &Project, product: Id, ray: Ray, sight: Sight<'_>) -> Option<PointerPoint> {
     let envelope = project.container(product)?.envelope()?;
     let size =
         DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
@@ -202,7 +205,7 @@ pub fn pointer_face(project: &Project, product: Id, ray: Ray) -> Option<PointerP
         return Some(PointerPoint { point: world_entry, face: None });
     };
     let inside = world_entry + step * ENTRY_INSET_MM;
-    let Some(probe) = project.probe(inside, ray.direction()) else {
+    let Some(probe) = project.probe(inside, ray.direction(), sight) else {
         return Some(PointerPoint { point: inside, face: None });
     };
     // The envelope's own far face means the ray crossed the whole void: the entry point is the
@@ -254,9 +257,16 @@ pub struct FreePlace {
 ///
 /// The face under the point decides the reading ([`FreePlace`]); nothing here moves the part, and a
 /// pointer outside the product answers nothing, which is the tool's business to hold on to.
-pub fn free_place(project: &Project, product: Id, niche: &Niche, axis: usize, ray: Ray) -> Option<FreePlace> {
+pub fn free_place(
+    project: &Project,
+    product: Id,
+    niche: &Niche,
+    axis: usize,
+    ray: Ray,
+    sight: Sight<'_>,
+) -> Option<FreePlace> {
     let along = *AXES.get(axis)?;
-    let found = pointer_face(project, product, ray)?;
+    let found = pointer_face(project, product, ray, sight)?;
     let placement = project.world_placement(product)?;
     let inverse = placement.inverse().ok()?;
     let local = inverse.transform_point(found.point);
@@ -356,28 +366,53 @@ mod tests {
         let (project, product) = piece();
         let mut atom = Void::new();
         assert_eq!(atom.niche(), None, "nothing is measured before the pointer");
-        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 360.0)));
+        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 360.0), Sight::none()));
         let niche = atom.niche().expect("the point is inside the void").clone();
         assert_eq!(niche.product, product);
         assert_eq!(atom.size(), Some([millimetres(600), millimetres(560), millimetres(720)]));
         // A hand that holds still gains no new answer, and the value is the same one.
-        assert!(!atom.measure(&project, DVec3::new(300.2, 280.0, 360.0)), "a step smaller than half a millimetre");
+        assert!(
+            !atom.measure(&project, DVec3::new(300.2, 280.0, 360.0), Sight::none()),
+            "a step smaller than half a millimetre"
+        );
         assert_eq!(atom.niche(), Some(&niche));
         // A pointer that moved re-measures.
-        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 361.0)));
+        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 361.0), Sight::none()));
+    }
+
+    #[test]
+    fn the_atom_measures_through_a_part_the_session_switched_off() {
+        let (mut project, product) = piece();
+        let nominal = model::PanelNominalSize::new(millimetres(18), millimetres(560)).expect("a sheet size");
+        let at = Placement::IDENTITY
+            .with_translation(millimetres(291), millimetres(0), millimetres(0))
+            .expect("a placement");
+        let sheet = project.add_panel(product, "Sheet", nominal, None, millimetres(720), at).expect("a sheet");
+        let point = DVec3::new(100.0, 280.0, 360.0);
+
+        let mut atom = Void::new();
+        atom.measure(&project, point, Sight::none());
+        let visible = atom.niche().expect("the void in front of the sheet").clone();
+        assert_eq!(visible.size, DVec3::new(291.0, 560.0, 720.0), "the sheet is a wall of the void");
+
+        let hidden: std::collections::HashSet<Id> = [sheet].into_iter().collect();
+        atom.clear();
+        atom.measure(&project, point, Sight::of(&hidden));
+        let through = atom.niche().expect("the hidden sheet is no wall").clone();
+        assert_eq!(through.size, DVec3::new(600.0, 560.0, 720.0), "the cell spans the case it cannot see");
     }
 
     #[test]
     fn a_point_outside_the_product_is_a_refusal_not_an_empty_value() {
         let (project, _) = piece();
         let mut atom = Void::new();
-        assert!(atom.measure(&project, DVec3::new(-500.0, 0.0, 0.0)));
+        assert!(atom.measure(&project, DVec3::new(-500.0, 0.0, 0.0), Sight::none()));
         assert_eq!(atom.niche(), None);
         let refusal = atom.refusal().expect("the pointer names no void");
         assert_eq!(refusal, VoidRefusal::Outside);
         assert_eq!(refusal.words(), Message::VoidOutside, "the sentence every surface prints");
         assert_eq!(atom.size(), None);
-        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 360.0)), "the pointer can come back");
+        assert!(atom.measure(&project, DVec3::new(300.0, 280.0, 360.0), Sight::none()), "the pointer can come back");
         assert_eq!(atom.refusal(), None);
     }
 
@@ -385,7 +420,7 @@ mod tests {
     fn clearing_forgets_the_point_and_the_cell() {
         let (project, _) = piece();
         let mut atom = Void::new();
-        atom.measure(&project, DVec3::new(300.0, 280.0, 360.0));
+        atom.measure(&project, DVec3::new(300.0, 280.0, 360.0), Sight::none());
         atom.clear();
         assert_eq!(atom, Void::new(), "a cleared atom is the one that was armed");
         assert_eq!(atom.point(), None);
@@ -396,14 +431,15 @@ mod tests {
     fn the_cursor_enters_the_envelope_at_its_near_face() {
         let (project, product) = piece();
         let ray = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the ray enters the piece");
+        let point = pointer_point(&project, product, ray, Sight::none()).expect("the ray enters the piece");
         assert!((point.x - 300.0).abs() < 1e-9 && (point.z - 300.0).abs() < 1e-9, "was {point:?}");
         assert!((0.0..0.01).contains(&point.y), "a micrometre inside the near face: {point:?}");
         let inside = Ray::new(DVec3::new(300.0, 280.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, inside).expect("a camera inside starts where it is");
+        let point =
+            pointer_point(&project, product, inside, Sight::none()).expect("a camera inside starts where it is");
         assert!((point.y - 280.0).abs() < 0.01, "was {point:?}");
         let missing = Ray::new(DVec3::new(-50.0, -1000.0, 300.0), -DVec3::Y).expect("a ray");
-        assert_eq!(pointer_point(&project, product, missing), None);
+        assert_eq!(pointer_point(&project, product, missing, Sight::none()), None);
     }
 
     /// A board standing as the case's back wall, its inner face through `y = through` at `z = 0`
@@ -421,10 +457,10 @@ mod tests {
         let (mut project, product) = piece();
         leaned_wall(&mut project, product, 542.0, 0.0);
         let ray = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the face is in the piece");
+        let point = pointer_point(&project, product, ray, Sight::none()).expect("the face is in the piece");
         assert!((point.y - 541.999).abs() < 0.01, "the point rests in front of the wall: {point:?}");
         let mut atom = Void::new();
-        atom.measure(&project, point);
+        atom.measure(&project, point, Sight::none());
         let niche = atom.niche().expect("the void ends at the wall");
         assert!(niche.local_max().y <= 542.0, "the niche ends at the wall: {niche:?}");
     }
@@ -460,8 +496,8 @@ mod tests {
         // The shelf's top face: the whole face names 368, so the point cannot say where the hand is
         // along the height, and the hand's own place on the cell's axis is a different number.
         let top = DVec3::new(200.0, 400.0, 368.0);
-        let niche = project.niche(top + DVec3::Z * 1.0e-3).expect("the cell above the shelf");
-        let aim = free_place(&project, product, &niche, 2, ray(top)).expect("the pointer names a point");
+        let niche = project.niche(top + DVec3::Z * 1.0e-3, Sight::none()).expect("the cell above the shelf");
+        let aim = free_place(&project, product, &niche, 2, ray(top), Sight::none()).expect("the pointer names a point");
         assert!(aim.square, "a top face is square to the height: {aim:?}");
         assert!((aim.point - 368.0).abs() <= 0.01, "the point rests on the face: {aim:?}");
         assert!((aim.hand - aim.point).abs() > 20.0, "the hand is elsewhere on the axis: {aim:?}");
@@ -469,7 +505,7 @@ mod tests {
         // The wall behind runs along the height, so the point itself is the height the pointer is on
         // and a tool reads that instead of the hand's projection.
         let across = Ray::new(DVec3::new(300.0, -800.0, 400.0), DVec3::Y).expect("a ray");
-        let aim = free_place(&project, product, &niche, 2, across).expect("the pointer names a point");
+        let aim = free_place(&project, product, &niche, 2, across, Sight::none()).expect("the pointer names a point");
         assert!(!aim.square, "a wall is not square to the height: {aim:?}");
         assert!((aim.point - 400.0).abs() <= 0.01, "the height the pointer is on: {aim:?}");
 
@@ -477,15 +513,15 @@ mod tests {
         // the entry point: an empty piece answers nothing but its envelope.
         let (project, product) = piece();
         let through = Ray::new(DVec3::new(300.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        let niche = project.niche(DVec3::new(300.0, 1.0, 300.0)).expect("the whole reserved space");
-        let aim = free_place(&project, product, &niche, 2, through).expect("the ray crosses the void");
+        let niche = project.niche(DVec3::new(300.0, 1.0, 300.0), Sight::none()).expect("the whole reserved space");
+        let aim = free_place(&project, product, &niche, 2, through, Sight::none()).expect("the ray crosses the void");
         assert!(aim.face.is_none() && !aim.square, "the entry point names no face: {aim:?}");
         assert!((aim.point - 300.0).abs() <= 0.01, "the entry point's own height: {aim:?}");
 
         // A ray that misses the piece names nothing at all, and neither does a fourth axis.
         let away = Ray::new(DVec3::new(-500.0, -800.0, 400.0), DVec3::X).expect("a ray");
-        assert_eq!(free_place(&project, product, &niche, 2, away), None);
-        assert_eq!(free_place(&project, product, &niche, 7, through), None, "no fourth axis");
+        assert_eq!(free_place(&project, product, &niche, 2, away, Sight::none()), None);
+        assert_eq!(free_place(&project, product, &niche, 7, through, Sight::none()), None, "no fourth axis");
     }
 
     #[test]
@@ -501,11 +537,11 @@ mod tests {
         let world = |x: f64, y: f64, z: f64| turn.transform_point(DVec3::new(x, y, z));
         // The piece now spans x in [-560, 0] and y in [0, 600], so a ray at x = -500 points into it.
         let ray = Ray::new(world(300.0, -500.0, 300.0), turn.transform_vector(DVec3::Y)).expect("a ray");
-        let point = pointer_point(&project, product, ray).expect("the turned piece is entered");
+        let point = pointer_point(&project, product, ray, Sight::none()).expect("the turned piece is entered");
         let local = turn.inverse().expect("an inverse").transform_point(point);
         assert!((0.0..0.01).contains(&local.y), "a micrometre inside the piece's own face: {local:?}");
         // A ray aimed at the world bounds but outside the turned box has no point at all.
         let outside = Ray::new(DVec3::new(10.0, -1000.0, 300.0), DVec3::Y).expect("a ray");
-        assert_eq!(pointer_point(&project, product, outside), None);
+        assert_eq!(pointer_point(&project, product, outside, Sight::none()), None);
     }
 }

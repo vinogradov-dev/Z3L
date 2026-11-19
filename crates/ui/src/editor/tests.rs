@@ -20,7 +20,7 @@ use engine::{PanelCreate, PrimitiveKind, Session};
 use model::Contour;
 use model::{
     ClassCode, Container, Cutout, CutoutDepth, CutoutShape, DEFAULT_BANDS, DEFAULT_SEGMENTS, Envelope, EulerAngles,
-    FaceSide, FillMode, Geometry, MachiningAnchor, MachiningParams, Panel, PivotLocal, Placement,
+    FaceSide, FillMode, Geometry, MachiningAnchor, MachiningParams, Panel, PivotLocal, Placement, Sight,
 };
 use model::{Path, PathCorner, Project};
 use testkit::{cube_mesh, millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
@@ -2128,6 +2128,41 @@ fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
 }
 
 #[test]
+fn a_part_switched_off_measures_the_void_behind_it_under_a_still_pointer() {
+    // X73: hiding a part changes the space without moving the pointer, so the atom drops the cell it
+    // held and measures the void the eye now reads.
+    let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+    let product = project
+        .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+        .expect("a product");
+    let nominal = model::PanelNominalSize::new(millimetres(18), millimetres(560)).expect("a sheet size");
+    let at =
+        Placement::IDENTITY.with_translation(millimetres(291), millimetres(0), millimetres(0)).expect("a placement");
+    let sheet = project.add_panel(product, "Sheet", nominal, None, millimetres(720), at).expect("a sheet");
+
+    let mut editor = Editor::new();
+    editor.arm_void();
+    let point = geom::DVec3::new(100.0, 280.0, 360.0);
+    assert!(editor.void_measure(&project, point));
+    assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
+
+    editor.set_hidden(sheet, true);
+    assert!(editor.void_measure(&project, point), "the still pointer re-measures the new void");
+    assert_eq!(
+        editor.void().size(),
+        Some([millimetres(600), millimetres(560), millimetres(720)]),
+        "the hidden sheet is no wall of the cell"
+    );
+
+    editor.set_hidden(sheet, false);
+    assert!(editor.void_measure(&project, point), "and showing it again restores the reading");
+    assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
+}
+
+#[test]
 fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     // The atom is measured once and every consumer reads the same cell: the fill plan behind both
     // builds and the values a surface prints come from one answer, never a second probe (ADR 0118).
@@ -2154,7 +2189,12 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     // The fill plans its part from the cell the atom holds, and the plan names the same void.
     for (fill, mode) in [(model::Fill::WidthAndDepth, FillMode::Fit), (model::Fill::HeightAndDepth, FillMode::Shape)] {
         let plan = project
-            .fill_plan_in(&niche, product, model::FillRequest::new(point, fill, mode, millimetres(18), None))
+            .fill_plan_in(
+                &niche,
+                product,
+                model::FillRequest::new(point, fill, mode, millimetres(18), None),
+                editor.flags().sight(),
+            )
             .expect("a part fills the measured cell");
         assert_eq!(plan.niche, niche, "the plan is built from the atom's cell, not a second measurement");
     }
@@ -2164,6 +2204,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         .fill_plan(
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            editor.flags().sight(),
         )
         .expect("the direct query plans the same part");
     let from_atom = project
@@ -2171,6 +2212,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
             &niche,
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            editor.flags().sight(),
         )
         .expect("the atom plans the same part");
     assert_eq!(direct, from_atom, "one cell, one plan");
@@ -2196,6 +2238,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
             &fill_niche,
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            Sight::none(),
         )
         .expect("the fill plans from the cell its own pointer measured");
     assert_eq!(plan.niche, fill_niche, "the fill's ghost and the report row read one value");

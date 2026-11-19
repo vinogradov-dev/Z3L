@@ -22,6 +22,7 @@ mod panel_cmds;
 mod product_cmds;
 mod property_cmds;
 mod query;
+mod sight;
 mod surface;
 mod wire;
 
@@ -29,6 +30,7 @@ pub use error::ProjectError;
 pub use fill::{FillMode, FillPlan, FillRefusal, FillRequest, free_axis};
 pub use move_query::{Capture, MoveAxis, MoveLimit, MoveRule, Resting, SnapEnd, SnapSettings, SnapSurface};
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
+pub use sight::Sight;
 pub use surface::SurfaceKind;
 pub(crate) use wire::ProjectWire;
 

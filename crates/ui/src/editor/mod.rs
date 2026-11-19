@@ -81,6 +81,11 @@ pub struct Editor {
     void: crate::void::Void,
     /// Whether the niche tool itself owns the pointer, rather than a fill that consumes its value.
     void_armed: bool,
+    /// The visibility revision the measured niche was taken at, so a stale cell is dropped.
+    ///
+    /// Switching a part off changes the void without moving the pointer, so a hand that holds still
+    /// still needs a new cell (X73).
+    void_revision: u64,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
     /// The transform mode a menu entry asked for, until the window takes it.

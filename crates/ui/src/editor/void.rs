@@ -71,6 +71,14 @@ impl Editor {
         if !self.void_armed && self.fill.is_none() {
             return false;
         }
-        self.void.measure(project, point)
+        // A part switched off changes the void without moving the pointer, so the cell a still hand
+        // holds is dropped: the atom measures the space the eye now reads (X73).
+        let mut changed = false;
+        let revision = self.flags.visibility_revision();
+        if self.void_revision != revision {
+            self.void_revision = revision;
+            changed = self.void.clear();
+        }
+        changed | self.void.measure(project, point, self.flags.sight())
     }
 }

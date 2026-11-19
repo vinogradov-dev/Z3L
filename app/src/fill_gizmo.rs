@@ -30,7 +30,9 @@
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
-use model::{EdgeBevel, Fill, FillMode, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, Placement, Project};
+use model::{
+    EdgeBevel, Fill, FillMode, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, Placement, Project, Sight,
+};
 use scene::Camera;
 use ui::theme;
 use units::Length;
@@ -151,6 +153,7 @@ impl FillGizmo {
         mode: FillMode,
         thickness: Length,
         free: Option<f64>,
+        sight: Sight<'_>,
     ) -> bool {
         if self.measured.as_ref().is_some_and(|key| {
             key.niche == *niche
@@ -163,7 +166,7 @@ impl FillGizmo {
             return false;
         }
         self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, thickness, free });
-        match plan_at(project, product, point, niche, fill, mode, thickness, free) {
+        match plan_at(project, product, point, niche, fill, mode, thickness, free, sight) {
             Ok(ghost) => {
                 self.ghost = Some(ghost);
                 self.refusal = None;
@@ -273,12 +276,13 @@ pub(crate) fn plan(
     point: DVec3,
     fill: Fill,
     thickness: Length,
+    sight: Sight<'_>,
 ) -> Result<FillGhost, String> {
-    let niche = project.niche(point).map_err(|refusal| match refusal {
+    let niche = project.niche(point, sight).map_err(|refusal| match refusal {
         model::NicheRefusal::Outside => refusal_sentence(FillRefusal::Outside),
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
     })?;
-    plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None)
+    plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None, sight)
 }
 
 /// Plans the part a click would create in `niche` and answers the wireframe the maker sees.
@@ -297,9 +301,11 @@ pub(crate) fn plan_at(
     mode: FillMode,
     thickness: Length,
     free: Option<f64>,
+    sight: Sight<'_>,
 ) -> Result<FillGhost, String> {
     let request = model::FillRequest::new(point, fill, mode, thickness, free);
-    let plan = project.fill_plan_in(niche, product, request).map_err(refusal_sentence)?;
+    // The plan stops the part at a hidden body's faces, so the ghost is the part the click creates.
+    let plan = project.fill_plan_in(niche, product, request, sight).map_err(refusal_sentence)?;
     let parent_world = project.world_placement(product).ok_or_else(|| "The open product has no frame.".to_owned())?;
     let world_placement = Placement::compose(parent_world, plan.placement)
         .map_err(|_| "The part cannot be placed in the open product.".to_owned())?;
@@ -409,7 +415,7 @@ mod tests {
 
     /// The cell the pointer at `point` names, as the atom would answer it.
     fn niche_at(project: &Project, point: DVec3) -> Niche {
-        project.niche(point).expect("the point names a void")
+        project.niche(point, Sight::none()).expect("the point names a void")
     }
 
     /// Whether every corner of the ghost lies inside the void it was measured against.
@@ -476,8 +482,15 @@ mod tests {
     #[test]
     fn a_shelf_takes_the_void_width_and_depth_and_the_pointer_height() {
         let (project, product) = piece();
-        let ghost = plan(&project, product, DVec3::new(300.0, 280.0, 351.4), Fill::WidthAndDepth, millimetres(18))
-            .expect("a shelf fills the void");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(300.0, 280.0, 351.4),
+            Fill::WidthAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("a shelf fills the void");
         assert_eq!(ghost.nominal_size.length(), millimetres(600));
         assert_eq!(ghost.nominal_size.width(), millimetres(560));
         assert_eq!(ghost.placement.translation(), DVec3::new(0.0, 0.0, 351.0), "the height moves in whole mm");
@@ -498,8 +511,15 @@ mod tests {
     #[test]
     fn a_post_stands_on_the_voids_floor_and_spans_its_height_and_depth() {
         let (project, product) = piece();
-        let ghost = plan(&project, product, DVec3::new(250.6, 280.0, 360.0), Fill::HeightAndDepth, millimetres(18))
-            .expect("a post fills the void");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(250.6, 280.0, 360.0),
+            Fill::HeightAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("a post fills the void");
         assert_eq!(ghost.nominal_size.length(), millimetres(720), "the void height is the post's length");
         assert_eq!(ghost.nominal_size.width(), millimetres(560), "and the void depth its width");
         assert_eq!(ghost.size_mm, DVec3::new(720.0, 560.0, 18.0));
@@ -529,9 +549,15 @@ mod tests {
         // The pointer's plane is the face the post grows away from, so the board spans one thickness
         // to its +X side; a sign slip there would leave the board hanging through a wall.
         for pointer in [0.0, 600.0] {
-            let ghost =
-                plan(&project, product, DVec3::new(pointer, 280.0, 360.0), Fill::HeightAndDepth, millimetres(18))
-                    .expect("a post fills the void");
+            let ghost = plan(
+                &project,
+                product,
+                DVec3::new(pointer, 280.0, 360.0),
+                Fill::HeightAndDepth,
+                millimetres(18),
+                Sight::none(),
+            )
+            .expect("a post fills the void");
             let xs: Vec<f64> = ghost.world.iter().chain(ghost.top.iter()).map(|corner| corner.x).collect();
             let low = xs.iter().copied().fold(f64::INFINITY, f64::min);
             let high = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -553,6 +579,7 @@ mod tests {
             FillMode::Shape,
             millimetres(18),
             None,
+            Sight::none(),
         )
         .expect("a shelf fills the splayed void");
         let outline = ghost.outline.contour().expect("the shelf takes the measured section");
@@ -581,8 +608,15 @@ mod tests {
         // The posts narrow the void towards the back, so a board at x = 150..168 cannot be 560 mm
         // deep: the wall reaches x = 100 + 0.1786 y, and the board stops where the wall is.
         let (project, product) = splayed_piece();
-        let ghost = plan(&project, product, DVec3::new(150.0, 200.0, 360.0), Fill::HeightAndDepth, millimetres(18))
-            .expect("a post stands against the splayed wall");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(150.0, 200.0, 360.0),
+            Fill::HeightAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("a post stands against the splayed wall");
         assert!(ghost.outline.contour().is_none(), "the slab's depth leaves an honest rectangle");
         assert_eq!(ghost.nominal_size.length(), millimetres(720), "the void's height is the post's length");
         let depth = ghost.nominal_size.width().millimetres_f64();
@@ -595,8 +629,15 @@ mod tests {
     fn a_shelf_under_a_leaned_ceiling_keeps_its_whole_board_in_the_void() {
         let (mut project, product) = piece();
         leaned_ceiling(&mut project, product);
-        let ghost = plan(&project, product, DVec3::new(300.0, 540.0, 590.0), Fill::WidthAndDepth, millimetres(18))
-            .expect("a shelf fits under the leaned ceiling");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(300.0, 540.0, 590.0),
+            Fill::WidthAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("a shelf fits under the leaned ceiling");
         assert!(ghost.outline.contour().is_none(), "the ceiling cuts the depth, not the corners");
         assert_eq!(ghost.placement.translation().z, 590.0);
         assert!(
@@ -610,8 +651,9 @@ mod tests {
     #[test]
     fn a_cursor_on_the_envelope_face_still_measures_the_void() {
         let (project, product) = piece();
-        let ghost = plan(&project, product, DVec3::new(300.0, 0.0, 360.0), Fill::WidthAndDepth, millimetres(18))
-            .expect("the near face is inside the void");
+        let ghost =
+            plan(&project, product, DVec3::new(300.0, 0.0, 360.0), Fill::WidthAndDepth, millimetres(18), Sight::none())
+                .expect("the near face is inside the void");
         assert_eq!(ghost.nominal_size.length(), millimetres(600));
         assert!(ghost.outline.contour().is_none());
     }
@@ -620,8 +662,15 @@ mod tests {
     fn a_shelf_splits_the_void_and_the_ghost_fits_one_half() {
         let (mut project, product) = piece();
         shelf_slot(&mut project, product, (0, 0, 350));
-        let ghost = plan(&project, product, DVec3::new(300.0, 280.0, 600.0), Fill::WidthAndDepth, millimetres(18))
-            .expect("the upper niche takes a shelf");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(300.0, 280.0, 600.0),
+            Fill::WidthAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("the upper niche takes a shelf");
         assert_eq!(ghost.placement.translation(), DVec3::new(0.0, 0.0, 600.0));
         assert_eq!(ghost.niche.size.z, 352.0, "the upper void starts on the shelf's top face");
     }
@@ -632,8 +681,15 @@ mod tests {
         shelf_slot(&mut project, product, (0, 0, 350));
         // A cursor at the very top of the upper void would put the shelf through the roof; it is
         // clamped so the whole thickness stays inside.
-        let ghost = plan(&project, product, DVec3::new(300.0, 280.0, 720.0), Fill::WidthAndDepth, millimetres(18))
-            .expect("a shelf");
+        let ghost = plan(
+            &project,
+            product,
+            DVec3::new(300.0, 280.0, 720.0),
+            Fill::WidthAndDepth,
+            millimetres(18),
+            Sight::none(),
+        )
+        .expect("a shelf");
         assert_eq!(ghost.placement.translation().z, 720.0 - 18.0);
     }
 
@@ -642,16 +698,18 @@ mod tests {
         // The slot between the void's floor and the shelf is 350 mm; make it a sliver instead.
         let (mut project, product) = piece();
         shelf_slot(&mut project, product, (0, 0, 4));
-        let refusal = plan(&project, product, DVec3::new(300.0, 280.0, 1.0), Fill::WidthAndDepth, millimetres(18))
-            .expect_err("no shelf fits a 4 mm gap");
+        let refusal =
+            plan(&project, product, DVec3::new(300.0, 280.0, 1.0), Fill::WidthAndDepth, millimetres(18), Sight::none())
+                .expect_err("no shelf fits a 4 mm gap");
         assert!(refusal.contains("thinner"), "{refusal}");
     }
 
     #[test]
     fn a_point_outside_the_open_product_is_refused() {
         let (project, product) = piece();
-        let refusal = plan(&project, product, DVec3::new(-500.0, 0.0, 0.0), Fill::WidthAndDepth, millimetres(18))
-            .expect_err("no void");
+        let refusal =
+            plan(&project, product, DVec3::new(-500.0, 0.0, 0.0), Fill::WidthAndDepth, millimetres(18), Sight::none())
+                .expect_err("no void");
         assert!(refusal.contains("empty space"), "{refusal}");
     }
 
@@ -668,7 +726,8 @@ mod tests {
             Fill::WidthAndDepth,
             FillMode::Fit,
             millimetres(18),
-            None
+            None,
+            Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);
         for size in ["600", "560", "18"] {
@@ -691,7 +750,8 @@ mod tests {
             Fill::WidthAndDepth,
             FillMode::Shape,
             millimetres(18),
-            None
+            None,
+            Sight::none()
         ));
         let ghost = gizmo.ghost().expect("the leaned void takes a ghost");
         assert_eq!(ghost.bevels.len(), 1, "the wall's bevel travels with the ghost: {:?}", ghost.bevels);
@@ -726,7 +786,8 @@ mod tests {
             Fill::WidthAndDepth,
             FillMode::Shape,
             millimetres(18),
-            None
+            None,
+            Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);
         for size in ["400", "560", "18"] {

@@ -22,11 +22,14 @@
 //!
 //! Nothing here is stored: the plan is a query, like the niche it starts from.
 
+use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI};
 
 use geom::{DQuat, DVec2, DVec3};
 use units::{Degrees, Length};
 
+use super::niche::{signed_area, surface_corners};
+use super::surface::SurfaceBox;
 use crate::*;
 
 /// How far a wall may lean out of the board's own plane before its end face is not an end face.
@@ -164,12 +167,12 @@ impl Project {
     /// under the pointer picks it in whole millimetres, `Some` when a typed distance or the hand
     /// fixed it (ADR 0103). The result is the whole plan, so the caller never measures the void a
     /// second time.
-    pub fn fill_plan(&self, product: Id, request: FillRequest) -> Result<FillPlan, FillRefusal> {
-        let niche = self.niche(request.point).map_err(|refusal| match refusal {
+    pub fn fill_plan(&self, product: Id, request: FillRequest, sight: Sight) -> Result<FillPlan, FillRefusal> {
+        let niche = self.niche(request.point, sight).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
             NicheRefusal::Unrepresentable => FillRefusal::Unrepresentable,
         })?;
-        self.fill_plan_in(&niche, product, request)
+        self.fill_plan_in(&niche, product, request, sight)
     }
 
     /// Answers the part one click at `point` would create, in a niche already measured.
@@ -177,7 +180,13 @@ impl Project {
     /// This is the one plan behind [`Project::fill_plan`]: a caller that holds a [`Niche`] — the
     /// niche atom, which measures the void once for every tool that consumes it (ADR 0118) — passes
     /// it here, so no surface probes the document a second time for the same answer.
-    pub fn fill_plan_in(&self, niche: &Niche, product: Id, request: FillRequest) -> Result<FillPlan, FillRefusal> {
+    pub fn fill_plan_in(
+        &self,
+        niche: &Niche,
+        product: Id,
+        request: FillRequest,
+        sight: Sight,
+    ) -> Result<FillPlan, FillRefusal> {
         let FillRequest { point, fill, mode, thickness, free } = request;
         if niche.product != product {
             return Err(FillRefusal::OtherProduct);
@@ -194,7 +203,10 @@ impl Project {
         {
             return Err(FillRefusal::TooSmall);
         }
-        let (part, placement) = board(niche, local, gap, mode, free, fill, thickness)?;
+        // A part the sight switched off is not a wall of the void the eye measures, but it is there
+        // for the material: the plan stops the part at its faces (X73, ADR 0175).
+        let hidden = self.hidden_boxes(parent_world, sight);
+        let (part, placement) = board(FillInput { niche, local, gap, mode, free, fill, thickness, hidden: &hidden })?;
         // The free axis is the panel's own thickness axis, so the two ends are its base face and its
         // far face; which of them is lower depends on the stance (ADR 0105).
         let axis = free_axis(fill);
@@ -305,21 +317,30 @@ fn stance(fill: Fill) -> Stance {
     }
 }
 
-/// The board a click would create in `fill`'s stance: the part and its placement.
+/// One fill plan's inputs: the measurement, the tool's choice and the parts the sight switched off.
 ///
-/// `value` is the free-axis position, which is the slab's low end in the product frame; the board
-/// occupies one thickness from there. [`FillMode::Fit`] reads the section the slab takes at both
-/// ends, so it fits whichever way the walls lean; [`FillMode::Shape`] reads the wide face and
-/// bevels every edge whose wall tilts.
-fn board(
-    niche: &Niche,
+/// The eight travel together because they are one reading of one gesture (AGENTS §1.5): the cell the
+/// niche atom measured, the point inside it, the material's gap, the mode, the free-axis place, the
+/// class's axis pair, the thickness and the boxes a hidden body stands in the way with.
+struct FillInput<'a> {
+    niche: &'a Niche,
     local: DVec3,
     gap: f64,
     mode: FillMode,
     free: Option<f64>,
     fill: Fill,
     thickness: Length,
-) -> Result<(Part, Placement), FillRefusal> {
+    hidden: &'a [HiddenBox],
+}
+
+/// The board a click would create in `fill`'s stance: the part and its placement.
+///
+/// `value` is the free-axis position, which is the slab's low end in the product frame; the board
+/// occupies one thickness from there. [`FillMode::Fit`] reads the section the slab takes at both
+/// ends, so it fits whichever way the walls lean; [`FillMode::Shape`] reads the wide face and
+/// bevels every edge whose wall tilts.
+fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
+    let FillInput { niche, local, gap, mode, free, fill, thickness, hidden } = input;
     let stance = stance(fill);
     let low = niche.local_min[stance.t];
     let high = niche.local_max()[stance.t] - gap;
@@ -329,16 +350,22 @@ fn board(
     // A typed number is whole millimetres already and the hand's place is not: one rule measures
     // both, so the plan never stores a fraction the document cannot hold (ADR 0103).
     let value = follow(free.unwrap_or(local[stance.t]), low, high);
+    // A hidden body is a boundary of the part and not a slice out of it: the footprint is cut back at
+    // the body's face in both modes, so the part stops where the material starts (X73, ADR 0175).
+    let trim = |polygon: Vec<DVec2>, stance: &Stance| -> Result<Vec<DVec2>, FillRefusal> {
+        trim_footprint(polygon, hidden, stance, local, (value, value + gap))
+    };
     let (stance, polygon, angles) = match mode {
         FillMode::Fit => {
             let footprint =
                 niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-            (stance, footprint, Vec::new())
+            (stance, trim(footprint, &stance)?, Vec::new())
         }
         FillMode::Shape => match reference_face(niche, value, gap, stance) {
             Ok(stance) => {
                 let face = stance.face(value, gap);
                 let section = niche.cut(stance.t, (face, face), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
+                let section = trim(section, &stance)?;
                 let angles = wall_bevels(niche, &section, face, &stance);
                 (stance, section, angles)
             }
@@ -350,7 +377,7 @@ fn board(
             Err(FillRefusal::WallsDisagree | FillRefusal::Wedge) => {
                 let section =
                     niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-                (stance, section, Vec::new())
+                (stance, trim(section, &stance)?, Vec::new())
             }
             Err(refusal) => return Err(refusal),
         },
@@ -853,6 +880,185 @@ fn document_length(millimetres: f64) -> Option<Length> {
     Some(Length::from_micrometres(micrometres as i64))
 }
 
+/// How near a face counts as touching, in millimetres: the document's own micrometre.
+///
+/// The measured point rests a micrometre off the face it was measured from, so a body whose face
+/// stands there is contact and not a cut, exactly as a pair of boxes that share a face shares no
+/// volume (ADR 0162).
+const TRIM_TOLERANCE: f64 = 1.0e-3;
+
+/// A hidden body's box in the open product's frame, millimetres.
+#[derive(Clone, Copy, Debug)]
+struct HiddenBox {
+    min: DVec3,
+    max: DVec3,
+}
+
+impl Project {
+    /// The parts the sight switched off, as boxes in the open product's frame.
+    ///
+    /// A hidden part is not a wall of the void the eye measures, but it is still material, so the fill
+    /// stops at its faces (X73, ADR 0175). The box is the body's own, taken through the product's
+    /// placement: a turned body is read as the box around it in that frame, which trims a little more
+    /// than it must and never less.
+    fn hidden_boxes(&self, world: Placement, sight: Sight) -> Vec<HiddenBox> {
+        let Some(inverse) = world.inverse().ok() else {
+            return Vec::new();
+        };
+        self.hidden_body_surfaces(sight)
+            .into_iter()
+            .filter_map(|surface| {
+                let mut min = DVec3::splat(f64::INFINITY);
+                let mut max = DVec3::splat(f64::NEG_INFINITY);
+                for corner in surface_corners(surface) {
+                    let local = inverse.transform_point(corner);
+                    if !local.is_finite() {
+                        return None;
+                    }
+                    min = min.min(local);
+                    max = max.max(local);
+                }
+                (0..3).all(|axis| min[axis] < max[axis]).then_some(HiddenBox { min, max })
+            })
+            .collect()
+    }
+
+    /// The body surfaces the sight switched off, in world millimetres.
+    ///
+    /// The walk is the niche's own, so the parts a fill trims against are the parts a probe passes:
+    /// one reader of the tree cannot name a different set from the other.
+    fn hidden_body_surfaces(&self, sight: Sight) -> Vec<SurfaceBox> {
+        if sight.hidden().is_none_or(HashSet::is_empty) {
+            return Vec::new();
+        }
+        let mut surfaces = Vec::new();
+        self.body_surfaces(&self.root, &mut surfaces, 1, Sight::none());
+        surfaces.retain(|surface| sight.hides(self, surface.id));
+        surfaces
+    }
+}
+
+/// The footprint cut back at every hidden body's face on the board's own plane.
+///
+/// A part the sight switched off is invisible to the eye and to the pointer, never to the material:
+/// the ray that measured the void crossed it, so a board drawn across the whole cell would land
+/// inside it. Every hidden body that reaches the board's slab cuts the footprint at one of its own
+/// faces, and the cut keeps a side of the body rather than a slice of it: a door at the front trims
+/// the depth, a post at the side trims the width. The side the measured point stands on wins, so the
+/// part takes the space the maker pointed at; where the point lies inside the body's own footprint —
+/// a hidden shelf under the hand, a facade the ray crossed on its way in — the cut that keeps the
+/// most of the void takes it, which leaves that body's larger side rather than an empty plan. A body
+/// that leaves nothing is `TooSmall`: the void has no room left to fill.
+fn trim_footprint(
+    polygon: Vec<DVec2>,
+    hidden: &[HiddenBox],
+    stance: &Stance,
+    at: DVec3,
+    slab: (f64, f64),
+) -> Result<Vec<DVec2>, FillRefusal> {
+    let mut polygon = polygon;
+    for body in hidden {
+        // A body that only reaches the slab's own faces is contact, not a cut.
+        if body.max[stance.t] <= slab.0 + TRIM_TOLERANCE || body.min[stance.t] >= slab.1 - TRIM_TOLERANCE {
+            continue;
+        }
+        let (min, max) =
+            (DVec2::new(body.min[stance.u], body.min[stance.v]), DVec2::new(body.max[stance.u], body.max[stance.v]));
+        // A body that stands clear of what is left of the void cuts nothing.
+        if !polygon_hits_rect(&polygon, min, max) {
+            continue;
+        }
+        let mut best: Option<((bool, f64), Vec<DVec2>)> = None;
+        for axis in [stance.u, stance.v] {
+            // The two faces of the body on this axis, each keeping the side it bounds.
+            for (face, side) in [(body.min[axis], -1.0), (body.max[axis], 1.0)] {
+                let mut normal = DVec2::ZERO;
+                normal[axis] = side;
+                let Some(kept) = clip_half_plane(&polygon, normal, side * face) else {
+                    continue;
+                };
+                let stands = side * (at[axis] - face) > TRIM_TOLERANCE;
+                let score = (stands, signed_area(&kept));
+                if best.as_ref().is_none_or(|(seen, _)| score > *seen) {
+                    best = Some((score, kept));
+                }
+            }
+        }
+        match best {
+            Some((_, kept)) => polygon = kept,
+            None => return Err(FillRefusal::TooSmall),
+        }
+    }
+    Ok(polygon)
+}
+
+/// Whether a convex polygon and an axis-aligned rectangle share any area.
+///
+/// The separating-axis test over the rectangle's two axes and the polygon's edge normals: a pair that
+/// stands apart on one axis touches at most, which is contact and therefore no cut (ADR 0162).
+fn polygon_hits_rect(polygon: &[DVec2], min: DVec2, max: DVec2) -> bool {
+    let corners = [min, DVec2::new(max.x, min.y), max, DVec2::new(min.x, max.y)];
+    let mut axes = vec![DVec2::X, DVec2::Y];
+    for index in 0..polygon.len() {
+        let (Some(start), Some(end)) = (polygon.get(index), polygon.get((index + 1) % polygon.len())) else {
+            return false;
+        };
+        if let Some(unit) = (*end - *start).try_normalize() {
+            axes.push(DVec2::new(-unit.y, unit.x));
+        }
+    }
+    axes.into_iter().all(|axis| {
+        let (low_polygon, high_polygon) = projection_span(polygon, axis);
+        let (low_rect, high_rect) = projection_span(&corners, axis);
+        high_polygon > low_rect + TRIM_TOLERANCE && high_rect > low_polygon + TRIM_TOLERANCE
+    })
+}
+
+/// How far a set of points reaches along one axis.
+fn projection_span(points: &[DVec2], axis: DVec2) -> (f64, f64) {
+    points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), point| {
+        let reach = axis.dot(*point);
+        (low.min(reach), high.max(reach))
+    })
+}
+
+/// The footprint cut by one half-plane `normal · point >= offset`, or `None` when it keeps no area.
+///
+/// The footprint is convex and counter-clockwise, and a half-plane of a convex cell keeps it both:
+/// the clip walks the edges, keeps every corner on the free side and adds the point where an edge
+/// crosses the line.
+fn clip_half_plane(polygon: &[DVec2], normal: DVec2, offset: f64) -> Option<Vec<DVec2>> {
+    let reach = |point: DVec2| normal.dot(point) - offset;
+    let mut kept: Vec<DVec2> = Vec::with_capacity(polygon.len().saturating_add(1));
+    for index in 0..polygon.len() {
+        let start = *polygon.get(index)?;
+        let end = *polygon.get((index + 1) % polygon.len())?;
+        let (start_in, end_in) = (reach(start), reach(end));
+        if start_in >= -TRIM_TOLERANCE {
+            push_corner(&mut kept, start);
+        }
+        let crossing = (start_in > TRIM_TOLERANCE && end_in < -TRIM_TOLERANCE)
+            || (start_in < -TRIM_TOLERANCE && end_in > TRIM_TOLERANCE);
+        if crossing {
+            let step = start_in - end_in;
+            if step.abs() > f64::EPSILON {
+                let corner = start + (end - start) * (start_in / step);
+                if corner.is_finite() {
+                    push_corner(&mut kept, corner);
+                }
+            }
+        }
+    }
+    (kept.len() >= 3).then_some(kept)
+}
+
+/// Pushes a corner unless the polygon already holds one at the same place.
+fn push_corner(points: &mut Vec<DVec2>, corner: DVec2) {
+    if points.iter().all(|seen| (*seen - corner).length() > TRIM_TOLERANCE) {
+        points.push(corner);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,7 +1114,11 @@ mod tests {
         mode: FillMode,
         thickness: Length,
     ) -> Result<FillPlan, FillRefusal> {
-        project.fill_plan(product, FillRequest::new(centre(project, product), fill, mode, thickness, None))
+        project.fill_plan(
+            product,
+            FillRequest::new(centre(project, product), fill, mode, thickness, None),
+            Sight::none(),
+        )
     }
 
     /// A board standing as a wall across the case's back, its inner face through `y = through` at
@@ -916,7 +1126,7 @@ mod tests {
     ///
     /// The free space is in front of it. A positive lean brings the face forward as it rises, so the
     /// void narrows towards the top; a negative one widens it.
-    fn leaned_wall(project: &mut Project, product: Id, through: f64, degrees: f64) {
+    fn leaned_wall(project: &mut Project, product: Id, through: f64, degrees: f64) -> Id {
         let lean = degrees.to_radians();
         let wall = DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2);
         let rotation = DQuat::from_rotation_x(lean) * wall;
@@ -925,7 +1135,7 @@ mod tests {
         // is the case's height by its width; the panel is longer than the case so its face still
         // covers the whole void once it leans.
         let nominal = PanelNominalSize::new(millimetres(1600), millimetres(600)).expect("a wall size");
-        project.add_panel(product, "Wall", nominal, None, millimetres(18), placement).expect("add a wall");
+        project.add_panel(product, "Wall", nominal, None, millimetres(18), placement).expect("add a wall")
     }
 
     /// A board leaning 10 degrees over the case, its underside the void's ceiling.
@@ -1222,12 +1432,14 @@ mod tests {
                 thickness,
                 None,
             ),
+            Sight::none(),
         );
         assert_eq!(outside, Err(FillRefusal::Outside));
         let root = project.root().id();
         let wrong = project.fill_plan(
             root,
             FillRequest::new(centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, thickness, None),
+            Sight::none(),
         );
         assert_eq!(wrong, Err(FillRefusal::OtherProduct));
         let thin = project.fill_plan(
@@ -1239,6 +1451,7 @@ mod tests {
                 Length::from_micrometres(1),
                 None,
             ),
+            Sight::none(),
         );
         assert!(thin.is_ok(), "a micrometre board still leaves a plan");
     }
@@ -1302,6 +1515,126 @@ mod tests {
         assert_eq!(free_axis(Fill::WidthAndDepth), 2);
         assert_eq!(free_axis(Fill::HeightAndDepth), 0);
     }
+    /// A post standing across the whole depth of the case, its thickness from `x` to `x + 18`.
+    fn standing_post(project: &mut Project, product: Id, x: f64) -> Id {
+        let nominal = PanelNominalSize::new(millimetres(720), millimetres(560)).expect("a post size");
+        let rotation = DQuat::from_rotation_y(FRAC_PI_2);
+        let placement = Placement::new(DVec3::new(x, 0.0, 720.0), rotation).expect("a post placement");
+        project.add_panel(product, "Post", nominal, None, millimetres(18), placement).expect("add a post")
+    }
+
+    /// The sight that switches `node` off, owned by the test so the borrow outlives the query.
+    fn hiding(node: Id) -> HashSet<Id> {
+        [node].into_iter().collect()
+    }
+
+    #[test]
+    fn a_hidden_facade_bounds_the_part_and_not_the_void() {
+        let (mut project, product) = empty_product(600, 560, 720);
+        let facade = leaned_wall(&mut project, product, 0.0, 0.0);
+        let point = DVec3::new(300.0, 300.0, 360.0);
+        let request = FillRequest::new(point, Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None);
+
+        let visible = project.fill_plan(product, request, Sight::none()).expect("a shelf behind the facade");
+        let hidden = hiding(facade);
+        let through = project.fill_plan(product, request, Sight::of(&hidden)).expect("the case's own void");
+
+        assert!(
+            (through.niche.size.y - visible.niche.size.y - 18.0).abs() < 1.0e-3,
+            "the hidden facade is no wall of the void: {:?} against {:?}",
+            through.niche.size,
+            visible.niche.size
+        );
+        assert!(
+            (through.nominal_size.width().millimetres_f64() - visible.nominal_size.width().millimetres_f64()).abs()
+                < 1.0e-3,
+            "the part stops at the facade's inner face either way: {:?} against {:?}",
+            through.nominal_size,
+            visible.nominal_size
+        );
+        assert!(
+            (through.placement.translation() - visible.placement.translation()).length() < 1.0e-3,
+            "and lands in the same place"
+        );
+    }
+
+    /// A board lying across the whole case at `z`, `thickness` deep.
+    fn lying_board(project: &mut Project, product: Id, z: i64, thickness: i64) -> Id {
+        let nominal = PanelNominalSize::new(millimetres(600), millimetres(560)).expect("a board size");
+        let placement = Placement::IDENTITY
+            .with_translation(millimetres(0), millimetres(0), millimetres(z))
+            .expect("a board placement");
+        project.add_panel(product, "Board", nominal, None, millimetres(thickness), placement).expect("a board")
+    }
+
+    #[test]
+    fn a_part_goes_around_a_hidden_body_standing_inside_the_void() {
+        let (mut project, product) = empty_product(600, 560, 720);
+        let post = standing_post(&mut project, product, 291.0);
+        let thickness = millimetres(18);
+        let hidden = hiding(post);
+        let sight = Sight::of(&hidden);
+        let request =
+            |x: f64| FillRequest::new(DVec3::new(x, 300.0, 360.0), Fill::WidthAndDepth, FillMode::Fit, thickness, None);
+
+        // A point beside the post: the void is cut at the post's own face and the shelf takes what
+        // is left on that side of it.
+        let beside = project.fill_plan(product, request(100.0), sight).expect("the void beside the hidden post");
+        assert!(
+            (beside.nominal_size.length().millimetres_f64() - 291.0).abs() < 1.0e-3,
+            "the shelf stops at the post's near face: {:?}",
+            beside.nominal_size
+        );
+        assert!(
+            beside.corners.iter().all(|corner| corner.x <= 291.0 + 1.0e-3),
+            "and never crosses it: {:?}",
+            beside.corners
+        );
+
+        // A point the post itself stands over still plans a part: one rectangle cannot straddle the
+        // body, so the larger side of what is left wins and the part is never a slice of it.
+        let over = project.fill_plan(product, request(300.0), sight).expect("the larger side of the post");
+        assert!(
+            over.corners.iter().all(|corner| corner.x <= 291.0 + 1.0e-3 || corner.x >= 309.0 - 1.0e-3),
+            "the part is on one side of the post: {:?}",
+            over.corners
+        );
+
+        // Shown again, the post is a wall of the void and the same point is inside a niche.
+        let shown = project.fill_plan(product, request(300.0), Sight::none());
+        assert!(shown.is_ok(), "the post's own faces bound the void when it is shown: {shown:?}");
+    }
+
+    #[test]
+    fn a_hidden_body_that_spans_the_whole_void_leaves_nothing_to_fill() {
+        let (mut project, product) = empty_product(600, 560, 720);
+        let board = lying_board(&mut project, product, 350, 18);
+        let hidden = hiding(board);
+        let planned = project.fill_plan(
+            product,
+            FillRequest::new(
+                DVec3::new(300.0, 280.0, 360.0),
+                Fill::WidthAndDepth,
+                FillMode::Fit,
+                millimetres(18),
+                None,
+            ),
+            Sight::of(&hidden),
+        );
+        assert_eq!(planned, Err(FillRefusal::TooSmall), "the cut leaves no area at that height");
+        let shown = project.fill_plan(
+            product,
+            FillRequest::new(
+                DVec3::new(300.0, 280.0, 360.0),
+                Fill::WidthAndDepth,
+                FillMode::Fit,
+                millimetres(18),
+                None,
+            ),
+            Sight::none(),
+        );
+        assert!(shown.is_ok(), "and the board's own faces leave two niches when it is shown: {shown:?}");
+    }
 }
 
 #[cfg(test)]
@@ -1341,7 +1674,7 @@ mod turned {
         for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = project
-                    .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None))
+                    .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None), Sight::none())
                     .unwrap_or_else(|refusal| panic!("{fill:?}/{mode:?} refused: {refusal:?}"));
                 assert!(planned.corners.len() >= 3, "{fill:?}/{mode:?} has a footprint");
             }

@@ -20,7 +20,7 @@
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
-use model::{Id, Niche, Project};
+use model::{Id, Niche, Project, Sight};
 use scene::Camera;
 use ui::{Message, theme};
 use units::Length;
@@ -35,26 +35,32 @@ const LABEL_PADDING: egui::Vec2 = egui::vec2(6.0, 2.0);
 /// The one cursor rule both niche tools share: the ray enters the product's own envelope and stops at
 /// the first surface inside it (ADR 0109). A pointer outside the product, or a ray that misses the
 /// envelope, answers `None`.
-pub(crate) fn point_at(project: &Project, product: Id, camera: Camera, rect: Rect, pointer: Pos2) -> Option<DVec3> {
+pub(crate) fn point_at(
+    project: &Project,
+    product: Id,
+    camera: Camera,
+    rect: Rect,
+    pointer: Pos2,
+    sight: Sight<'_>,
+) -> Option<DVec3> {
     let ray = crate::gizmo_math::ray_to(pointer, rect, camera);
-    ui::pointer_point(project, product, ray)
+    ui::pointer_point(project, product, ray, sight)
 }
 
 /// What the pointer says about the cell's free axis, or `None` when it names no point at all.
 ///
-/// The one cursor rule becomes one ray here, and [`ui::free_place`] answers both halves of the
-/// reading: the place the point names and the hand's own place on the cell's axis, with the face
-/// that decides which of them the tool acts on (N23).
+/// The one cursor rule becomes one ray at the caller's end, and [`ui::free_place`] answers both
+/// halves of the reading: the place the point names and the hand's own place on the cell's axis,
+/// with the face that decides which of them the tool acts on (N23).
 pub(crate) fn free_at(
     project: &Project,
     product: Id,
     niche: &Niche,
     axis: usize,
-    camera: Camera,
-    rect: Rect,
-    pointer: Pos2,
+    ray: scene::Ray,
+    sight: Sight<'_>,
 ) -> Option<ui::FreePlace> {
-    ui::free_place(project, product, niche, axis, crate::gizmo_math::ray_to(pointer, rect, camera))
+    ui::free_place(project, product, niche, axis, ray, sight)
 }
 
 /// The niche tool's live overlay: nothing of its own, because the atom holds every number.
@@ -88,7 +94,8 @@ impl VoidGizmo {
         let (Some(pointer), Some(product)) = (pointer, product) else {
             return false;
         };
-        let Some(point) = point_at(project, product, camera, rect, pointer) else {
+        let sight = editor.flags().sight();
+        let Some(point) = point_at(project, product, camera, rect, pointer, sight) else {
             // The pointer is in the scene but outside the open product: the row says what to point
             // at rather than keeping the cell the hand has already left.
             return editor.void_clear();

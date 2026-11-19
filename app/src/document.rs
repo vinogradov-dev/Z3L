@@ -1521,7 +1521,8 @@ impl Document {
         rect: egui::Rect,
     ) -> Option<f64> {
         let camera = self.scene.camera;
-        let aim = void_gizmo::free_at(self.session.project(), product, niche, axis, camera, rect, pointer)?;
+        let ray = gizmo_math::ray_to(pointer, rect, camera);
+        let aim = void_gizmo::free_at(self.session.project(), product, niche, axis, ray, self.editor.flags().sight())?;
         let Some((face, offset)) = aim.face.filter(|_| aim.square) else {
             self.fill_carriage = None;
             return Some(aim.point);
@@ -1586,7 +1587,14 @@ impl Document {
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
         // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
         // vanishing, and the click creates what was drawn (N23).
-        let named = void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer);
+        let named = void_gizmo::point_at(
+            self.session.project(),
+            product,
+            self.scene.camera,
+            rect,
+            pointer,
+            self.editor.flags().sight(),
+        );
         // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
         // row and the part the click creates, so the pointer names one space in this frame.
         let measured = named.is_some_and(|point| self.editor.void_measure(self.session.project(), point));
@@ -1616,6 +1624,7 @@ impl Document {
                     arm.mode,
                     thickness,
                     free,
+                    self.editor.flags().sight(),
                 )
             }
             None => {
@@ -1699,6 +1708,7 @@ impl Document {
                     arm.mode,
                     thickness,
                     pinned,
+                    self.editor.flags().sight(),
                 );
             }
             ui.ctx().request_repaint();
@@ -3953,10 +3963,15 @@ fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<M
     let high_face = centre + direction * (high - centre.dot(direction));
     // A probe starting exactly on a face can meet that face; one micrometre outside it cannot.
     const INSET_MM: f64 = 1.0e-3;
-    let wall_low =
-        project.probe(low_face - direction * INSET_MM, -direction).map(|probe| low - INSET_MM - probe.distance_mm);
-    let wall_high =
-        project.probe(high_face + direction * INSET_MM, direction).map(|probe| high + INSET_MM + probe.distance_mm);
+    // The fields measure what the drag may take, so they read the material: a part switched off is
+    // still in the way of the piece and its fields measure the face that stops it (X73, ADR 0175).
+    let sight = model::Sight::none();
+    let wall_low = project
+        .probe(low_face - direction * INSET_MM, -direction, sight)
+        .map(|probe| low - INSET_MM - probe.distance_mm);
+    let wall_high = project
+        .probe(high_face + direction * INSET_MM, direction, sight)
+        .map(|probe| high + INSET_MM + probe.distance_mm);
     let distances = Distances::new(wall_low, wall_high, low, high)?;
     Some(MoveDistances {
         node,

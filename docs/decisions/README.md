@@ -180,6 +180,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0172](0172-a-crossing-rests-on-the-face-before-it-is-taken.md) | A crossing rests on the face before it is taken | Accepted; replaces 0167's step comparison with a geometric crossing and a cursor gate |
 | [0173](0173-a-cut-is-measured-from-where-the-piece-stands.md) | A cut is measured from where the piece stands | Accepted; completes 0171's axis walk, so a piece resting past a body is not pulled back across it |
 | [0174](0174-the-move-answers-places-and-the-jump-stays.md) | The move answers places, and the jump stays | Accepted; the reference record of the move at `21d94d2`, and the owner's call that the jump crosses material too |
+| [0175](0175-a-hidden-part-is-sight-not-material.md) | A hidden part is sight, not material: the tools pass it and the part stops at its faces | Accepted |
 
 ## Format
 

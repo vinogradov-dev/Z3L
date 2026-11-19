@@ -3473,6 +3473,88 @@ fn the_niche_is_a_tool_the_ribbon_arms_and_the_fill_reads() {
 }
 
 #[test]
+fn a_hidden_facade_lets_the_shelf_fill_measure_the_case_behind_it() {
+    // X73: the owner switched a frame's facades off, armed the shelf fill, and the ghost stuck in
+    // the phantom planes. A switched-off part is invisible to the eye and to the pointer, so the
+    // cell is the case's own void, and the part still stops at the facade's inner face.
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("a box");
+    let product = project
+        .add_product(project.root().id(), "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, model::Placement::IDENTITY)
+        .expect("a product");
+    // A wall stance: the part's length runs up the case, its width across it, its thickness along +Y.
+    let wall = geom::DQuat::from_rotation_z(-std::f64::consts::FRAC_PI_2)
+        * geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
+    let size = model::PanelNominalSize::new(mm(720), mm(600)).expect("a wall size");
+    let mut shell = |at: f64, name: &str| {
+        let placement = model::Placement::new(geom::DVec3::new(0.0, at, 0.0), wall).expect("a panel placement");
+        project.add_panel(product, name, size, None, mm(18), placement).expect("a panel")
+    };
+    let far_side = shell(0.0, "Far");
+    let near_side = shell(542.0, "Near");
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut harness = Harness::with_session("frame-hidden-facade-fill", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+
+    // The panel the camera looks at is the one a maker would switch off; the case's other side
+    // stays drawn, so the ray has a surface to rest on behind it.
+    let facade = {
+        let document = harness.app.tabs.active();
+        if document.camera().eye().y > 280.0 { near_side } else { far_side }
+    };
+    let pointer = {
+        let document = harness.app.tabs.active();
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        gizmo_math::screen_point(document.camera(), rect, geom::DVec3::new(300.0, 280.0, 360.0))
+            .expect("the case is on screen")
+    };
+
+    {
+        let document = harness.app.tabs.active_mut();
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+    }
+    harness.hover(pointer);
+    let revision = harness.revision();
+    let shown = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the fill plans a shelf");
+
+    harness.app.tabs.active_mut().editor.set_hidden(facade, true);
+    harness.hover(pointer);
+    let hidden = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the hidden facade plans a shelf");
+
+    assert!(
+        hidden.niche.size.y > shown.niche.size.y,
+        "the hidden facade is no wall of the void: {:?} against {:?}",
+        hidden.niche.size,
+        shown.niche.size
+    );
+    assert_eq!(
+        hidden.niche.size,
+        geom::DVec3::new(600.0, 542.0, 720.0),
+        "the cell is the case's own space between its two sides"
+    );
+    assert_eq!(hidden.nominal_size.length(), mm(600), "the shelf spans the case");
+    assert_eq!(
+        hidden.nominal_size.width(),
+        mm(524),
+        "and its depth stops at the facade's inner face: the facade is 18 thick and the case 542 deep"
+    );
+    assert!(
+        (hidden.placement.translation().y - 18.0).abs() < 1.0e-3,
+        "its near face rests on the far side's own face, never inside the facade: {:?}",
+        hidden.placement
+    );
+    assert_eq!(harness.revision(), revision, "the flag never reaches the document");
+}
+
+#[test]
 fn the_ruler_snaps_to_the_board_under_the_pointer() {
     // The probe is the ruler's point resolver (ADR 0103, 0118): a click lands on the face the
     // person points at, not on the work plane behind it and not on the reserved box around a part.

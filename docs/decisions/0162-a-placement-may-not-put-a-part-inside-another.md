@@ -67,7 +67,8 @@ analytically against the true faces (ADR 0106, ADR 0103) and is the safer guaran
 
 **Hidden is a matter of sight, not of material.** The guard reads the document: a part switched off in
 the tree is as much in the way as a visible one, because what a hidden part loses is its picture and
-its pointer, never its body (X73 makes the tools agree).
+its pointer, never its body (X73 makes the tools agree, and
+[0175](0175-a-hidden-part-is-sight-not-material.md) writes what agreeing means).
 
 ## Consequences
 
