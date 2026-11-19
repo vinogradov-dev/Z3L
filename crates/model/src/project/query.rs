@@ -133,17 +133,38 @@ impl Project {
     /// The root contributes its own placement, which is normally the identity. Returns `None` for
     /// an unknown id or a tree deeper than [`Project::MAX_ASSEMBLY_DEPTH`].
     pub fn world_placement(&self, id: Id) -> Option<Placement> {
-        fn walk(node: &Node, id: Id, parent: Placement, depth: u32) -> Option<Placement> {
+        self.world_placement_with(id, &[])
+    }
+
+    /// The world placement of a node when `overrides` replace the stored placements they name.
+    ///
+    /// A placement write is refused before it lands, and the refusal has to measure the box the node
+    /// *would* carry: this is that measurement (`Project::resting_conflict`). An override of an
+    /// ancestor composes with the overrides below it, so a batch that names a container and one of
+    /// its children is measured as the tree would hold them afterwards. An override naming the root is
+    /// ignored: the root's placement is the world frame, and no command writes it.
+    pub fn world_placement_with(&self, id: Id, overrides: &[(Id, Placement)]) -> Option<Placement> {
+        fn walk(
+            node: &Node,
+            id: Id,
+            parent: Placement,
+            overrides: &[(Id, Placement)],
+            depth: u32,
+        ) -> Option<Placement> {
             if depth > Project::MAX_ASSEMBLY_DEPTH {
                 return None;
             }
-            let world = Placement::compose(parent, node.placement()).ok()?;
+            let own = overrides
+                .iter()
+                .find(|(node_id, _)| *node_id == node.id())
+                .map_or_else(|| node.placement(), |(_, placement)| *placement);
+            let world = Placement::compose(parent, own).ok()?;
             if node.id() == id {
                 return Some(world);
             }
             let children = node.children()?;
             for child in children {
-                if let Some(found) = walk(child, id, world, depth.saturating_add(1)) {
+                if let Some(found) = walk(child, id, world, overrides, depth.saturating_add(1)) {
                     return Some(found);
                 }
             }
@@ -154,8 +175,15 @@ impl Project {
         if self.root.id() == id {
             return Some(root_world);
         }
+        let root_own = overrides
+            .iter()
+            .find(|(node_id, _)| *node_id == self.root.id())
+            .map_or_else(|| self.root.placement(), |(_, placement)| *placement);
+        if root_own != root_world {
+            return None;
+        }
         for child in self.root.children() {
-            if let Some(found) = walk(child, id, root_world, 1) {
+            if let Some(found) = walk(child, id, root_world, overrides, 1) {
                 return Some(found);
             }
         }

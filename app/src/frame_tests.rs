@@ -1068,27 +1068,30 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
 }
 
 #[test]
-fn the_free_move_crosses_a_neighbour_the_furniture_move_stops_at() {
-    // The Done of N22 in one sentence: the same handle and the same drag, twice. The free move keeps
-    // the pointer's own distance and passes the panel beside it; the furniture move stops flush
-    // against that panel, because contact is the document's rule and a body stops at a body
-    // (ADR 0102, ADR 0147). Each drag is one revision, so the two tools share the whole gesture.
+fn both_moves_stop_a_board_flush_against_its_neighbour() {
+    // The Done of N22 in one sentence, amended by X72: the same handle and the same drag, twice. The
+    // free move keeps the pointer's own distance and snaps to nothing, but it stops at the panel
+    // beside it like the furniture move, because contact is the document's rule and a body stops at a
+    // body (ADR 0102, ADR 0162). Each drag is one revision, so the two tools share the whole gesture.
     let (free_end, free_start, free_revision) = moved_divider(TransformMode::Move, "frame-free-move");
     assert!(
-        free_end > free_start,
-        "the free move passes the neighbour's low face at {free_start}: it ends at {free_end}"
+        (free_end - free_start).abs() < 1.0e-6,
+        "the free move stops the board flush against the neighbour at {free_start}: it ends at {free_end}"
     );
     let (stopped_end, neighbour_start, stopped_revision) =
         moved_divider(TransformMode::Furniture, "frame-furniture-move");
     assert!(
         (stopped_end - neighbour_start).abs() < 1.0e-6,
-        "the furniture move stops the board flush against the neighbour at {neighbour_start}: it ends at {stopped_end}"
+        "and so does the furniture move, at the same face {neighbour_start}: it ends at {stopped_end}"
     );
     assert_eq!(free_revision, stopped_revision, "both drags cost one undo entry");
 }
 
-/// Moves the divider of [`divider_beside_a_panel`] 150 points along world X and answers the face it
+/// Moves the divider of [`divider_beside_a_panel`] 400 points along world X and answers the face it
 /// ends on, the neighbour's low face and how many revisions the gesture cost.
+///
+/// 400 points is further than the 50 mm the board has left, so a drag that were not cut by contact
+/// would end inside the neighbour: the number is what makes the stop visible.
 ///
 /// The two tools are asked the same question with their own gesture: the free move takes a handle and
 /// drags it, the furniture move takes the board by its body and carries it (N24).
@@ -1111,10 +1114,10 @@ fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
         TransformMode::Furniture => {
             // Any part of the body takes it; the travel names the axis it may move along.
             let body = harness.node_point(divider);
-            harness.carry(body, direction * 150.0);
+            harness.carry(body, direction * 400.0);
         }
         _ => {
-            harness.drag(handle, direction * 150.0, egui::PointerButton::Primary);
+            harness.drag(handle, direction * 400.0, egui::PointerButton::Primary);
         }
     }
     let project = harness.app.tabs.active().session.project();

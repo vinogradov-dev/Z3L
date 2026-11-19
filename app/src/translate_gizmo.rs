@@ -15,9 +15,14 @@
 //!
 //! The two tools are held differently (N22, N24, ADR 0147, ADR 0151). The free `Move` keeps its three
 //! arrows: a press on a handle and the release are one drag, and the pointer's own micrometre
-//! distance applies no rule and no snap at all. Handles keep a constant screen length, and an axis
+//! distance is snapped to nothing at all. Handles keep a constant screen length, and an axis
 //! within about ten degrees of the view direction is not drawn, because its projected direction is
 //! unstable and a pointer drag would move it by metres.
+//!
+//! Both tools stop at a neighbour, and both stop for one reason: contact is the document's rule, and
+//! the write refuses what a drag would have crossed, so a piece stops at a face instead of reaching a
+//! sentence (X72, ADR 0162). The free move reads `Project::contact_rule` — no snapping, every axis,
+//! contact — and the furniture move reads `Project::move_rule`.
 //!
 //! The furniture move draws **no handle at all**: a click on a piece's body takes it, the pointer
 //! carries it with no button held, and the next click puts it down. What it may travel is the
@@ -626,10 +631,11 @@ impl TranslateGizmo {
         };
 
         let moving: Vec<Id> = targets.iter().map(|target| target.node).collect();
-        // The free move applies no rule at all: the furniture snapping of ADR 0146 is the other
-        // tool's, and a loose body keeps the pointer's own distance wherever it goes (N22).
+        // The free move snaps to nothing — the furniture snapping of ADR 0146 is the other tool's,
+        // and a loose body keeps the pointer's own distance (N22) — but it stops at a neighbour all
+        // the same, because contact is the document's rule and not a taste (X72, ADR 0162).
         let rule = match target.move_kind {
-            MoveKind::Free => None,
+            MoveKind::Free => target.project.contact_rule(&moving),
             MoveKind::Furniture => target.project.move_rule(&moving, target.snaps),
         };
         self.drag = Some(Drag {
@@ -680,11 +686,12 @@ impl TranslateGizmo {
 }
 
 /// The distance a drag may travel, and the surface it landed on: the pointer's own distance, cut by
-/// the furniture move rule.
+/// the document's rule of the tool.
 ///
 /// The rule, and the snap settings inside it, were read from the workspace and the document when the
 /// drag started and the document still holds those placements, so the preview and the release read
-/// the same answer. A drag outside furniture has no rule and keeps its exact micrometre distance.
+/// the same answer. The free move's rule snaps to nothing, so its distance is the pointer's own
+/// micrometre travel up to the first surface in the way.
 fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> (f64, Option<Capture>) {
     rule.map_or((distance, None), |rule| {
         let limit = rule.limit(axis.move_axis(), distance);
@@ -700,7 +707,7 @@ mod tests {
 
     use egui::Pos2;
     use geom::DQuat;
-    use model::{ClassCode, Envelope, Placement, SnapSettings};
+    use model::{ClassCode, Envelope, PanelNominalSize, Placement, SnapSettings};
     use testkit::{millimetres, sample_project};
     use units::Length;
 
@@ -811,11 +818,28 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_outside_furniture_keeps_its_exact_distance() {
-        let project = sample_project();
+    fn the_free_move_keeps_its_distance_and_stops_at_a_neighbour() {
+        // No snapping is the free tool's, and no grid; contact is the document's (X72, ADR 0162).
+        let mut project = sample_project();
         let loose = Id::new(2).expect("id");
-        assert!(project.move_rule(&[loose], SnapSettings::default()).is_none());
-        assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None));
+        assert_eq!(constrained_distance(None, Axis::X, 97.4), (97.4, None), "no rule is the pointer's own travel");
+        let free = project.contact_rule(&[loose]).expect("a loose board is still measured");
+        assert_eq!(constrained_distance(Some(&free), Axis::Y, 97.4), (97.4, None), "and it snaps to nothing");
+        // The sample shelf and the drawer's front share one box: a third board beside them stops at
+        // the face of the first it meets, and the touch itself is allowed.
+        let root = project.root().id();
+        let beside = project
+            .add_panel(
+                root,
+                "Beside",
+                PanelNominalSize::new(millimetres(100), millimetres(100)).expect("a small board"),
+                None,
+                millimetres(18),
+                Placement::IDENTITY.with_translation(millimetres(900), Length::ZERO, Length::ZERO).expect("a place"),
+            )
+            .expect("a board beside the sample ones");
+        let free = project.contact_rule(&[beside]).expect("the board has a contact rule");
+        assert_eq!(constrained_distance(Some(&free), Axis::X, -500.0), (-200.0, None), "it stops at the shelf");
     }
 
     #[test]

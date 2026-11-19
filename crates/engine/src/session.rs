@@ -2536,6 +2536,74 @@ mod tests {
     }
 
     #[test]
+    fn a_placement_that_sinks_a_board_into_its_neighbour_is_refused_and_writes_nothing() {
+        // X72: the rule lives in the document, so a typed distance, a palette command or a batch is
+        // refused with a sentence naming the part in the way — and nothing is written, so the
+        // revision does not move and the history gains no entry.
+        let mut project = sample_project();
+        let root = project.root().id();
+        let loose = project
+            .add_panel(
+                root,
+                "Loose",
+                sample_panel_nominal_size(),
+                None,
+                sample_panel_thickness(),
+                placement(2000.0, 0.0, 0.0),
+            )
+            .expect("a board of its own");
+        let mut session = Session::with_directory(project, sample_catalog());
+        let shelf = Id::new(2).expect("shelf id");
+        let front = Id::new(4).expect("front id");
+        // The sample scene holds the shelf and the drawer's front in one box, which no rule polices
+        // after the fact; pulling the shelf clear is a legal move out of that overlap.
+        let clear = NodePlacementSet { node: shelf, placement: placement(1000.0, 0.0, 0.0) };
+        session.dispatch("node.placement.set", &json_params(&clear)).expect("the shelf comes clear");
+        let revision = session.project().revision();
+
+        // 500 puts 200 mm of the shelf inside the front, which is more than the nothing it shared.
+        let sinking = NodePlacementSet { node: shelf, placement: placement(500.0, 0.0, 0.0) };
+        let error = session
+            .dispatch("node.placement.set", &json_params(&sinking))
+            .expect_err("a board may not come to rest inside another");
+        let CommandError::RestingInTheWay { moved, standing, .. } = &error else {
+            panic!("the refusal names both parts: {error:?}");
+        };
+        assert_eq!((moved.as_str(), standing.as_str()), ("Shelf", "Front"), "the sentence names the part in the way");
+        assert_eq!(session.project().revision(), revision, "a refusal writes nothing");
+        assert_eq!(
+            session.project().panel(shelf).expect("panel").placement(),
+            placement(1000.0, 0.0, 0.0),
+            "and the board stands where it was"
+        );
+
+        // The batch asks the same rule, so a selection cannot smuggle an overlap past it: the second
+        // entry is a legal move and it is refused with the first, because a batch is one change.
+        let batch = NodePlacementSetMany {
+            placements: vec![
+                NodePlacement { node: shelf, placement: placement(500.0, 0.0, 0.0) },
+                NodePlacement { node: loose, placement: placement(2500.0, 0.0, 0.0) },
+            ],
+        };
+        assert!(matches!(
+            session.dispatch("node.placement.set_many", &json_params(&batch)),
+            Err(CommandError::RestingInTheWay { .. })
+        ));
+        assert_eq!(session.project().revision(), revision, "and the whole batch is refused, not half of it");
+        assert_eq!(
+            session.project().panel(loose).expect("panel").placement(),
+            placement(2000.0, 0.0, 0.0),
+            "the entry that was legal did not land either"
+        );
+
+        // One undo takes the shelf's own move back and nothing follows it: the refusals made no entry.
+        session.undo().expect("undo the move out of the overlap");
+        assert_eq!(session.project().panel(shelf).expect("panel").placement(), Placement::IDENTITY);
+        assert!(!session.can_undo(), "a refusal records no history");
+        assert_ne!(front, loose);
+    }
+
+    #[test]
     fn a_placement_batch_is_one_revision_and_one_undo_step() {
         let mut session = sample_session();
         let panel = Id::new(2).expect("panel id");

@@ -1,4 +1,5 @@
-//! The furniture move rule: how far one drag along a world axis may travel.
+//! The furniture move rule: how far one drag along a world axis may travel, and what a placement
+//! may not come to rest inside.
 //!
 //! The translate gizmo proposes a world distance and this module answers with the distance the
 //! document allows. Four facts decide it and none of them is a code literal:
@@ -18,14 +19,22 @@
 //! taste and a workshop standard (ADR 0146). A capture is reported with the surface it landed on, so
 //! the shell can draw the line the piece jumped to and measure its field against that same surface.
 //!
+//! The same contact test is the document's own rule and not the tool's: [`Project::resting_conflict`]
+//! answers whether a placement a caller asks to write would land a part inside one that stays behind,
+//! and the placement commands refuse it (X72, ADR 0162). The write asks [`resting_inside`] and the
+//! drag stops where that answer would refuse, so a drag reaches a contact before it reaches a
+//! sentence. Contact is the document's and not a tool's, so the free move obeys it too, and the only
+//! rule the free move does without is snapping (ADR 0162).
+//!
 //! The answer is derived from the placements the document holds, which during a drag are still the
 //! drag's start placements, so the preview and the single `node.placement.set_many` on release
 //! cannot disagree. Nothing is stored and nothing is mutated.
 //!
-//! A drag in which no product is involved — free geometry, a panel at the root — is not a furniture
-//! move: [`Project::move_rule`] answers `None` and the gizmo keeps its exact micrometre move. The
-//! panel axis is the one part of the rule that needs no surface, so [`Project::furniture_axes`]
-//! answers it wherever the board stands.
+//! [`Project::move_rule`] answers with the furniture rule wherever a piece can be measured, and with
+//! a rule that only stops at contact where the scene has no product to snap to. The panel axis is the
+//! one part of the rule that needs no surface, so [`Project::furniture_axes`] answers it wherever the
+//! board stands; the free move asks [`Project::contact_rule`], which refuses no axis and snaps to
+//! nothing.
 
 use geom::DVec3;
 
@@ -174,23 +183,83 @@ impl Default for SnapSettings {
 const GRID_MM: f64 = 1.0;
 
 impl Project {
-    /// The rule that measures a drag of `moving`, or `None` when the drag is not furniture.
+    /// The rule that measures a drag of `moving`, or `None` when nothing movable is selected.
     ///
     /// A drag is a furniture move when every top-most moved node is a product or sits inside one.
     /// The surfaces, the mount trait and the snap settings are read here, once, so the drag can ask
     /// the rule for every pointer position without walking the tree again: nothing the rule measured
     /// moves while the pointer travels, and a settings change mid-drag does not bend the preview
     /// away from the placement the release commits.
+    ///
+    /// A drag of loose geometry — free bodies, a panel at the root — has no product to snap to and
+    /// takes no grid, so its rule carries no snapping at all while its contact stays: a body still
+    /// stops at a body (ADR 0162, narrowing ADR 0147).
     pub fn move_rule(&self, moving: &[Id], snaps: SnapSettings) -> Option<MoveRule> {
         let targets = self.moved_targets(moving);
-        if targets.is_empty() || !targets.iter().all(|id| self.is_furniture(*id)) {
+        let furniture = !targets.is_empty() && targets.iter().all(|id| self.is_furniture(*id));
+        let axes = self.axes_of(&targets);
+        self.rule_of(&targets, axes, furniture.then_some(snaps))
+    }
+
+    /// The rule the free move is measured by: contact only.
+    ///
+    /// The free tool refuses no axis and snaps to nothing — the pointer's own distance, quantised to
+    /// the micrometre the document stores — but it does not pass through a neighbour: contact is the
+    /// document's rule and not a taste (ADR 0102, ADR 0162).
+    pub fn contact_rule(&self, moving: &[Id]) -> Option<MoveRule> {
+        let targets = self.moved_targets(moving);
+        self.rule_of(&targets, ALL_MOVE_AXES, None)
+    }
+
+    /// The rule that measures a drag of `targets`, snapping only when `snaps` says so.
+    ///
+    /// The axes are the caller's: the furniture tool hands the intersection of what every moved node
+    /// allows, so a loose board keeps its own thickness axis wherever it stands (N22, ADR 0147), and
+    /// the free tool hands all three.
+    fn rule_of(&self, targets: &[Id], axes: [bool; 3], snaps: Option<SnapSettings>) -> Option<MoveRule> {
+        if targets.is_empty() {
             return None;
         }
-        let movers = self.mover_boxes(&targets);
+        let movers = self.mover_boxes(targets);
         if movers.is_empty() {
             return None;
         }
-        Some(MoveRule { axes: self.axes_of(&targets), obstacles: self.obstacle_boxes(&targets), movers, snaps })
+        Some(MoveRule { axes, obstacles: self.obstacle_boxes(targets), movers, snaps })
+    }
+
+    /// The part a proposed placement change would put inside another part, if any.
+    ///
+    /// This is the document's rule, asked before the write lands and not only under a gesture
+    /// (ADR 0162): a body may not come to rest inside another body and a shell may not end up half
+    /// inside another shell, while a piece inside a case's envelope stays legal (ADR 0102). The rule
+    /// reads the document, never the sight: a part switched off in the tree is as much in the way as
+    /// a visible one, because what is hidden is the picture and the pointer (X73).
+    ///
+    /// `placements` is what the caller asks for: every node whose stored placement changes, and the
+    /// placement it receives. A container travels with its children, and a batch may name a container
+    /// and one of its descendants. A pair that only touches is contact, not an overlap, and a pair
+    /// that already overlaps is no *new* overlap: the answer refuses only a placement that brings a
+    /// part into an overlap it did not have, so a file written before this rule opens and its maker
+    /// drags the part out by hand.
+    pub fn resting_conflict(&self, placements: &[(Id, Placement)]) -> Option<Resting> {
+        let asked: Vec<Id> = placements.iter().map(|(id, _)| *id).collect();
+        let targets = self.moved_targets(&asked);
+        if targets.is_empty() {
+            return None;
+        }
+        let obstacles = self.obstacle_boxes(&targets);
+        for moved in &targets {
+            let Some(lands) =
+                self.world_placement_with(*moved, placements).and_then(|world| self.box_at(*moved, world))
+            else {
+                continue;
+            };
+            let stood = self.mover_box(*moved);
+            if let Some(standing) = obstacles.iter().find(|obstacle| resting_inside(stood, lands, **obstacle)) {
+                return Some(Resting { moved: *moved, standing: standing.id });
+            }
+        }
+        None
     }
 
     /// The world axes a furniture drag of this selection offers, in [`MoveAxis`] order.
@@ -304,12 +373,20 @@ impl Project {
     /// The world box one moved node carries: a product's envelope, a panel's or object's own
     /// bounds, and for any other container the union of the parts below it.
     fn mover_box(&self, id: Id) -> Option<SurfaceBox> {
+        self.box_at(id, self.world_placement(id)?)
+    }
+
+    /// The world box a node occupies when it stands at `world`.
+    ///
+    /// The same box at the placement the document holds is [`Project::mover_box`]; a proposed write is
+    /// measured through this one, so the refusal and the drag read one definition of a part's volume.
+    fn box_at(&self, id: Id, world: Placement) -> Option<SurfaceBox> {
         if let Some(container) = self.container(id) {
             if container.is_product() {
-                return self.envelope_box(id);
+                return self.envelope_at(id, world);
             }
             let (min, max) = panel_bounds(container.children(), Placement::IDENTITY, 0)?;
-            return surface_box(id, min, max, self.world_placement(id)?, SurfaceKind::Body);
+            return surface_box(id, min, max, world, SurfaceKind::Body);
         }
         if let Some(panel) = self.panel(id) {
             let size = panel.nominal_size();
@@ -318,19 +395,24 @@ impl Project {
                 size.width().millimetres_f64(),
                 panel.last_known_thickness().millimetres_f64(),
             );
-            return surface_box(id, DVec3::ZERO, max, self.world_placement(id)?, SurfaceKind::Panel);
+            return surface_box(id, DVec3::ZERO, max, world, SurfaceKind::Panel);
         }
         let object = self.object(id)?;
         let (min, max) = object_bounds_mm(object.geometry())?;
-        surface_box(id, min, max, self.world_placement(id)?, SurfaceKind::Body)
+        surface_box(id, min, max, world, SurfaceKind::Body)
     }
 
     /// The world box of a product's authored envelope.
     fn envelope_box(&self, id: Id) -> Option<SurfaceBox> {
+        self.envelope_at(id, self.world_placement(id)?)
+    }
+
+    /// The world box of a product's envelope when it stands at `world`.
+    fn envelope_at(&self, id: Id, world: Placement) -> Option<SurfaceBox> {
         let envelope = self.container(id)?.envelope()?;
         let size =
             DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
-        surface_box(id, DVec3::ZERO, size, self.world_placement(id)?, SurfaceKind::Shell)
+        surface_box(id, DVec3::ZERO, size, world, SurfaceKind::Shell)
     }
 
     /// The surfaces a furniture drag may meet: every other product's envelope, and every other
@@ -368,6 +450,40 @@ impl Project {
     }
 }
 
+/// A part a placement would put inside another part.
+///
+/// It is what the write refuses and what the sentence names: the part being moved or created, and the
+/// part that stays behind and is in the way (X72, ADR 0162).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resting {
+    /// The part the placement moves, or would create.
+    pub moved: Id,
+    /// The part that stays behind, which the moved box would come to rest inside.
+    pub standing: Id,
+}
+
+/// Whether a box that lands at `now` comes to rest inside `obstacle`, where it did not before.
+///
+/// This is the document's own contact test, asked by [`Project::resting_conflict`] before a placement
+/// is written (ADR 0162). A body meets a body and a shell meets a shell; a body inside a shell is a
+/// piece inside a case and stays legal (ADR 0102). Two boxes that only touch share no volume, so a
+/// face is contact and never a refusal, and the answer is exact rather than the world box around a
+/// turned part: a board set flush in a case's corner shares its faces and nothing else.
+///
+/// `was` is the box the part stood with, or `None` for a part that does not exist yet. A pair that
+/// already overlaps is no new overlap: a file written before this rule opens, and its maker drags the
+/// part out and types where it goes. The drag's own rule (`MoveRule::limit`) stops at the world-box
+/// contact, which is the coarser reading, so a drag reaches a contact before it reaches a refusal.
+fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox) -> bool {
+    if now.is_shell() != obstacle.is_shell() {
+        return false;
+    }
+    if was.is_some_and(|was| was.meets(obstacle)) {
+        return false;
+    }
+    now.meets(obstacle)
+}
+
 /// What one furniture drag is measured against, taken once when the drag starts.
 ///
 /// The document does not change while the pointer travels, so the moved boxes, the other surfaces
@@ -384,8 +500,10 @@ pub struct MoveRule {
     /// It is the intersection of what every moved node allows, taken once when the drag starts: a
     /// panel's own thickness axis, a floor-bound product's two horizontal axes (N22, ADR 0147).
     axes: [bool; 3],
-    /// What this drag snaps to, and how near, as the workspace settings chose it (ADR 0146).
-    snaps: SnapSettings,
+    /// What this drag snaps to, and how near, as the workspace settings chose it (ADR 0146), or
+    /// `None` for a drag no grid and no surface may move: the free move, and the furniture move of a
+    /// piece no product holds.
+    snaps: Option<SnapSettings>,
 }
 
 impl MoveRule {
@@ -412,7 +530,11 @@ impl MoveRule {
         // An axis the drag does not offer moves nothing: a floor-bound product keeps its height and a
         // panel does not cross its own faces, and saying so here keeps the rule out of the gizmo.
         let distance = if self.allows(axis) { proposed_mm } else { 0.0 };
-        let (snapped, capture) = snap_distance(axis, &self.movers, &self.obstacles, distance, self.snaps);
+        let (snapped, capture) = match self.snaps {
+            Some(snaps) => snap_distance(axis, &self.movers, &self.obstacles, distance, snaps),
+            // A drag with no snapping keeps the pointer's own distance: no face, no plane and no grid.
+            None => (distance, None),
+        };
         let limit = stop_at_contact(axis, snapped, &self.movers, &self.obstacles);
         // A contact that cuts the snapped distance stops the piece short of the captured surface, so
         // the face landed on the contact and not on the snap: the stop is the answer, reported on its
@@ -741,15 +863,95 @@ mod tests {
     }
 
     #[test]
-    fn the_panel_axis_holds_outside_a_product_where_the_rule_does_not() {
-        // A board at the root has no furniture to measure against, so its drag keeps the exact
-        // micrometre move — but it is still a board, and the tool still slides it along its
-        // thickness only (N22).
+    fn the_panel_axis_holds_outside_a_product_where_the_snaps_do_not() {
+        // A board at the root has no product to snap to, so its drag keeps the exact micrometre move
+        // — but it is still a board, still slides along its thickness only (N22), and still stops at
+        // a neighbour, because contact is the document's rule and not a taste (ADR 0162).
         let project = sample_project();
         let loose = Id::new(2).expect("id");
         assert_eq!(project.furniture_axes(&[loose]), [false, false, true], "the sample shelf is a board");
-        assert!(project.move_rule(&[loose], SnapSettings::default()).is_none(), "and it has no surface rule");
+        let loose_rule = rule_with(&project, &[loose], SnapSettings::default());
+        assert!(!loose_rule.allows(MoveAxis::X), "and the tool keeps it in its own plane");
+        assert_eq!(
+            loose_rule.limit(MoveAxis::Z, 40.4),
+            moved(40.4),
+            "with nothing to snap to it keeps the pointer's own micrometre distance"
+        );
         assert_eq!(project.furniture_axes(&[]), [true, true, true], "nothing selected offers every axis");
+    }
+
+    /// A panel placement `(x, y, z)` millimetres inside the root frame.
+    fn place(at: (f64, f64, f64)) -> Placement {
+        Placement::IDENTITY
+            .with_translation(
+                Length::from_micrometres((at.0 * 1000.0).round() as i64),
+                Length::from_micrometres((at.1 * 1000.0).round() as i64),
+                Length::from_micrometres((at.2 * 1000.0).round() as i64),
+            )
+            .expect("a placement")
+    }
+
+    #[test]
+    fn a_write_that_sinks_a_board_into_its_neighbour_is_refused_and_a_touch_is_not() {
+        // X72 in the model: a board asked to come to rest inside another board is refused, and the
+        // refusal names both parts. The sample shelf is 700 x 500 x 18 at the origin, so a second
+        // board beside it stands clear at x = 720 and touches it at x = 700.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let a = panel(&mut project, root, "Left", (0, 0, 0));
+        let b = panel(&mut project, root, "Right", (720, 0, 0));
+        assert_eq!(project.resting_conflict(&[(b, place((720.0, 0.0, 0.0)))]), None, "the board is where it is");
+        assert_eq!(project.resting_conflict(&[(b, place((700.0, 0.0, 0.0)))]), None, "and touching is contact");
+        assert_eq!(
+            project.resting_conflict(&[(b, place((650.0, 0.0, 0.0)))]),
+            Some(Resting { moved: b, standing: a }),
+            "half a board inside its neighbour is a refusal"
+        );
+        // A move of the whole selection keeps their relation and is no overlap at all.
+        assert_eq!(
+            project.resting_conflict(&[(a, place((0.0, -100.0, 0.0))), (b, place((720.0, -100.0, 0.0)))]),
+            None,
+            "a selection that moves rigidly stays as it was"
+        );
+    }
+
+    #[test]
+    fn a_board_that_already_overlaps_can_be_pulled_out_and_is_never_refused_again() {
+        // A file written before the rule can hold two boards that already overlap, and the write must
+        // let the maker repair it by hand: only a *new* overlap is a refusal, so a pair the document
+        // already holds is the maker's to move (ADR 0162).
+        let mut project = empty_project();
+        let root = project.root().id();
+        let shelf = panel(&mut project, root, "Shelf", (0, 0, 0));
+        panel(&mut project, root, "Neighbour", (600, 0, 0));
+        // 100 mm of the shelf's 700 is inside the neighbour's 700, and every placement of the pair is
+        // no new overlap: out of it, or further in.
+        assert_eq!(project.resting_conflict(&[(shelf, place((-650.0, 0.0, 0.0)))]), None, "sliding out is legal");
+        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 0.0)))]), None, "staying is legal");
+        assert_eq!(project.resting_conflict(&[(shelf, place((50.0, 0.0, 0.0)))]), None, "and deeper is not refused");
+    }
+
+    #[test]
+    fn a_piece_inside_a_case_stays_legal_and_a_shell_may_not_cross_a_shell() {
+        // A body inside a shell is a shelf in a case, and it is legal at its own place and anywhere a
+        // shelf would be set down; two shells know only containment, so a cabinet half inside another
+        // is the one shell case the write refuses (ADR 0102).
+        let mut project = empty_project();
+        let case = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
+        let shelf = panel(&mut project, case, "Shelf", (0, 0, 0));
+        assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 100.0)))]), None, "a shelf in its case");
+        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (2000, 0, 0));
+        assert_eq!(
+            project.resting_conflict(&[(neighbour, place((400.0, 0.0, 0.0)))]),
+            Some(Resting { moved: neighbour, standing: case }),
+            "a cabinet driven half into another's envelope is refused"
+        );
+        let nested = product(&mut project, "10.01.02", (300, 300, 300), (2050, 50, 50));
+        assert_eq!(
+            project.resting_conflict(&[(nested, place((2100.0, 80.0, 60.0)))]),
+            None,
+            "a cabinet wholly inside another's envelope stays legal"
+        );
     }
 
     #[test]
@@ -894,12 +1096,32 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_outside_furniture_is_not_constrained() {
-        // A loose panel at the root: no product, so the gizmo keeps its exact move.
+    fn a_drag_of_loose_geometry_snaps_to_nothing_and_still_stops_at_a_body() {
+        // A loose panel at the root: no product, so no plane, no frame, no grid — the pointer's own
+        // distance (ADR 0147) — while a body in its way still stops it (ADR 0162).
         let project = sample_project();
         let loose = Id::new(2).expect("id");
-        assert!(project.move_rule(&[loose], SnapSettings::default()).is_none());
-        assert!(project.move_rule(&[], SnapSettings::default()).is_none());
+        let free = rule_with(&project, &[loose], SnapSettings::default());
+        assert_eq!(
+            free.limit(MoveAxis::Z, 40.4),
+            moved(40.4),
+            "the furniture grid is the furniture tool's and this piece has none"
+        );
+        assert!(project.move_rule(&[], SnapSettings::default()).is_none(), "nothing selected is no rule");
+        assert!(project.contact_rule(&[]).is_none());
+
+        // The free tool refuses no axis and snaps to nothing either, but the same contact holds: the
+        // sample shelf and the drawer's front share one box, so neither may be pushed further into
+        // the other — and both may slide out of it (X72).
+        let free_move = project.contact_rule(&[loose]).expect("a loose board has a contact rule");
+        assert_eq!(
+            free_move.limit(MoveAxis::X, 40.4),
+            moved(40.4),
+            "a pair that already overlaps may slide along the other's face"
+        );
+        let beside = Id::new(4).expect("id");
+        let pushed = project.contact_rule(&[beside]).expect("the front has a contact rule");
+        assert_eq!(pushed.limit(MoveAxis::Y, 10.0), moved(10.0), "and a piece with nothing beside it is free");
     }
 
     #[test]

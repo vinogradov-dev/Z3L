@@ -1,7 +1,7 @@
 //! Command metadata, the static registry and dispatch errors.
 
 use catalog::Directory;
-use model::{Id, ItemId, Level, MachiningId, Project, ProjectError};
+use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
@@ -282,6 +282,16 @@ pub enum CommandError {
         /// The missing material id.
         material: ItemId,
     },
+    /// The placement would put a part inside one that stays behind.
+    #[error("`{command}`: `{moved}` would come to rest inside `{standing}`")]
+    RestingInTheWay {
+        /// The stable command id.
+        command: &'static str,
+        /// The part the placement moves or creates.
+        moved: String,
+        /// The part that stays behind and is in the way.
+        standing: String,
+    },
     /// There is no earlier document state to restore.
     #[error("nothing to undo")]
     NothingToUndo,
@@ -300,6 +310,20 @@ impl CommandError {
     pub(crate) fn creation(command: &'static str, refusal: CreationRefusal) -> Self {
         Self::CreationRefused { command, refusal }
     }
+
+    /// A placement that would land a part inside one that stays behind, naming both (ADR 0162).
+    pub(crate) fn resting(command: &'static str, project: &Project, resting: Resting) -> Self {
+        Self::RestingInTheWay {
+            command,
+            moved: part_name(project, resting.moved),
+            standing: part_name(project, resting.standing),
+        }
+    }
+}
+
+/// The name a refusal calls a part by: its own, or its id when the tree no longer holds it.
+fn part_name(project: &Project, id: Id) -> String {
+    project.node(id).map_or_else(|| id.to_string(), |node| node.name().to_owned())
 }
 
 #[cfg(test)]

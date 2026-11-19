@@ -341,8 +341,27 @@ fn node_placement_set_run(
     params: &Value,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSet>(params, NODE_PLACEMENT_SET_ID)?;
+    refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)])?;
     project.set_node_placement(params.node, params.placement)?;
     Ok(CommandOutcome::changed())
+}
+
+/// Refuses a placement that would land a part inside one that stays behind (X72, ADR 0162).
+///
+/// The document answers this question itself (`Project::resting_conflict`), so the gesture that
+/// previews the move and the write that records it read one rule: the drag stops at the neighbour,
+/// and a typed distance, a palette command or the assistant is refused with a sentence naming the
+/// part in the way instead of writing an overlap. Nothing has changed when this returns, so the
+/// revision does not move and no undo entry is made.
+pub(crate) fn refuse_resting(
+    project: &Project,
+    command: &'static str,
+    placements: &[(Id, Placement)],
+) -> Result<(), CommandError> {
+    match project.resting_conflict(placements) {
+        Some(resting) => Err(CommandError::resting(command, project, resting)),
+        None => Ok(()),
+    }
 }
 
 /// Stable id of the world-zero placement command.
@@ -446,6 +465,7 @@ fn node_placement_set_many_run(
     let params = parse::<NodePlacementSetMany>(params, NODE_PLACEMENT_SET_MANY_ID)?;
     let placements: Vec<(Id, Placement)> =
         params.placements.iter().map(|entry| (entry.node, entry.placement)).collect();
+    refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements)?;
     project.set_node_placements(&placements)?;
     Ok(CommandOutcome::changed())
 }
