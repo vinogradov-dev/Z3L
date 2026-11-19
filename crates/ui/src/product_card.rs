@@ -4,9 +4,13 @@
 //! what the piece is (ADR 0100, ADR 0159). The card is the numeric path to `product.create`: it draws
 //! the three sides in whole millimetres on one label column, offers the registry's product classes as
 //! the same family/type tree the class picker draws — folded, so the case a shop builds is a row and
-//! not a scroll — and returns a [`ProductDraft`]. It never dispatches a command and never touches the
-//! document — the editor turns the draft into `product.create` and then opens the new frame as a
-//! session view operation (ADR 0098).
+//! not a scroll — names the position the chosen class carries, and returns a [`ProductDraft`]. It
+//! never dispatches a command and never touches the document — the editor turns the draft into
+//! `product.create` and then opens the new frame as a session view operation (ADR 0098).
+//!
+//! The card asks for no position field: the class already says whether the piece stands or hangs
+//! (ADR 0097), so a stored field would be a second source of truth. The row under the class reads
+//! that trait and is absent, rather than guessed, for a class that carries no mount.
 //!
 //! The footprint is four corner rows and the corner type is chosen first: a square corner asks for
 //! nothing, a fillet asks for its radius and a chamfer for its two setbacks, which is the offset a
@@ -371,6 +375,12 @@ impl ProductCard {
                 let current = self.class.label().map(|label| label.text(lang)).unwrap_or_default();
                 ui.label(RichText::new(current).strong());
             });
+            // Where the piece stands is the class's rule, not a question (ADR 0097): the card says it
+            // and offers no field. A class without the trait draws no row at all, because a guess here
+            // would be a second source of truth beside the registry.
+            if let Some(position) = self.class.traits().and_then(|traits| traits.mount()) {
+                ui.label(RichText::new(position.label().text(lang)).color(theme::text_dim(ui)));
+            }
             ui.add(
                 TextEdit::singleline(&mut self.query)
                     .hint_text(Message::ClassPickerSearch.text(lang))
@@ -578,6 +588,30 @@ mod tests {
         assert!(
             !texts.iter().any(|text| text.contains("ready for parts")),
             "the paragraph under the title is gone: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn the_card_says_the_position_the_class_gives_and_never_asks() {
+        let mut card = ProductCard::new();
+        card.start();
+        // The placeholder is a product class, so it stands on the floor: the card reports the rule
+        // its class carries instead of asking for one.
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(texts.iter().any(|text| text == "On the floor"), "the placeholder stands: {texts:?}");
+        assert!(!texts.iter().any(|text| text == "On the wall"), "and hangs nowhere: {texts:?}");
+
+        card.class = "10.01.02".parse().expect("the wall cabinet");
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(texts.iter().any(|text| text == "On the wall"), "a wall cabinet hangs: {texts:?}");
+        assert!(!texts.iter().any(|text| text == "On the floor"), "and does not stand: {texts:?}");
+
+        // A fitting carries no mount, so the row is absent rather than guessed.
+        card.class = "50.02".parse().expect("a cup hinge");
+        let (texts, _) = present(&mut card, Lang::En);
+        assert!(
+            !texts.iter().any(|text| text == "On the floor" || text == "On the wall"),
+            "a class without a mount draws no position row: {texts:?}"
         );
     }
 

@@ -708,6 +708,8 @@ messages! {
     // ── Product card ────────────────────────────────────────────────────────
     ProductCardTitle = ["New product frame", "Новый каркас изделия"],
     Height = ["Height", "Высота"],
+    MountFloor = ["On the floor", "На полу"],
+    MountWall = ["On the wall", "На стене"],
 
     // ── Container card ──────────────────────────────────────────────────────
     ContainerRoleComponent = ["Component", "Компонент"],

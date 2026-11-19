@@ -477,6 +477,17 @@ pub enum Mount {
 }
 
 impl Mount {
+    /// Where the mount puts the piece, said in words for someone choosing a class.
+    ///
+    /// The sentence reports the rule the class carries; the height above the floor stays the
+    /// maker's placement (ADR 0100), so this describes the position and never sets one.
+    pub const fn label(self) -> Message {
+        match self {
+            Self::Floor => Message::MountFloor,
+            Self::Wall => Message::MountWall,
+        }
+    }
+
     const fn bits(self) -> u32 {
         match self {
             Self::Floor => 1,
