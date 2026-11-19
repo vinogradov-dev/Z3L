@@ -21,6 +21,11 @@ megabytes, and takes its level from `Z3L_LOG` (`off`, `error`, `warn`, `info`, `
 default is `debug`: the log exists to answer a report, and an unknown word is the default rather than
 an error, because a mistyped environment variable must never keep the window from opening.
 
+**Only this program's own lines take the workspace level.** Another crate's `debug` arrives through
+the same facade — winit's tracing spans alone are a thousand lines a second — so a record whose target
+does not start with `z3l` is passed only at a warning or worse. A report a person reads cannot be
+mostly another library's RPC calls.
+
 **The carry logs the frame that a bug report needs.** One `debug` line per carried frame, target
 `z3l::move`: the node, its world coordinate (the pivot plus the settled delta), the cursor in points,
 the world point the hand meets, the delta the hand asked for, the delta the rule resolved, the delta

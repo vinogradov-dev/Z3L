@@ -174,6 +174,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0166](0166-the-move-answers-the-place-the-piece-lands.md) | The move answers the place the piece lands, not the path it crosses | Accepted; supersedes 0165's swept stop and 0163's contact reading, narrows 0102's containment clause |
 | [0167](0167-a-jump-is-held-for-a-moment-before-the-carry-takes-it.md) | A jump is held for a moment before the carry takes it | Accepted; refines 0166's destination rule and the touch reading of 0162's contact |
 | [0168](0168-the-shell-writes-one-log-and-the-carry-logs-its-frame.md) | The shell writes one log, and the carry logs its frame | Accepted; installs the `log` sink the stack table promises, and measures a jump against the hand |
+| [0169](0169-what-the-move-log-said.md) | What the move log said: a typed zero, a lost bond, and a stale hold | Accepted; fixes what 0168's first session showed, carries 0092's zero convention into the carry |
 
 ## Format
 

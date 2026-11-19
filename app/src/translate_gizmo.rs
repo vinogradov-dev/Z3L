@@ -530,7 +530,13 @@ impl TranslateGizmo {
             // hangs at in *points* and not in millimetres: a plane meets the eye at a slant, and a
             // world delta that matches the pointer's travel at the take only shrinks the piece's own
             // screen travel as the piece changes depth (X75).
-            if let (false, Some(offset)) = (held_now, hand.offset)
+            // The bond between hand and pivot is read again when it is missing: a camera gesture or
+            // a pointer that left the work area clears it, and a branch that only reads an offset it
+            // already has would leave the piece standing still for the rest of the carry (X80).
+            let offset = hand.offset.or_else(|| {
+                screen_point(target.camera, viewport, drag.start_origin + drag.delta).map(|at| at - hand.at)
+            });
+            if let (false, Some(offset)) = (held_now, offset)
                 && let Some(hit) = plane.point(hand.at + offset, viewport, target.camera, drag.start_origin)
             {
                 let asked = bounded(hit - drag.start_origin);
@@ -587,6 +593,11 @@ impl TranslateGizmo {
             // points of pointer travel is a hundred millimetres, and an absolute threshold would
             // freeze the piece and let it through in bursts (X79).
             let resolved = delta;
+            if typed.is_some() {
+                // A typed number is the maker's own face; a crossing the hand asked for before it is
+                // no longer pending, or it would fire the moment the number is released (X80).
+                drag.jump = None;
+            }
             if typed.is_none() {
                 let dt = ui.input(|input| input.stable_dt);
                 let hand_step = (proposed - drag.asked).length();
@@ -599,7 +610,7 @@ impl TranslateGizmo {
                 target: "z3l::move",
                 "carry node={:?} piece=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) hand={} \
                  asked=({:.3},{:.3},{:.3}) resolved=({:.3},{:.3},{:.3}) delta=({:.3},{:.3},{:.3}) \
-                 jump={} contact={:?}",
+                 typed={:?} held={held_now} offset={} jump={:?} contact={:?}",
                 drag.node,
                 drag.start_origin.x + delta.x,
                 drag.start_origin.y + delta.y,
@@ -619,7 +630,9 @@ impl TranslateGizmo {
                 delta.x,
                 delta.y,
                 delta.z,
-                drag.jump.is_some(),
+                typed,
+                offset.is_some(),
+                drag.jump.map(|(_, age)| age),
                 limits.map(|limits| [
                     (limits[0].contact, limits[0].capture),
                     (limits[1].contact, limits[1].capture),

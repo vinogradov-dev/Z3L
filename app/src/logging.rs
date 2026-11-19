@@ -22,6 +22,12 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+/// The prefix every line of this program's own logging carries.
+///
+/// It is also the filter that keeps another crate's debug chatter out: a report is read by a person,
+/// and a thousand winit spans per second is not a report (X80).
+const TARGET: &str = "z3l";
+
 /// The file's name inside the config directory.
 const FILE_NAME: &str = "z3l.log";
 
@@ -40,7 +46,14 @@ struct Sink {
 
 impl log::Log for Sink {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= self.level
+        // Our own lines take the level the workspace asked for; everything else — winit's tracing
+        // spans and the GPU stack's chatter, which arrive at `debug` and drown a report — is only
+        // passed when it is a warning or worse (X80).
+        if metadata.target().starts_with(TARGET) {
+            metadata.level() <= self.level
+        } else {
+            metadata.level() <= log::Level::Warn
+        }
     }
 
     fn log(&self, record: &log::Record<'_>) {
@@ -125,6 +138,8 @@ fn open(path: &std::path::Path) -> Option<File> {
 
 #[cfg(test)]
 mod tests {
+    use log::Log;
+
     use super::*;
 
     /// The default and every spelled level, without touching the process's environment.
@@ -147,6 +162,19 @@ mod tests {
         assert_eq!(read("Debug"), log::LevelFilter::Debug);
         assert_eq!(read("off"), log::LevelFilter::Off);
         assert_eq!(read("chatty"), log::LevelFilter::Debug);
+    }
+
+    #[test]
+    fn another_crate_s_debug_chatter_is_not_a_report() {
+        // The GPU stack's tracing spans arrive at debug and drown a session in megabytes. Our own
+        // targets take the level the workspace asked for; everything else is passed at a warning.
+        let sink = Sink { level: log::LevelFilter::Debug, file: None, started: Instant::now() };
+        let ours = log::MetadataBuilder::new().level(log::Level::Debug).target("z3l::move").build();
+        assert!(sink.enabled(&ours), "our own debug lines are the report");
+        let theirs = log::MetadataBuilder::new().level(log::Level::Debug).target("winit::Window").build();
+        assert!(!sink.enabled(&theirs), "another crate's debug line is not");
+        let warning = log::MetadataBuilder::new().level(log::Level::Warn).target("winit::Window").build();
+        assert!(sink.enabled(&warning), "but its warning still is");
     }
 
     #[test]

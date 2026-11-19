@@ -295,6 +295,14 @@ impl Distances {
         if !value.is_finite() || value < 0.0 {
             return Err(DistanceRefusal::OutOfVoid);
         }
+        // Zero is the way out of a lock, exactly as it is in every other typed field of the editor
+        // (ADR 0092, ADR 0126): the pointer takes the face back. Without this a carried piece whose
+        // gap was typed as 0 is pinned against the wall and stops following the hand (X80).
+        if value == 0.0 {
+            self.pins[side.index()] = None;
+            self.locks[side.index()] = false;
+            return Ok(());
+        }
         if self.locks[side.opposite().index()] {
             // The field is a span from the locked face: taking it would change the extent.
             return Err(DistanceRefusal::WouldResize);
@@ -690,6 +698,18 @@ mod tests {
     fn distances() -> Distances {
         // A 600 mm void, an 18 mm part sitting 100 mm from the low wall.
         Distances::new(Some(0.0), Some(600.0), 100.0, 118.0).expect("a usable measurement")
+    }
+
+    #[test]
+    fn a_typed_zero_gives_the_face_back_to_the_pointer() {
+        // X80: a carried piece whose gap was typed as 0 was pinned against the wall and stopped
+        // following the hand. Zero is the way out of a lock, as it is in every other typed field.
+        let mut state = distances();
+        state.place(Side::Low, 40.0).expect("the gap is taken");
+        assert_eq!(state.pinned_low(), Some(40.0), "a typed gap puts the face 40 mm from the wall and pins it");
+        state.place(Side::Low, 0.0).expect("zero is taken as a release");
+        assert_eq!(state.pinned_low(), None, "and gives the face back");
+        assert_eq!(state.value(Side::Low), Some(40.0), "the face stays where the pin left it");
     }
 
     #[test]
