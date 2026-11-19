@@ -53,12 +53,3 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
-- A piece found inside another (X86): should the object move pop it out at once, one undo entry,
-  or only refuse every destination that is deeper, so the maker walks it out by hand?
-- X85's contact port has no home at its filed layer. `model` (L1) is what measures a body during a
-  drag, a probe and a write, and a crate may depend only on lower layers, so `contact` cannot sit at
-  L1 beside `kernel`: either it moves to L0 and binds parry3d inside the crate (one crate, no
-  injection, parry never leaves its boundary), or the port stays L0 and the `contact-parry` adapter
-  (L2) is injected as a `&dyn Contact` through `Project::move_rule`, `contact_rule`, `resting_conflict`
-  and `probe`, which reaches the callers in `engine`, `ui` and `app`. The owner's call before X85
-  starts: one crate at L0, or the port/adapter split with injection.

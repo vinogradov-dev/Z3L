@@ -163,7 +163,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a panel answer exactly as today; the drag, the release guard and the log read one
    measurement; the frame budget is tested; the gate is green.
   `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs`
-- `[ ]` **X86** a piece already inside another may only come out
+## Done
+
+- `[x]` **X86** a piece already inside another may only come out
   Why: Today a pair the document already holds overlapping is exempt for the whole drag: a
    piece left inside another by a hand edit or a typed coordinate can be dragged deeper as
    easily as out. The owner asked that choosing the object move on such a piece makes it come
@@ -174,8 +176,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    for a box pair and the penetration EPA answers for hulls.
   Done: A piece standing inside another moves out and never deeper while it still overlaps; a
    pair that only touches is untouched; the gate is green.
-  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs`
-## Done
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs` — `ac84a60`
 
 - `[x]` **X87** an invisible floor stops every body unless the workspace turns it off
   Why: In a perspective or axonometric view a body dragged on a horizontal carry plane can end
