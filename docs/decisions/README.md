@@ -183,6 +183,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0175](0175-a-hidden-part-is-sight-not-material.md) | A hidden part is sight, not material: the tools pass it and the part stops at its faces | Accepted |
 | [0176](0176-the-plan-shows-a-stream-and-one-line-keeps-one-writer.md) | The plan shows a stream, and one line keeps one writer | Accepted; amends 0085's one-live-task rule |
 | [0177](0177-the-invisible-floor-stops-a-body-and-not-a-drag-only-snap.md) | The invisible floor stops a body, and it is not the floor snap | Accepted; amends 0146's scope to dragging |
+| [0178](0178-a-piece-the-document-holds-inside-another-may-only-come-out.md) | A piece the document holds inside another may only come out | Accepted; amends 0162's exemption and 0166's answer |
 
 ## Format
 

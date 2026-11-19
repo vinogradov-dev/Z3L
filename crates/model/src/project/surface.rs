@@ -173,6 +173,28 @@ impl SurfaceBox {
         self.shared(other).iter().all(|extent| *extent > CONTACT_MM)
     }
 
+    /// How deeply this box is sunk into `other`, in millimetres: the least overlap over every axis
+    /// that could push them apart.
+    ///
+    /// It is the *going deeper* measure a drag and the write's guard read: a box pushed further into
+    /// another can be separated along a longer travel than before, a board slid along a face keeps
+    /// the depth it had (its thinnest overlap is its own thickness whichever way it slides), and a box
+    /// that comes out answers zero, so contact stays contact. A shared volume would do neither: it
+    /// grows under a rotation that sinks nothing and shrinks under a slide that changes no face
+    /// (X86, ADR 0162, ADR 0178).
+    pub(crate) fn depth(self, other: Self) -> f64 {
+        let mut least = f64::INFINITY;
+        for axis in separating_axes(self, other) {
+            let (low_a, high_a) = extent(self, axis);
+            let (low_b, high_b) = extent(other, axis);
+            if !(low_a.is_finite() && high_a.is_finite() && low_b.is_finite() && high_b.is_finite()) {
+                return 0.0;
+            }
+            least = least.min(high_a.min(high_b) - low_a.max(low_b));
+        }
+        if least.is_finite() { least.max(0.0) } else { 0.0 }
+    }
+
     /// Whether `point` lies inside the box or on its faces.
     pub(crate) fn contains(self, point: DVec3) -> bool {
         point.x >= self.min.x

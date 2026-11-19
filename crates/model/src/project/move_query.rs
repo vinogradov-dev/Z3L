@@ -42,6 +42,10 @@
 //! sentence. Contact is the document's and not a tool's, so the free move obeys it too, and the only
 //! rule the free move does without is snapping (ADR 0162).
 //!
+//! A pair the document already holds overlapping has one way to go, and it is out: the place the part
+//! stands in is the deepest one it may keep, so a destination that sinks it further is refused, and
+//! the drag's rule reads that depth with the same number the write's guard does (X86, ADR 0178).
+//!
 //! The answer is derived from the placements the document holds, which during a drag are still the
 //! drag's start placements, so the preview and the single `node.placement.set_many` on release
 //! cannot disagree. Nothing is stored and nothing is mutated.
@@ -54,7 +58,7 @@
 
 use geom::DVec3;
 
-use super::surface::{Span, SurfaceBox, SurfaceKind, extent, separating_axes, surface_box};
+use super::surface::{CONTACT_MM, Span, SurfaceBox, SurfaceKind, extent, separating_axes, surface_box};
 use crate::project::Project;
 use crate::tree::{object_bounds_mm, panel_bounds};
 use crate::*;
@@ -324,10 +328,11 @@ impl Project {
     ///
     /// `placements` is what the caller asks for: every node whose stored placement changes, and the
     /// placement it receives. A container travels with its children, and a batch may name a container
-    /// and one of its descendants. A pair that only touches is contact, not an overlap, and a pair
-    /// that already overlaps is no *new* overlap: the answer refuses only a placement that brings a
-    /// part into an overlap it did not have, so a file written before this rule opens and its maker
-    /// drags the part out by hand.
+    /// and one of its descendants. A pair that only touches is contact, not an overlap. A pair that
+    /// already overlaps is the maker's to repair, and the repair has one direction: the depth the part
+    /// stands at is the deepest it may keep, so every placement that sinks it further is refused while
+    /// every way out is granted. A file written before this rule still opens and is repaired by hand
+    /// (X86, ADR 0178).
     pub fn resting_conflict(&self, placements: &[(Id, Placement)]) -> Option<Resting> {
         let asked: Vec<Id> = placements.iter().map(|(id, _)| *id).collect();
         let targets = self.moved_targets(&asked);
@@ -569,18 +574,23 @@ pub struct Resting {
 /// turned part: a board set flush in a case's corner shares its faces and nothing else.
 ///
 /// `was` is the box the part stood with, or `None` for a part that does not exist yet. A pair that
-/// already overlaps is no new overlap: a file written before this rule opens, and its maker drags the
-/// part out and types where it goes. The drag's own rule (`MoveRule::limit`) stops a furniture piece
-/// at the world-box contact and a solid body at its exact face contact, and neither reading is later
-/// than this answer, so a drag reaches a contact before it reaches a refusal (ADR 0165).
+/// already overlaps is the maker's to repair, and the repair has one direction: the place the part
+/// stands in is the deepest one it may keep, so it comes out of another part and never further in
+/// (X86, ADR 0178). A file written before this rule still opens, and its maker drags the part out and
+/// types where it goes. The drag's own rule (`MoveRule::limit`) stops a furniture piece at the
+/// world-box contact and a solid body at its exact face contact, and neither reading is later than
+/// this answer, so a drag reaches a contact before it reaches a refusal (ADR 0165).
 fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox, product: Option<Id>) -> bool {
     // A legitimate nesting is not an overlap: a piece in its own case and a unit inside another stay
     // legal wherever they stand, and the drag's own destination test reads the same rule (X77).
     if nested(now, obstacle, product) {
         return false;
     }
-    if was.is_some_and(|was| was.meets(obstacle)) {
-        return false;
+    // A pair the document already holds overlapping is no new overlap only while the part is no
+    // deeper: the depth it stands at is the most it may keep, so every motion is a way out
+    // (X86, ADR 0178).
+    if let Some(was) = was.filter(|was| was.meets(obstacle)) {
+        return now.depth(obstacle) > was.depth(obstacle) + CONTACT_MM;
     }
     now.meets(obstacle)
 }
@@ -759,8 +769,9 @@ impl MoveRule {
     /// the free place the hand is pointing at.
     ///
     /// The contact is the distance to the touch and is reported per axis, so the shell can say what
-    /// stopped the drag. A pair that already overlaps is the maker's to repair and is no new overlap:
-    /// such a piece can always be dragged out of it, as the write's own guard reads it (ADR 0162).
+    /// stopped the drag. A pair that already overlaps is the maker's to repair, and an axis may only
+    /// take the piece no deeper than it stands: the way out is always granted and going in is not, as
+    /// the write's own guard reads it (X86, ADR 0162, ADR 0178).
     fn resolve(&self, asks: [f64; 3], from: DVec3) -> ([f64; 3], [Option<Stop>; 3]) {
         let whole = DVec3::new(asks[0], asks[1], asks[2]);
         // The destination first, as one placement: a slot the hand names is free even when every
@@ -878,12 +889,15 @@ impl MoveRule {
                 if nested(moved, *obstacle, mover.product) {
                     continue;
                 }
-                if !nested(mover.box_, *obstacle, mover.product) {
-                    let was =
-                        if mover.faces { mover.box_.meets(*obstacle) } else { mover.box_.overlaps_box(*obstacle) };
-                    if was {
-                        continue;
-                    }
+                // The place the piece stands in is the deepest one it may keep: a pair that already
+                // overlaps and is no legitimate nesting is the maker's to repair, so every place
+                // deeper than the start is refused and the piece has one way out and no way further
+                // in (X86, ADR 0178). A nested piece is not that pair: it keeps its holder's walls
+                // and is cut at one when it straddles it (ADR 0102).
+                if !nested(mover.box_, *obstacle, mover.product)
+                    && moved.depth(*obstacle) <= mover.box_.depth(*obstacle) + CONTACT_MM
+                {
+                    continue;
                 }
                 let blocked = if mover.faces { moved.meets(*obstacle) } else { moved.overlaps_box(*obstacle) };
                 if blocked {
@@ -939,8 +953,9 @@ impl MoveRule {
                 if nested(start, *obstacle, mover.product) {
                     continue;
                 }
-                if mover.box_.meets(*obstacle) {
-                    // The pair already shares a volume, so the path is not the tool's to police.
+                if mover.box_.depth(*obstacle) > CONTACT_MM {
+                    // The pair already shares a volume, so the path is not the tool's to police: the
+                    // piece leaves it and never goes deeper, which `blocked_at` measures (ADR 0178).
                     continue;
                 }
                 if let Some(touch) = blocking_along(direction, &start, obstacle)
@@ -954,11 +969,11 @@ impl MoveRule {
     }
 
     fn free_at(&self, delta: DVec3) -> bool {
-        // A pair the document already holds overlapping is the maker's to repair: only a *new*
-        // overlap is a collision, exactly as the write's guard reads it (ADR 0162). A legitimate
-        // nesting is not that kind of overlap — a piece in its case is nested, not stuck — so it is
-        // exempt at the start and judged at the destination. [`MoveRule::blocked_at`] is that one
-        // reading, with the part named for a report.
+        // A pair the document already holds overlapping is the maker's to repair, and the repair has
+        // one direction: the place the piece stands in is the deepest one it may keep, exactly as the
+        // write's guard reads it (X86, ADR 0162, ADR 0178). A legitimate nesting is not that kind of
+        // overlap — a piece in its case is nested, not stuck — so it is exempt at the destination.
+        // [`MoveRule::blocked_at`] is that one reading, with the part named for a report.
         delta.is_finite() && self.blocked_at(delta).is_none()
     }
 }
@@ -1185,7 +1200,8 @@ fn blocking_along(direction: DVec3, moving: &SurfaceBox, obstacle: &SurfaceBox) 
 /// The two boxes must share a volume across the movement — touching faces are contact, not overlap.
 /// Along it, a body may only stay clear of another body, while one shell may sit inside another:
 /// a drag that keeps the containment stops at the wall it would cross, and a pair that already
-/// overlaps one another partially is not the tool's to police.
+/// overlaps one another partially is not the tool's to police — the piece keeps the place it stands
+/// in and every way out of it (`blocked_at` measures the depth, ADR 0178).
 fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBox, nested: bool) -> Option<f64> {
     let [first, second] = axis.perpendicular();
     let overlap = |a: Span, b: Span| a.min < b.max && b.min < a.max;
@@ -1733,19 +1749,56 @@ mod tests {
     }
 
     #[test]
-    fn a_board_that_already_overlaps_can_be_pulled_out_and_is_never_refused_again() {
-        // A file written before the rule can hold two boards that already overlap, and the write must
-        // let the maker repair it by hand: only a *new* overlap is a refusal, so a pair the document
-        // already holds is the maker's to move (ADR 0162).
+    fn a_board_the_document_holds_in_another_slides_along_it_and_comes_out() {
+        // A file written before the rule, or a typed coordinate, can hold two boards that already
+        // overlap, and the write must let the maker repair it by hand. The measure is the depth the
+        // pair is sunk to, and two coplanar boards are sunk by their own thickness: no slide along
+        // the plane deepens that, so every placement along the face and every way out is granted
+        // (X86, ADR 0162, ADR 0178).
         let mut project = empty_project();
         let root = project.root().id();
         let shelf = panel(&mut project, root, "Shelf", (0, 0, 0));
         panel(&mut project, root, "Neighbour", (600, 0, 0));
-        // 100 mm of the shelf's 700 is inside the neighbour's 700, and every placement of the pair is
-        // no new overlap: out of it, or further in.
+        // 100 mm of the shelf's 700 is inside the neighbour's 700, and the pair shares its thickness.
         assert_eq!(project.resting_conflict(&[(shelf, place((-650.0, 0.0, 0.0)))]), None, "sliding out is legal");
         assert_eq!(project.resting_conflict(&[(shelf, place((0.0, 0.0, 0.0)))]), None, "staying is legal");
-        assert_eq!(project.resting_conflict(&[(shelf, place((50.0, 0.0, 0.0)))]), None, "and deeper is not refused");
+        assert_eq!(
+            project.resting_conflict(&[(shelf, place((0.0, -100.0, 0.0)))]),
+            None,
+            "sliding along the face is legal too"
+        );
+        assert_eq!(
+            project.resting_conflict(&[(shelf, place((50.0, 0.0, 0.0)))]),
+            None,
+            "and so is sliding further behind it, which sinks the boards no deeper"
+        );
+    }
+
+    #[test]
+    fn a_body_standing_inside_another_is_dragged_out_and_never_deeper() {
+        // X86: the drag and the write read one measure. A body the document already holds inside
+        // another is carried out of it whole, and every axis that would sink it further is refused,
+        // so the piece has exactly one way to go and the log names the body it is leaving.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        let host = solid_box(&mut project, root, "Host", (100, 100, 100), place((50.0, 0.0, 0.0)));
+        let rule = rule(&project, &[body]);
+        // 50 mm of the two bodies is shared, so going deeper along +X is refused before it starts…
+        assert_eq!(stops(rule.limit(MoveAxis::X, 40.0)), (0.0, None), "a deeper place is not taken");
+        assert_eq!(
+            rule.blocked_at(DVec3::new(40.0, 0.0, 0.0)).and_then(Stop::node),
+            Some(host),
+            "and the answer names the body it is inside"
+        );
+        // …while the way out is the whole distance, in the drag and in the write alike.
+        assert_eq!(rule.limit(MoveAxis::X, -400.0), moved(-400.0), "coming out is granted whole");
+        assert_eq!(project.resting_conflict(&[(body, place((-400.0, 0.0, 0.0)))]), None, "and so is the write");
+        assert_eq!(
+            project.resting_conflict(&[(body, place((40.0, 0.0, 0.0)))]),
+            Some(Resting { moved: body, standing: host }),
+            "while the same place is refused by the write's own guard"
+        );
     }
 
     #[test]
