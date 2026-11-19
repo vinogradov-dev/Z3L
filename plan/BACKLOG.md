@@ -87,7 +87,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    field; a hidden container hides its whole subtree for the tools as it does for the frame;
    cargo xtask ci is green.
   `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs`
-
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
@@ -195,6 +194,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **X74** the furniture move carries a frame on every axis its class allows and slides it along the face it meets
+  Why: The owner, using the furniture move on a product frame: it travels one axis at a time,
+   so a floor cabinet cannot be moved across the floor in one gesture and a wall cabinet cannot
+   be moved in the plane it hangs on. The mount trait therefore reads as if it changed nothing,
+   because both a floor and a wall piece still obey the one axis the hand named (ADR 0151,
+   0153). The frame must move on every axis its class allows — a floor piece across the floor
+   plane, a wall piece everywhere — and a face it meets must stop that axis while the other
+   axes keep carrying it.
+  Shape: The furniture carry stops latching one axis for a piece that allows more than one. The
+   pointer is taken on the camera plane through the pivot at the take, so the hand proposes a
+   world vector; the rule answers it axis by axis, which zeroes a forbidden axis (a floor
+   piece's height, a panel's in-plane directions), snaps each allowed axis to a surface and
+   cuts each at its first contact, so a blocked axis stops and the free ones slide. A one-axis
+   piece keeps the hand-travel latch, its exact-distance fields and its typed gap; a multi-axis
+   delta keeps the fields on its dominant allowed axis, so a typed number still pins one face.
+   The class is read where the rule is read, so changing it in the properties card changes the
+   carry at the next take, and a test proves the same node changes behaviour.
+  Done: A floor frame carried diagonally changes X and Y in one gesture and keeps Z; the same
+   frame given a wall class moves in Z as well; a frame dragged into a neighbour stops on that
+   axis and still slides on the free one; a panel still offers its thickness axis only and its
+   typed gap still lands; one carry is one undo entry; an ADR and the map rows are updated;
+   cargo xtask ci is green.
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/move_query.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions` — `cea450f`
 
 - `[x]` **X72** a moved part may come to rest inside another part
   Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
