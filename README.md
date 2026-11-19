@@ -12,6 +12,14 @@ cargo test --workspace
 cargo xtask layers          # checks the crate dependency rules
 ```
 
+## Diagnostics
+
+The shell writes a log to `z3l.log` in the application's config directory (`~/.config/z3l/z3l.log` on
+Linux, `%APPDATA%\z3l` on Windows, `~/Library/Application Support/z3l` on macOS) and to stderr. The
+level comes from `Z3L_LOG`: `off`, `error`, `warn`, `info`, `debug` (the default) or `trace`. A carry
+logs the moved node, its world coordinate, the cursor, the delta the hand asked for and the delta the
+document allowed, so a defect report is the file and one sentence about the gesture.
+
 ## Where to read next
 
 - [`PROJECT.md`](PROJECT.md) — the product, the domain vocabulary and the crate map.

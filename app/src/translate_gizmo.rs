@@ -177,6 +177,12 @@ struct Drag {
     /// brushed a face: a board brought up to a slab would flip above it. The carry therefore holds
     /// the crossing for a moment and takes it only while the hand keeps asking (X77).
     jump: Option<(DVec3, f32)>,
+    /// The delta the hand itself named last frame, before the rule answered it.
+    ///
+    /// A jump is an answer that changes far more than the hand did; without this the carry could
+    /// only compare the answer with an absolute distance, and at a zoom where a few points of
+    /// pointer travel mean a hundred millimetres every ordinary frame would read as a jump (X79).
+    asked: DVec3,
     /// The document the targets and the rule were read from.
     ///
     /// A command that lands under the hand makes both stale, so the hold ends rather than committing
@@ -395,6 +401,20 @@ impl TranslateGizmo {
         if let Some(distance) = distance.filter(|distance| distance.is_finite()) {
             drag.delta = axis.direction() * distance;
             drag.capture = capture;
+            // The held drag's one-axis line: the piece, the cursor, the distance the rule allowed
+            // and the surface a snap landed it on (ADR 0168).
+            log::debug!(
+                target: "z3l::move",
+                "drag node={:?} axis={:?} piece=({:.3},{:.3},{:.3}) cursor={} distance={:.3} capture={:?}",
+                drag.node,
+                axis,
+                drag.start_origin.x + drag.delta.x,
+                drag.start_origin.y + drag.delta.y,
+                drag.start_origin.z + drag.delta.z,
+                pointer.map_or_else(|| "none".to_owned(), |at| format!("({:.1},{:.1})", at.x, at.y)),
+                distance,
+                capture.map(|capture| (capture.surface, capture.at_mm)),
+            );
         }
         if !down {
             self.consumed_click = true;
@@ -442,6 +462,14 @@ impl TranslateGizmo {
         // taken and put back without travelling is no move, and the click still ends the hold.
         if response.clicked_by(egui::PointerButton::Primary) {
             self.consumed_click = true;
+            log::info!(
+                target: "z3l::move",
+                "drop node={:?} delta=({:.3},{:.3},{:.3})",
+                drag.node,
+                drag.delta.x,
+                drag.delta.y,
+                drag.delta.z
+            );
             let commit = commit_translation(&drag.targets, drag.delta)?;
             return Ok(commit);
         }
@@ -496,6 +524,8 @@ impl TranslateGizmo {
             let mut capture = drag.capture;
             let typed = pinned.filter(|distance| distance.is_finite());
             let mut limits = None;
+            let mut hand_world = None;
+            let mut proposed = drag.asked;
             // The bond is the screen offset the click gave the pivot, so the piece keeps the place it
             // hangs at in *points* and not in millimetres: a plane meets the eye at a slant, and a
             // world delta that matches the pointer's travel at the take only shrinks the piece's own
@@ -503,9 +533,11 @@ impl TranslateGizmo {
             if let (false, Some(offset)) = (held_now, hand.offset)
                 && let Some(hit) = plane.point(hand.at + offset, viewport, target.camera, drag.start_origin)
             {
-                let proposed = bounded(hit - drag.start_origin);
-                limits = drag.rule.as_ref().map(|rule| rule.limits(proposed));
-                delta = limits.map_or(proposed, |limits| {
+                let asked = bounded(hit - drag.start_origin);
+                proposed = asked;
+                hand_world = Some(hit);
+                limits = drag.rule.as_ref().map(|rule| rule.limits(asked));
+                delta = limits.map_or(asked, |limits| {
                     DVec3::new(
                         limits[Axis::X.index()].distance_mm,
                         limits[Axis::Y.index()].distance_mm,
@@ -550,14 +582,50 @@ impl TranslateGizmo {
                 self.moved_by_gesture = true;
             }
             // A typed number is the maker's own face and is never delayed; a rule's answer that
-            // crosses an obstacle in one frame is held for a moment first.
+            // crosses an obstacle in one frame is held for a moment first. The step is compared with
+            // the hand's own travel, never with an absolute distance: at a zoomed-out view a few
+            // points of pointer travel is a hundred millimetres, and an absolute threshold would
+            // freeze the piece and let it through in bursts (X79).
+            let resolved = delta;
             if typed.is_none() {
                 let dt = ui.input(|input| input.stable_dt);
-                let asked = drag.jump;
-                let (settled, jump) = settled_carry(drag.delta, delta, asked, moved.length(), dt);
+                let hand_step = (proposed - drag.asked).length();
+                let (settled, jump) = settled_carry(drag.delta, delta, hand_step, drag.jump, dt);
                 delta = settled;
                 drag.jump = jump;
+                drag.asked = proposed;
             }
+            log::debug!(
+                target: "z3l::move",
+                "carry node={:?} piece=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) hand={} \
+                 asked=({:.3},{:.3},{:.3}) resolved=({:.3},{:.3},{:.3}) delta=({:.3},{:.3},{:.3}) \
+                 jump={} contact={:?}",
+                drag.node,
+                drag.start_origin.x + delta.x,
+                drag.start_origin.y + delta.y,
+                drag.start_origin.z + delta.z,
+                hand.at.x,
+                hand.at.y,
+                hand_world.map_or_else(
+                    || "none".to_owned(),
+                    |point| format!("({:.3},{:.3},{:.3})", point.x, point.y, point.z)
+                ),
+                proposed.x,
+                proposed.y,
+                proposed.z,
+                resolved.x,
+                resolved.y,
+                resolved.z,
+                delta.x,
+                delta.y,
+                delta.z,
+                drag.jump.is_some(),
+                limits.map(|limits| [
+                    (limits[0].contact, limits[0].capture),
+                    (limits[1].contact, limits[1].capture),
+                    (limits[2].contact, limits[2].capture),
+                ]),
+            );
             drag.delta = delta;
             drag.capture = capture;
             drag.hold = Hold::Following { axis: measured, follow: Follow::Plane { plane }, hand };
@@ -722,6 +790,17 @@ impl TranslateGizmo {
             // there would swallow that travel and leave the piece standing still (X67).
             let offset = screen_point(target.camera, viewport, origin_world).map(|pivot| pivot - at);
             let hand = Hand { offset, ..Hand::taken(at) };
+            log::info!(
+                target: "z3l::move",
+                "take node={:?} pivot=({:.3},{:.3},{:.3}) cursor=({:.1},{:.1}) axes={:?}",
+                anchor.node,
+                origin_world.x,
+                origin_world.y,
+                origin_world.z,
+                at.x,
+                at.y,
+                axes
+            );
             self.drag = Some(Drag {
                 node: anchor.node,
                 hold: Hold::Following { axis: None, follow, hand },
@@ -733,6 +812,7 @@ impl TranslateGizmo {
                 start_parameter: 0.0,
                 delta: DVec3::ZERO,
                 jump: None,
+                asked: DVec3::ZERO,
                 revision: target.project.revision(),
             });
             return Ok(None);
@@ -775,6 +855,7 @@ impl TranslateGizmo {
             start_parameter: parameter,
             delta: DVec3::ZERO,
             jump: None,
+            asked: DVec3::ZERO,
             revision: target.project.revision(),
         });
         if !ui.input(|input| input.pointer.primary_down()) {
@@ -812,15 +893,14 @@ impl TranslateGizmo {
     }
 }
 
-/// How far a carried delta may move in one frame before the carry calls it a jump, in millimetres.
+/// How much further than the hand the rule's answer may move before the carry calls it a jump, in
+/// millimetres.
 ///
-/// A hand that travels at an ordinary pace moves the piece a few millimetres a frame; a place beyond
-/// an obstacle is a step of the obstacle's whole thickness. The two are far apart, so a large step
-/// with a still pointer is a jump rather than travel.
+/// The hand's own travel is the measure, not an absolute step: at a zoomed-out view a few points of
+/// pointer travel is a hundred millimetres, and an absolute threshold read every ordinary frame as a
+/// jump, which froze the piece and let it through in bursts. An answer that moves no further than
+/// the hand plus this margin is travel (X79).
 const JUMP_MM: f64 = 15.0;
-
-/// How little the pointer may have moved for that step to count as a jump, in points.
-const JUMP_POINTS: f32 = 6.0;
 
 /// How long the hand must keep asking for a jump before the piece takes it, in seconds.
 ///
@@ -831,18 +911,20 @@ const JUMP_HOLD: f32 = 0.12;
 
 /// A carried delta after the jump hold: where the piece goes this frame, and the request it keeps.
 ///
-/// A jump is the rule's answer changing by more than [`JUMP_MM`] while the pointer barely moved. The
-/// previous delta holds until the same request has been asked for [`JUMP_HOLD`] seconds; a hand that
-/// asks for something else, or stops asking, clears the request and the piece follows it at once.
+/// A jump is the rule's answer changing further than the hand itself travelled, past [`JUMP_MM`]:
+/// the hand moved a millimetre and the answer moved a face's thickness, which is a crossing and not
+/// travel. The previous delta holds until the same request has been asked for [`JUMP_HOLD`] seconds;
+/// a hand that asks for something else, or stops asking, clears the request and the piece follows it
+/// at once.
 fn settled_carry(
     previous: DVec3,
     asked: DVec3,
+    hand_step: f64,
     pending: Option<(DVec3, f32)>,
-    pointer_moved: f32,
     dt: f32,
 ) -> (DVec3, Option<(DVec3, f32)>) {
     let step = (asked - previous).length();
-    let jump = step.is_finite() && step > JUMP_MM && pointer_moved < JUMP_POINTS;
+    let jump = step.is_finite() && step > hand_step + JUMP_MM;
     if !jump {
         return (asked, None);
     }
@@ -901,25 +983,25 @@ mod tests {
         // so a hand that merely brushed the face does not flip the piece over it.
         let start = DVec3::ZERO;
         let past = DVec3::new(400.0, 0.0, 0.0);
-        let (settled, pending) = settled_carry(start, past, None, 1.0, 0.016);
+        let (settled, pending) = settled_carry(start, past, 1.0, None, 0.016);
         assert_eq!(settled, start, "the first frame asks: the piece stays at the face");
         let pending = pending.expect("the request is kept");
-        let (settled, pending) = settled_carry(start, past, Some(pending), 0.5, 0.05);
+        let (settled, pending) = settled_carry(start, past, 0.5, Some(pending), 0.05);
         assert_eq!(settled, start, "a tenth of a second is still a pause");
-        let (settled, pending) = settled_carry(start, past, pending, 0.5, 0.08);
+        let (settled, pending) = settled_carry(start, past, 0.5, pending, 0.08);
         assert_eq!(settled, past, "a sixth of a second takes the place the hand kept naming");
         assert!(pending.is_none(), "and the request is spent");
 
-        // A hand that travels fast enough for that step is travel, not a jump.
-        let (settled, _) = settled_carry(start, past, None, 40.0, 0.016);
-        assert_eq!(settled, past, "a fast hand crosses at once");
+        // A hand that travelled that far itself is travel, not a jump — however far the answer is.
+        let (settled, _) = settled_carry(start, past, 400.0, None, 0.016);
+        assert_eq!(settled, past, "the piece follows a hand that travelled the distance");
         // An ordinary step of a few millimetres is never a jump.
         let step = DVec3::new(3.0, 0.0, 0.0);
-        assert_eq!(settled_carry(start, step, None, 0.5, 0.016).0, step);
+        assert_eq!(settled_carry(start, step, 3.0, None, 0.016).0, step);
         // A hand that asks for a different place clears the request it was holding.
-        let (settled, pending) = settled_carry(start, past, None, 1.0, 0.016);
+        let (settled, pending) = settled_carry(start, past, 1.0, None, 0.016);
         assert_eq!(settled, start);
-        let (settled, _) = settled_carry(start, DVec3::new(0.0, 300.0, 0.0), pending, 1.0, 0.016);
+        let (settled, _) = settled_carry(start, DVec3::new(0.0, 300.0, 0.0), 1.0, pending, 0.016);
         assert_eq!(settled, start, "another request starts its own pause");
     }
 

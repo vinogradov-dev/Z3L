@@ -37,6 +37,7 @@ mod frame_tests;
 mod gizmo;
 mod gizmo_math;
 mod header;
+mod logging;
 mod measure_gizmo;
 mod mesh_pick;
 mod open_frame;
@@ -1118,6 +1119,12 @@ impl eframe::App for App {
 /// Reads the command line first: an export or a help request finishes here, before eframe creates a
 /// surface, so the same binary writes a package with no window, no GPU and no person (K3).
 fn main() -> eframe::Result {
+    // The sink is installed before anything can fail: the first tab, the command line and the window
+    // all write through it, and a bug report is the file it names (ADR 0168).
+    if let Some(path) = logging::install() {
+        log::info!(target: "z3l::shell", "log file {}", path.display());
+    }
+    log::info!(target: "z3l::shell", "{} starts", theme::PRODUCT_NAME);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
         Ok(command) => command,
