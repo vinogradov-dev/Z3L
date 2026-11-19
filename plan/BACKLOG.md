@@ -43,17 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X90** the probe and the frame budget, the two clauses X85 leaves
-  Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
-   clause and its frame budget are a separate piece of work that needs its own shape (the port
-   has no ray query yet).
-  Shape: The probe asks the same shapes: a ray case through the port, a face hit derived from
-   the port's answer, and the niche cell measured against the body's own faces; then a
-   per-revision shape cache and a broad phase, with a measured budget for a scene of a few
-   hundred bodies.
-  Done: The niche probe meets a turned body's own face and not the box around it; a rule built
-   over a few hundred bodies keeps its frame budget; the gate is green.
-  `files: crates/model/src/project/niche.rs, crates/model/src/project/move_query.rs, plan/notes/X85.md`
 - `[ ]` **X91** opening and saving ask the system file manager instead of a path typed into a field
   Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
    deletes two characters and the cursor moves by two, so a path can be edited only by retyping
@@ -199,6 +188,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
 
 ## Done
+
+- `[x]` **X90** the probe and the frame budget, the two clauses X85 leaves
+  Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
+   clause and its frame budget are a separate piece of work that needs its own shape (the port
+   has no ray query yet).
+  Shape: The probe asks the same shapes: a ray case through the port, a face hit derived from
+   the port's answer, and the niche cell measured against the body's own faces; then a
+   per-revision shape cache and a broad phase, with a measured budget for a scene of a few
+   hundred bodies.
+  Done: The niche probe meets a turned body's own face and not the box around it; a rule built
+   over a few hundred bodies keeps its frame budget; the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/move_query.rs, plan/notes/X85.md` — `5c75c31`
 
 - `[x]` **X89** a scene with a plate that has a hole, to carry a ball through it
   Why: There are no boolean operations in the workspace, so a maker cannot cut a hole to try
