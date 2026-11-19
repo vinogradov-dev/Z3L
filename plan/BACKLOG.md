@@ -43,6 +43,31 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **X85** a body is measured by its own surface and not by the box around it
+  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
+   apex reaches the corner between two plates, which is the owner report of the sixth session.
+   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
+   The owner asked for near-physical interaction: any surface lives by its faces, never by the
+   box around it.
+  Shape: Stage A: a new `contact` port crate (L1, next to `kernel`) with a `Shape` (convex
+   polyhedron or triangle mesh), a pose, and four queries — overlap, distance, first touch
+   along a direction, penetration depth and normal — implemented by a `contact-parry` adapter
+   over parry3d 0.31 (Apache-2.0, pure Rust, glam-based, f64 build): a cone, a cylinder, a ball
+   and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
+   notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
+   `model` builds the shape of a node from its own parametric data — never from the render mesh
+   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
+   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
+   material, and the hold still rests the piece on the face first — only what counts as a face
+   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
+   budget. The mesh never decides contact; the rule stays pure and stateless.
+  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
+   surface allows and stops on the plate face; a ball slips through a hole in a blob when its
+   place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
+   and a panel answer exactly as today; the drag, the release guard and the log read one
+   measurement; the frame budget is tested; the gate is green.
+  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs`
+
 ## Bugs
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
@@ -139,30 +164,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **X85** a body is measured by its own surface and not by the box around it
-  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
-   apex reaches the corner between two plates, which is the owner report of the sixth session.
-   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
-   The owner asked for near-physical interaction: any surface lives by its faces, never by the
-   box around it.
-  Shape: Stage A: a new `contact` port crate (L1, next to `kernel`) with a `Shape` (convex
-   polyhedron or triangle mesh), a pose, and four queries — overlap, distance, first touch
-   along a direction, penetration depth and normal — implemented by a `contact-parry` adapter
-   over parry3d 0.31 (Apache-2.0, pure Rust, glam-based, f64 build): a cone, a cylinder, a ball
-   and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
-   notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
-   `model` builds the shape of a node from its own parametric data — never from the render mesh
-   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
-   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
-   material, and the hold still rests the piece on the face first — only what counts as a face
-   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
-   budget. The mesh never decides contact; the rule stays pure and stateless.
-  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
-   surface allows and stops on the plate face; a ball slips through a hole in a blob when its
-   place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
-   and a panel answer exactly as today; the drag, the release guard and the log read one
-   measurement; the frame budget is tested; the gate is green.
-  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs`
 ## Done
 
 - `[x]` **X86** a piece already inside another may only come out

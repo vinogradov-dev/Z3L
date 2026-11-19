@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=ac84a60 updated=2026-11-19
+STATE: milestone=M7 phase=T task=X85 state=doing base=ac84a60 updated=2026-11-19
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -27,10 +27,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-Nothing is scheduled: X85 is next and legal to start, and it is the largest task left in this area —
-a contact port at L0 with a contact-parry adapter injected like the geometry kernel, so a cone, a
-cylinder, a ball and a turned panel are measured by their own surfaces during a drag, a probe and a
-write.
+X85 is next: a body is measured by its own surface and not by the box around it
 
 ## Index
 
