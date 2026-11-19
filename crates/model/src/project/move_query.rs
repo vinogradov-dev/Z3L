@@ -519,10 +519,10 @@ impl MoveRule {
     /// The distance a proposal may travel along a world axis.
     ///
     /// The proposal is zeroed on the vertical when a moved product is floor-bound, then snapped to
-    /// the 1 mm grid or to a surface within [`SnapSettings::tolerance`], and finally cut at the
-    /// first surface in the way; the contact is reported so a caller can say what stopped the drag,
-    /// and the capture so it can draw the surface the piece jumped to. A proposal that is not
-    /// finite comes back as no movement.
+    /// the 1 mm grid or to a surface within [`SnapSettings::tolerance`] — or left exactly as it is
+    /// when the drag snaps to nothing — and finally cut at the first surface in the way; the contact
+    /// is reported so a caller can say what stopped the drag, and the capture so it can draw the
+    /// surface the piece jumped to. A proposal that is not finite comes back as no movement.
     pub fn limit(&self, axis: MoveAxis, proposed_mm: f64) -> MoveLimit {
         if !proposed_mm.is_finite() {
             return MoveLimit { distance_mm: 0.0, contact: None, capture: None };
