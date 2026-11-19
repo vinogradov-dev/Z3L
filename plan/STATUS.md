@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=N20 state=idle base=b2a651b updated=2026-11-19
+STATE: milestone=M7 phase=T task=N26 state=idle base=2cb817d updated=2026-11-19
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -25,7 +25,7 @@ both packages named (O7).
 
 ## Next
 
-N20 is next: the card says the position its class gives, and never asks.
+N26 is next: a carried piece measures its gaps with arrows in the scene, not with a card at the hand
 
 ## Index
 

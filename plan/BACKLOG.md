@@ -43,22 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N20** the card says the position its class gives, and never asks
-  Why: The owner asked the card for a position, then settled it: the class already dictates how
-   the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
-   source of truth that record refuses. What is missing is only the sentence: the card names a
-   class code and says nothing about whether the piece stands or hangs, so a maker cannot tell
-   why a floor cabinet will not rise or why a wall cabinet does. No field and no filter: the
-   card reads the trait.
-  Shape: One row under the class: the position the chosen class carries, said in words (On the
-   floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
-   class list is not filtered and the class stays the only stored fact. A height above the
-   floor stays the makers placement, as ADR 0100 has it, so the row describes the rule and
-   never sets a height. Two messages carry the words in both languages.
-  Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
-   wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
-   xtask ci is green.
-  `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs`
 - `[ ]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
   why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
    owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
@@ -269,6 +253,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 
 ## Done
+
+- `[x]` **N20** the card says the position its class gives, and never asks
+  Why: The owner asked the card for a position, then settled it: the class already dictates how
+   the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
+   source of truth that record refuses. What is missing is only the sentence: the card names a
+   class code and says nothing about whether the piece stands or hangs, so a maker cannot tell
+   why a floor cabinet will not rise or why a wall cabinet does. No field and no filter: the
+   card reads the trait.
+  Shape: One row under the class: the position the chosen class carries, said in words (On the
+   floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
+   class list is not filtered and the class stays the only stored fact. A height above the
+   floor stays the makers placement, as ADR 0100 has it, so the row describes the rule and
+   never sets a height. Two messages carry the words in both languages.
+  Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
+   wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
+   xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs` — `2cb817d`
 
 - `[x]` **O7** a package travels between workshops
   Why: A workshop extends its directory and hands the extension to another workshop.
