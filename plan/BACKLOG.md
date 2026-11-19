@@ -195,6 +195,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X83** a crossing rests on the face
+  Why: The owner pushes a horizontal block butt-first into a vertical one: it passes to the
+   other side at once, though it should rest on the face and wait for the cursor to cross the
+   body. The other direction freezes and jumps much later, so the two directions read
+   differently. The hold compares the answer step with the hand step, and this session logged
+   single frames of 500-1000 mm of pointer travel, so a leap across a whole body is read as
+   ordinary travel and no frame shows the piece on the face.
+  Shape: The rule names the body a straight carry passes through (crossing) and the body the
+   hand itself stands inside (enclosing), both with the swept face test the drag already uses.
+   The carry holds a granted place beyond such a body for JUMP_HOLD, whatever the hand did, and
+   keeps the hold age at zero while the hand is still over the body: the wait is the cursor
+   crossing the thickness, not a timer. A cut answer is the face already and is never held.
+  Done: A place granted whole beyond a body is held on the face for JUMP_HOLD even when the
+   pointer crossed the whole body in one frame; the hold keeps no age while the hand is over
+   the body and takes the place the frame it comes out; both directions read the same; a cut
+   answer and a typed number are never held; the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, docs/decisions/0172-a-crossing-rests-on-the-face-before-it-is-taken.md` — `6af7d87`
+
 - `[x]` **X82** the free slot is not refused by the staircase
   Why: The third logged session has the hand at (-171, 236) and the answer at (-94, 236), held
    while the pointer kept travelling, and its own blocked=none proves the destination was free.
