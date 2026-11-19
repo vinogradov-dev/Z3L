@@ -195,6 +195,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X79** the shell logs the carry, and a jump is measured against the hand
+  Why: The owner asks for a logging system that carries what a bug report needs: the moved
+   object, its coordinate and the cursor's coordinate, so a gesture's behaviour can be read
+   after the fact. The same message reports a regression of X78: the piece now jerks and jumps
+   instead of travelling. The cause is that the jump hold compared the rule's answer with an
+   absolute 15 mm step and the pointer's travel in points, so at a zoom where a few points mean
+   a hundred millimetres every ordinary frame was read as a jump and the piece moved in held
+   bursts.
+  Shape: The shell installs one `log` sink before anything else: a level from `Z3L_LOG`, a file
+   beside the workspace settings bounded at four megabytes, and the same lines on stderr. The
+   carry writes the node, its world coordinate, the cursor in points and the hand's world
+   point, the delta the hand asked for, the delta the rule resolved, the delta the carry
+   settled on, the jump hold and the contact/capture per axis; the held drag writes its
+   one-axis line; take, drop and cancel are info. The jump is measured against the hand's own
+   travel instead of an absolute step, so ordinary motion is never held.
+  Done: A run with `Z3L_LOG=debug` writes a line per carry frame with the object, its
+   coordinate, the cursor and all three deltas, and `Z3L_LOG=trace` adds the rest; the file is
+   bounded and appended across runs; a drag at any zoom follows the hand without held bursts,
+   and only a crossing of an obstacle is still held for a sixth of a second; the gate is green.
+  `files: app/src/logging.rs, app/src/main.rs, app/src/translate_gizmo.rs, README.md` — `a412412`
+
 - `[x]` **X78** a jump is held for a moment, and the object move has its icon
   Why: Two reports from the owner on one screenshot of a room. A post carried up to a slab's
    underside flips above the slab instead of resting on its face, which is the destination rule
