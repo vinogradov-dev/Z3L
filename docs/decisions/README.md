@@ -171,6 +171,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) | The furniture move carries a piece on every axis its class allows | Accepted; supersedes the single-axis latch of 0151 and narrows the one-axis carry of 0153; its camera-plane carry is superseded by 0164 |
 | [0164](0164-a-carried-piece-is-met-on-the-plane-its-class-allows.md) | A carried piece is met on the plane its class allows | Accepted; supersedes 0163's camera-plane carry |
 | [0165](0165-the-move-tool-is-the-object-move-and-a-solid-body-is-measured-by-its-faces.md) | The move tool is the object move, and a solid body is measured by its faces | Accepted; supersedes 0147's furniture-only scope, narrows 0162's snapping clause and 0163's world-box contact |
+| [0166](0166-the-move-answers-the-place-the-piece-lands.md) | The move answers the place the piece lands, not the path it crosses | Accepted; supersedes 0165's swept stop and 0163's contact reading, narrows 0102's containment clause |
 
 ## Format
 

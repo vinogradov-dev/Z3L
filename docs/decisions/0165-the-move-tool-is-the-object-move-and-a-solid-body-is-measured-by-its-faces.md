@@ -4,7 +4,9 @@
   [0147](0147-the-furniture-move-is-its-own-tool-and-a-panel-slides-along-its-thickness.md), and
   narrows the snapping clause of [0162](0162-a-placement-may-not-put-a-part-inside-another.md) and
   the world-box contact of
-  [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) for a body that is not furniture
+  [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) for a body that is not furniture.
+  Its swept stop — the piece cut at the first contact along the path — is superseded by
+  [0166](0166-the-move-answers-the-place-the-piece-lands.md)
 - Date: 2026-11-19
 
 ## Context

@@ -2,7 +2,10 @@
 //! not come to rest inside.
 //!
 //! The translate gizmo proposes a world distance and this module answers with the distance the
-//! document allows. Four facts decide it and none of them is a code literal:
+//! document allows. The answer is about the **place the drag lands**, not the path it crosses: a
+//! destination that is free is taken whole, so a piece is carried past an obstacle into the free
+//! place beyond it, and only a destination that is not free is cut at the first face in the way
+//! (ADR 0166). Four facts decide it and none of them is a code literal:
 //!
 //! - the **axes** the drag offers: a panel slides only along its own thickness, so the two in-plane
 //!   directions are refused, and a floor-bound product keeps its height (N22, ADR 0147); a piece free
@@ -10,10 +13,11 @@
 //!   the free axes keep carrying it along the face (X74);
 //! - the **mount** trait of a product's class: a `Floor` product keeps its height, a `Wall` product
 //!   moves freely (ADR 0097);
-//! - **contact**: a shell stops at another shell and a body at another body, while containment of
-//!   one shell in another stays legal (ADR 0102). A furniture piece keeps the world-box reading it
-//!   always had; any other solid body is measured by its own faces, so a turned body stops where it
-//!   touches and not at the box around it (ADR 0165);
+//! - **contact**: a body stops at a body, a shell at a shell, and a carcass at a solid body that is
+//!   not its own piece, while a legitimate nesting — a piece in its case, a unit inside another —
+//!   stays legal (ADR 0102). A furniture piece keeps the world-box reading it always had; any other
+//!   solid body is measured by its own faces, so a turned body stops where it touches and not at the
+//!   box around it (ADR 0165);
 //! - **snapping**: the moved box's faces fall onto the world coordinate planes (the floor included),
 //!   onto the virtual faces of the product frames around it, onto a neighbouring part's face, or
 //!   onto the 1 mm grid. A body measured by its own faces takes the planes and the grid and not
@@ -23,6 +27,10 @@
 //! [`SnapSettings`] value the shell reads from the workspace settings and passes in: snapping is a
 //! taste and a workshop standard (ADR 0146). A capture is reported with the surface it landed on, so
 //! the shell can draw the line the piece jumped to and measure its field against that same surface.
+//!
+//! The axes are resolved in one pass and each is decided where the axes before it put the piece: the
+//! three answers are one placement, tested as one, so no combination of them can land the piece
+//! inside a turned neighbour (ADR 0166).
 //!
 //! The same contact test is the document's own rule and not the tool's: [`Project::resting_conflict`]
 //! answers whether a placement a caller asks to write would land a part inside one that stays behind,
@@ -258,7 +266,9 @@ impl Project {
                 continue;
             };
             let stood = self.mover_box(*moved);
-            if let Some(standing) = obstacles.iter().find(|obstacle| resting_inside(stood, lands, **obstacle)) {
+            let product = self.product_of(*moved);
+            if let Some(standing) = obstacles.iter().find(|obstacle| resting_inside(stood, lands, **obstacle, product))
+            {
                 return Some(Resting { moved: *moved, standing: standing.id });
             }
         }
@@ -363,7 +373,13 @@ impl Project {
     fn movers(&self, targets: &[Id]) -> Vec<Mover> {
         targets
             .iter()
-            .filter_map(|id| self.mover_box(*id).map(|box_| Mover { box_, faces: !self.is_furniture(*id) }))
+            .filter_map(|id| {
+                self.mover_box(*id).map(|box_| Mover {
+                    box_,
+                    faces: !self.is_furniture(*id),
+                    product: self.product_of(*id),
+                })
+            })
             .collect()
     }
 
@@ -481,14 +497,34 @@ pub struct Resting {
 /// part out and types where it goes. The drag's own rule (`MoveRule::limit`) stops a furniture piece
 /// at the world-box contact and a solid body at its exact face contact, and neither reading is later
 /// than this answer, so a drag reaches a contact before it reaches a refusal (ADR 0165).
-fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox) -> bool {
-    if now.is_shell() != obstacle.is_shell() {
+fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox, product: Option<Id>) -> bool {
+    // A legitimate nesting is not an overlap: a piece in its own case and a unit inside another stay
+    // legal wherever they stand, and the drag's own destination test reads the same rule (X77).
+    if nested(now, obstacle, product) {
         return false;
     }
     if was.is_some_and(|was| was.meets(obstacle)) {
         return false;
     }
     now.meets(obstacle)
+}
+
+/// Whether one box legitimately holds the other, so the pair is no collision.
+///
+/// A body inside a shell is a piece inside a case, and a shell inside a shell is a unit inside
+/// another; both are places a furniture project holds on purpose (ADR 0102). Two bodies have no
+/// such place: a body inside a body is an overlap. Everything else — a carcass and a solid body
+/// that merely stand beside each other — is measured, so a body no longer passes through a case and
+/// the case no longer passes through the body (X77).
+fn nested(held: SurfaceBox, holder: SurfaceBox, product: Option<Id>) -> bool {
+    if held.is_shell() && holder.is_shell() {
+        // Two products may nest, one wholly inside the other, and neither is a collision; two boxes
+        // of one size stand in each other's place, which is an overlap and not a containment.
+        return held.inside(holder) != holder.inside(held);
+    }
+    // A body is a piece of its own case and of nothing else: a shelf may sit inside the cabinet
+    // whose child it is, and a lamp may not be pushed into that same cabinet's envelope (X77).
+    product == Some(holder.id) && held.inside(holder)
 }
 
 /// One moved node's box, and the reading its contact is measured by.
@@ -504,6 +540,11 @@ struct Mover {
     box_: SurfaceBox,
     /// Whether contact with this node is measured by its own faces rather than by the world box.
     faces: bool,
+    /// The product this node is a piece of, when it is one.
+    ///
+    /// A piece is legal inside its own case and nowhere else: a shelf inside its cabinet is a body
+    /// in a shell, while a lamp pushed into the same cabinet is a body in a way (X77).
+    product: Option<Id>,
 }
 
 /// What one drag is measured against, taken once when the drag starts.
@@ -564,16 +605,17 @@ impl MoveRule {
             // A drag with no snapping keeps the pointer's own distance: no face, no plane and no grid.
             None => (distance, None),
         };
-        let limit = stop_at_contact(axis, snapped, &self.movers, &self.obstacles);
+        // The rule answers the place the drag lands, not the path it crosses: a destination that is
+        // free is taken as it is, even when the straight path from the start met a neighbour, and
+        // only a destination that is not free is cut at the first contact (ADR 0166).
+        let mut asks = [0.0; 3];
+        asks[axis.index()] = snapped;
+        let (distances, contacts) = self.resolve(asks);
         // A contact that cuts the snapped distance stops the piece short of the captured surface, so
         // the face landed on the contact and not on the snap: the stop is the answer, reported on its
         // own, and a capture would name a surface the piece never reached.
-        let capture = if limit.contact.is_some() { None } else { capture };
-        // A distance no contact cut is rounded to the micrometre the document stores; a distance a
-        // contact cut is the touch itself and is rounded the same way, which may put the piece half a
-        // micrometre in — under the document's own contact threshold, so the release still lands a
-        // placement the write allows (ADR 0165).
-        MoveLimit { distance_mm: quantised(limit.distance_mm), contact: limit.contact, capture }
+        let capture = if contacts[axis.index()].is_some() { None } else { capture };
+        MoveLimit { distance_mm: quantised(distances[axis.index()]), contact: contacts[axis.index()], capture }
     }
 
     /// The distance a proposal may travel on every world axis at once.
@@ -586,10 +628,121 @@ impl MoveRule {
     pub fn limits(&self, proposed: DVec3) -> [MoveLimit; 3] {
         let proposed = [proposed.x, proposed.y, proposed.z];
         let mut limits = [MoveLimit { distance_mm: 0.0, contact: None, capture: None }; 3];
+        let mut asks = [0.0_f64; 3];
+        let mut captures: [Option<Capture>; 3] = [None; 3];
         for axis in MoveAxis::ALL {
-            limits[axis.index()] = self.limit(axis, proposed[axis.index()]);
+            let index = axis.index();
+            let ask = if self.allows(axis) { proposed[index] } else { 0.0 };
+            let (distance, capture) = match self.snaps {
+                Some(snaps) => snap_distance(axis, &self.movers, &self.obstacles, ask, snaps),
+                None => (ask, None),
+            };
+            asks[index] = distance;
+            captures[index] = capture;
+        }
+        // The whole destination is answered once, not axis by axis: a per-axis answer is exact for
+        // each axis alone and can still combine into a place inside a turned neighbour, which is how
+        // a diagonal carry used to cut a corner (ADR 0166).
+        let (distances, contacts) = self.resolve(asks);
+        for axis in MoveAxis::ALL {
+            let index = axis.index();
+            let capture = if contacts[index].is_some() { None } else { captures[index] };
+            limits[index] = MoveLimit { distance_mm: quantised(distances[index]), contact: contacts[index], capture };
         }
         limits
+    }
+
+    /// The travel the document allows for a proposal, resolved once in world-axis order.
+    ///
+    /// Each axis is decided against the piece **standing where the axes before it put it**: an axis
+    /// whose destination is free is taken whole, and one whose destination is not is cut at the first
+    /// face in its way from there. That is what keeps a diagonal carry honest — the three answers are
+    /// one placement, tested as one, so no combination of them can land the piece inside a turned
+    /// neighbour (ADR 0166) — while a free axis still slides the piece along the face that stopped the
+    /// axis before it.
+    ///
+    /// The contact is the distance to the touch and is reported per axis, so the shell can say what
+    /// stopped the drag. A pair that already overlaps is the maker's to repair and is no new overlap:
+    /// such a piece can always be dragged out of it, as the write's own guard reads it (ADR 0162).
+    fn resolve(&self, asks: [f64; 3]) -> ([f64; 3], [Option<Id>; 3]) {
+        let mut distances = [0.0; 3];
+        let mut contacts: [Option<Id>; 3] = [None; 3];
+        let mut delta = DVec3::ZERO;
+        for axis in MoveAxis::ALL {
+            let index = axis.index();
+            let ask = asks[index];
+            if ask == 0.0 || !ask.is_finite() {
+                continue;
+            }
+            let mut candidate = delta;
+            candidate[index] = ask;
+            if self.free_at(candidate) {
+                delta = candidate;
+                distances[index] = ask;
+                continue;
+            }
+            let standing: Vec<Mover> = self
+                .movers
+                .iter()
+                .filter_map(|mover| mover.box_.shifted(delta).map(|box_| Mover { box_, ..*mover }))
+                .collect();
+            let limit = stop_at_contact(axis, ask, &standing, &self.obstacles);
+            let mut cut = limit.distance_mm;
+            candidate[index] = cut;
+            // The contact is the face the piece meets; should the cut land it in a corner the axis
+            // could not see on its own, the axis keeps the piece where it stood and says nothing
+            // about a face it never reached. An axis that does not move is honest; a preview the
+            // release refuses is not.
+            if cut != 0.0 && !self.free_at(candidate) {
+                cut = 0.0;
+                candidate[index] = 0.0;
+            } else {
+                contacts[index] = limit.contact;
+            }
+            distances[index] = cut;
+            delta = candidate;
+        }
+        (distances, contacts)
+    }
+
+    /// Whether the piece may come to rest where `delta` puts it.
+    ///
+    /// The answers are about the destination, never about the straight path: a body carried past an
+    /// obstacle lands beyond it as soon as the place it names is free, which is what lets a panel be
+    /// set down behind a panel (ADR 0166). A legitimate nesting — a piece in a case, a unit inside
+    /// another — is no overlap; a carcass and a body beside it are measured like two bodies; and the
+    /// predicate is the same one the write's guard asks, so a drag never previews a place the release
+    /// refuses.
+    fn free_at(&self, delta: DVec3) -> bool {
+        if !delta.is_finite() {
+            return false;
+        }
+        for mover in &self.movers {
+            let Some(moved) = mover.box_.shifted(delta) else {
+                return false;
+            };
+            for obstacle in &self.obstacles {
+                // A pair the document already holds overlapping is the maker's to repair: only a
+                // *new* overlap is a collision, exactly as the write's guard reads it (ADR 0162). A
+                // legitimate nesting is not that kind of overlap — a piece in its case is nested, not
+                // stuck — so it is exempt at the start and judged at the destination.
+                if nested(moved, *obstacle, mover.product) {
+                    continue;
+                }
+                if !nested(mover.box_, *obstacle, mover.product) {
+                    let was =
+                        if mover.faces { mover.box_.meets(*obstacle) } else { mover.box_.overlaps_box(*obstacle) };
+                    if was {
+                        continue;
+                    }
+                }
+                let blocked = if mover.faces { moved.meets(*obstacle) } else { moved.overlaps_box(*obstacle) };
+                if blocked {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 
@@ -704,14 +857,12 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &
     let mut nearest: Option<(f64, Id)> = None;
     for mover in movers {
         for obstacle in obstacles {
-            // A body stops at a body and a shell at a shell (ADR 0102).
-            if mover.box_.is_shell() != obstacle.is_shell() {
-                continue;
-            }
+            // A body stops at a body, a shell at a shell, and a carcass at a solid body that is not
+            // its own piece: only a legitimate nesting is exempt, and `blocking` knows that wall.
             let blocked = if mover.faces {
                 blocking_faces(axis, sign, &mover.box_, obstacle)
             } else {
-                blocking(axis, sign, &mover.box_, obstacle)
+                blocking(axis, sign, &mover.box_, obstacle, nested(mover.box_, *obstacle, mover.product))
             };
             let Some(limit) = blocked else {
                 continue;
@@ -755,22 +906,26 @@ fn blocking_faces(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &Sur
         }
         // The moving box is below the obstacle on this axis, or above it, and the gap between them
         // closes only while the direction carries it that way.
-        let gap = if moving_high <= obstacle_low {
-            if rate <= 0.0 {
-                return None;
-            }
-            (obstacle_low - moving_high) / rate
+        let (gap, closing) = if moving_high <= obstacle_low {
+            (obstacle_low - moving_high, rate > 0.0)
         } else if obstacle_high <= moving_low {
-            if rate >= 0.0 {
-                return None;
-            }
-            (moving_low - obstacle_high) / -rate
+            (moving_low - obstacle_high, rate < 0.0)
         } else {
             continue;
         };
-        if !gap.is_finite() || gap < 0.0 {
+        if !gap.is_finite() {
             return None;
         }
+        // A gap thinner than the document's own contact threshold is contact: a cross axis of two
+        // turned boxes carries rounding noise of that size, and reading it as a separation that never
+        // closes would report no contact for a pair that is in the way (X77).
+        if gap <= crate::project::surface::CONTACT_MM {
+            continue;
+        }
+        if !closing {
+            return None;
+        }
+        let gap = gap / rate.abs();
         reach = Some(reach.map_or(gap, |best: f64| best.max(gap)));
     }
     reach
@@ -783,7 +938,7 @@ fn blocking_faces(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &Sur
 /// Along it, a body may only stay clear of another body, while one shell may sit inside another:
 /// a drag that keeps the containment stops at the wall it would cross, and a pair that already
 /// overlaps one another partially is not the tool's to police.
-fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBox) -> Option<f64> {
+fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBox, nested: bool) -> Option<f64> {
     let [first, second] = axis.perpendicular();
     let overlap = |a: Span, b: Span| a.min < b.max && b.min < a.max;
     let moving_first = moving.span(first);
@@ -794,7 +949,7 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
         return None;
     }
     let contains = |outer: Span, inner: Span| outer.min <= inner.min && inner.max <= outer.max;
-    let shells = moving.is_shell() && obstacle.is_shell();
+    let shells = nested;
     let moving_span = moving.span(axis);
     let obstacle_span = obstacle.span(axis);
     let inside = obstacle_span.min <= moving_span.min && moving_span.max <= obstacle_span.max;
@@ -1041,10 +1196,107 @@ mod tests {
         let root = project.root().id();
         let board = solid_box(&mut project, root, "Board", (200, 20, 10), turned_z(45_000, (0, 0, 0)));
         let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((500.0, 0.0, 0.0)));
+        // A destination inside the neighbour is cut at the true touch.
         assert_eq!(
-            limit(&project, &[board], MoveAxis::X, 1000.0),
+            limit(&project, &[board], MoveAxis::X, 500.0),
             MoveLimit { distance_mm: 400.0, contact: Some(neighbour), capture: None },
             "the board's corner (500, 100) is the touch, not the box's corner (500, 141.42)"
+        );
+    }
+
+    #[test]
+    fn a_carried_body_lands_in_the_free_place_beyond_a_neighbour() {
+        // X77: the rule answers the place the piece lands, not the path it crosses. A destination
+        // beside and beyond the neighbour is free, so the piece goes there; a destination that
+        // straddles the neighbour is cut at its face.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((300.0, 0.0, 0.0)));
+        assert_eq!(
+            limit(&project, &[body], MoveAxis::X, 250.0),
+            MoveLimit { distance_mm: 200.0, contact: Some(neighbour), capture: None },
+            "a destination inside the neighbour is the contact"
+        );
+        assert_eq!(
+            limit(&project, &[body], MoveAxis::X, 1000.0),
+            moved(1000.0),
+            "a free destination beyond it is taken whole: the piece jumps past"
+        );
+        // And a furniture piece obeys the same rule: a board behind a board is reachable.
+        let (mut project, piece) = product_project("10.01.01");
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        let above = panel(&mut project, piece, "Above", (0, 0, 1000));
+        assert_eq!(
+            limit(&project, &[shelf], MoveAxis::Z, 1200.0),
+            moved(1200.0),
+            "the board rises past its neighbour and lands in the free place beyond"
+        );
+        assert!(above == above);
+    }
+
+    #[test]
+    fn a_diagonal_carry_never_lands_inside_a_turned_neighbour() {
+        // X77: each axis is exact for itself and the three answers can still combine into a place
+        // inside a turned neighbour, which is how a diagonal carry used to cut a corner. The
+        // destination is now answered once for the whole vector, so the preview is a placement the
+        // write's guard accepts.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        solid_box(&mut project, root, "Board", (400, 20, 200), turned_z(45_000, (300, -100, 0)));
+        let proposed = DVec3::new(380.0, -10.0, 0.0);
+        let direct = place((proposed.x, proposed.y, proposed.z));
+        assert!(
+            project.resting_conflict(&[(body, direct)]).is_some(),
+            "the hand's own diagonal would land the body inside the turned board"
+        );
+        let body_rule = rule(&project, &[body]);
+        let limits = body_rule.limits(proposed);
+        let delta = DVec3::new(
+            limits[MoveAxis::X.index()].distance_mm,
+            limits[MoveAxis::Y.index()].distance_mm,
+            limits[MoveAxis::Z.index()].distance_mm,
+        );
+        let landing = place((delta.x, delta.y, delta.z));
+        assert_eq!(
+            project.resting_conflict(&[(body, landing)]),
+            None,
+            "the preview the rule answers is a placement the write accepts"
+        );
+        assert!(limits.iter().any(|limit| limit.contact.is_some()), "and the corner is what stopped it");
+    }
+
+    #[test]
+    fn a_carcass_and_a_body_stop_each_other_and_a_piece_in_the_case_does_not() {
+        // X77: a shell and a body were skipped as a pair, so a cabinet's envelope passed through a
+        // solid. Only a legitimate nesting is exempt: a shelf in its own case moves inside it.
+        let (mut project, piece) = product_project("10.01.01");
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        let frame = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 1000));
+        assert_eq!(
+            limit(&project, &[shelf], MoveAxis::Z, 1100.0),
+            MoveLimit { distance_mm: 982.0, contact: Some(frame), capture: None },
+            "the shelf is not part of that frame, so its envelope stops the shelf"
+        );
+        // A shelf inside its own case is a body in a shell: the destination inside the case is free.
+        let (mut project, piece) = product_project("10.01.01");
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 100));
+        assert_eq!(limit(&project, &[shelf], MoveAxis::Z, 500.0), moved(500.0), "a piece moves inside its case");
+        // A solid body beside a carcass stops at its envelope.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let cabinet = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((800.0, 0.0, 0.0)));
+        assert_eq!(
+            limit(&project, &[body], MoveAxis::X, -300.0),
+            MoveLimit { distance_mm: -200.0, contact: Some(cabinet), capture: None },
+            "the body stops at the carcass's envelope and is not pushed into it"
+        );
+        assert_eq!(
+            limit(&project, &[body], MoveAxis::X, -1000.0),
+            moved(-1000.0),
+            "a free place beyond the carcass is the hand's to take"
         );
     }
 
@@ -1055,13 +1307,13 @@ mod tests {
         let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
         let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((300.0, 0.0, 0.0)));
         let body_rule = rule(&project, &[body]);
-        let limits = body_rule.limits(DVec3::new(1000.0, 120.0, 30.0));
+        let limits = body_rule.limits(DVec3::new(250.0, 60.0, 30.0));
         assert_eq!(
             limits[MoveAxis::X.index()],
             MoveLimit { distance_mm: 200.0, contact: Some(neighbour), capture: None },
             "the neighbour's face stops X"
         );
-        assert_eq!(limits[MoveAxis::Y.index()].distance_mm, 120.0, "and the hand's Y travel slides along it");
+        assert_eq!(limits[MoveAxis::Y.index()].distance_mm, 60.0, "and the hand's Y travel slides along it");
         assert_eq!(limits[MoveAxis::Z.index()].distance_mm, 30.0, "while the vertical is free for a solid");
     }
 
@@ -1167,16 +1419,18 @@ mod tests {
 
     #[test]
     fn a_shell_stops_at_contact_with_another_shell() {
-        let (mut project, cabinet) = product_project("10.01.01");
+        let mut project = empty_project();
+        let cabinet = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
         let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
-        // The cabinet spans x = 0..600 and the neighbour starts at 1000: the drag stops at 400.
+        // The cabinet spans x = 0..600 and the neighbour starts at 1000: a destination on the
+        // neighbour is cut at its face, and the same drag goes past it when the place is free.
         assert_eq!(
-            limit(&project, &[cabinet], MoveAxis::X, 1000.0),
+            limit(&project, &[cabinet], MoveAxis::X, 700.0),
             MoveLimit { distance_mm: 400.0, contact: Some(neighbour), capture: None }
         );
         // The neighbour may come back the same way and stop at its own contact.
         assert_eq!(
-            limit(&project, &[neighbour], MoveAxis::X, -1000.0),
+            limit(&project, &[neighbour], MoveAxis::X, -700.0),
             MoveLimit { distance_mm: -400.0, contact: Some(cabinet), capture: None }
         );
     }
@@ -1227,20 +1481,31 @@ mod tests {
         let mut project = sample_project();
         let outer = product(&mut project, "10.01.02", (2000, 1000, 2000), (0, 0, 0));
         let inner = product(&mut project, "10.01.02", (600, 500, 700), (700, 200, 500));
+        // A destination that straddles the outer piece's ceiling is cut at that wall…
         assert_eq!(
-            limit(&project, &[inner], MoveAxis::Z, 1500.0),
+            limit(&project, &[inner], MoveAxis::Z, 1000.0),
             MoveLimit { distance_mm: 800.0, contact: Some(outer), capture: None },
-            "a shelf unit inside a niche moves freely until its top meets the ceiling"
+            "a unit inside a niche stops where its top meets the ceiling"
         );
         assert_eq!(
-            limit(&project, &[inner], MoveAxis::Z, -1500.0),
+            limit(&project, &[inner], MoveAxis::Z, -600.0),
             MoveLimit { distance_mm: -500.0, contact: Some(outer), capture: None },
             "and down until it stands on the floor of the outer piece"
+        );
+        // …while a destination wholly beyond it is free, and the unit lands on the outer's top.
+        assert_eq!(
+            limit(&project, &[inner], MoveAxis::Z, 1500.0),
+            MoveLimit {
+                distance_mm: 1500.0,
+                contact: None,
+                capture: Some(Capture { end: SnapEnd::Low, at_mm: 2000.0, surface: SnapSurface::Frame(outer) })
+            },
+            "a free place beyond the case is reachable: the unit jumps out and lands on it"
         );
     }
 
     #[test]
-    fn a_body_stops_at_a_body_and_not_at_a_shell() {
+    fn a_body_stops_at_a_body() {
         // A shelf is a board, so the object move slides it along its thickness — upright (N22) —
         // and the contact it meets is the panel above it in the same case.
         let (mut project, piece) = product_project("10.01.01");
@@ -1251,13 +1516,6 @@ mod tests {
             MoveLimit { distance_mm: 982.0, contact: Some(above), capture: None },
             "the shelf rises 982 mm, which is where its 18 mm board meets the panel above"
         );
-
-        // A shell is not a body: the same shelf rises up to a neighbouring frame untouched. The
-        // drag stops short of every face around it, so the answer is the pointer's own distance.
-        let (mut project, piece) = product_project("10.01.01");
-        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
-        let _frame = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 1000));
-        assert_eq!(limit(&project, &[shelf], MoveAxis::Z, 1100.0), moved(1100.0));
     }
 
     /// The answer of a drag whose high face landed `at` millimetres on `surface`.
@@ -1353,15 +1611,16 @@ mod tests {
     #[test]
     fn a_turned_product_is_measured_by_its_world_box() {
         let (mut project, cabinet) = product_project("10.01.01");
-        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
-        // Turn the cabinet a quarter about Z: its depth (560) now runs along +X, so its world box
-        // reaches x = 560 and the drag may travel 440 mm before contact.
+        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, -600, 0));
+        // Turn the cabinet a quarter about Z: its depth (560) now runs along +X and its width along
+        // -Y, so its world box reaches x = 560 and the neighbour stands in that turned frame. A
+        // destination on the neighbour is cut after 440 mm.
         let turned = Placement::IDENTITY
             .with_rotation_euler(EulerAngles { z: Degrees::from_millidegrees(-90_000), ..EulerAngles::default() })
             .expect("a quarter turn");
         project.set_node_placement(cabinet, turned).expect("turn the cabinet");
         assert_eq!(
-            limit(&project, &[cabinet], MoveAxis::X, 1000.0),
+            limit(&project, &[cabinet], MoveAxis::X, 1100.0),
             MoveLimit { distance_mm: 440.0, contact: Some(neighbour), capture: None }
         );
     }

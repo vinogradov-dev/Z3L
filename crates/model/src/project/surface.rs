@@ -143,6 +143,36 @@ impl SurfaceBox {
         true
     }
 
+    /// The same box moved rigidly by `delta` millimetres, or `None` when the move is not finite.
+    ///
+    /// It is how the rule asks what the drag would put where: the box keeps its own frame, so a turned
+    /// body is measured as itself at the destination and not as the box around its start (ADR 0166).
+    pub(crate) fn shifted(self, delta: DVec3) -> Option<Self> {
+        if !delta.is_finite() {
+            return None;
+        }
+        let world = Placement::new(self.world.translation() + delta, self.world.rotation()).ok()?;
+        Some(Self { min: self.min + delta, max: self.max + delta, world, ..self })
+    }
+
+    /// Whether this box lies wholly inside `outer`, by their world boxes.
+    ///
+    /// A body inside a shell is a piece inside a case and a unit inside another is a nested product:
+    /// both are legal places and neither is a collision (ADR 0102). A box that pokes out of `outer`
+    /// is not inside it, which is the conservative reading a containment exemption needs.
+    pub(crate) fn inside(self, outer: Self) -> bool {
+        (0..3).all(|axis| outer.min[axis] <= self.min[axis] && self.max[axis] <= outer.max[axis])
+    }
+
+    /// Whether the two world boxes share a volume thicker than the contact threshold.
+    ///
+    /// It is the coarse reading of [`SurfaceBox::meets`], used where the box around a body is the
+    /// measure the tool always used; a coarse overlap is still an overlap, and a coarse clearance is a
+    /// real clearance, because a box contains its body (ADR 0162, ADR 0166).
+    pub(crate) fn overlaps_box(self, other: Self) -> bool {
+        self.shared(other).iter().all(|extent| *extent > CONTACT_MM)
+    }
+
     /// Whether `point` lies inside the box or on its faces.
     pub(crate) fn contains(self, point: DVec3) -> bool {
         point.x >= self.min.x

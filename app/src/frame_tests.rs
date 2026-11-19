@@ -1229,33 +1229,33 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
 }
 
 #[test]
-fn both_moves_stop_a_board_flush_against_its_neighbour() {
-    // The Done of N22 in one sentence, amended by X72: the same handle and the same drag, twice. The
-    // free move keeps the pointer's own distance and snaps to nothing, but it stops at the panel
-    // beside it like the object move, because contact is the document's rule and a body stops at a
-    // body (ADR 0102, ADR 0162). Each drag is one revision, so the two tools share the whole gesture.
-    let (free_end, free_start, free_revision) = moved_divider(TransformMode::Move, "frame-free-move");
-    assert!(
-        (free_end - free_start).abs() < 1.0e-6,
-        "the free move stops the board flush against the neighbour at {free_start}: it ends at {free_end}"
-    );
-    let (stopped_end, neighbour_start, stopped_revision) = moved_divider(TransformMode::Object, "frame-furniture-move");
-    assert!(
-        (stopped_end - neighbour_start).abs() < 1.0e-6,
-        "and so does the object move, at the same face {neighbour_start}: it ends at {stopped_end}"
-    );
-    assert_eq!(free_revision, stopped_revision, "both drags cost one undo entry");
+fn both_moves_answer_the_place_the_board_lands_and_never_inside_its_neighbour() {
+    // X72 gave both tools the same contact, and X77 makes it a rule about the place the board lands:
+    // a drag whose destination is inside the neighbour stops flush on its face, and a drag whose
+    // destination is beyond the neighbour carries the board past it and lands in the free place
+    // there. What neither may do is come to rest inside.
+    for mode in [TransformMode::Move, TransformMode::Object] {
+        let (ended, low, _high, revisions) = moved_divider(mode, 60.0, "frame-free-move");
+        assert!(
+            (ended - low).abs() < 1.0e-6,
+            "{mode:?} stops the board flush against the neighbour at {low}: it ends at {ended}"
+        );
+        assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
+        let (ended, low, high, revisions) = moved_divider(mode, 400.0, "frame-carry-beyond");
+        assert!(
+            ended >= high - 1.0e-6,
+            "{mode:?} lands the board in the free place beyond the neighbour at {high}: it ends at {ended} (low {low})"
+        );
+        assert_eq!(revisions, 1, "{mode:?} costs one undo entry");
+    }
 }
 
-/// Moves the divider of [`divider_beside_a_panel`] 400 points along world X and answers the face it
-/// ends on, the neighbour's low face and how many revisions the gesture cost.
+/// Moves the divider of [`divider_beside_a_panel`] `points` along world X and answers the face it
+/// ends on, the neighbour's two faces and how many revisions the gesture cost.
 ///
-/// 400 points is further than the 50 mm the board has left, so a drag that were not cut by contact
-/// would end inside the neighbour: the number is what makes the stop visible.
-///
-/// The two tools are asked the same question with their own gesture: the free move takes a handle and
-/// drags it, the object move takes the board by its body and carries it (N24).
-fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
+/// The drag is the same question the two tools are asked with their own gesture: the free move takes
+/// the handle and drags it, the object move takes the board by its body and carries it (N24).
+fn moved_divider(mode: TransformMode, points: f32, name: &str) -> (f64, f64, f64, u64) {
     let (session, divider, beside) = divider_beside_a_panel();
     let mut harness = Harness::with_session(name, session);
     harness.settle();
@@ -1274,16 +1274,16 @@ fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
         TransformMode::Object => {
             // Any part of the body takes it; the travel names the axis it may move along.
             let body = harness.node_point(divider);
-            harness.carry(body, direction * 400.0);
+            harness.carry(body, direction * points);
         }
         _ => {
-            harness.drag(handle, direction * 400.0, egui::PointerButton::Primary);
+            harness.drag(handle, direction * points, egui::PointerButton::Primary);
         }
     }
     let project = harness.app.tabs.active().session.project();
     let ended = project.world_box(divider).expect("the divider has a box").1.x;
-    let neighbour = project.world_box(beside).expect("the neighbour has a box").0.x;
-    (ended, neighbour, harness.revision().get() - revision.get())
+    let (low, high) = project.world_box(beside).expect("the neighbour has a box");
+    (ended, low.x, high.x, harness.revision().get() - revision.get())
 }
 
 /// A `3000 x 600 x 720` frame holding a divider and the panel beside it, 50 mm apart.
