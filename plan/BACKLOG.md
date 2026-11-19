@@ -43,19 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X89** a scene with a plate that has a hole, to carry a ball through it
-  Why: There are no boolean operations in the workspace, so a maker cannot cut a hole to try
-   the contact port on. The owner asked for a scene that proves a body passes through a hole in
-   another body (owner, 2026-11-19).
-  Shape: A scene file under assets/scenes built from a ring mesh: a 300 x 300 plate 10 mm thick
-   with a 120 mm square hole through it, a 60 mm ball above the hole and a turned board beside
-   it, so the object move can carry the ball down through the hole and stop where the plate's
-   own faces stop it. A project-side test writes the file from the model API and reads it back,
-   so the scene is verified rather than drawn by hand.
-  Done: The scene opens in the editor; the object move carries the ball through the hole and
-   the drag is not stopped by the plate; a test builds and re-reads the file; the gate is
-   green.
-  `files: assets/scenes, crates/project/src/lib.rs, crates/model/src/mesh.rs`
 - `[ ]` **X90** the probe and the frame budget, the two clauses X85 leaves
   Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
    clause and its frame budget are a separate piece of work that needs its own shape (the port
@@ -181,6 +168,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
 
 ## Done
+
+- `[x]` **X89** a scene with a plate that has a hole, to carry a ball through it
+  Why: There are no boolean operations in the workspace, so a maker cannot cut a hole to try
+   the contact port on. The owner asked for a scene that proves a body passes through a hole in
+   another body (owner, 2026-11-19).
+  Shape: A scene file under assets/scenes built from a ring mesh: a 300 x 300 plate 10 mm thick
+   with a 120 mm square hole through it, a 60 mm ball above the hole and a turned board beside
+   it, so the object move can carry the ball down through the hole and stop where the plate's
+   own faces stop it. A project-side test writes the file from the model API and reads it back,
+   so the scene is verified rather than drawn by hand.
+  Done: The scene opens in the editor; the object move carries the ball through the hole and
+   the drag is not stopped by the plate; a test builds and re-reads the file; the gate is
+   green.
+  `files: assets/scenes, crates/project/src/lib.rs, crates/model/src/mesh.rs` — `f92b4b8`
 
 - `[x]` **X85** a body is measured by its own surface and not by the box around it
   Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the

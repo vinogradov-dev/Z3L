@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X89 state=doing base=df5cf5b updated=2026-11-19
+STATE: milestone=M7 phase=T task=X90 state=idle base=f92b4b8 updated=2026-11-19
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -27,7 +27,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-X89 is next: a scene with a plate that has a hole, to carry a ball through it
+X90 carries what X85 leaves (the probe and the frame budget); X88 is the object rotate tool
 
 ## Index
 
