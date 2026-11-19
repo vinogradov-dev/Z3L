@@ -195,6 +195,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **N27** the move tool is the object move, and a solid body stops at another body's faces
+  Why: Owner's request: the move tool is not the furniture move but the object move, because a
+   room is furnished with more than furniture. For a furniture piece nothing changes; a solid
+   body is measured by its own faces, so a turned chair stops where its face touches the
+   neighbouring body and not at the world box around it. Today the tool measures every contact
+   by the world box, which is early by the slack a turned body carries, and it hands a
+   selection that is not furniture no snapping at all, so a loose body cannot be put on the
+   floor plane or on the millimetre grid. The object-type idea (wall, floor, ceiling, skirting,
+   cornice) is the owner's next step and is not this entry.
+  Shape: The rule keeps one reading of contact for a furniture piece and gains an exact one for
+   a solid: a swept separating-axis test over the two boxes' own frames answers the first
+   distance at which the two bodies touch along the world axis the drag runs on, so a contact
+   is measured by faces and a contact that cuts the drag is rounded towards the start, which
+   keeps the release from landing a placement the write would refuse. Every selection now gets
+   the workspace's snapping; a face-measured mover takes the coordinate planes and the grid and
+   not another part's world box, which is the coarse reading it no longer shares. The mode, its
+   id, its key row and its words become Object, and the model's furniture_axes becomes
+   move_axes because it answers any move. The furniture rules (a panel's thickness axis, a
+   floor class's height) are untouched. An ADR records the split between the two readings and
+   why.
+  Done: A turned solid body dragged at a neighbour stops where its own face meets the
+   neighbour, which is later than the world box would allow, and its contact is the same box
+   the write refuses; a loose body drags onto the coordinate planes and the 1 mm grid and is
+   not captured by another part's world box; every furniture test keeps its answer and its
+   snapping; the mode reads Object in the band, the menu and the Settings page, and draws no
+   icon yet; the gate is green and an ADR records the decision.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, crates/text/src/messages.rs, app/src/gizmo_math.rs, app/src/translate_gizmo.rs, plan/map.md` — `8366029`
+
 - `[x]` **X76** a carried frame leaves its grips behind, and a grip steals the press that puts it down
   why: Observation, from the owner's screenshot of a carried frame: the frame moved and its
    fourteen grip rings — eight corners and six face centres — stayed at the place it was taken.
