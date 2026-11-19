@@ -195,6 +195,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X75** a carried frame lags the hand and leaves its brackets behind
+  Why: Observation, from the owner, on the furniture move of a product frame bound to the
+   floor: the piece is sluggish — the hand runs away from it — and the corners of the open
+   frame's box stay where the piece was taken. Reproduced headlessly: a floor frame carried 120
+   points across the screen and 80 points up moves 113 and 21, so the piece gives up nearly
+   four fifths of the hand's depth travel. Cause: a multi-axis carry meets the pointer on the
+   camera's own plane through the pivot, and the rule then keeps only the horizontal part of a
+   delta measured in a plane turned away from the floor (ADR 0163), so the piece follows a
+   foreshortened copy of the hand. The brackets are collected from the frame the document still
+   holds, so they do not follow a drag at all. Expected: the piece keeps the screen offset the
+   click gave it, on the plane its class allows — exactly under the hand across the floor — and
+   every mark of the carried level, its corner brackets included, travels with it.
+  Shape: The carry meets the pointer on the plane the piece may travel in: the plane across the
+   one axis its class forbids (the floor, for a floor-bound frame), the camera's own plane only
+   when its three axes are free, and the hand-travel latch for a one-axis panel. The brackets
+   read the drag's preview instead of the placements the document still holds.
+  Done: A floor frame carried by the hand keeps it, its screen travel equal to the pointer's on
+   both screen directions; the same frame given a wall class still follows the hand in depth; a
+   one-axis panel keeps its latch, its fields and a typed gap; the brackets of an open product
+   or group stay on the carried level while the piece is in hand and go back with it; one carry
+   is still one undo entry; ADR 0163 is amended and the map rows are current; cargo xtask ci is
+   green.
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/open_frame.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions` — `c718acb`
+
 - `[x]` **X74** the furniture move carries a frame on every axis its class allows and slides it along the face it meets
   Why: The owner, using the furniture move on a product frame: it travels one axis at a time,
    so a floor cabinet cannot be moved across the floor in one gesture and a wall cabinet cannot
