@@ -1,6 +1,6 @@
 //! A furniture surface as a box, in millimetres.
 //!
-//! Three pure queries measure the document against the same surfaces: the furniture move rule stops a
+//! Three pure queries measure the document against the same surfaces: the object move rule stops a
 //! drag at one (`move_query`), the niche probe reports the first one along a ray (`niche`), and the
 //! write refuses a placement that lands a part inside one that stays behind. They share this value so
 //! they cannot disagree about where a surface is (ADR 0102, ADR 0103, ADR 0162).
@@ -130,23 +130,7 @@ impl SurfaceBox {
         if self.shared(other).iter().any(|extent| *extent <= CONTACT_MM) {
             return false;
         }
-        let own_axes = |box_: Self| [DVec3::X, DVec3::Y, DVec3::Z].map(|axis| box_.world.transform_vector(axis));
-        let (own, theirs) = (own_axes(self), own_axes(other));
-        let mut axes: Vec<DVec3> = Vec::with_capacity(15);
-        axes.extend(own);
-        axes.extend(theirs);
-        for first in own {
-            for second in theirs {
-                let cross = first.cross(second);
-                let length = cross.length();
-                // Two boxes whose faces are parallel have no sixth axis to test: the cross product is
-                // the zero vector and testing it would separate nothing.
-                if length > 1.0e-9 {
-                    axes.push(cross / length);
-                }
-            }
-        }
-        for axis in axes {
+        for axis in separating_axes(self, other) {
             let (low_a, high_a) = extent(self, axis);
             let (low_b, high_b) = extent(other, axis);
             if !low_a.is_finite() || !low_b.is_finite() || !high_a.is_finite() || !high_b.is_finite() {
@@ -197,8 +181,33 @@ impl SurfaceBox {
     }
 }
 
+/// The unit axes a pair of boxes is separated along: each box's own three and the nine cross
+/// products of their edges.
+///
+/// It is the axis set of the separating-axis test, written once so the refusal and the drag's own
+/// stop cannot disagree about which directions a pair of turned bodies is apart in (ADR 0162,
+/// ADR 0165). Two boxes whose faces are parallel have no cross axis to test: the cross product is
+/// the zero vector and testing it would separate nothing.
+pub(crate) fn separating_axes(first: SurfaceBox, second: SurfaceBox) -> Vec<DVec3> {
+    let own_axes = |box_: SurfaceBox| [DVec3::X, DVec3::Y, DVec3::Z].map(|axis| box_.world.transform_vector(axis));
+    let (own, theirs) = (own_axes(first), own_axes(second));
+    let mut axes: Vec<DVec3> = Vec::with_capacity(15);
+    axes.extend(own);
+    axes.extend(theirs);
+    for first in own {
+        for second in theirs {
+            let cross = first.cross(second);
+            let length = cross.length();
+            if length > 1.0e-9 {
+                axes.push(cross / length);
+            }
+        }
+    }
+    axes
+}
+
 /// How far `box_` reaches along `axis`, as the lowest and highest corner.
-fn extent(box_: SurfaceBox, axis: DVec3) -> (f64, f64) {
+pub(crate) fn extent(box_: SurfaceBox, axis: DVec3) -> (f64, f64) {
     box_.corners().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), corner| {
         let reach = corner.dot(axis);
         (low.min(reach), high.max(reach))

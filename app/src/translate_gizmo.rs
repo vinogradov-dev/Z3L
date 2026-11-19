@@ -6,7 +6,7 @@
 //! converted into its own parent frame and rounded to micrometres, so a selection whose nodes have
 //! different parents still moves rigidly and the inspector agrees with the document after the drag.
 //!
-//! A furniture drag is cut by the document's own rule (`Project::move_rule`): a floor-bound product
+//! A object drag is cut by the document's own rule (`Project::move_rule`): a floor-bound product
 //! keeps its height, a shell stops at another shell and a body at another body, and the moved box
 //! lands on a coordinate plane, on a neighbouring face or on the 1 mm grid (ADR 0102, ADR 0103). What
 //! the drag snaps to, and how near, is the workspace's `SnapSettings`, read once when the drag
@@ -22,9 +22,9 @@
 //! Both tools stop at a neighbour, and both stop for one reason: contact is the document's rule, and
 //! the write refuses what a drag would have crossed, so a piece stops at a face instead of reaching a
 //! sentence (X72, ADR 0162). The free move reads `Project::contact_rule` — no snapping, every axis,
-//! contact — and the furniture move reads `Project::move_rule`.
+//! contact — and the object move reads `Project::move_rule`.
 //!
-//! The furniture move draws **no handle at all**: a click on a piece's body takes it, the pointer
+//! The object move draws **no handle at all**: a click on a piece's body takes it, the pointer
 //! carries it with no button held, and the next click puts it down. What it may travel is the
 //! document's answer: a panel offers only the axis its own thickness points at, so a shelf rises and
 //! falls in its thickness direction and never across its own faces, and that one axis is the one the
@@ -61,7 +61,7 @@ enum Hold {
     /// The free move holds one arrow with the primary button: the axis is known at the press and the
     /// release commits the distance under the pointer.
     Handle(Axis),
-    /// The furniture move holds nothing: a click took the piece, the pointer carries it, and the
+    /// The object move holds nothing: a click took the piece, the pointer carries it, and the
     /// next click puts it down (ADR 0151).
     Following {
         /// The axis the travel named, once the pointer moved far enough for the hand to say so.
@@ -145,7 +145,7 @@ impl Hold {
         }
     }
 
-    /// Whether the piece is carried without a button, which is the furniture move.
+    /// Whether the piece is carried without a button, which is the object move.
     fn follows(self) -> bool {
         matches!(self, Self::Following { .. })
     }
@@ -220,17 +220,17 @@ impl TranslateGizmo {
 
     /// Drops the hold without writing anything, so the piece goes back where it was taken.
     ///
-    /// The shell calls this when a tool takes the pointer: the furniture move blocks nothing, and a
+    /// The shell calls this when a tool takes the pointer: the object move blocks nothing, and a
     /// piece in hand is not a mode the rest of the editor has to wait for (N25).
     pub(crate) fn cancel(&mut self) {
         self.drag = None;
         self.request = None;
     }
 
-    /// Takes the piece under `pointer` in hand, for the furniture move to carry (ADR 0151).
+    /// Takes the piece under `pointer` in hand, for the object move to carry (ADR 0151).
     ///
     /// The shell calls this after the click that named the piece has selected it; the hold itself
-    /// starts on the next frame, from this point. A request that no furniture move picks up is
+    /// starts on the next frame, from this point. A request that no object move picks up is
     /// dropped with the mode, so a stray click never arms a piece much later.
     pub(crate) fn grab(&mut self, pointer: egui::Pos2) {
         self.request = Some(pointer);
@@ -398,7 +398,7 @@ impl TranslateGizmo {
         Ok(None)
     }
 
-    /// Carries a piece the furniture move took: the pointer moves it, a click puts it down and
+    /// Carries a piece the object move took: the pointer moves it, a click puts it down and
     /// Escape puts it back (ADR 0151).
     ///
     /// No button is held here, so the hold ends on a *click* — press and release at one place — and
@@ -415,7 +415,7 @@ impl TranslateGizmo {
     ) -> Result<Option<PlacementCommit>, String> {
         // The mode is the window's one value, and it is read again here: a piece in hand whose tool
         // is switched under it goes back where it was taken, because nothing said where it goes.
-        if target.move_kind != MoveKind::Furniture {
+        if target.move_kind != MoveKind::Object {
             return Ok(None);
         }
         let (pointer, escape) = ui.input(|input| (input.pointer.latest_pos(), input.key_pressed(egui::Key::Escape)));
@@ -673,7 +673,7 @@ impl TranslateGizmo {
     ) -> Result<Option<PlacementCommit>, String> {
         self.hover = None;
         // A click that took a piece is read by the shell after this gizmo has run for its frame, so
-        // the hold starts here on the next one. A request the furniture move no longer owns is
+        // the hold starts here on the next one. A request the object move no longer owns is
         // dropped, so a click never arms a piece much later.
         let request = self.request.take();
         if pointer_over_widget {
@@ -687,7 +687,7 @@ impl TranslateGizmo {
             return Ok(None);
         };
 
-        if target.move_kind == MoveKind::Furniture {
+        if target.move_kind == MoveKind::Object {
             let Some(at) = request else {
                 return Ok(None);
             };
@@ -745,7 +745,7 @@ impl TranslateGizmo {
         // the same, because contact is the document's rule and not a taste (X72, ADR 0162).
         let rule = match target.move_kind {
             MoveKind::Free => target.project.contact_rule(&moving),
-            MoveKind::Furniture => target.project.move_rule(&moving, target.snaps),
+            MoveKind::Object => target.project.move_rule(&moving, target.snaps),
         };
         self.drag = Some(Drag {
             node: anchor.node,
@@ -768,10 +768,10 @@ impl TranslateGizmo {
 
     /// Draws the handles over the viewport.
     ///
-    /// The furniture move draws none: a piece is taken by any part of its body, so an arrow over it
+    /// The object move draws none: a piece is taken by any part of its body, so an arrow over it
     /// would name a target the tool does not have (ADR 0151).
     pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: Target<'_>, handle_length: f32) {
-        if target.move_kind == MoveKind::Furniture {
+        if target.move_kind == MoveKind::Object {
             return;
         }
         let origin_world = if let Some(drag) = &self.drag {
@@ -919,7 +919,7 @@ mod tests {
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
         // The pointer pulls 1000 mm, the neighbour's wall is at 1000: the drag keeps 400.
-        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("a furniture drag");
+        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 1000.0);
         assert_eq!(distance, 400.0);
         assert_eq!(capture, None, "a stop is the contact's, not a snap's");
@@ -970,7 +970,7 @@ mod tests {
         let mut project = sample_project();
         let cabinet = add_cabinet(&mut project, 0);
         let neighbour = add_cabinet(&mut project, 1000);
-        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("a furniture drag");
+        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("an object drag");
         let (distance, capture) = constrained_distance(Some(&rule), Axis::X, 398.0);
         assert_eq!(distance, 400.0, "the drag jumps the 2 mm gap");
         let capture = capture.expect("a frame face captured it");

@@ -133,7 +133,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // catalogue material; the cell then arms the free-outline tool, whose close is the one
             // command that cuts the board (ADR 0114).
             let draw = Message::PanelContourDraw.with(lang, [tool.label.text(lang)]);
-            // A furniture tool always names itself: the missing product disables the cell but is not
+            // A object tool always names itself: the missing product disables the cell but is not
             // written in its hint, so a dim cell still says which tool it is (X46).
             let hint = if !has_panel_material { Message::FillNeedsMaterial.text(lang) } else { draw.as_str() };
             let enabled = product_open && has_panel_material;

@@ -42,7 +42,7 @@ struct StatusInfo {
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
     void: Option<Result<[Length; 3], VoidRefusal>>,
-    /// Whether the furniture move is carrying a piece the pointer moves with no button held.
+    /// Whether the object move is carrying a piece the pointer moves with no button held.
     holding: bool,
     grid: bool,
     mesh: Option<(MeshElement, usize)>,
@@ -366,7 +366,7 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
     } else if info.holding {
         // The piece follows the pointer rather than a button, so the left zone says what ends the
         // hold: a click puts it down and Escape puts it back (ADR 0151).
-        hint(ui, Message::FurnitureHold.text(lang));
+        hint(ui, Message::ObjectHold.text(lang));
     } else {
         hint(ui, Message::ViewportHint.text(lang));
     }
@@ -379,7 +379,7 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
 /// States of one value are one control, not separate switches: the filled cell is the mode the
 /// viewport is in, and the band behind them says the four belong together (ADR 0113). The two moves
 /// sit next to each other because they are one decision made two ways — the free move keeps the
-/// pointer's distance and the furniture move obeys the document's rules (ADR 0147) — and each cell
+/// pointer's distance and the object move obeys the document's rules (ADR 0147) — and each cell
 /// says in a hover line which of the two it is, because "Move" alone no longer names the choice.
 /// The mode is the window's view state, so the control reads it and returns the chosen one; the
 /// caller writes it, and no command and no undo entry is involved.
@@ -733,7 +733,7 @@ mod tests {
             let caption = mode.caption(Lang::En);
             assert!(texts.contains(&caption), "the control names {caption}: {texts:?}");
         }
-        let furniture = TransformMode::Furniture.caption(Lang::En);
+        let furniture = TransformMode::Object.caption(Lang::En);
         let at = drawn_text_rects(&idle.shapes)
             .into_iter()
             .find(|(_, text)| *text == furniture)
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(chosen, None, "the press alone is not a click");
         let (released, chosen) = row(vec![button(false)]);
         released.drop_without_applying_deltas();
-        assert_eq!(chosen, Some(TransformMode::Furniture), "a click on Furniture returns Furniture");
+        assert_eq!(chosen, Some(TransformMode::Object), "a click on Furniture returns Furniture");
     }
 
     #[test]

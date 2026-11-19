@@ -193,8 +193,8 @@ pub const PANELS_COLLAPSE: &str = "view.panels.collapse";
 pub const TRANSFORM_SELECT: &str = "view.transform.select";
 /// The id of the free `Move` mode.
 pub const TRANSFORM_MOVE: &str = "view.transform.move";
-/// The id of the `Furniture` move, which obeys the document's rules.
-pub const TRANSFORM_FURNITURE: &str = "view.transform.furniture";
+/// The id of the object move, which obeys the document's rules.
+pub const TRANSFORM_OBJECT: &str = "view.transform.object";
 /// The id of the `Rotate` mode.
 pub const TRANSFORM_ROTATE: &str = "view.transform.rotate";
 
@@ -213,7 +213,7 @@ pub const ACTIONS: &[Action] = &[
     // the cell, the menu entry and the Settings row print one spelling.
     Action { id: TRANSFORM_SELECT, words: Message::Select },
     Action { id: TRANSFORM_MOVE, words: Message::Move },
-    Action { id: TRANSFORM_FURNITURE, words: Message::Furniture },
+    Action { id: TRANSFORM_OBJECT, words: Message::Object },
     Action { id: TRANSFORM_ROTATE, words: Message::Rotate },
 ];
 
@@ -235,11 +235,11 @@ pub const KEYS: &[Binding] = &[
     Binding { id: PANELS_COLLAPSE, key: egui::Key::Num0, chord: Chord::CtrlShift, label: "Ctrl+Shift+0" },
     Binding { id: "view.layout.maximize", key: egui::Key::W, chord: Chord::Alt, label: "Alt+W" },
     // The band's four keys: `Q`, `W` and `E` beside `Shift+W`, on the letters the sketch, the view
-    // and the niche do not hold (U113). The furniture move is the shifted pair of the free one
+    // and the niche do not hold (U113). The object move is the shifted pair of the free one
     // because it is the same decision made by the document's rules (ADR 0147).
     Binding { id: TRANSFORM_SELECT, key: egui::Key::Q, chord: Chord::Plain, label: "Q" },
     Binding { id: TRANSFORM_MOVE, key: egui::Key::W, chord: Chord::Plain, label: "W" },
-    Binding { id: TRANSFORM_FURNITURE, key: egui::Key::W, chord: Chord::Shift, label: "Shift+W" },
+    Binding { id: TRANSFORM_OBJECT, key: egui::Key::W, chord: Chord::Shift, label: "Shift+W" },
     Binding { id: TRANSFORM_ROTATE, key: egui::Key::E, chord: Chord::Plain, label: "E" },
     Binding { id: "node.delete", key: egui::Key::Delete, chord: Chord::Plain, label: "Delete" },
     Binding { id: "view.projection.toggle", key: egui::Key::O, chord: Chord::Plain, label: "O" },

@@ -101,7 +101,7 @@ thing is made of.
 | `host` | a set of classes | where the object may sit or be mounted | insertion, mounting |
 | `level` | `Product`, `Component`, `Part`, `Fitting` | report grouping and tree presentation | reports |
 | `opening` | `Closes`, `None` | whether the object closes an opening, and therefore has gaps and a facade report | reports, drawing |
-| `mount` | `Floor`, `Wall` | where the piece stands: on the floor or hung; `None` for anything that is not a product | the furniture move tool, the product card (0097) |
+| `mount` | `Floor`, `Wall` | where the piece stands: on the floor or hung; `None` for anything that is not a product | the object move tool, the product card (0097) |
 | `fill` | `None`, `HeightAndDepth`, `WidthAndDepth` | which axis pair a part takes from a free box when it fills a void | the empty-space tool (0097) |
 
 Rules for the vocabulary:
@@ -119,7 +119,7 @@ Rules for the vocabulary:
    only tells reports what kind of thing it is.
 5. **A trait change is a behaviour change.** Correcting a mistake in an existing row is allowed but
    changes what saved projects do; it is recorded in the registry changelog like a schema change.
-6. **The product traits arrived with their consumers** (0097): `mount` is read by the furniture move
+6. **The product traits arrived with their consumers** (0097): `mount` is read by the object move
    tool and by the product card, `fill` by the empty-space tool. `mount` applies to `level = Product` rows only; `fill` to
    `level = Part` rows only, and a class may carry neither.
 7. **`MadeInShop` marks an assembled object, not a stock item** (0104): a product, or a part built
@@ -182,7 +182,7 @@ every trait selects exactly one of them or one behaviour:
 | purchase grouping | `level` | a fitting, an appliance, a lighting line |
 | resize, banding and cutout commands | `extent`, `operations` | what the editor must refuse |
 | insertion and mounting | `host` | whether a part may sit there |
-| the furniture move tool | `mount` | floor-bound or free |
+| the object move tool | `mount` | floor-bound or free |
 | the product card | `mount` | which position the class the maker picked gives |
 | the empty-space tool | `fill` | which axis pair a part takes from a void |
 

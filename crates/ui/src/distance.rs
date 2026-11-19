@@ -6,7 +6,7 @@
 //! ADR 0092 — a bare number with `mm` outside — not a dialog, and exactly one of them is active.
 //!
 //! Two layouts draw the same measurement. A tool whose hand holds a button shows one
-//! [card](ToolView) beside the pointer. A carried piece — the furniture move, which holds nothing but
+//! [card](ToolView) beside the pointer. A carried piece — the object move, which holds nothing but
 //! the piece — draws its two gaps *in the scene* (N26, ADR 0161): an arrow per side from the piece's
 //! face to the surface that stops it, and the gap's own [plate](crate::tool_card::plate) sitting in
 //! the middle of that run. The shell measures the arrow's two ends; this module places the field and

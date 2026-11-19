@@ -171,7 +171,7 @@ and the type is a later edit rather than a prerequisite.
 **Placement is the gesture's or the card's.** The card puts the frame at the origin in an empty scene,
 and otherwise beside the nearest product, on the floor, clear of every other envelope. A drawn frame
 stands where its base rectangle was drawn. Either way it becomes selected and open, and the maker
-moves it with the furniture move tool (§8).
+moves it with the object move tool (§8).
 
 **Opening is a double click in the viewport**, or the tree. At most one product is open at a time, and
 opening another closes the previous one. Openness is session state per tab, never a document field

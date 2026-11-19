@@ -1,5 +1,5 @@
-//! The furniture move rule: how far one drag along a world axis may travel, and what a placement
-//! may not come to rest inside.
+//! The object move rule: how far one drag along a world axis may travel, and what a placement may
+//! not come to rest inside.
 //!
 //! The translate gizmo proposes a world distance and this module answers with the distance the
 //! document allows. Four facts decide it and none of them is a code literal:
@@ -11,10 +11,13 @@
 //! - the **mount** trait of a product's class: a `Floor` product keeps its height, a `Wall` product
 //!   moves freely (ADR 0097);
 //! - **contact**: a shell stops at another shell and a body at another body, while containment of
-//!   one shell in another stays legal (ADR 0102);
+//!   one shell in another stays legal (ADR 0102). A furniture piece keeps the world-box reading it
+//!   always had; any other solid body is measured by its own faces, so a turned body stops where it
+//!   touches and not at the box around it (ADR 0165);
 //! - **snapping**: the moved box's faces fall onto the world coordinate planes (the floor included),
 //!   onto the virtual faces of the product frames around it, onto a neighbouring part's face, or
-//!   onto the 1 mm grid.
+//!   onto the 1 mm grid. A body measured by its own faces takes the planes and the grid and not
+//!   another part's world box, which is the coarse reading it does not share (ADR 0165).
 //!
 //! Which of those capture a drag, and how near one has to be, is not a code literal but a
 //! [`SnapSettings`] value the shell reads from the workspace settings and passes in: snapping is a
@@ -32,20 +35,19 @@
 //! drag's start placements, so the preview and the single `node.placement.set_many` on release
 //! cannot disagree. Nothing is stored and nothing is mutated.
 //!
-//! [`Project::move_rule`] answers with the furniture rule wherever a piece can be measured, and with
-//! a rule that only stops at contact where the scene has no product to snap to. The panel axis is the
-//! one part of the rule that needs no surface, so [`Project::furniture_axes`] answers it wherever the
+//! [`Project::move_rule`] answers with the rule wherever a piece can be measured. The panel axis is
+//! the one part of the rule that needs no surface, so [`Project::move_axes`] answers it wherever the
 //! board stands; the free move asks [`Project::contact_rule`], which refuses no axis and snaps to
 //! nothing.
 
 use geom::DVec3;
 
-use super::surface::{Span, SurfaceBox, SurfaceKind, surface_box};
+use super::surface::{Span, SurfaceBox, SurfaceKind, extent, separating_axes, surface_box};
 use crate::project::Project;
 use crate::tree::{object_bounds_mm, panel_bounds};
 use crate::*;
 
-/// The world axis a furniture drag runs along.
+/// The world axis an object drag runs along.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MoveAxis {
     /// The world X axis.
@@ -91,7 +93,7 @@ impl MoveAxis {
 /// Every axis, for a drag the document has no rule about.
 const ALL_MOVE_AXES: [bool; 3] = [true, true, true];
 
-/// How far a furniture drag may go, and what stopped it.
+/// How far an object drag may go, and what stopped it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveLimit {
     /// The signed distance the drag may travel along its world axis, in millimetres.
@@ -145,7 +147,7 @@ pub struct Capture {
     pub surface: SnapSurface,
 }
 
-/// What a furniture drag snaps to, and how near.
+/// What an object drag snaps to, and how near.
 ///
 /// The values are a workspace setting (`crates/ui/src/settings.rs` holds the window and the file),
 /// so the model owns their meaning and their defaults but never stores them: [`Project::move_rule`]
@@ -178,29 +180,28 @@ impl Default for SnapSettings {
     }
 }
 
-/// The grid step of a furniture move, in millimetres.
+/// The grid step of an object move, in millimetres.
 ///
-/// The maker's own clearance is one millimetre (ADR 0102), so a furniture drag lands on the whole
+/// The maker's own clearance is one millimetre (ADR 0102), so an object drag lands on the whole
 /// millimetre unless a surface captures it first.
 const GRID_MM: f64 = 1.0;
 
 impl Project {
     /// The rule that measures a drag of `moving`, or `None` when nothing movable is selected.
     ///
-    /// A drag is a furniture move when every top-most moved node is a product or sits inside one.
     /// The surfaces, the mount trait and the snap settings are read here, once, so the drag can ask
     /// the rule for every pointer position without walking the tree again: nothing the rule measured
     /// moves while the pointer travels, and a settings change mid-drag does not bend the preview
     /// away from the placement the release commits.
     ///
-    /// A drag of loose geometry — free bodies, a panel at the root — has no product to snap to and
-    /// takes no grid, so its rule carries no snapping at all while its contact stays: a body still
-    /// stops at a body (ADR 0162, narrowing ADR 0147).
+    /// Every selection is a drag of the object move, so every one of them lands on the workspace's
+    /// snaps (ADR 0165). What each moved node allows, and how its contact is measured, is decided by
+    /// the node: a furniture piece keeps its class rules and the world-box reading, any other solid
+    /// body is free in all three axes and is measured by its own faces.
     pub fn move_rule(&self, moving: &[Id], snaps: SnapSettings) -> Option<MoveRule> {
         let targets = self.moved_targets(moving);
-        let furniture = !targets.is_empty() && targets.iter().all(|id| self.is_furniture(*id));
         let axes = self.axes_of(&targets);
-        self.rule_of(&targets, axes, furniture.then_some(snaps))
+        self.rule_of(&targets, axes, Some(snaps))
     }
 
     /// The rule the free move is measured by: contact only.
@@ -215,14 +216,14 @@ impl Project {
 
     /// The rule that measures a drag of `targets`, snapping only when `snaps` says so.
     ///
-    /// The axes are the caller's: the furniture tool hands the intersection of what every moved node
+    /// The axes are the caller's: the object tool hands the intersection of what every moved node
     /// allows, so a loose board keeps its own thickness axis wherever it stands (N22, ADR 0147), and
     /// the free tool hands all three.
     fn rule_of(&self, targets: &[Id], axes: [bool; 3], snaps: Option<SnapSettings>) -> Option<MoveRule> {
         if targets.is_empty() {
             return None;
         }
-        let movers = self.mover_boxes(targets);
+        let movers = self.movers(targets);
         if movers.is_empty() {
             return None;
         }
@@ -264,7 +265,7 @@ impl Project {
         None
     }
 
-    /// The world axes a furniture drag of this selection offers, in [`MoveAxis`] order.
+    /// The world axes a move of this selection offers, in [`MoveAxis`] order.
     ///
     /// A selection offers what every one of its top-most nodes offers, so a panel beside a frame is
     /// held to the panel's one axis. A `false` slot is an axis the tool does not draw and does not
@@ -272,9 +273,9 @@ impl Project {
     /// (ADR 0113).
     ///
     /// The answer is the tool's, not the document's, so it does not need the surfaces a full
-    /// [`Project::move_rule`] collects: the panel axis holds wherever a panel stands, and a drag
-    /// outside furniture reads it without walking the tree.
-    pub fn furniture_axes(&self, moving: &[Id]) -> [bool; 3] {
+    /// [`Project::move_rule`] collects: the panel axis holds wherever a panel stands, and a drag of
+    /// any other body reads it without walking the tree.
+    pub fn move_axes(&self, moving: &[Id]) -> [bool; 3] {
         let targets = self.moved_targets(moving);
         if targets.is_empty() {
             return ALL_MOVE_AXES;
@@ -300,7 +301,7 @@ impl Project {
         axes
     }
 
-    /// The world axes one moved node offers a furniture drag.
+    /// The world axes one moved node offers an object drag.
     ///
     /// A **panel** offers one: the axis its own thickness points most nearly at, so it slides parallel
     /// to its own A and B faces and never across them. That is the whole of the panel rule and it is
@@ -358,9 +359,12 @@ impl Project {
         self.container(id).is_some_and(Container::is_product) || self.product_of(id).is_some()
     }
 
-    /// The world box each moved node carries.
-    fn mover_boxes(&self, targets: &[Id]) -> Vec<SurfaceBox> {
-        targets.iter().filter_map(|id| self.mover_box(*id)).collect()
+    /// The world box each moved node carries, and whether its contact is measured by its own faces.
+    fn movers(&self, targets: &[Id]) -> Vec<Mover> {
+        targets
+            .iter()
+            .filter_map(|id| self.mover_box(*id).map(|box_| Mover { box_, faces: !self.is_furniture(*id) }))
+            .collect()
     }
 
     /// The world axis-aligned box a node occupies, in millimetres.
@@ -417,7 +421,7 @@ impl Project {
         surface_box(id, DVec3::ZERO, size, world, SurfaceKind::Shell)
     }
 
-    /// The surfaces a furniture drag may meet: every other product's envelope, and every other
+    /// The surfaces an object drag may meet: every other product's envelope, and every other
     /// panel and object.
     fn obstacle_boxes(&self, targets: &[Id]) -> Vec<SurfaceBox> {
         let mut boxes: Vec<SurfaceBox> = self
@@ -474,8 +478,9 @@ pub struct Resting {
 ///
 /// `was` is the box the part stood with, or `None` for a part that does not exist yet. A pair that
 /// already overlaps is no new overlap: a file written before this rule opens, and its maker drags the
-/// part out and types where it goes. The drag's own rule (`MoveRule::limit`) stops at the world-box
-/// contact, which is the coarser reading, so a drag reaches a contact before it reaches a refusal.
+/// part out and types where it goes. The drag's own rule (`MoveRule::limit`) stops a furniture piece
+/// at the world-box contact and a solid body at its exact face contact, and neither reading is later
+/// than this answer, so a drag reaches a contact before it reaches a refusal (ADR 0165).
 fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox) -> bool {
     if now.is_shell() != obstacle.is_shell() {
         return false;
@@ -486,15 +491,30 @@ fn resting_inside(was: Option<SurfaceBox>, now: SurfaceBox, obstacle: SurfaceBox
     now.meets(obstacle)
 }
 
-/// What one furniture drag is measured against, taken once when the drag starts.
+/// One moved node's box, and the reading its contact is measured by.
+///
+/// A furniture piece keeps the world-box reading it always had: a panel inside a case is a slab in a
+/// frame, and the box around a turned board is what the furniture rule has always measured
+/// (ADR 0147, ADR 0162). Any other solid body is measured by its own faces, because the box around a
+/// turned chair is not the chair: it stops the drag by the slack the turn adds, so the chair could not
+/// be brought flush to an angled neighbour (ADR 0165).
+#[derive(Clone, Copy, Debug)]
+struct Mover {
+    /// The world box the node occupies at the start of the drag.
+    box_: SurfaceBox,
+    /// Whether contact with this node is measured by its own faces rather than by the world box.
+    faces: bool,
+}
+
+/// What one drag is measured against, taken once when the drag starts.
 ///
 /// The document does not change while the pointer travels, so the moved boxes, the other surfaces
 /// and the mount trait are read once and every later proposal is answered from them. Nothing is
 /// stored in the document and nothing is mutated.
 #[derive(Clone, Debug)]
 pub struct MoveRule {
-    /// The world box each moved node carries at the start of the drag.
-    movers: Vec<SurfaceBox>,
+    /// Each moved node's world box at the start of the drag, and how its contact is measured.
+    movers: Vec<Mover>,
     /// The surfaces that stay behind: the other products' envelopes, panels and objects.
     obstacles: Vec<SurfaceBox>,
     /// Which world axes the drag offers, in [`MoveAxis`] order.
@@ -503,8 +523,7 @@ pub struct MoveRule {
     /// panel's own thickness axis, a floor-bound product's two horizontal axes (N22, ADR 0147).
     axes: [bool; 3],
     /// What this drag snaps to, and how near, as the workspace settings chose it (ADR 0146), or
-    /// `None` for a drag no grid and no surface may move: the free move, and the furniture move of a
-    /// piece no product holds.
+    /// `None` for a drag no grid and no surface may move: the free move.
     snaps: Option<SnapSettings>,
 }
 
@@ -550,6 +569,10 @@ impl MoveRule {
         // the face landed on the contact and not on the snap: the stop is the answer, reported on its
         // own, and a capture would name a surface the piece never reached.
         let capture = if limit.contact.is_some() { None } else { capture };
+        // A distance no contact cut is rounded to the micrometre the document stores; a distance a
+        // contact cut is the touch itself and is rounded the same way, which may put the piece half a
+        // micrometre in — under the document's own contact threshold, so the release still lands a
+        // placement the write allows (ADR 0165).
         MoveLimit { distance_mm: quantised(limit.distance_mm), contact: limit.contact, capture }
     }
 
@@ -597,7 +620,7 @@ fn covered_by(project: &Project, node: Id, targets: &[Id]) -> bool {
 /// nothing rounds to the 1 mm grid and reports no capture.
 fn snap_distance(
     axis: MoveAxis,
-    movers: &[SurfaceBox],
+    movers: &[Mover],
     obstacles: &[SurfaceBox],
     proposed: f64,
     snaps: SnapSettings,
@@ -610,10 +633,10 @@ fn snap_distance(
     let overlap = |a: Span, b: Span| a.min < b.max && b.min < a.max;
     let mut best: Option<(f64, f64, Capture)> = None;
     for mover in movers {
-        let mover_first = mover.span(first);
-        let mover_second = mover.span(second);
+        let mover_first = mover.box_.span(first);
+        let mover_second = mover.box_.span(second);
         let mut capture = |candidate: f64, surface: SnapSurface| {
-            for (end, own) in [(SnapEnd::Low, mover.span(axis).min), (SnapEnd::High, mover.span(axis).max)] {
+            for (end, own) in [(SnapEnd::Low, mover.box_.span(axis).min), (SnapEnd::High, mover.box_.span(axis).max)] {
                 let distance = candidate - own;
                 let offset = (distance - proposed).abs();
                 // A face behind the pointer would pull the drag backwards, which is not a snap but
@@ -627,22 +650,28 @@ fn snap_distance(
                 }
             }
         };
-        for obstacle in obstacles {
-            // A frame's virtual face captures only while the workspace snaps to frames. What it does
-            // not do is stop being a stop: contact is the document's rule, not a taste (ADR 0146).
-            let target = if obstacle.is_shell() {
-                if !snaps.frames {
+        // A body measured by its own faces is not captured by another part's world box: the box is
+        // the coarse reading this mover no longer shares, and a face land on it would be a gap the
+        // solid does not have (ADR 0165). The planes and the grid are the same for every body.
+        if !mover.faces {
+            for obstacle in obstacles {
+                // A frame's virtual face captures only while the workspace snaps to frames. What it
+                // does not do is stop being a stop: contact is the document's rule, not a taste
+                // (ADR 0146).
+                let target = if obstacle.is_shell() {
+                    if !snaps.frames {
+                        continue;
+                    }
+                    SnapSurface::Frame(obstacle.id)
+                } else {
+                    SnapSurface::Face(obstacle.id)
+                };
+                if !overlap(mover_first, obstacle.span(first)) || !overlap(mover_second, obstacle.span(second)) {
                     continue;
                 }
-                SnapSurface::Frame(obstacle.id)
-            } else {
-                SnapSurface::Face(obstacle.id)
-            };
-            if !overlap(mover_first, obstacle.span(first)) || !overlap(mover_second, obstacle.span(second)) {
-                continue;
+                capture(obstacle.span(axis).min, target);
+                capture(obstacle.span(axis).max, target);
             }
-            capture(obstacle.span(axis).min, target);
-            capture(obstacle.span(axis).max, target);
         }
         if snaps.planes {
             // A coordinate plane runs through the whole world, so it captures without a
@@ -660,14 +689,14 @@ fn quantised(value: f64) -> f64 {
     if rounded.is_finite() { rounded } else { 0.0 }
 }
 
-/// Rounds a drag distance to the furniture grid.
+/// Rounds a drag distance to the 1 mm grid.
 fn round_to_grid(value: f64) -> f64 {
     let rounded = (value / GRID_MM).round() * GRID_MM;
     if rounded.is_finite() { rounded } else { 0.0 }
 }
 
 /// The snapped distance cut at the first surface in its way.
-fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[SurfaceBox], obstacles: &[SurfaceBox]) -> MoveLimit {
+fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &[SurfaceBox]) -> MoveLimit {
     let sign = if distance < 0.0 { -1.0 } else { 1.0 };
     if distance == 0.0 {
         return MoveLimit { distance_mm: 0.0, contact: None, capture: None };
@@ -676,10 +705,15 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[SurfaceBox], obstacl
     for mover in movers {
         for obstacle in obstacles {
             // A body stops at a body and a shell at a shell (ADR 0102).
-            if mover.is_shell() != obstacle.is_shell() {
+            if mover.box_.is_shell() != obstacle.is_shell() {
                 continue;
             }
-            let Some(limit) = blocking(axis, sign, mover, obstacle) else {
+            let blocked = if mover.faces {
+                blocking_faces(axis, sign, &mover.box_, obstacle)
+            } else {
+                blocking(axis, sign, &mover.box_, obstacle)
+            };
+            let Some(limit) = blocked else {
                 continue;
             };
             if nearest.is_none_or(|(best, _)| limit < best) {
@@ -689,10 +723,57 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[SurfaceBox], obstacl
     }
     match nearest {
         Some((limit, contact)) if distance.abs() > limit => {
-            MoveLimit { distance_mm: limit * sign, contact: Some(contact), capture: None }
+            MoveLimit { distance_mm: quantised(limit * sign), contact: Some(contact), capture: None }
         }
         _ => MoveLimit { distance_mm: distance, contact: None, capture: None },
     }
+}
+
+/// The first distance towards `sign` at which a solid body meets another, measured by their faces.
+///
+/// Both boxes are taken with their own frames, and the movement is a translation along one world
+/// axis. The separating-axis test gives the answer exactly: for every axis the pair can be separated
+/// along, the projections of the two boxes are intervals that move towards each other at the rate
+/// the direction's own projection names, so the distance at which that axis stops separating is
+/// `gap / rate`. The two solids first touch where the last separating axis closes, which is the
+/// largest of those distances; an axis that never closes keeps them apart forever and answers
+/// `None`, and a pair that already shares an axis is the maker's to repair, exactly as the write's
+/// own guard reads it (ADR 0162, ADR 0165).
+///
+/// The distance is the exact touch, which is larger than the world-box reading of a turned body and
+/// never smaller: a box contains its body, so the coarse reading stops the drag early and can never
+/// let it through.
+fn blocking_faces(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBox) -> Option<f64> {
+    let direction = axis.direction() * sign;
+    let mut reach: Option<f64> = None;
+    for normal in separating_axes(*moving, *obstacle) {
+        let (moving_low, moving_high) = extent(*moving, normal);
+        let (obstacle_low, obstacle_high) = extent(*obstacle, normal);
+        let rate = direction.dot(normal);
+        if !rate.is_finite() {
+            return None;
+        }
+        // The moving box is below the obstacle on this axis, or above it, and the gap between them
+        // closes only while the direction carries it that way.
+        let gap = if moving_high <= obstacle_low {
+            if rate <= 0.0 {
+                return None;
+            }
+            (obstacle_low - moving_high) / rate
+        } else if obstacle_high <= moving_low {
+            if rate >= 0.0 {
+                return None;
+            }
+            (moving_low - obstacle_high) / -rate
+        } else {
+            continue;
+        };
+        if !gap.is_finite() || gap < 0.0 {
+            return None;
+        }
+        reach = Some(reach.map_or(gap, |best: f64| best.max(gap)));
+    }
+    reach
 }
 
 /// The distance towards `sign` before `moving` meets `obstacle`, or `None` when this pair does not
@@ -821,7 +902,7 @@ mod tests {
     }
 
     fn rule_with(project: &Project, moving: &[Id], snaps: SnapSettings) -> MoveRule {
-        project.move_rule(moving, snaps).expect("a furniture move")
+        project.move_rule(moving, snaps).expect("an object move")
     }
 
     fn limit(project: &Project, moving: &[Id], axis: MoveAxis, proposed: f64) -> MoveLimit {
@@ -834,12 +915,12 @@ mod tests {
         // thickness direction and the two in-plane handles are not offered at all.
         let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
-        assert_eq!(project.furniture_axes(&[shelf]), [false, false, true], "a shelf's thickness is its upright axis");
+        assert_eq!(project.move_axes(&[shelf]), [false, false, true], "a shelf's thickness is its upright axis");
         let rule = rule(&project, &[shelf]);
         assert!(rule.allows(MoveAxis::Z), "the shelf rises and falls");
         assert!(!rule.allows(MoveAxis::X) && !rule.allows(MoveAxis::Y), "and does not slide in its own plane");
         assert_eq!(rule.limit(MoveAxis::X, 100.0), moved(0.0), "a drag across the board moves nothing");
-        assert_eq!(rule.limit(MoveAxis::Z, 40.4), moved(40.0), "along its thickness it keeps the furniture grid");
+        assert_eq!(rule.limit(MoveAxis::Z, 40.4), moved(40.0), "along its thickness it keeps the move grid");
     }
 
     #[test]
@@ -848,7 +929,7 @@ mod tests {
         // and the axis it offers follows the board rather than the world (N22).
         let (mut project, piece) = product_project("10.01.01");
         let divider = turned_panel(&mut project, piece, "Divider", 'y', 90);
-        assert_eq!(project.furniture_axes(&[divider]), [true, false, false], "a divider crosses the case");
+        assert_eq!(project.move_axes(&[divider]), [true, false, false], "a divider crosses the case");
         assert_eq!(
             rule(&project, &[divider]).limit(MoveAxis::X, 120.4),
             moved(120.0),
@@ -856,7 +937,7 @@ mod tests {
         );
 
         let back = turned_panel(&mut project, piece, "Back", 'x', 90);
-        assert_eq!(project.furniture_axes(&[back]), [false, true, false], "a back moves in and out");
+        assert_eq!(project.move_axes(&[back]), [false, true, false], "a back moves in and out");
     }
 
     #[test]
@@ -871,7 +952,7 @@ mod tests {
             .with_rotation_euler(EulerAngles { y: turn, ..EulerAngles::default() })
             .expect("a quarter turn");
         project.set_node_placement(piece, quarters).expect("turn the case");
-        assert_eq!(project.furniture_axes(&[shelf]), [true, false, false]);
+        assert_eq!(project.move_axes(&[shelf]), [true, false, false]);
     }
 
     #[test]
@@ -881,30 +962,26 @@ mod tests {
         let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
         let back = turned_panel(&mut project, piece, "Back", 'x', 90);
-        assert_eq!(project.furniture_axes(&[shelf, back]), [false, false, false]);
+        assert_eq!(project.move_axes(&[shelf, back]), [false, false, false]);
 
         // A frame beside a board offers its own axes, and the intersection keeps what they share: a
         // wall-hung frame offers all three, so this selection slides the board along Z alone.
         let neighbour = product(&mut project, "10.01.02", (600, 560, 720), (1000, 0, 0));
-        assert_eq!(project.furniture_axes(&[shelf, neighbour]), [false, false, true]);
+        assert_eq!(project.move_axes(&[shelf, neighbour]), [false, false, true]);
     }
 
     #[test]
-    fn the_panel_axis_holds_outside_a_product_where_the_snaps_do_not() {
-        // A board at the root has no product to snap to, so its drag keeps the exact micrometre move
-        // — but it is still a board, still slides along its thickness only (N22), and still stops at
-        // a neighbour, because contact is the document's rule and not a taste (ADR 0162).
+    fn the_panel_axis_holds_outside_a_product_and_the_move_snaps_anywhere() {
+        // A board at the root is not furniture, but it is still a board: it slides along its
+        // thickness only (N22), while its drag is the object move, so it lands on the workspace's
+        // grid like every other body (ADR 0165).
         let project = sample_project();
         let loose = Id::new(2).expect("id");
-        assert_eq!(project.furniture_axes(&[loose]), [false, false, true], "the sample shelf is a board");
+        assert_eq!(project.move_axes(&[loose]), [false, false, true], "the sample shelf is a board");
         let loose_rule = rule_with(&project, &[loose], SnapSettings::default());
         assert!(!loose_rule.allows(MoveAxis::X), "and the tool keeps it in its own plane");
-        assert_eq!(
-            loose_rule.limit(MoveAxis::Z, 40.4),
-            moved(40.4),
-            "with nothing to snap to it keeps the pointer's own micrometre distance"
-        );
-        assert_eq!(project.furniture_axes(&[]), [true, true, true], "nothing selected offers every axis");
+        assert_eq!(loose_rule.limit(MoveAxis::Z, 40.4), moved(40.0), "a drag lands on the 1 mm grid");
+        assert_eq!(project.move_axes(&[]), [true, true, true], "nothing selected offers every axis");
     }
 
     /// A panel placement `(x, y, z)` millimetres inside the root frame.
@@ -916,6 +993,76 @@ mod tests {
                 Length::from_micrometres((at.2 * 1000.0).round() as i64),
             )
             .expect("a placement")
+    }
+
+    /// A solid box of `size` millimetres at `at`, with its own base corner at the node's origin.
+    fn solid_box(project: &mut Project, parent: Id, name: &str, size: (i64, i64, i64), at: Placement) -> Id {
+        let (x, y, z) = size;
+        let corner = |dx: i64, dy: i64, dz: i64| [millimetres(dx), millimetres(dy), millimetres(dz)];
+        let vertices = vec![
+            corner(0, 0, 0),
+            corner(x, 0, 0),
+            corner(x, y, 0),
+            corner(0, y, 0),
+            corner(0, 0, z),
+            corner(x, 0, z),
+            corner(x, y, z),
+            corner(0, y, z),
+        ];
+        let faces = vec![
+            vec![0, 3, 2, 1],
+            vec![4, 5, 6, 7],
+            vec![0, 1, 5, 4],
+            vec![1, 2, 6, 5],
+            vec![2, 3, 7, 6],
+            vec![3, 0, 4, 7],
+        ];
+        let mesh = Mesh::new(vertices, faces).expect("a box mesh");
+        project.add_object(parent, name, at, Geometry::Mesh(mesh)).expect("a solid body")
+    }
+
+    /// A placement turned `millidegrees` about Z, its origin at `(x, y, z)` millimetres.
+    fn turned_z(millidegrees: i64, at: (i64, i64, i64)) -> Placement {
+        let euler = EulerAngles { z: Degrees::from_millidegrees(millidegrees), ..EulerAngles::default() };
+        Placement::IDENTITY
+            .with_rotation_euler(euler)
+            .and_then(|placement| placement.with_translation(millimetres(at.0), millimetres(at.1), millimetres(at.2)))
+            .expect("a turned placement")
+    }
+
+    #[test]
+    fn a_turned_solid_stops_at_its_own_face_and_not_at_the_box_around_it() {
+        // ADR 0165: a 200 x 20 x 10 board turned 45 degrees has a world box that reaches
+        // x = 141.42, but at the height of the neighbour (y = 0..100) its own far corner only reaches
+        // x = 100. The box around the board therefore stops the drag at 500 - 141.42 = 358.58 mm,
+        // while the board's own face meets the neighbour after 400 mm: the tip at 141.42 is already
+        // above the neighbour's y = 100 face and never touches it.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let board = solid_box(&mut project, root, "Board", (200, 20, 10), turned_z(45_000, (0, 0, 0)));
+        let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((500.0, 0.0, 0.0)));
+        assert_eq!(
+            limit(&project, &[board], MoveAxis::X, 1000.0),
+            MoveLimit { distance_mm: 400.0, contact: Some(neighbour), capture: None },
+            "the board's corner (500, 100) is the touch, not the box's corner (500, 141.42)"
+        );
+    }
+
+    #[test]
+    fn a_solid_body_slides_along_a_face_and_keeps_the_other_axes_free() {
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 0.0)));
+        let neighbour = solid_box(&mut project, root, "Neighbour", (100, 100, 100), place((300.0, 0.0, 0.0)));
+        let body_rule = rule(&project, &[body]);
+        let limits = body_rule.limits(DVec3::new(1000.0, 120.0, 30.0));
+        assert_eq!(
+            limits[MoveAxis::X.index()],
+            MoveLimit { distance_mm: 200.0, contact: Some(neighbour), capture: None },
+            "the neighbour's face stops X"
+        );
+        assert_eq!(limits[MoveAxis::Y.index()].distance_mm, 120.0, "and the hand's Y travel slides along it");
+        assert_eq!(limits[MoveAxis::Z.index()].distance_mm, 30.0, "while the vertical is free for a solid");
     }
 
     #[test]
@@ -1094,7 +1241,7 @@ mod tests {
 
     #[test]
     fn a_body_stops_at_a_body_and_not_at_a_shell() {
-        // A shelf is a board, so the furniture move slides it along its thickness — upright (N22) —
+        // A shelf is a board, so the object move slides it along its thickness — upright (N22) —
         // and the contact it meets is the panel above it in the same case.
         let (mut project, piece) = product_project("10.01.01");
         let shelf = panel(&mut project, piece, "Shelf", (0, 1000, 0));
@@ -1164,32 +1311,37 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_of_loose_geometry_snaps_to_nothing_and_still_stops_at_a_body() {
-        // A loose panel at the root: no product, so no plane, no frame, no grid — the pointer's own
-        // distance (ADR 0147) — while a body in its way still stops it (ADR 0162).
-        let project = sample_project();
-        let loose = Id::new(2).expect("id");
-        let free = rule_with(&project, &[loose], SnapSettings::default());
+    fn a_drag_of_a_solid_body_takes_the_planes_and_the_grid_and_not_another_parts_box() {
+        // A body that is not furniture is a solid: the object move lands it on the coordinate planes
+        // and the millimetre grid, while another part's world box captures nothing, because that box
+        // is the coarse reading the body is no longer measured by (ADR 0165). Contact is still the
+        // document's rule (ADR 0162).
+        let mut project = empty_project();
+        let root = project.root().id();
+        let body = solid_box(&mut project, root, "Body", (100, 100, 100), place((0.0, 0.0, 1500.0)));
+        let plane = Some(Capture { end: SnapEnd::Low, at_mm: 0.0, surface: SnapSurface::Plane });
         assert_eq!(
-            free.limit(MoveAxis::Z, 40.4),
-            moved(40.4),
-            "the furniture grid is the furniture tool's and this piece has none"
+            rule(&project, &[body]).limit(MoveAxis::Z, -1498.0),
+            MoveLimit { distance_mm: -1500.0, contact: None, capture: plane },
+            "the body lands on the floor plane"
         );
-        assert!(project.move_rule(&[], SnapSettings::default()).is_none(), "nothing selected is no rule");
-        assert!(project.contact_rule(&[]).is_none());
+        assert_eq!(limit(&project, &[body], MoveAxis::Z, -97.4), moved(-97.0), "and on the millimetre grid");
 
-        // The free tool refuses no axis and snaps to nothing either, but the same contact holds: the
-        // sample shelf and the drawer's front share one box, so neither may be pushed further into
-        // the other — and both may slide out of it (X72).
-        let free_move = project.contact_rule(&[loose]).expect("a loose board has a contact rule");
+        // A neighbour 2 mm above: a furniture piece would jump onto its face, a solid body does not,
+        // because the face it would land on is the neighbour's own and no world box stands in for it.
+        let under = solid_box(&mut project, root, "Under", (100, 100, 100), place((0.0, 0.0, 1702.0)));
+        assert_eq!(limit(&project, &[body], MoveAxis::Z, 100.0), moved(100.0), "no face capture for a solid");
+
+        // The same pair of bodies is still contact: a solid body may not be laid inside another.
         assert_eq!(
-            free_move.limit(MoveAxis::X, 40.4),
-            moved(40.4),
-            "a pair that already overlaps may slide along the other's face"
+            limit(&project, &[body], MoveAxis::Z, 300.0),
+            MoveLimit { distance_mm: 102.0, contact: Some(under), capture: None },
+            "it stops where its own face meets the neighbour"
         );
-        let beside = Id::new(4).expect("id");
-        let pushed = project.contact_rule(&[beside]).expect("the front has a contact rule");
-        assert_eq!(pushed.limit(MoveAxis::Y, 10.0), moved(10.0), "and a piece with nothing beside it is free");
+
+        // The free move keeps its own reading: no grid, no plane, no face, the pointer's distance.
+        let free = project.contact_rule(&[body]).expect("a solid body has a contact rule");
+        assert_eq!(free.limit(MoveAxis::Z, 40.4), moved(40.4), "the free move snaps to nothing");
     }
 
     #[test]

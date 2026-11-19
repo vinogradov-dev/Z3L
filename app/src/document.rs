@@ -2699,7 +2699,7 @@ impl Document {
             match Transform::of(shell.mode) {
                 // No mode owns a handle, so no gizmo runs: a press where one would be is a pick.
                 None => Ok(None),
-                Some(Transform::Move | Transform::Furniture) => {
+                Some(Transform::Move | Transform::Object) => {
                     let pinned = self.move_pinned();
                     self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
@@ -2725,7 +2725,7 @@ impl Document {
                 || input.smooth_scroll_delta != egui::Vec2::ZERO
         });
         self.carry_cursor(ui.ctx(), gesture || navigating);
-        if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Furniture))
+        if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Object))
             && self.translate_gizmo.is_dragging()
         {
             self.show_move_distances(ui, rect, opacity);
@@ -2766,7 +2766,7 @@ impl Document {
             match Transform::of(shell.mode) {
                 // The mode offers no handle, so nothing consumed the press: the click picks.
                 None => false,
-                Some(Transform::Move | Transform::Furniture) => self.translate_gizmo.consumed_click(),
+                Some(Transform::Move | Transform::Object) => self.translate_gizmo.consumed_click(),
                 Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
             }
         };
@@ -2889,7 +2889,7 @@ impl Document {
             && ui.input(|input| input.pointer.primary_pressed())
             && response.interact_pointer_pos().is_some_and(|pointer| self.over_empty_space(rect, pointer, &previewed));
         self.update_band(ui, &response, rect, band_starts);
-        // Whether the click opened a container instead of picking a node, so the furniture move
+        // Whether the click opened a container instead of picking a node, so the object move
         // does not take a piece on the way into a level.
         let mut entered_level = false;
         let clicked = interactive
@@ -3012,11 +3012,11 @@ impl Document {
                     }
                 }
             }
-            // The furniture move takes the piece the click named, by any part of its body: the click
+            // The object move takes the piece the click named, by any part of its body: the click
             // has selected it, and the pointer carries it until the next click puts it down (N24). A
             // click that opened a container is navigation, not a hand on a piece.
-            if Transform::of(shell.mode) == Some(Transform::Furniture) && !entered_level {
-                self.take_furniture(pointer);
+            if Transform::of(shell.mode) == Some(Transform::Object) && !entered_level {
+                self.take_body(pointer);
             }
         }
 
@@ -3182,7 +3182,7 @@ impl Document {
             );
             match Transform::of(shell.mode) {
                 None => {}
-                Some(Transform::Move | Transform::Furniture) => {
+                Some(Transform::Move | Transform::Object) => {
                     self.translate_gizmo.paint(ui, rect, paint_target, handle_length);
                 }
                 Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
@@ -3321,15 +3321,15 @@ impl Document {
         ui.ctx().request_repaint();
     }
 
-    /// Takes the selected piece in hand for the furniture move, unless it may travel nowhere.
+    /// Takes the selected piece in hand for the object move, unless it may travel nowhere.
     ///
     /// The click has already named the piece and set the selection, so this reads the selection and
     /// asks the document what may move: a piece with no allowed axis, a locked piece and an empty
     /// selection are all left alone, and the click stays an ordinary selection.
-    fn take_furniture(&mut self, pointer: egui::Pos2) {
+    fn take_body(&mut self, pointer: egui::Pos2) {
         let selection = self.editor.selected_nodes();
         let project = self.session.project();
-        if selection.is_empty() || project.furniture_axes(selection) == [false, false, false] {
+        if selection.is_empty() || project.move_axes(selection) == [false, false, false] {
             return;
         }
         if self.editor.locked_selection(project).is_some() {
@@ -3340,7 +3340,7 @@ impl Document {
         self.translate_gizmo.grab(pointer);
     }
 
-    /// Whether the furniture move is carrying a piece, for the status bar's own words (N24).
+    /// Whether the object move is carrying a piece, for the status bar's own words (N24).
     pub(crate) fn holding_piece(&self) -> bool {
         self.translate_gizmo.is_following()
     }
@@ -4309,7 +4309,7 @@ mod tests {
         let measure = measure_move(&project, piece, gizmo_math::Axis::Y).expect("two faces");
         assert_eq!(measure.wall_low, None, "nothing stands below the piece");
 
-        let rule = project.move_rule(&[piece], model::SnapSettings::default()).expect("a furniture drag");
+        let rule = project.move_rule(&[piece], model::SnapSettings::default()).expect("an object drag");
         let limit = rule.limit(model::MoveAxis::Y, -1498.0);
         let capture = limit.capture.expect("the plane captured the drag");
         let (wall_low, wall_high) = captured_walls(&measure, Some(capture));

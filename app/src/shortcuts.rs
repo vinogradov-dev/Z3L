@@ -158,7 +158,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
 /// Consumes at most one transform-mode key and answers the mode it arms (U113).
 ///
 /// The shifted pair is read first: a pattern without `Shift` also matches a press that carries it, so
-/// a plain `W` read first would swallow `Shift+W` and the furniture move would never run (U78). The
+/// a plain `W` read first would swallow `Shift+W` and the object move would never run (U78). The
 /// key and its pair come from the inventory's table, so the four cells, the menu entries and the
 /// Settings rows print one spelling.
 fn take_mode(input: &mut egui::InputState) -> Option<TransformMode> {
@@ -436,7 +436,7 @@ mod tests {
         output.drop_without_applying_deltas();
         assert_eq!(read, Shortcuts { maximize: true, ..Shortcuts::default() });
 
-        // A plain `W` is the free move and must not expand anything; `Shift+W` is the furniture move
+        // A plain `W` is the free move and must not expand anything; `Shift+W` is the object move
         // beside it, and the shifted pair is the one that has to win the frame it is pressed in (U78).
         let output = ctx.run_ui(key_input(egui::Key::W, egui::Modifiers::NONE), |ui| {
             read = take_shortcuts(ui.ctx());
@@ -450,8 +450,8 @@ mod tests {
         output.drop_without_applying_deltas();
         assert_eq!(
             read,
-            Shortcuts { mode: Some(TransformMode::Furniture), ..Shortcuts::default() },
-            "`Shift+W` arms the furniture move and never its plain twin"
+            Shortcuts { mode: Some(TransformMode::Object), ..Shortcuts::default() },
+            "`Shift+W` arms the object move and never its plain twin"
         );
 
         // One view already fills the workspace, so the key is a no-op in the single layout.

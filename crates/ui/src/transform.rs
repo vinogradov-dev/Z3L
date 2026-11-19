@@ -22,8 +22,9 @@ use crate::inventory::{self, Binding};
 /// never handed a handle they did not ask for (ADR 0113).
 ///
 /// The two moves are two tools and not one tool that guesses (N22, ADR 0147): `Move` keeps the
-/// pointer's own distance and applies no rule, and `Furniture` moves a piece by the document's own
-/// rules — the axes they allow, the neighbours that stop it and the workspace's snapping.
+/// pointer's own distance and applies no rule, and `Object` moves any body by the document's own
+/// rules — the axes a furniture piece allows, the neighbours that stop it, and the workspace's
+/// snapping (ADR 0165).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TransformMode {
     /// No transform: a click selects, shift adds, a double click enters a level.
@@ -31,23 +32,24 @@ pub enum TransformMode {
     Select,
     /// Three world-axis arrows move the selection freely, with no rule and no snapping.
     Move,
-    /// The arrows move furniture by its own rules: a panel along its thickness, a frame to its
-    /// neighbours and the floor, and every drag landing on the workspace's snaps.
-    Furniture,
+    /// The arrows move a body by the document's own rules: a panel along its thickness, a floor-bound
+    /// frame in its own plane, a solid body until its face meets a neighbour's, and every drag landing
+    /// on the workspace's snaps (ADR 0165).
+    Object,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
 }
 
 impl TransformMode {
     /// Every mode, in the order the band and the menu list them.
-    pub const ALL: [Self; 4] = [Self::Select, Self::Move, Self::Furniture, Self::Rotate];
+    pub const ALL: [Self; 4] = [Self::Select, Self::Move, Self::Object, Self::Rotate];
 
     /// The inventory id the mode is filed under, and the id its key runs.
     pub const fn id(self) -> &'static str {
         match self {
             Self::Select => inventory::TRANSFORM_SELECT,
             Self::Move => inventory::TRANSFORM_MOVE,
-            Self::Furniture => inventory::TRANSFORM_FURNITURE,
+            Self::Object => inventory::TRANSFORM_OBJECT,
             Self::Rotate => inventory::TRANSFORM_ROTATE,
         }
     }
@@ -57,7 +59,7 @@ impl TransformMode {
         match self {
             Self::Select => Message::Select,
             Self::Move => Message::Move,
-            Self::Furniture => Message::Furniture,
+            Self::Object => Message::Object,
             Self::Rotate => Message::Rotate,
         }
     }
@@ -75,7 +77,7 @@ impl TransformMode {
         match self {
             Self::Select => Message::SelectHint,
             Self::Move => Message::MoveHint,
-            Self::Furniture => Message::FurnitureHint,
+            Self::Object => Message::ObjectHint,
             Self::Rotate => Message::RotateHint,
         }
     }

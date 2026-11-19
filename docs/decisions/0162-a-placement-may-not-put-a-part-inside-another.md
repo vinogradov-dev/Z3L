@@ -1,7 +1,9 @@
 # 0162. A placement may not put a part inside another part
 
 - Status: Accepted; carries ADR 0102's two contact rules from one gesture into the document, and
-  narrows ADR 0147's free move and the crossing clause of X65
+  narrows ADR 0147's free move and the crossing clause of X65. Its "the drag stops at the world
+  box" clause is narrowed by
+  [0165](0165-the-move-tool-is-the-object-move-and-a-solid-body-is-measured-by-its-faces.md)
 - Date: 2026-11-20
 
 ## Context

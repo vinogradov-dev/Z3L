@@ -19,7 +19,7 @@
 //! report rather than approximated.
 //!
 //! Both are pure queries: no session, no renderer, no document write. The surfaces are the same
-//! boxes the furniture move rule measures against (`super::surface`), so the tool that fills a
+//! boxes the object move rule measures against (`super::surface`), so the tool that fills a
 //! niche and the tool that drags a piece cannot disagree about where a surface is.
 
 use geom::{DVec2, DVec3, Region};

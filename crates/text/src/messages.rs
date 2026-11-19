@@ -185,17 +185,17 @@ messages! {
     Move = ["Move", "Перемещение"],
     Select = ["Select", "Выбор"],
     Rotate = ["Rotate", "Вращение"],
-    Furniture = ["Furniture", "Мебель"],
+    Object = ["Object", "Объект"],
     SelectHint = ["Select: a click picks, a drag draws a band", "Выбор: щелчок выбирает, перетаскивание рисует рамку"],
     MoveHint = [
         "Move freely: the pointer's own distance, no snapping",
         "Двигать свободно: расстояние по указателю, без привязок"
     ],
-    FurnitureHint = [
-        "Move by furniture rules: click a piece to take it, move the pointer, click to put it down",
-        "Двигать по правилам мебели: щелчок берёт деталь, укажите новое место, щелчок ставит её"
+    ObjectHint = [
+        "Move a body: click to take it, move the pointer, click to put it down; it stops at another body",
+        "Двигать тело: щелчок берёт его, укажите новое место, щелчок ставит; тело упирается в другое"
     ],
-    FurnitureHold = [
+    ObjectHold = [
         "Piece in hand: the pointer moves it, a click puts it down, Esc puts it back",
         "Деталь в руке: указатель её двигает, щелчок ставит, Esc возвращает"
     ],

@@ -200,7 +200,7 @@ impl Harness {
 
     /// Takes the piece under `at` with a click, carries it by `travel` and puts it down.
     ///
-    /// The furniture move holds nothing (ADR 0151), so its gesture is two clicks with the pointer
+    /// The object move holds nothing (ADR 0151), so its gesture is two clicks with the pointer
     /// travelling in between: the first takes the piece by its body, the second drops it.
     fn carry(&mut self, at: egui::Pos2, travel: egui::Vec2) -> Chrome {
         self.click(at, egui::PointerButton::Primary);
@@ -872,7 +872,7 @@ fn handle_point(harness: &Harness, node: Id) -> (egui::Pos2, egui::Vec2) {
 /// A point on the handle of `node` along `axis`, for a tool that offers `axes`.
 ///
 /// The `axes` are the ones the mode draws, so a test can ask where a handle *would* be in a mode that
-/// does not draw it: that is how the furniture move's refused directions are pressed (N22).
+/// does not draw it: that is how the object move's refused directions are pressed (N22).
 fn handle_point_on(
     harness: &Harness,
     node: Id,
@@ -907,7 +907,7 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     assert!(
         harness.drew(Message::Select.text(Lang::En))
             && harness.drew(Message::Move.text(Lang::En))
-            && harness.drew(Message::Furniture.text(Lang::En))
+            && harness.drew(Message::Object.text(Lang::En))
             && harness.drew(Message::Rotate.text(Lang::En)),
         "the bar offers Select beside the three gestures"
     );
@@ -946,7 +946,7 @@ fn each_of_the_four_gestures_answers_its_key_and_the_bar_prints_the_pair() {
     let revision = harness.revision();
     for (key, modifiers, mode) in [
         (egui::Key::W, egui::Modifiers::NONE, TransformMode::Move),
-        (egui::Key::W, egui::Modifiers::SHIFT, TransformMode::Furniture),
+        (egui::Key::W, egui::Modifiers::SHIFT, TransformMode::Object),
         (egui::Key::E, egui::Modifiers::NONE, TransformMode::Rotate),
         (egui::Key::Q, egui::Modifiers::NONE, TransformMode::Select),
     ] {
@@ -992,7 +992,7 @@ fn the_viewport_menu_arms_a_gesture_and_writes_nothing() {
 
 #[test]
 fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
-    // N24: the furniture move draws no handle. A click anywhere on the board takes it, the pointer
+    // N24: the object move draws no handle. A click anywhere on the board takes it, the pointer
     // carries it with no button held, and the next click puts it down as one undo entry; what it may
     // travel is still the document's answer, so the board never moves across its own faces (ADR 0147).
     let (session, panel) = one_wide_panel();
@@ -1003,12 +1003,12 @@ fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
     harness.app.tabs.active_mut().editor.select_node(None);
     harness.settle();
 
-    let cell = harness.mode_cell(&TransformMode::Furniture.caption(Lang::En));
+    let cell = harness.mode_cell(&TransformMode::Object.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
-    assert_eq!(harness.app.shell.mode, TransformMode::Furniture, "the bar's cell arms the furniture move");
+    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the bar's cell arms the object move");
     harness.settle();
 
-    let axes = harness.app.tabs.active().session.project().furniture_axes(&[panel]);
+    let axes = harness.app.tabs.active().session.project().move_axes(&[panel]);
     assert_eq!(axes, [false, false, true], "a board offers its own thickness and nothing else");
     // The middle of the board's face is no handle: the body is what a click takes.
     let body = harness.node_point(panel);
@@ -1046,7 +1046,7 @@ fn a_floor_frame_is_carried_across_the_floor_in_one_gesture() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let project = harness.app.tabs.active().session.project();
@@ -1086,7 +1086,7 @@ fn a_frame_stops_on_the_axis_it_meets_and_slides_on_the_other() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let project = harness.app.tabs.active().session.project();
@@ -1124,7 +1124,7 @@ fn a_frames_class_decides_whether_it_may_be_hung() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = piece_middle(&harness, frame);
@@ -1206,7 +1206,7 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1232,18 +1232,17 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
 fn both_moves_stop_a_board_flush_against_its_neighbour() {
     // The Done of N22 in one sentence, amended by X72: the same handle and the same drag, twice. The
     // free move keeps the pointer's own distance and snaps to nothing, but it stops at the panel
-    // beside it like the furniture move, because contact is the document's rule and a body stops at a
+    // beside it like the object move, because contact is the document's rule and a body stops at a
     // body (ADR 0102, ADR 0162). Each drag is one revision, so the two tools share the whole gesture.
     let (free_end, free_start, free_revision) = moved_divider(TransformMode::Move, "frame-free-move");
     assert!(
         (free_end - free_start).abs() < 1.0e-6,
         "the free move stops the board flush against the neighbour at {free_start}: it ends at {free_end}"
     );
-    let (stopped_end, neighbour_start, stopped_revision) =
-        moved_divider(TransformMode::Furniture, "frame-furniture-move");
+    let (stopped_end, neighbour_start, stopped_revision) = moved_divider(TransformMode::Object, "frame-furniture-move");
     assert!(
         (stopped_end - neighbour_start).abs() < 1.0e-6,
-        "and so does the furniture move, at the same face {neighbour_start}: it ends at {stopped_end}"
+        "and so does the object move, at the same face {neighbour_start}: it ends at {stopped_end}"
     );
     assert_eq!(free_revision, stopped_revision, "both drags cost one undo entry");
 }
@@ -1255,7 +1254,7 @@ fn both_moves_stop_a_board_flush_against_its_neighbour() {
 /// would end inside the neighbour: the number is what makes the stop visible.
 ///
 /// The two tools are asked the same question with their own gesture: the free move takes a handle and
-/// drags it, the furniture move takes the board by its body and carries it (N24).
+/// drags it, the object move takes the board by its body and carries it (N24).
 fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
     let (session, divider, beside) = divider_beside_a_panel();
     let mut harness = Harness::with_session(name, session);
@@ -1266,13 +1265,13 @@ fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
     harness.app.shell.mode = mode;
     harness.settle();
     let project = harness.app.tabs.active().session.project();
-    let axes = project.furniture_axes(&[divider]);
+    let axes = project.move_axes(&[divider]);
     assert_eq!(axes, [true, false, false], "a divider crosses the case, so X is the only way it travels");
     let (handle, direction) = handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X))
         .expect("the direction X runs in is on screen");
     let revision = harness.revision();
     match mode {
-        TransformMode::Furniture => {
+        TransformMode::Object => {
             // Any part of the body takes it; the travel names the axis it may move along.
             let body = harness.node_point(divider);
             harness.carry(body, direction * 400.0);
@@ -1290,7 +1289,7 @@ fn moved_divider(mode: TransformMode, name: &str) -> (f64, f64, u64) {
 /// A `3000 x 600 x 720` frame holding a divider and the panel beside it, 50 mm apart.
 ///
 /// The divider is turned a quarter about Y, so its thickness — and with it the only axis the
-/// furniture move offers it — runs along world X and the gap is measured across it (N22).
+/// object move offers it — runs along world X and the gap is measured across it (N22).
 fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
     let mm = testkit::millimetres;
     let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
@@ -1313,14 +1312,14 @@ fn divider_beside_a_panel() -> (engine::Session, Id, Id) {
     let beside = project.add_panel(frame, "Beside", size, None, mm(18), beside_at).expect("a panel beside the divider");
     let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     // The product is open, so a click lands on the part and not on the frame around it: the
-    // furniture move takes the piece the click named (N24).
+    // object move takes the piece the click named (N24).
     assert!(session.open_product(frame), "the fixture product opens");
     (session, divider, beside)
 }
 
 #[test]
 fn a_carried_piece_measures_its_gaps_in_the_scene_and_a_press_over_one_puts_it_down() {
-    // N26: a carried piece's two gaps are dimensioned where they are measured, so the furniture move
+    // N26: a carried piece's two gaps are dimensioned where they are measured, so the object move
     // draws no card at all — the numbers are one field in the middle of each arrow and the words are
     // the inspector's. X66 still holds: a field that sits in the scene covers the very press that
     // puts the piece down, so it takes the keyboard and never the pointer.
@@ -1329,9 +1328,9 @@ fn a_carried_piece_measures_its_gaps_in_the_scene_and_a_press_over_one_puts_it_d
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
-    let axes = harness.app.tabs.active().session.project().furniture_axes(&[shelf]);
+    let axes = harness.app.tabs.active().session.project().move_axes(&[shelf]);
     let (_, up) = handle_point_on(&harness, shelf, axes, Some(gizmo_math::Axis::Z))
         .expect("the direction Z runs in is on screen");
     let body = harness.node_point(shelf);
@@ -1372,10 +1371,10 @@ fn a_gap_typed_into_a_scene_field_lands_where_it_was_typed_as_one_undo_entry() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
     let start = harness.app.tabs.active().session.project().world_placement(shelf).expect("a world frame");
-    let axes = harness.app.tabs.active().session.project().furniture_axes(&[shelf]);
+    let axes = harness.app.tabs.active().session.project().move_axes(&[shelf]);
     let (_, up) = handle_point_on(&harness, shelf, axes, Some(gizmo_math::Axis::Z))
         .expect("the direction Z runs in is on screen");
     let body = harness.node_point(shelf);
@@ -1416,7 +1415,7 @@ fn a_gap_typed_into_a_scene_field_lands_where_it_was_typed_as_one_undo_entry() {
 
 /// A cabinet holding one shelf raised 100 mm off its floor: a piece with a gap on both sides.
 ///
-/// The shelf's thickness runs along world Z, so the furniture move offers it that one axis and both
+/// The shelf's thickness runs along world Z, so the object move offers it that one axis and both
 /// of its gaps have a surface to measure against (N26).
 fn a_raised_shelf() -> (engine::Session, Id) {
     let mm = testkit::millimetres;
@@ -1445,9 +1444,9 @@ fn a_sideways_hand_never_carries_a_piece_away() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
-    let axes = harness.app.tabs.active().session.project().furniture_axes(&[divider]);
+    let axes = harness.app.tabs.active().session.project().move_axes(&[divider]);
     assert_eq!(axes, [true, false, false], "the divider crosses the case, so X is the only way it travels");
     let (_, along) = handle_point_on(&harness, divider, axes, Some(gizmo_math::Axis::X))
         .expect("the direction X runs in is on screen");
@@ -1484,7 +1483,7 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1555,7 +1554,7 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1626,7 +1625,7 @@ fn a_tool_or_a_command_under_the_hand_puts_the_piece_back() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
     let body = harness.node_point(panel);
     let revision = harness.revision();
@@ -4856,7 +4855,7 @@ fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -4912,7 +4911,7 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -4961,7 +4960,7 @@ fn a_pan_under_a_carried_piece_leaves_the_piece_where_it_was() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let screen = |harness: &Harness| {
@@ -5152,7 +5151,7 @@ fn a_floor_frame_keeps_the_hand_on_both_floor_directions() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let pivot = harness.app.tabs.active().session.project().pivot_world(frame).expect("a pivot");
@@ -5186,7 +5185,7 @@ fn a_frames_brackets_travel_with_the_piece_in_hand() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
     assert_eq!(harness.app.tabs.active().brackets.len(), 8, "the open frame brackets its authored box");
 
@@ -5237,7 +5236,7 @@ fn a_carried_frames_old_grip_is_no_target() {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
-    harness.app.shell.mode = TransformMode::Furniture;
+    harness.app.shell.mode = TransformMode::Object;
     harness.settle();
 
     let high = harness.app.tabs.active().session.project().world_box(frame).expect("the frame has a box").1;

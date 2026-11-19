@@ -34,7 +34,7 @@ pub const MAX_GRID_STEP_MM: u32 = 10_000;
 
 /// The smallest snap tolerance the settings offer, in millimetres.
 ///
-/// One millimetre is the furniture grid itself, so the smallest setting still captures a drag that
+/// One millimetre is the move grid itself, so the smallest setting still captures a drag that
 /// has already landed: below it the field would offer a number no drag can use.
 pub const MIN_SNAP_MM: u32 = 1;
 
@@ -381,7 +381,7 @@ impl GizmoSettings {
     }
 }
 
-/// The *Snapping* section: what a furniture drag captures, and how near it must come.
+/// The *Snapping* section: what an object drag captures, and how near it must come.
 ///
 /// Snapping is a taste and a workshop standard, so the three values are the workspace's and never
 /// the document's: turning the planes off costs no undo entry and leaves no revision behind. The
@@ -517,7 +517,7 @@ pub struct Settings {
     pub viewport: ViewportSettings,
     /// The size of the two transform gizmos.
     pub gizmo: GizmoSettings,
-    /// What a furniture drag snaps to, and how near.
+    /// What an object drag snaps to, and how near.
     pub snaps: SnapSettings,
     /// The size of the work cursor and whether it draws a crosshair.
     pub pointer: PointerSettings,

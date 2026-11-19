@@ -3,7 +3,9 @@
 - Status: Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the
   free move, and adds the panel axis 0102 and 0103 did not have. Its handle half — the arrows, the
   held drag and the absence of an in-plane handle — is superseded by
-  [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md)
+  [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md); its
+  furniture-only scope is superseded by
+  [0165](0165-the-move-tool-is-the-object-move-and-a-solid-body-is-measured-by-its-faces.md)
 - Date: 2026-11-18
 
 ## Context

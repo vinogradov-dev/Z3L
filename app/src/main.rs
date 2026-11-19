@@ -105,14 +105,14 @@ use crate::view_cluster::ViewCluster;
 /// this file adds the gesture a mode hands the viewport, which is the shell's own business.
 ///
 /// The two moves are two tools and not one tool that guesses (N22, ADR 0147): `Move` keeps the
-/// pointer's own distance and applies no rule, and `Furniture` moves a piece by the document's own
-/// rules — the axes they allow, the neighbours that stop it and the workspace's snapping.
+/// pointer's own distance and applies no rule, and `Object` moves a body by the document's own
+/// rules — the axes it allows, the neighbours that stop it and the workspace's snapping (ADR 0165).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
     /// Three world-axis arrows move the selection without a rule.
     Move,
-    /// The arrows move the selection by the document's furniture rules.
-    Furniture,
+    /// The arrows move the selection by the document's own rules.
+    Object,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
 }
@@ -126,7 +126,7 @@ impl Transform {
         match mode {
             TransformMode::Select => None,
             TransformMode::Move => Some(Self::Move),
-            TransformMode::Furniture => Some(Self::Furniture),
+            TransformMode::Object => Some(Self::Object),
             TransformMode::Rotate => Some(Self::Rotate),
         }
     }

@@ -149,7 +149,7 @@ pub(crate) struct Target<'a> {
     pub(crate) project: &'a Project,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
-    /// What a furniture drag snaps to, as the workspace settings chose it (ADR 0146).
+    /// What an object drag snaps to, as the workspace settings chose it (ADR 0146).
     ///
     /// It travels here rather than as another argument because a drag that starts reads it once,
     /// with the camera and the selection it starts under.
@@ -168,8 +168,9 @@ pub(crate) struct Target<'a> {
 pub(crate) enum MoveKind {
     /// The pointer's own distance, rounded to the document's micrometre: no contact and no snap.
     Free,
-    /// The furniture rules: the axes they allow, contact at the neighbours, and the workspace's snaps.
-    Furniture,
+    /// The document's rules: the axes a piece allows, contact measured by its faces, and the
+    /// workspace's snaps.
+    Object,
 }
 
 impl MoveKind {
@@ -180,20 +181,20 @@ impl MoveKind {
     /// `ui::transform` beside its key (U113); this is the gesture it hands the gizmo.
     pub(crate) fn of(mode: TransformMode) -> Self {
         match mode {
-            TransformMode::Furniture => Self::Furniture,
+            TransformMode::Object => Self::Object,
             TransformMode::Select | TransformMode::Move | TransformMode::Rotate => Self::Free,
         }
     }
 
     /// The axes a drag of this kind offers the selection.
     ///
-    /// The free move keeps the three world axes everywhere; the furniture move asks the document
+    /// The free move keeps the three world axes everywhere; the object move asks the document
     /// which axes the pieces may travel along, so a panel is held to its own thickness axis and a
     /// floor-bound frame keeps its height (N22).
     pub(crate) fn axes(self, project: &Project, selection: &[Id]) -> [bool; 3] {
         match self {
             Self::Free => ALL_AXES,
-            Self::Furniture => project.furniture_axes(selection),
+            Self::Object => project.move_axes(selection),
         }
     }
 }
@@ -221,7 +222,7 @@ impl Target<'_> {
     /// Every scene item that moves with the selection, in target order.
     ///
     /// A panel, an object and a path carry their own id. A product's dashed envelope does too, so
-    /// the frame follows a furniture drag instead of staying behind until the release.
+    /// the frame follows an object drag instead of staying behind until the release.
     pub(crate) fn drawables(&self) -> Vec<Id> {
         let mut drawables = Vec::new();
         for target in self.move_targets() {
@@ -992,7 +993,7 @@ pub(crate) fn hit_axis(
 
 /// The axis a hand's travel names, for a tool that draws no handle.
 ///
-/// The furniture move is taken by the piece's body rather than by an arrow (N24, ADR 0151), so the
+/// The object move is taken by the piece's body rather than by an arrow (N24, ADR 0151), so the
 /// direction has to be read from the pointer itself: each axis the tool may travel is projected at
 /// the piece's pivot and the one whose screen direction lies nearest to `travel` wins, whichever way
 /// the travel points, because the sign is the hand's and not this choice. An axis that points at the
@@ -1060,7 +1061,7 @@ pub(crate) fn planar(axes: [bool; 3]) -> bool {
 ///
 /// The piece travels along a world line, and this is the inverse of how long that travel looks on
 /// screen: one point of the hand is however many millimetres the axis needs to move the piece by one
-/// point. The furniture move is carried by the hand (N24), so its distance is measured in points of
+/// point. The object move is carried by the hand (N24), so its distance is measured in points of
 /// the hand and never by projecting a ray onto the line — that projection is unstable away from the
 /// line (X65) and its slope at the pointer is not the piece's own.
 pub(crate) fn travel_frame(
@@ -1243,7 +1244,7 @@ mod tests {
 
     #[test]
     fn a_hand_travel_names_the_axis_it_points_along() {
-        // N24: the furniture move draws no handle, so the axis is read from the pointer's own
+        // N24: the object move draws no handle, so the axis is read from the pointer's own
         // travel. The default view projects Z up and X to the right, which is what makes the two
         // travels below unambiguous.
         let camera = Camera::default();
