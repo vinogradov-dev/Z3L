@@ -195,6 +195,33 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X77** the move answers the place the piece lands, not the path it crosses
+  Why: Reported by the owner with screenshots of a room: two plain solids side by side stop at
+   each other and cannot be carried into the empty place beyond, a post cannot be carried past
+   a shelf although the shelf ends, and in perspective and axonometry solids and the carcass
+   pass through one another. The cause is one: the drag's rule stops the piece at the first
+   contact along the path it would travel from the start boxes, so a place beyond an obstacle
+   is unreachable by construction, whatever the pointer names. The second cause is that a shell
+   and a body are skipped entirely in a drag and in the write's guard, because a shelf in a
+   case is a body in a shell, so a carcass and a solid body pass through one another. The third
+   is that per-axis answers combine into a destination inside a turned neighbour, which is how
+   a diagonal carry cuts a corner.
+  Shape: The rule answers the place the drag lands and not the path it crosses: when the whole
+   destination the hand names is free, the piece goes there, jumping past whatever stood
+   between; when it is not, each axis is clamped at its first contact as today, so the piece
+   rests against the face and slides along it. The destination is tested once for the whole
+   vector, so a diagonal carry cannot cut a corner. A legitimate nesting — a piece in a case, a
+   unit inside another — is legal and never a collision, while a shell and a body that are not
+   nested stop each other like two bodies. The write's guard uses the same pair rule, so the
+   drag and the release cannot disagree.
+  Done: A solid body carried to a free place beyond another body lands there, while a carry
+   into it stops at its face; a body and a carcass stop each other, and a shelf inside a case
+   still moves freely within it; a diagonal carry whose per-axis limits would cut a corner is
+   stopped; a panel jumps past a neighbouring panel into the free place beyond it; every
+   existing contact test keeps its answer where the destination is blocked, and the gate is
+   green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, app/src/translate_gizmo.rs` — `fb7b34a`
+
 - `[x]` **N27** the move tool is the object move, and a solid body stops at another body's faces
   Why: Owner's request: the move tool is not the furniture move but the object move, because a
    room is furnished with more than furniture. For a furniture piece nothing changes; a solid
