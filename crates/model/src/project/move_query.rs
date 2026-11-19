@@ -917,9 +917,13 @@ fn blocking_faces(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &Sur
             return None;
         }
         // A gap thinner than the document's own contact threshold is contact: a cross axis of two
-        // turned boxes carries rounding noise of that size, and reading it as a separation that never
-        // closes would report no contact for a pair that is in the way (X77).
+        // turned boxes carries rounding noise of that size, and a face that already touches must not
+        // read as a separation that never closes. A touch that the direction carries into the face is
+        // the stop at zero; a touch the direction leaves is no stop at all (X77).
         if gap <= crate::project::surface::CONTACT_MM {
+            if closing {
+                reach = Some(reach.map_or(0.0, |best: f64| best.max(0.0)));
+            }
             continue;
         }
         if !closing {
@@ -1298,6 +1302,24 @@ mod tests {
             moved(-1000.0),
             "a free place beyond the carcass is the hand's to take"
         );
+    }
+
+    #[test]
+    fn a_solid_sticks_its_end_to_the_slab_above_it() {
+        // X77: a hand that asks for five millimetres into the slab is answered with the face, so the
+        // post's top end stays on the slab's underside instead of being carried through it.
+        let mut project = empty_project();
+        let root = project.root().id();
+        // The post hangs 100 mm above the floor, so the floor plane does not capture this drag.
+        let post = solid_box(&mut project, root, "Post", (18, 500, 300), place((0.0, 0.0, 100.0)));
+        let slab = solid_box(&mut project, root, "Slab", (600, 500, 20), place((0.0, 0.0, 400.0)));
+        assert_eq!(
+            limit(&project, &[post], MoveAxis::Z, 5.0),
+            MoveLimit { distance_mm: 0.0, contact: Some(slab), capture: None },
+            "the top of the post meets the underside of the slab and stays there"
+        );
+        // A place beyond the slab is a place of its own: the far side is reachable on purpose.
+        assert_eq!(limit(&project, &[post], MoveAxis::Z, 500.0), moved(500.0));
     }
 
     #[test]

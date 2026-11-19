@@ -87,6 +87,17 @@ impl TransformMode {
         self.hint_words().text(lang)
     }
 
+    /// The icon the mode draws beside its word, when its artwork exists.
+    ///
+    /// The object move is the one mode with a drawing so far; the other three answer `None`, and a
+    /// cell without an image is the cell it always was (`assets/README.md`).
+    pub fn icon(self) -> Option<crate::icons::Icon> {
+        match self {
+            Self::Object => Some(crate::icons::transform::OBJECT),
+            Self::Select | Self::Move | Self::Rotate => None,
+        }
+    }
+
     /// The binding the key table files under this mode's id.
     pub fn binding(self) -> Option<&'static Binding> {
         inventory::binding(self.id())

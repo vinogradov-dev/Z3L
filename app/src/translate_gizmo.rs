@@ -170,6 +170,13 @@ struct Drag {
     /// multi-axis carry reads the hand's bond from [`Hand::offset`] instead, on its own plane.
     start_parameter: f64,
     delta: DVec3,
+    /// A jump the hand is asking for, and how long it has been asking.
+    ///
+    /// The rule answers the place a drag lands, so a piece carried at an obstacle crosses it in one
+    /// frame as soon as a place beyond it fits (ADR 0166). That is too eager for a hand that merely
+    /// brushed a face: a board brought up to a slab would flip above it. The carry therefore holds
+    /// the crossing for a moment and takes it only while the hand keeps asking (X77).
+    jump: Option<(DVec3, f32)>,
     /// The document the targets and the rule were read from.
     ///
     /// A command that lands under the hand makes both stale, so the hold ends rather than committing
@@ -542,6 +549,15 @@ impl TranslateGizmo {
             } else if navigating && camera_moved {
                 self.moved_by_gesture = true;
             }
+            // A typed number is the maker's own face and is never delayed; a rule's answer that
+            // crosses an obstacle in one frame is held for a moment first.
+            if typed.is_none() {
+                let dt = ui.input(|input| input.stable_dt);
+                let asked = drag.jump;
+                let (settled, jump) = settled_carry(drag.delta, delta, asked, moved.length(), dt);
+                delta = settled;
+                drag.jump = jump;
+            }
             drag.delta = delta;
             drag.capture = capture;
             drag.hold = Hold::Following { axis: measured, follow: Follow::Plane { plane }, hand };
@@ -716,6 +732,7 @@ impl TranslateGizmo {
                 start_origin: origin_world,
                 start_parameter: 0.0,
                 delta: DVec3::ZERO,
+                jump: None,
                 revision: target.project.revision(),
             });
             return Ok(None);
@@ -757,6 +774,7 @@ impl TranslateGizmo {
             start_origin: origin_world,
             start_parameter: parameter,
             delta: DVec3::ZERO,
+            jump: None,
             revision: target.project.revision(),
         });
         if !ui.input(|input| input.pointer.primary_down()) {
@@ -792,6 +810,45 @@ impl TranslateGizmo {
             HandleSpec { axes: target.move_kind.axes(target.project, target.selection), length: handle_length },
         );
     }
+}
+
+/// How far a carried delta may move in one frame before the carry calls it a jump, in millimetres.
+///
+/// A hand that travels at an ordinary pace moves the piece a few millimetres a frame; a place beyond
+/// an obstacle is a step of the obstacle's whole thickness. The two are far apart, so a large step
+/// with a still pointer is a jump rather than travel.
+const JUMP_MM: f64 = 15.0;
+
+/// How little the pointer may have moved for that step to count as a jump, in points.
+const JUMP_POINTS: f32 = 6.0;
+
+/// How long the hand must keep asking for a jump before the piece takes it, in seconds.
+///
+/// A sixth of a second is under the time it takes to read the jump, and long enough that a hand
+/// passing over a face never flips the piece: the maker sees it rest on the face and only a
+/// continuing pull carries it across.
+const JUMP_HOLD: f32 = 0.12;
+
+/// A carried delta after the jump hold: where the piece goes this frame, and the request it keeps.
+///
+/// A jump is the rule's answer changing by more than [`JUMP_MM`] while the pointer barely moved. The
+/// previous delta holds until the same request has been asked for [`JUMP_HOLD`] seconds; a hand that
+/// asks for something else, or stops asking, clears the request and the piece follows it at once.
+fn settled_carry(
+    previous: DVec3,
+    asked: DVec3,
+    pending: Option<(DVec3, f32)>,
+    pointer_moved: f32,
+    dt: f32,
+) -> (DVec3, Option<(DVec3, f32)>) {
+    let step = (asked - previous).length();
+    let jump = step.is_finite() && step > JUMP_MM && pointer_moved < JUMP_POINTS;
+    if !jump {
+        return (asked, None);
+    }
+    let (held, age) = pending.filter(|(held, _)| (*held - asked).length() <= JUMP_MM).unwrap_or((asked, 0.0));
+    let age = if age.is_finite() { age + dt } else { dt };
+    if age >= JUMP_HOLD { (asked, None) } else { (previous, Some((held, age))) }
 }
 
 /// The distance a drag may travel, and the surface it landed on: the pointer's own distance, cut by
@@ -835,6 +892,35 @@ mod tests {
 
     fn viewport() -> egui::Rect {
         egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(800.0, 600.0))
+    }
+
+    #[test]
+    fn a_jump_is_held_until_the_hand_keeps_asking_for_it() {
+        // X77: the rule answers the place a drag lands, so a piece carried at a slab crosses it in
+        // one frame as soon as a place beyond it fits. The carry holds that crossing for a moment,
+        // so a hand that merely brushed the face does not flip the piece over it.
+        let start = DVec3::ZERO;
+        let past = DVec3::new(400.0, 0.0, 0.0);
+        let (settled, pending) = settled_carry(start, past, None, 1.0, 0.016);
+        assert_eq!(settled, start, "the first frame asks: the piece stays at the face");
+        let pending = pending.expect("the request is kept");
+        let (settled, pending) = settled_carry(start, past, Some(pending), 0.5, 0.05);
+        assert_eq!(settled, start, "a tenth of a second is still a pause");
+        let (settled, pending) = settled_carry(start, past, pending, 0.5, 0.08);
+        assert_eq!(settled, past, "a sixth of a second takes the place the hand kept naming");
+        assert!(pending.is_none(), "and the request is spent");
+
+        // A hand that travels fast enough for that step is travel, not a jump.
+        let (settled, _) = settled_carry(start, past, None, 40.0, 0.016);
+        assert_eq!(settled, past, "a fast hand crosses at once");
+        // An ordinary step of a few millimetres is never a jump.
+        let step = DVec3::new(3.0, 0.0, 0.0);
+        assert_eq!(settled_carry(start, step, None, 0.5, 0.016).0, step);
+        // A hand that asks for a different place clears the request it was holding.
+        let (settled, pending) = settled_carry(start, past, None, 1.0, 0.016);
+        assert_eq!(settled, start);
+        let (settled, _) = settled_carry(start, DVec3::new(0.0, 300.0, 0.0), pending, 1.0, 0.016);
+        assert_eq!(settled, start, "another request starts its own pause");
     }
 
     fn origin_screen(camera: Camera) -> Pos2 {

@@ -172,6 +172,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0164](0164-a-carried-piece-is-met-on-the-plane-its-class-allows.md) | A carried piece is met on the plane its class allows | Accepted; supersedes 0163's camera-plane carry |
 | [0165](0165-the-move-tool-is-the-object-move-and-a-solid-body-is-measured-by-its-faces.md) | The move tool is the object move, and a solid body is measured by its faces | Accepted; supersedes 0147's furniture-only scope, narrows 0162's snapping clause and 0163's world-box contact |
 | [0166](0166-the-move-answers-the-place-the-piece-lands.md) | The move answers the place the piece lands, not the path it crosses | Accepted; supersedes 0165's swept stop and 0163's contact reading, narrows 0102's containment clause |
+| [0167](0167-a-jump-is-held-for-a-moment-before-the-carry-takes-it.md) | A jump is held for a moment before the carry takes it | Accepted; refines 0166's destination rule and the touch reading of 0162's contact |
 
 ## Format
 

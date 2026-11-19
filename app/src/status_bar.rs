@@ -383,6 +383,12 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
 /// says in a hover line which of the two it is, because "Move" alone no longer names the choice.
 /// The mode is the window's view state, so the control reads it and returns the chosen one; the
 /// caller writes it, and no command and no undo entry is involved.
+/// The size a mode's glyph takes in the band, in points.
+///
+/// It is the inline size: the band is chrome on the narrowest window the shell opens, and a toolbar
+/// glyph would push the last cell under the readouts on the right (U113).
+const MODE_ICON_POINT_SIZE: f32 = 14.0;
+
 fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<TransformMode> {
     let lang = ui::language(ui.ctx());
     let band = egui::Frame::new()
@@ -400,7 +406,18 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
             ui.spacing_mut().button_padding.x = theme::STEP;
             let mut clicked = false;
             for entry in TransformMode::ALL {
-                let response = ui.selectable_value(&mut chosen, entry, entry.cell(ui, lang));
+                let text = entry.cell(ui, lang);
+                let image = entry.icon().and_then(|icon| ui::icons::icon_image(ui, icon, MODE_ICON_POINT_SIZE));
+                let response = match image {
+                    Some(image) => {
+                        let response = ui.add(egui::Button::image_and_text(image, text).selected(chosen == entry));
+                        if response.clicked() {
+                            chosen = entry;
+                        }
+                        response
+                    }
+                    None => ui.selectable_value(&mut chosen, entry, text),
+                };
                 clicked |= response.on_hover_text(entry.hint(lang)).clicked();
             }
             clicked
