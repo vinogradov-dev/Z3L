@@ -2,8 +2,10 @@
 
 - Status: Accepted; supersedes the handle half of ADR 0147 — the furniture move draws no arrow and
   is not held by a button. Its frozen camera is narrowed by
-  [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) and its distance mapping
-  replaced by [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md)
+  [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md), its distance mapping
+  replaced by [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md), and its
+  single-axis latch superseded by
+  [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md)
 - Date: 2026-11-18
 
 ## Context

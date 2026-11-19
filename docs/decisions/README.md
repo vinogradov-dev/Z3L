@@ -156,9 +156,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
 | [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
 | [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
-| [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147 |
+| [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147; its single-axis latch is superseded by 0163 |
 | [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) | A piece in hand blocks nothing, and the view moves under it | Accepted; narrows 0151 |
-| [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md) | A carried piece is measured by the hand, not by the ray that points at it | Accepted; replaces 0151's distance mapping |
+| [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md) | A carried piece is measured by the hand, not by the ray that points at it | Accepted; replaces 0151's distance mapping; its one-axis carry is narrowed by 0163 |
 | [0154](0154-the-wheel-zooms-towards-the-pointer.md) | The wheel zooms towards the pointer | Accepted |
 | [0155](0155-a-carried-piece-keeps-its-place-under-the-hand.md) | A carried piece keeps its place under the hand | Superseded by 0156 |
 | [0156](0156-the-pointer-comes-back-to-a-carried-piece.md) | The pointer comes back to a carried piece | Accepted; replaces 0155 |
@@ -168,6 +168,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0160](0160-a-frames-box-is-the-box-tools-and-a-drawn-rectangle-is-the-plain-envelope.md) | A frame's box is the box tool's, and a drawn rectangle is the plain envelope | Accepted; amends the creation gesture of 0101, refines 0138 and 0159 |
 | [0161](0161-a-carried-pieces-gaps-are-dimensioned-in-the-scene.md) | A carried piece's gaps are dimensioned in the scene | Accepted; amends 0119's placement for the furniture move, refines 0103 |
 | [0162](0162-a-placement-may-not-put-a-part-inside-another.md) | A placement may not put a part inside another part | Accepted; carries 0102's contact rules into the write, narrows 0147's free move and X65's crossing clause |
+| [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) | The furniture move carries a piece on every axis its class allows | Accepted; supersedes the single-axis latch of 0151 and narrows the one-axis carry of 0153 |
 
 ## Format
 

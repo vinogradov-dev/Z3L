@@ -112,6 +112,15 @@ impl Axis {
         }
     }
 
+    /// This axis' component of a world vector.
+    pub(crate) fn component(self, vector: DVec3) -> f64 {
+        match self {
+            Self::X => vector.x,
+            Self::Y => vector.y,
+            Self::Z => vector.z,
+        }
+    }
+
     /// The local dimension this axis changes, for the class gate.
     pub(crate) const fn dimension(self) -> Dimension {
         match self {
@@ -468,11 +477,20 @@ pub(crate) fn screen_point(camera: Camera, viewport: egui::Rect, point: DVec3) -
 /// target is where the projection's scale is exact for both projections; a ray along the view
 /// direction has no point on it, which is the answer `None`.
 pub(crate) fn view_plane_point(pointer: Pos2, viewport: egui::Rect, camera: Camera) -> Option<DVec3> {
+    view_plane_through(pointer, viewport, camera, camera.target())
+}
+
+/// The world point where the pointer's ray meets the plane through `origin` that faces the camera.
+///
+/// A carried piece that may travel on more than one axis is taken on this plane: the pointer meets
+/// it at one world point, and the difference of two such points is the delta the document's rule
+/// measures axis by axis. A ray parallel to the plane has no point on it, which is the answer `None`.
+pub(crate) fn view_plane_through(pointer: Pos2, viewport: egui::Rect, camera: Camera, origin: DVec3) -> Option<DVec3> {
     let ray = ray_to(pointer, viewport, camera);
     let forward = camera.forward();
     let facing = ray.direction().dot(forward);
     (facing.abs() > f64::EPSILON).then(|| {
-        let depth = (camera.target() - ray.origin()).dot(forward) / facing;
+        let depth = (origin - ray.origin()).dot(forward) / facing;
         ray.origin() + ray.direction() * depth
     })
 }
@@ -949,6 +967,33 @@ pub(crate) fn named_axis(
         }
     }
     best.map(|(_, handle)| handle)
+}
+
+/// The allowed axis a carried delta travels furthest along, if one moves at all.
+///
+/// A piece that may travel on more than one axis has no single direction to measure a gap by. The
+/// exact-distance fields follow the axis the hand carries it furthest along, which is the one whose
+/// face a typed number is about; the carry itself moves on every allowed axis at once.
+pub(crate) fn dominant_axis(delta: DVec3, axes: [bool; 3]) -> Option<Axis> {
+    let mut best: Option<(f64, Axis)> = None;
+    for axis in Axis::ALL {
+        if !axis_allowed(axes, axis) {
+            continue;
+        }
+        let reach = axis.component(delta).abs();
+        if reach.is_finite() && reach > 0.0 && best.is_none_or(|(widest, _)| reach > widest) {
+            best = Some((reach, axis));
+        }
+    }
+    best.map(|(_, axis)| axis)
+}
+
+/// Whether the axes let a hand carry a piece in more than one direction at once.
+///
+/// A panel offers exactly one axis and keeps the carry the hand's travel names (N22, ADR 0147); a
+/// product, a body or a group offers two or three and is carried on the camera's own plane (X74).
+pub(crate) fn planar(axes: [bool; 3]) -> bool {
+    axes.into_iter().filter(|allowed| *allowed).count() > 1
 }
 
 /// The screen frame a carried piece's hand travel is read in: the axis' unit direction at the

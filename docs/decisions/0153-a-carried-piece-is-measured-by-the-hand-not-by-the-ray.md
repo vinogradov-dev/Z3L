@@ -1,6 +1,7 @@
 # 0153. A carried piece is measured by the hand, not by the ray that points at it
 
-- Status: Accepted; replaces the distance mapping of ADR 0151's carry
+- Status: Accepted; replaces the distance mapping of ADR 0151's carry, which
+  [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) narrows to the one-axis piece
 - Date: 2026-11-18
 
 ## Context

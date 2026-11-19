@@ -1037,6 +1037,163 @@ fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
 }
 
 #[test]
+fn a_floor_frame_is_carried_across_the_floor_in_one_gesture() {
+    // X74: a frame is not a board. A floor-bound product may travel on both horizontal axes at
+    // once, so one diagonal hand move carries it across the floor, and the vertical stays the
+    // class's to refuse. The single-axis latch belongs to a panel (N22).
+    let (session, frame) = one_floor_frame("10.01.01");
+    let mut harness = Harness::with_session("frame-carry-floor", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let project = harness.app.tabs.active().session.project();
+    let before = project.world_box(frame).expect("the frame has a box");
+    let pivot = project.pivot_world(frame).expect("a pivot");
+    let target = pivot + geom::DVec3::new(200.0, 150.0, 0.0);
+    let body = piece_middle(&harness, frame);
+    let travel =
+        gizmo_math::screen_point(harness.camera(), harness.scene(), target).expect("the target is on screen") - body;
+    let revision = harness.revision();
+    harness.carry(body, travel);
+
+    let after = harness.app.tabs.active().session.project().world_box(frame).expect("a box");
+    assert!(
+        (after.0.x - before.0.x).abs() > 1.0,
+        "the frame crossed the floor in X: {:?} from {:?}",
+        after.0,
+        before.0
+    );
+    assert!((after.0.y - before.0.y).abs() > 1.0, "and in Y in the same gesture: {:?} from {:?}", after.0, before.0);
+    assert!(
+        (after.0.z - before.0.z).abs() < 1.0e-6,
+        "while its class kept its height: {:?} from {:?}",
+        after.0,
+        before.0
+    );
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one carry is one undo entry");
+}
+
+#[test]
+fn a_frame_stops_on_the_axis_it_meets_and_slides_on_the_other() {
+    // X74: contact is resolved per axis. Two floor frames 100 mm apart: a diagonal carry stops the
+    // first frame's face on the second's and keeps carrying it along that face instead of freezing
+    // the whole gesture the way a one-axis drag did.
+    let (session, mover, neighbour) = two_floor_frames();
+    let mut harness = Harness::with_session("frame-carry-slide", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let project = harness.app.tabs.active().session.project();
+    let before = project.world_box(mover).expect("the frame has a box");
+    let contact = project.world_box(neighbour).expect("the neighbour has a box").0.x;
+    let middle = (before.0 + before.1) * 0.5;
+    let target = middle + geom::DVec3::new(400.0, 400.0, 0.0);
+    let body = piece_middle(&harness, mover);
+    let travel =
+        gizmo_math::screen_point(harness.camera(), harness.scene(), target).expect("the target is on screen") - body;
+    harness.carry(body, travel);
+
+    let after = harness.app.tabs.active().session.project().world_box(mover).expect("a box");
+    assert!(
+        (after.1.x - contact).abs() < 1.0e-6,
+        "the frame's face landed on the neighbour at {contact}: {} ",
+        after.1.x
+    );
+    assert!(
+        after.0.y > before.0.y + 1.0,
+        "and the same gesture slid it along the face: {:?} from {:?}",
+        after.0,
+        before.0
+    );
+    assert!((after.0.z - before.0.z).abs() < 1.0e-6, "while the floor kept its height");
+}
+
+#[test]
+fn a_frames_class_decides_whether_it_may_be_hung() {
+    // The owner's report: changing the class in the inspector seemed to change nothing. The rule
+    // is read at the take, so the same node follows its new class on the next take (X74): a floor
+    // cabinet may not rise and a wall cabinet may.
+    let (session, frame) = one_floor_frame("10.01.01");
+    let mut harness = Harness::with_session("frame-carry-class", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.shell.mode = TransformMode::Furniture;
+    harness.settle();
+
+    let body = piece_middle(&harness, frame);
+    let pivot = harness.app.tabs.active().session.project().pivot_world(frame).expect("a pivot");
+    let upward = gizmo_math::screen_point(harness.camera(), harness.scene(), pivot + geom::DVec3::new(0.0, 0.0, 300.0))
+        .expect("the target is on screen")
+        - body;
+
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body + upward);
+    assert!(harness.app.tabs.active().holding_piece(), "the cabinet is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.z.abs() < 1.0e-6, "a base cabinet keeps its height: {carried:?}");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().holding_piece(), "Escape puts the cabinet back");
+
+    // The inspector's own command assigns the class: one `node.property.set` on the same node.
+    let value = serde_json::to_value(model::PropertyValue::class("10.01.02".parse().expect("a wall cabinet")))
+        .expect("the class value");
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .session
+        .dispatch(
+            engine::node_cmds::NODE_PROPERTY_SET_ID,
+            &serde_json::json!({ "node": frame, "key": model::SYSTEM_CLASS, "value": value }),
+        )
+        .expect("the class changes");
+    harness.settle();
+
+    let body = piece_middle(&harness, frame);
+    harness.click(body, egui::PointerButton::Primary);
+    harness.hover(body + upward);
+    assert!(harness.app.tabs.active().holding_piece(), "the hung cabinet is in hand");
+    let carried = harness.app.tabs.active().carried_delta();
+    assert!(carried.z > 1.0, "a wall cabinet hangs where the hand puts it: {carried:?}");
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+}
+
+/// Two floor-bound product frames with no parts, 100 mm apart on X, so a diagonal carry can meet
+/// the neighbour on one axis while the other keeps travelling.
+fn two_floor_frames() -> (engine::Session, Id, Id) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("a frame");
+    let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
+    let mover = project
+        .add_product(project.root().id(), "Case", class, envelope.clone(), model::Placement::IDENTITY)
+        .expect("the moving frame");
+    let beside = model::Placement::IDENTITY.with_translation(mm(700), Length::ZERO, Length::ZERO).expect("a placement");
+    let neighbour = project.add_product(project.root().id(), "Next", class, envelope, beside).expect("the neighbour");
+    (engine::Session::with_directory(project, testkit::sample_catalog()), mover, neighbour)
+}
+
+/// A product frame with no parts, so a press lands on its own envelope.
+fn one_floor_frame(code: &str) -> (engine::Session, Id) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let envelope = Envelope::new(mm(600), mm(560), mm(720)).expect("a frame");
+    let class: ClassCode = code.parse().expect("a product class");
+    let frame =
+        project.add_product(project.root().id(), "Case", class, envelope, model::Placement::IDENTITY).expect("a frame");
+    (engine::Session::with_directory(project, testkit::sample_catalog()), frame)
+}
+
+#[test]
 fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothing() {
     // The two ways a hold ends without a placement: Escape puts the piece back, and a click that
     // never travelled commits a zero delta, which is no command at all (ADR 0151).

@@ -5,7 +5,9 @@
 //! document allows. Four facts decide it and none of them is a code literal:
 //!
 //! - the **axes** the drag offers: a panel slides only along its own thickness, so the two in-plane
-//!   directions are refused, and a floor-bound product keeps its height (N22, ADR 0147);
+//!   directions are refused, and a floor-bound product keeps its height (N22, ADR 0147); a piece free
+//!   on more than one axis is answered axis by axis, so a contact stops only the axis it meets and
+//!   the free axes keep carrying it along the face (X74);
 //! - the **mount** trait of a product's class: a `Floor` product keeps its height, a `Wall` product
 //!   moves freely (ADR 0097);
 //! - **contact**: a shell stops at another shell and a body at another body, while containment of
@@ -507,6 +509,14 @@ pub struct MoveRule {
 }
 
 impl MoveRule {
+    /// The world axes the drag offers, in [`MoveAxis`] order.
+    ///
+    /// A caller that carries a piece on more than one axis reads this before it decides what the
+    /// hand may propose: a panel offers one axis and a product the axes its mount leaves free.
+    pub const fn axes(&self) -> [bool; 3] {
+        self.axes
+    }
+
     /// Whether a drag may move along `axis` at all.
     ///
     /// A panel offers only its own thickness axis and a floor-bound product keeps its height, so the
@@ -541,6 +551,22 @@ impl MoveRule {
         // own, and a capture would name a surface the piece never reached.
         let capture = if limit.contact.is_some() { None } else { capture };
         MoveLimit { distance_mm: quantised(limit.distance_mm), contact: limit.contact, capture }
+    }
+
+    /// The distance a proposal may travel on every world axis at once.
+    ///
+    /// Each axis is measured on its own, so a face that stops one axis leaves the other two free: a
+    /// piece dragged diagonally into a neighbour stops on the axis that meets it and keeps sliding on
+    /// the axes beside it. The proposal is the whole carried vector from the start of the drag and the
+    /// boxes the rule holds are the start boxes, so every slot is answered from one snapshot. A slot
+    /// of an axis the drag does not offer is zero, exactly as [`MoveRule::limit`] answers it.
+    pub fn limits(&self, proposed: DVec3) -> [MoveLimit; 3] {
+        let proposed = [proposed.x, proposed.y, proposed.z];
+        let mut limits = [MoveLimit { distance_mm: 0.0, contact: None, capture: None }; 3];
+        for axis in MoveAxis::ALL {
+            limits[axis.index()] = self.limit(axis, proposed[axis.index()]);
+        }
+        limits
     }
 }
 
@@ -726,6 +752,7 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use geom::DVec3;
     use units::Degrees;
 
     use crate::fixtures::*;
@@ -1004,6 +1031,47 @@ mod tests {
         assert_eq!(
             limit(&project, &[neighbour], MoveAxis::X, -1000.0),
             MoveLimit { distance_mm: -400.0, contact: Some(cabinet), capture: None }
+        );
+    }
+
+    #[test]
+    fn a_multi_axis_proposal_slides_along_the_axis_a_contact_leaves_free() {
+        let (mut project, cabinet) = product_project("10.01.01");
+        let neighbour = product(&mut project, "10.01.01", (600, 560, 720), (1000, 0, 0));
+        let rule = project.move_rule(&[cabinet], SnapSettings::default()).expect("a furniture rule");
+
+        let limits = rule.limits(DVec3::new(1000.0, 120.0, 30.0));
+        assert_eq!(
+            limits[MoveAxis::X.index()],
+            MoveLimit { distance_mm: 400.0, contact: Some(neighbour), capture: None },
+            "the neighbour stops X at its face"
+        );
+        assert_eq!(
+            limits[MoveAxis::Y.index()],
+            MoveLimit { distance_mm: 120.0, contact: None, capture: None },
+            "and the hand's Y travel keeps sliding along that face"
+        );
+        assert_eq!(
+            limits[MoveAxis::Z.index()],
+            MoveLimit { distance_mm: 0.0, contact: None, capture: None },
+            "while the floor-bound class keeps its height"
+        );
+    }
+
+    #[test]
+    fn the_class_decides_every_axis_of_a_multi_axis_proposal() {
+        let (mut project, id) = product_project("10.01.01");
+        let floor = project.move_rule(&[id], SnapSettings::default()).expect("a floor rule");
+        assert_eq!(floor.axes(), [true, true, false], "a base cabinet keeps its height");
+        assert_eq!(floor.limits(DVec3::new(0.0, 0.0, 120.0))[MoveAxis::Z.index()].distance_mm, 0.0);
+
+        project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class("10.01.02"))).expect("a wall class");
+        let wall = project.move_rule(&[id], SnapSettings::default()).expect("a wall rule");
+        assert_eq!(wall.axes(), [true, true, true], "the same frame may be hung once its class says so");
+        assert_eq!(
+            wall.limits(DVec3::new(0.0, 0.0, 120.0))[MoveAxis::Z.index()].distance_mm,
+            120.0,
+            "and the vertical is the hand's to carry"
         );
     }
 

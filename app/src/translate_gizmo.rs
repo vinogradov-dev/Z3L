@@ -27,10 +27,14 @@
 //! The furniture move draws **no handle at all**: a click on a piece's body takes it, the pointer
 //! carries it with no button held, and the next click puts it down. What it may travel is the
 //! document's answer: a panel offers only the axis its own thickness points at, so a shelf rises and
-//! falls in its thickness direction and never across its own faces. The axis is the allowed one the
-//! hand's travel names best, latched at the first movement so the piece cannot change direction under
-//! the hand. Both tools keep the exact-distance fields, which are the typed path to the same distance
-//! (ADR 0103).
+//! falls in its thickness direction and never across its own faces, and that one axis is the one the
+//! hand's travel names, latched at the first movement so the piece cannot change direction under the
+//! hand. A product, a body or a group offers two or three axes: the hand takes it on the camera's own
+//! plane and the document measures the proposed world delta axis by axis, so a floor-bound frame
+//! crosses the floor while it keeps its height and a hung one moves everywhere (X74). A contact stops
+//! only the axis it meets, so the piece slides along the face rather than stopping dead. Both tools
+//! keep the exact-distance fields, which are the typed path to the same distance (ADR 0103), on the
+//! axis a multi-axis carry travels furthest along.
 
 use eframe::egui;
 use egui::{Response, Ui};
@@ -39,8 +43,9 @@ use model::{Capture, Id, MoveRule};
 use scene::{Camera, MAX_DISTANCE_MM};
 
 use crate::gizmo_math::{
-    Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation, hit_axis,
-    named_axis, paint_axis_handles, ray_to, screen_point, travel_frame,
+    Axis, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_translation,
+    dominant_axis, hit_axis, named_axis, paint_axis_handles, planar, ray_to, screen_point, travel_frame,
+    view_plane_through,
 };
 
 /// The smallest travel, in points, that names an axis.
@@ -59,10 +64,27 @@ enum Hold {
     /// next click puts it down (ADR 0151).
     Following {
         /// The axis the travel named, once the pointer moved far enough for the hand to say so.
+        ///
+        /// It is also the axis the exact-distance fields measure when the piece may travel on more
+        /// than one axis: the one the carry's own delta travels furthest along (X74).
         axis: Option<Axis>,
-        /// The bond between the pointer and the piece it hangs from itself.
+        /// How the hand's pointer becomes a world delta.
+        follow: Follow,
+        /// The bond between the pointer and the piece it carries.
         hand: Hand,
     },
+}
+
+/// How a carried piece turns the hand's pointer into a world delta.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Follow {
+    /// One allowed axis: the hand's travel names it and the hand's distance along it is the move
+    /// (N22, ADR 0153).
+    Axis,
+    /// Two or three allowed axes: the pointer meets the camera's own plane through the pivot, and the
+    /// world difference from where it took the piece is the delta the document answers axis by axis
+    /// (X74). `grab` is the point the hand took, relative to the pivot at the take.
+    Plane { grab: DVec3 },
 }
 
 /// The screen bond between the hand and the piece it carries.
@@ -137,7 +159,8 @@ struct Drag {
     /// The pointer's parameter along the latched axis the distance is measured from.
     ///
     /// It is set when the piece is taken and re-anchored whenever the view moves under the hand, so
-    /// the piece keeps the distance it already has and the camera never drags it along (N25).
+    /// the piece keeps the distance it already has and the camera never drags it along (N25). A
+    /// multi-axis carry reads its grab from [`Follow::Plane`] instead.
     start_parameter: f64,
     delta: DVec3,
     /// The document the targets and the rule were read from.
@@ -246,8 +269,10 @@ impl TranslateGizmo {
 
     /// The world axis of the drag in progress, if any.
     ///
-    /// A carried piece has none until the hand's travel names one, which is why the exact-distance
-    /// fields appear on the frame the piece starts to move and not on the frame it is taken.
+    /// A one-axis carry has none until the hand's travel names one, which is why the exact-distance
+    /// fields appear on the frame the piece starts to move and not on the frame it is taken. A
+    /// multi-axis carry has none until the delta travels along an allowed axis, and then answers the
+    /// one it travels furthest along, which is the gap its fields measure (X74).
     pub(crate) fn axis(&self) -> Option<Axis> {
         self.drag.as_ref().and_then(|drag| drag.hold.axis())
     }
@@ -406,7 +431,7 @@ impl TranslateGizmo {
             let commit = commit_translation(&drag.targets, drag.delta)?;
             return Ok(commit);
         }
-        let Hold::Following { axis: held, hand } = drag.hold else {
+        let Hold::Following { axis: held, follow, hand } = drag.hold else {
             return Ok(None);
         };
         let axes = target.move_kind.axes(target.project, target.selection);
@@ -442,6 +467,78 @@ impl TranslateGizmo {
         } else {
             hand.at = pointer;
         }
+        // The piece is held — it keeps its own distance — while the eye is moving, and on the frame
+        // the hand is put back on it: a frame that moves the view must never move the piece (X67).
+        let rehome = !navigating && (camera_moved || self.moved_by_gesture);
+        let held_now = navigating || rehome;
+
+        // A piece free on two or three axes is carried on the camera's own plane through its pivot:
+        // the pointer meets that plane at one world point, and the world difference from the take is
+        // the delta the document answers axis by axis. A contact then stops only the axis it meets,
+        // so the other axes keep carrying the piece along the face (X74).
+        if let Follow::Plane { mut grab } = follow {
+            let mut delta = drag.delta;
+            let mut capture = drag.capture;
+            let typed = pinned.filter(|distance| distance.is_finite());
+            let mut limits = None;
+            if !held_now && let Some(hit) = view_plane_through(hand.at, viewport, target.camera, drag.start_origin) {
+                let proposed = hit - (drag.start_origin + grab);
+                limits = drag.rule.as_ref().map(|rule| rule.limits(proposed));
+                delta = limits.map_or(proposed, |limits| {
+                    DVec3::new(
+                        limits[Axis::X.index()].distance_mm,
+                        limits[Axis::Y.index()].distance_mm,
+                        limits[Axis::Z.index()].distance_mm,
+                    )
+                });
+            }
+            // A typed number is the maker's own face and neither the rule nor a snap moves it
+            // (ADR 0103, N26). It pins the axis the carry measured, and the other axes stay the
+            // hand's, so a gap and a slide in the same gesture do not fight. The measured axis stays
+            // the pinned one while the number holds, or the card would move to another gap mid-type.
+            let measured = held.or_else(|| dominant_axis(delta, axes));
+            if let (Some(axis), Some(typed)) = (measured, typed) {
+                match axis {
+                    Axis::X => delta.x = typed,
+                    Axis::Y => delta.y = typed,
+                    Axis::Z => delta.z = typed,
+                }
+            }
+            let measured = if typed.is_some() { measured } else { dominant_axis(delta, axes) };
+            if !held_now {
+                capture = match (typed, measured, limits) {
+                    (None, Some(axis), Some(limits)) => limits[axis.index()].capture,
+                    _ => None,
+                };
+            }
+            // The gesture is over and the camera moved under the piece: put the hand back on the
+            // middle of the piece, which is where a maker reaches for it (X67, X69). The camera's
+            // plane turned with the view, so the grab is read again against the place the piece
+            // already stands and the frame the hand moved carries nothing.
+            if rehome {
+                self.moved_by_gesture = false;
+                let middle = target
+                    .project
+                    .world_box(drag.node)
+                    .map_or(drag.start_origin, |(low, high)| (low + high) * 0.5 + delta);
+                if let Some(want) = screen_point(target.camera, viewport, middle).filter(|at| viewport.contains(*at)) {
+                    hand.at = want;
+                    hand.displaced = true;
+                    if let Some(hit) = view_plane_through(hand.at, viewport, target.camera, drag.start_origin) {
+                        grab = hit - (drag.start_origin + delta);
+                    }
+                    hand.offset = screen_point(target.camera, viewport, drag.start_origin + delta).map(|at| at - want);
+                }
+            } else if navigating && camera_moved {
+                self.moved_by_gesture = true;
+            }
+            drag.delta = delta;
+            drag.capture = capture;
+            drag.hold = Hold::Following { axis: measured, follow: Follow::Plane { grab }, hand };
+            self.drag = Some(drag);
+            return Ok(None);
+        }
+
         let mut offset = hand.offset;
         // The axis is named once, by the first movement of the hand past a stray point, and kept: a
         // piece that re-decided every frame would flip near 45° and its distance would restart.
@@ -457,7 +554,7 @@ impl TranslateGizmo {
         };
         let Some(axis) = axis else {
             // The hand has not said which way yet, so the piece stays where it was taken.
-            drag.hold = Hold::Following { axis: None, hand };
+            drag.hold = Hold::Following { axis: None, follow: Follow::Axis, hand };
             self.drag = Some(drag);
             return Ok(None);
         };
@@ -465,12 +562,8 @@ impl TranslateGizmo {
         if offset.is_none() {
             offset = screen_point(target.camera, viewport, pivot).map(|at| at - hand.at);
         }
-        // The piece is held — it keeps its own distance — while the eye is moving, and on the frame
-        // the hand is put back on it: a frame that moves the view must never move the piece (X67).
-        let rehome = !navigating && (camera_moved || self.moved_by_gesture);
-        let held = navigating || rehome;
         let carried = match offset {
-            Some(offset) if pinned.is_none() && !held => self.hangs_from(
+            Some(offset) if pinned.is_none() && !held_now => self.hangs_from(
                 viewport,
                 target.camera,
                 drag.start_origin,
@@ -514,7 +607,7 @@ impl TranslateGizmo {
             // moving on the very frame the hand can be put back.
             self.moved_by_gesture = true;
         }
-        drag.hold = Hold::Following { axis: Some(axis), hand };
+        drag.hold = Hold::Following { axis: Some(axis), follow: Follow::Axis, hand };
         self.drag = Some(drag);
         Ok(None)
     }
@@ -592,6 +685,17 @@ impl TranslateGizmo {
             // The rule and the snap settings are read once, when the piece is taken, exactly as a
             // held drag reads them at the press: the preview and the drop then measure one document.
             let rule = target.project.move_rule(&moving, target.snaps);
+            // A piece that may travel on more than one axis is carried on the camera's own plane:
+            // the pointer meets that plane at the take, and every later frame differs from it. A
+            // one-axis piece is measured along its axis instead.
+            let axes = target.move_kind.axes(target.project, target.selection);
+            let follow = if planar(axes) {
+                let grab = view_plane_through(at, viewport, target.camera, origin_world)
+                    .map_or(DVec3::ZERO, |hit| hit - origin_world);
+                Follow::Plane { grab }
+            } else {
+                Follow::Axis
+            };
             // The grab is measured against the click and not against the frame the axis is named:
             // by then the hand has already travelled far enough to name one, and an offset read
             // there would swallow that travel and leave the piece standing still (X67).
@@ -599,7 +703,7 @@ impl TranslateGizmo {
             let hand = Hand { offset, ..Hand::taken(at) };
             self.drag = Some(Drag {
                 node: anchor.node,
-                hold: Hold::Following { axis: None, hand },
+                hold: Hold::Following { axis: None, follow, hand },
                 rule,
                 capture: None,
                 drawables: target.drawables(),
