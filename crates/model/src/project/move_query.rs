@@ -1508,6 +1508,78 @@ mod tests {
         assert!(by_surface > by_box, "the box is a smaller answer than the body it holds");
     }
 
+    /// A cone body: base radius 40 mm, apex up, 100 mm tall, standing on its own origin.
+    fn cone_object(project: &mut Project, name: &str, placement: Placement) -> Id {
+        let cone = crate::Primitive::cone(
+            Length::from_millimetres(40).expect("a radius"),
+            Length::ZERO,
+            Length::from_millimetres(100).expect("a height"),
+            16,
+        )
+        .expect("a cone");
+        let root = project.root().id();
+        project.add_object(root, name, placement, crate::Geometry::Primitive(cone)).expect("an object")
+    }
+
+    #[test]
+    fn a_turned_cone_reaches_a_corner_as_far_as_its_own_surface_allows() {
+        // The owner's report: a turned cone is a box for contact, so its invisible cuboid meets the
+        // corner between two plates long before the apex does. With the port the cone's own surface
+        // is what stops it, and the stop names the plate it met (X85, ADR 0179).
+        let mut project = empty_project();
+        let quarter = std::f64::consts::FRAC_PI_4;
+        let turned = Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_z(quarter)).expect("a turn");
+        let cone = cone_object(&mut project, "Cone", turned);
+        // Two plates standing in the corner the cone is carried into.
+        block_object(&mut project, "Wall", place((400.0, -100.0, -100.0)), (20.0, 400.0, 400.0));
+        let floor = block_object(&mut project, "Floor", place((100.0, 200.0, -100.0)), (600.0, 20.0, 400.0));
+
+        let free = MoveSettings::default().free();
+        let diagonal = DVec3::new(300.0, 200.0, 0.0);
+        let boxed = project.move_rule(&[cone], free, None).expect("a box rule");
+        let measured = project.move_rule(&[cone], free, Some(&contact_parry::Parry)).expect("a measured rule");
+        let by_box = boxed.limits(diagonal);
+        let by_surface = measured.limits(diagonal);
+        let travel = |limits: [MoveLimit; 3]| (limits[0].distance_mm.powi(2) + limits[1].distance_mm.powi(2)).sqrt();
+        assert!(
+            travel(by_surface) > travel(by_box),
+            "the cone's own surface reaches further than its box: {} vs {}",
+            travel(by_surface),
+            travel(by_box)
+        );
+        let stopped = by_surface.iter().find_map(|limit| limit.contact).map(|stop| stop.node());
+        assert!(stopped.is_some(), "the corner stops the carry and the log names what stopped it");
+        let _ = floor;
+    }
+
+    #[test]
+    fn a_barrel_rests_its_own_side_on_a_face() {
+        // A cone with two equal circles is a barrel: its side is what rests on the plate, and the
+        // write grants the place the drag stops at while the box around it would sink it (X85).
+        let mut project = empty_project();
+        // The cone lies on its side, its axis along world X, so its barrel is what comes down.
+        let lying =
+            Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2)).expect("a turn");
+        // It starts well above the plate, so the pair is no overlap to begin with and the guard's
+        // answer is about the place asked for and not about a repair (X86).
+        let above = |z: f64| Placement::new(DVec3::new(0.0, 0.0, z), lying.rotation()).expect("a place");
+        let barrel = cone_object(&mut project, "Barrel", above(200.0));
+        block_object(&mut project, "Plate", place((0.0, 0.0, 0.0)), (600.0, 600.0, 20.0));
+        // Its side reaches 40 mm below its own axis, so an axis 50 mm above the origin rests the
+        // barrel on the plate's top face at z = 10: the guard grants the touch and refuses deeper.
+        let resting = above(50.0);
+        assert_eq!(
+            project.resting_conflict(&[(barrel, resting)], Some(&contact_parry::Parry)),
+            None,
+            "the barrel's side rests on the plate's face"
+        );
+        let sunk = above(20.0);
+        assert!(
+            project.resting_conflict(&[(barrel, sunk)], Some(&contact_parry::Parry)).is_some(),
+            "and half its base below the face is an overlap"
+        );
+    }
+
     #[test]
     fn the_write_reads_the_same_surface_the_drag_reads() {
         // The guard is the drag's own question asked before a placement lands. With the port it
