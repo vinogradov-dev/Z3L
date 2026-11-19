@@ -27,7 +27,13 @@ use crate::{Geometry, Id, Mesh, Primitive, Project};
 /// fallback here is the reading the caller had before the port existed.
 pub(crate) fn node_shape(project: &Project, id: Id, local_min: DVec3, local_max: DVec3) -> Option<Shape> {
     let object = project.object(id)?;
-    geometry_shape(object.geometry()).or_else(|| box_between(local_min, local_max))
+    body_shape(object.geometry(), local_min, local_max)
+}
+
+/// The same shape from a geometry payload already in hand, so a rule can build it when a pair first
+/// needs it instead of when the drag starts (X90).
+pub(crate) fn body_shape(geometry: &Geometry, local_min: DVec3, local_max: DVec3) -> Option<Shape> {
+    geometry_shape(geometry).or_else(|| box_between(local_min, local_max))
 }
 
 /// The box between `min` and `max` as a convex hull of its eight corners.

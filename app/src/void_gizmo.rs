@@ -42,9 +42,10 @@ pub(crate) fn point_at(
     rect: Rect,
     pointer: Pos2,
     sight: Sight<'_>,
+    contact: Option<&dyn geom::Contact>,
 ) -> Option<DVec3> {
     let ray = crate::gizmo_math::ray_to(pointer, rect, camera);
-    ui::pointer_point(project, product, ray, sight)
+    ui::pointer_point(project, product, ray, sight, contact)
 }
 
 /// What the pointer says about the cell's free axis, or `None` when it names no point at all.
@@ -59,8 +60,9 @@ pub(crate) fn free_at(
     axis: usize,
     ray: scene::Ray,
     sight: Sight<'_>,
+    contact: Option<&dyn geom::Contact>,
 ) -> Option<ui::FreePlace> {
-    ui::free_place(project, product, niche, axis, ray, sight)
+    ui::free_place(project, product, niche, axis, ray, sight, contact)
 }
 
 /// The niche tool's live overlay: nothing of its own, because the atom holds every number.
@@ -83,6 +85,7 @@ impl VoidGizmo {
         rect: Rect,
         camera: Camera,
         project: &Project,
+        contact: &dyn geom::Contact,
         editor: &mut ui::Editor,
         product: Option<Id>,
         pointer_over_widget: bool,
@@ -95,12 +98,12 @@ impl VoidGizmo {
             return false;
         };
         let sight = editor.flags().sight();
-        let Some(point) = point_at(project, product, camera, rect, pointer, sight) else {
+        let Some(point) = point_at(project, product, camera, rect, pointer, sight, Some(contact)) else {
             // The pointer is in the scene but outside the open product: the row says what to point
             // at rather than keeping the cell the hand has already left.
             return editor.void_clear();
         };
-        editor.void_measure(project, point)
+        editor.void_measure(project, point, Some(contact))
     }
 
     /// Paints the cell's twelve edges and its three sides, in the theme's accent.

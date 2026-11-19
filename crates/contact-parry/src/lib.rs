@@ -23,12 +23,12 @@
     clippy::unreachable
 )]
 
-use geom::{Contact, DVec3, Penetration, Pose, Shape, Shared, Solid};
+use geom::{Contact, DVec3, Impact, Penetration, Pose, Shape, Shared, Solid};
 use std::any::Any;
 use std::sync::Arc;
 
 use parry3d_f64::math::{Pose as ParryPose, Rot3, Vec3};
-use parry3d_f64::query::{ShapeCastOptions, cast_shapes, contact as parry_contact};
+use parry3d_f64::query::{Ray, ShapeCastOptions, cast_shapes, contact as parry_contact};
 use parry3d_f64::shape::SharedShape;
 
 /// The furthest a single ask may travel, in millimetres: ten metres past any workshop.
@@ -49,6 +49,11 @@ struct Body {
 }
 
 impl Contact for Parry {
+    fn handle(&self) -> Arc<dyn Contact> {
+        // The adapter is a unit value: a handle to it is a pointer, not a copy.
+        Arc::new(*self)
+    }
+
     fn prepare(&self, shape: &Shape, pose: Pose) -> Option<Shared> {
         let shape = match shape {
             Shape::Convex(points) => SharedShape::convex_hull(&points.iter().copied().map(vector).collect::<Vec<_>>())?,
@@ -104,6 +109,28 @@ impl Solid for Body {
         .ok()??;
         let travel = hit.time_of_impact;
         travel.is_finite().then_some(travel)
+    }
+
+    fn ray(&self, origin: DVec3, direction: DVec3) -> Option<Impact> {
+        // The ray is cast through the shape in its own frame, so a turned board, a cone and a ball
+        // answer the face the eye sees and not the box around them. The heading is taken at its own
+        // length: the answer is a distance in millimetres.
+        let heading = direction.normalize_or_zero();
+        if !origin.is_finite() || !heading.is_finite() || heading.length_squared() <= 0.0 {
+            return None;
+        }
+        let ray = Ray::new(vector(origin), vector(heading));
+        let hit = self.shape.cast_ray_and_get_normal(&self.pose, &ray, f64::MAX, true)?;
+        let distance_mm = hit.time_of_impact;
+        if !distance_mm.is_finite() || distance_mm < 0.0 {
+            return None;
+        }
+        let hit_point = origin + heading * distance_mm;
+        let mut normal = point(hit.normal);
+        if normal.dot(heading) > 0.0 {
+            normal = -normal;
+        }
+        (hit_point.is_finite() && normal.is_finite()).then_some(Impact { distance_mm, point: hit_point, normal })
     }
 
     fn penetration(&self, other: &dyn Solid) -> Option<Penetration> {
@@ -209,6 +236,35 @@ mod tests {
         assert_eq!(a.penetration(&*prepared(&cube(100.0), at(100.0, 0.0, 0.0))), None, "a face is contact");
         assert_eq!(a.penetration(&*prepared(&cube(100.0), at(400.0, 0.0, 0.0))), None, "and this pair is apart");
         assert!(geom::overlap(&*a, &*b, 0.001), "50 mm is deeper than the document's rounding");
+    }
+
+    #[test]
+    fn a_ray_meets_the_bodys_own_face() {
+        let ball = prepared(&ball(100.0), at(0.0, 0.0, 0.0));
+        let impact = ball.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::NEG_Z).expect("a ray from above meets the ball");
+        // The hull of a tessellated ball is inscribed, so its top is a facet just under the radius.
+        assert!((impact.distance_mm - 300.0).abs() < 1.0, "was {impact:?}");
+        assert!(impact.normal.z > 0.9, "the face points back along the ray: {impact:?}");
+        assert_eq!(ball.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::Z), None, "a ray going away meets nothing");
+        assert_eq!(ball.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::new(0.0, 0.0, 0.0)), None, "a zero heading has no ray");
+
+        // A turned board: the ray meets its own slanted face, which no world box has.
+        let mut points = Vec::new();
+        for x in [-100.0, 100.0] {
+            for y in [-10.0, 10.0] {
+                for z in [-5.0, 5.0] {
+                    points.push(DVec3::new(x, y, z));
+                }
+            }
+        }
+        let quarter = std::f64::consts::FRAC_PI_4;
+        let board = prepared(
+            &Shape::convex(points).expect("a board is a convex shape"),
+            Pose::new(DVec3::ZERO, DQuat::from_rotation_z(quarter)),
+        );
+        let down = board.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::NEG_Z).expect("a ray from above meets the board");
+        assert!((down.point.z - 5.0).abs() < 1.0e-6, "the board's own face is at its own half thickness: {down:?}");
+        assert!((down.point.x.abs() - down.point.y.abs()).abs() < 1.0e-6, "on its turned edge: {:?}", down.point);
     }
 
     #[test]

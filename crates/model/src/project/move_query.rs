@@ -56,6 +56,9 @@
 //! free move asks the same rule as [`MoveSettings::free`] reads it — all three axes and nothing to
 //! snap to — and the floor stops it all the same (ADR 0162, ADR 0177).
 
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
+
 use geom::DVec3;
 
 use geom::{Contact, Pose, Shared, overlap as overlaps};
@@ -334,15 +337,8 @@ impl Project {
         let floor = settings.floor.then(|| floor_bound(&movers)).flatten();
         // A drag the document does not measure carries no obstacles at all: the free move goes where
         // the hand puts it and only the pointer's own distance reaches the placement (ADR 0180).
-        let obstacles = if settings.measured {
-            self.obstacle_boxes(targets)
-                .into_iter()
-                .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps })
+        let obstacles = if settings.measured { self.obstacles(targets) } else { Vec::new() };
+        Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps, contact: contact.map(Contact::handle) })
     }
 
     /// The part a proposed placement change would put inside another part, if any.
@@ -366,11 +362,7 @@ impl Project {
         if targets.is_empty() {
             return None;
         }
-        let obstacles: Vec<Obstacle> = self
-            .obstacle_boxes(&targets)
-            .into_iter()
-            .map(|box_| Obstacle { box_, solid: self.solid_of(box_, contact) })
-            .collect();
+        let obstacles = self.obstacles(&targets);
         for moved in &targets {
             let Some(lands) =
                 self.world_placement_with(*moved, placements).and_then(|world| self.box_at(*moved, world))
@@ -384,10 +376,9 @@ impl Project {
             let faces = !self.is_furniture(*moved);
             let landed = Measured::new(lands, faces.then(|| self.solid_of(lands, contact)).flatten());
             let held = stood.map(|box_| Measured::new(box_, faces.then(|| self.solid_of(box_, contact)).flatten()));
-            let found = obstacles.iter().position(|obstacle| {
-                let standing = Measured::new(obstacle.box_, obstacle.solid.clone());
-                resting_inside(held.clone(), &landed, &standing, product)
-            });
+            let found = obstacles
+                .iter()
+                .position(|obstacle| resting_inside(held.clone(), &landed, &obstacle.measured(contact), product));
             if let Some(index) = found {
                 return Some(Resting { moved: *moved, standing: obstacles.get(index)?.box_.id });
             }
@@ -506,6 +497,21 @@ impl Project {
                         product: self.product_of(*id),
                     }
                 })
+            })
+            .collect()
+    }
+
+    /// Every surface a move of `targets` stays behind from, with the geometry each is measured by.
+    ///
+    /// Nothing is prepared here: the shape of a body is built when a pair first needs it, so a drag
+    /// in a scene of a few hundred bodies prepares the handful it actually reaches (X90).
+    fn obstacles(&self, targets: &[Id]) -> Vec<Obstacle> {
+        self.obstacle_boxes(targets)
+            .into_iter()
+            .map(|box_| Obstacle {
+                box_,
+                geometry: self.object(box_.id).map(|object| object.geometry().clone()),
+                solid: Rc::new(OnceLock::new()),
             })
             .collect()
     }
@@ -732,10 +738,39 @@ struct Mover {
 }
 
 /// One surface that stays behind, and the body the contact port measures it as.
+///
+/// The body is **not** prepared when the rule is built: a scene of a few hundred bodies would build a
+/// hull for every one of them at the start of every drag, and a drag needs a handful. The shape is
+/// built from the geometry it came from the first time a pair actually reaches for it, and the rule
+/// keeps the adapter for that (X90, ADR 0181).
 #[derive(Clone, Debug)]
 struct Obstacle {
     box_: SurfaceBox,
-    solid: Option<Shared>,
+    /// The geometry the body's own shape is built from, when the document describes it.
+    geometry: Option<Geometry>,
+    /// The body, once a pair has needed it: prepared on the first ask and shared by every clone.
+    solid: Rc<OnceLock<Option<Shared>>>,
+}
+
+impl Obstacle {
+    /// The body the adapter measures this surface as, prepared now when nothing has asked yet.
+    ///
+    /// `None` is the world-box reading: no adapter, or a shape the document cannot describe.
+    fn body(&self, contact: Option<&dyn Contact>) -> Option<Shared> {
+        let contact = contact?;
+        self.solid
+            .get_or_init(|| {
+                let geometry = self.geometry.as_ref()?;
+                let shape = contact_shape::body_shape(geometry, self.box_.local_min, self.box_.local_max)?;
+                contact.prepare(&shape, Pose::new(self.box_.world.translation(), self.box_.world.rotation()))
+            })
+            .clone()
+    }
+
+    /// The surface with the body the adapter measures it as, or the box reading when it cannot.
+    fn measured(&self, contact: Option<&dyn Contact>) -> Measured {
+        Measured::new(self.box_, self.body(contact))
+    }
 }
 
 impl std::ops::Deref for Obstacle {
@@ -769,6 +804,9 @@ pub struct MoveRule {
     /// The lowest this drag may travel down the world Z, in millimetres, when the workspace keeps a
     /// floor; `None` when it keeps none (X87, ADR 0177).
     floor: Option<f64>,
+    /// The adapter that measures a body by its own faces, kept because the obstacles are prepared on
+    /// demand and a drag asks the same rule every frame (X90, ADR 0181).
+    contact: Option<Arc<dyn Contact>>,
 }
 
 impl MoveRule {
@@ -928,7 +966,8 @@ impl MoveRule {
                     })
                     .collect();
                 // The travel still to make from where the piece stands, and the face that stops it.
-                let limit = stop_at_contact(axis, ask - delta[index], &standing, &self.obstacles);
+                let limit =
+                    stop_at_contact(axis, ask - delta[index], &standing, &self.obstacles, self.contact.as_deref());
                 let mut contact = limit.contact;
                 let mut cut = delta[index] + limit.distance_mm;
                 // The workspace's floor is a lower bound on the whole carry, so it cuts the vertical
@@ -1011,6 +1050,11 @@ impl MoveRule {
                 if nested(moved, obstacle.box_, mover.product) {
                     continue;
                 }
+                // A body lies inside its world box, so a pair whose boxes stand apart cannot touch:
+                // the reading is answered without building either shape (X90).
+                if !moved.overlaps_box(obstacle.box_) && !nested(moved, obstacle.box_, mover.product) {
+                    continue;
+                }
                 // The place the piece stands in is the deepest one it may keep: a pair that already
                 // overlaps and is no legitimate nesting is the maker's to repair, so every place
                 // deeper than the start is refused and the piece has one way out and no way further
@@ -1018,7 +1062,7 @@ impl MoveRule {
                 // and is cut at one when it straddles it (ADR 0102).
                 let landed = Measured::new(moved, carried.clone());
                 let stood = Measured::new(mover.box_, mover.solid.clone());
-                let standing = Measured::new(obstacle.box_, obstacle.solid.clone());
+                let standing = obstacle.measured(self.contact.as_deref());
                 if !nested(mover.box_, obstacle.box_, mover.product)
                     && landed.sunk(&standing) <= stood.sunk(&standing) + CONTACT_MM
                 {
@@ -1205,8 +1249,26 @@ fn round_to_grid(value: f64) -> f64 {
     if rounded.is_finite() { rounded } else { 0.0 }
 }
 
+/// Whether two boxes can meet along `axis`, whatever their shapes are.
+///
+/// The travel runs along one axis, so the pair has to overlap on the other two before the bodies can
+/// touch at all; a box apart there is a body apart there (X90).
+fn swept_across(axis: MoveAxis, mover: &SurfaceBox, obstacle: &Obstacle) -> bool {
+    let index = axis.index();
+    (0..3).filter(|candidate| *candidate != index).all(|other| {
+        let (low, high) = (mover.min[other].max(obstacle.min[other]), mover.max[other].min(obstacle.max[other]));
+        high - low > CONTACT_MM
+    })
+}
+
 /// The snapped distance cut at the first surface in its way.
-fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &[Obstacle]) -> MoveLimit {
+fn stop_at_contact(
+    axis: MoveAxis,
+    distance: f64,
+    movers: &[Mover],
+    obstacles: &[Obstacle],
+    contact: Option<&dyn Contact>,
+) -> MoveLimit {
     let sign = if distance < 0.0 { -1.0 } else { 1.0 };
     if distance == 0.0 {
         return MoveLimit { distance_mm: 0.0, contact: None, capture: None };
@@ -1218,8 +1280,13 @@ fn stop_at_contact(axis: MoveAxis, distance: f64, movers: &[Mover], obstacles: &
             // its own piece: only a legitimate nesting is exempt, and `blocking` knows that wall.
             // A body measured by its own faces is cut where its own surface first touches the other
             // body, and only a body the port cannot describe falls back to the box around it (X85).
-            let faces = match (mover.solid.as_ref(), obstacle.solid.as_ref()) {
-                (Some(moving), Some(standing)) => moving.travel(&**standing, axis.direction() * sign),
+            // A pair whose boxes stand apart on an axis across the travel cannot meet, whatever
+            // their shapes are: the box around a body holds the body (X90).
+            if !swept_across(axis, &mover.box_, obstacle) {
+                continue;
+            }
+            let faces = match (mover.solid.as_ref(), obstacle.body(contact).as_deref()) {
+                (Some(moving), Some(standing)) => moving.travel(standing, axis.direction() * sign),
                 _ => blocking_faces(axis, sign, &mover.box_, obstacle),
             };
             let blocked = if mover.faces {
@@ -1496,6 +1563,33 @@ mod tests {
             crate::Primitive::sphere(Length::from_millimetres(radius).expect("a radius"), 16, 8).expect("a ball");
         let root = project.root().id();
         project.add_object(root, name, placement, crate::Geometry::Primitive(primitive)).expect("an object")
+    }
+
+    #[test]
+    fn a_drag_in_a_hall_of_three_hundred_bodies_is_built_at_once_and_measured_where_it_reaches() {
+        // A workshop-wide scene: three hundred balls standing 500 mm apart. The drag's own frame has
+        // to pay for the bodies it reaches, not for the hall: the shapes are built when a pair first
+        // asks for one, so the build is a walk over the boxes and the asks touch a handful (X90).
+        let mut project = empty_project();
+        let mut bodies = Vec::new();
+        for index in 0..300 {
+            let x = f64::from(index % 20) * 500.0 - 5000.0;
+            let y = f64::from(index / 20) * 500.0 - 3000.0;
+            bodies.push(primitive_object(&mut project, "Ball", place((x, y, 0.0)), 150));
+        }
+        let hand = MoveSettings { snaps: None, ..MoveSettings::default() };
+        let started = std::time::Instant::now();
+        let rule = project.move_rule(&bodies[..1], hand, Some(&contact_parry::Parry)).expect("a rule");
+        let build = started.elapsed();
+        let started = std::time::Instant::now();
+        for step in 0..120 {
+            let _ = rule.blocked_at(DVec3::new(10.0, 0.0, f64::from(step)));
+        }
+        let asks = started.elapsed();
+        // The bounds are two frames of a slow machine, generous enough not to be flaky and tight
+        // enough to catch a rule that prepares the hall: the fail an eager build gives is 40 ms.
+        assert!(build < std::time::Duration::from_millis(16), "the build costs one frame at most: {build:?}");
+        assert!(asks < std::time::Duration::from_millis(16), "and 120 asks fit in a frame: {asks:?}");
     }
 
     #[test]

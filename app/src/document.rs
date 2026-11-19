@@ -1522,7 +1522,15 @@ impl Document {
     ) -> Option<f64> {
         let camera = self.scene.camera;
         let ray = gizmo_math::ray_to(pointer, rect, camera);
-        let aim = void_gizmo::free_at(self.session.project(), product, niche, axis, ray, self.editor.flags().sight())?;
+        let aim = void_gizmo::free_at(
+            self.session.project(),
+            product,
+            niche,
+            axis,
+            ray,
+            self.editor.flags().sight(),
+            Some(self.session.contact()),
+        )?;
         let Some((face, offset)) = aim.face.filter(|_| aim.square) else {
             self.fill_carriage = None;
             return Some(aim.point);
@@ -1594,10 +1602,12 @@ impl Document {
             rect,
             pointer,
             self.editor.flags().sight(),
+            Some(self.session.contact()),
         );
         // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
         // row and the part the click creates, so the pointer names one space in this frame.
-        let measured = named.is_some_and(|point| self.editor.void_measure(self.session.project(), point));
+        let measured = named
+            .is_some_and(|point| self.editor.void_measure(self.session.project(), point, Some(self.session.contact())));
         let Some(point) = named.or_else(|| self.editor.void().point()) else {
             self.reset_fill(ui.ctx());
             return;
@@ -1809,6 +1819,7 @@ impl Document {
             rect,
             self.scene.camera,
             self.session.project(),
+            self.session.contact(),
             &mut self.editor,
             self.session.active_product(),
             pointer_over_widget,
@@ -1834,7 +1845,7 @@ impl Document {
 
     /// Measures the moving box and the two surfaces along the drag axis, once per drag.
     fn measure_move(&self, node: Id, axis: gizmo_math::Axis) -> Option<MoveDistances> {
-        measure_move(self.session.project(), node, axis)
+        measure_move(self.session.project(), node, axis, Some(self.session.contact()))
     }
 
     /// Draws the exact-distance fields of the translate drag and reads their numbers.
@@ -2592,6 +2603,7 @@ impl Document {
                 rect,
                 self.scene.camera,
                 self.session.project(),
+                self.session.contact(),
                 &mut self.editor,
                 self.draw_gizmo.grid(),
                 pointer_over_widget,
@@ -3955,7 +3967,12 @@ struct MoveDistances {
 ///
 /// A translate drag reads this once, when it starts: the document still holds the start placements,
 /// so the preview, the fields and the release commit one measurement.
-fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<MoveDistances> {
+fn measure_move(
+    project: &Project,
+    node: Id,
+    axis: gizmo_math::Axis,
+    contact: Option<&dyn geom::Contact>,
+) -> Option<MoveDistances> {
     let (min, max) = project.world_box(node)?;
     let direction = axis.direction();
     let (low, high) = (min.dot(direction), max.dot(direction));
@@ -3972,10 +3989,10 @@ fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<M
     // still in the way of the piece and its fields measure the face that stops it (X73, ADR 0175).
     let sight = model::Sight::none();
     let wall_low = project
-        .probe(low_face - direction * INSET_MM, -direction, sight)
+        .probe(low_face - direction * INSET_MM, -direction, sight, contact)
         .map(|probe| low - INSET_MM - probe.distance_mm);
     let wall_high = project
-        .probe(high_face + direction * INSET_MM, direction, sight)
+        .probe(high_face + direction * INSET_MM, direction, sight, contact)
         .map(|probe| high + INSET_MM + probe.distance_mm);
     let distances = Distances::new(wall_low, wall_high, low, high)?;
     Some(MoveDistances {
@@ -4301,7 +4318,7 @@ mod tests {
         project
             .add_product(root_id, "Beside", ClassCode::GENERAL_PRODUCT, envelope(), beside)
             .expect("a second product");
-        let measure = measure_move(&project, moved, gizmo_math::Axis::X).expect("two faces");
+        let measure = measure_move(&project, moved, gizmo_math::Axis::X, None).expect("two faces");
         assert_eq!(measure.start_low, 0.0);
         assert_eq!(measure.extent, 600.0);
         assert_eq!(measure.wall_low, None, "nothing stands to the left");
@@ -4326,7 +4343,7 @@ mod tests {
         let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
         let at = Placement::new(DVec3::new(0.0, 1500.0, 0.0), DQuat::IDENTITY).expect("a placement");
         let piece = project.add_product(root_id, "Piece", ClassCode::GENERAL_PRODUCT, envelope, at).expect("a product");
-        let measure = measure_move(&project, piece, gizmo_math::Axis::Y).expect("two faces");
+        let measure = measure_move(&project, piece, gizmo_math::Axis::Y, None).expect("two faces");
         assert_eq!(measure.wall_low, None, "nothing stands below the piece");
 
         let rule = project.move_rule(&[piece], model::MoveSettings::default(), None).expect("an object drag");

@@ -98,6 +98,7 @@ impl MeasureGizmo {
         rect: Rect,
         camera: Camera,
         project: &Project,
+        contact: &dyn geom::Contact,
         editor: &mut ui::Editor,
         grid: bool,
         pointer_over_widget: bool,
@@ -117,7 +118,7 @@ impl MeasureGizmo {
         // The ruler measures what the eye sees: a part switched off is crossed, not stopped at.
         let sight = editor.flags().sight();
         let aim = Aim { camera, rect, pointer };
-        let Some(point) = resolve(project, aim, first, grid, modifiers, sight) else {
+        let Some(point) = resolve(project, Some(contact), aim, first, grid, modifiers, sight) else {
             self.reset();
             return false;
         };
@@ -172,6 +173,7 @@ impl MeasureGizmo {
 /// all, so a broken camera or a hostile document resolves to `None` instead of a number.
 fn resolve(
     project: &Project,
+    contact: Option<&dyn geom::Contact>,
     aim: Aim,
     first: Option<[Length; 3]>,
     grid: bool,
@@ -181,7 +183,7 @@ fn resolve(
     let Aim { camera, rect, pointer } = aim;
     let ray = ray_to(pointer, rect, camera);
     if !modifiers.ignore_snaps
-        && let Some(probe) = surface_under(project, ray.origin(), ray.direction(), sight)
+        && let Some(probe) = surface_under(project, contact, ray.origin(), ray.direction(), sight)
     {
         return measure_point(probe, camera, rect, SnapTarget::Surface);
     }
@@ -221,10 +223,16 @@ struct Aim {
 /// the person points at a shelf behind it. The ray restarts a micrometre inside the envelope and
 /// looks again, at most [`MAX_SHELLS`] times, so the boards inside win. Every other surface — a
 /// panel, a body, the far envelope face of the product the point is now in — is the answer.
-fn surface_under(project: &Project, origin: DVec3, direction: DVec3, sight: Sight<'_>) -> Option<DVec3> {
+fn surface_under(
+    project: &Project,
+    contact: Option<&dyn geom::Contact>,
+    origin: DVec3,
+    direction: DVec3,
+    sight: Sight<'_>,
+) -> Option<DVec3> {
     let mut from = origin;
     for _ in 0..=MAX_SHELLS {
-        let probe = project.probe(from, direction, sight)?;
+        let probe = project.probe(from, direction, sight, contact)?;
         if probe.hit.kind != SurfaceKind::Shell {
             return Some(probe.face.point);
         }

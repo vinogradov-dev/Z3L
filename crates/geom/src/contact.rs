@@ -176,6 +176,23 @@ impl Penetration {
     }
 }
 
+/// Where a ray meets a body's own surface, in world millimetres.
+///
+/// It is the answer a probe reads: the distance along the ray, the point it stopped at and that
+/// face's own normal — a niche's walls, a callout's dimension and a measure's end all come from
+/// here, so the surface a drag stops at is the surface a ray stops at (X90).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Impact {
+    /// The distance along the unit ray direction, in millimetres.
+    pub distance_mm: f64,
+    /// The world point where the ray meets the surface, in millimetres.
+    pub point: DVec3,
+    /// The surface's unit normal at that point, pointing back along the ray.
+    ///
+    /// The free space therefore lies in the half-space `normal · (point - impact) >= 0`.
+    pub normal: DVec3,
+}
+
 /// One body's own surface, prepared by an adapter and posed in the world.
 ///
 /// It is what a rule carries instead of a shape: the adapter built it once, the body knows where it
@@ -196,6 +213,14 @@ pub trait Solid: fmt::Debug + Any {
     /// is touching now. A body another adapter made answers `None`: a contract is not a licence to
     /// guess.
     fn travel(&self, other: &dyn Solid, direction: DVec3) -> Option<f64>;
+
+    /// The first face of this body a ray meets, or `None` when the ray misses it.
+    ///
+    /// `direction` is a heading and is taken at its own length: the answer is a distance in
+    /// millimetres, so a caller may pass a world axis or the vector between two places. A ray that
+    /// starts on the surface answers distance zero — a probe standing on a face reads the face it
+    /// stands on and never the one behind it.
+    fn ray(&self, origin: DVec3, direction: DVec3) -> Option<Impact>;
 
     /// How deeply this body is sunk into `other`, and along which normal it comes out.
     ///
@@ -223,6 +248,14 @@ pub fn overlap(a: &dyn Solid, b: &dyn Solid, slack_mm: f64) -> bool {
 /// every body it will measure when the rule is built, and never again: the expensive conversion
 /// happens once per gesture, and a stub answers contact in a test without a collision engine.
 pub trait Contact: fmt::Debug {
+    /// A handle to this adapter, for a caller that keeps a rule across frames.
+    ///
+    /// A [`MoveRule`](../../model) outlives the call that built it and prepares a body only when a
+    /// pair first needs one, so it holds the adapter instead of borrowing it. The handle must be
+    /// cheap: an adapter is a stateless service, and one that copied its state would pay for it on
+    /// every drag (X90).
+    fn handle(&self) -> Arc<dyn Contact>;
+
     /// This adapter's own representation of `shape` standing at `pose`, or `None` when it cannot
     /// measure that shape.
     ///
@@ -291,6 +324,27 @@ mod tests {
             (reach[axis].signum() == heading[axis].signum()).then_some(gap)
         }
 
+        fn ray(&self, origin: DVec3, direction: DVec3) -> Option<Impact> {
+            let heading = direction.normalize_or_zero();
+            let local = origin - self.pose.translation;
+            let mut nearest: Option<Impact> = None;
+            for axis in 0..3 {
+                if heading[axis].abs() < 1.0e-9 {
+                    continue;
+                }
+                // The face the ray enters is the one whose outward normal opposes the heading.
+                let face = -heading[axis].signum();
+                let distance = (face * self.half[axis] - local[axis]) / heading[axis];
+                if distance < 0.0 || nearest.is_some_and(|best| distance >= best.distance_mm) {
+                    continue;
+                }
+                let mut normal = DVec3::ZERO;
+                normal[axis] = face;
+                nearest = Some(Impact { distance_mm: distance, point: origin + heading * distance, normal });
+            }
+            nearest
+        }
+
         fn penetration(&self, other: &dyn Solid) -> Option<Penetration> {
             let other = as_block(other)?;
             let reach = other.pose.translation - self.pose.translation;
@@ -312,6 +366,10 @@ mod tests {
     struct Stub;
 
     impl Contact for Stub {
+        fn handle(&self) -> Arc<dyn Contact> {
+            Arc::new(Stub)
+        }
+
         fn prepare(&self, shape: &Shape, pose: Pose) -> Option<Shared> {
             let (low, high) = shape.bounds()?;
             Some(Arc::new(Block { pose, half: (high - low) / 2.0 }) as Shared)
@@ -354,6 +412,16 @@ mod tests {
         assert_eq!(cube.penetration(&*inside).map(|sunk| sunk.depth_mm), Some(50.0));
         assert!(overlap(&*cube, &*inside, 0.001), "sunk 50 mm is deeper than the document's rounding");
         assert!(!overlap(&*cube, &*away, 0.001), "a pair that stands apart is no overlap");
+    }
+
+    #[test]
+    fn a_body_answers_the_face_a_ray_meets() {
+        let cube = Stub.prepare(&cube(100.0), Pose::IDENTITY).expect("a cube is measurable");
+        let impact = cube.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::NEG_Z).expect("a ray from above meets the top");
+        assert_eq!(impact.distance_mm, 350.0);
+        assert_eq!(impact.point, DVec3::new(0.0, 0.0, 50.0));
+        assert_eq!(impact.normal, DVec3::Z, "the face points back along the ray");
+        assert_eq!(cube.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::Z), None, "a ray going away meets nothing");
     }
 
     #[test]

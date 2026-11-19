@@ -25,7 +25,7 @@
 use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use geom::{DQuat, DVec2, DVec3};
+use geom::{Contact, DQuat, DVec2, DVec3};
 use units::{Degrees, Length};
 
 use super::niche::{signed_area, surface_corners};
@@ -167,8 +167,14 @@ impl Project {
     /// under the pointer picks it in whole millimetres, `Some` when a typed distance or the hand
     /// fixed it (ADR 0103). The result is the whole plan, so the caller never measures the void a
     /// second time.
-    pub fn fill_plan(&self, product: Id, request: FillRequest, sight: Sight) -> Result<FillPlan, FillRefusal> {
-        let niche = self.niche(request.point, sight).map_err(|refusal| match refusal {
+    pub fn fill_plan(
+        &self,
+        product: Id,
+        request: FillRequest,
+        sight: Sight,
+        contact: Option<&dyn Contact>,
+    ) -> Result<FillPlan, FillRefusal> {
+        let niche = self.niche(request.point, sight, contact).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
             NicheRefusal::Unrepresentable => FillRefusal::Unrepresentable,
         })?;
@@ -1118,6 +1124,7 @@ mod tests {
             product,
             FillRequest::new(centre(project, product), fill, mode, thickness, None),
             Sight::none(),
+            None,
         )
     }
 
@@ -1433,6 +1440,7 @@ mod tests {
                 None,
             ),
             Sight::none(),
+            None,
         );
         assert_eq!(outside, Err(FillRefusal::Outside));
         let root = project.root().id();
@@ -1440,6 +1448,7 @@ mod tests {
             root,
             FillRequest::new(centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, thickness, None),
             Sight::none(),
+            None,
         );
         assert_eq!(wrong, Err(FillRefusal::OtherProduct));
         let thin = project.fill_plan(
@@ -1452,6 +1461,7 @@ mod tests {
                 None,
             ),
             Sight::none(),
+            None,
         );
         assert!(thin.is_ok(), "a micrometre board still leaves a plan");
     }
@@ -1535,9 +1545,9 @@ mod tests {
         let point = DVec3::new(300.0, 300.0, 360.0);
         let request = FillRequest::new(point, Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None);
 
-        let visible = project.fill_plan(product, request, Sight::none()).expect("a shelf behind the facade");
+        let visible = project.fill_plan(product, request, Sight::none(), None).expect("a shelf behind the facade");
         let hidden = hiding(facade);
-        let through = project.fill_plan(product, request, Sight::of(&hidden)).expect("the case's own void");
+        let through = project.fill_plan(product, request, Sight::of(&hidden), None).expect("the case's own void");
 
         assert!(
             (through.niche.size.y - visible.niche.size.y - 18.0).abs() < 1.0e-3,
@@ -1579,7 +1589,7 @@ mod tests {
 
         // A point beside the post: the void is cut at the post's own face and the shelf takes what
         // is left on that side of it.
-        let beside = project.fill_plan(product, request(100.0), sight).expect("the void beside the hidden post");
+        let beside = project.fill_plan(product, request(100.0), sight, None).expect("the void beside the hidden post");
         assert!(
             (beside.nominal_size.length().millimetres_f64() - 291.0).abs() < 1.0e-3,
             "the shelf stops at the post's near face: {:?}",
@@ -1593,7 +1603,7 @@ mod tests {
 
         // A point the post itself stands over still plans a part: one rectangle cannot straddle the
         // body, so the larger side of what is left wins and the part is never a slice of it.
-        let over = project.fill_plan(product, request(300.0), sight).expect("the larger side of the post");
+        let over = project.fill_plan(product, request(300.0), sight, None).expect("the larger side of the post");
         assert!(
             over.corners.iter().all(|corner| corner.x <= 291.0 + 1.0e-3 || corner.x >= 309.0 - 1.0e-3),
             "the part is on one side of the post: {:?}",
@@ -1601,7 +1611,7 @@ mod tests {
         );
 
         // Shown again, the post is a wall of the void and the same point is inside a niche.
-        let shown = project.fill_plan(product, request(300.0), Sight::none());
+        let shown = project.fill_plan(product, request(300.0), Sight::none(), None);
         assert!(shown.is_ok(), "the post's own faces bound the void when it is shown: {shown:?}");
     }
 
@@ -1620,6 +1630,7 @@ mod tests {
                 None,
             ),
             Sight::of(&hidden),
+            None,
         );
         assert_eq!(planned, Err(FillRefusal::TooSmall), "the cut leaves no area at that height");
         let shown = project.fill_plan(
@@ -1632,6 +1643,7 @@ mod tests {
                 None,
             ),
             Sight::none(),
+            None,
         );
         assert!(shown.is_ok(), "and the board's own faces leave two niches when it is shown: {shown:?}");
     }
@@ -1674,7 +1686,7 @@ mod turned {
         for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = project
-                    .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None), Sight::none())
+                    .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None), Sight::none(), None)
                     .unwrap_or_else(|refusal| panic!("{fill:?}/{mode:?} refused: {refusal:?}"));
                 assert!(planned.corners.len() >= 3, "{fill:?}/{mode:?} has a footprint");
             }

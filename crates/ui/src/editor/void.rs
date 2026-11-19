@@ -8,7 +8,7 @@
 //!
 //! Changes when: the niche is armed or disarmed by another surface, or it stops owning the pointer.
 
-use geom::DVec3;
+use geom::{Contact, DVec3};
 use model::Project;
 
 use super::Editor;
@@ -67,7 +67,7 @@ impl Editor {
     /// Returns whether the value changed, so the caller can ask for a repaint. A pointer that moved
     /// less than the atom's own step changes nothing; with neither tool armed there is no value to
     /// keep, so the call does nothing at all.
-    pub fn void_measure(&mut self, project: &Project, point: DVec3) -> bool {
+    pub fn void_measure(&mut self, project: &Project, point: DVec3, contact: Option<&dyn Contact>) -> bool {
         if !self.void_armed && self.fill.is_none() {
             return false;
         }
@@ -79,6 +79,6 @@ impl Editor {
             self.void_revision = revision;
             changed = self.void.clear();
         }
-        changed | self.void.measure(project, point, self.flags.sight())
+        changed | self.void.measure(project, point, self.flags.sight(), contact)
     }
 }

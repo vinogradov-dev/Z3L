@@ -43,7 +43,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X90** the probe and the frame budget, the two clauses X85 leaves
+- `[~]` **X90** the probe and the frame budget, the two clauses X85 leaves
   Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
    clause and its frame budget are a separate piece of work that needs its own shape (the port
    has no ray query yet).
@@ -71,6 +71,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    typed; the double-delete defect cannot occur because there is no text field; the gate is
    green.
   `files: app/src/file_menu.rs, crates/text/src/messages.rs, crates/ui/src/inventory.rs`
+- `[ ]` **X92** the probe reads a body the boxes cannot describe, and no other
+  Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against
+   the port moved an ordinary cell's plane by rounding and broke the fill ghost: a cell is
+   where a board is cut, so the reading needs a test of its own before it ships (found in X90,
+   ADR 0181).
+  Shape: The probe asks the port only for a body the boxes cannot describe — one whose own
+   surface leaves a hole or reaches outside its box — and keeps the box reading everywhere
+   else, decided once per surface when its shape is built. The cell then meets a plate's hole,
+   a notched panel and a ball's own side; 's scene proves a ray crosses the hole and stops at
+   the floor behind it, and the fill ghost's board test stays green.
+  Done: A probe crosses a hole in a plate and stops at the face behind it; an ordinary cell's
+   planes are the boxes it always had; the fill ghost keeps following the hand across a board;
+   the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/contact_shape.rs, crates/project/tests/through_a_hole.rs`
 
 ## Bugs
 ## Next

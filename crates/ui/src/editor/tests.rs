@@ -2147,11 +2147,11 @@ fn a_part_switched_off_measures_the_void_behind_it_under_a_still_pointer() {
     let mut editor = Editor::new();
     editor.arm_void();
     let point = geom::DVec3::new(100.0, 280.0, 360.0);
-    assert!(editor.void_measure(&project, point));
+    assert!(editor.void_measure(&project, point, None));
     assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
 
     editor.set_hidden(sheet, true);
-    assert!(editor.void_measure(&project, point), "the still pointer re-measures the new void");
+    assert!(editor.void_measure(&project, point, None), "the still pointer re-measures the new void");
     assert_eq!(
         editor.void().size(),
         Some([millimetres(600), millimetres(560), millimetres(720)]),
@@ -2159,7 +2159,7 @@ fn a_part_switched_off_measures_the_void_behind_it_under_a_still_pointer() {
     );
 
     editor.set_hidden(sheet, false);
-    assert!(editor.void_measure(&project, point), "and showing it again restores the reading");
+    assert!(editor.void_measure(&project, point, None), "and showing it again restores the reading");
     assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
 }
 
@@ -2178,7 +2178,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     let mut editor = Editor::new();
     editor.arm_void();
     let point = geom::DVec3::new(300.0, 280.0, 360.0);
-    assert!(editor.void_measure(&project, point), "the pointer measures the void");
+    assert!(editor.void_measure(&project, point, None), "the pointer measures the void");
     let niche = editor.void().niche().expect("the point is inside the open product").clone();
     assert_eq!(niche.product, product);
     assert_eq!(
@@ -2206,6 +2206,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
             editor.flags().sight(),
+            None,
         )
         .expect("the direct query plans the same part");
     let from_atom = project
@@ -2232,7 +2233,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         envelope.z().millimetres_f64() / 2.0,
     );
     let point = project.world_placement(product).expect("a frame").transform_point(half);
-    assert!(editor.void_measure(project, point), "the fill tool feeds the same atom");
+    assert!(editor.void_measure(project, point, None), "the fill tool feeds the same atom");
     let fill_niche = editor.void().niche().expect("the fill's pointer names the void").clone();
     let plan = project
         .fill_plan_in(

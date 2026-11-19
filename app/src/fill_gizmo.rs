@@ -278,7 +278,7 @@ pub(crate) fn plan(
     thickness: Length,
     sight: Sight<'_>,
 ) -> Result<FillGhost, String> {
-    let niche = project.niche(point, sight).map_err(|refusal| match refusal {
+    let niche = project.niche(point, sight, None).map_err(|refusal| match refusal {
         model::NicheRefusal::Outside => refusal_sentence(FillRefusal::Outside),
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
     })?;
@@ -415,7 +415,7 @@ mod tests {
 
     /// The cell the pointer at `point` names, as the atom would answer it.
     fn niche_at(project: &Project, point: DVec3) -> Niche {
-        project.niche(point, Sight::none()).expect("the point names a void")
+        project.niche(point, Sight::none(), None).expect("the point names a void")
     }
 
     /// Whether every corner of the ghost lies inside the void it was measured against.
