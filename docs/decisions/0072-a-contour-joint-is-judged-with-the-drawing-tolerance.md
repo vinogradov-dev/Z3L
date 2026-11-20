@@ -1,6 +1,6 @@
 # 0072. A contour joint is judged with the drawing tolerance
 
-- Status: Accepted
+- Status: Accepted; its slack corrected to a whole millidegree (G3)
 - Date: 2026-11-08
 
 ## Context
@@ -22,14 +22,19 @@ limitation in `plan/debt.md` was the same defect.
 One rule, applied to every joint and scaled by the segments on either side of it:
 
 ```text
-tolerance = 1 µm + arc_slack(first) + arc_slack(next)
-arc_slack = radius × 8.73e-6   (0 for a line)
+tolerance = 2 µm + arc_slack(first) + arc_slack(next)
+arc_slack = 2 µm + radius × 1.746e-5   (0 for a line)
 ```
 
-- The one-micrometre base is the rounding of one document unit that any two stored points need; it
-  also covers the fraction lost when the slack is rounded down to whole micrometres.
-- The slack is the endpoint rounding of an arc of that radius: the stored angle is a whole
-  millidegree, and the endpoint moves by `radius × Δangle`.
+- The base is the rounding of two stored points that are rounded independently: each coordinate
+  moves by at most half a micrometre, so two points miss each other by at most `sqrt(2)/2 + sqrt(2)/2`
+  = 1.42 µm, and two units is that bound rounded up.
+- The slack is the endpoint rounding of an arc of that radius. The endpoint is derived from the
+  *sum* of two stored angles — the start angle and the sweep — so each half-millidegree rounding
+  moves it, and together they move it by a whole millidegree: `radius × 1.746e-5`. The centre and
+  the radius are rounded too, which adds `sqrt(2)/2 + 1/2` µm, carried as two more units. G3 found
+  the first version of this rule short by that factor: a boolean that cuts a 650 mm circle with a
+  straight edge leaves a joint 7.7 µm wide, and the half-step slack allowed 6.7.
 - The rule is one function. In document units `ContourSegment::end_meets` (and `Path::assemble` and
   `Contour::assemble` through it) compares with it in integer micrometres; at the geometry boundary
   `joint_tolerance_mm` hands the same rule to
@@ -40,9 +45,9 @@ arc_slack = radius × 8.73e-6   (0 for a line)
 - The error keeps its wording, so a real gap still reads as "contour segment N does not meet the
   next segment".
 
-The tolerance is not a licence for a sloppy chain: on a 100 mm arc it is one micrometre, and a
-20 µm gap is still a gap. On a 600 mm arc it is 6 µm, which is one stored unit plus the rounding of
-the arc itself.
+The tolerance is not a licence for a sloppy chain: on a 100 mm arc it is 4 µm, and a 20 µm gap is
+still a gap. On a 600 mm arc it is 14 µm, which is two stored units plus the rounding of the arc
+itself.
 
 ## Consequences
 A ring the user drew with an arc assembles, converts to geometry and extrudes; the closing click of
