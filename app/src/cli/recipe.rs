@@ -1,22 +1,24 @@
-//! A recipe: one command per line, one session, one undo entry, one write.
+//! A recipe: one command per line, one batch, one undo entry, one write.
 //!
 //! A recipe is JSON Lines — one object per line, `{"command": <id>, "params": {...}}` — because a
 //! line is a step and a diff of two recipes reads as a diff of two runs (the same argument the order
-//! package makes for its tables, ADR 0095). Nothing here mutates a document directly: every step is
-//! [`engine::Session::dispatch_in`], so undo, the class guard and the command's own validation stay
-//! the only door (`docs/domain/prototypes.md` §8).
+//! package makes for its tables, ADR 0095). Nothing here mutates a document directly: every line is
+//! a [`engine::BatchStep`] and the whole list is one [`engine::Session::batch`], so undo, the class
+//! guard and the command's own validation stay the only door (`docs/domain/prototypes.md` §8). The
+//! batch is the same operation a tool over the same commands calls, so the two answers cannot
+//! disagree (ADR 0190, ADR 0197).
 //!
-//! A run is all or nothing. The commands run inside one edit scope, so the whole recipe is a single
-//! undo entry; the scene is written once, at the end, through [`project::SceneFile`], and only when
-//! every line succeeded and `--dry-run` is absent. A failing line reports its number and the
-//! command's own sentence, and writes nothing at all — a recipe that half applied would be a scene
-//! nobody asked for.
+//! A run is all or nothing and one undo entry: the batch plans the whole list on a copy of the
+//! document and installs it in one piece, and the scene is written once, at the end, through
+//! [`project::SceneFile`] and only when every line succeeded and `--dry-run` is absent. A failing
+//! line reports its number and the command's own sentence, and writes nothing at all — a recipe that
+//! half applied would be a scene nobody asked for.
 //!
 //! Changes when: the step shape grows a key, or a run stops being one undo entry.
 
 use std::path::Path;
 
-use engine::Session;
+use engine::{BatchOptions, BatchReport, BatchStep, Session, StepOutcome};
 use project::SceneFile;
 use serde_json::{Map, Value};
 
@@ -33,12 +35,19 @@ struct Step {
     params: Value,
 }
 
+impl Step {
+    /// The engine step this line dispatches into the batch.
+    fn batch(&self) -> BatchStep {
+        BatchStep::new(self.command.clone(), self.params.clone())
+    }
+}
+
 /// Runs a recipe against a saved scene and returns the lines to print.
 ///
-/// The scene is read once, the commands are dispatched in order into one session, and the document
-/// is written once: to `--out` when the line names one, over the scene read otherwise. `--dry-run`
-/// dispatches everything and writes nothing, so a recipe can be checked against a real document
-/// before it changes a file.
+/// The scene is read once, the commands run as one batch, and the document is written once: to
+/// `--out` when the line names one, over the scene read otherwise. `--dry-run` plans the whole batch
+/// without changing the document, so a recipe can be checked against a real document before it
+/// changes a file.
 pub fn perform(args: &RunArgs) -> Result<Vec<String>, CliError> {
     let scene = SceneFile::read(&args.scene).map_err(CliError::Scene)?;
     let extra = scene.extra().clone();
@@ -48,7 +57,12 @@ pub fn perform(args: &RunArgs) -> Result<Vec<String>, CliError> {
     if steps.is_empty() {
         return Ok(vec![format!("{}: the recipe holds no step, so nothing was written", args.commands.display())]);
     }
-    let mut lines = dispatch(&mut session, &steps)?;
+    let batch: Vec<BatchStep> = steps.iter().map(Step::batch).collect();
+    let report = session.batch(&batch, BatchOptions::ALL_OR_NOTHING.dry_run(args.dry_run));
+    if let Some((number, error)) = report.refusal() {
+        return Err(dispatch_error(&steps, number, error));
+    }
+    let mut lines = performed(&steps, &report);
     let revision = session.project().revision().get();
     if args.dry_run {
         lines.push(format!("dry run: {} steps, revision {revision}, nothing was written", steps.len()));
@@ -92,26 +106,36 @@ fn open_product(session: &mut Session, product: Option<model::Id>) -> Result<(),
     }
 }
 
-/// Dispatches every step inside one edit scope, so the whole recipe is one undo entry.
+/// The lines a run prints before its own last line: one per step that ran, numbered by the recipe's
+/// own lines so the output of a recipe with blank lines still points at the file.
 ///
-/// A step that fails stops the run: the session left the document untouched for that step, and the
-/// caller writes nothing, so a refusal cannot leave a half-applied recipe on disk.
-fn dispatch(session: &mut Session, steps: &[Step]) -> Result<Vec<String>, CliError> {
-    let scope = session.begin_edit();
-    let mut lines = Vec::with_capacity(steps.len());
-    for step in steps {
-        let outcome = session.dispatch_in(scope, &step.command, &step.params).map_err(|error| CliError::Dispatch {
-            line: step.line,
-            command: step.command.clone(),
-            error,
-        })?;
-        lines.push(match outcome.created_id() {
-            Some(id) => format!("{}: {} created {id}", step.line, step.command),
-            None => format!("{}: {} ok", step.line, step.command),
-        });
+/// A refused step is not printed: the refusal becomes the error the run fails with.
+fn performed(steps: &[Step], report: &BatchReport) -> Vec<String> {
+    report
+        .steps()
+        .iter()
+        .zip(steps)
+        .filter_map(|(step, source)| {
+            let StepOutcome::Ran(outcome) = step.outcome() else {
+                return None;
+            };
+            Some(match outcome.created_id() {
+                Some(id) => format!("{}: {} created {id}", source.line, step.command()),
+                None => format!("{}: {} ok", source.line, step.command()),
+            })
+        })
+        .collect()
+}
+
+/// The error a refused batch fails the run with: the recipe line, the command and its own sentence.
+///
+/// A batch is one answer, so the run stops at the first refusal; the report is what says what the
+/// applied steps would have been, and the command line writes none of it.
+fn dispatch_error(steps: &[Step], number: usize, error: &engine::CommandError) -> CliError {
+    match steps.get(number.saturating_sub(1)) {
+        Some(step) => CliError::Dispatch { line: step.line, command: step.command.clone(), error: error.clone() },
+        None => CliError::Recipe(format!("step {number} refused: {error}")),
     }
-    session.end_edit();
-    Ok(lines)
 }
 
 /// Reads the recipe file, naming it when it cannot be read.
@@ -253,6 +277,11 @@ mod tests {
         };
         let lines = perform(&args).expect("the recipe runs");
         assert_eq!(lines.len(), 4, "one line per step and one for the write: {lines:?}");
+        assert!(lines.first().is_some_and(|line| line.starts_with("1: panel.create")), "{lines:?}");
+        assert!(
+            lines.get(1).is_some_and(|line| line.starts_with("3: panel.create")),
+            "the blank line keeps the recipe's own numbering: {lines:?}"
+        );
 
         let written = SceneFile::read(&path).expect("the scene is written back");
         let project = written.document();
@@ -268,8 +297,10 @@ mod tests {
         let mut session = session_of(scene.into_document()).expect("a session");
         open_product(&mut session, Some(product)).expect("the fixture holds its product");
         let steps = parse(&recipe(product)).expect("the recipe parses");
-        let lines = dispatch(&mut session, &steps).expect("the recipe dispatches");
-        assert_eq!(lines.len(), 3);
+        let batch: Vec<BatchStep> = steps.iter().map(Step::batch).collect();
+        let report = session.batch(&batch, BatchOptions::ALL_OR_NOTHING);
+        assert_eq!(report.effect(), engine::BatchEffect::Landed, "the whole recipe is one batch");
+        assert_eq!(report.steps().len(), 3);
         assert_eq!(children(session.project(), product), 2, "both panels are there before the undo");
         session.undo().expect("one undo entry covers the whole recipe");
         assert_eq!(children(session.project(), product), 0, "one undo removes both panels");
