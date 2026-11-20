@@ -205,6 +205,15 @@ pub trait Solid: fmt::Debug + Any {
     /// The same body moved rigidly by `delta` millimetres, or `None` when the move is not finite.
     fn shifted(&self, delta: DVec3) -> Option<Shared>;
 
+    /// The same body turned rigidly by `turn` about the world point `pivot`, or `None` when the turn
+    /// is not finite.
+    ///
+    /// It is [`Solid::shifted`] for a ring drag: a body swinging about a hinge sweeps through poses no
+    /// translation reaches, so the rule asks for the body at the turned pose and the adapter re-poses
+    /// the shape it already holds instead of building it again (X88). The pivot is in world
+    /// millimetres, which is what the ring's own centre is.
+    fn turned(&self, turn: DQuat, pivot: DVec3) -> Option<Shared>;
+
     /// How far this body travels along `direction` before it first touches `other`.
     ///
     /// The answer is in millimetres whatever the length of `direction`: the direction is taken as a
@@ -315,6 +324,15 @@ mod tests {
             })
         }
 
+        fn turned(&self, turn: DQuat, pivot: DVec3) -> Option<Shared> {
+            (turn.is_finite() && pivot.is_finite()).then(|| {
+                Arc::new(Self {
+                    pose: Pose::new(pivot + turn * (self.pose.translation - pivot), turn * self.pose.rotation),
+                    half: self.half,
+                }) as Shared
+            })
+        }
+
         fn travel(&self, other: &dyn Solid, direction: DVec3) -> Option<f64> {
             let other = as_block(other)?;
             let heading = direction.normalize_or_zero();
@@ -422,6 +440,29 @@ mod tests {
         assert_eq!(impact.point, DVec3::new(0.0, 0.0, 50.0));
         assert_eq!(impact.normal, DVec3::Z, "the face points back along the ray");
         assert_eq!(cube.ray(DVec3::new(0.0, 0.0, 400.0), DVec3::Z), None, "a ray going away meets nothing");
+    }
+
+    #[test]
+    fn a_body_turns_about_a_pivot() {
+        // A ring drag turns a body about a hinge, which no translation reaches: a cube one metre out
+        // and turned a quarter turn about the origin stands one metre up, and its own faces turn too.
+        let cube =
+            Stub.prepare(&cube(100.0), Pose::new(DVec3::new(1000.0, 0.0, 0.0), DQuat::IDENTITY)).expect("a cube");
+        let turned = cube.turned(DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2), DVec3::ZERO).expect("a turn");
+        let (low, high) = turned.bounds();
+        let (want_low, want_high) = (DVec3::new(-50.0, 950.0, -50.0), DVec3::new(50.0, 1050.0, 50.0));
+        assert!((low - want_low).length() < 1.0e-9 && (high - want_high).length() < 1.0e-9, "{low:?}..{high:?}");
+        let not_a_number = DQuat::from_xyzw(f64::NAN, 0.0, 0.0, 1.0);
+        assert!(cube.turned(not_a_number, DVec3::ZERO).is_none(), "a turn that is not a turn has no body");
+        assert!(cube.turned(DQuat::IDENTITY, DVec3::splat(f64::INFINITY)).is_none(), "and a pivot that is not a place");
+        // Turning about the body's own centre leaves it where it stood.
+        let in_place = cube.turned(DQuat::from_rotation_x(0.3), DVec3::new(1000.0, 0.0, 0.0)).expect("a turn");
+        let (low, high) = in_place.bounds();
+        let (was_low, was_high) = cube.bounds();
+        assert!(
+            (low - was_low).length() < 1.0e-9 && (high - was_high).length() < 1.0e-9,
+            "a turn about its own centre leaves it where it stood: {low:?}..{high:?}"
+        );
     }
 
     #[test]

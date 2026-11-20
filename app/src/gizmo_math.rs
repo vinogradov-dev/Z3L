@@ -161,6 +161,8 @@ pub(crate) struct Target<'a> {
     /// Which move a translate drag is: the free one, or the furniture one that obeys the document's
     /// rules and offers only the axes they allow (N22, ADR 0147).
     pub(crate) move_kind: MoveKind,
+    /// Which turn a ring drag is: the free one, or the one the document's bodies stop (X88).
+    pub(crate) rotate_kind: RotateKind,
 }
 
 /// Which move a translate drag makes.
@@ -186,7 +188,9 @@ impl MoveKind {
     pub(crate) fn of(mode: TransformMode) -> Self {
         match mode {
             TransformMode::Object => Self::Object,
-            TransformMode::Select | TransformMode::Move | TransformMode::Rotate => Self::Free,
+            TransformMode::Select | TransformMode::Move | TransformMode::Rotate | TransformMode::ObjectRotate => {
+                Self::Free
+            }
         }
     }
 
@@ -203,7 +207,47 @@ impl MoveKind {
     }
 }
 
+/// Which turn a ring drag makes.
+///
+/// The two turns share the rings, the pivot, the preview and the one `node.placement.set_many` on
+/// release, and differ in one question: does the document's rule measure the turn, or the hand
+/// alone (X88, ADR 0180).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RotateKind {
+    /// The hand's own angle: the rings turn the selection through whatever stands beside it.
+    Free,
+    /// The document's rules: the ring stops where another body does, and the release is refused where
+    /// it would put a body inside one.
+    Object,
+}
+
+impl RotateKind {
+    /// Which of the two turns a mode makes, or the free one where the mode is not a turn at all.
+    ///
+    /// A move has no use for it, and `Select` draws no gizmo, so the two answer the free turn: the
+    /// question is only ever asked by a ring drag.
+    pub(crate) fn of(mode: TransformMode) -> Self {
+        match mode {
+            TransformMode::ObjectRotate => Self::Object,
+            TransformMode::Select | TransformMode::Move | TransformMode::Object | TransformMode::Rotate => Self::Free,
+        }
+    }
+
+    /// Whether the document's bodies measure a turn of this kind.
+    pub(crate) const fn measured(self) -> bool {
+        matches!(self, Self::Object)
+    }
+}
+
 impl Target<'_> {
+    /// The rule a ring drag of this kind is measured by, or `None` when the hand turns alone.
+    ///
+    /// It is read once, when the drag starts, exactly as the move rule is: the document does not
+    /// change while the ring is held, so the preview and the release read one measurement (X88).
+    pub(crate) fn rotate_rule(&self) -> Option<model::RotateRule> {
+        self.rotate_kind.measured().then(|| self.project.rotate_rule(self.selection, Some(self.contact))).flatten()
+    }
+
     /// The movable nodes the active gizmo acts on, in selection order.
     pub(crate) fn move_targets(&self) -> Vec<MoveTarget> {
         move_targets(self.project, self.selection)
@@ -236,6 +280,21 @@ impl Target<'_> {
             drawables.extend(self.project.geometry_ids_under(target.node).unwrap_or_default());
         }
         drawables
+    }
+}
+
+/// What a stop names in a log, with the way the rule measured it.
+///
+/// The move and the turn both stop at a body, and a report that said only "blocked" would leave the
+/// reader to guess which one: the id, the kind and the bounds of the surface are the rule's own
+/// reading, so the line is the measurement rather than a second opinion (ADR 0170, X88).
+pub(crate) fn stop_text(stop: model::Stop) -> String {
+    match stop {
+        model::Stop::Floor => "Some(Floor)".to_owned(),
+        model::Stop::Node { id, kind, min, max } => format!(
+            "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
+            min.x, min.y, min.z, max.x, max.y, max.z
+        ),
     }
 }
 
@@ -337,10 +396,13 @@ pub(crate) fn commit_translation(
 /// The anchor is the last target: its stored pivot defines the centre exactly, and every other
 /// target is turned about the same world point. A node whose translation already sits on the centre
 /// keeps its translation bit-for-bit; every other translation is rounded to whole micrometres.
+/// `measured` is the drag's own answer: the object turn's release is refused where it would put a
+/// body inside another, while the free turn writes what it showed (ADR 0180, X88).
 pub(crate) fn commit_rotation(
     targets: &[MoveTarget],
     pivot_world: DVec3,
     rotation_world: DQuat,
+    measured: bool,
 ) -> Result<Option<PlacementCommit>, String> {
     if !rotation_world.is_finite() || (rotation_world.length() - 1.0).abs() > 1.0e-9 {
         return Err("the drag produced a non-finite rotation".to_owned());
@@ -380,7 +442,7 @@ pub(crate) fn commit_rotation(
             changes.push(PlacementChange { node: target.node, placement });
         }
     }
-    Ok(unchanged_or(changes, false))
+    Ok(unchanged_or(changes, measured))
 }
 
 /// Packs the changed nodes into a commit, or `None` when a drag ended where it started.
@@ -1235,6 +1297,7 @@ mod tests {
             selection,
             moves: MoveSettings::default(),
             move_kind: MoveKind::Free,
+            rotate_kind: RotateKind::Free,
         }
     }
 
@@ -1519,7 +1582,7 @@ mod tests {
         assert_eq!(pivot, anchor.start_local.transform_point(anchor.pivot_local));
         let turn = DQuat::from_axis_angle(DVec3::Z, std::f64::consts::FRAC_PI_2);
 
-        let commit = commit_rotation(&targets, pivot, turn).expect("valid").expect("a turn");
+        let commit = commit_rotation(&targets, pivot, turn, false).expect("valid").expect("a turn");
         assert_eq!(commit.changes.len(), 2);
         for (change, target) in commit.changes.iter().zip(&targets) {
             let before = target.parent.transform_point(target.start_local.translation());
@@ -1540,9 +1603,9 @@ mod tests {
         let targets = move_targets(&project, &[id(4), id(3)]);
 
         assert_eq!(commit_translation(&targets, DVec3::ZERO, true).expect("no error"), None);
-        assert_eq!(commit_rotation(&targets, DVec3::ZERO, DQuat::IDENTITY).expect("no error"), None);
+        assert_eq!(commit_rotation(&targets, DVec3::ZERO, DQuat::IDENTITY, false).expect("no error"), None);
         assert_eq!(commit_translation(&[], DVec3::X, true).expect("no error"), None);
-        assert_eq!(commit_rotation(&[], DVec3::ZERO, DQuat::from_rotation_z(0.5)).expect("no error"), None);
+        assert_eq!(commit_rotation(&[], DVec3::ZERO, DQuat::from_rotation_z(0.5), false).expect("no error"), None);
     }
 
     #[test]

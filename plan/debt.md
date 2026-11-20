@@ -16,6 +16,20 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
   of `app/src/directory_app.rs` then (ADR 0158).
 
+- `[gizmo]` A turn is bounded by the bodies around the selection and not by the workspace's floor, so a
+  ring swung far enough carries a piece below Z = 0 where a carry would have been held: the rotate rule
+  reads no `MoveSettings` and no floor (X88, ADR 0177). Give the turn the same bound when a maker turns
+  a piece through the bench.
+
+- `[gizmo]` A turn has no typed angle: the shared scrub field belongs to a translate drag, and a ring
+  drag answers the pointer alone (X88, ADR 0092). Add the field to the rotate gesture when a maker asks
+  to turn by a number.
+
+- `[gizmo]` A measured turn answers the *destination*, not the path (ADR 0166 read for a ring: the last
+  angle the rule grants is always a free placement, but a hand that drags more than half a revolution can
+  be granted an angle that swung the body through a neighbour on the way). Bisect the blocked interval
+  instead of the whole angle when a maker turns a door right round.
+
 - `[view-state]` The fill trims a hidden body by the box around it in the open product's frame, so a
   turned hidden part cuts a little more than it must (X73, ADR 0175). Trim by the body's own faces
   when a maker reports a shelf that is shorter than the void behind a leaned hidden wall.

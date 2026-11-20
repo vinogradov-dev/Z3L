@@ -523,10 +523,11 @@ mod tests {
                 Message::Move,
                 Message::Object,
                 Message::Rotate,
+                Message::ObjectRotate,
                 Message::CmdDuplicate,
                 Message::CmdDelete,
             ],
-            "a panel's menu: the eye, the padlock, the view entries and the four gestures, then its edits"
+            "a panel's menu: the eye, the padlock, the view entries and the five gestures, then its edits"
         );
     }
 
@@ -546,6 +547,7 @@ mod tests {
                 Message::Move,
                 Message::Object,
                 Message::Rotate,
+                Message::ObjectRotate,
                 Message::TreeAddChild,
                 Message::CmdDuplicate,
                 Message::CmdConvertToGroup,
@@ -578,6 +580,7 @@ mod tests {
                 Message::Move,
                 Message::Object,
                 Message::Rotate,
+                Message::ObjectRotate,
                 Message::CmdDuplicate,
                 Message::CmdDelete,
             ],
@@ -598,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn the_four_gestures_are_session_entries_of_a_node_menu() {
+    fn the_five_gestures_are_session_entries_of_a_node_menu() {
         // U113: the mode is the window's view state and writes no document, so the menu offers it
         // with no command behind it — an entry that names the mode, says what it does on hover and
         // is never refused, not even on a locked node, which a mode does not edit.
@@ -611,7 +614,7 @@ mod tests {
         assert_eq!(
             modes.iter().map(|entry| entry.action.clone()).collect::<Vec<_>>(),
             TransformMode::ALL.into_iter().map(NodeAction::Mode).collect::<Vec<_>>(),
-            "the menu offers the four in the band's order"
+            "the menu offers the five in the band's order"
         );
         for (entry, mode) in modes.iter().zip(TransformMode::ALL) {
             assert!(entry.id.is_none(), "a mode is view state, so it names no command");
@@ -622,9 +625,9 @@ mod tests {
     }
 
     #[test]
-    fn the_four_gestures_are_one_section_of_the_menu() {
-        // Four entries that read as three groups would put a separator between two moves made the
-        // same way: the mode band is one block, and the rows around it keep their own separators.
+    fn the_five_gestures_are_one_section_of_the_menu() {
+        // Five entries that read as groups would put a separator between two gestures made the same
+        // way: the mode band is one block, and the rows around it keep their own separators.
         let project = sample_project();
         let flags = ViewFlags::default();
         let entries = menu(&project, &flags, &[id(2)], Subject::Node(id(2)));
@@ -633,7 +636,7 @@ mod tests {
             .filter(|entry| matches!(entry.action, NodeAction::Mode(_)))
             .map(|entry| entry.section)
             .collect();
-        assert_eq!(sections, vec![true, false, false, false], "the band opens one section, not four");
+        assert_eq!(sections, vec![true, false, false, false, false], "the band opens one section, not five");
     }
 
     #[test]

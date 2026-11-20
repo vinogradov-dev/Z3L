@@ -1026,11 +1026,101 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
 }
 
+/// A board and a wall across its sweep, both boxes at the root: no furniture, so the turn is
+/// measured by the contact port on two bodies (X88).
+fn board_beside_a_wall() -> (model::Project, Id) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let root_id = project.root().id();
+    let place =
+        |x: i64, y: i64, z: i64| model::Placement::IDENTITY.with_translation(mm(x), mm(y), mm(z)).expect("a placement");
+    let cuboid = |size: (i64, i64, i64)| {
+        let half = [size.0 / 2, size.1 / 2, size.2 / 2];
+        model::Mesh::cuboid(half.map(|value| mm(-value)), half.map(mm)).expect("a box")
+    };
+    let board = project
+        .add_object(root_id, "Board", place(250, 10, 350), model::Geometry::Mesh(cuboid((500, 20, 700))))
+        .expect("a board");
+    project
+        .add_object(root_id, "Wall", place(0, 210, 350), model::Geometry::Mesh(cuboid((3000, 20, 700))))
+        .expect("a wall");
+    (project, board)
+}
+
+/// The screen point on the node's Z ring at 45 degrees, and the travel to the turn `turn` radians on.
+///
+/// The ring is the gizmo's own: the pivot of the anchor, `ring_factor` of the camera distance, in the
+/// plane the world Z axis turns in. The press sits at 45 degrees because the ring crosses its
+/// neighbours at the axes: there one point is two rings, and the grab would take whichever came first
+/// in the axis order.
+fn ring_drag(harness: &Harness, node: Id, turn: f64) -> (egui::Pos2, egui::Vec2) {
+    let document = harness.app.tabs.active();
+    let project = document.session.project();
+    let pivot = project.pivot_world(node).expect("a pivot");
+    let radius = document.camera().distance() * harness.app.settings.gizmo.ring_factor();
+    let rect = document.scene_rect().expect("a settled frame gives the scene a rectangle");
+    let at = |angle: f64| {
+        let offset = geom::DVec3::new(radius * angle.cos(), radius * angle.sin(), 0.0);
+        gizmo_math::screen_point(document.camera(), rect, pivot + offset).expect("the ring is on screen")
+    };
+    let start = std::f64::consts::FRAC_PI_4;
+    let (from, to) = (at(start), at(start + turn));
+    (from, to - from)
+}
+
+/// How far the node's own frame has turned about the world Z axis, in radians.
+fn turned_by(harness: &Harness, node: Id) -> f64 {
+    let rotation = harness.app.tabs.active().session.project().world_placement(node).expect("a frame").rotation();
+    2.0 * rotation.z.atan2(rotation.w)
+}
+
 #[test]
-fn each_of_the_four_gestures_answers_its_key_and_the_bar_prints_the_pair() {
+fn the_object_turn_stops_on_the_face_where_the_free_turn_passes_through() {
+    // X88 at the frame: one ring drag, two rules. The free turn takes the hand's angle and lets the
+    // board through the wall; the object turn is cut where the board's own face meets the wall's, and
+    // the release writes that smaller turn as one measured placement (ADR 0180, ADR 0179).
+    let (project, board) = board_beside_a_wall();
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut harness = Harness::with_session("frame-object-turn", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.tabs.active_mut().editor.select_node(Some(board));
+    harness.settle();
+
+    let turn = std::f64::consts::FRAC_PI_3;
+    let (from, delta) = ring_drag(&harness, board, turn);
+
+    harness.press(egui::Key::E, egui::Modifiers::NONE);
+    assert_eq!(harness.app.shell.mode, TransformMode::Rotate, "`E` arms the free turn");
+    let revision = harness.revision();
+    harness.drag(from, delta, egui::PointerButton::Primary);
+    let free = turned_by(&harness, board);
+    assert!((free - turn).abs() < 0.05, "the free turn keeps the hand's angle: {free}");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "and the release is one placement");
+    harness.app.tabs.active_mut().session.undo().expect("one undo step");
+
+    harness.press(egui::Key::E, egui::Modifiers::SHIFT);
+    assert_eq!(harness.app.shell.mode, TransformMode::ObjectRotate, "`Shift+E` arms the object turn");
+    harness.drag(from, delta, egui::PointerButton::Primary);
+    let measured = turned_by(&harness, board);
+    assert!(measured > 0.1, "the turn still makes headway: {measured}");
+    assert!(measured < free - 0.1, "and it stops short of the wall: {measured} against the hand's {turn}");
+    // The stopped turn is a placement the document accepts: the wall is a face, not an overlap.
+    let landed = harness.app.tabs.active().session.project().object(board).expect("the board").placement();
+    assert_eq!(
+        harness.app.tabs.active().session.project().resting_conflict(&[(board, landed)], Some(&contact_parry::Parry)),
+        None,
+        "the turn the ring showed is the turn the write takes"
+    );
+}
+
+#[test]
+fn each_of_the_five_gestures_answers_its_key_and_the_bar_prints_the_pair() {
     // U113: the mode is the window's view state, so a key arms it for the whole window and writes no
     // document; the band then prints the key beside the gesture it arms, which is what makes the
-    // four discoverable without the manual.
+    // five discoverable without the manual (X88 adds the shifted pair of the turn).
     let mut harness = Harness::new("frame-mode-keys");
     harness.settle();
     assert_eq!(harness.app.shell.mode, TransformMode::Select, "a window opens in Select");
@@ -1039,6 +1129,7 @@ fn each_of_the_four_gestures_answers_its_key_and_the_bar_prints_the_pair() {
         (egui::Key::W, egui::Modifiers::NONE, TransformMode::Move),
         (egui::Key::W, egui::Modifiers::SHIFT, TransformMode::Object),
         (egui::Key::E, egui::Modifiers::NONE, TransformMode::Rotate),
+        (egui::Key::E, egui::Modifiers::SHIFT, TransformMode::ObjectRotate),
         (egui::Key::Q, egui::Modifiers::NONE, TransformMode::Select),
     ] {
         harness.press(key, modifiers);

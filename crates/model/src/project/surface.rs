@@ -155,6 +155,22 @@ impl SurfaceBox {
         Some(Self { min: self.min + delta, max: self.max + delta, world, ..self })
     }
 
+    /// The same box turned rigidly by `turn` about the world point `pivot`, or `None` when either is
+    /// not a finite number.
+    ///
+    /// It is how a ring drag asks what the turn would put where: the box keeps its own frame, so a
+    /// turned board is measured as itself at the destination and not as the box around it (X88). The
+    /// world box around the turned box is rebuilt from the turned corners, exactly as
+    /// [`surface_box`] built the start one.
+    pub(crate) fn turned(self, turn: geom::DQuat, pivot: DVec3) -> Option<Self> {
+        if !turn.is_finite() || !pivot.is_finite() {
+            return None;
+        }
+        let translation = pivot + turn * (self.world.translation() - pivot);
+        let world = Placement::new(translation, turn * self.world.rotation()).ok()?;
+        surface_box(self.id, self.local_min, self.local_max, world, self.kind)
+    }
+
     /// Whether this box lies wholly inside `outer`, by their world boxes.
     ///
     /// A body inside a shell is a piece inside a case and a unit inside another is a nested product:

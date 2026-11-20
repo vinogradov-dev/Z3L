@@ -59,9 +59,7 @@
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use geom::DVec3;
-
-use geom::{Contact, Pose, Shared, overlap as overlaps};
+use geom::{Contact, DQuat, DVec3, Pose, Shared, overlap as overlaps};
 
 use super::contact_shape;
 use super::surface::{CONTACT_MM, Span, SurfaceBox, SurfaceKind, extent, separating_axes, surface_box};
@@ -114,6 +112,18 @@ impl MoveAxis {
 
 /// Every axis, for a drag the document has no rule about.
 const ALL_MOVE_AXES: [bool; 3] = [true, true, true];
+
+/// The asks one ring drag may make while it bisects a refused angle.
+///
+/// A turn of a full revolution is halved to [`TURN_RESOLUTION`] in twenty-three passes; the cap is
+/// what keeps a hostile angle from spinning, and it is past the point the bisection has settled.
+const MAX_TURN_STEPS: usize = 32;
+
+/// How near the bisection must come to the refusing angle, in radians.
+///
+/// A micrometre of a turn at the far end of a workshop: a five-metre board sweeps 0.005 mm in it,
+/// which is the document's own rounding and not a face (X88).
+const TURN_RESOLUTION: f64 = 1.0e-6;
 
 /// How far an object drag may go, and what stopped it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -313,6 +323,27 @@ impl Project {
             MoveAxes::Every => ALL_MOVE_AXES,
         };
         self.rule_of(&targets, axes, settings, contact)
+    }
+
+    /// The rule that measures a turn of `moving` about the anchor's pivot, or `None` when nothing
+    /// the selection holds can be carried.
+    ///
+    /// A ring drag turns the selection about one world point — the stored pivot of the last movable
+    /// node, which is the anchor the rotation commit uses too — so the rule is built from the same
+    /// movers and the same obstacles the move rule reads, and the whole turn is asked as one
+    /// placement before it is cut. Nothing is prepared here beyond the boxes: a body's shape is built
+    /// when a probe first reaches for it (X88, X90).
+    pub fn rotate_rule(&self, moving: &[Id], contact: Option<&dyn Contact>) -> Option<RotateRule> {
+        let targets = self.moved_targets(moving);
+        let movers = self.movers(&targets, contact);
+        if movers.is_empty() {
+            return None;
+        }
+        let pivot = self.pivot_world(*targets.last()?)?;
+        if !pivot.is_finite() {
+            return None;
+        }
+        Some(RotateRule { pivot, movers, obstacles: self.obstacles(&targets), contact: contact.map(Contact::handle) })
     }
 
     /// The rule that measures a drag of `targets` under the workspace's settings.
@@ -1147,6 +1178,141 @@ impl MoveRule {
     }
 }
 
+/// How far a ring drag may turn, and what stopped it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RotateLimit {
+    /// The signed angle the drag may turn by about its world axis, in radians.
+    ///
+    /// The sign is the drag's own: a turn of `-0.4` is the same ring turned the other way. The angle
+    /// is the largest one the document grants in that direction, so the preview drawn from it and the
+    /// placement released from it are one number (X88).
+    pub angle: f64,
+    /// What the turn stopped at, when a body stopped it before the hand did.
+    pub contact: Option<Stop>,
+}
+
+impl RotateLimit {
+    /// The turn that moves nothing, which is the answer to a drag the document refuses from its first
+    /// degree and to an axis that is not a direction.
+    const STILL: Self = Self { angle: 0.0, contact: None };
+}
+
+/// What one turn of a ring drag is measured against, taken once when the drag starts.
+///
+/// A turn is not a carry: a body swinging about a hinge sweeps through poses no translation reaches,
+/// and the world box around a turned board is not the board. So the rule asks the contact port for
+/// the body **at the turned pose** and measures the pair with the same [`Measured`] values the move
+/// rule and the write's guard use, which is what keeps a preview, a release and a refusal one answer
+/// (X88, ADR 0162, ADR 0179).
+///
+/// The document does not change while the ring is held, so the moved boxes, the bodies they carry and
+/// the surfaces that stay behind are read once. Nothing is stored in the document and nothing is
+/// mutated.
+#[derive(Clone, Debug)]
+pub struct RotateRule {
+    /// The world point every moved node turns about: the anchor's stored pivot (ADR 0026).
+    pivot: DVec3,
+    /// Every moved node's world box and its own body, where the drag started.
+    movers: Vec<Mover>,
+    /// Every surface the turn may come to rest inside, with the geometry each is measured by.
+    obstacles: Vec<Obstacle>,
+    /// The adapter the shapes are built by, kept for the pairs a frame actually reaches (X90).
+    contact: Option<Arc<dyn Contact>>,
+}
+
+impl RotateRule {
+    /// The world pivot the turn is measured about, in millimetres.
+    pub const fn pivot(&self) -> DVec3 {
+        self.pivot
+    }
+
+    /// The angle a turn about `axis` may make, and the body that stops it.
+    ///
+    /// The whole turn is asked first, so a place the document grants is taken as it is. Only a turn
+    /// the document refuses is bisected: the angle is halved until the last granted turn is found, a
+    /// couple of dozen asks that never touch the document, so a ring drag answers every frame without
+    /// building a shape again (X88).
+    pub fn limit(&self, axis: DVec3, angle: f64) -> RotateLimit {
+        let Some(axis) = axis.try_normalize() else {
+            return RotateLimit::STILL;
+        };
+        if !angle.is_finite() || angle == 0.0 {
+            return RotateLimit::STILL;
+        }
+        // The turn as one placement, like the move rule's destination: a ring the document grants
+        // whole is not cut up on the way to it.
+        if self.blocked_at(axis, angle).is_none() {
+            return RotateLimit { angle, contact: None };
+        }
+        // `low` is a turn the document grants and `high` one it refuses; the granted end is the
+        // answer, so the release writes a placement the write's guard accepts.
+        let mut low = 0.0;
+        let mut high = angle;
+        let mut contact = None;
+        for _ in 0..MAX_TURN_STEPS {
+            if (high - low).abs() <= TURN_RESOLUTION {
+                break;
+            }
+            let middle = (low + high) * 0.5;
+            match self.blocked_at(axis, middle) {
+                None => low = middle,
+                Some(stop) => {
+                    high = middle;
+                    contact = Some(stop);
+                }
+            }
+        }
+        RotateLimit { angle: low, contact }
+    }
+
+    /// The first part the turn would come to rest inside, for the log.
+    ///
+    /// It is [`RotateRule::limit`]'s predicate with a name attached, so the shell can say what stopped
+    /// the ring instead of leaving the reader to guess from the angle (ADR 0170, X88).
+    pub fn blocked_at(&self, axis: DVec3, angle: f64) -> Option<Stop> {
+        let axis = axis.try_normalize()?;
+        if !angle.is_finite() {
+            return None;
+        }
+        let turn = DQuat::from_axis_angle(axis, angle);
+        for mover in &self.movers {
+            let Some(turned) = mover.box_.turned(turn, self.pivot) else {
+                // A body that cannot be turned has no place to be: the answer names the body itself.
+                return Some(Stop::part(mover.box_));
+            };
+            let carried = mover.solid.as_ref().and_then(|solid| solid.turned(turn, self.pivot));
+            for obstacle in &self.obstacles {
+                if nested(turned, obstacle.box_, mover.product) {
+                    continue;
+                }
+                // A body lies inside its world box, so a pair whose boxes stand apart cannot touch:
+                // the coarse box is the cull and never the answer (X90, X88).
+                if !turned.overlaps_box(obstacle.box_) {
+                    continue;
+                }
+                let stood = Measured::new(mover.box_, mover.solid.clone());
+                let standing = obstacle.measured(self.contact.as_deref());
+                let landed = Measured::new(turned, carried.clone());
+                // The place the piece stands in is the deepest one it may keep, exactly as a carry
+                // reads it: a pair the document already holds overlapping is the maker's to repair
+                // and the turn has one way out and no way further in (X86, ADR 0178).
+                if !nested(mover.box_, obstacle.box_, mover.product)
+                    && landed.sunk(&standing) <= stood.sunk(&standing) + CONTACT_MM
+                {
+                    continue;
+                }
+                // The face and not the world box: a panel's own box turned is exact, and a body the
+                // port describes is its own surface — the reading the write's guard asks, so a turn
+                // the drag shows is a turn the release accepts (ADR 0162, ADR 0179).
+                if landed.meets(&standing) {
+                    return Some(Stop::part(obstacle.box_));
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Whether `node` is one of `targets` or sits below one of them.
 fn covered_by(project: &Project, node: Id, targets: &[Id]) -> bool {
     let mut current = Some(node);
@@ -1453,7 +1619,7 @@ fn blocking(axis: MoveAxis, sign: f64, moving: &SurfaceBox, obstacle: &SurfaceBo
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use geom::DVec3;
+    use geom::{DQuat, DVec3};
     use units::Degrees;
 
     use crate::fixtures::*;
@@ -2636,5 +2802,82 @@ mod tests {
             (400.0, Some(neighbour)),
             "turning frames off does not let a shell through another shell"
         );
+    }
+
+    /// The placement a turn about `pivot` gives the node that stands at `local`.
+    fn turned_from(local: Placement, pivot: DVec3, angle: f64, axis: DVec3) -> Placement {
+        let turn = DQuat::from_axis_angle(axis, angle);
+        Placement::new(pivot + turn * (local.translation() - pivot), turn * local.rotation()).expect("a placement")
+    }
+
+    #[test]
+    fn a_turn_of_a_door_into_a_wall_stops_on_its_face() {
+        // X88's own case: a door hinged at its corner, turned into the case it belongs to. The drag
+        // answers the angle it may make, names the wall that stops it, and the release writes a
+        // placement the write's guard accepts — the drag, the release and the refusal are one
+        // measurement (ADR 0180, ADR 0179).
+        let mut project = empty_project();
+        let door = block_object(&mut project, "Door", place((250.0, 10.0, 350.0)), (500.0, 20.0, 700.0));
+        // The hinge is the door's own bottom corner, which is the world origin: a pivot is not the
+        // node's origin and the turn reads it, exactly as the ring does (ADR 0026).
+        project
+            .set_node_pivot(door, PivotLocal::new(millimetres(-250), millimetres(-10), millimetres(-350)))
+            .expect("a pivot at the hinge");
+        let wall = block_object(&mut project, "Wall", place((0.0, 310.0, 350.0)), (3000.0, 20.0, 700.0));
+        let rule = project.rotate_rule(&[door], Some(&contact_parry::Parry)).expect("a rotate rule");
+        assert_eq!(rule.pivot(), DVec3::ZERO, "the rule turns about the ring's own centre");
+
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let stop = rule.limit(DVec3::Z, quarter);
+        assert!(stop.angle > 0.0 && stop.angle < quarter, "the turn into the wall is cut: {stop:?}");
+        assert_eq!(stop.contact.and_then(Stop::node), Some(wall), "and the wall is named");
+        // The door's far corner stands on the wall's face: 500 sin θ + 20 cos θ = 300.
+        let corner = DQuat::from_axis_angle(DVec3::Z, stop.angle) * DVec3::new(500.0, 20.0, 0.0);
+        assert!((corner.y - 300.0).abs() < 0.01, "the far corner meets the wall at 300: {corner:?}");
+
+        // The way out of the case is granted whole and nothing is in the way.
+        let away = rule.limit(DVec3::Z, -quarter);
+        assert_eq!(away.angle, -quarter, "a turn away from the wall is the hand's own");
+        assert_eq!(away.contact, None);
+
+        // The release reads the drag's own answer: the granted turn is written where one degree
+        // further is refused.
+        let start = project.object(door).expect("the door").placement();
+        let accepted = turned_from(start, DVec3::ZERO, stop.angle, DVec3::Z);
+        assert_eq!(
+            project.resting_conflict(&[(door, accepted)], Some(&contact_parry::Parry)),
+            None,
+            "the turn the drag showed is the turn the write takes"
+        );
+        let deeper = turned_from(start, DVec3::ZERO, stop.angle + 1.0_f64.to_radians(), DVec3::Z);
+        assert_eq!(
+            project.resting_conflict(&[(door, deeper)], Some(&contact_parry::Parry)).map(|resting| resting.standing),
+            Some(wall),
+            "a degree further is inside the wall, and the guard names it"
+        );
+    }
+
+    #[test]
+    fn a_turn_of_a_cone_reaches_further_than_the_box_around_it() {
+        // The rule asks the port for the body at the turned pose, so a cone tips over its own surface
+        // and not the corner its box would invent: measured against the same wall, the box stops the
+        // turn eight degrees early (X85, X88).
+        let mut project = empty_project();
+        let root = project.root().id();
+        let cone = crate::Primitive::cone(millimetres(100), Length::ZERO, millimetres(720), 32).expect("a cone");
+        let cone =
+            project.add_object(root, "Cone", place((0.0, 0.0, 0.0)), crate::Geometry::Primitive(cone)).expect("a cone");
+        let wall = block_object(&mut project, "Wall", place((410.0, 0.0, 250.0)), (20.0, 1000.0, 1500.0));
+
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let by_box = project.rotate_rule(&[cone], None).expect("a box rule");
+        let by_port = project.rotate_rule(&[cone], Some(&contact_parry::Parry)).expect("a measured rule");
+        let boxed = by_box.limit(DVec3::Y, quarter);
+        let measured = by_port.limit(DVec3::Y, quarter);
+        assert!(measured.angle > boxed.angle + 1.0_f64.to_radians(), "the cone beats its box: {measured:?}");
+        assert_eq!(measured.contact.and_then(Stop::node), Some(wall), "the wall stops the tip");
+        // The cone's own apex stands on the wall's face: 720 sin θ = 400.
+        let apex = DQuat::from_axis_angle(DVec3::Y, measured.angle) * DVec3::new(0.0, 0.0, 720.0);
+        assert!((apex.x - 400.0).abs() < 0.01, "the tip meets the wall at 400: {apex:?}");
     }
 }

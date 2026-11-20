@@ -23,7 +23,7 @@
     clippy::unreachable
 )]
 
-use geom::{Contact, DVec3, Impact, Penetration, Pose, Shape, Shared, Solid};
+use geom::{Contact, DQuat, DVec3, Impact, Penetration, Pose, Shape, Shared, Solid};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -76,6 +76,18 @@ impl Solid for Body {
             return None;
         }
         let pose = ParryPose::from_parts(self.pose.translation + vector(delta), self.pose.rotation);
+        Some(Arc::new(Body { shape: self.shape.clone(), pose }) as Shared)
+    }
+
+    fn turned(&self, turn: DQuat, pivot: DVec3) -> Option<Shared> {
+        if !turn.is_finite() || !pivot.is_finite() {
+            return None;
+        }
+        // The body swings about the world pivot: its centre travels along the arc the turn makes of
+        // the line from the pivot, and its own frame is turned by the same rotation. The shape is
+        // shared, so a ring drag that asks once a frame re-poses and never rebuilds (X88).
+        let centre = pivot + turn * (point(self.pose.translation) - pivot);
+        let pose = ParryPose::from_parts(vector(centre), parry_rotation(turn) * self.pose.rotation);
         Some(Arc::new(Body { shape: self.shape.clone(), pose }) as Shared)
     }
 
@@ -171,8 +183,12 @@ fn point(value: Vec3) -> DVec3 {
 /// the workspace's, so the rotation crosses this boundary as four numbers rather than as a type. The
 /// conversion is exact for a unit quaternion.
 fn parry_pose(pose: Pose) -> ParryPose {
-    let rotation = pose.rotation;
-    ParryPose::from_parts(vector(pose.translation), Rot3::from_xyzw(rotation.x, rotation.y, rotation.z, rotation.w))
+    ParryPose::from_parts(vector(pose.translation), parry_rotation(pose.rotation))
+}
+
+/// A Z3L rotation as parry's own, across the same `glam` boundary [`parry_pose`] crosses.
+fn parry_rotation(rotation: DQuat) -> Rot3 {
+    Rot3::from_xyzw(rotation.x, rotation.y, rotation.z, rotation.w)
 }
 
 #[cfg(test)]
@@ -276,6 +292,35 @@ mod tests {
         assert_eq!(a.travel(&*b, DVec3::NEG_X), None, "the other way is clear");
         // The heading is a heading: a vector twice as long names the same touch.
         assert_eq!(a.travel(&*b, DVec3::X * 7.0).map(|mm| mm.round()), Some(200.0));
+    }
+
+    #[test]
+    fn a_body_turned_about_a_pivot_sweeps_where_it_really_goes() {
+        // X88's reading: a board hinged at its own corner. Standing at the pivot and turned a quarter
+        // turn, its far end is where the turn puts it, and a ball in the way is met by the board's own
+        // face and not by the box around it.
+        let mut points = Vec::new();
+        for x in [0.0, 200.0] {
+            for y in [-10.0, 10.0] {
+                for z in [-5.0, 5.0] {
+                    points.push(DVec3::new(x, y, z));
+                }
+            }
+        }
+        let board = prepared(&Shape::convex(points).expect("a board is a convex shape"), Pose::IDENTITY);
+        let quarter = DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2);
+        let turned = board.turned(quarter, DVec3::ZERO).expect("a turn about the corner");
+        let (low, high) = turned.bounds();
+        assert!((low.x + 10.0).abs() < 1.0e-9 && (high.x - 10.0).abs() < 1.0e-9, "{low:?}..{high:?}");
+        assert!(low.y.abs() < 1.0e-9 && (high.y - 200.0).abs() < 1.0e-9, "the board now runs up +Y: {low:?}..{high:?}");
+
+        // A block standing 300 mm up the sweep is met by the board's own end.
+        let block = prepared(&cube(100.0), at(0.0, 300.0, 0.0));
+        let travel = board.travel(&*block, DVec3::Y).expect("the board's end meets the block");
+        assert!((travel - 240.0).abs() < 1.0e-6, "the board's end is 200 mm out and the block begins at 250: {travel}");
+        // At the turned pose the board's end is 50 mm short of the block, so the cast is 50 mm.
+        let rest = turned.travel(&*block, DVec3::Y).expect("the turned board still meets the block");
+        assert!((rest - 50.0).abs() < 1.0e-6, "the turned board ends at y = 200: {rest}");
     }
 
     #[test]

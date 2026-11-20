@@ -48,7 +48,7 @@ use scene::{Camera, MAX_DISTANCE_MM};
 use crate::gizmo_math::{
     Axis, CarryPlane, HandleSpec, MoveKind, MoveTarget, PlacementCommit, Preview, PreviewKey, Target,
     commit_translation, dominant_axis, hit_axis, named_axis, paint_axis_handles, planar, ray_to, screen_point,
-    travel_frame,
+    stop_text, travel_frame,
 };
 
 /// The smallest travel, in points, that names an axis.
@@ -1025,16 +1025,6 @@ fn constrained_distance(rule: Option<&MoveRule>, axis: Axis, distance: f64) -> (
 /// is the one the one-axis carry takes, so both tools stop at the same distance.
 /// What stopped a drag, written as the log's own field: the part with its kind and world box, or the
 /// workspace's floor, which has neither (X70, X87, ADR 0170, ADR 0177).
-fn stop_text(stop: model::Stop) -> String {
-    match stop {
-        model::Stop::Floor => "Some(Floor)".to_owned(),
-        model::Stop::Node { id, kind, min, max } => format!(
-            "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
-            min.x, min.y, min.z, max.x, max.y, max.z
-        ),
-    }
-}
-
 fn bounded(delta: DVec3) -> DVec3 {
     let inside = |value: f64| value.clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
     DVec3::new(inside(delta.x), inside(delta.y), inside(delta.z))

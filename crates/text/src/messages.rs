@@ -196,6 +196,11 @@ messages! {
         "Деталь в руке: указатель её двигает, щелчок ставит, Esc возвращает"
     ],
     RotateHint = ["Turn the selection about its pivot", "Поворачивать выделение вокруг пивота"],
+    ObjectRotate = ["Turn", "Поворот"],
+    ObjectRotateHint = [
+        "Turn a body about its pivot: the ring stops where another body stops it",
+        "Поворачивать тело вокруг пивота: кольцо останавливается там, где его останавливает другое тело"
+    ],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],
     MeshEditStatusFew = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершины"],
     MeshEditStatusMany = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершин"],
