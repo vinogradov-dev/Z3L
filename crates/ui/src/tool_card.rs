@@ -410,6 +410,10 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
 }
 
 /// The tool's ✓ and ✕, when its commit is the pair; the words are the tool's own.
+///
+/// The cross is `actions::dismiss`, which the style guide gives to closing a surface, and not
+/// `actions::cancel`, the back arrow: a card's ✕ drops the preview and closes the card, and a plain
+/// left arrow beside a check reads as *back* (ADR 0119 names the pair ✓ and ✕).
 fn pair_ui(ui: &mut Ui, commit: ToolCommit, outcome: &mut ToolOutcome, lang: crate::Lang) {
     let ToolCommit::Pair { apply, cancel } = commit else {
         return;
@@ -417,7 +421,7 @@ fn pair_ui(ui: &mut Ui, commit: ToolCommit, outcome: &mut ToolOutcome, lang: cra
     if icons::icon_button(ui, icons::actions::CONFIRM, apply.text(lang)).clicked() {
         outcome.action = Some(ToolAction::Apply);
     }
-    if icons::icon_button(ui, icons::actions::CANCEL, cancel.text(lang)).clicked() {
+    if icons::icon_button(ui, icons::actions::DISMISS, cancel.text(lang)).clicked() {
         outcome.action = Some(ToolAction::Cancel);
     }
 }

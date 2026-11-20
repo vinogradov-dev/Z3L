@@ -1147,6 +1147,35 @@ fn each_of_the_five_gestures_answers_its_key_and_the_bar_prints_the_pair() {
 }
 
 #[test]
+fn the_tool_card_stays_where_it_opened_so_the_hand_reaches_it() {
+    // U115: the card is the only surface that finishes a draft and applies a contour edit, so it has
+    // to be reachable. A card anchored to the pointer every frame could never be reached, because the
+    // hand that chases it is what moves it: the owner saw exactly that. It opens where the hand was
+    // and then stays, and the hand walks onto it.
+    let (session, _object) = one_sketch_path();
+    let mut harness = Harness::with_session("frame-card-reach", session);
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let opened = harness.app.tabs.active().tool_card_rect().expect("the draft draws its card");
+    let mut at = scene.center() + egui::vec2(120.0, 0.0);
+    for _ in 0..16 {
+        at += egui::vec2(6.0, 6.0);
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        if opened.contains(at) {
+            break;
+        }
+    }
+    let now = harness.app.tabs.active().tool_card_rect().expect("the card is still up");
+    assert_eq!(now, opened, "the card stays where it opened instead of following the hand");
+    let pointer = harness.ctx.input(|input| input.pointer.hover_pos()).expect("the frame has a pointer");
+    assert!(now.contains(pointer), "the hand reaches the card it was chasing: {pointer:?} is not in {now:?}");
+}
+
+#[test]
 fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
     // U115: the status bar's *Finish*, *Apply*, *Cancel* and the along/free switch are the armed
     // tool's card — the one row that names the tool and holds its two buttons. The card writes

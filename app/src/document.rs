@@ -335,11 +335,11 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The point the tool card hangs from, frozen while the pointer is on the card itself.
+    /// The point the tool card hangs from, kept for as long as the card is up.
     ///
-    /// A card that follows the pointer would move away from the hand reaching for its field: the
-    /// anchor is the last point in the scene, and it is kept while the pointer is over the card
-    /// (ADR 0119).
+    /// A card that followed the pointer could never be reached, because the hand that chases it is
+    /// what moves it: the card opens where the hand was and stays there until the tool ends, so its
+    /// fields and its two buttons are within reach (ADR 0119, U115).
     tool_card_anchor: Option<egui::Pos2>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
@@ -1585,7 +1585,7 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
-        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        let card_anchor = self.card_anchor(Some(pointer));
         // The point under the pointer names the cell. A pointer that names none — the hand left the
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
         // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
@@ -1999,20 +1999,13 @@ impl Document {
     /// it, and a number that leaves the field's range is refused by the field itself, so the preview
     /// keeps the last height the document could hold. A niche's two gaps draw the same card from
     /// `update_fill`, and the inspector draws the same rows from the same draft.
-    fn show_tool_card(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport: egui::Rect,
-        pointer: Option<egui::Pos2>,
-        card_before: Option<egui::Rect>,
-        opacity: u32,
-    ) {
+    fn show_tool_card(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, pointer: Option<egui::Pos2>, opacity: u32) {
         let Some(mut view) = self.card_view() else {
             // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
             // — and the rectangle is not this path's to clear.
             return;
         };
-        let anchor = self.card_anchor(pointer, card_before);
+        let anchor = self.card_anchor(pointer);
         // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
         // a click; the flag is cleared by the read so the field never holds the focus against the
         // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
@@ -2025,20 +2018,17 @@ impl Document {
         self.apply_tool_outcome(ui.ctx(), reported);
     }
 
-    /// The point the card hangs from: the pointer, or the last scene point while the hand is on the
-    /// card.
+    /// The point the card hangs from: where the hand was when the card opened, and nothing else.
     ///
-    /// A card that followed the pointer would slide out from under the hand reaching for its field,
-    /// so the anchor is frozen across the whole time the pointer is inside the card's rectangle. It
-    /// is the same rule `egui` applies to a tooltip and the one the context menu relies on: a
-    /// floating surface must not move while it is being used.
-    fn card_anchor(&mut self, pointer: Option<egui::Pos2>, card_before: Option<egui::Rect>) -> egui::Pos2 {
-        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
-        if card_before.is_some_and(|card| card.contains(pointer))
-            && let Some(anchor) = self.tool_card_anchor
-        {
+    /// A card that followed the pointer would slide away from the hand reaching for its field — and
+    /// a hand can never catch a surface that moves with it — so the anchor is taken once, when the
+    /// card first draws, and kept until the card closes. It is the rule `egui` applies to a tooltip
+    /// and the one the context menu relies on: a floating surface must not move while it is used.
+    fn card_anchor(&mut self, pointer: Option<egui::Pos2>) -> egui::Pos2 {
+        if let Some(anchor) = self.tool_card_anchor {
             return anchor;
         }
+        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
         self.tool_card_anchor = Some(pointer);
         pointer
     }
@@ -2401,6 +2391,11 @@ impl Document {
         // which is the one on screen while the card stays open. The plates of the point being placed
         // are the same kind of surface: a press on a number is the number's, never a point (ADR 0126).
         let card_before = self.tool_card_rect;
+        // The card's anchor lives as long as the card does: a frame with no card behind it forgets
+        // where the last one opened, so the next card appears at the hand that armed its tool.
+        if card_before.is_none() {
+            self.tool_card_anchor = None;
+        }
         let pointer_on_chrome = dismiss_press
             || pointer.is_some_and(|pointer| {
                 chrome.covers(pointer)
@@ -3343,7 +3338,7 @@ impl Document {
             Some(ClusterAction::OpenSettings) => shell.open_settings = true,
             None => {}
         }
-        self.show_tool_card(ui, content, pointer, card_before, opacity);
+        self.show_tool_card(ui, content, pointer, opacity);
         self.show_draft_menu(ui, content, opacity);
         self.paint_view_frames(ui, content, &regions);
         self.show_context_menu(ui, content, opacity);
