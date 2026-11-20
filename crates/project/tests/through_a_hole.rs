@@ -12,7 +12,10 @@
 use std::path::PathBuf;
 
 use geom::DVec3;
-use model::{Container, Geometry, Id, Mesh, MoveAxis, MoveSettings, Placement, Primitive, Project};
+use model::{
+    ClassCode, Container, Envelope, Geometry, Id, Mesh, MoveAxis, MoveSettings, Placement, Primitive, Project, Sight,
+    SurfaceKind,
+};
 use project::SceneFile;
 use units::Length;
 
@@ -95,6 +98,32 @@ fn through_a_hole() -> Project {
     project
 }
 
+/// A case 600 x 600 x 720 mm with the plate across its middle and the hole at its centre.
+///
+/// A probe needs a face behind the hole: inside a product the envelope's own floor is that face, which
+/// is what the free space of a piece of furniture is bounded by (ADR 0099).
+fn plate_in_a_case() -> (Project, Id) {
+    let root = Container::new(Id::new(1).expect("an id"), "A case with a hole", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let root_id = project.root().id();
+    let envelope = Envelope::new(millimetres(600), millimetres(600), millimetres(720)).expect("an envelope");
+    let product = project
+        .add_product(root_id, "Case", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+        .expect("the case");
+    project
+        .add_object(
+            product,
+            "Plate with a hole",
+            Placement::IDENTITY
+                .with_translation(millimetres(300), millimetres(300), millimetres(300))
+                .expect("a place"),
+            Geometry::Mesh(plate_with_a_hole(400.0, 140.0, 10.0)),
+        )
+        .expect("the plate");
+    project.validate().expect("a valid scene");
+    (project, product)
+}
+
 /// The ball's id, by name.
 fn ball(project: &Project) -> Id {
     project
@@ -139,4 +168,31 @@ fn the_scene_carries_a_ball_through_the_hole_and_no_further_than_a_face() {
     assert!(blocked.distance_mm > drop.z, "the box around the plate stops the ball above the hole");
     assert_eq!(through.contact, Some(model::Stop::Floor), "and what stops the real body is the floor");
     assert!(blocked.contact.and_then(model::Stop::node).is_some(), "the box names the plate");
+}
+
+#[test]
+fn a_probe_crosses_the_hole_and_stops_at_the_floor_behind_it() {
+    // X92: the probe asks the port only for a body the boxes cannot describe. A plate with a hole is
+    // exactly that body, so a ray down the hole crosses the plate and meets the case's floor, where
+    // the box around the plate stops it on a face the maker cannot see (ADR 0181).
+    let (project, _case) = plate_in_a_case();
+    let centre = DVec3::new(300.0, 300.0, 450.0);
+    let by_box = project.probe(centre, -DVec3::Z, Sight::none(), None).expect("the box around the plate");
+    assert_eq!(by_box.distance_mm, 145.0, "the plate's top face stands at 305");
+    let through = project
+        .probe(centre, -DVec3::Z, Sight::none(), Some(&contact_parry::Parry))
+        .expect("the ray crosses the hole and meets the floor");
+    assert_eq!(through.distance_mm, 450.0, "the case's floor is at z = 0");
+    assert_eq!(through.hit.kind, SurfaceKind::Envelope, "and what it meets is the envelope, not the plate");
+    assert_eq!(through.face.normal, DVec3::Z, "the floor faces back up the ray");
+
+    // Beside the hole the plate's own surface is the face the box describes, so the port moves nothing:
+    // the two readings of one board are one number, which is what a cell cut into boards needs.
+    let beside = DVec3::new(150.0, 300.0, 450.0);
+    let by_box = project.probe(beside, -DVec3::Z, Sight::none(), None).expect("the plate beside the hole");
+    let by_port = project
+        .probe(beside, -DVec3::Z, Sight::none(), Some(&contact_parry::Parry))
+        .expect("the same face through the port");
+    assert_eq!(by_port, by_box, "an ordinary face is measured by the box it already had");
+    assert_eq!(by_port.hit.kind, SurfaceKind::Body, "and the plate is still what the ray stops at");
 }

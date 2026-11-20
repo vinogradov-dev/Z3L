@@ -16,9 +16,21 @@
 //! - anything this module cannot describe — a constructive body, a path, a mesh larger than the port's
 //!   own caps — answers `None`, and the caller keeps the world-box reading it had. A fallback that
 //!   measures less precisely is honest; a shape invented from a tessellation is not.
+//!
+//! Two callers want two different things from that answer. A drag asks for the body's own surface
+//! wherever the port can build one ([`node_shape`], [`body_shape`]). A probe asks only for the surface
+//! its box cannot describe ([`shape_beyond_box`]): it is cut into boards, so a plane the box already
+//! answers must not move by the port's rounding (X92, ADR 0181).
 use geom::{DVec3, MAX_CONVEX_POINTS, MAX_MESH_TRIANGLES, MAX_MESH_VERTICES, Shape};
 
 use crate::{Geometry, Id, Mesh, Primitive, Project};
+
+/// Slack on comparing a point of a body's own surface with the box the document keeps for it, in
+/// millimetres.
+const BOX_SLACK_MM: f64 = 1.0e-6;
+
+/// The share by which a triangle skin's own area may differ from its box's and still be that box.
+const BOX_AREA_SLACK: f64 = 1.0e-6;
 
 /// The shape of one node's own surface in its local frame, in millimetres, or `None` when the box
 /// around it is the answer.
@@ -50,6 +62,124 @@ pub(crate) fn box_between(min: DVec3, max: DVec3) -> Option<Shape> {
         }
     }
     Shape::convex(corners).ok()
+}
+
+/// The body's own surface when the box around it cannot describe that surface, and `None` when the
+/// box is the honest reading.
+///
+/// The probe is not a drag. A cell is cut into boards, so a plane a rounding moves is a silent defect
+/// in the part made from it, while a box that stands where a hole or a curved side is stops a ray at
+/// a wall the maker cannot see: measured against the bodies of an ordinary scene the port's ray moved
+/// an ordinary cell's plane by rounding (X90, ADR 0181). So the two readings are split by the body:
+/// a surface the box *is* — a panel, a cuboid, a shell — is measured by that box to the micrometre,
+/// and the port answers only for a surface the box cannot describe, one that leaves a hole in itself
+/// or never reaches the corners of its box: a plate with an opening, a ball, a cone (X92).
+///
+/// The decision is taken once, where the shape is built, and never per ray. A shape that reaches
+/// outside the box the caller keeps is left out too: the probe asks the box first, so the port's body
+/// has to lie inside the box for that reading to be the near one.
+pub(crate) fn shape_beyond_box(geometry: &Geometry, local_min: DVec3, local_max: DVec3) -> Option<Shape> {
+    let shape = geometry_shape(geometry)?;
+    let (low, high) = shape.bounds()?;
+    if !(0..3).all(|axis| low[axis] >= local_min[axis] - BOX_SLACK_MM && high[axis] <= local_max[axis] + BOX_SLACK_MM) {
+        return None;
+    }
+    (!describes_box(&shape, local_min, local_max)).then_some(shape)
+}
+
+/// Whether the shape's own surface is exactly the surface of the box between `min` and `max`.
+///
+/// Only two bodies can answer yes, and both are answered exactly: a hull whose points are the box's
+/// eight corners, and a triangle skin that covers the box's six faces once and nothing else. A box
+/// with a flattened side is not one.
+fn describes_box(shape: &Shape, min: DVec3, max: DVec3) -> bool {
+    if !min.is_finite() || !max.is_finite() || (0..3).any(|axis| max[axis] - min[axis] <= BOX_SLACK_MM) {
+        return false;
+    }
+    match shape {
+        Shape::Convex(points) => is_box_hull(points, min, max),
+        Shape::Mesh { vertices, triangles } => is_box_skin(vertices, triangles, min, max),
+    }
+}
+
+/// Whether the points are the box's eight corners, one each: their hull is the box itself.
+fn is_box_hull(points: &[DVec3], min: DVec3, max: DVec3) -> bool {
+    if points.len() != 8 {
+        return false;
+    }
+    let mut seen = 0u8;
+    for point in points {
+        let Some(corner) = box_corner(*point, min, max) else {
+            return false;
+        };
+        let bit = 1u8 << corner;
+        if seen & bit != 0 {
+            return false;
+        }
+        seen |= bit;
+    }
+    seen == u8::MAX
+}
+
+/// Which corner of the box `point` is, as three bits from X to Z, or `None` when it is no corner.
+fn box_corner(point: DVec3, min: DVec3, max: DVec3) -> Option<u8> {
+    let mut corner = 0u8;
+    for axis in 0..3 {
+        if (point[axis] - min[axis]).abs() <= BOX_SLACK_MM {
+            continue;
+        }
+        if (point[axis] - max[axis]).abs() <= BOX_SLACK_MM {
+            corner |= 1u8 << axis;
+            continue;
+        }
+        return None;
+    }
+    Some(corner)
+}
+
+/// Whether a triangle skin is the box's own skin.
+///
+/// Every triangle has to lie in one of the six faces, and the whole area has to equal the box's own:
+/// less and the surface leaves a hole, more and something is laid on top of itself. A point outside
+/// the box would meet neither test and is refused first.
+fn is_box_skin(vertices: &[DVec3], triangles: &[[u32; 3]], min: DVec3, max: DVec3) -> bool {
+    let size = max - min;
+    let expected = 2.0 * (size.x * size.y + size.y * size.z + size.z * size.x);
+    if triangles.is_empty() || !expected.is_finite() || expected <= 0.0 {
+        return false;
+    }
+    let mut area = 0.0;
+    for triangle in triangles {
+        let [a, b, c] = triangle.map(|index| vertices.get(index as usize).copied());
+        let (Some(a), Some(b), Some(c)) = (a, b, c) else {
+            return false;
+        };
+        if !in_box(a, min, max) || !in_box(b, min, max) || !in_box(c, min, max) || !on_one_face(a, b, c, min, max) {
+            return false;
+        }
+        let twice = (b - a).cross(c - a).length();
+        if !twice.is_finite() {
+            return false;
+        }
+        area += twice * 0.5;
+    }
+    (area - expected).abs() <= expected * BOX_AREA_SLACK
+}
+
+/// Whether `point` lies inside the box, allowing the micrometre a stored coordinate is rounded to.
+fn in_box(point: DVec3, min: DVec3, max: DVec3) -> bool {
+    (0..3).all(|axis| point[axis] >= min[axis] - BOX_SLACK_MM && point[axis] <= max[axis] + BOX_SLACK_MM)
+}
+
+/// Whether all three points lie on one face of the box.
+fn on_one_face(a: DVec3, b: DVec3, c: DVec3, min: DVec3, max: DVec3) -> bool {
+    (0..3).any(|axis| {
+        [min[axis], max[axis]].into_iter().any(|side| {
+            (a[axis] - side).abs() <= BOX_SLACK_MM
+                && (b[axis] - side).abs() <= BOX_SLACK_MM
+                && (c[axis] - side).abs() <= BOX_SLACK_MM
+        })
+    })
 }
 
 /// The shape of a geometry payload, or `None` when only the geometry kernel could describe it.
@@ -297,5 +427,52 @@ mod tests {
         );
         let boxed = super::box_between(DVec3::ZERO, DVec3::splat(10.0)).expect("a box");
         assert_eq!(bounds(&boxed), (DVec3::ZERO, DVec3::splat(10.0)));
+    }
+
+    #[test]
+    fn the_box_is_the_answer_for_a_body_it_describes_and_the_port_for_one_it_cannot() {
+        // X92: the probe reads the box wherever the box *is* the body, so an ordinary cell keeps the
+        // planes it always had; the port answers only where the box would put a wall the maker cannot
+        // see — in a hole or in the empty corner beside a ball.
+        let cube = Mesh::cuboid([Length::ZERO; 3], [millimetres(100); 3]).expect("a cube");
+        assert!(
+            super::shape_beyond_box(&Geometry::Mesh(cube), DVec3::ZERO, DVec3::splat(100.0)).is_none(),
+            "a cuboid is its box"
+        );
+        let ball = Geometry::Primitive(Primitive::sphere(millimetres(50), 16, 8).expect("a ball"));
+        let shape = super::shape_beyond_box(&ball, DVec3::splat(-50.0), DVec3::splat(50.0))
+            .expect("a ball never reaches the corners of its box");
+        assert!(matches!(shape, geom::Shape::Convex(_)), "the ball is measured by its own surface");
+        let dented = extruded(&[(0.0, 0.0), (100.0, 0.0), (100.0, 40.0), (40.0, 40.0), (40.0, 100.0), (0.0, 100.0)]);
+        assert!(
+            matches!(
+                super::shape_beyond_box(&Geometry::Mesh(dented), DVec3::ZERO, DVec3::new(100.0, 100.0, 20.0)),
+                Some(geom::Shape::Mesh { .. })
+            ),
+            "a dent leaves a corner of the box empty"
+        );
+    }
+
+    #[test]
+    fn a_skin_that_leaves_a_hole_is_not_the_box_it_spans() {
+        // The plate with a hole of the scene fixture is this case: its own surface covers five sixths
+        // of the box around it, so the box is not the answer.
+        let cube = Mesh::cuboid([Length::ZERO; 3], [millimetres(100); 3]).expect("a cube");
+        let vertices: Vec<DVec3> = cube
+            .positions()
+            .iter()
+            .map(|point| DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), point[2].millimetres_f64()))
+            .collect();
+        let mut triangles: Vec<[u32; 3]> = Vec::new();
+        for face in cube.faces() {
+            let Some(first) = face.first().copied() else { continue };
+            for window in face.windows(3) {
+                triangles.push([first, window[1], window[2]]);
+            }
+        }
+        let (min, max) = (DVec3::ZERO, DVec3::splat(100.0));
+        assert!(super::is_box_skin(&vertices, &triangles, min, max), "a closed box is its own skin");
+        triangles.pop();
+        assert!(!super::is_box_skin(&vertices, &triangles, min, max), "a triangle short is a hole");
     }
 }

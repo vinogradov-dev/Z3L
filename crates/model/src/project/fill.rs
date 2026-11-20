@@ -939,8 +939,8 @@ impl Project {
         }
         let mut surfaces = Vec::new();
         self.body_surfaces(&self.root, &mut surfaces, 1, Sight::none());
-        surfaces.retain(|surface| sight.hides(self, surface.id));
-        surfaces
+        surfaces.retain(|surface| sight.hides(self, surface.box_.id));
+        surfaces.into_iter().map(|surface| surface.box_).collect()
     }
 }
 

@@ -20,10 +20,16 @@
 //!
 //! Both are pure queries: no session, no renderer, no document write. The surfaces are the same
 //! boxes the object move rule measures against (`super::surface`), so the tool that fills a
-//! niche and the tool that drags a piece cannot disagree about where a surface is.
+//! niche and the tool that drags a piece cannot disagree about where a surface is. Where the box *is*
+//! the body — a panel, a cuboid, a shell — the probe reads that box, which is exact to the micrometre;
+//! only a body the box cannot describe, one whose own surface leaves a hole or never reaches the
+//! corners of its box, is asked of the contact port (X92, ADR 0181).
 
-use geom::{Contact, DVec2, DVec3, Region};
+use std::sync::OnceLock;
 
+use geom::{Contact, DVec2, DVec3, Pose, Region, Shared};
+
+use super::contact_shape;
 use super::surface::{FaceHit, SurfaceBox, SurfaceKind, surface_box};
 use crate::tree::object_bounds_mm;
 use crate::*;
@@ -220,11 +226,76 @@ impl Niche {
 }
 
 /// The surfaces one point is measured against.
-struct Surroundings {
+struct Surroundings<'a> {
     /// The innermost envelope the point sits in, measured as an envelope rather than a shell.
     own: Option<(Id, SurfaceBox)>,
     /// Every other surface a ray can stop at: the bodies and the other products' shells.
-    surfaces: Vec<SurfaceBox>,
+    surfaces: Vec<Surface<'a>>,
+}
+
+/// One surface a probe may stop at, and the body behind it when the box cannot describe that body.
+///
+/// A panel, a product's envelope and a product's shell carry no geometry at all: the box *is* the
+/// body, and the probe answers from it to the micrometre, which is what a cell cut into boards needs
+/// (X92, ADR 0181). A body is built when a ray of one question first reaches for it and is then shared
+/// by every other ray of that question, so a scene of a few hundred bodies builds only the handful a
+/// probe could actually meet.
+pub(super) struct Surface<'a> {
+    /// The box the document keeps for this surface: the coarse reading every ray starts from.
+    pub(super) box_: SurfaceBox,
+    /// The geometry the body's own surface is built from, when the box may not describe it.
+    geometry: Option<&'a Geometry>,
+    /// The body the contact port measures, once a ray has asked for it.
+    ///
+    /// `None` inside means the box was the answer after all: no adapter, or a surface the box *is*.
+    exact: OnceLock<Option<Shared>>,
+}
+
+impl<'a> Surface<'a> {
+    /// A surface whose own body is the adapter's to measure.
+    const fn body(box_: SurfaceBox, geometry: &'a Geometry) -> Self {
+        Self { box_, geometry: Some(geometry), exact: OnceLock::new() }
+    }
+
+    /// A surface the box describes: a panel, an envelope, another product's shell.
+    const fn boxed(box_: SurfaceBox) -> Self {
+        Self { box_, geometry: None, exact: OnceLock::new() }
+    }
+
+    /// The face of this surface a ray meets, in world millimetres.
+    ///
+    /// The box answers first, because a body lies inside its box: a ray whose box it misses cannot meet
+    /// the body at all. A surface whose own surface is not that box is then asked of the port, and a
+    /// ray the body misses — down a hole, past the corner of a ball — meets no face, where the box
+    /// would have answered with a wall the maker cannot see.
+    fn face_hit(&self, point: DVec3, direction: DVec3, contact: Option<&dyn Contact>) -> Option<FaceHit> {
+        let boxed = self.box_.face_hit(point, direction)?;
+        let Some(body) = self.exact_body(contact) else {
+            return Some(boxed);
+        };
+        let impact = body.ray(point, direction)?;
+        if !(impact.distance_mm.is_finite() && impact.point.is_finite() && impact.normal.is_finite()) {
+            return None;
+        }
+        // The axis is the box's own face, which the broad phase has already named: a body's own face
+        // is not one of the box's six and this field is the box's reading of the surface.
+        Some(FaceHit { distance: impact.distance_mm, point: impact.point, normal: impact.normal, axis: boxed.axis })
+    }
+
+    /// The body the adapter measures this surface as, or `None` when the box is the honest reading.
+    ///
+    /// The decision is the shape builder's ([`contact_shape::shape_beyond_box`]) and it is taken once,
+    /// where the shape is built: a surface the box describes keeps the reading it always had.
+    fn exact_body(&self, contact: Option<&dyn Contact>) -> Option<Shared> {
+        let contact = contact?;
+        let geometry = self.geometry?;
+        self.exact
+            .get_or_init(|| {
+                let shape = contact_shape::shape_beyond_box(geometry, self.box_.local_min, self.box_.local_max)?;
+                contact.prepare(&shape, Pose::new(self.box_.world.translation(), self.box_.world.rotation()))
+            })
+            .clone()
+    }
 }
 
 /// The free space around a point, as the convex cell its supporting planes bound.
@@ -378,9 +449,15 @@ impl Project {
     /// the ray crosses it and stops at the next face behind it (X73, ADR 0175). A caller that
     /// measures *material* — the distance fields of a drag — hands [`Sight::none`] and keeps every
     /// face in the way.
-    pub fn probe(&self, point: DVec3, direction: DVec3, sight: Sight, _contact: Option<&dyn Contact>) -> Option<Probe> {
+    ///
+    /// `contact` is the geometry adapter that measures a body the boxes cannot describe: a ray passes
+    /// through the hole in a plate and past the corner of a ball's box, and stops at the face behind
+    /// it. Every other surface — a panel, a cuboid, a product's shell — is measured by its box, which
+    /// is exact to the micrometre, so an ordinary cell keeps the planes it always had (X92, ADR 0181).
+    /// A caller with no adapter keeps the box reading everywhere.
+    pub fn probe(&self, point: DVec3, direction: DVec3, sight: Sight, contact: Option<&dyn Contact>) -> Option<Probe> {
         let surroundings = self.surroundings_around(point, sight);
-        self.probe_within(point, direction, &surroundings)
+        self.probe_within(point, direction, &surroundings, contact)
     }
 
     /// The empty space around `point`, as the convex cell its walls bound.
@@ -399,7 +476,11 @@ impl Project {
     /// the void and does not make it non-convex, so the cell spans the space the eye reads (X73,
     /// ADR 0175). A hidden body standing in the cell is a boundary of the part that fills it, which
     /// the fill plan trims against, and never a slice out of the void.
-    pub fn niche(&self, point: DVec3, sight: Sight, _contact: Option<&dyn Contact>) -> Result<Niche, NicheRefusal> {
+    ///
+    /// `contact` is the adapter that measures the walls the boxes cannot describe, exactly as
+    /// [`Project::probe`] reads it: a splayed post, a plate with a hole and a ball bound the cell by
+    /// their own faces, while every surface the box *is* keeps the box reading (X92, ADR 0181).
+    pub fn niche(&self, point: DVec3, sight: Sight, contact: Option<&dyn Contact>) -> Result<Niche, NicheRefusal> {
         if !point.is_finite() {
             return Err(NicheRefusal::Outside);
         }
@@ -417,7 +498,7 @@ impl Project {
             let mut added = false;
             for direction in cell.directions(local, round == 0) {
                 let world = placement.transform_vector(direction);
-                let Some(probe) = self.probe_within(point, world, &surroundings) else {
+                let Some(probe) = self.probe_within(point, world, &surroundings, contact) else {
                     continue;
                 };
                 let Some(plane) = plane_of(probe.face, inverse) else {
@@ -461,9 +542,9 @@ impl Project {
     /// to the cell would cut into it, so the void is refused until the query can answer several
     /// cells. Only a corner strictly inside counts, so the wall that bounded the cell — its own
     /// corners lie on the boundary — is not mistaken for an obstacle.
-    fn holds_body(&self, cell: &Cell, surroundings: &Surroundings, inverse: Placement) -> bool {
+    fn holds_body(&self, cell: &Cell, surroundings: &Surroundings<'_>, inverse: Placement) -> bool {
         surroundings.surfaces.iter().any(|surface| {
-            surface_corners(*surface).into_iter().any(|corner| {
+            surface_corners(surface.box_).into_iter().any(|corner| {
                 let local = inverse.transform_point(corner);
                 local.is_finite() && cell.planes.iter().all(|plane| plane.distance_to(local) > COORDINATE_TOLERANCE)
             })
@@ -471,8 +552,14 @@ impl Project {
     }
 
     /// The distance to the first furniture face along `direction`, against known surroundings.
-    fn probe_within(&self, point: DVec3, direction: DVec3, surroundings: &Surroundings) -> Option<Probe> {
-        let (unit, surface, face) = self.first_face(point, direction, surroundings)?;
+    fn probe_within(
+        &self,
+        point: DVec3,
+        direction: DVec3,
+        surroundings: &Surroundings<'_>,
+        contact: Option<&dyn Contact>,
+    ) -> Option<Probe> {
+        let (unit, surface, face) = self.first_face(point, direction, surroundings, contact)?;
         let distance = quantised(face.distance);
         let hit_point = point + unit * distance;
         if !hit_point.is_finite() {
@@ -515,23 +602,23 @@ impl Project {
     /// Panels and objects are bodies; a product's authored box is a shell. The innermost envelope is
     /// also returned so a probe can report it as an envelope face rather than as the shell of the
     /// piece it is standing in.
-    fn surroundings_around(&self, point: DVec3, sight: Sight) -> Surroundings {
-        let mut boxes = Vec::new();
+    fn surroundings_around(&self, point: DVec3, sight: Sight) -> Surroundings<'_> {
+        let mut surfaces = Vec::new();
         for product in self.products() {
             if sight.hides(self, product) {
                 continue;
             }
             if let Some(envelope) = self.envelope_surface(product) {
-                boxes.push(envelope);
+                surfaces.push(Surface::boxed(envelope));
             }
         }
-        self.body_surfaces(&self.root, &mut boxes, 1, sight);
+        self.body_surfaces(&self.root, &mut surfaces, 1, sight);
         let own = self.product_containing(point, sight);
         // The innermost envelope is measured as an envelope, not as one more shell; keeping it in
         // the list would let a tie choose the shell and report the wrong kind.
         let own_id = own.map(|(product, _)| product);
-        boxes.retain(|box_| Some(box_.id) != own_id);
-        Surroundings { own, surfaces: boxes }
+        surfaces.retain(|surface| Some(surface.box_.id) != own_id);
+        Surroundings { own, surfaces }
     }
 
     /// The world box of a product's authored envelope, as a shell surface.
@@ -546,10 +633,10 @@ impl Project {
     ///
     /// A node the sight switched off is left out with its whole subtree, which is the walk the scene
     /// builder and the pick make: the tools and the frame name the same parts (X73).
-    pub(super) fn body_surfaces(
-        &self,
-        container: &Container,
-        surfaces: &mut Vec<SurfaceBox>,
+    pub(super) fn body_surfaces<'a>(
+        &'a self,
+        container: &'a Container,
+        surfaces: &mut Vec<Surface<'a>>,
         depth: u32,
         sight: Sight,
     ) {
@@ -571,7 +658,7 @@ impl Project {
                     if let Some(world) = self.world_placement(panel.id())
                         && let Some(surface) = surface_box(panel.id(), DVec3::ZERO, max, world, SurfaceKind::Panel)
                     {
-                        surfaces.push(surface);
+                        surfaces.push(Surface::boxed(surface));
                     }
                 }
                 Node::Object(object) => {
@@ -579,7 +666,7 @@ impl Project {
                         && let Some(world) = self.world_placement(object.id())
                         && let Some(surface) = surface_box(object.id(), min, max, world, SurfaceKind::Body)
                     {
-                        surfaces.push(surface);
+                        surfaces.push(Surface::body(surface, object.geometry()));
                     }
                 }
                 Node::Container(inner) => self.body_surfaces(inner, surfaces, depth.saturating_add(1), sight),
@@ -590,15 +677,17 @@ impl Project {
 
     /// The first surface and face a normalized ray meets.
     ///
-    /// The world boxes are asked first and the port last, because a body lies inside its box: a
-    /// surface whose box the ray misses cannot be hit at all, and a surface whose box the ray meets
-    /// further away than the answer already in hand cannot beat it. So a scene of a few hundred
-    /// bodies prepares only the handful of shapes a ray could actually reach (X90, ADR 0179).
+    /// The world boxes are asked first (inside [`Surface::face_hit`]) and the port last, because a body
+    /// lies inside its box: a surface whose box the ray misses cannot be hit at all, and a surface whose
+    /// box the ray meets further away than the answer already in hand cannot beat it. So a scene of a
+    /// few hundred bodies prepares only the handful of shapes a ray could actually reach (X90,
+    /// ADR 0179).
     fn first_face(
         &self,
         point: DVec3,
         direction: DVec3,
-        surroundings: &Surroundings,
+        surroundings: &Surroundings<'_>,
+        contact: Option<&dyn Contact>,
     ) -> Option<(DVec3, SurfaceBox, FaceHit)> {
         if !point.is_finite() || !direction.is_finite() {
             return None;
@@ -616,14 +705,14 @@ impl Project {
             best = Some((SurfaceBox { kind: SurfaceKind::Envelope, ..envelope }, face));
         }
         for surface in &surroundings.surfaces {
-            if own.is_some_and(|(product, _)| product == surface.id) {
+            if own.is_some_and(|(product, _)| product == surface.box_.id) {
                 continue;
             }
-            let Some(face) = surface.face_hit(point, unit) else {
+            let Some(face) = surface.face_hit(point, unit, contact) else {
                 continue;
             };
             if best.is_none_or(|(_, nearest)| face.distance < nearest.distance) {
-                best = Some((*surface, face));
+                best = Some((surface.box_, face));
             }
         }
         best.map(|(surface, face)| (unit, surface, face))
@@ -1001,6 +1090,59 @@ mod tests {
             .expect("the body stops the ray");
         assert_eq!(answer.distance_mm, 100.0);
         assert_eq!(answer.hit, ProbeHit { id: object, kind: SurfaceKind::Body });
+    }
+
+    #[test]
+    fn an_ordinary_cell_keeps_the_planes_the_boxes_gave_it() {
+        // X92: the port answers only for a body the box cannot describe, so a case of panels — and a
+        // baked box standing in it as a wall — is measured exactly as it was before the port existed.
+        // A cell is where a board is cut, and a plane moved by rounding is a silent defect in the part
+        // made from it (ADR 0181).
+        let (mut project, piece) = empty_piece();
+        panel(&mut project, piece, (0, 0, 350), (600, 560, 18));
+        let block =
+            Mesh::cuboid([Length::ZERO; 3], [millimetres(18), millimetres(560), millimetres(350)]).expect("a block");
+        let placement =
+            Placement::IDENTITY.with_translation(millimetres(400), Length::ZERO, Length::ZERO).expect("a placement");
+        project.add_object(piece, "Wall", placement, Geometry::Mesh(block)).expect("add a wall");
+        let point = DVec3::new(200.0, 280.0, 100.0);
+        let by_box = project.niche(point, Sight::none(), None).expect("the cell under the shelf");
+        let by_port =
+            project.niche(point, Sight::none(), Some(&contact_parry::Parry)).expect("the same cell through the port");
+        assert_eq!(by_box, by_port, "the port must not move a plane the boxes already answered");
+        assert!((by_port.local_max().x - 400.0).abs() < 1.0e-9, "the baked box is its own wall: {by_port:?}");
+
+        // The probe answers the same distance and the same face with and without the adapter.
+        assert_eq!(
+            project.probe(DVec3::new(200.0, 280.0, 100.0), DVec3::X, Sight::none(), None),
+            project.probe(DVec3::new(200.0, 280.0, 100.0), DVec3::X, Sight::none(), Some(&contact_parry::Parry)),
+        );
+    }
+
+    #[test]
+    fn a_probe_meets_a_balls_own_side_and_not_the_corner_of_its_box() {
+        // A ball is the body the boxes cannot describe: the corner of its box stands in the free space
+        // beside it, so a ray that meets that corner reads the wall the port answers rather than the
+        // empty air beside the ball's own round side (X92, ADR 0181).
+        let (mut project, piece) = empty_piece();
+        let ball = Primitive::sphere(millimetres(100), 24, 12).expect("a ball");
+        let placement = Placement::IDENTITY
+            .with_translation(millimetres(300), millimetres(280), millimetres(300))
+            .expect("a placement");
+        let object = project.add_object(piece, "Ball", placement, Geometry::Primitive(ball)).expect("add a ball");
+        let point = DVec3::new(150.0, 350.0, 300.0);
+        let by_box = project.probe(point, DVec3::X, Sight::none(), None).expect("the box around the ball");
+        let by_port =
+            project.probe(point, DVec3::X, Sight::none(), Some(&contact_parry::Parry)).expect("the ball's own side");
+        assert_eq!(by_box.distance_mm, 50.0, "the box's near face stands at 200");
+        // The ray runs 70 mm off the ball's axis, so its side is sqrt(100^2 - 70^2) away from the
+        // centre: 300 - 71.4 = 228.6 on the x axis, which is 78.6 mm from the point.
+        assert!((by_port.distance_mm - 78.6).abs() < 1.0, "the ball's own side: {by_port:?}");
+        assert_eq!(by_port.hit, ProbeHit { id: object, kind: SurfaceKind::Body });
+        assert!(
+            by_port.face.normal.dot(DVec3::X) < -0.5,
+            "the face is the ball's side and looks back along the ray: {by_port:?}"
+        );
     }
 
     #[test]
