@@ -168,6 +168,11 @@ Detailed, normative descriptions live in `docs/domain/`:
 - [`order-export.md`](docs/domain/order-export.md) — the order package: the published, one-way snapshot other programs read for reports, drawings, cutting lists and CNC.
 - [`products.md`](docs/domain/products.md) — the product as the unit of work: the authored envelope, open and closed, the workspace rules and the match to a void.
 
+The shop's own numbers — board thickness, plinth height, gaps, back sheet, rail height — are settings,
+not document data: the build's defaults come from the workshop standards the build reads, and a
+workshop's own values are the person's, kept in the application settings. They never enter a scene
+file, a package or a project.
+
 ## Architectural principles
 
 - **Data is separate from rendering.** `model` is serializable data; meshes and scene descriptions are derived in `mesh` and `scene`; only `render` touches `wgpu`. No GPU type ever appears in the document.
@@ -210,13 +215,19 @@ Z3L separates the model from the way it is viewed.
 
 Z3L ships an assistant named **Faber** that follows the project in real time. It is disabled by
 default because it needs a language-model connection; without one the editor behaves exactly as
-before.
+before. A person talks to it in a chat panel of the window, and a client outside the window — a
+desktop assistant, a script, an agent process — reaches the same tools over MCP (ADR 0185).
 
 - Faber acts as a person does: every action is a command, a query or a session view operation,
-  dispatched by the same ids the UI uses. It has no private mutation path (ADR 0028).
+  dispatched by the same ids the UI uses. It has no private mutation path (ADR 0028). The tool list is
+  a projection of `CommandRegistry::specs()`, never a second registry, and a tool that is unavailable
+  says why (ADR 0185).
 - It runs with a window, where the user watches it work, and headless, where it processes jobs
   without a viewport. The core is deterministic and model-agnostic; the language model is an injected
-  adapter that may be local or remote. The application never listens for connections.
+  adapter that may be local or remote. The application never listens for connections: a client
+  outside the window starts `z3l mcp serve` and speaks over that process's stdio (ADR 0185).
+- A chat turn is one undo entry named after the message, the first enable is read-only, and a plan is
+  the `dry_run` result shown as a checklist — so what a person approves is what ran (ADR 0187).
 - The core does not receive pixels. It reads the scene as data: the node tree, panels, materials,
   placements, machining, diagnostics and derived measures. A vision channel is a separate, optional
   decision.
@@ -237,12 +248,14 @@ before.
   (ADR 0036).
 
 Open questions: what API the material and order programs expose locally and whether they ship with
-Z3L; where the workshop profile lives; whether reference retrieval (catalogues, norms, past
+Z3L; whether reference retrieval (catalogues, norms, past
 jobs) is needed and in what form; voice input and output.
 
-The assistant adds `agent` between `engine` and `ui`, a model adapter and resource
-adapters at the composition boundary, and a project store for save and load. They enter the crate map
-only when the crates exist.
+The assistant adds `mcp` at layer 7, beside `ui`: the projection of the command registry into tools,
+the MCP server and client, the `ChatBackend` port and the model transport, as the only crate allowed
+to depend on `rmcp`, `tokio` and `cap-std` (ADR 0186). The chat panel is a shell surface in `app`. No
+layer is renumbered. The crate, its row in the crate map, the layer table in `xtask` and `AGENTS.md`
+§3 change in the one commit that creates it.
 
 ## Crate map
 
@@ -301,7 +314,7 @@ A crate may depend only on crates in lower layers. `kernel-truck` is the only cr
 | M7 | Objects and the scene file | Geometry objects with a baked mesh and with a feature history, mesh editing gated to the mesh payload, `object.collapse`, camera and light objects, and a versioned `.z3l` scene file with a migration and a golden file per schema |
 | M8 | Hardware and joinery | Hardware catalogue, anchor points, generated holes, collision warnings |
 | M9 | Output | Cutting lists per material and sheet, panel drawings, CNC export |
-| M10 | Assistant | Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per task, a whole task runnable by a scripted model without a network, and a headless job over a saved project |
+| M10 | Assistant | The chat panel holds a conversation in the window and a client outside it calls the same tools over MCP; Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per turn, a whole task runnable by a scripted model without a network, and a headless job over a saved project |
 
 ## Open model questions (M1)
 
