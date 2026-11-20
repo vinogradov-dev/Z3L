@@ -293,7 +293,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   draw them and `cargo xtask ui-rules` is green; a headless test drives the bar in an armed
   draft, an armed contour and an idle frame and finds labels only; the status bar's `//!`
   says what it owns; `cargo xtask ci` is green.
-  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs` — `6ac248e`
+  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs` — `f24506d`
 
 - `[x]` **X94** the status bar's three zones draw over one another
   Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
