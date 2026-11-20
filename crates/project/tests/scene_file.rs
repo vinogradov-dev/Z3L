@@ -144,6 +144,20 @@ fn a_newer_format_version_is_a_readable_error() {
 }
 
 #[test]
+fn a_document_from_another_build_names_its_schema_before_its_fields() {
+    // A file from an older layout fails inside the first field that moved, unless the schema is
+    // read first: "invalid type: integer, expected a struct" says nothing a person can act on, and
+    // the version is the one fact that does (ADR 0096).
+    let current = Project::CURRENT_SCHEMA_VERSION;
+    let older = GOLDEN
+        .replacen(&format!("\"schema_version\": {current}"), &format!("\"schema_version\": {}", current - 1), 1)
+        .replacen("\"tool\": {", "\"tool\": 7, \"old\": {", 1);
+    let error = SceneFile::parse(&older).expect_err("another schema is refused");
+    assert!(matches!(error, SceneFileError::UnsupportedSchemaVersion { .. }), "error was {error}");
+    assert!(error.to_string().contains(&(current - 1).to_string()), "the error names the version found");
+}
+
+#[test]
 fn any_other_document_schema_is_the_same_readable_error() {
     let current = Project::CURRENT_SCHEMA_VERSION;
     for other in [current + 1, current - 1] {
