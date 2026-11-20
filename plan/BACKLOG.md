@@ -44,23 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **J2** a command says what it takes, so a model can call it
-  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
-   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
-   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
-   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
-   refuses: nothing would check it against the struct it describes.
-  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
-   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
-   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
-   prints it, and the test asserts that every command whose parameters are not the unit type
-   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
-   same surface, because a disabled command with no sentence is a mystery.
-  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
-   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
-   closes; `cargo xtask ci` is green.
-  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,crates/units/src/lib.rs,crates/model/src/contour.rs,app/src/cli/commands.rs,docs/decisions/0194-the-parameter-schema-derives-where-its-type-lives.md`
-
 - `[~]` **G3** the three contour booleans run on two closed rings and store one
   Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
   `geom::boolean` and the panel core already unions its cutouts through them, but no tool
@@ -552,6 +535,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs`
 
 ## Done
+
+- `[x]` **J2** a command says what it takes, so a model can call it
+  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
+   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
+   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
+   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
+   refuses: nothing would check it against the struct it describes.
+  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
+   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
+   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
+   prints it, and the test asserts that every command whose parameters are not the unit type
+   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
+   same surface, because a disabled command with no sentence is a mystery.
+  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
+   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
+   closes; `cargo xtask ci` is green.
+  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,crates/units/src/lib.rs,crates/model/src/contour.rs,app/src/cli/commands.rs,docs/decisions/0194-the-parameter-schema-derives-where-its-type-lives.md` — `3acda02`
 
 - `[x]` **U115** the status bar reports and no longer carries a control
   Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
