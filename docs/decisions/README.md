@@ -198,8 +198,8 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0191](0191-the-inspectors-first-seven-findings.md) | The inspector's first seven findings | Accepted |
 | [0192](0192-a-recipe-is-rust-that-emits-commands.md) | A recipe is Rust that emits commands, and the recipe language waits | Accepted |
 | [0193](0193-an-agent-task-is-the-acceptance-test.md) | An agent task is the acceptance test | Accepted |
-| [0194](0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md) | A contour boolean is a mode that stores a new object | Accepted; implements 0043, the tool mark follows the file schema |
 | [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
+| [0194](0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md) | A contour boolean is a mode that stores a new object | Accepted; implements 0043, the tool mark follows the file schema |
 
 ## Format
 

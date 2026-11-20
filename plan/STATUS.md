@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=G3 state=doing base=05a4528 updated=2026-11-20
+STATE: milestone=M7 phase=T task=W1 state=idle base=658ed5a updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,7 +52,7 @@ card's own (U115).
 
 ## Next
 
-G3 is next: the three contour booleans run on two closed rings and store one
+W1 is next: a boolean between two bodies is a feature of the constructive object
 
 ## Index
 

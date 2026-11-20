@@ -44,34 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **G3** the three contour booleans run on two closed rings and store one
-  Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
-  `geom::boolean` and the panel core already unions its cutouts through them, but no tool
-  reaches them, so a maker cannot union two drawn figures, cut one ring with another or keep
-  their intersection; the artwork has been in the contour theme since U69, and M71's command
-  bar was built for exactly this previewing operation.
-  Shape: Three commands in `engine` — `contour.boolean.union`, `.subtract`, `.intersect` as the
-  proposal — each take two selected closed rings and write the result through the existing
-  doors (`object.contour.replace` for a path, `panel.outline.set` for a panel outline). The
-  owner answered with a mode, and it is the tool card's choice kept in the session:
-  - **one-shot**: the result replaces the target's ring as one undo entry and the source ring
-    is consumed; a panel outline takes the result through `panel.outline.set`.
-  - **tool**: the source stays in the tree as a named cutter, and the result stores a boolean
-    step that names it, so one cutter serves several rings and an edit to the cutter re-derives
-    every result. Storing that step is the first decision of the task — a feature list on a
-    path object or a new payload — and it is a schema change with an ADR; a live step's
-    operands are path objects in one frame, so a panel outline can only take a baked result.
-  The result draws before the click through the session overlay (ADR 0093); an open ring, a
-  self-crossing ring and an empty result are readable refusals. The three cells stop being
-  `planned` and the tool card names the operation and its mode.
-  Done: Tests: one-shot — a union of two overlapping rectangles, a subtract that opens a notch and a
-  hole, and an intersect that keeps the shared area, each one undo entry, into a path and into a
-  panel; tool — one cutter trims two different targets and moving or editing the cutter
-  re-derives both, while deleting a target leaves the cutter; an open ring, a self-crossing ring
-  and an empty result are readable refusals; the preview writes no revision; the three cells
-  draw their icons and run the commands; the ADR and the schema are in the change;
-  `cargo xtask ci` is green.
-  `files: crates/geom/src/boolean.rs,crates/engine/src/object_cmds.rs,crates/engine/src/panel_cmds/panel.rs,crates/model/src/object.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs`
 - `[ ]` **W1** a boolean between two bodies is a feature of the constructive object
   Why: The owner asks for the standard boolean set over bodies. The kernel port has
   `SolidKernel::boolean`, `SolidPlan` already carries boolean steps (ADR 0041), and
@@ -545,8 +517,61 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
    revision. The area is derived on read and cached by the set, its revision and its placement.
   `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs`
+- `[ ]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
+  Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
+   that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
+   evaluated, so the command stores the cutout, the revision moves, undo gains an entry and the
+   panel simply stops drawing. The maker reads a vanished board instead of a refusal, and the
+   ghost that previewed the cutout said nothing either.
+  Shape: The rule is the one `panel.outline.set` already keeps: a command validates what it
+   would produce before the document changes. `panel.machining.add` and
+   `panel.machining.update` run the same 2D subtraction on a copy of the panel's core region —
+   `PanelGeometry::core_region` minus the new cutout — and refuse when it leaves more than one
+   piece, with a sentence that names the panel and the split; a blind cutout never reaches the
+   core's full thickness and keeps its own rule. The preview ghost of a fill and the cutout
+   card's add button both read the same check, so the refusal appears where the cutout is
+   chosen.
+  Done: Tests: a cutout that crosses the whole board is refused by `panel.machining.add` and
+   `panel.machining.update` with the panel and the split named, and the revision, the undo
+   stack and the panel's records are unchanged; the same cutout on a panel with a material that
+   reaches only part of the width is accepted; a cutout that removes the core entirely is
+   refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
+   green.
+  `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 
 ## Done
+
+- `[x]` **G3** the three contour booleans run on two closed rings and store one
+  Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
+  `geom::boolean` and the panel core already unions its cutouts through them, but no tool
+  reaches them, so a maker cannot union two drawn figures, cut one ring with another or keep
+  their intersection; the artwork has been in the contour theme since U69, and M71's command
+  bar was built for exactly this previewing operation.
+  shape: Three commands in `engine` — `contour.boolean.union`, `.subtract`, `.intersect` — take
+   a base ring, one or more rings beside it and a name; the owner's rule decides the rest (ADR
+   0194). The result is a **new object** in the base's container and frame: one ring is a
+   `Path`, several are a contour set (`Geometry::Contours`, a flat drawing that draws one chain
+   per ring). The sources are consumed in the same command and the same undo entry, except an
+   object marked as a **tool**: the mark is a field of the object and a stamp that survives the
+   operation, never a live operand. A hole is an area rather than a ring, so a subtraction
+   whose cutter never crosses the outer boundary creates nothing and says so, as an empty
+   intersection and a result equal to one operand do; a refusal writes nothing. A panel outline
+   is never an operand. The operation is a mode: the three cells arm it, the picks are the
+   selection, the result draws before the commit in place of the base ring through the session
+   overlay (ADR 0093), and `ContourBooleanPlan` is the same calculation without the write, so
+   the frame and the stored object cannot disagree.
+  done: Tests: a union of two overlapping rings stores one path object and one undo entry that
+   puts both sources back; a subtraction opens a notch into one ring; an intersection keeps
+   only the shared area; a subtraction that would leave a hole, an empty intersection and a
+   pair of rings that never meet are readable refusals that write nothing; an open chain is
+   neither enabled nor stored; rings in different frames land in the base frame and two
+   separate pieces become a contour set; a tool-marked ring survives while an unmarked one is
+   consumed; the plan computes the same geometry the command stores and moves no revision; the
+   three cells draw their icons and arm the mode, a second press drops it, the preview draws in
+   place of the base ring and the card's check or Enter stores one object
+   (`crates/ui/src/editor/tests.rs`, `app/src/frame_tests.rs`). ADR 0194 and the schema are in
+   the change (schema 29: `Contours` and the object's `tool` flag); `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/engine/src/object_cmds.rs,crates/engine/src/panel_cmds/panel.rs,crates/model/src/object.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs` — `658ed5a`
 
 - `[x]` **U115** the status bar reports and no longer carries a control
   Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
