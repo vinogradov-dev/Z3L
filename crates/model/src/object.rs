@@ -892,6 +892,17 @@ mod tests {
             Err(ProjectError::BooleanToolCycle { id: five }),
             "two bodies that name each other close a loop"
         );
+        // Three bodies are the same loop one node longer: the walk finds the edge that closes it
+        // wherever in the ring the smallest id sits.
+        assert_eq!(
+            Project::new(scene(vec![
+                body_with_step(5, BooleanOp::Union, 6).into(),
+                body_with_step(6, BooleanOp::Difference, 7).into(),
+                body_with_step(7, BooleanOp::Intersection, 5).into(),
+            ])),
+            Err(ProjectError::BooleanToolCycle { id: five }),
+            "three bodies that name each other close a loop"
+        );
     }
 
     #[test]
