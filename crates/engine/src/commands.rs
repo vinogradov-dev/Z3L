@@ -1,6 +1,8 @@
 //! Command metadata, the static registry and dispatch errors.
 
-use model::{Catalog, Id, Level, MachiningId, MaterialId, Project, ProjectError};
+use catalog::Directory;
+use geom::Contact;
+use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
@@ -81,7 +83,7 @@ pub struct CommandSpec {
     id: &'static str,
     label: Message,
     enabled_fn: fn(&Session, &Value) -> bool,
-    run_fn: fn(&mut Project, &Catalog, &Value) -> Result<CommandOutcome, CommandError>,
+    run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     creation: Option<Creation>,
 }
 
@@ -91,7 +93,7 @@ impl CommandSpec {
         id: &'static str,
         label: Message,
         enabled_fn: fn(&Session, &Value) -> bool,
-        run_fn: fn(&mut Project, &Catalog, &Value) -> Result<CommandOutcome, CommandError>,
+        run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     ) -> Self {
         Self { id, label, enabled_fn, run_fn, creation: None }
     }
@@ -110,6 +112,18 @@ impl CommandSpec {
     /// The user-facing command label.
     pub const fn label(self) -> Message {
         self.label
+    }
+
+    /// The class level of the node the command creates, or `None` when it creates none.
+    ///
+    /// A discovery surface reads it — the command line's `commands --json` and, later, the
+    /// assistant — so a caller knows whether an id builds something before it dispatches it. The
+    /// level is the class trait ADR 0098 gates; it says nothing about the parameters.
+    pub const fn creation_level(self) -> Option<Level> {
+        match self.creation {
+            Some(creation) => Some(creation.level()),
+            None => None,
+        }
     }
 
     /// Whether the command applies to this session and these parameters.
@@ -139,13 +153,19 @@ impl CommandSpec {
         class_rules::allow_creation(session.project(), parent, session.active_product())
     }
 
+    /// Runs the command on a working copy of the document.
+    ///
+    /// `contact` is the session's contact adapter: the placement guard measures a body by its own
+    /// surface through it, and the drag's rule is handed the same one, so a release never refuses a
+    /// place the preview showed (ADR 0166, ADR 0179).
     pub(crate) fn run(
         self,
         project: &mut Project,
-        catalog: &Catalog,
+        catalog: &Directory,
         params: &Value,
+        contact: &dyn Contact,
     ) -> Result<CommandOutcome, CommandError> {
-        (self.run_fn)(project, catalog, params)
+        (self.run_fn)(project, catalog, params, contact)
     }
 }
 
@@ -279,7 +299,17 @@ pub enum CommandError {
     #[error("unknown material {material}")]
     UnknownMaterial {
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
+    },
+    /// The placement would put a part inside one that stays behind.
+    #[error("`{command}`: `{moved}` would come to rest inside `{standing}`")]
+    RestingInTheWay {
+        /// The stable command id.
+        command: &'static str,
+        /// The part the placement moves or creates.
+        moved: String,
+        /// The part that stays behind and is in the way.
+        standing: String,
     },
     /// There is no earlier document state to restore.
     #[error("nothing to undo")]
@@ -299,6 +329,20 @@ impl CommandError {
     pub(crate) fn creation(command: &'static str, refusal: CreationRefusal) -> Self {
         Self::CreationRefused { command, refusal }
     }
+
+    /// A placement that would land a part inside one that stays behind, naming both (ADR 0162).
+    pub(crate) fn resting(command: &'static str, project: &Project, resting: Resting) -> Self {
+        Self::RestingInTheWay {
+            command,
+            moved: part_name(project, resting.moved),
+            standing: part_name(project, resting.standing),
+        }
+    }
+}
+
+/// The name a refusal calls a part by: its own, or its id when the tree no longer holds it.
+fn part_name(project: &Project, id: Id) -> String {
+    project.node(id).map_or_else(|| id.to_string(), |node| node.name().to_owned())
 }
 
 #[cfg(test)]

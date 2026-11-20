@@ -5,11 +5,12 @@
 use crate::parse::{
     STATE_PREFIX, backlog_entries, parse_backlog, parse_map, parse_session, parse_state, parse_task_line, session_field,
 };
-use crate::{NO_TASK, NOTHING_SCHEDULED, Summary, Task, TaskStatus};
+use crate::streams::Streams;
+use crate::{NO_TASK, NOTHING_SCHEDULED, StreamState, Summary, Task, TaskStatus};
 
 /// Longest accepted `plan/STATUS.md`, in lines.
 pub const MAX_STATUS_LINES: usize = 70;
-/// Longest accepted `plan/SESSION.md`, in lines.
+/// Longest accepted session note, in lines: one budget per stream, because each note is one screen.
 pub const MAX_SESSION_LINES: usize = 50;
 /// The section a session starts from.
 const NOW_SECTION: &str = "Now";
@@ -18,12 +19,29 @@ const DONE_SECTION: &str = "Done";
 /// The one place development state may live.
 pub const README_RULE: &str = "README must not carry development status; it lives in plan/STATUS.md";
 
-/// Checks the three plan files against each other, without touching the filesystem or git.
-pub fn analyze(status: &str, backlog: &str, session: Option<&str>) -> Result<Summary, Vec<String>> {
+/// Checks the plan files against each other, without touching the filesystem or git.
+///
+/// `sessions` is every session note the plan holds, as `(path, text)`: one per stream at most, and
+/// the path is what tells a note from the stream it belongs to. A plan that declares no stream has
+/// one, `plan/SESSION.md`, and the rules are the ones it always had.
+pub fn analyze(status: &str, backlog: &str, sessions: &[(String, String)]) -> Result<Summary, Vec<String>> {
     let state = parse_state(status)?;
+    let streams = match Streams::parse(status) {
+        Ok(streams) => streams,
+        Err(errors) => {
+            // The declaration is unusable, so the rules that read it run over the plan's own single
+            // stream; every sentence about the declaration is already in the list.
+            let tasks = parse_backlog(backlog);
+            let mut violations = errors;
+            violations.extend(parse_violations(status, backlog, &tasks));
+            violations.extend(unparsed_task_lines(backlog));
+            violations.extend(legend_violations(backlog, &tasks));
+            return Err(violations);
+        }
+    };
     let tasks = parse_backlog(backlog);
     let mut violations = parse_violations(status, backlog, &tasks);
-    violations.extend(budget_violations(status, session));
+    violations.extend(budget_violations(status, sessions));
     violations.extend(unparsed_task_lines(backlog));
     violations.extend(legend_violations(backlog, &tasks));
 
@@ -34,11 +52,136 @@ pub fn analyze(status: &str, backlog: &str, session: Option<&str>) -> Result<Sum
         violations.push(violation);
     }
 
+    violations.extend(note_violations(&streams, sessions, &tasks));
+    violations.extend(primary_violations(&streams, &tasks, &state));
+
+    if violations.is_empty() {
+        let streams = stream_states(&streams, sessions, &tasks);
+        Ok(Summary { state, tasks, streams, head: None, interrupted: false })
+    } else {
+        Err(violations)
+    }
+}
+
+/// The streams as the plan holds them: which task each one works, and the note it keeps.
+pub(crate) fn stream_states(streams: &Streams, sessions: &[(String, String)], tasks: &[Task]) -> Vec<StreamState> {
+    streams
+        .iter()
+        .map(|stream| {
+            let note_path = stream.note_path();
+            StreamState {
+                key: stream.key.clone(),
+                primary: stream.is_primary(),
+                live: live_task(streams, tasks, stream),
+                session: sessions.iter().find(|(path, _)| *path == note_path).map(|(_, text)| parse_session(text)),
+                note_path,
+            }
+        })
+        .collect()
+}
+
+/// The task a stream has marked in progress, in file order.
+fn live_task(streams: &Streams, tasks: &[Task], stream: &crate::Stream) -> Option<String> {
+    tasks
+        .iter()
+        .find(|task| task.status == TaskStatus::Doing && streams.owner(&task.id).key == stream.key)
+        .map(|task| task.id.clone())
+}
+
+/// One stream works one task, and the note beside it is about that task.
+///
+/// Four rules, and every one of them is the same rule the plan always had, read per stream instead of
+/// per plan: a `[~]` marker lives in `## Now`, no stream holds two of them, a stream that works a task
+/// keeps its note and no stream keeps a note it is not working under. A note whose path names no
+/// stream is the fifth: a renamed stream leaves its note behind, and the file then says what nothing
+/// else does.
+fn note_violations(streams: &Streams, sessions: &[(String, String)], tasks: &[Task]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for task in tasks.iter().filter(|task| task.status == TaskStatus::Doing) {
+        if task.section != NOW_SECTION {
+            violations
+                .push(format!("`[~]` task {} must sit in `## {NOW_SECTION}`, not `## {}`", task.id, task.section));
+        }
+    }
+    for stream in streams.iter() {
+        let doing: Vec<&Task> = tasks
+            .iter()
+            .filter(|task| task.status == TaskStatus::Doing && streams.owner(&task.id).key == stream.key)
+            .collect();
+        if doing.len() > 1 {
+            let ids: Vec<&str> = doing.iter().map(|task| task.id.as_str()).collect();
+            violations.push(format!(
+                "the `{}` stream marks {} in progress at once; a stream works one task at a time",
+                stream.key,
+                ids.join(", ")
+            ));
+        }
+        let path = stream.note_path();
+        let note = sessions.iter().find(|(note, _)| *note == path).map(|(_, text)| text.as_str());
+        match (doing.first(), note) {
+            (Some(task), Some(note)) => {
+                match session_field(note, "task") {
+                    Some(found) if found == task.id => {}
+                    Some(found) => violations.push(format!(
+                        "`{path}` is about task {found}, but `{}` works the `{}` stream",
+                        task.id, stream.key
+                    )),
+                    None => violations.push(format!("`{path}` needs a `task: <id>` line")),
+                }
+                for key in ["goal", "now", "run"] {
+                    if session_field(note, key).is_none() {
+                        violations.push(format!("`{path}` needs a non-empty `{key}:` line"));
+                    }
+                }
+            }
+            (Some(task), None) => violations.push(if stream.is_primary() {
+                format!(
+                    "`STATE: state=doing` needs a `{path}`; copy `plan/SESSION.template.md` and start {} there",
+                    task.id
+                )
+            } else {
+                format!(
+                    "the `{}` stream works {} and needs its `{path}`; `cargo xtask task start {}` writes it",
+                    stream.key, task.id, task.id
+                )
+            }),
+            (None, Some(_)) if stream.is_primary() => {
+                violations.push(format!("`STATE: state=idle` must not leave a `{path}` behind"))
+            }
+            (None, Some(_)) => violations.push(format!(
+                "`{path}` is a session note no stream is working under; `{}` has no `[~]` task",
+                stream.key
+            )),
+            (None, None) => {}
+        }
+    }
+    for (path, _) in sessions {
+        if streams.stream_at(path).is_none() {
+            let declared = streams.notes();
+            violations
+                .push(format!("`{path}` is a session note no stream declares; the notes are {}", declared.join(", ")));
+        }
+    }
+    violations
+}
+
+/// The rules `STATE:` carries, which speak about the plan's own stream and not about the others.
+///
+/// `state=` and `task=` are the primary stream's: its task in progress, or the head of its work
+/// order. A stream beside it keeps its `[~]` and its note, and neither moves the state line — which
+/// is what lets four checkouts work one backlog without four writers of one line.
+fn primary_violations(streams: &Streams, tasks: &[Task], state: &crate::State) -> Vec<String> {
+    let mut violations = Vec::new();
+    let primary = streams.primary();
+    let live = live_task(streams, tasks, primary);
+    let head = first_unfinished(streams, tasks);
+
     // An empty work order is a legal state of the plan: `task=-` says so, and it is allowed only
-    // while `## Now` holds nothing unfinished. The moment a task is in the order, the line names it.
+    // while `## Now` holds nothing unfinished of the plan's own stream. The moment one is in the
+    // order, the line names it: another stream's entry is its own business and never moves it.
     match state.current() {
         None => {
-            if let Some(first) = first_unfinished(&tasks) {
+            if let Some(first) = head {
                 violations.push(format!(
                     "`STATE: task={NO_TASK}` but `## {NOW_SECTION}` still holds {}; name it or defer it",
                     first.id
@@ -55,7 +198,15 @@ pub fn analyze(status: &str, backlog: &str, session: Option<&str>) -> Result<Sum
                         "`STATE: task={id}` sits in `## {}`; the current task must be in `## {NOW_SECTION}`",
                         task.section
                     ));
-                } else if let Some(first) = first_unfinished(&tasks)
+                } else if streams.owner(&task.id).key != primary.key {
+                    violations.push(format!(
+                        "`STATE: task={id}` belongs to the `{}` stream; the state line names the `{}` stream's \
+                         task, and `{}` starts with `cargo xtask task start {id}`",
+                        streams.of(task).key,
+                        primary.key,
+                        primary.key
+                    ));
+                } else if let Some(first) = head
                     && first.id != task.id
                 {
                     violations.push(format!(
@@ -68,7 +219,6 @@ pub fn analyze(status: &str, backlog: &str, session: Option<&str>) -> Result<Sum
         },
     }
 
-    let doing: Vec<&Task> = tasks.iter().filter(|task| task.status == TaskStatus::Doing).collect();
     match state.status.as_str() {
         "doing" => {
             if state.current().is_none() {
@@ -77,60 +227,30 @@ pub fn analyze(status: &str, backlog: &str, session: Option<&str>) -> Result<Sum
                      to work on"
                 ));
             }
-            if doing.len() != 1 {
+            if live.is_none() {
                 violations.push(format!(
-                    "`STATE: state=doing` needs exactly one `[~]` task, the backlog has {}",
-                    doing.len()
+                    "`STATE: state=doing` needs exactly one `[~]` task in the `{}` stream, the backlog has none",
+                    primary.key
                 ));
             }
-            match doing.first() {
-                Some(task) if task.id != state.task => violations
-                    .push(format!("`STATE: task={}` does not match the `[~]` backlog task {}", state.task, task.id)),
-                Some(task) if task.section != NOW_SECTION => violations
-                    .push(format!("`[~]` task {} must sit in `## {NOW_SECTION}`, not `## {}`", task.id, task.section)),
-                _ => {}
-            }
-            if session.is_none() {
+            if let Some(working) = &live
+                && *working != state.task
+            {
                 violations
-                    .push("`STATE: state=doing` needs a `plan/SESSION.md`; copy `plan/SESSION.template.md`".into());
-            }
-            if let Some(session) = session {
-                match session_field(session, "task") {
-                    Some(task) if task == state.task => {}
-                    Some(task) => violations.push(format!(
-                        "`plan/SESSION.md` is about task {task}, but `STATE: task={}` names another",
-                        state.task
-                    )),
-                    None => violations.push("`plan/SESSION.md` needs a `task: <id>` line".into()),
-                }
-                for key in ["goal", "now", "run"] {
-                    if session_field(session, key).is_none() {
-                        violations.push(format!("`plan/SESSION.md` needs a non-empty `{key}:` line"));
-                    }
-                }
+                    .push(format!("`STATE: task={}` does not match the `[~]` backlog task {working}", state.task));
             }
         }
         "idle" => {
-            if !doing.is_empty() {
-                let ids: Vec<&str> = doing.iter().map(|task| task.id.as_str()).collect();
+            if let Some(working) = &live {
                 violations.push(format!(
-                    "`STATE: state=idle` but the backlog marks {} still in progress; set `[~]` back to `[ ]` \
-                     or start the task",
-                    ids.join(", ")
+                    "`STATE: state=idle` but the backlog marks {working} still in progress; set `[~]` back to \
+                     `[ ]` or start the task"
                 ));
-            }
-            if session.is_some() {
-                violations.push("`STATE: state=idle` must not leave a `plan/SESSION.md` behind".into());
             }
         }
         other => violations.push(format!("`STATE: state={other}` must be `idle` or `doing`")),
     }
-
-    if violations.is_empty() {
-        Ok(Summary { state, tasks, session: session.map(parse_session), head: None, interrupted: false })
-    } else {
-        Err(violations)
-    }
+    violations
 }
 
 /// The `## Next` paragraph of `plan/STATUS.md` must name the task `STATE:` does: it is the first
@@ -307,8 +427,14 @@ pub(crate) fn reference_violations(name: &str, text: &str) -> Vec<String> {
 ///
 /// Order is the order of work, so this is the task the plan is actually on: `STATE: task=` may name
 /// it, not any later one. `## Bugs`, `## Next` and `## Done` are outside the work order.
-fn first_unfinished(tasks: &[Task]) -> Option<&Task> {
-    tasks.iter().find(|task| task.section == NOW_SECTION && task.status != TaskStatus::Done)
+/// The first unfinished task of the plan's own stream in `## Now`, which is the task `STATE:` must
+/// name: another stream's entry sits in the same order and is not this checkout's head.
+fn first_unfinished<'a>(streams: &Streams, tasks: &'a [Task]) -> Option<&'a Task> {
+    tasks.iter().find(|task| {
+        task.section == NOW_SECTION
+            && task.status != TaskStatus::Done
+            && streams.owner(&task.id).key == streams.primary().key
+    })
 }
 
 /// A `README.md` that carries a status line or a milestone is a second source of truth, and the
@@ -342,11 +468,9 @@ fn milestone(text: &str) -> Option<&str> {
 /// The message names the width as well as the count, because the count alone is what cost a session
 /// seven minutes: it printed the result (a candidate of 94 lines against a budget of 70) and not the
 /// cause (a section body re-wraps at [`crate::edit::PROSE_WIDTH`], so every attempt grew the file).
-fn budget_violations(status: &str, session: Option<&str>) -> Vec<String> {
+fn budget_violations(status: &str, sessions: &[(String, String)]) -> Vec<String> {
     let mut violations = Vec::new();
-    for (name, text, max) in
-        [("plan/STATUS.md", status, MAX_STATUS_LINES), ("plan/SESSION.md", session.unwrap_or(""), MAX_SESSION_LINES)]
-    {
+    let mut over = |name: &str, text: &str, max: usize| {
         let lines = text.lines().count();
         if lines > max {
             violations.push(format!(
@@ -355,6 +479,11 @@ fn budget_violations(status: &str, session: Option<&str>) -> Vec<String> {
                 crate::edit::PROSE_WIDTH
             ));
         }
+    };
+    over("plan/STATUS.md", status, MAX_STATUS_LINES);
+    for (path, text) in sessions {
+        // Each stream's note is one screen of its own: the budget counts per file, not per plan.
+        over(path, text, MAX_SESSION_LINES);
     }
     violations
 }
@@ -560,6 +689,11 @@ mod tests {
     const NOTE: &str =
         "task: A3\ngoal: edit arcs in the card\nnow: the arc arm in `object_card.rs`\nrun: cargo test -p ui\n";
 
+    /// The primary stream's note, as `analyze` takes it: one session, no declaration.
+    fn note(text: &str) -> Vec<(String, String)> {
+        vec![("plan/SESSION.md".to_owned(), text.to_owned())]
+    }
+
     fn backlog() -> &'static str {
         "## Now\n\n\
          - `[ ]` **A3** arcs in the card `files: crates/ui/src/object_card.rs`\n\
@@ -568,9 +702,101 @@ mod tests {
          - `[x]` **A2** ring of segments — `0833b4c`\n"
     }
 
+    /// A plan that declares one stream beside its own: the agent's tasks are `J`.
+    fn declared_plan(backlog: &str, notes: &[(&str, &str)]) -> Result<Summary, Vec<String>> {
+        let status = "STATE: milestone=M7 phase=A task=A3 state=doing base=32c659f updated=2026-10-30\n\
+                      STREAMS: agent=J\n"
+            .to_owned();
+        let notes: Vec<(String, String)> =
+            notes.iter().map(|(path, text)| ((*path).to_owned(), (*text).to_owned())).collect();
+        analyze(&status, backlog, &notes)
+    }
+
+    /// One `[~]` entry of each stream, each with its own note: the shape the plan now allows.
+    fn two_streams() -> &'static str {
+        "## Now\n\n\
+         - `[~]` **A3** arcs in the card `files: crates/ui/src/object_card.rs`\n\
+         - `[~]` **J1** the recipe runner `files: app/src/cli.rs`\n\n\
+         ## Done\n"
+    }
+
+    const AGENT_NOTE: &str = "task: J1\ngoal: run a recipe\nnow: the line parser\nrun: cargo test -p app\n";
+
+    #[test]
+    fn every_declared_stream_works_one_task_and_keeps_its_own_note() {
+        let summary = declared_plan(two_streams(), &[("plan/SESSION.md", NOTE), ("plan/SESSION.agent.md", AGENT_NOTE)])
+            .expect("two streams, two notes");
+        assert_eq!(summary.streams.len(), 2);
+        assert_eq!(summary.streams[0].key, "app");
+        assert_eq!(summary.streams[0].live.as_deref(), Some("A3"));
+        assert_eq!(summary.streams[1].key, "agent");
+        assert_eq!(summary.streams[1].live.as_deref(), Some("J1"));
+        assert_eq!(summary.streams[1].note_path, "plan/SESSION.agent.md");
+        assert_eq!(
+            summary.stream_of("J1").and_then(|stream| stream.session.as_ref()).and_then(|note| note.now.as_deref()),
+            Some("the line parser")
+        );
+        assert_eq!(summary.stream_of("A4"), None, "an open task works no stream");
+    }
+
+    #[test]
+    fn one_stream_may_not_run_two_tasks_at_once() {
+        let backlog = two_streams().replace("## Done", "- `[~]` **J2** the report `files: app/src/cli.rs`\n\n## Done");
+        let error = declared_plan(&backlog, &[("plan/SESSION.md", NOTE), ("plan/SESSION.agent.md", AGENT_NOTE)])
+            .expect_err("two `[~]` tasks of one stream");
+        assert!(
+            error.iter().any(|violation| violation.contains("the `agent` stream marks J1, J2 in progress")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_works_needs_its_note_and_a_note_needs_its_stream() {
+        let error = declared_plan(two_streams(), &[("plan/SESSION.md", NOTE)])
+            .expect_err("the agent stream works without a note");
+        assert!(
+            error.iter().any(|violation| violation.contains("plan/SESSION.agent.md") && violation.contains("J1")),
+            "{error:?}"
+        );
+
+        // The other direction: a note that names no declared stream is a file nothing explains.
+        let idle = two_streams().replace("- `[~]` **J1**", "- `[ ]` **J1**");
+        let error = declared_plan(&idle, &[("plan/SESSION.md", NOTE), ("plan/SESSION.agent.md", AGENT_NOTE)])
+            .expect_err("a note without a `[~]` task");
+        assert!(
+            error.iter().any(|violation| violation.contains("works the `agent` stream")
+                || violation.contains("no stream is working under")),
+            "{error:?}"
+        );
+
+        let undeclared =
+            declared_plan(two_streams(), &[("plan/SESSION.md", NOTE), ("plan/SESSION.agent.md", AGENT_NOTE)])
+                .expect("the declared shape is valid");
+        assert_eq!(undeclared.streams.len(), 2);
+        let status = "STATE: milestone=M7 phase=A task=A3 state=doing base=32c659f updated=2026-10-30\n";
+        let notes = vec![("plan/SESSION.catalog.md".to_owned(), AGENT_NOTE.to_owned())];
+        let error = analyze(status, two_streams(), &notes).expect_err("a note no stream declares");
+        assert!(error.iter().any(|violation| violation.contains("plan/SESSION.catalog.md")), "{error:?}");
+    }
+
+    #[test]
+    fn the_state_line_names_the_plans_own_task_and_not_another_streams() {
+        // A declared stream's entry in `## Now` is not the head `STATE:` names.
+        let idle = "STATE: milestone=M7 phase=A task=- state=idle base=32c659f updated=2026-10-30\nSTREAMS: agent=J\n\
+                    ## Next\n\nNothing is scheduled: the plan's own order is empty.\n"
+            .to_owned();
+        let backlog = "## Now\n\n- `[ ]` **J1** the recipe runner `files: app/src/cli.rs`\n\n## Done\n";
+        let summary = analyze(&idle, backlog, &[]).expect("an empty primary order beside a declared stream");
+        assert_eq!(summary.state.current(), None);
+
+        let named = idle.replace("task=-", "task=J1");
+        let error = analyze(&named, backlog, &[]).expect_err("the state line may not name the agent's task");
+        assert!(error.iter().any(|violation| violation.contains("belongs to the `agent` stream")), "{error:?}");
+    }
+
     #[test]
     fn an_idle_plan_with_a_matching_task_is_consistent() {
-        let summary = analyze(HEADER, backlog(), None).expect("the plan is consistent");
+        let summary = analyze(HEADER, backlog(), &[]).expect("the plan is consistent");
         assert_eq!(summary.state.task, "A3");
         assert_eq!(summary.tasks.len(), 3);
         assert_eq!(summary.tasks[0].status, TaskStatus::Open);
@@ -595,14 +821,14 @@ mod tests {
     fn a_legend_that_declares_every_used_letter_is_consistent() {
         let backlog =
             legend_backlog("`A` — contour\n`K` — the order package", "- `[ ]` **K4** the package `files: src/a.rs`");
-        let summary = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, None).expect("the plan is consistent");
+        let summary = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, &[]).expect("the plan is consistent");
         assert_eq!(summary.tasks[0].id, "K4");
     }
 
     #[test]
     fn an_id_in_a_phase_the_legend_does_not_declare_is_reported() {
         let backlog = legend_backlog("`A` — contour", "- `[ ]` **K4** the package `files: src/a.rs`");
-        let error = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, None).expect_err("K is undeclared");
+        let error = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, &[]).expect_err("K is undeclared");
         assert!(
             error
                 .iter()
@@ -615,7 +841,7 @@ mod tests {
     fn a_prose_legend_is_reported_with_the_verb_that_rewrites_it() {
         let backlog =
             legend_backlog("Phases: A contour, K the order package", "- `[ ]` **K4** the package `files: src/a.rs`");
-        let error = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, None)
+        let error = analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, &[])
             .expect_err("a prose clause line is not the canonical form");
         assert!(
             error.iter().any(|violation| violation.contains("is not a `L` — text clause")
@@ -630,21 +856,29 @@ mod tests {
         let backlog = legend_backlog("", "- `[ ]` **K4** the package `files: src/a.rs`")
             .replace("Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n\n", "");
         assert!(!backlog.contains("Phases come from"), "{backlog}");
-        analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, None).expect("no legend, no phase rule");
+        analyze(&HEADER.replace("task=A3", "task=K4"), &backlog, &[]).expect("no legend, no phase rule");
     }
 
     #[test]
     fn a_doing_plan_needs_a_session_note_and_one_marked_task() {
         let doing = HEADER.replace("state=idle", "state=doing");
+        let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
         assert!(
-            analyze(&doing, backlog(), None)
-                .expect_err("a doing task without a session note must fail")
+            analyze(&doing, &marked, &[])
+                .expect_err("a doing task without a note must fail")
                 .iter()
-                .any(|violation| violation.contains("needs a `plan/SESSION.md`"))
+                .any(|violation| violation.contains("needs a `plan/SESSION.md`")),
+            "a `[~]` task without its note is refused"
+        );
+        assert!(
+            analyze(&doing, backlog(), &[])
+                .expect_err("a doing state without a `[~]` marker must fail")
+                .iter()
+                .any(|violation| violation.contains("exactly one `[~]`")),
+            "a state nothing marks is refused"
         );
 
-        let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
-        let summary = analyze(&doing, &marked, Some(NOTE)).expect("every file agrees");
+        let summary = analyze(&doing, &marked, &note(NOTE)).expect("every file agrees");
         assert_eq!(summary.state.status, "doing");
     }
 
@@ -652,11 +886,11 @@ mod tests {
     fn a_session_note_about_another_task_is_rejected() {
         let doing = HEADER.replace("state=idle", "state=doing");
         let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
-        let error = analyze(&doing, &marked, Some("task: A4\ngoal: x\nnow: y\nrun: z\n"))
+        let error = analyze(&doing, &marked, &note("task: A4\ngoal: x\nnow: y\nrun: z\n"))
             .expect_err("a foreign session note must fail");
         assert!(error.iter().any(|violation| violation.contains("is about task A4")), "{error:?}");
 
-        let error = analyze(&doing, &marked, Some("# note without a task line\n"))
+        let error = analyze(&doing, &marked, &note("# note without a task line\n"))
             .expect_err("a session note without a task line must fail");
         assert!(error.iter().any(|violation| violation.contains("needs a `task: <id>` line")), "{error:?}");
     }
@@ -665,7 +899,7 @@ mod tests {
     fn a_session_note_needs_a_goal_the_current_step_and_a_command() {
         let doing = HEADER.replace("state=idle", "state=doing");
         let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
-        let error = analyze(&doing, &marked, Some("task: A3\ngoal:\nrun:   \n")).expect_err("an empty note must fail");
+        let error = analyze(&doing, &marked, &note("task: A3\ngoal:\nrun:   \n")).expect_err("an empty note must fail");
         for key in ["goal", "now", "run"] {
             assert!(
                 error.iter().any(|violation| violation.contains(&format!("`{key}:` line"))),
@@ -677,24 +911,25 @@ mod tests {
     #[test]
     fn a_doing_task_that_the_backlog_does_not_mark_is_rejected() {
         let doing = HEADER.replace("state=idle", "state=doing");
-        let error = analyze(&doing, backlog(), Some(NOTE)).expect_err("a doing state without a `[~]` marker must fail");
+        let error =
+            analyze(&doing, backlog(), &note(NOTE)).expect_err("a doing state without a `[~]` marker must fail");
         assert!(error.iter().any(|violation| violation.contains("exactly one `[~]`")), "{error:?}");
     }
 
     #[test]
     fn an_idle_plan_must_not_hide_a_session_note_or_an_open_task() {
-        let error = analyze(HEADER, backlog(), Some(NOTE)).expect_err("an idle session note must fail");
+        let error = analyze(HEADER, backlog(), &note(NOTE)).expect_err("an idle session note must fail");
         assert!(error.iter().any(|violation| violation.contains("must not leave")), "{error:?}");
 
         let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
-        let error = analyze(HEADER, &marked, None).expect_err("an idle open task must fail");
+        let error = analyze(HEADER, &marked, &[]).expect_err("an idle open task must fail");
         assert!(error.iter().any(|violation| violation.contains("still in progress")), "{error:?}");
     }
 
     #[test]
     fn the_state_must_name_a_task_in_the_backlog() {
         let error =
-            analyze(&HEADER.replace("task=A3", "task=A9"), backlog(), None).expect_err("an unknown task id must fail");
+            analyze(&HEADER.replace("task=A3", "task=A9"), backlog(), &[]).expect_err("an unknown task id must fail");
         assert!(error.iter().any(|violation| violation.contains("not a task in `plan/BACKLOG.md`")), "{error:?}");
     }
 
@@ -706,7 +941,7 @@ mod tests {
                      - `[ ]` **A4** later `files: crates/model`\n\n\
                      ## Done\n\n\
                      - `[x]` **A2** ring of segments — `0833b4c`\n";
-        let error = analyze(&HEADER.replace("task=A3", "task=A4"), split, None)
+        let error = analyze(&HEADER.replace("task=A3", "task=A4"), split, &[])
             .expect_err("a `## Next` task cannot be the current one");
         assert!(error.iter().any(|violation| violation.contains("must be in `## Now`")), "{error:?}");
     }
@@ -718,7 +953,7 @@ mod tests {
                       - `[ ]` **A4** later `files: crates/model`\n\n\
                       ## Done\n\n\
                       - `[x]` **A2** ring of segments — `0833b4c`\n";
-        let error = analyze(&HEADER.replace("task=A3", "task=A4"), backlog, None)
+        let error = analyze(&HEADER.replace("task=A3", "task=A4"), backlog, &[])
             .expect_err("a task behind the first open one must fail");
         assert!(
             error.iter().any(|violation| violation.contains("is not the first unfinished task in `## Now`")),
@@ -726,7 +961,7 @@ mod tests {
         );
         assert!(error.iter().any(|violation| violation.contains("`A3` comes before it")), "{error:?}");
 
-        analyze(HEADER, backlog, None).expect("the first open task is the current one");
+        analyze(HEADER, backlog, &[]).expect("the first open task is the current one");
     }
 
     #[test]
@@ -737,7 +972,7 @@ mod tests {
                       - `[ ]` **A3** first open `files: crates/ui`\n\n\
                       ## Done\n\n\
                       - `[x]` **A1** older — `0833b4c`\n";
-        let error = analyze(HEADER, backlog, None).expect_err("a `[x]` outside `## Done` still fails");
+        let error = analyze(HEADER, backlog, &[]).expect_err("a `[x]` outside `## Done` still fails");
         assert!(error.iter().any(|violation| violation.contains("belongs in `## Done`")), "{error:?}");
         assert!(
             !error.iter().any(|violation| violation.contains("is not the first unfinished task")),
@@ -754,24 +989,24 @@ mod tests {
                       ## Next\n\n\
                       - `[ ]` **A4** later `files: crates/model`\n\n\
                       ## Done\n\n";
-        analyze(HEADER, backlog, None).expect("only `## Now` orders the work");
+        analyze(HEADER, backlog, &[]).expect("only `## Now` orders the work");
     }
 
     #[test]
     fn a_finished_marker_only_belongs_in_the_done_section() {
         let stray = backlog().replace("- `[ ]` **A4**", "- `[x]` **A4**");
-        let error = analyze(HEADER, &stray, None).expect_err("`[x]` outside `## Done` must fail");
+        let error = analyze(HEADER, &stray, &[]).expect_err("`[x]` outside `## Done` must fail");
         assert!(error.iter().any(|violation| violation.contains("belongs in `## Done`")), "{error:?}");
 
         let reopened = backlog().replace("- `[x]` **A2**", "- `[ ]` **A2**");
-        let error = analyze(HEADER, &reopened, None).expect_err("`## Done` holding an open task must fail");
+        let error = analyze(HEADER, &reopened, &[]).expect_err("`## Done` holding an open task must fail");
         assert!(error.iter().any(|violation| violation.contains("without `[x]`")), "{error:?}");
     }
 
     #[test]
     fn an_unfinished_task_needs_a_files_hint() {
         let hintless = backlog().replace(" `files: crates/model/src/lib.rs`", "");
-        let error = analyze(HEADER, &hintless, None).expect_err("a task without a hint must fail");
+        let error = analyze(HEADER, &hintless, &[]).expect_err("a task without a hint must fail");
         assert!(error.iter().any(|violation| violation.contains("has no `files:` hint")), "{error:?}");
     }
 
@@ -829,7 +1064,7 @@ mod tests {
 
     #[test]
     fn the_plan_checks_updated_when_it_reads_the_state_line() {
-        let error = analyze(&HEADER.replace("updated=2026-10-30", "updated=last week"), backlog(), None)
+        let error = analyze(&HEADER.replace("updated=2026-10-30", "updated=last week"), backlog(), &[])
             .expect_err("a word is not a date");
         assert!(error.iter().any(|violation| violation.contains("is not a date")), "{error:?}");
     }
@@ -869,7 +1104,7 @@ mod tests {
     #[test]
     fn an_over_long_plan_file_fails_the_gate() {
         let long_status = format!("{HEADER}{}", "filler\n".repeat(MAX_STATUS_LINES));
-        let error = analyze(&long_status, backlog(), None).expect_err("the budget is an error, not a warning");
+        let error = analyze(&long_status, backlog(), &[]).expect_err("the budget is an error, not a warning");
         assert!(error.iter().any(|violation| violation.contains("over the 70-line budget")), "{error:?}");
         // The count alone is what cost a session seven minutes: the message names the width too.
         assert!(
@@ -882,23 +1117,23 @@ mod tests {
         let doing = HEADER.replace("state=idle", "state=doing");
         let marked = backlog().replace("- `[ ]` **A3**", "- `[~]` **A3**");
         let long_note = format!("{NOTE}{}", "filler\n".repeat(MAX_SESSION_LINES));
-        let error = analyze(&doing, &marked, Some(&long_note)).expect_err("an over-long note must fail");
+        let error = analyze(&doing, &marked, &note(&long_note)).expect_err("an over-long note must fail");
         assert!(error.iter().any(|violation| violation.contains("over the 50-line budget")), "{error:?}");
     }
 
     #[test]
     fn a_task_line_without_a_bold_id_fails_the_gate() {
         let broken = format!("{}- `[ ]` A9 an editor without a bold id\n", backlog());
-        let error = analyze(HEADER, &broken, None).expect_err("a malformed task line must fail");
+        let error = analyze(HEADER, &broken, &[]).expect_err("a malformed task line must fail");
         assert!(error.iter().any(|violation| violation.contains("without a `**bold**` id")), "{error:?}");
     }
 
     #[test]
     fn a_missing_state_line_or_field_is_reported() {
-        let error = analyze("# Status\n", backlog(), None).expect_err("a missing state line must fail");
+        let error = analyze("# Status\n", backlog(), &[]).expect_err("a missing state line must fail");
         assert!(error.iter().any(|violation| violation.contains("needs a `STATE:` line")), "{error:?}");
 
-        let error = analyze("STATE: milestone=M7 task=A3\n", backlog(), None).expect_err("missing fields must fail");
+        let error = analyze("STATE: milestone=M7 task=A3\n", backlog(), &[]).expect_err("missing fields must fail");
         assert!(error.iter().any(|violation| violation.contains("needs `state=`")), "{error:?}");
         assert!(error.iter().any(|violation| violation.contains("needs `base=`")), "{error:?}");
     }
@@ -906,27 +1141,27 @@ mod tests {
     #[test]
     fn a_repeated_status_section_is_reported() {
         let doubled = format!("{HEADER}\n## Next\n\nA3 is next.\n\n## Next\n\nA3 again.\n");
-        let error = analyze(&doubled, backlog(), None).expect_err("one section, one body");
+        let error = analyze(&doubled, backlog(), &[]).expect_err("one section, one body");
         assert!(error.iter().any(|violation| violation.contains("two `## Next` sections")), "{error:?}");
     }
 
     #[test]
     fn a_duplicate_backlog_id_is_rejected() {
         let doubled = backlog().replace("- `[ ]` **A4**", "- `[ ]` **A3**");
-        let error = analyze(HEADER, &doubled, None).expect_err("a duplicate id must fail");
+        let error = analyze(HEADER, &doubled, &[]).expect_err("a duplicate id must fail");
         assert!(error.iter().any(|violation| violation.contains("appears twice")), "{error:?}");
     }
 
     #[test]
     fn the_summary_holds_the_current_task_and_the_next_open_ones() {
-        let summary = analyze(HEADER, backlog(), None).expect("the plan is consistent");
+        let summary = analyze(HEADER, backlog(), &[]).expect("the plan is consistent");
         assert_eq!(summary.state.milestone, "M7");
         assert_eq!(summary.tasks.iter().filter(|task| task.status == TaskStatus::Open).count(), 2);
     }
 
     #[test]
     fn the_state_may_not_point_at_a_finished_task() {
-        let error = analyze(&HEADER.replace("task=A3", "task=A2"), backlog(), None)
+        let error = analyze(&HEADER.replace("task=A3", "task=A2"), backlog(), &[])
             .expect_err("a finished task cannot be the current one");
         assert!(error.iter().any(|violation| violation.contains("is done")), "{error:?}");
     }

@@ -5,8 +5,8 @@
 //! second list that disagrees with the first. This module is that list. A [`Subject`] is a node, the
 //! root frame or empty space; [`entries`] answers with what that subject owns — the inventory's
 //! contextual rows that act on its kind (ADR 0117), in the registry's order, plus the session
-//! entries that write no document: the eye, the padlock, *Isolate*, *Show all*, *Add child* and the
-//! open product (ADR 0065, ADR 0098).
+//! entries that write no document: the eye, the padlock, *Isolate*, *Show all*, the four transform
+//! gestures and *Add child* and the open product (ADR 0065, ADR 0098, U113).
 //!
 //! A capability entry names its id, its label, whether it can run and the sentence that says why not,
 //! so a menu cannot offer something the engine would refuse silently. The tree row and the viewport
@@ -21,6 +21,7 @@ use model::{Container, Id, Project};
 use text::Message;
 
 use crate::inventory::{self, NodeKind, Place};
+use crate::transform::TransformMode;
 use crate::view_flags::ViewFlags;
 use crate::{language, theme};
 
@@ -93,6 +94,11 @@ pub enum NodeAction {
         node: Id,
     },
     ShowAll,
+    /// Arms one of the window's four transform gestures.
+    ///
+    /// The mode is the window's view state and not the document's, so the entry names it and the
+    /// shell writes it: no command, no revision and no undo entry (ADR 0113, U113).
+    Mode(TransformMode),
 }
 
 impl NodeAction {
@@ -191,6 +197,23 @@ pub fn entries(subject: Subject, source: &MenuSource<'_>) -> Vec<Entry> {
         reason: Some(Message::TreeShowAllHint),
         section: false,
     });
+
+    // The window's four gestures, beside the view entries because they write no document either:
+    // the mode is view state, so a node's row menu is where a maker reaches it without leaving the
+    // piece in hand (U113). Empty space and the root draw no entry of their own here: a mode acts on
+    // a selection, and the status bar's band is always one press away.
+    if node.is_some() && std::env::var("Z3L_NO_MODES").is_err() {
+        for (index, mode) in TransformMode::ALL.into_iter().enumerate() {
+            entries.push(Entry {
+                id: None,
+                label: mode.words(),
+                action: NodeAction::Mode(mode),
+                enabled: true,
+                reason: Some(mode.hint_words()),
+                section: index == 0,
+            });
+        }
+    }
 
     // A container is where a part lands and, when it is a product, the piece the session works in.
     if let Some(id) = node
@@ -420,7 +443,15 @@ impl ViewportMenu {
                     });
             })
             .response;
-        let dismissed = ui.input(|input| input.pointer.any_pressed()) && !response.contains_pointer();
+        // A press inside the menu is the menu's own, and a press outside it dismisses it. The frame's
+        // rectangle decides, not `Response::contains_pointer`: a popup the window had to pull back
+        // inside the scene keeps the hit test of the place it would have had, so a menu taller than
+        // the space under the pointer would dismiss itself on a press on one of its own rows (U113
+        // measured this with ten entries). The same rectangle is what the shell hands to
+        // `Chrome::covers`, so a press that keeps the menu up is also kept from the scene behind it.
+        let pressed = ui.input(|input| input.pointer.any_pressed());
+        let inside = ui.input(|input| input.pointer.interact_pos()).is_some_and(|pos| response.rect.contains(pos));
+        let dismissed = pressed && !inside;
         if chosen.is_some() || dismissed {
             self.close();
         } else {
@@ -453,6 +484,29 @@ mod tests {
         entries.iter().map(|entry| entry.label).collect()
     }
 
+    /// Collects the text of every text shape and the rectangle it was drawn in, nested ones too.
+    fn drawn_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Rect, String)> {
+        use egui::epaint::Shape;
+        fn walk(shape: &Shape, out: &mut Vec<(Rect, String)>) {
+            match shape {
+                Shape::Text(text) => {
+                    out.push((Rect::from_min_size(text.pos, text.galley.size()), text.galley.text().to_owned()));
+                }
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut out);
+        }
+        out
+    }
+
     #[test]
     fn a_panel_offers_the_view_entries_then_its_edits() {
         let project = sample_project();
@@ -465,10 +519,15 @@ mod tests {
                 Message::TreeLock,
                 Message::TreeIsolate,
                 Message::TreeShowAll,
+                Message::Select,
+                Message::Move,
+                Message::Object,
+                Message::Rotate,
+                Message::ObjectRotate,
                 Message::CmdDuplicate,
                 Message::CmdDelete,
             ],
-            "a panel's menu: the eye, the padlock, the two view entries, then its edits"
+            "a panel's menu: the eye, the padlock, the view entries and the five gestures, then its edits"
         );
     }
 
@@ -484,6 +543,11 @@ mod tests {
                 Message::TreeLock,
                 Message::TreeIsolate,
                 Message::TreeShowAll,
+                Message::Select,
+                Message::Move,
+                Message::Object,
+                Message::Rotate,
+                Message::ObjectRotate,
                 Message::TreeAddChild,
                 Message::CmdDuplicate,
                 Message::CmdConvertToGroup,
@@ -512,10 +576,15 @@ mod tests {
                 Message::TreeLock,
                 Message::TreeIsolate,
                 Message::TreeShowAll,
+                Message::Select,
+                Message::Move,
+                Message::Object,
+                Message::Rotate,
+                Message::ObjectRotate,
                 Message::CmdDuplicate,
                 Message::CmdDelete,
             ],
-            "a scene object is a node like any other, so it keeps the same five entries"
+            "a scene object is a node like any other, so it keeps the same entries"
         );
         assert!(entries.iter().all(|entry| entry.id != Some("panel.rename")));
     }
@@ -529,6 +598,45 @@ mod tests {
             assert_eq!(labels(&entries), vec![Message::TreeShowAll], "{subject:?} owns one action");
             assert!(entries.iter().all(|entry| entry.id.is_none()), "and it is no command");
         }
+    }
+
+    #[test]
+    fn the_five_gestures_are_session_entries_of_a_node_menu() {
+        // U113: the mode is the window's view state and writes no document, so the menu offers it
+        // with no command behind it — an entry that names the mode, says what it does on hover and
+        // is never refused, not even on a locked node, which a mode does not edit.
+        let project = sample_project();
+        let mut flags = ViewFlags::default();
+        flags.set_locked(id(2), true);
+        let entries = menu(&project, &flags, &[id(2)], Subject::Node(id(2)));
+        let modes: Vec<Entry> =
+            entries.iter().filter(|entry| matches!(entry.action, NodeAction::Mode(_))).cloned().collect();
+        assert_eq!(
+            modes.iter().map(|entry| entry.action.clone()).collect::<Vec<_>>(),
+            TransformMode::ALL.into_iter().map(NodeAction::Mode).collect::<Vec<_>>(),
+            "the menu offers the five in the band's order"
+        );
+        for (entry, mode) in modes.iter().zip(TransformMode::ALL) {
+            assert!(entry.id.is_none(), "a mode is view state, so it names no command");
+            assert_eq!(entry.label, mode.words(), "the menu and the band print one word");
+            assert_eq!(entry.reason, Some(mode.hint_words()), "and the hover says which gesture it is");
+            assert!(entry.enabled, "a locked node refuses an edit, never a view mode");
+        }
+    }
+
+    #[test]
+    fn the_five_gestures_are_one_section_of_the_menu() {
+        // Five entries that read as groups would put a separator between two gestures made the same
+        // way: the mode band is one block, and the rows around it keep their own separators.
+        let project = sample_project();
+        let flags = ViewFlags::default();
+        let entries = menu(&project, &flags, &[id(2)], Subject::Node(id(2)));
+        let sections: Vec<bool> = entries
+            .iter()
+            .filter(|entry| matches!(entry.action, NodeAction::Mode(_)))
+            .map(|entry| entry.section)
+            .collect();
+        assert_eq!(sections, vec![true, false, false, false, false], "the band opens one section, not five");
     }
 
     #[test]
@@ -604,6 +712,68 @@ mod tests {
         assert_eq!(entry.action, NodeAction::ArmVoid { product });
         let panel_menu = menu(&project, &flags, &[id(2)], Subject::Node(id(2)));
         assert!(panel_menu.iter().all(|entry| entry.id != Some("probe.void")), "a panel owns no void to name");
+    }
+
+    #[test]
+    fn a_popup_pulled_back_inside_the_scene_still_runs_the_row_under_the_press() {
+        // A node's menu is taller than the gap a right click near the bottom of the scene leaves, so
+        // the window pulls the popup back inside the view. A press on one of its own rows still has
+        // to run that row: the rectangle the frame drew decides, not a hit test that goes stale on a
+        // popup the window moved.
+        let project = sample_project();
+        let flags = ViewFlags::default();
+        let selection = [id(2)];
+        let source = MenuSource { project: &project, flags: &flags, selection: &selection, active_product: None };
+        let viewport = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 320.0));
+        let mut menu = ViewportMenu::default();
+        // Twenty points stay below the pointer, and ten rows need far more than that.
+        menu.open(Subject::Node(id(2)), egui::pos2(100.0, 300.0));
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+
+        let frame = |menu: &mut ViewportMenu, events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(viewport), events, ..Default::default() };
+            let mut chosen = None;
+            let output = ctx.run_ui(input, |ui| {
+                chosen = menu.show(ui, viewport, &source, 90);
+            });
+            let rects = drawn_rects(&output.shapes);
+            output.drop_without_applying_deltas();
+            (rects, chosen)
+        };
+
+        // Two frames: the first lays the popup out, the second draws it where the window pulled it.
+        frame(&mut menu, Vec::new());
+        let (rects, chosen) = frame(&mut menu, Vec::new());
+        assert!(chosen.is_none(), "an idle frame chooses nothing");
+        let row = Message::TreeHide.text(crate::Lang::En);
+        let at = rects
+            .iter()
+            .find(|(_, text)| text == row)
+            .map(|(rect, _)| rect.center())
+            .expect("the menu drew the row it offers");
+        assert!(
+            menu.rect().is_some_and(|drawn| drawn.top() < 300.0),
+            "the menu was pulled up from where the press asked for it"
+        );
+
+        let (_, chosen) = frame(&mut menu, vec![egui::Event::PointerMoved(at)]);
+        assert!(chosen.is_none(), "moving the pointer runs nothing");
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (_, chosen) = frame(&mut menu, vec![button(true)]);
+        assert!(chosen.is_none(), "the press alone runs nothing, and it does not dismiss the menu either");
+        let (_, chosen) = frame(&mut menu, vec![button(false)]);
+        assert_eq!(
+            chosen,
+            Some(NodeAction::SetHidden { node: id(2), hidden: true }),
+            "the row under the press is the row that runs"
+        );
+        assert!(!menu.is_open(), "and the menu closes when it has run");
     }
 
     #[test]

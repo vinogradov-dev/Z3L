@@ -11,7 +11,8 @@
 //! gizmos, and it takes no click.
 //!
 //! The boxes are view state read from the last evaluation, so opening or closing a level paints on
-//! the next frame and re-evaluates nothing. A closed container, a hidden one — its subtree draws
+//! the next frame and re-evaluates nothing. A drag preview is applied where the boxes are read, so a
+//! piece in hand carries its brackets with it (X75). A closed container, a hidden one — its subtree draws
 //! nothing, so it has no box — and a product that is not open draw nothing at all.
 
 use std::collections::HashSet;
@@ -23,7 +24,7 @@ use model::Id;
 use scene::{Camera, ProductEnvelope, ProductEnvelopeState};
 use ui::theme;
 
-use crate::gizmo_math::screen_point;
+use crate::gizmo_math::{Preview, screen_point};
 use crate::scene_build::LevelBounds;
 
 /// An arm takes a fifth of the shortest box edge that meets its corner.
@@ -63,36 +64,58 @@ pub(crate) struct OpenBoxes(Vec<[DVec3; 8]>);
 
 impl OpenBoxes {
     /// The boxes of the containers in `open` and of the one open product.
-    pub(crate) fn collect(levels: &[LevelBounds], open: &HashSet<Id>, envelopes: &[ProductEnvelope]) -> Self {
+    ///
+    /// `carried` is the drag a gizmo is previewing, if any: a level the drag moves is bracketed where
+    /// the preview draws it and not where the document still holds it, so the marks travel with the
+    /// piece in hand and land with it on the click that puts it down (X75).
+    pub(crate) fn collect(
+        levels: &[LevelBounds],
+        open: &HashSet<Id>,
+        envelopes: &[ProductEnvelope],
+        carried: Option<Preview<'_>>,
+    ) -> Self {
         let mut boxes = Vec::new();
         for level in levels {
             if !open.contains(&level.id) {
                 continue;
             }
             if let Some(corners) = level.corners {
-                boxes.push(corners);
+                boxes.push(corners.map(|corner| carried_corner(carried, level.id, corner)));
             }
         }
         for envelope in envelopes {
             if matches!(envelope.state, ProductEnvelopeState::Open) {
-                boxes.push(envelope_corners(envelope));
+                boxes.push(envelope_corners(envelope).map(|corner| carried_corner(carried, envelope.id, corner)));
             }
         }
         Self(boxes)
     }
 }
 
+/// One box corner where the drag preview puts it, or where it stands when the drag carries no such
+/// node.
+fn carried_corner(carried: Option<Preview<'_>>, id: Id, corner: DVec3) -> DVec3 {
+    match carried {
+        Some(preview) if preview.drawables().contains(&id) => preview.moved_point(corner),
+        _ => corner,
+    }
+}
+
 /// The eight corners of a product's authored box in world space.
 ///
 /// The bit order is the one [`geom::Bounds`] promises for a container's box: bit 0 picks
-/// the `x` maximum, bit 1 the `y` and bit 2 the `z`, so both kinds of box bracket the same way.
+/// the `x` maximum, bit 1 the `y` and bit 2 the `z`, so both kinds of box bracket the same way. The
+/// box is the one around the reserved footprint: a bracket marks the piece's extent, not its shape.
 fn envelope_corners(envelope: &ProductEnvelope) -> [DVec3; 8] {
-    let size = envelope.size;
+    let (min, max) = envelope.local_bounds().unwrap_or((DVec3::ZERO, DVec3::ZERO));
     let mut corners = [DVec3::ZERO; 8];
     for (index, corner) in corners.iter_mut().enumerate() {
-        let pick = |bit: usize, high: f64| if index & bit == 0 { 0.0 } else { high };
-        *corner =
-            envelope.world_transform.transform_point3(DVec3::new(pick(1, size.x), pick(2, size.y), pick(4, size.z)));
+        let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+        *corner = envelope.world_transform.transform_point3(DVec3::new(
+            pick(1, min.x, max.x),
+            pick(2, min.y, max.y),
+            pick(4, min.z, max.z),
+        ));
     }
     corners
 }
@@ -262,12 +285,12 @@ mod tests {
         let group = level(2, Some(corners));
         let empty = level(3, None);
         let closed = HashSet::new();
-        assert!(OpenBoxes::collect(&[group, empty], &closed, &[]).0.is_empty(), "a closed group draws nothing");
+        assert!(OpenBoxes::collect(&[group, empty], &closed, &[], None).0.is_empty(), "a closed group draws nothing");
 
         let mut open = HashSet::new();
         open.insert(level(2, None).id);
         open.insert(level(3, None).id);
-        let boxes = OpenBoxes::collect(&[group, empty], &open, &[]);
+        let boxes = OpenBoxes::collect(&[group, empty], &open, &[], None);
         assert_eq!(boxes.0.len(), 1, "an open level with nothing drawn adds no box, so no bracket");
         assert_eq!(boxes.0[0], corners);
     }
@@ -277,31 +300,27 @@ mod tests {
             DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2),
             DVec3::new(100.0, 0.0, 0.0),
         );
-        ProductEnvelope {
-            id: Id::new(id).expect("id"),
-            size: DVec3::new(600.0, 400.0, 720.0),
-            world_transform: placement,
-            state,
-        }
+        ProductEnvelope::rectangular(Id::new(id).expect("id"), DVec3::new(600.0, 400.0, 720.0), placement, state)
     }
 
     #[test]
     fn only_the_open_product_brackets_its_authored_box() {
         let opening = envelope(4, ProductEnvelopeState::Open);
-        let boxes = OpenBoxes::collect(&[], &HashSet::new(), std::slice::from_ref(&opening));
+        let boxes = OpenBoxes::collect(&[], &HashSet::new(), std::slice::from_ref(&opening), None);
         assert_eq!(boxes.0.len(), 1, "the open product brackets its envelope");
 
         // The box follows the product's own frame, so a turned piece brackets a turned box.
         let corners = boxes.0[0];
+        let (min, max) = opening.local_bounds().expect("a valid envelope");
         for (index, corner) in corners.iter().enumerate() {
-            let pick = |bit: usize, high: f64| if index & bit == 0 { 0.0 } else { high };
-            let local = DVec3::new(pick(1, opening.size.x), pick(2, opening.size.y), pick(4, opening.size.z));
+            let pick = |bit: usize, low: f64, high: f64| if index & bit == 0 { low } else { high };
+            let local = DVec3::new(pick(1, min.x, max.x), pick(2, min.y, max.y), pick(4, min.z, max.z));
             let expected = opening.world_transform.transform_point3(local);
             assert!((*corner - expected).length() < 1.0e-9, "corner {index} of the authored box");
         }
 
         for state in [ProductEnvelopeState::ClosedEmpty, ProductEnvelopeState::ClosedWithParts] {
-            let closed = OpenBoxes::collect(&[], &HashSet::new(), &[envelope(5, state)]);
+            let closed = OpenBoxes::collect(&[], &HashSet::new(), &[envelope(5, state)], None);
             assert!(closed.0.is_empty(), "a {state:?} product draws no bracket");
         }
     }

@@ -611,6 +611,41 @@ pub fn set_state(status: &str, values: &[(String, String)]) -> Result<String, St
     Ok(text)
 }
 
+/// Writes the `STREAMS:` declaration of `plan/STATUS.md`: one `key=AB` pair per stream.
+///
+/// It lives on its own line under the `STATE:` line, because the state changes every task and the
+/// declaration changes when a checkout appears. An empty list removes the line, which puts the plan
+/// back on its single stream; the pairs are checked by [`crate::Streams::parse`] before anything is
+/// written, so a declaration the gate would refuse is a sentence here instead.
+pub fn set_streams(status: &str, pairs: &[String]) -> Result<String, String> {
+    let declaration = pairs.join(" ");
+    if !declaration.is_empty() {
+        let probe = format!("STREAMS: {declaration}\n");
+        crate::Streams::parse(&probe).map_err(|violations| violations.join("; "))?;
+    }
+    let mut lines: Vec<String> = status.lines().map(str::to_owned).collect();
+    let existing = lines.iter().position(|line| line.trim_start().starts_with(crate::STREAMS_PREFIX));
+    match (existing, declaration.is_empty()) {
+        (Some(index), false) => lines[index] = format!("STREAMS: {declaration}"),
+        (Some(index), true) => {
+            lines.remove(index);
+        }
+        (None, false) => {
+            let index = lines
+                .iter()
+                .position(|line| line.trim_start().starts_with(crate::parse::STATE_PREFIX))
+                .ok_or_else(|| "`plan/STATUS.md` has no `STATE:` line".to_owned())?;
+            lines.insert(index.saturating_add(1), format!("STREAMS: {declaration}"));
+        }
+        (None, true) => {}
+    }
+    let mut text = lines.join("\n");
+    if status.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(text)
+}
+
 /// The prose of a section, with the blank lines between paragraphs kept.
 ///
 /// A line that already fits [`PROSE_WIDTH`] is copied as it is: a caller that hands the tool the
@@ -941,6 +976,31 @@ mod tests {
             "# Backlog\n\nIntro prose.\n\n{LEGEND_LEAD}\n`A` — contour\n`K` — the order package, its writer and the \
              money it carries\n\n## Now\n\n- `[ ]` **A3** arcs `files: src/a.rs`\n\n## Done\n"
         )
+    }
+
+    #[test]
+    fn the_stream_declaration_sits_under_the_state_line_and_leaves_it_alone() {
+        let status = "# Status\n\nSTATE: milestone=M1 task=P6 state=idle base=abc1234 updated=2026-01-01\n\n## Now\n";
+        let declared = set_streams(status, &["agent=J".to_owned(), "catalog=O".to_owned()]).expect("two streams");
+        let lines: Vec<&str> = declared.lines().collect();
+        assert_eq!(lines[2], "STATE: milestone=M1 task=P6 state=idle base=abc1234 updated=2026-01-01");
+        assert_eq!(lines[3], "STREAMS: agent=J catalog=O");
+        assert!(declared.ends_with("## Now\n"), "the rest of the file is untouched: {declared}");
+
+        // A second write replaces the line instead of adding one, and an empty list removes it.
+        let again = set_streams(&declared, &["prototypes=Q".to_owned()]).expect("one stream");
+        assert_eq!(again.matches("STREAMS:").count(), 1, "{again}");
+        assert!(again.contains("STREAMS: prototypes=Q\n"), "{again}");
+        let cleared = set_streams(&again, &[]).expect("no declaration is legal");
+        assert!(!cleared.contains("STREAMS:"), "{cleared}");
+        assert_eq!(cleared, status, "clearing restores the file byte for byte");
+    }
+
+    #[test]
+    fn a_declaration_the_gate_would_refuse_is_a_sentence() {
+        let status = "STATE: milestone=M1 task=P6 state=idle base=abc1234 updated=2026-01-01\n";
+        let error = set_streams(status, &["agent=jk".to_owned()]).expect_err("not a phase");
+        assert!(error.contains("one capital letter"), "{error}");
     }
 
     #[test]

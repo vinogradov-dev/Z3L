@@ -14,9 +14,11 @@
 //! It does not do: the edge and corner trims (`banding.rs`), the machining records
 //! (`machining.rs`), or any geometry derivation.
 
+use catalog::Directory;
+use geom::Contact;
 use model::{
-    Catalog, ClassCode, Contour, EdgeBevel, EdgeRef, Id, Level, MaterialId, Operation, Panel, PanelNominalSize,
-    PanelOutline, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
+    ClassCode, Contour, EdgeBevel, EdgeRef, Id, ItemId, Level, Operation, Panel, PanelNominalSize, PanelOutline,
+    Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,7 +46,7 @@ pub struct PanelCreate {
     /// Panel nominal length and width.
     pub nominal_size: PanelNominalSize,
     /// Panel-body material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
     /// Placement relative to the parent container.
     pub placement: Placement,
     /// The furniture class the new part plays, when the tool that created it has one.
@@ -149,7 +151,7 @@ pub struct PanelContourCreate {
     /// Constructive object whose contour becomes the panel outline.
     pub source: Id,
     /// Panel-body material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
     /// Offset composed on top of the source's frame, in the parent frame.
     ///
     /// The identity means "exactly over the source": the panel's local zero, its contour's base
@@ -191,19 +193,19 @@ fn contour_create_enabled(session: &Session, params: &Value) -> bool {
     params.validate_name().is_ok()
         && session.project().is_container(params.parent)
         && allow_creation(session.project(), params.parent, session.active_product()).is_ok()
-        && session.catalog().panel_material(params.material).is_some()
+        && session.directory().board(params.material).is_some()
         && session.project().validate_panel_contour(params.parent, params.source).is_ok()
 }
 
 fn contour_create_run(
     project: &mut Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelContourCreate::parse(params)?;
     params.validate_name()?;
-    let material =
-        catalog.panel_material(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
+    let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
     let contour = project.object_contour(params.source)?.clone();
     let placement = over_source_placement(project, &params)?;
     let id = project.add_panel_contour(
@@ -211,7 +213,7 @@ fn contour_create_run(
         params.name,
         &contour,
         Some(params.material),
-        material.nominal_thickness(),
+        material.thickness,
         placement,
     )?;
     Ok(CommandOutcome::created(id))
@@ -268,7 +270,12 @@ fn bevel_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_panel_bevel(params.panel, bevel).is_ok()
 }
 
-fn bevel_set_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bevel_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelBevelSet::parse(params)?;
     let bevel = params.bevel()?;
     class_allows_contour(project, params.panel, BEVEL_SET_ID)?;
@@ -310,7 +317,12 @@ fn bevel_clear_enabled(session: &Session, params: &Value) -> bool {
     session.project().panel(params.panel).is_some_and(|panel| panel.bevel_at(params.source).is_some())
 }
 
-fn bevel_clear_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn bevel_clear_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelBevelClear::parse(params)?;
     project.clear_panel_bevel(params.panel, params.source)?;
     Ok(CommandOutcome::changed())
@@ -373,7 +385,12 @@ fn outline_set_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_panel_outline(params.panel, &params.contour).is_ok()
 }
 
-fn outline_set_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn outline_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelOutlineSet::parse(params)?;
     class_allows_contour(project, params.panel, OUTLINE_SET_ID)?;
     project.set_panel_outline(params.panel, params.contour)?;
@@ -419,8 +436,9 @@ fn outline_contour_enabled(session: &Session, params: &Value) -> bool {
 
 fn outline_contour_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelOutlineToContour::parse(params)?;
     class_allows_contour(project, params.panel, OUTLINE_CONTOUR_ID)?;
@@ -435,15 +453,19 @@ fn create_enabled(session: &Session, params: &Value) -> bool {
     params.validate_name().is_ok()
         && session.project().is_container(params.parent)
         && allow_creation(session.project(), params.parent, session.active_product()).is_ok()
-        && session.catalog().panel_material(params.material).is_some()
+        && session.directory().board(params.material).is_some()
 }
 
-fn create_run(project: &mut Project, catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn create_run(
+    project: &mut Project,
+    catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelCreate::parse(params)?;
     params.validate_name()?;
-    let material =
-        catalog.panel_material(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
-    let thickness = material.nominal_thickness();
+    let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
+    let thickness = material.thickness;
     let id = match params.outline.as_ref() {
         Some(PanelOutline::Contour { contour }) => {
             let anchored = Panel::anchored_contour(contour).map_err(ProjectError::from)?;
@@ -549,7 +571,12 @@ fn rename_enabled(session: &Session, params: &Value) -> bool {
     params.validate_name().is_ok() && session.project().panel(params.panel).is_some()
 }
 
-fn rename_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn rename_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelRename::parse(params)?;
     params.validate_name()?;
     project.rename_panel(params.panel, params.name)?;
@@ -590,7 +617,12 @@ fn resize_enabled(session: &Session, params: &Value) -> bool {
         && session.project().validate_panel_resize(params.panel, params.nominal_size).is_ok()
 }
 
-fn resize_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn resize_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelResize::parse(params)?;
     class_allows_resize(project, params.panel, params.nominal_size)?;
     project.set_panel_nominal_size(params.panel, params.nominal_size)?;
@@ -638,7 +670,7 @@ pub struct PanelMaterialSet {
     /// Id of the panel whose material changes.
     pub panel: Id,
     /// Panel-body material from the session catalogue.
-    pub material: MaterialId,
+    pub material: ItemId,
 }
 
 impl PanelMaterialSet {
@@ -656,17 +688,21 @@ fn material_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMaterialSet::parse(params) else {
         return false;
     };
-    let Some(material) = session.catalog().panel_material(params.material) else {
+    let Some(material) = session.directory().board(params.material) else {
         return false;
     };
-    session.project().panel(params.panel).is_some_and(|panel| panel.geometry(material.nominal_thickness()).is_ok())
+    session.project().panel(params.panel).is_some_and(|panel| panel.geometry(material.thickness).is_ok())
 }
 
-fn material_set_run(project: &mut Project, catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn material_set_run(
+    project: &mut Project,
+    catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = PanelMaterialSet::parse(params)?;
-    let material =
-        catalog.panel_material(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
-    project.set_panel_material(params.panel, params.material, material.nominal_thickness())?;
+    let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
+    project.set_panel_material(params.panel, params.material, material.thickness)?;
     Ok(CommandOutcome::changed())
 }
 
@@ -684,7 +720,7 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::with_catalog(sample_project(), sample_catalog())
+        Session::with_directory(sample_project(), sample_catalog())
     }
 
     fn params<T: serde::Serialize>(value: &T) -> Value {

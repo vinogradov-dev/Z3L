@@ -10,6 +10,35 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[release]` a gate that has to run before the first release, `[vendor]`.
 
+- `[design]` `app` is a binary root without a library, so a second binary cannot share the shell's
+  rules: `z3l directory` is a mode of the one program, because a second `[[bin]]` would write the rule
+  for where `nomenclature/` lives (`settings_store::config_dir`) a second time. Split `app` into
+  `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
+  of `app/src/directory_app.rs` then (ADR 0158).
+
+- `[gizmo]` A turn is bounded by the bodies around the selection and not by the workspace's floor, so a
+  ring swung far enough carries a piece below Z = 0 where a carry would have been held: the rotate rule
+  reads no `MoveSettings` and no floor (X88, ADR 0177). Give the turn the same bound when a maker turns
+  a piece through the bench.
+
+- `[gizmo]` A turn has no typed angle: the shared scrub field belongs to a translate drag, and a ring
+  drag answers the pointer alone (X88, ADR 0092). Add the field to the rotate gesture when a maker asks
+  to turn by a number.
+
+- `[gizmo]` A measured turn answers the *destination*, not the path (ADR 0166 read for a ring: the last
+  angle the rule grants is always a free placement, but a hand that drags more than half a revolution can
+  be granted an angle that swung the body through a neighbour on the way). Bisect the blocked interval
+  instead of the whole angle when a maker turns a door right round.
+
+- `[view-state]` The fill trims a hidden body by the box around it in the open product's frame, so a
+  turned hidden part cuts a little more than it must (X73, ADR 0175). Trim by the body's own faces
+  when a maker reports a shelf that is shorter than the void behind a leaned hidden wall.
+
+- `[view-state]` The fill trims a hidden body on the board's own two axes only, so a hidden board
+  lying across the board's thickness at the same height cuts the footprint instead of moving the
+  free axis (X73, ADR 0175). `TooSmall` is the honest answer today; a fill that steps over a hidden
+  slab is a tool of its own.
+
 - `[release]` The product name leaves the code before the first release: R1 is the measured
   four-commit procedure in `plan/rename.md`, deferred out of the work order until then so a release
   does not wait for the whole order. Run `cargo xtask task take R1` and the four commits first.
@@ -71,10 +100,16 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   step.
 - `[assistant]` Faber is designed (ADRs 0028–0032) but not implemented; the scene store now gives a
   background job a file to open, but there is no headless binary or query surface yet.
-- `[scene]` Save and load exist in the shell. Gaps: there is no prompt when the window closes with
-  unsaved changes, Open warns inside the path dialog instead of asking for confirmation, there is no
-  recent-files list and no autosave. `app` still starts from `sample_session()`; a new
-  empty scene is one menu click away.
+- `[scene]` Save and load exist in the shell. Gaps: the window's own close button does not ask about
+  unsaved changes (only the menu's *Exit* does), and there is no autosave. `app` still starts from
+  `sample_session()`; a new empty scene is one menu click away.
+- `[scene]` *Open* and *Save as* ask the system file manager, and a pick that never comes back holds
+  the pair: `rfd` waits on the portal's D-Bus call with no timeout, so a crashed
+  `xdg-desktop-portal` leaves the picker busy until the window restarts, and the binding reports no
+  refusal of its own — a portal that is not there answers `None`, the same as a cancelled pick, so
+  the status bar cannot say why nothing happened. The dialog is also not owned by our window, because
+  no parent handle is passed: on Windows and Wayland the file manager is a window of its own rather
+  than a sheet of the editor's (ADR 0182, X91).
 - `[scene]` A scene written by an earlier build is not migrated to the current frame: there are no
   releases and no user files yet (`plan/rename.md`), so an old pre-release document may load with a
   different world shape instead of being converted. Owner's decision, 2026-11-10; revisit when a
@@ -91,9 +126,14 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `docs/domain/furntypes.md`.
 - `[types]` Queries exist in the model and the scene tree selects a furniture-type subtree, but there
   is no engine command or saved report over a query yet.
-- `[gizmo]` The gizmos do not snap: translate and rotate angles are free, and snapping is not
-  implemented yet.
+- `[gizmo]` The rotate rings do not snap: an angle is the pointer's own. A translate drag snaps to
+  the coordinate planes, the frames and the part faces inside the workspace's tolerance (ADR 0146);
+  no angle has a step the maker can set.
 - `[gizmo]` The rotate rings are world-aligned only; a local-axis mode is not implemented.
+- `[gizmo]` A panel's furniture drag runs along the world axis its thickness points most nearly at,
+  not along its exact normal, because every surface the rule measures is a world box (ADR 0102); a
+  board turned off the world axes therefore travels in one of the three directions. Measuring a
+  board in its own frame is the larger change and nothing asks for it yet (ADR 0147, N22).
 - `[gizmo]` The pivot is edited only in the inspector; there is no viewport pivot-pick tool yet.
 - `[gizmo]` The orientation widget is hidden in a viewport smaller than 124 pt wide plus margins
   (148 pt), or 148 pt tall plus margins; there is no menu fallback for the six views or the roll
@@ -154,11 +194,13 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `object.path.extrude` from the command palette or an API, and `object.extrude.create` from a
   contour, leave the body without a pull. The shell reads the height from the command result, so
   another entry point needs the same signal before it can pull too.
-- `[ui]` A box's height card never takes the keyboard on its own: `Document::tool_focus` is the slot
-  that should hold the row, and nothing writes it, so the box field is typed into only after a click.
-  U104 gave the pull its own counted ask in `ExtrudeGizmo::take_focus`; the box needs the same ask
-  from `Editor::pull_box_height`.
 
+- `[ui]` A frame's height is typed only after a click: its card's field cannot take the keyboard on
+  its own, because the height is what the hand pulls and a focused field owns the number instead of
+  the pointer (`Document::update_box`'s `text_edit_focused` guard), and Escape in the field drops the
+  whole draft instead of giving the number back to the pointer. A frame whose height is typed before
+  it is pulled needs the field to pin the pointer and Escape to release the number — the distance
+  fields' rule (ADR 0103) — which is a key path, not a flag (N19).
 - `[design]` `app/src/main.rs` `viewport` is one 635-line function. U45 moves it onto
   `Document` with the rest of the scene-bound state, so the S7 audit filed no split; it is measured
   again and split there.
@@ -224,6 +266,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `Operation::Holes`, `Grooves`, `CupBore` and `MountPattern` have no command to refuse. The hardware
   commands must read `NodeRules::admits` when they land, as T4 did for contour, edge banding and
   cutouts.
+- `[mesh]` A panel's derived holes are computed and cached but never drawn: the viewport paints the
+  undrilled body, so a cup bore is invisible until a task decides how a bore is painted — a decal, a
+  marker, or a real boolean per hole, which costs one kernel step for each of a door's dozen holes.
+  The record says what is wrong and never guesses the fix.
+- `[panel]` The material a drilled hole is clipped against is the core minus its through cutouts,
+  across the full thickness. A blind cutout that thins the board where the bore lands and an end
+  bevel that shortens the material beside it are not read yet, so both answer a hole that the shop
+  would have to correct; the crossing needs a material that varies with the point, or two
+  diagnostics that name the cutout and the bevel (O10).
 - `[ui]` The panel card's size fields, banding menu, shape section and machining add menu name the
   class's reason when it forbids them, but the class picker still offers every row: a person can
   choose a class whose host the assignment then refuses and reads the engine's English sentence in
@@ -298,3 +349,23 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   (`target/ui-shots/wireframe-ink.png`). Both go away with the same change: a line ink and alpha in
   the per-pass uniform (a third dynamic offset beside the camera and ground slots), so a style and a
   strength become draw-time values instead of buffer keys.
+- `[render]` The floor plate writes no depth (U108), so a body under an opaque floor is hidden by the
+  plate's blend while its form outlines still draw: at 100 % opacity an underground part reads as a
+  wireframe ghost instead of nothing (`target/ui-shots/floor-opacity-100.png`, U109). Either the
+  plate writes depth when it is opaque — which gives up the U108 pass-through the see-through floor
+  replaced — or the edge pass learns the plate as a second occluder, which wants the plate's depth in
+  a buffer a line can test against.
+
+- `[plan]` `cargo xtask task take <ID> --at top` refuses while `## Now` already holds work: it leaves
+  `STATE:` alone, and the gate then reports that the state does not name the first unfinished task. An
+  owner-directed defect has to be filed with `task add --at top` instead, which files it in `## Now`
+  rather than in `## Bugs`. The far end of the order still takes `--at end`, which needs no state
+  change; the fix is to point `STATE:` at the new head in the same write, as `add` does.
+
+- `[plan]` `cargo xtask file <reference>` takes the *whole* body of the file, so a session that means
+  to append one entry passes its own text and silently replaces every entry the file held: one session
+  did exactly that to `plan/questions.md` and committed the single line it meant to add, and the file
+  had to be restored from git. The gate cannot see the loss — the short body is still a legal file —
+  and `plan/BACKLOG.md` is refused outright, so the verb that owns the reference files has no append
+  form at all. An `--add` that appends one entry through the same gate, or a guard that refuses a body
+  far shorter than the file it replaces, closes it.

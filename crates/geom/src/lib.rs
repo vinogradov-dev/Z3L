@@ -14,6 +14,7 @@
 )]
 
 pub mod boolean;
+pub mod contact;
 pub mod contour;
 pub mod rect;
 pub mod ring;
@@ -21,6 +22,10 @@ pub mod segment;
 pub mod triangulate;
 
 pub use boolean::{intersect_regions, subtract_regions, union_regions};
+pub use contact::{
+    Contact, Impact, MAX_CONVEX_POINTS, MAX_MESH_TRIANGLES, MAX_MESH_VERTICES, Penetration, Pose, Shape, ShapeError,
+    Shared, Solid, overlap,
+};
 pub use contour::{Contour, ContourError, DEFAULT_TANGENT_TOLERANCE};
 pub use glam::{DMat4, DQuat, DVec2, DVec3, DVec4, EulerRot};
 pub use rect::{Rect, RectError, connected_count, regions_from_rects, subtract_rects, total_area, union_rects};

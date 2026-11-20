@@ -198,12 +198,22 @@ pub enum Theme {
     Actions,
     /// The window row of the header: minimize, maximize, restore, close.
     Window,
+    /// The viewport's transform modes: the object move.
+    Transform,
 }
 
 impl Theme {
     /// Every theme, in the order of the asset tree.
-    pub const ALL: [Self; 7] =
-        [Self::Contour, Self::Primitives, Self::Bodies, Self::Scene, Self::View, Self::Actions, Self::Window];
+    pub const ALL: [Self; 8] = [
+        Self::Contour,
+        Self::Primitives,
+        Self::Bodies,
+        Self::Scene,
+        Self::View,
+        Self::Actions,
+        Self::Window,
+        Self::Transform,
+    ];
 
     /// The directory name of this theme, which is also the first URI segment of its icons.
     pub const fn as_str(self) -> &'static str {
@@ -215,6 +225,7 @@ impl Theme {
             Self::View => "view",
             Self::Actions => "actions",
             Self::Window => "window",
+            Self::Transform => "transform",
         }
     }
 
@@ -228,6 +239,7 @@ impl Theme {
             Self::View => view::ALL,
             Self::Actions => actions::ALL,
             Self::Window => window::ALL,
+            Self::Transform => transform::ALL,
         }
     }
 }
@@ -458,6 +470,12 @@ icons!(Window, "window", View, window {
     CLOSE => "close",
 });
 
+// The viewport's transform modes. A solid and a hand's arrow: the tool takes a body and carries it
+// (`assets/icons/STYLE_GUIDE.md` §8, ADR 0167).
+icons!(Transform, "transform", Modify, transform {
+    OBJECT => "object": Modify,
+});
+
 /// The product wordmark, drawn by the header.
 ///
 /// It lives in `assets/logo.svg`, not in a theme: a mark is not an icon of a surface, and it keeps
@@ -572,6 +590,22 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
         return ui.button(label);
     }
     hinted(icon_widget(ui, icon, ICON_POINT_SIZE, label, true, false), label, true)
+}
+
+/// The rasterised icon as a widget image, for a control that pairs a glyph with a word.
+///
+/// The tone ladder and the role ramp are the square buttons' own, so a cell that carries its label
+/// beside the glyph keeps the theme's inks. A placeholder file answers `None` and the caller draws
+/// its word alone, exactly as the square buttons fall back to their label.
+pub fn icon_image(ui: &Ui, icon: Icon, point_size: f32) -> Option<egui::Image<'static>> {
+    if !icon.is_drawn() {
+        return None;
+    }
+    let px = pixel_size(point_size, ui.pixels_per_point());
+    let roles = crate::icon_color(ui.ctx()).uses_roles(px);
+    let color = ui.visuals().widgets.inactive.fg_stroke.color;
+    let texture = icon_texture(ui.ctx(), icon, px, color, ui.visuals().dark_mode, roles, IconTone::Rest)?;
+    Some(egui::Image::new(egui::load::SizedTexture::new(texture.id(), Vec2::splat(point_size))))
 }
 
 /// A tool button: a [`TOOL_ICON_POINT_SIZE`] icon with a hint that names the tool and its shortcut.
@@ -1215,7 +1249,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 116);
+        assert_eq!(seen.len(), 117);
     }
 
     #[test]

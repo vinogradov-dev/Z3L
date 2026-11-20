@@ -16,7 +16,7 @@ use serde_json::Value;
 use thiserror::Error;
 use units::{Degrees, Length};
 
-use crate::{ClassCode, Id};
+use crate::{ClassCode, Id, ItemId};
 
 /// The reserved system property keys of a node (ADR 0034).
 pub const SYSTEM_COMPONENT: &str = "component";
@@ -74,6 +74,14 @@ pub enum PropertyValue {
         /// The referenced id.
         id: Id,
     },
+    /// A reference to a nomenclature record: the plug a person chose, the board a part is cut from.
+    ///
+    /// A catalogue id is not a document id (`§4.10`, ADR 0148): the record lives in the directory and
+    /// survives the scene, so the two are different value kinds and a reader never confuses them.
+    Item {
+        /// The referenced record.
+        id: ItemId,
+    },
     /// A semantic class code.
     Class {
         /// The class.
@@ -122,6 +130,11 @@ impl PropertyValue {
         Self::Reference { id }
     }
 
+    /// Builds a catalogue-record reference property value.
+    pub const fn item(id: ItemId) -> Self {
+        Self::Item { id }
+    }
+
     /// Builds a class property value.
     pub const fn class(value: ClassCode) -> Self {
         Self::Class { value }
@@ -142,6 +155,7 @@ impl PropertyValue {
             Self::Text { .. } => "text",
             Self::Choice { .. } => "choice",
             Self::Reference { .. } => "reference",
+            Self::Item { .. } => "item",
             Self::Class { .. } => "class",
             Self::Structured { .. } => "structured",
         }
@@ -317,7 +331,7 @@ mod tests {
             PropertyValue::text("oak"),
             PropertyValue::choice("left", "Left"),
             PropertyValue::reference(Id::new(9).expect("id")),
-            PropertyValue::class(class("30.11")),
+            PropertyValue::class(class("10.11")),
             PropertyValue::structured(serde_json::json!({"width": 600})),
         ];
         for value in values {
@@ -338,7 +352,7 @@ mod tests {
         }
         let mut properties = Properties::new();
         properties.insert(SYSTEM_COMPONENT, PropertyValue::bool(false)).expect("component flag");
-        properties.insert(SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        properties.insert(SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         properties
             .insert(SYSTEM_PROTOTYPE_ID, PropertyValue::reference(Id::new(5).expect("id")))
             .expect("prototype id");
@@ -354,13 +368,13 @@ mod tests {
         let unknown = class("20.01.09");
         assert!(!unknown.is_registered());
         assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(unknown)).is_err());
-        assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(class("30"))).is_err(), "a family");
+        assert!(Properties::new().insert(SYSTEM_CLASS, PropertyValue::class(class("10"))).is_err(), "a family");
 
         let stored = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(unknown) });
         let loaded = Properties::deserialize(stored).expect("an unknown class still loads");
         assert_eq!(loaded.get(SYSTEM_CLASS), Some(&PropertyValue::class(unknown)));
 
-        let family = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(class("30")) });
+        let family = serde_json::json!({ SYSTEM_CLASS: PropertyValue::class(class("10")) });
         Properties::deserialize(family).expect("a family code loads and reads as not assignable");
     }
 }

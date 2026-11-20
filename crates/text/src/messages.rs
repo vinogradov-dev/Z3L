@@ -69,16 +69,12 @@ messages! {
         "Всё выделение удаляется за один шаг. Отмена (Ctrl+Z) вернёт его."
     ],
     OpenSceneTitle = ["Open scene", "Открыть сцену"],
-    OpenButton = ["Open", "Открыть"],
     SaveSceneAsTitle = ["Save scene as", "Сохранить сцену как"],
-    SaveButton = ["Save", "Сохранить"],
-    OpenNewTabHint = [
-        "The scene opens in a new tab; the open scenes are left as they are.",
-        "Сцена откроется в новой вкладке; открытые сцены останутся как есть."
+    SceneFiles = ["Scene files", "Сцены"],
+    PickFailed = [
+        "The system file manager could not be opened.",
+        "Не удалось открыть системный файловый менеджер."
     ],
-    PathLabel = ["Path", "Путь"],
-    NearbyScenes = ["Nearby scenes", "Сцены рядом"],
-    EnterFilePath = ["Enter a file path.", "Введите путь к файлу."],
     NoticeNoSettingsLocation = [
         "No workspace settings location; using defaults.",
         "Нет расположения настроек рабочей области; используются значения по умолчанию."
@@ -185,6 +181,26 @@ messages! {
     Move = ["Move", "Перемещение"],
     Select = ["Select", "Выбор"],
     Rotate = ["Rotate", "Вращение"],
+    Object = ["Object", "Объект"],
+    SelectHint = ["Select: a click picks, a drag draws a band", "Выбор: щелчок выбирает, перетаскивание рисует рамку"],
+    MoveHint = [
+        "Move freely: the pointer's own distance, no snapping",
+        "Двигать свободно: расстояние по указателю, без привязок"
+    ],
+    ObjectHint = [
+        "Move a body: click to take it, move the pointer, click to put it down; it stops at another body",
+        "Двигать тело: щелчок берёт его, укажите новое место, щелчок ставит; тело упирается в другое"
+    ],
+    ObjectHold = [
+        "Piece in hand: the pointer moves it, a click puts it down, Esc puts it back",
+        "Деталь в руке: указатель её двигает, щелчок ставит, Esc возвращает"
+    ],
+    RotateHint = ["Turn the selection about its pivot", "Поворачивать выделение вокруг пивота"],
+    ObjectRotate = ["Turn", "Поворот"],
+    ObjectRotateHint = [
+        "Turn a body about its pivot: the ring stops where another body stops it",
+        "Поворачивать тело вокруг пивота: кольцо останавливается там, где его останавливает другое тело"
+    ],
     MeshEditStatusOne = ["Mesh edit · {} vertex selected", "Редактирование сетки · выбрана {} вершина"],
     MeshEditStatusFew = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершины"],
     MeshEditStatusMany = ["Mesh edit · {} vertices selected", "Редактирование сетки · выбрано {} вершин"],
@@ -255,15 +271,20 @@ messages! {
         "How far the floor darkens under the shadow the key light casts.",
         "Насколько сильно тень от ключевого света затемняет пол."
     ],
+    FloorOpacity = ["Floor opacity", "Непрозрачность пола"],
+    FloorOpacityHint = [
+        "How solid the floor plate is; below 100 you see what stands under it through the tint, and 0 hides the plate and its shadow.",
+        "Насколько плотна плита пола; ниже 100 сквозь неё видно то, что стоит под ней, а 0 скрывает плиту и её тень."
+    ],
     DisplayConfigure = ["Configure…", "Настроить…"],
     DisplayConfigureHint = [
-        "Opens Settings › View for the grid, outline and shadow strengths.",
-        "Открывает «Настройки › Вид» для силы сетки пола, контуров и тени."
+        "Opens Settings › View for the display strengths and the floor's opacity.",
+        "Открывает «Настройки › Вид» для силы отображения и непрозрачности пола."
     ],
     ResetDisplay = ["Reset display", "Сбросить отображение"],
     ResetDisplayHint = [
-        "Restores the floor grid, outline and ground shadow strengths to 60 / 70 / 40.",
-        "Возвращает силу сетки пола, контуров и тени на полу: 60 / 70 / 40."
+        "Restores the floor grid, outline, ground shadow and floor opacity to 60 / 70 / 40 / 100.",
+        "Возвращает силу сетки пола, контуров, тени и непрозрачность пола: 60 / 70 / 40 / 100."
     ],
     SectionAdditional = ["Additional", "Дополнительно"],
     WorkPlane = ["Work plane · {}", "Рабочая плоскость · {}"],
@@ -428,6 +449,9 @@ messages! {
     MissingMaterial = ["Missing material {}", "Материал {} отсутствует"],
     NoMaterial = ["No material", "Нет материала"],
     SectionOutline = ["Outline", "Контур"],
+    SectionFootprint = ["Base outline", "Контур основания"],
+    ProductFrameNeedsHeight = ["A frame's outline is finished by its height pull.", "Контур каркаса завершается вытягиванием высоты."],
+    ProductContourDraw = ["Draw the {} base outline on the plane, then pull its height.", "Нарисуйте контур основания {} на плоскости, затем вытяните высоту."],
     PanelContourRingOne = ["Contour ring · {} segment", "Контурное кольцо · {} сегмент"],
     PanelContourRingFew = ["Contour ring · {} segments", "Контурное кольцо · {} сегмента"],
     PanelContourRingMany = ["Contour ring · {} segments", "Контурное кольцо · {} сегментов"],
@@ -684,11 +708,9 @@ messages! {
 
     // ── Product card ────────────────────────────────────────────────────────
     ProductCardTitle = ["New product frame", "Новый каркас изделия"],
-    ProductCardHint = [
-        "The frame is created open, ready for parts on the floor beside the other pieces.",
-        "Каркас создаётся открытым, готовым для деталей на полу рядом с другими изделиями."
-    ],
     Height = ["Height", "Высота"],
+    MountFloor = ["On the floor", "На полу"],
+    MountWall = ["On the wall", "На стене"],
 
     // ── Container card ──────────────────────────────────────────────────────
     ContainerRoleComponent = ["Component", "Компонент"],
@@ -872,6 +894,7 @@ messages! {
     // The ribbon's tools (U68); a planned row is named here before its command exists.
     ToolProductFrame = ["Product frame", "Каркас изделия"],
     ToolProductFrameDraw = ["Frame by drawing", "Каркас по чертежу"],
+    ToolProductFrameContour = ["Frame from contour", "Каркас по контуру"],
     ToolPanel = ["Panel", "Панель"],
     ToolPost = ["Post", "Стойка"],
     ToolVoid = ["Niche", "Ниша"],
@@ -998,6 +1021,38 @@ messages! {
     BodyProfileOpen = ["A body is swept from a closed profile", "Тело выдавливается из замкнутого профиля"],
     FrameHeight = ["Frame height", "Высота каркаса"],
 
+    // ── The directory application ──────────────────────────────────────────
+    DirectoryTitle = ["Nomenclature directory", "Каталог номенклатуры"],
+    DirectoryFolder = ["Folder", "Папка"],
+    DirectoryReload = ["Reload", "Перечитать"],
+    DirectoryNewItem = ["New item", "Новый предмет"],
+    DirectorySave = ["Save", "Сохранить"],
+    DirectoryItems = ["Items", "Предметы"],
+    DirectoryRegistry = ["Registry", "Реестр"],
+    DirectoryFilter = ["Filter", "Фильтр"],
+    DirectoryName = ["Name", "Название"],
+    DirectorySlug = ["Slug", "Код"],
+    DirectoryKind = ["Kind", "Вид"],
+    DirectoryIdentifier = ["Id", "Идентификатор"],
+    DirectoryArchived = ["Archived", "Снят с производства"],
+    DirectoryPackage = ["Package", "Пакет"],
+    DirectoryProperties = ["Properties", "Свойства"],
+    DirectoryPickItem = ["Pick an item, or create one", "Выберите предмет или создайте новый"],
+    DirectorySaved = ["Saved, and the revision moved", "Сохранено, ревизия сменилась"],
+    DirectoryNothingSaved = ["Nothing is saved yet", "Пока ничего не сохранено"],
+    DirectoryRequired = ["required", "обязательное"],
+    DirectoryReadOnly = ["read-only", "только чтение"],
+    DirectoryEmpty = ["The directory carries no package", "В каталоге нет ни одного пакета"],
+    DirectoryImportPrices = ["Import prices", "Импорт цен"],
+    PriceNoCurrency = ["no currency in this package", "в пакете нет валюты"],
+    PriceFresh = ["{} days old", "возраст {} дней"],
+    PriceStale = ["{} days old, past the {} day limit", "{} дней, больше предела в {} дней"],
+    PriceUndated = ["no date", "даты нет"],
+    PriceListTitle = ["Import a price list", "Импорт прайс-листа"],
+    PriceListFiles = ["Price list (CSV)", "Прайс-лист (CSV)"],
+    PriceListUnread = ["Cannot read the price list: {}", "Не удалось прочитать прайс-лист: {}"],
+    PriceListRefused = ["No price was written: {}", "Ни одна цена не записана: {}"],
+
     // ── Display names ───────────────────────────────────────────────────────
     Axonometric = ["Axonometric", "Аксонометрия"],
     Front = ["Front", "Спереди"],
@@ -1080,6 +1135,27 @@ messages! {
         "Сцена скрывает системную стрелку и рисует этот квадрат; жест со своим курсором сохраняет его."
     ],
     ShowFloorGrid = ["Show the floor grid", "Показывать сетку пола"],
+    Snapping = ["Snapping", "Привязка"],
+    SnapPlanes = ["Coordinate planes", "Координатные плоскости"],
+    SnapPlanesHint = [
+        "X = 0, Y = 0 and Z = 0 capture a dragged piece, the floor included; until a wall tool exists they stand in for the walls of a room.",
+        "X = 0, Y = 0 и Z = 0 захватывают перетаскиваемую деталь, включая пол; пока нет инструмента стен, они заменяют стены комнаты."
+    ],
+    SnapFrames = ["Neighbouring frames", "Соседние корпуса"],
+    SnapFramesHint = [
+        "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
+        "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
+    ],
+    SnapTolerance = ["Tolerance", "Допуск"],
+    SnapToleranceHint = [
+        "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
+        "Насколько близко должна быть поверхность, чтобы захватить перетаскивание, в миллиметрах; деталь встаёт вплотную, потому что допуск — это расстояние срабатывания привязки."
+    ],
+    FloorStop = ["Floor stops every body", "Пол останавливает любое тело"],
+    FloorStopHint = [
+        "A dragged body stops at the invisible floor at Z = 0 whatever the two switches above say; a class that keeps its height is unchanged either way.",
+        "Перетаскиваемое тело останавливается на невидимом полу Z = 0, что бы ни говорили два переключателя выше; изделие, которое держит высоту по классу, не меняется."
+    ],
     ShowEveryTriangleEdge = ["Show every triangle edge", "Показывать все рёбра треугольников"],
     AllEdgesHint = [
         "Diagnostic: keeps the triangulation diagonals the form-edge view hides.",

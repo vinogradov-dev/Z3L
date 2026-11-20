@@ -28,20 +28,19 @@ use engine::node_cmds::{NODE_DELETE_MANY_ID, NODE_PLACEMENT_SET_MANY_ID};
 use engine::{MeshVertexMove, MeshVerticesMove, NodeDeleteMany, NodePlacement, NodePlacementSetMany, Session};
 use kernel_truck::TruckKernel;
 use mesh::{EvaluationCache, object_mesh};
-use model::{Catalog, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
+use model::{CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
 use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
-    BoxDraft, ContourGrip, DistanceFields, DistanceOutcome, Distances, DrawDraft, Editor, FieldPlacement, GripValue,
-    MeshElement, Message, PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, ViewFlags,
-    tool_card,
+    ContourGrip, DistanceFields, Distances, DrawDraft, Editor, FieldPlacement, GripValue, MeshElement, Message,
+    PaletteContext, Pick, Side, ToolAction, ToolOutcome, ToolParam, ToolView, TransformMode, ViewFlags, tool_card,
 };
 use units::Length;
 
-use crate::box_gizmo::{self, BoxEvent, BoxGrips, GripUpdate};
+use crate::box_gizmo::{self, BoxGrips, GripUpdate};
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawModifiers};
@@ -50,7 +49,7 @@ use crate::file_menu::{FileAction, FileMenu, PreservedSections};
 use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
-use crate::gizmo_math::{PlacementCommit, Preview, PreviewKey, WorkPlane};
+use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
 use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
@@ -66,7 +65,7 @@ use crate::vertex_gizmo;
 use crate::vertex_gizmo::{MeshVertexCommit, VertexGizmo, VertexPreview};
 use crate::view_cluster;
 use crate::view_cluster::{ClusterAction, ClusterView, NavigationMode, ViewCluster};
-use crate::view_layout::{Layout, LayoutKind};
+use crate::view_layout::{Layout, LayoutKind, LeafId};
 use crate::void_gizmo::{self, VoidGizmo};
 use crate::{Shell, Transform, theme};
 
@@ -101,12 +100,29 @@ const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
 
+/// How far the line of a snapped drag reaches past the moved box, in millimetres.
+const CAPTURE_OVERHANG_MM: f64 = 12.0;
+
+/// How near the pointer must be to a measured gap, in points, for its dimension to be lit.
+const GAP_REACH: f32 = 26.0;
+
+/// How far a dimension recedes while the pointer is elsewhere: one tone of the same ink, never a
+/// second colour (N26).
+const GAP_DIM: f32 = 0.55;
+
+/// The length of one arrowhead of a dimension, in points, and its half-width.
+///
+/// The drafting grammar's terminator: a solid head whose tip touches the witness, thin enough to
+/// read as a dimension over a board and not as a second object (N26).
+const GAP_ARROW_LENGTH: f32 = 8.0;
+const GAP_ARROW_HALF_WIDTH: f32 = 2.6;
+
 /// The display state the window owns and every frame of this tab is built with.
 ///
-/// The floor grid, the edge list, the ground shadow's strength and the colours of the active theme
-/// variant are the window's (ADR 0029), so the shell hands them to the active document; a frame
-/// rebuilt by a command, a card or a shortcut then draws the same display state the viewport shows.
-/// The shadow's *switch* is the view's, so it is not here (U107).
+/// The floor grid, the edge list, the ground shadow's strength, the floor's opacity and the colours
+/// of the active theme variant are the window's (ADR 0029), so the shell hands them to the active
+/// document; a frame rebuilt by a command, a card or a shortcut then draws the same display state
+/// the viewport shows. The shadow's *switch* is the view's, so it is not here (U107).
 #[derive(Clone, Copy, Debug)]
 struct Display {
     /// Whether the floor grid draws.
@@ -117,6 +133,8 @@ struct Display {
     all_edges: bool,
     /// How far the ground shadow darkens the floor plate, from 0 to 1.
     shadow_strength: f32,
+    /// How opaque the floor plate is, from 0 to 1: zero draws neither plate nor shadow (U109).
+    floor_opacity: f32,
     /// How much of the floor grid's inks shows, from 0 to 1.
     grid_strength: f32,
     /// How opaque the form-outline ink is, from 0 to 1.
@@ -133,6 +151,7 @@ impl Display {
             grid_step_mm: viewport.grid_step_mm,
             all_edges: viewport.all_edges,
             shadow_strength: ui::display::display_strength(viewport.shadow_strength),
+            floor_opacity: ui::display::floor_opacity(viewport.floor_opacity),
             grid_strength: ui::display::display_strength(viewport.grid_strength),
             edge_strength: ui::display::display_strength(viewport.edge_strength),
             colors,
@@ -144,7 +163,8 @@ impl Display {
     /// The shadow's switch is not here: it is the view's, so the active leaf has already put it in
     /// place and a whole-struct write here would overwrite it (U107). Its strength is, because the
     /// intensity is one workspace value — and so are the grid's and the outline's, which the frame
-    /// carries as opacities the renderer reads when it builds the lines.
+    /// carries as opacities the renderer reads when it builds the lines. The floor's opacity is a
+    /// number the plate's fragment reads, so it travels the same way (U109).
     fn apply(self, scene: &mut SceneFrame) {
         scene.grid.visible = self.grid;
         scene.grid.spacing_mm = f64::from(self.grid_step_mm.max(1));
@@ -152,6 +172,7 @@ impl Display {
         scene.all_edges = self.all_edges;
         scene.edge_strength = self.edge_strength;
         scene.contact_shadows.strength = self.shadow_strength;
+        scene.floor_opacity = self.floor_opacity;
         scene.apply_colors(self.colors);
     }
 
@@ -159,7 +180,8 @@ impl Display {
     ///
     /// The three strengths live in the colours and the inks the line buffers are built from, so a
     /// change to one costs a re-upload of the grid and the outlines, not a re-evaluation of the
-    /// document (U64, U107).
+    /// document (U64, U107). The floor's opacity and the shadow's strength are absent on purpose:
+    /// they are read from the uniform when the plate draws, so turning one moves no buffer at all.
     fn repaints(self, previous: Self) -> bool {
         self.colors != previous.colors
             || self.grid_strength != previous.grid_strength
@@ -300,6 +322,12 @@ pub(crate) struct Document {
     /// (ADR 0098), so the rebuild watches it here: opening a piece repaints its envelope ink
     /// without touching the document.
     scene_product: Option<Id>,
+    /// The session's directory version the frame was built from.
+    ///
+    /// The directory is not the document, so a reload moves no revision (ADR 0148 §13); the rebuild
+    /// watches the session's own counter instead, so a board whose thickness changed re-derives its
+    /// panels without a restart and without pretending the person edited anything.
+    scene_directory: u64,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
     /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
@@ -307,8 +335,6 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The row of the tool card that takes the keyboard, consumed by the frame that draws it.
-    tool_focus: Option<ToolParam>,
     /// The point the tool card hangs from, frozen while the pointer is on the card itself.
     ///
     /// A card that follows the pointer would move away from the hand reaching for its field: the
@@ -332,6 +358,8 @@ pub(crate) struct Document {
     /// save so an older build never silently destroys a newer build's data.
     extra: PreservedSections,
     translate_gizmo: TranslateGizmo,
+    /// Whether the window is currently hiding the pointer for the carry (ADR 0156).
+    cursor_hidden: bool,
     rotate_gizmo: RotateGizmo,
     vertex_gizmo: VertexGizmo,
     pub(crate) contour_gizmo: ContourGizmo,
@@ -354,6 +382,8 @@ pub(crate) struct Document {
     pub(crate) distance_fields: DistanceFields,
     /// The measurement the fields draw, rebuilt from the ghost every frame (ADR 0103).
     pub(crate) distances: Option<Distances>,
+    /// The face the fill's free axis is carried on, if the hand is carrying it (N23).
+    fill_carriage: Option<Carriage>,
     /// The exact distances of the translate drag in progress, measured once when it starts.
     move_distances: Option<MoveDistances>,
     /// The corner orientation widget, which owns the roll-ring drag across frames.
@@ -420,10 +450,10 @@ impl Document {
             scene_visibility: 0,
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
+            scene_directory: session.directory_version(),
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
-            tool_focus: None,
             tool_card_anchor: None,
             context_menu: ui::ViewportMenu::default(),
             scene_rect: None,
@@ -438,6 +468,7 @@ impl Document {
             file: FileMenu::new(),
             extra,
             translate_gizmo: TranslateGizmo::default(),
+            cursor_hidden: false,
             rotate_gizmo: RotateGizmo::default(),
             vertex_gizmo: VertexGizmo::default(),
             contour_gizmo: ContourGizmo::default(),
@@ -450,6 +481,7 @@ impl Document {
             band: None,
             distance_fields: DistanceFields::default(),
             distances: None,
+            fill_carriage: None,
             move_distances: None,
             gizmo: gizmo::Gizmo::default(),
             draft_menu: ui::DraftMenu::default(),
@@ -473,12 +505,12 @@ impl Document {
         settings: &Settings,
         shell: &Shell,
         path: &Path,
-        catalog: &Catalog,
+        directory: Arc<catalog::Directory>,
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let project = scene.into_document();
-        let session = Session::with_catalog(project, catalog.clone());
+        let session = Session::with_directory(project, directory).with_contact(crate::scene_build::contact_engine());
         let mut document = Self::new(render_state, settings, shell, session, extra)?;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -595,6 +627,14 @@ impl Document {
         self.tool_card_rect.is_some()
     }
 
+    /// Takes the transform mode a node menu asked for, for the shell to write.
+    ///
+    /// The mode belongs to the window and this tab only records the wish, so the shell drains it
+    /// once per frame after the tree and the viewport have drawn (U113).
+    pub(crate) fn take_mode_request(&mut self) -> Option<TransformMode> {
+        self.editor.take_mode_request()
+    }
+
     /// The rectangle of the armed tool's card, which the shell hands to `Chrome`.
     pub(crate) const fn tool_card_rect(&self) -> Option<egui::Rect> {
         self.tool_card_rect
@@ -625,24 +665,19 @@ impl Document {
         locked_command_refusal(&self.editor, self.session.project(), id, lang)
     }
 
-    /// The save the header's button and `Ctrl+S` ask for: the current path, or the path dialog.
-    pub(crate) fn request_save(&mut self) -> Option<FileAction> {
-        self.file.save()
+    /// The save the header's button and `Ctrl+S` ask for: the current path, or a file-manager pick.
+    pub(crate) fn request_save(&mut self, lang: Lang) -> Option<FileAction> {
+        self.file.save(lang)
     }
 
-    /// Opens the Open dialog from the Home surface, which has no File menu of its own.
-    pub(crate) fn request_open(&mut self) {
-        self.file.request_open();
+    /// Asks for the pick the Home surface's *Open* entry wants; Home has no File menu of its own.
+    pub(crate) fn request_open(&mut self, lang: Lang) -> Option<FileAction> {
+        self.file.request_open(lang)
     }
 
-    /// Draws the File menu button and its dialogs.
+    /// Draws the File menu button.
     pub(crate) fn show_file_menu(&mut self, ui: &mut egui::Ui) -> Option<FileAction> {
         self.file.show(ui)
-    }
-
-    /// Draws the dialogs the File menu opened and returns the operation one of them asked for.
-    pub(crate) fn show_dialogs(&mut self, ctx: &egui::Context) -> Option<FileAction> {
-        self.file.show_dialogs(ctx)
     }
 
     /// Re-uploads the frame when the selection moved.
@@ -708,8 +743,8 @@ impl Document {
     /// everything they act on belongs to the active document: one tab's undo never touches another.
     /// The save is returned rather than performed: writing a file is the shell's job, because it
     /// also remembers the path in the workspace settings.
-    pub(crate) fn handle_shortcuts(&mut self, shortcuts: Shortcuts) -> Option<FileAction> {
-        let save = if shortcuts.save { self.file.save() } else { None };
+    pub(crate) fn handle_shortcuts(&mut self, shortcuts: Shortcuts, lang: Lang) -> Option<FileAction> {
+        let save = if shortcuts.save { self.file.save(lang) } else { None };
         if shortcuts.undo {
             self.undo();
         }
@@ -774,7 +809,7 @@ impl Document {
     pub(crate) fn zoom_active_view(&mut self, factor: f64) {
         let active = self.layout.active();
         if let Some(leaf) = self.layout.leaf_mut(active) {
-            leaf.zoom(factor);
+            leaf.zoom_about(factor, None);
         }
     }
 
@@ -811,6 +846,18 @@ impl Document {
             || self.editor.visibility_revision() != self.scene_visibility
             || self.session.preview_version() != self.scene_preview
             || self.session.active_product() != self.scene_product
+            || self.session.directory_version() != self.scene_directory
+    }
+
+    /// Installs a newer snapshot of the workshop's directory in this tab's session.
+    ///
+    /// The tab keeps nothing else: its frame is re-derived on the next [`Document::sync_scene`],
+    /// because the session's directory version moved, and its cached meshes are keyed by the
+    /// thicknesses they were built from, so only the panels of a changed board are rebuilt. The
+    /// selection, the tools and the undo history are the document's, which a directory never
+    /// touches (ADR 0148, `docs/domain/nomenclature.md` §13).
+    pub(crate) fn set_directory(&mut self, directory: Arc<catalog::Directory>) {
+        self.session.set_directory(directory);
     }
 
     /// Takes the window's display state and rebuilds the frame when the document moved.
@@ -854,10 +901,12 @@ impl Document {
         let visibility = self.editor.visibility_revision();
         let preview = self.session.preview_version();
         let product = self.session.active_product();
+        let directory = self.session.directory_version();
         if revision == self.scene_revision
             && visibility == self.scene_visibility
             && preview == self.scene_preview
             && product == self.scene_product
+            && directory == self.scene_directory
         {
             return Ok(());
         }
@@ -878,6 +927,7 @@ impl Document {
         self.scene_visibility = visibility;
         self.scene_preview = preview;
         self.scene_product = product;
+        self.scene_directory = directory;
         let uploaded = self.upload_scene();
         let elapsed = started.elapsed();
         self.rebuild.record(elapsed);
@@ -1062,6 +1112,9 @@ impl Document {
     /// is not finished here: the shell starts the height pull on the path it just committed, in the
     /// same edit scope, so the box or cylinder is built on Z by the one gesture (ADR 0138).
     pub(crate) fn commit_drawing(&mut self, lang: Lang) -> Result<(), String> {
+        if self.product_draft_running() {
+            return self.start_frame_pull(lang);
+        }
         let placement = self.drawing_placement()?;
         let drawn = self.editor.commit_drawing(&mut self.session, placement, lang)?;
         let profile = (drawn.intent == ui::DrawIntent::Body)
@@ -1098,8 +1151,30 @@ impl Document {
     /// The ring is closed before the commit and reopened if the document refuses it, so a refusal
     /// leaves the shape the user drew editable instead of a finished draft that cannot be changed.
     pub(crate) fn close_draft(&mut self, lang: Lang) -> Result<(), String> {
+        if self.product_draft_running() {
+            return self.start_frame_pull(lang);
+        }
         let placement = self.drawing_placement()?;
         self.editor.close_and_commit_drawing(&mut self.session, placement, lang)?;
+        self.end_drawing()
+    }
+
+    /// Whether the running drawing is a product frame's base rather than a path or a body.
+    ///
+    /// A frame's base is finished by its height pull, not by a command of its own (ADR 0101, ADR 0159),
+    /// so the shell hands it to the frame draft instead of committing a node. Both of the frame's
+    /// drawn methods end here: the rectangle the box cell draws and the free outline.
+    fn product_draft_running(&self) -> bool {
+        matches!(self.editor.drawing_intent(), ui::DrawIntent::Product | ui::DrawIntent::ProductBox)
+    }
+
+    /// Closes the frame's base and hands it to the height pull.
+    ///
+    /// The figure becomes the frame draft's base, so the pull, its preview and its one
+    /// `product.create` are the drawn frame's own; nothing is written until that pull is accepted
+    /// (ADR 0101, ADR 0159).
+    fn start_frame_pull(&mut self, lang: Lang) -> Result<(), String> {
+        self.editor.start_product_pull(lang)?;
         self.end_drawing()
     }
 
@@ -1330,46 +1405,33 @@ impl Document {
         ui.ctx().request_repaint();
     }
 
-    /// Reads one frame of the box gesture: the live base, the pulled height, and the click that
-    /// anchors it, fixes it or accepts it.
+    /// Reads one frame of the frame's height pull: the number the pointer pulls and the click that
+    /// accepts it.
     ///
-    /// A click that fixes the base starts the pull; every frame of the pull reads the pointer along
-    /// the plane's normal, so the height is a number of millimetres rather than a screen distance.
-    /// The last click, or the command bar's ✓, is the one command the gesture writes (ADR 0101).
+    /// The base is already drawn — the sketch fixed it — so this reads the pointer along the plane's
+    /// normal, which makes the height a number of millimetres rather than a screen distance, and the
+    /// click, the gesture's Enter or the field's own Enter is the one command the gesture writes
+    /// (ADR 0101).
     fn update_box(&mut self, ui: &mut egui::Ui, response: &egui::Response, rect: egui::Rect) {
         let plane = WorkPlane::from_camera(self.scene.camera);
-        let Some(draft) = self.editor.box_draft().copied() else {
+        let Some(draft) = self.editor.box_draft().cloned() else {
             return;
         };
         let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
-        if draft.is_pulling() {
-            // A focused field owns its number: while the maker types the height into the card, the
-            // pointer may not overwrite it, and leaving the field hands the height back to the
-            // hand (ADR 0119).
-            if !ui.ctx().text_edit_focused()
-                && let (Some(pointer), Some(base)) = (pointer, draft.base())
-                && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, base.corner, pointer)
-                && let Err(error) = self.editor.pull_box_height(height)
-            {
-                self.last_error = Some(error.to_string());
-            }
-        } else if let Some(pointer) = pointer
-            && let Some(corner) = box_gizmo::plane_point(self.scene.camera, rect, plane, pointer)
+        // A focused field owns its number: while the maker types the height into the card, the
+        // pointer may not overwrite it, and leaving the field hands the height back to the
+        // hand (ADR 0119).
+        if !ui.ctx().text_edit_focused()
+            && let Some(pointer) = pointer
+            && let Some(height) = box_gizmo::pulled_height(self.scene.camera, rect, plane, draft.base_corner(), pointer)
+            && let Err(error) = self.editor.pull_box_height(height)
         {
-            self.editor.set_box_corner(corner);
+            self.last_error = Some(error.to_string());
         }
-        match box_gizmo::update_box(ui, response, rect, self.scene.camera, plane, &draft) {
-            Some(BoxEvent::Click(corner)) => {
-                if let Err(error) = self.editor.click_box(corner) {
-                    self.last_error = Some(error.to_string());
-                }
-            }
-            Some(BoxEvent::Commit) => {
-                if let Err(error) = self.finish_box(ui::language(ui.ctx())) {
-                    self.last_error = Some(error);
-                }
-            }
-            None => {}
+        if box_gizmo::update_box(ui, response)
+            && let Err(error) = self.finish_box(ui::language(ui.ctx()))
+        {
+            self.last_error = Some(error);
         }
     }
 
@@ -1433,6 +1495,56 @@ impl Document {
         self.editor.cancel_box();
     }
 
+    /// The place along the fill's free axis for this frame, read from what the pointer says.
+    ///
+    /// A typed number pins it, above everything the hand does (ADR 0103). Otherwise the face under
+    /// the pointer decides: a face that runs along the axis names the hand's place exactly, so the
+    /// point itself answers. A face square to the axis names one place for the whole face, and the
+    /// point would freeze the part at the board however far the hand travelled over it; there the
+    /// carriage carries the part instead — the place the face named when the hand met it, moved by
+    /// every millimetre the hand has gone since — so the part passes the board as the hand does and
+    /// only the cell's walls, the frame's envelope included, stop it (N23).
+    ///
+    /// A pointer that names no point at all answers `None`, which leaves the part where the tool
+    /// already holds it.
+    fn fill_place(
+        &mut self,
+        product: Id,
+        niche: &model::Niche,
+        axis: usize,
+        pointer: egui::Pos2,
+        rect: egui::Rect,
+    ) -> Option<f64> {
+        let camera = self.scene.camera;
+        let ray = gizmo_math::ray_to(pointer, rect, camera);
+        let aim = void_gizmo::free_at(
+            self.session.project(),
+            product,
+            niche,
+            axis,
+            ray,
+            self.editor.flags().sight(),
+            Some(self.session.contact()),
+        )?;
+        let Some((face, offset)) = aim.face.filter(|_| aim.square) else {
+            self.fill_carriage = None;
+            return Some(aim.point);
+        };
+        let carried = self
+            .fill_carriage
+            .filter(|carried| carried.face == face && (carried.offset - offset).abs() <= CARRIAGE_FACE_MM);
+        let Some(carried) = carried else {
+            self.fill_carriage = Some(Carriage { face, offset, hand: aim.hand, place: aim.point });
+            return Some(aim.point);
+        };
+        let place = carried.place + (aim.hand - carried.hand);
+        if !place.is_finite() {
+            return None;
+        }
+        self.fill_carriage = Some(Carriage { hand: aim.hand, place, ..carried });
+        Some(place)
+    }
+
     /// Measures the void under the pointer and keeps the ghost the next click would create.
     ///
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
@@ -1469,29 +1581,45 @@ impl Document {
             .hover_pos()
             .or_else(|| response.interact_pointer_pos())
             .or_else(|| ui.input(|input| input.pointer.hover_pos()).filter(|pointer| on_field(*pointer)));
-        let card_anchor = self.card_anchor(pointer, card_before);
-        let point = pointer.and_then(|pointer| {
-            void_gizmo::point_at(self.session.project(), product, self.scene.camera, rect, pointer)
-        });
-        let Some(point) = point.or_else(|| {
-            // The card sits beside the pointer now and then over the envelope's silhouette; the
-            // gesture keeps the point it was measured at rather than dropping the ghost under the
-            // maker's cursor.
-            ui.input(|input| input.pointer.hover_pos())
-                .filter(|pointer| on_field(*pointer))
-                .and_then(|_| self.editor.void().point())
-        }) else {
+        let Some(pointer) = pointer else {
             self.reset_fill(ui.ctx());
             return;
         };
+        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        // The point under the pointer names the cell. A pointer that names none — the hand left the
+        // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
+        // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
+        // vanishing, and the click creates what was drawn (N23).
+        let named = void_gizmo::point_at(
+            self.session.project(),
+            product,
+            self.scene.camera,
+            rect,
+            pointer,
+            self.editor.flags().sight(),
+            Some(self.session.contact()),
+        );
         // The fill is the niche atom's first consumer: one measurement serves the ghost, the report
         // row and the part the click creates, so the pointer names one space in this frame.
-        let measured = self.editor.void_measure(self.session.project(), point);
+        let measured = named
+            .is_some_and(|point| self.editor.void_measure(self.session.project(), point, Some(self.session.contact())));
+        let Some(point) = named.or_else(|| self.editor.void().point()) else {
+            self.reset_fill(ui.ctx());
+            return;
+        };
         let niche = self.editor.void().niche().cloned();
+        let axis = model::free_axis(arm.fill);
         let planned = match niche.as_ref() {
             Some(niche) => {
-                // A number typed into a field pins the free position; the pointer drives it otherwise.
-                let free = self.distances.as_ref().and_then(Distances::pinned_low);
+                // A number typed into a field pins the free place; the hand carries it otherwise.
+                // A pointer that names no cell holds the ghost: the plan then reads the point's own
+                // place, and the cell the tool still holds is the one that keeps it on the screen.
+                let free = match self.distances.as_ref().and_then(Distances::pinned_low) {
+                    Some(pinned) => Some(pinned),
+                    None if named.is_some() => self.fill_place(product, niche, axis, pointer, rect),
+                    // The pointer names no cell, so the ghost holds the place the tool already has.
+                    None => self.fill_carriage.map(|carried| carried.place),
+                };
                 self.fill_gizmo.hover(
                     self.session.project(),
                     product,
@@ -1501,6 +1629,7 @@ impl Document {
                     arm.mode,
                     thickness,
                     free,
+                    self.editor.flags().sight(),
                 )
             }
             None => {
@@ -1522,7 +1651,6 @@ impl Document {
             self.tool_card_rect = None;
             return;
         };
-        let axis = model::free_axis(arm.fill);
         let unit = axis_unit(axis);
         let low_wall = ghost.niche.local_min[axis];
         let high_wall = ghost.niche.local_max()[axis];
@@ -1563,7 +1691,8 @@ impl Document {
             painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
             placements.push(FieldPlacement { side, position: middle_screen });
         }
-        let outcome: DistanceOutcome =
+        // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
+        let outcome =
             self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity);
         self.tool_card_rect = outcome.rect;
         if let Some(message) = self.distance_fields.error() {
@@ -1584,6 +1713,7 @@ impl Document {
                     arm.mode,
                     thickness,
                     pinned,
+                    self.editor.flags().sight(),
                 );
             }
             ui.ctx().request_repaint();
@@ -1594,6 +1724,7 @@ impl Document {
     /// Drops the empty-space ghost and the exact-distance card that measured it.
     fn reset_fill(&mut self, ctx: &egui::Context) {
         self.fill_gizmo.reset();
+        self.fill_carriage = None;
         self.distance_fields.dismiss(ctx);
         self.distances = None;
         self.tool_card_rect = None;
@@ -1683,6 +1814,7 @@ impl Document {
             rect,
             self.scene.camera,
             self.session.project(),
+            self.session.contact(),
             &mut self.editor,
             self.session.active_product(),
             pointer_over_widget,
@@ -1708,10 +1840,15 @@ impl Document {
 
     /// Measures the moving box and the two surfaces along the drag axis, once per drag.
     fn measure_move(&self, node: Id, axis: gizmo_math::Axis) -> Option<MoveDistances> {
-        measure_move(self.session.project(), node, axis)
+        measure_move(self.session.project(), node, axis, Some(self.session.contact()))
     }
 
     /// Draws the exact-distance fields of the translate drag and reads their numbers.
+    ///
+    /// One measurement, two layouts: a held handle keeps the card beside the pointer (ADR 0119) and a
+    /// carried piece dimensions its gaps in the scene, one field in the middle of each arrow
+    /// (N26, ADR 0161). Both read the same [`Distances`], so the inspector and the scene cannot show
+    /// two numbers for one face.
     fn show_move_distances(&mut self, ui: &mut egui::Ui, rect: egui::Rect, opacity: u32) {
         let (Some(axis), Some(node)) = (self.translate_gizmo.axis(), self.translate_gizmo.anchor()) else {
             self.clear_move_distances(ui.ctx());
@@ -1721,6 +1858,8 @@ impl Document {
             self.clear_move_distances(ui.ctx());
             return;
         }
+        // The carry's own hand is read before the measurement is borrowed: the card hangs from it.
+        let hand = self.carry_hand();
         if self.move_distances.as_ref().is_none_or(|measured| measured.node != node || measured.axis != axis) {
             self.distance_fields.dismiss(ui.ctx());
             self.move_distances = self.measure_move(node, axis);
@@ -1733,40 +1872,78 @@ impl Document {
         let delta = self.translate_gizmo.drag_delta().dot(direction);
         let low = measure.start_low + delta;
         let high = low + measure.extent;
-        measure.distances.sync(measure.wall_low, measure.wall_high, low, high);
+        let capture = self.translate_gizmo.capture();
+        let (wall_low, wall_high) = captured_walls(measure, capture);
+        measure.distances.sync(wall_low, wall_high, low, high);
         let low_face = measure.low_face + direction * delta;
         let high_face = measure.high_face + direction * delta;
+        // The snap moved the piece on its own, so it draws the surface the face landed on.
+        if let Some(capture) = capture {
+            let centre = match capture.end {
+                model::SnapEnd::Low => low_face,
+                model::SnapEnd::High => high_face,
+            };
+            paint_capture(
+                &ui.painter().with_clip_rect(rect),
+                self.scene.camera,
+                rect,
+                measure,
+                centre,
+                axis,
+                ui::theme::helper(ui),
+            );
+        }
         // The walls stay where the start measurement found them; only the faces travel.
         let low_wall_point = measure.wall_low.map(|wall| measure.low_face + direction * (wall - measure.start_low));
         let high_wall_point =
             measure.wall_high.map(|wall| measure.high_face + direction * (wall - (measure.start_low + measure.extent)));
         let painter = ui.painter().with_clip_rect(rect);
+        // The hand is where the maker sees the pointer, and after a camera gesture it is the carry's
+        // own square and not the system pointer (X69, ADR 0156).
+        let pointer = hand.or_else(|| ui.input(|input| input.pointer.hover_pos()));
+        let ink = ui::theme::helper(ui);
         let mut placements = Vec::new();
         for (side, face, wall_point) in
             [(Side::Low, low_face, low_wall_point), (Side::High, high_face, high_wall_point)]
         {
-            let middle = wall_point.map_or(face, |wall_point| {
-                let (Some(face_screen), Some(wall_screen)) = (
-                    gizmo_math::screen_point(self.scene.camera, rect, face),
-                    gizmo_math::screen_point(self.scene.camera, rect, wall_point),
-                ) else {
-                    return face;
-                };
-                painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
-                (face + wall_point) * 0.5
-            });
-            let Some(middle_screen) = gizmo_math::screen_point(self.scene.camera, rect, middle) else {
+            let Some(wall_point) = wall_point else {
                 continue;
             };
-            let position = egui::Pos2::new(
-                middle_screen.x.clamp(rect.left() + 90.0, (rect.right() - 90.0).max(rect.left() + 90.0)),
-                middle_screen.y.clamp(rect.top() + 26.0, (rect.bottom() - 26.0).max(rect.top() + 26.0)),
-            );
-            placements.push(FieldPlacement { side, position });
+            // An axis that points at the eye has no run on screen: the arrow would be a dot, so the
+            // scene draws neither the gap nor its field and the inspector keeps the two numbers
+            // (N26). The probe answered both faces of one box, so both sides take this answer.
+            if gizmo_math::travel_frame(self.scene.camera, rect, face, axis).is_none() {
+                continue;
+            }
+            let (Some(face_screen), Some(wall_screen)) = (
+                gizmo_math::screen_point(self.scene.camera, rect, face),
+                gizmo_math::screen_point(self.scene.camera, rect, wall_point),
+            ) else {
+                continue;
+            };
+            // The gap under the hand is the one lit; a pointer elsewhere in the room leaves the
+            // dimension thin and dim, so two numbers never shout over the model (N26).
+            let lit = pointer.is_some_and(|pointer| distance_to_run(pointer, face_screen, wall_screen) <= GAP_REACH);
+            paint_gap_arrow(&painter, face_screen, wall_screen, if lit { ink } else { ink.gamma_multiply(GAP_DIM) });
+            placements.push(FieldPlacement { side, position: face_screen + (wall_screen - face_screen) * 0.5 });
         }
-        let anchor = ui.input(|input| input.pointer.hover_pos()).unwrap_or_else(|| rect.center());
-        let outcome = self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
-        self.tool_card_rect = outcome.rect;
+        let outcome = if self.translate_gizmo.is_following() {
+            // A carried piece is measured where the gaps are (N26, ADR 0161): the field sits in the
+            // middle of its own arrow and no card follows the hand, so nothing covers the pointer
+            // and no number drifts away from the run it measures. The plate takes no pointer, which
+            // is why a press over it is still the click that puts the piece down (X66).
+            let outcome = self.distance_fields.show_in_scene(ui, &mut measure.distances, &placements, rect, opacity);
+            self.tool_card_rect = None;
+            outcome
+        } else {
+            // A held drag keeps its card: the hand is on the handle, so a plate beside the pointer is
+            // a deliberate target and its fields take both the hand and the keyboard (ADR 0119).
+            let anchor = hand.or(pointer).unwrap_or_else(|| rect.center());
+            let outcome =
+                self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
+            self.tool_card_rect = outcome.rect;
+            outcome
+        };
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
         }
@@ -1785,7 +1962,7 @@ impl Document {
 
     /// The thickness a filled part takes: the catalogue's first panel material.
     fn fill_thickness(&self) -> Option<Length> {
-        self.session.catalog().panel_materials().first().map(|material| material.nominal_thickness())
+        self.session.directory().boards().next().map(|board| board.thickness)
     }
 
     /// Creates the ghost's part through one `panel.create`, class included.
@@ -1836,9 +2013,11 @@ impl Document {
             return;
         };
         let anchor = self.card_anchor(pointer, card_before);
-        // A pull that just appeared takes the keyboard, so its height can be typed without a click;
-        // the flag is cleared by the read so the field never holds the focus against the next press.
-        let focus = self.tool_focus.take().or_else(|| self.extrude_gizmo.take_focus().then_some(ToolParam::Height));
+        // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
+        // a click; the flag is cleared by the read so the field never holds the focus against the
+        // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
+        // owns the number instead of the pointer (`update_box`, ADR 0119).
+        let focus = self.extrude_gizmo.take_focus().then_some(ToolParam::Height);
         let (reported, rect) = tool_card::show(ui, viewport, anchor, &mut view, focus, opacity);
         // A press on the card is chrome, exactly like a press on a panel: the card floats over the
         // scene, so its rectangle is handed to the viewport's own hit test next frame.
@@ -1870,11 +2049,13 @@ impl Document {
     /// niche's gaps are drawn by `update_fill` from the same [`Distances`], and every tool reaches
     /// the inspector through [`Self::tool_view`].
     fn height_view(&self) -> Option<ToolView> {
-        if let Some(draft) = self.editor.box_draft().copied().filter(BoxDraft::is_pulling) {
+        if let Some(draft) = self.editor.box_draft().cloned() {
             let maximum = box_gizmo::MAX_SIDE_MM as f64;
-            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101).
+            // A frame's pull is the height it reserves, not a solid's edge (ADR 0101), and its plate
+            // is the pull's own: `H`, no unit, no button pair, Enter and Escape the commit and the
+            // cancel — one plate for the frame and the solid it is drawn with (N19, U104).
             let range = box_gizmo::MIN_SIDE_MM as f64..=maximum;
-            return Some(ToolView::height(Message::FrameHeight, draft.height().millimetres_f64(), range, 3));
+            return Some(ToolView::pull(draft.height().millimetres_f64(), None, range, 3));
         }
         self.extrude_gizmo.object()?;
         let height = self.extrude_gizmo.height()?;
@@ -1890,14 +2071,23 @@ impl Document {
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
     /// the two gaps of a niche. Two surfaces read one draft, so they cannot show two numbers for one
-    /// face.
+    /// face. A move's two gaps are the third instance: a carried piece draws its fields in the scene
+    /// (N26) and the inspector is where the same rows keep the words and the refusal, because the
+    /// plates there are one number in the middle of an arrow and cannot say which gap they measure.
     pub(crate) fn tool_view(&self) -> Option<ToolView> {
         if let Some(height) = self.height_view() {
             return Some(height);
         }
-        let arm = self.editor.fill_arm()?;
-        let distances = self.distances.as_ref()?;
-        Some(ToolView { title: arm.class.label(), rows: distances.rows(), commit: ui::ToolCommit::Gesture })
+        if let Some(arm) = self.editor.fill_arm() {
+            let distances = self.distances.as_ref()?;
+            return Some(ToolView {
+                title: arm.class.label(),
+                rows: distances.rows(),
+                commit: ui::ToolCommit::Gesture,
+            });
+        }
+        let measured = self.move_distances.as_ref()?;
+        Some(ToolView { title: None, rows: measured.distances.rows(), commit: ui::ToolCommit::Gesture })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
@@ -1914,7 +2104,7 @@ impl Document {
             };
             match edit.param {
                 ToolParam::Height => {
-                    if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                    if self.editor.box_draft().is_some() {
                         if let Err(error) = self.editor.pull_box_height(next) {
                             self.last_error = Some(error.to_string());
                         }
@@ -1940,21 +2130,29 @@ impl Document {
         {
             self.last_error = Some(error);
         }
-        if (reported.edits.iter().any(|edit| edit.param != ToolParam::Height)
+        // A gap belongs to whichever gesture measured it: the niche's void, or the move's own drag,
+        // whose rows the inspector draws while a piece is in hand or on a handle (N26). The two
+        // fields are told apart at the borrow, so one number still has one refusal and one pin.
+        let gaps = reported.edits.iter().any(|edit| matches!(edit.param, ToolParam::LowGap | ToolParam::HighGap))
             || reported.lock.is_some()
-            || reported.centre.is_some())
-            && let Some(distances) = self.distances.as_mut()
-        {
-            if self.distance_fields.apply(distances, &reported) {
-                ctx.request_repaint();
-            }
-            if let Some(message) = self.distance_fields.error() {
-                self.last_error = Some(message.text(ui::language(ctx)).to_owned());
+            || reported.centre.is_some();
+        if gaps {
+            let measured = match self.distances.as_mut() {
+                Some(distances) => Some(distances),
+                None => self.move_distances.as_mut().map(|measure| &mut measure.distances),
+            };
+            if let Some(distances) = measured {
+                if self.distance_fields.apply(distances, &reported) {
+                    ctx.request_repaint();
+                }
+                if let Some(message) = self.distance_fields.error() {
+                    self.last_error = Some(message.text(ui::language(ctx)).to_owned());
+                }
             }
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.box_draft().is_some_and(BoxDraft::is_pulling) {
+                if self.editor.box_draft().is_some() {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
@@ -1984,6 +2182,9 @@ impl Document {
             return Err(format!("{name} is locked. Unlock it in the scene tree to move it."));
         }
         let request = NodePlacementSetMany {
+            // A gesture the document did not measure — the free move and the rotation — writes what
+            // it showed; a drag of the object tool is refused where the bodies refuse it (ADR 0180).
+            unmeasured: !commit.measured,
             placements: commit
                 .changes
                 .iter()
@@ -2045,6 +2246,30 @@ impl Document {
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 
+    /// Zooms one view about the point under the pointer, which keeps that point where it is.
+    ///
+    /// The wheel and every drag that zooms go through here: a zoom about the view's centre slides
+    /// everything the maker is looking at out from under the pointer, and a piece carried by that
+    /// pointer left the hand on every step (X67).
+    fn zoom_about_pointer(&mut self, leaf: LeafId, viewport: egui::Rect, pointer: egui::Pos2, factor: f64) {
+        let Some(leaf) = self.layout.leaf_mut(leaf) else {
+            return;
+        };
+        let anchor = gizmo_math::view_plane_point(pointer, viewport, leaf.camera());
+        leaf.zoom_about(factor, anchor);
+    }
+
+    /// Turns the active view to a standard preset, the way the corner widget and the view menu do.
+    ///
+    /// The preset writes the camera's direction and its projection, so this is view state and no
+    /// command (ADR 0049); the shell's camera is refreshed here so one entry point cannot leave the
+    /// two disagreeing.
+    pub(crate) fn apply_view_preset(&mut self, preset: ui::display::OpeningView) {
+        self.layout.active_leaf_mut().apply_preset(preset);
+        let camera = self.layout.active_camera();
+        self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
+    }
+
     /// Switches the active view's projection and refreshes the camera the viewport draws with.
     ///
     /// The ribbon, the Display popover and the corner widget all end here, so the three entry points
@@ -2092,7 +2317,12 @@ impl Document {
         // float over it and folding one moves no view and no camera (U72). A pointer on the chrome
         // is never a viewport hit.
         shell.pointer_position = ui.input(|input| input.pointer.hover_pos());
-        let pointer = shell.pointer_position;
+        // The carry's own hand is where the maker sees the pointer: after a camera gesture the square
+        // sits on the piece while the system pointer is somewhere else, and every decision the
+        // viewport takes about a pointer — a pick, chrome under it, the wheel's own anchor — has to
+        // be taken about the square, or the two disagree (X70's follow-up).
+        let hand = self.carry_hand();
+        let pointer = hand.or(shell.pointer_position);
         // A press outside the open context menu dismisses it and picks nothing, the way a question
         // answers itself with no second click: the menu owns the press that closes it (U92). A
         // press inside is chrome through `Chrome::covers`, so the entry under the pointer is what
@@ -2199,7 +2429,8 @@ impl Document {
         // A pointer on the chrome owns the pointer only while no gesture is live: a panel or the
         // ribbon band is not the scene, so a press there never starts a gizmo, a draft, a selection
         // rectangle or a navigation drag. A gesture that already started keeps the pointer even if
-        // the user drags it over a panel, so releasing there still commits the move.
+        // the user drags it over a panel, so releasing there still commits the move — a carried
+        // piece included, because its own distance fields are chrome around the hand (N24, N25).
         let capturing = self.translate_gizmo.is_dragging()
             || self.rotate_gizmo.is_dragging()
             || self.box_grips.is_dragging()
@@ -2367,6 +2598,7 @@ impl Document {
                 rect,
                 self.scene.camera,
                 self.session.project(),
+                self.session.contact(),
                 &mut self.editor,
                 self.draw_gizmo.grid(),
                 pointer_over_widget,
@@ -2404,6 +2636,8 @@ impl Document {
 
         // A grip drag resizes a selected box in place: a press mints the edit scope that makes the
         // whole drag one undo entry, and every move writes the sides the pointer reaches (ADR 0092).
+        // A piece in hand is not a target: the next press is the click that puts it down, so no grip
+        // may take it and resize the piece the maker is carrying (X76).
         let gripping = interactive
             && !contour_editing
             && !drawing
@@ -2412,6 +2646,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !self.translate_gizmo.is_following()
             && self.grip_target().is_some();
         if gripping {
             self.update_box_grips(ui, &response, rect);
@@ -2443,12 +2678,31 @@ impl Document {
         let target = gizmo_math::Target {
             camera: self.scene.camera,
             project: self.session.project(),
+            contact: self.session.contact(),
             selection: self.editor.selected_nodes(),
+            moves: settings.snaps.move_settings(),
+            move_kind: MoveKind::of(shell.mode),
+            rotate_kind: RotateKind::of(shell.mode),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
         // node, so the missing handles read as a refusal instead of a bug.
         let locked_selection = self.editor.locked_selection(self.session.project());
+        // The hold is not a mode: a tool that takes the pointer puts the piece back, because a piece
+        // in hand may not hold a click back from a running draft, a pull, a grip or the ruler (N25).
+        if self.translate_gizmo.is_following()
+            && (contour_editing
+                || drawing
+                || boxing
+                || pulling
+                || filling
+                || measuring
+                || voiding
+                || mesh_object.is_some()
+                || locked_selection.is_some())
+        {
+            self.translate_gizmo.cancel();
+        }
         let update: Result<Option<PlacementCommit>, String> = if !interactive
             || contour_editing
             || drawing
@@ -2464,14 +2718,14 @@ impl Document {
         {
             Ok(None)
         } else {
-            match shell.mode.transform() {
+            match Transform::of(shell.mode) {
                 // No mode owns a handle, so no gizmo runs: a press where one would be is a pick.
                 None => Ok(None),
-                Some(Transform::Move) => {
+                Some(Transform::Move | Transform::Object) => {
                     let pinned = self.move_pinned();
                     self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
-                Some(Transform::Rotate) => {
+                Some(Transform::Rotate | Transform::ObjectRotate) => {
                     self.rotate_gizmo.update(ui, &response, rect, target, pointer_over_widget, ring_factor)
                 }
             }
@@ -2485,7 +2739,17 @@ impl Document {
             Ok(None) => {}
             Err(error) => self.last_error = Some(error),
         }
-        if matches!(shell.mode.transform(), Some(Transform::Move)) && self.translate_gizmo.is_dragging() {
+        // The camera gestures are the input of a move of the eye: the middle button, the right
+        // button and the wheel, whatever tool holds the piece.
+        let gesture = ui.input(|input| {
+            input.pointer.middle_down()
+                || input.pointer.secondary_down()
+                || input.smooth_scroll_delta != egui::Vec2::ZERO
+        });
+        self.carry_cursor(ui.ctx(), gesture || navigating);
+        if matches!(Transform::of(shell.mode), Some(Transform::Move | Transform::Object))
+            && self.translate_gizmo.is_dragging()
+        {
             self.show_move_distances(ui, rect, opacity);
         } else {
             self.clear_move_distances(ui.ctx());
@@ -2496,6 +2760,9 @@ impl Document {
         // A camera or a light has no drawable, so its glyph and its contribution to the frame are
         // driven by this list rather than by the uploaded geometry.
         let previewed = self.previewed_scene_placements();
+        // A drag that holds a button freezes the camera, because the axis and the parameter under
+        // the hand are read through it. A carried piece holds nothing, so the view keeps working
+        // under it and the hold re-anchors to whatever the camera became (N25).
         let dragging = if contour_editing {
             self.contour_gizmo.is_dragging()
         } else if pulling {
@@ -2503,7 +2770,7 @@ impl Document {
         } else if mesh_object.is_some() {
             self.vertex_gizmo.is_dragging()
         } else {
-            self.translate_gizmo.is_dragging() || self.rotate_gizmo.is_dragging()
+            self.translate_gizmo.is_held() || self.rotate_gizmo.is_dragging()
         };
         let consumed_click = if contour_editing
             || drawing
@@ -2518,11 +2785,11 @@ impl Document {
         } else if mesh_object.is_some() {
             self.vertex_gizmo.consumed_click()
         } else {
-            match shell.mode.transform() {
+            match Transform::of(shell.mode) {
                 // The mode offers no handle, so nothing consumed the press: the click picks.
                 None => false,
-                Some(Transform::Move) => self.translate_gizmo.consumed_click(),
-                Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
+                Some(Transform::Move | Transform::Object) => self.translate_gizmo.consumed_click(),
+                Some(Transform::Rotate | Transform::ObjectRotate) => self.rotate_gizmo.consumed_click(),
             }
         };
 
@@ -2535,9 +2802,14 @@ impl Document {
         if navigable && response.hovered() && pointer_over_active && !dragging {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             if scroll != 0.0
-                && let Some(leaf) = self.layout.leaf_mut(target_leaf)
+                && let Some(at) = ui.input(|input| input.pointer.hover_pos())
             {
-                leaf.zoom((-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp());
+                self.zoom_about_pointer(
+                    target_leaf,
+                    target_rect,
+                    at,
+                    (-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp(),
+                );
             }
         }
 
@@ -2565,8 +2837,13 @@ impl Document {
                     }
                 }
                 Some(NavigationMode::Zoom) => {
-                    if let Some(leaf) = self.layout.leaf_mut(target_leaf) {
-                        leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
                     }
                 }
                 None => {}
@@ -2580,7 +2857,14 @@ impl Document {
                 if modifiers.shift {
                     leaf.pan_pixels(f64::from(drag.x), f64::from(drag.y), f64::from(navigation_rect.height()));
                 } else if modifiers.ctrl {
-                    leaf.zoom((-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp());
+                    if let Some(at) = response.interact_pointer_pos() {
+                        self.zoom_about_pointer(
+                            target_leaf,
+                            navigation_rect,
+                            at,
+                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
+                        );
+                    }
                 } else {
                     leaf.orbit(
                         -f64::from(drag.x) * ORBIT_RADIANS_PER_POINT,
@@ -2627,6 +2911,9 @@ impl Document {
             && ui.input(|input| input.pointer.primary_pressed())
             && response.interact_pointer_pos().is_some_and(|pointer| self.over_empty_space(rect, pointer, &previewed));
         self.update_band(ui, &response, rect, band_starts);
+        // Whether the click opened a container instead of picking a node, so the object move
+        // does not take a piece on the way into a level.
+        let mut entered_level = false;
         let clicked = interactive
             && !pointer_on_chrome
             && if mesh_object.is_some() {
@@ -2732,7 +3019,8 @@ impl Document {
                 if response.double_clicked() {
                     // Opening a product repaints its envelope without a document revision, so the
                     // scene is rebuilt here instead of waiting a frame for the next sync.
-                    if self.editor.enter_viewport_level(&mut self.session, hit) {
+                    entered_level = self.editor.enter_viewport_level(&mut self.session, hit);
+                    if entered_level {
                         if let Err(error) = self.refresh() {
                             self.last_error = Some(error);
                         }
@@ -2746,6 +3034,12 @@ impl Document {
                     }
                 }
             }
+            // The object move takes the piece the click named, by any part of its body: the click
+            // has selected it, and the pointer carries it until the next click puts it down (N24). A
+            // click that opened a container is navigation, not a hand on a piece.
+            if Transform::of(shell.mode) == Some(Transform::Object) && !entered_level {
+                self.take_body(pointer);
+            }
         }
 
         // The style and the shadow switch are frame data the renderer reads when it draws, so a
@@ -2754,6 +3048,7 @@ impl Document {
         // reads a different cached list, so the last upload is replayed when the switch flips.
         self.layout.apply_frame_display(&mut self.scene);
         self.scene.contact_shadows.strength = ui::display::display_strength(settings.viewport.shadow_strength);
+        self.scene.floor_opacity = ui::display::floor_opacity(settings.viewport.floor_opacity);
         if self.scene.all_edges != settings.viewport.all_edges {
             self.scene.all_edges = settings.viewport.all_edges;
             if let Err(error) = self.upload_scene() {
@@ -2807,11 +3102,14 @@ impl Document {
             }
         }
         // The overlaid feedback is drawn per view, with that view's camera and rectangle, so a
-        // camera glyph or a selection outline lands where its own pass drew the model.
+        // camera glyph or a selection outline lands where its own pass drew the model. A piece in
+        // hand takes its brackets with it: the overlay reads the drag's preview, as the renderer
+        // does, and not the placements the document still holds (X75).
         let open_boxes = open_frame::OpenBoxes::collect(
             &self.level_bounds,
             self.editor.open_containers(),
             self.scene.product_envelopes(),
+            self.preview(),
         );
         self.brackets.clear();
         for (leaf, view_rect) in &regions {
@@ -2841,7 +3139,11 @@ impl Document {
         let paint_target = gizmo_math::Target {
             camera: self.scene.camera,
             project: self.session.project(),
+            contact: self.session.contact(),
             selection: self.editor.selected_nodes(),
+            moves: settings.snaps.move_settings(),
+            move_kind: MoveKind::of(shell.mode),
+            rotate_kind: RotateKind::of(shell.mode),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
         if let Some(edit) = self.editor.contour_edit() {
@@ -2863,7 +3165,7 @@ impl Document {
                 }
                 Err(error) => self.last_error = Some(error),
             }
-        } else if let Some(draft) = self.editor.box_draft().copied() {
+        } else if let Some(draft) = self.editor.box_draft().cloned() {
             let plane = WorkPlane::from_camera(self.scene.camera);
             box_gizmo::paint_box(ui, rect, self.scene.camera, plane, response.hover_pos(), &draft);
         } else if let Some(object) = mesh_object {
@@ -2892,12 +3194,24 @@ impl Document {
             // handles because the drag it would start is refused.
         } else {
             // A box shows its grips instead of nothing: the faces and the base corners are the
-            // three-side editor, and the placement handles still act beside them.
-            self.box_grips.paint(ui, rect, self.scene.camera, self.session.project(), self.grip_target());
-            match shell.mode.transform() {
+            // three-side editor, and the placement handles still act beside them. The grips read the
+            // drag's preview, so a carried frame's rings ride with it (X76).
+            self.box_grips.paint(
+                ui,
+                rect,
+                self.scene.camera,
+                self.session.project(),
+                self.grip_target(),
+                self.preview(),
+            );
+            match Transform::of(shell.mode) {
                 None => {}
-                Some(Transform::Move) => self.translate_gizmo.paint(ui, rect, paint_target, handle_length),
-                Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
+                Some(Transform::Move | Transform::Object) => {
+                    self.translate_gizmo.paint(ui, rect, paint_target, handle_length);
+                }
+                Some(Transform::Rotate | Transform::ObjectRotate) => {
+                    self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor)
+                }
             }
         }
         // The rubber band is work-area paint: it lies over the image and the gizmos and under the
@@ -2958,11 +3272,7 @@ impl Document {
             Some(ClusterAction::ToggleProjection) => self.toggle_view_projection(),
             Some(ClusterAction::SetLayout(kind)) => self.set_layout(kind),
             Some(ClusterAction::ToggleMaximize) => self.layout.toggle_maximized(),
-            Some(ClusterAction::SetPreset(preset)) => {
-                self.layout.active_leaf_mut().apply_preset(preset);
-                let camera = self.layout.active_camera();
-                self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
-            }
+            Some(ClusterAction::SetPreset(preset)) => self.apply_view_preset(preset),
             Some(ClusterAction::SetStyle(style)) => {
                 self.layout.set_active_style(style);
                 // The style is frame data the renderer reads per view at draw time, so no upload.
@@ -3035,6 +3345,68 @@ impl Document {
             self.last_error = Some(error);
         }
         ui.ctx().request_repaint();
+    }
+
+    /// Takes the selected piece in hand for the object move, unless it may travel nowhere.
+    ///
+    /// The click has already named the piece and set the selection, so this reads the selection and
+    /// asks the document what may move: a piece with no allowed axis, a locked piece and an empty
+    /// selection are all left alone, and the click stays an ordinary selection.
+    fn take_body(&mut self, pointer: egui::Pos2) {
+        let selection = self.editor.selected_nodes();
+        let project = self.session.project();
+        if selection.is_empty() || project.move_axes(selection) == [false, false, false] {
+            return;
+        }
+        if self.editor.locked_selection(project).is_some() {
+            return;
+        }
+        // The hold itself starts on the next frame, from this point: the gizmo has already run for
+        // the frame this click was read in.
+        self.translate_gizmo.grab(pointer);
+    }
+
+    /// Whether the object move is carrying a piece, for the status bar's own words (N24).
+    pub(crate) fn holding_piece(&self) -> bool {
+        self.translate_gizmo.is_following()
+    }
+
+    /// Settles what the carry asks of the pointer this frame (X69).
+    ///
+    /// The work area draws its own square and hides the system arrow (X40), so the carry asks the
+    /// *window* for nothing at all: on a Wayland session the system pointer cannot be moved
+    /// (`set_cursor_position` answers `NotSupported`), and a cursor shown through a viewport command
+    /// fights `egui-winit`'s own icon, which re-shows it on every icon change. The carry keeps a hand
+    /// of its own instead — [`Document::carry_hand`] — and the pointer is simply not drawn while a
+    /// camera gesture slides the view under the piece it holds.
+    pub(crate) fn carry_cursor(&mut self, _ctx: &egui::Context, gesture: bool) {
+        self.cursor_hidden = gesture && self.translate_gizmo.is_following();
+    }
+
+    /// Whether the carry has put the pointer away this frame, for the shell's own square.
+    ///
+    /// Hiding the pointer is a question of not drawing it: a square standing still over a scene
+    /// sliding under it is the picture of a piece being left behind, and it is not what happens.
+    pub(crate) fn hides_pointer(&self) -> bool {
+        self.cursor_hidden
+    }
+
+    /// Where the carry's hand is on screen, when it is not where the system pointer is.
+    ///
+    /// A camera gesture moves the view and the piece stays, so the hand is put back on the middle of
+    /// the piece and the square is drawn there; the mouse then moves that hand by its own movement,
+    /// so dragging carries the piece from the piece (X69).
+    pub(crate) fn carry_hand(&self) -> Option<egui::Pos2> {
+        self.translate_gizmo.hand()
+    }
+
+    /// The world distance the carried piece has travelled, for a test that watches the preview.
+    ///
+    /// The preview lives in the session overlay and the document is untouched until the drop, so a
+    /// test cannot read the moved box from the project.
+    #[cfg(test)]
+    pub(crate) fn carried_delta(&self) -> geom::DVec3 {
+        self.translate_gizmo.drag_delta()
     }
 
     /// The rectangle the open context menu drew last frame, which the shell hands to `Chrome`.
@@ -3374,7 +3746,7 @@ impl Document {
                 self.cancel_box();
             } else if enter
                 && !ui.ctx().text_edit_focused()
-                && self.editor.box_draft().is_some_and(BoxDraft::is_pulling)
+                && self.editor.box_draft().is_some()
                 && let Err(error) = self.finish_box(ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);
@@ -3581,6 +3953,8 @@ struct MoveDistances {
     /// The world centres of the two start faces.
     low_face: geom::DVec3,
     high_face: geom::DVec3,
+    /// The moved box's own size, so a captured line can be drawn across it.
+    size: geom::DVec3,
     /// The surfaces that stop the two faces, in the axis's world coordinates.
     wall_low: Option<f64>,
     wall_high: Option<f64>,
@@ -3592,7 +3966,12 @@ struct MoveDistances {
 ///
 /// A translate drag reads this once, when it starts: the document still holds the start placements,
 /// so the preview, the fields and the release commit one measurement.
-fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<MoveDistances> {
+fn measure_move(
+    project: &Project,
+    node: Id,
+    axis: gizmo_math::Axis,
+    contact: Option<&dyn geom::Contact>,
+) -> Option<MoveDistances> {
     let (min, max) = project.world_box(node)?;
     let direction = axis.direction();
     let (low, high) = (min.dot(direction), max.dot(direction));
@@ -3605,10 +3984,15 @@ fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<M
     let high_face = centre + direction * (high - centre.dot(direction));
     // A probe starting exactly on a face can meet that face; one micrometre outside it cannot.
     const INSET_MM: f64 = 1.0e-3;
-    let wall_low =
-        project.probe(low_face - direction * INSET_MM, -direction).map(|probe| low - INSET_MM - probe.distance_mm);
-    let wall_high =
-        project.probe(high_face + direction * INSET_MM, direction).map(|probe| high + INSET_MM + probe.distance_mm);
+    // The fields measure what the drag may take, so they read the material: a part switched off is
+    // still in the way of the piece and its fields measure the face that stops it (X73, ADR 0175).
+    let sight = model::Sight::none();
+    let wall_low = project
+        .probe(low_face - direction * INSET_MM, -direction, sight, contact)
+        .map(|probe| low - INSET_MM - probe.distance_mm);
+    let wall_high = project
+        .probe(high_face + direction * INSET_MM, direction, sight, contact)
+        .map(|probe| high + INSET_MM + probe.distance_mm);
     let distances = Distances::new(wall_low, wall_high, low, high)?;
     Some(MoveDistances {
         node,
@@ -3617,10 +4001,92 @@ fn measure_move(project: &Project, node: Id, axis: gizmo_math::Axis) -> Option<M
         extent: high - low,
         low_face,
         high_face,
+        size: max - min,
         wall_low,
         wall_high,
         distances,
     })
+}
+
+/// The surfaces the drag's fields measure against, with a captured one standing where the rule put it.
+///
+/// The probe answers the first surface a ray meets, which is not necessarily the surface a snap
+/// used: a coordinate plane has no body behind it, so the field would measure a wall the piece never
+/// touched, or find none at all. The capture names the surface the rule used, so its coordinate
+/// replaces the probe's answer on that face and the field shows the same surface the release
+/// landed on (ADR 0146).
+fn captured_walls(measure: &MoveDistances, capture: Option<model::Capture>) -> (Option<f64>, Option<f64>) {
+    match capture {
+        Some(capture) if capture.end == model::SnapEnd::Low => (Some(capture.at_mm), measure.wall_high),
+        Some(capture) => (measure.wall_low, Some(capture.at_mm)),
+        None => (measure.wall_low, measure.wall_high),
+    }
+}
+
+/// Draws the surface a snap landed the piece on, across the face that met it.
+///
+/// A coordinate plane has no neighbour to look at, so a drag that jumped to it would otherwise show
+/// only a number that moved on its own. The line lies in the captured surface and runs across the
+/// moved box, in the helper ink the other guide geometry uses (ADR 0146).
+fn paint_capture(
+    painter: &egui::Painter,
+    camera: Camera,
+    viewport: egui::Rect,
+    measure: &MoveDistances,
+    centre: geom::DVec3,
+    axis: gizmo_math::Axis,
+    ink: egui::Color32,
+) {
+    let (first, second) = match axis {
+        gizmo_math::Axis::X => (geom::DVec3::Y, geom::DVec3::Z),
+        gizmo_math::Axis::Y => (geom::DVec3::X, geom::DVec3::Z),
+        gizmo_math::Axis::Z => (geom::DVec3::X, geom::DVec3::Y),
+    };
+    let half = measure.size * 0.5;
+    let stroke = egui::Stroke::new(1.0, ink);
+    for (unit, reach) in [(first, half.dot(first)), (second, half.dot(second))] {
+        let end = unit * (reach + CAPTURE_OVERHANG_MM);
+        let (Some(from), Some(to)) = (
+            gizmo_math::screen_point(camera, viewport, centre - end),
+            gizmo_math::screen_point(camera, viewport, centre + end),
+        ) else {
+            continue;
+        };
+        painter.line_segment([from, to], stroke);
+    }
+}
+
+/// Draws one measured gap as a dimension: a thin line along the run and an arrowhead at each end.
+///
+/// The grammar is the drafting skill's: the run is the dimension line between the two witnesses the
+/// model probe found, the heads point at those witnesses, and the gap's own field is the text that
+/// sits in the middle of it (N26). The ink is the guide amber the program draws its help in, dimmed
+/// by the caller while the pointer is elsewhere, and a run too short to hold two heads draws the
+/// line alone rather than a pair of overlapping triangles.
+fn paint_gap_arrow(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, ink: egui::Color32) {
+    painter.line_segment([from, to], egui::Stroke::new(1.0, ink));
+    let run = to - from;
+    let length = run.length();
+    if length <= GAP_ARROW_LENGTH * 2.0 || length <= f32::EPSILON {
+        return;
+    }
+    let along = run / length;
+    let across = egui::vec2(-along.y, along.x) * GAP_ARROW_HALF_WIDTH;
+    for (tip, towards) in [(from, along), (to, -along)] {
+        let base = tip + towards * GAP_ARROW_LENGTH;
+        painter.add(egui::Shape::convex_polygon(vec![tip, base + across, base - across], ink, egui::Stroke::NONE));
+    }
+}
+
+/// How far `point` lies from the segment `from..to`, in points.
+fn distance_to_run(point: egui::Pos2, from: egui::Pos2, to: egui::Pos2) -> f32 {
+    let run = to - from;
+    let length = run.length();
+    if length <= f32::EPSILON {
+        return point.distance(from);
+    }
+    let along = ((point - from).dot(run) / (length * length)).clamp(0.0, 1.0);
+    point.distance(from + run * along)
 }
 
 /// The world axis a product-frame axis index names.
@@ -3783,6 +4249,33 @@ fn preview_vertex_mesh(frame: SceneFrame, project: &Project, preview: VertexPrev
     Ok(frame.with_drawable_mesh(preview.object, Arc::new(data)))
 }
 
+/// The face a fill's free axis is carried on, and the two numbers the hand turns it with.
+///
+/// A face square to the free axis names one place for the whole face, so a part measured off it
+/// sticks at the board while the pointer travels over it. The carriage is what the tool holds
+/// instead: the part's place and the hand's own place, one step behind, so every millimetre the hand
+/// travels moves the part by one. It starts at the place the face itself named, which is why the part
+/// never jumps when the carriage begins, and the face is remembered as its normal and offset, which
+/// is what keeps the same wall carrying and starts a new one at a new wall (N23).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Carriage {
+    /// The face's outward normal, in the world.
+    face: geom::DVec3,
+    /// The face's plane offset along that normal, in world millimetres.
+    offset: f64,
+    /// The hand's place along the free axis this step.
+    hand: f64,
+    /// The part's place this step, which the hand moves next step.
+    place: f64,
+}
+
+/// How far the point may drift within one face and still be the same face, in millimetres.
+///
+/// The point rests a micrometre on the free side of the face it met, and the probe answers whole
+/// micrometres, so one wall's offset moves by that much between frames; a hundredth of a millimetre
+/// separates two walls that are not the same wall.
+const CARRIAGE_FACE_MM: f64 = 0.01;
+
 /// Whether `node` offers the three-length grips when it is the only selection.
 ///
 /// A product frame owns an envelope, and those handles belong to the piece being worked in: a closed
@@ -3824,7 +4317,7 @@ mod tests {
         project
             .add_product(root_id, "Beside", ClassCode::GENERAL_PRODUCT, envelope(), beside)
             .expect("a second product");
-        let measure = measure_move(&project, moved, gizmo_math::Axis::X).expect("two faces");
+        let measure = measure_move(&project, moved, gizmo_math::Axis::X, None).expect("two faces");
         assert_eq!(measure.start_low, 0.0);
         assert_eq!(measure.extent, 600.0);
         assert_eq!(measure.wall_low, None, "nothing stands to the left");
@@ -3836,6 +4329,34 @@ mod tests {
         assert!((distances.low() - 300.0).abs() < 1.0e-9, "{:?}", distances.low());
         let pinned = distances.pinned_low().expect("the typed distance pins the low face");
         assert!((pinned - measure.start_low - 300.0).abs() < 1.0e-9, "the drag delta is the typed gap");
+    }
+
+    #[test]
+    fn the_field_at_a_captured_face_measures_the_surface_the_rule_used() {
+        // A piece two millimetres off the Y = 0 plane: the rule snaps it flush, and the field has to
+        // measure the plane the release landed on. The probe finds no wall there — a coordinate plane
+        // has no body behind it — so without the capture the field would say the piece is free.
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root_id = project.root().id();
+        let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+        let at = Placement::new(DVec3::new(0.0, 1500.0, 0.0), DQuat::IDENTITY).expect("a placement");
+        let piece = project.add_product(root_id, "Piece", ClassCode::GENERAL_PRODUCT, envelope, at).expect("a product");
+        let measure = measure_move(&project, piece, gizmo_math::Axis::Y, None).expect("two faces");
+        assert_eq!(measure.wall_low, None, "nothing stands below the piece");
+
+        let rule = project.move_rule(&[piece], model::MoveSettings::default(), None).expect("an object drag");
+        let limit = rule.limit(model::MoveAxis::Y, -1498.0);
+        let capture = limit.capture.expect("the plane captured the drag");
+        let (wall_low, wall_high) = captured_walls(&measure, Some(capture));
+        assert_eq!(wall_low, Some(capture.at_mm), "the field measures the surface the rule named");
+        assert_eq!(wall_high, measure.wall_high, "the other side keeps its probe");
+
+        let mut distances = measure.distances;
+        let low = measure.start_low + limit.distance_mm;
+        distances.sync(wall_low, wall_high, low, low + measure.extent);
+        assert_eq!(distances.value(Side::Low), Some(0.0), "the piece landed flush on the plane");
+        assert_eq!(distances.low(), capture.at_mm, "the face is where the number says it is");
     }
 
     #[test]
@@ -3967,11 +4488,13 @@ mod tests {
     fn the_display_strengths_reach_the_frame_and_the_shadow_does_not_cost_an_upload() {
         // U64: the grid and outline strengths are workspace values the renderer reads when it builds
         // the line buffers, so a change to one repaints the frame; U107: the shadow's intensity is
-        // read from the view's uniform, so it never repaints anything.
+        // read from the view's uniform, so it never repaints anything. U109: the floor's opacity is
+        // read by the same uniform, so it does not repaint either.
         let settings = ViewportSettings {
             grid_strength: 25,
             edge_strength: 0,
             shadow_strength: 80,
+            floor_opacity: 40,
             ..ViewportSettings::default()
         };
         let display = Display::of(&settings, SceneColors::DARK);
@@ -3980,6 +4503,7 @@ mod tests {
         assert!((frame.grid.ink_strength - 0.25).abs() < 1.0e-6, "the grid strength reaches the frame");
         assert_eq!(frame.edge_strength, 0.0, "the outline strength reaches the frame");
         assert!((frame.contact_shadows.strength - 0.8).abs() < 1.0e-6, "and the shadow's");
+        assert!((frame.floor_opacity - 0.4).abs() < 1.0e-6, "and the floor's own opacity");
 
         let quieter = Display::of(&ViewportSettings { grid_strength: 10, ..settings }, SceneColors::DARK);
         assert!(quieter.repaints(display), "a grid strength repaints the frame's own lines");
@@ -3987,6 +4511,9 @@ mod tests {
         assert!(darker.repaints(display), "so does an outline strength");
         let dimmer = Display::of(&ViewportSettings { shadow_strength: 30, ..settings }, SceneColors::DARK);
         assert!(!dimmer.repaints(display), "the shadow's intensity is a uniform, never an upload");
+        let ground = Display::of(&ViewportSettings { floor_opacity: 100, ..settings }, SceneColors::DARK);
+        assert!(!ground.repaints(display), "and so is the floor's opacity");
+        assert_ne!(ground.floor_opacity, display.floor_opacity, "though the two frames draw different floors");
         let same = Display::of(&settings, SceneColors::LIGHT);
         assert!(same.repaints(display), "and a theme is the colours the lines are drawn with");
     }
@@ -4213,7 +4740,8 @@ mod tests {
         let shelf = Id::new(2).expect("shelf id");
         let mut editor = Editor::new();
         let placement = Placement::IDENTITY;
-        let commit = PlacementCommit { changes: vec![gizmo_math::PlacementChange { node: shelf, placement }] };
+        let commit =
+            PlacementCommit { changes: vec![gizmo_math::PlacementChange { node: shelf, placement }], measured: true };
 
         assert_eq!(locked_change(&project, &commit, &editor), None, "an unlocked node moves");
         editor.set_locked(shelf, true);

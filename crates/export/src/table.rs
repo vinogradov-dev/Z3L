@@ -130,7 +130,7 @@ pub const PART_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::integer("product_id"),
     Column::text("class"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("thickness_um").in_unit("um"),
     Column::integer("length_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
@@ -147,7 +147,7 @@ pub const PART_COLUMNS: &[Column] = &[
 pub const BANDING_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::text("unit"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("thickness_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
     Column::boolean("included_in_size"),
@@ -174,7 +174,7 @@ pub const FACADE_COLUMNS: &[Column] = &[
     Column::integer("node_id"),
     Column::integer("product_id"),
     Column::text("class"),
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::integer("length_um").in_unit("um"),
     Column::integer("width_um").in_unit("um"),
     Column::integer("thickness_um").in_unit("um"),
@@ -207,7 +207,7 @@ pub const MACHINING_COLUMNS: &[Column] = &[
 
 /// The columns of `materials`.
 pub const MATERIAL_COLUMNS: &[Column] = &[
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::text("name"),
     Column::text("kind"),
     Column::integer("thickness_um").in_unit("um"),
@@ -217,17 +217,21 @@ pub const MATERIAL_COLUMNS: &[Column] = &[
     Column::integer("sheet_width_um").in_unit("um"),
     Column::text("stock_group"),
     Column::integer("price_minor"),
+    Column::text("price_date"),
+    Column::integer("price_stale"),
 ];
 
 /// The columns of `sheets`.
 pub const SHEET_COLUMNS: &[Column] = &[
-    Column::integer("material_id"),
+    Column::text("material_id"),
     Column::text("stock_group"),
     Column::integer("sheet_length_um").in_unit("um"),
     Column::integer("sheet_width_um").in_unit("um"),
     Column::integer("usable_length_um").in_unit("um"),
     Column::integer("usable_width_um").in_unit("um"),
     Column::integer("price_minor"),
+    Column::text("price_date"),
+    Column::integer("price_stale"),
     Column::integer("part_count"),
     Column::integer("part_area_mm2").in_unit("mm2"),
     Column::integer("sheet_area_mm2").in_unit("mm2"),
@@ -303,6 +307,20 @@ impl Cell {
     /// The type name a mismatch reports.
     pub const fn type_name(&self) -> &'static str {
         self.kind().as_str()
+    }
+
+    /// The value a JSON reader sees: an integer, a string, a flag or the stored JSON.
+    ///
+    /// The JSON Lines writer, the single-file form and the command line's `query` all read a cell
+    /// through this one function, so a published record and a printed report cannot disagree about
+    /// what a cell is.
+    pub fn json(&self) -> serde_json::Value {
+        match self {
+            Self::Integer(value) => serde_json::Value::from(*value),
+            Self::Text(value) => serde_json::Value::from(value.clone()),
+            Self::Boolean(value) => serde_json::Value::from(*value),
+            Self::Json(value) => value.clone(),
+        }
     }
 }
 

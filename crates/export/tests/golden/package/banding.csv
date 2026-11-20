@@ -1,2 +1,2 @@
 node_id,unit,material_id,thickness_um,width_um,included_in_size,length_um
-6,edge:1,101,2000,22000,true,700000
+6,edge:1,1-101,2000,22000,true,700000

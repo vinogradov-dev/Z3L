@@ -1,9 +1,9 @@
 //! The Home surface: what the house button opens.
 //!
-//! Home is a start view, not a document surface. It offers a new scene, the file dialog, the recent
-//! files the workspace remembers, and the empty template; it reads the recent list and returns one
-//! [`HomeAction`], which the shell performs through the same File menu path as the header. Escape
-//! and a click on the backdrop dismiss it.
+//! Home is a start view, not a document surface. It offers a new scene, the system file manager, the
+//! recent files the workspace remembers, and the empty template; it reads the recent list and
+//! returns one [`HomeAction`], which the shell performs through the same File menu path as the
+//! header. Escape and a click on the backdrop dismiss it.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ use crate::theme;
 pub enum HomeAction {
     /// Start a new, empty scene.
     New,
-    /// Open the file dialog.
+    /// Ask the system file manager for a scene.
     Open,
     /// Start from the empty template.
     EmptyTemplate,

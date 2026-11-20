@@ -8,59 +8,96 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
 
+use crate::footprint::{FootprintError, anchored_ring};
 use crate::{
-    ClassCode, Id, Node, PivotLocal, Placement, Properties, PropertyError, PropertyValue, SYSTEM_CLASS,
-    SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION,
+    ClassCode, Contour, Footprint, Id, Node, PivotLocal, Placement, Properties, PropertyError, PropertyValue,
+    SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION,
 };
 
-/// The authored box of a product: its width, depth and height in the product's own frame.
+/// The authored box of a product: its width, depth, height and the shape its base is cut to.
 ///
 /// The document stores the box a human decided on, never the bounds of its parts (ADR 0097). The
 /// three sides are named after the product frame axes: `x` is the width, `y` the depth and `z` the
 /// height. A product anchors at the minimum corner of its base rectangle, so the reserved space is
-/// `[0..x] × [0..y] × [0..z]` in that frame and needs no offset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `[0..x] × [0..y] × [0..z]` in that frame and needs no offset. The [`Footprint`] cuts that base
+/// rectangle — a corner kitchen cabinet with one corner off, an end table drawn as a ring — and `x`
+/// and `y` stay the bounds of whatever shape it is, so every reader that only wants the reserved box
+/// still gets one answer (ADR 0159).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "EnvelopeWire")]
 pub struct Envelope {
     x: Length,
     y: Length,
     z: Length,
+    #[serde(default, skip_serializing_if = "Footprint::is_rectangle")]
+    footprint: Footprint,
 }
 
 impl Envelope {
     /// The largest side an envelope may have: 1000 m, the panel dimension ceiling.
     pub const MAX_SIDE: Length = Length::from_micrometres(1_000_000_000);
 
-    /// Builds an envelope from three exact side lengths.
+    /// Builds an envelope from three exact side lengths: the plain rectangular box.
     ///
     /// Every side must be positive and inside [`Envelope::MAX_SIDE`]; a bad number is a typed
-    /// error, never a clamp. The envelope is a box: a sloped or reshaped one is a new field and a
-    /// new decision.
+    /// error, never a clamp.
     pub fn new(x: Length, y: Length, z: Length) -> Result<Self, EnvelopeError> {
+        Self::with_footprint(x, y, z, Footprint::rectangle())
+    }
+
+    /// Builds an envelope whose base rectangle is cut as `footprint` says.
+    ///
+    /// The three sides are validated first, then the shape against them: a corner cut that leaves no
+    /// straight edge and a ring whose bounds are not the sides are both typed refusals, never a
+    /// clamp and never a silently reshaped box.
+    pub fn with_footprint(x: Length, y: Length, z: Length, footprint: Footprint) -> Result<Self, EnvelopeError> {
         validate_side("width", x)?;
         validate_side("depth", y)?;
         validate_side("height", z)?;
-        Ok(Self { x, y, z })
+        footprint.outline(x, y).map_err(|source| EnvelopeError::Footprint { source })?;
+        Ok(Self { x, y, z, footprint })
+    }
+
+    /// Builds an envelope whose base is a closed ring drawn on the plane.
+    ///
+    /// The ring is anchored at its own minimum corner and its bounds become the width and the depth,
+    /// so the product's zero stays its base min corner and a drawn piece needs no offset (ADR 0042,
+    /// ADR 0082). The height is still the third side, pulled or typed like any other.
+    pub fn with_ring(contour: &Contour, z: Length) -> Result<Self, EnvelopeError> {
+        let ring = anchored_ring(contour).map_err(|source| EnvelopeError::Footprint { source })?;
+        let (min, max) = ring.bounds_micrometres();
+        let span = |side: &'static str, low: i64, high: i64| -> Result<Length, EnvelopeError> {
+            let span = high.checked_sub(low).ok_or(EnvelopeError::RingBounds { side, low, high })?;
+            Ok(Length::from_micrometres(span))
+        };
+        let width = span("width", min[0], max[0])?;
+        let depth = span("depth", min[1], max[1])?;
+        Self::with_footprint(width, depth, z, Footprint::ring(ring))
     }
 
     /// The width along the product frame's X axis.
-    pub const fn x(self) -> Length {
+    pub const fn x(&self) -> Length {
         self.x
     }
 
     /// The depth along the product frame's Y axis.
-    pub const fn y(self) -> Length {
+    pub const fn y(&self) -> Length {
         self.y
     }
 
     /// The height along the product frame's Z axis.
-    pub const fn z(self) -> Length {
+    pub const fn z(&self) -> Length {
         self.z
     }
 
     /// The three sides in frame order.
-    pub const fn components(self) -> [Length; 3] {
+    pub const fn components(&self) -> [Length; 3] {
         [self.x, self.y, self.z]
+    }
+
+    /// The shape the base rectangle is cut to.
+    pub const fn footprint(&self) -> &Footprint {
+        &self.footprint
     }
 }
 
@@ -71,18 +108,20 @@ struct EnvelopeWire {
     x: Length,
     y: Length,
     z: Length,
+    #[serde(default)]
+    footprint: Footprint,
 }
 
 impl TryFrom<EnvelopeWire> for Envelope {
     type Error = EnvelopeError;
 
     fn try_from(wire: EnvelopeWire) -> Result<Self, Self::Error> {
-        Self::new(wire.x, wire.y, wire.z)
+        Self::with_footprint(wire.x, wire.y, wire.z, wire.footprint)
     }
 }
 
 /// Why a product envelope is not usable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum EnvelopeError {
     /// A side is zero or negative.
     #[error("product {side} must be positive, got {value}")]
@@ -101,6 +140,23 @@ pub enum EnvelopeError {
         value: Length,
         /// The largest accepted value for this side.
         max: Length,
+    },
+    /// The footprint cannot be drawn at the sides it is stored with.
+    #[error("the product footprint is not usable: {source}")]
+    Footprint {
+        /// Why the shape was refused.
+        #[source]
+        source: FootprintError,
+    },
+    /// A drawn ring's bounds cannot be expressed as two sides.
+    #[error("the product ring's {side} spans {low}..{high} micrometres, which is not a length")]
+    RingBounds {
+        /// The side that could not be measured.
+        side: &'static str,
+        /// The ring's low coordinate on that axis, in micrometres.
+        low: i64,
+        /// The ring's high coordinate on that axis, in micrometres.
+        high: i64,
     },
 }
 
@@ -232,8 +288,8 @@ impl Container {
     }
 
     /// The authored box of a product, or `None` for the root, a group or another component.
-    pub const fn envelope(&self) -> Option<Envelope> {
-        self.envelope
+    pub const fn envelope(&self) -> Option<&Envelope> {
+        self.envelope.as_ref()
     }
 
     /// Stores or clears the authored box; [`crate::Project::add_product`] is the creation path.

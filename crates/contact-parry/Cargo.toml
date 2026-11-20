@@ -1,0 +1,13 @@
+[package]
+name = "contact-parry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+geom = { workspace = true }
+parry3d-f64 = { workspace = true }

@@ -23,6 +23,7 @@ mod container_card;
 mod contour_edit;
 mod contour_grips;
 mod coords;
+mod directory;
 pub mod display;
 mod distance;
 mod draw;
@@ -54,6 +55,7 @@ mod target;
 pub mod theme;
 pub mod tool_card;
 pub mod toolbars;
+pub mod transform;
 pub mod ui_scale;
 mod view_flags;
 mod void;
@@ -61,6 +63,7 @@ mod void;
 pub use box_tool::{BoxBase, BoxDraft, BoxDraftError, MIN_BOX_HEIGHT_MM};
 pub use contour_edit::{ContourDraft, ContourEdit, ContourTarget};
 pub use contour_grips::{ContourGrip, GripNumber, GripValue};
+pub use directory::DirectoryEditor;
 pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, FieldPlacement, Side};
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use draw_fields::{PointRow, PointState, Reference, SketchAngle, XEnd, field_row, sketch_angle};
@@ -76,8 +79,9 @@ pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
 pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
+pub use transform::TransformMode;
 pub use view_flags::ViewFlags;
-pub use void::{Void, VoidRefusal, pointer_point};
+pub use void::{FreePlace, PointerPoint, Void, VoidRefusal, free_place, pointer_face, pointer_point};
 
 /// The `egui` memory key the shell publishes the workspace language under.
 ///

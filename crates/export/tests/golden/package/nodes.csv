@@ -3,11 +3,11 @@ node_id,parent_id,name,class,level,path,x_um,y_um,z_um,qw,qx,qy,qz
 2,1,Shelf,,,Shelf,0,0,0,1000000000,0,0,0
 3,1,Drawer,,,Drawer,0,0,0,1000000000,0,0,0
 4,3,Front,,,Drawer/Front,0,0,0,1000000000,0,0,0
-5,1,Cabinet,80.01,Product,Cabinet,0,0,0,1000000000,0,0,0
-6,5,Side,30.10,Part,Cabinet/Side,0,0,0,1000000000,0,0,0
-8,5,Shelf,30.11,Part,Cabinet/Shelf,0,0,0,1000000000,0,0,0
-9,5,Door,30.20,Component,Cabinet/Door,0,0,0,1000000000,0,0,0
+5,1,Cabinet,70.01,Product,Cabinet,0,0,0,1000000000,0,0,0
+6,5,Side,10.10,Part,Cabinet/Side,0,0,0,1000000000,0,0,0
+8,5,Shelf,10.11,Part,Cabinet/Shelf,0,0,0,1000000000,0,0,0
+9,5,Door,10.20,Component,Cabinet/Door,0,0,0,1000000000,0,0,0
 10,5,Hinge,50.02.01,Fitting,Cabinet/Hinge,0,0,0,1000000000,0,0,0
-11,1,Wardrobe,80.01,Product,Wardrobe,0,0,0,1000000000,0,0,0
-12,11,Back,30.12,Part,Wardrobe/Back,0,0,0,1000000000,0,0,0
-13,11,Round shelf,30.11,Part,Wardrobe/Round shelf,0,0,0,1000000000,0,0,0
+11,1,Wardrobe,70.01,Product,Wardrobe,0,0,0,1000000000,0,0,0
+12,11,Back,10.12,Part,Wardrobe/Back,0,0,0,1000000000,0,0,0
+13,11,Round shelf,10.11,Part,Wardrobe/Round shelf,0,0,0,1000000000,0,0,0

@@ -19,11 +19,17 @@
 //! report rather than approximated.
 //!
 //! Both are pure queries: no session, no renderer, no document write. The surfaces are the same
-//! boxes the furniture move rule measures against (`super::surface`), so the tool that fills a
-//! niche and the tool that drags a piece cannot disagree about where a surface is.
+//! boxes the object move rule measures against (`super::surface`), so the tool that fills a
+//! niche and the tool that drags a piece cannot disagree about where a surface is. Where the box *is*
+//! the body — a panel, a cuboid, a shell — the probe reads that box, which is exact to the micrometre;
+//! only a body the box cannot describe, one whose own surface leaves a hole or never reaches the
+//! corners of its box, is asked of the contact port (X92, ADR 0181).
 
-use geom::{DVec2, DVec3, Region};
+use std::sync::OnceLock;
 
+use geom::{Contact, DVec2, DVec3, Pose, Region, Shared};
+
+use super::contact_shape;
 use super::surface::{FaceHit, SurfaceBox, SurfaceKind, surface_box};
 use crate::tree::object_bounds_mm;
 use crate::*;
@@ -220,11 +226,76 @@ impl Niche {
 }
 
 /// The surfaces one point is measured against.
-struct Surroundings {
+struct Surroundings<'a> {
     /// The innermost envelope the point sits in, measured as an envelope rather than a shell.
     own: Option<(Id, SurfaceBox)>,
     /// Every other surface a ray can stop at: the bodies and the other products' shells.
-    surfaces: Vec<SurfaceBox>,
+    surfaces: Vec<Surface<'a>>,
+}
+
+/// One surface a probe may stop at, and the body behind it when the box cannot describe that body.
+///
+/// A panel, a product's envelope and a product's shell carry no geometry at all: the box *is* the
+/// body, and the probe answers from it to the micrometre, which is what a cell cut into boards needs
+/// (X92, ADR 0181). A body is built when a ray of one question first reaches for it and is then shared
+/// by every other ray of that question, so a scene of a few hundred bodies builds only the handful a
+/// probe could actually meet.
+pub(super) struct Surface<'a> {
+    /// The box the document keeps for this surface: the coarse reading every ray starts from.
+    pub(super) box_: SurfaceBox,
+    /// The geometry the body's own surface is built from, when the box may not describe it.
+    geometry: Option<&'a Geometry>,
+    /// The body the contact port measures, once a ray has asked for it.
+    ///
+    /// `None` inside means the box was the answer after all: no adapter, or a surface the box *is*.
+    exact: OnceLock<Option<Shared>>,
+}
+
+impl<'a> Surface<'a> {
+    /// A surface whose own body is the adapter's to measure.
+    const fn body(box_: SurfaceBox, geometry: &'a Geometry) -> Self {
+        Self { box_, geometry: Some(geometry), exact: OnceLock::new() }
+    }
+
+    /// A surface the box describes: a panel, an envelope, another product's shell.
+    const fn boxed(box_: SurfaceBox) -> Self {
+        Self { box_, geometry: None, exact: OnceLock::new() }
+    }
+
+    /// The face of this surface a ray meets, in world millimetres.
+    ///
+    /// The box answers first, because a body lies inside its box: a ray whose box it misses cannot meet
+    /// the body at all. A surface whose own surface is not that box is then asked of the port, and a
+    /// ray the body misses — down a hole, past the corner of a ball — meets no face, where the box
+    /// would have answered with a wall the maker cannot see.
+    fn face_hit(&self, point: DVec3, direction: DVec3, contact: Option<&dyn Contact>) -> Option<FaceHit> {
+        let boxed = self.box_.face_hit(point, direction)?;
+        let Some(body) = self.exact_body(contact) else {
+            return Some(boxed);
+        };
+        let impact = body.ray(point, direction)?;
+        if !(impact.distance_mm.is_finite() && impact.point.is_finite() && impact.normal.is_finite()) {
+            return None;
+        }
+        // The axis is the box's own face, which the broad phase has already named: a body's own face
+        // is not one of the box's six and this field is the box's reading of the surface.
+        Some(FaceHit { distance: impact.distance_mm, point: impact.point, normal: impact.normal, axis: boxed.axis })
+    }
+
+    /// The body the adapter measures this surface as, or `None` when the box is the honest reading.
+    ///
+    /// The decision is the shape builder's ([`contact_shape::shape_beyond_box`]) and it is taken once,
+    /// where the shape is built: a surface the box describes keeps the reading it always had.
+    fn exact_body(&self, contact: Option<&dyn Contact>) -> Option<Shared> {
+        let contact = contact?;
+        let geometry = self.geometry?;
+        self.exact
+            .get_or_init(|| {
+                let shape = contact_shape::shape_beyond_box(geometry, self.box_.local_min, self.box_.local_max)?;
+                contact.prepare(&shape, Pose::new(self.box_.world.translation(), self.box_.world.rotation()))
+            })
+            .clone()
+    }
 }
 
 /// The free space around a point, as the convex cell its supporting planes bound.
@@ -373,9 +444,20 @@ impl Project {
     /// surface (ADR 0102) and it is measured in world millimetres, quantised to the document's
     /// micrometre. A point that is not finite, a direction that is zero or not finite, and a ray
     /// that meets nothing all answer `None`.
-    pub fn probe(&self, point: DVec3, direction: DVec3) -> Option<Probe> {
-        let surroundings = self.surroundings_around(point);
-        self.probe_within(point, direction, &surroundings)
+    ///
+    /// `sight` is what the ray may pass: a part the user switched off is not there for the eye, so
+    /// the ray crosses it and stops at the next face behind it (X73, ADR 0175). A caller that
+    /// measures *material* — the distance fields of a drag — hands [`Sight::none`] and keeps every
+    /// face in the way.
+    ///
+    /// `contact` is the geometry adapter that measures a body the boxes cannot describe: a ray passes
+    /// through the hole in a plate and past the corner of a ball's box, and stops at the face behind
+    /// it. Every other surface — a panel, a cuboid, a product's shell — is measured by its box, which
+    /// is exact to the micrometre, so an ordinary cell keeps the planes it always had (X92, ADR 0181).
+    /// A caller with no adapter keeps the box reading everywhere.
+    pub fn probe(&self, point: DVec3, direction: DVec3, sight: Sight, contact: Option<&dyn Contact>) -> Option<Probe> {
+        let surroundings = self.surroundings_around(point, sight);
+        self.probe_within(point, direction, &surroundings, contact)
     }
 
     /// The empty space around `point`, as the convex cell its walls bound.
@@ -389,25 +471,34 @@ impl Project {
     /// cell did not cut against (ADR 0099, ADR 0106, ADR 0109). A wall bounds the void where its face
     /// stands, not only when it covers a whole face of the envelope: an open front under a short top
     /// still answers.
-    pub fn niche(&self, point: DVec3) -> Result<Niche, NicheRefusal> {
+    ///
+    /// `sight` is what the cell is measured through: a part the user switched off is not a wall of
+    /// the void and does not make it non-convex, so the cell spans the space the eye reads (X73,
+    /// ADR 0175). A hidden body standing in the cell is a boundary of the part that fills it, which
+    /// the fill plan trims against, and never a slice out of the void.
+    ///
+    /// `contact` is the adapter that measures the walls the boxes cannot describe, exactly as
+    /// [`Project::probe`] reads it: a splayed post, a plate with a hole and a ball bound the cell by
+    /// their own faces, while every surface the box *is* keeps the box reading (X92, ADR 0181).
+    pub fn niche(&self, point: DVec3, sight: Sight, contact: Option<&dyn Contact>) -> Result<Niche, NicheRefusal> {
         if !point.is_finite() {
             return Err(NicheRefusal::Outside);
         }
-        let (product, envelope) = self.product_containing(point).ok_or(NicheRefusal::Outside)?;
+        let (product, envelope) = self.product_containing(point, sight).ok_or(NicheRefusal::Outside)?;
         let placement = self.world_placement(product).ok_or(NicheRefusal::Outside)?;
         let inverse = placement.inverse().map_err(|_| NicheRefusal::Outside)?;
         let local = inverse.transform_point(point);
         if !local.is_finite() || !within_box(local, envelope.local_min, envelope.local_max) {
             return Err(NicheRefusal::Outside);
         }
-        let surroundings = self.surroundings_around(point);
+        let surroundings = self.surroundings_around(point, sight);
         let mut cell = Cell::envelope(envelope.local_max - envelope.local_min);
         let mut settled = false;
         for round in 0..MAX_CELL_ROUNDS {
             let mut added = false;
             for direction in cell.directions(local, round == 0) {
                 let world = placement.transform_vector(direction);
-                let Some(probe) = self.probe_within(point, world, &surroundings) else {
+                let Some(probe) = self.probe_within(point, world, &surroundings, contact) else {
                     continue;
                 };
                 let Some(plane) = plane_of(probe.face, inverse) else {
@@ -451,9 +542,9 @@ impl Project {
     /// to the cell would cut into it, so the void is refused until the query can answer several
     /// cells. Only a corner strictly inside counts, so the wall that bounded the cell — its own
     /// corners lie on the boundary — is not mistaken for an obstacle.
-    fn holds_body(&self, cell: &Cell, surroundings: &Surroundings, inverse: Placement) -> bool {
+    fn holds_body(&self, cell: &Cell, surroundings: &Surroundings<'_>, inverse: Placement) -> bool {
         surroundings.surfaces.iter().any(|surface| {
-            surface_corners(*surface).into_iter().any(|corner| {
+            surface_corners(surface.box_).into_iter().any(|corner| {
                 let local = inverse.transform_point(corner);
                 local.is_finite() && cell.planes.iter().all(|plane| plane.distance_to(local) > COORDINATE_TOLERANCE)
             })
@@ -461,8 +552,14 @@ impl Project {
     }
 
     /// The distance to the first furniture face along `direction`, against known surroundings.
-    fn probe_within(&self, point: DVec3, direction: DVec3, surroundings: &Surroundings) -> Option<Probe> {
-        let (unit, surface, face) = self.first_face(point, direction, surroundings)?;
+    fn probe_within(
+        &self,
+        point: DVec3,
+        direction: DVec3,
+        surroundings: &Surroundings<'_>,
+        contact: Option<&dyn Contact>,
+    ) -> Option<Probe> {
+        let (unit, surface, face) = self.first_face(point, direction, surroundings, contact)?;
         let distance = quantised(face.distance);
         let hit_point = point + unit * distance;
         if !hit_point.is_finite() {
@@ -476,9 +573,16 @@ impl Project {
     }
 
     /// The innermost product whose envelope contains `point`, with that envelope's world box.
-    fn product_containing(&self, point: DVec3) -> Option<(Id, SurfaceBox)> {
+    ///
+    /// A part the sight switched off holds no space: a hidden product is neither the frame the point
+    /// is measured in nor the shell a ray stops at, so the point belongs to the product around it
+    /// (X73).
+    fn product_containing(&self, point: DVec3, sight: Sight) -> Option<(Id, SurfaceBox)> {
         let mut innermost: Option<(Id, SurfaceBox, f64)> = None;
         for product in self.products() {
+            if sight.hides(self, product) {
+                continue;
+            }
             let Some(envelope) = self.envelope_surface(product) else {
                 continue;
             };
@@ -498,19 +602,22 @@ impl Project {
     /// Panels and objects are bodies; a product's authored box is a shell. The innermost envelope is
     /// also returned so a probe can report it as an envelope face rather than as the shell of the
     /// piece it is standing in.
-    fn surroundings_around(&self, point: DVec3) -> Surroundings {
+    fn surroundings_around(&self, point: DVec3, sight: Sight) -> Surroundings<'_> {
         let mut surfaces = Vec::new();
         for product in self.products() {
+            if sight.hides(self, product) {
+                continue;
+            }
             if let Some(envelope) = self.envelope_surface(product) {
-                surfaces.push(envelope);
+                surfaces.push(Surface::boxed(envelope));
             }
         }
-        self.body_surfaces(&self.root, &mut surfaces, 1);
-        let own = self.product_containing(point);
+        self.body_surfaces(&self.root, &mut surfaces, 1, sight);
+        let own = self.product_containing(point, sight);
         // The innermost envelope is measured as an envelope, not as one more shell; keeping it in
         // the list would let a tie choose the shell and report the wrong kind.
         let own_id = own.map(|(product, _)| product);
-        surfaces.retain(|surface| Some(surface.id) != own_id);
+        surfaces.retain(|surface| Some(surface.box_.id) != own_id);
         Surroundings { own, surfaces }
     }
 
@@ -523,11 +630,23 @@ impl Project {
     }
 
     /// Collects the panels and objects below `container` as body surfaces.
-    fn body_surfaces(&self, container: &Container, surfaces: &mut Vec<SurfaceBox>, depth: u32) {
+    ///
+    /// A node the sight switched off is left out with its whole subtree, which is the walk the scene
+    /// builder and the pick make: the tools and the frame name the same parts (X73).
+    pub(super) fn body_surfaces<'a>(
+        &'a self,
+        container: &'a Container,
+        surfaces: &mut Vec<Surface<'a>>,
+        depth: u32,
+        sight: Sight,
+    ) {
         if depth > Self::MAX_ASSEMBLY_DEPTH {
             return;
         }
         for child in container.children() {
+            if sight.hides(self, child.id()) {
+                continue;
+            }
             match child {
                 Node::Panel(panel) => {
                     let size = panel.nominal_size();
@@ -539,7 +658,7 @@ impl Project {
                     if let Some(world) = self.world_placement(panel.id())
                         && let Some(surface) = surface_box(panel.id(), DVec3::ZERO, max, world, SurfaceKind::Panel)
                     {
-                        surfaces.push(surface);
+                        surfaces.push(Surface::boxed(surface));
                     }
                 }
                 Node::Object(object) => {
@@ -547,21 +666,28 @@ impl Project {
                         && let Some(world) = self.world_placement(object.id())
                         && let Some(surface) = surface_box(object.id(), min, max, world, SurfaceKind::Body)
                     {
-                        surfaces.push(surface);
+                        surfaces.push(Surface::body(surface, object.geometry()));
                     }
                 }
-                Node::Container(inner) => self.body_surfaces(inner, surfaces, depth.saturating_add(1)),
+                Node::Container(inner) => self.body_surfaces(inner, surfaces, depth.saturating_add(1), sight),
                 Node::Camera(_) | Node::Light(_) => {}
             }
         }
     }
 
     /// The first surface and face a normalized ray meets.
+    ///
+    /// The world boxes are asked first (inside [`Surface::face_hit`]) and the port last, because a body
+    /// lies inside its box: a surface whose box the ray misses cannot be hit at all, and a surface whose
+    /// box the ray meets further away than the answer already in hand cannot beat it. So a scene of a
+    /// few hundred bodies prepares only the handful of shapes a ray could actually reach (X90,
+    /// ADR 0179).
     fn first_face(
         &self,
         point: DVec3,
         direction: DVec3,
-        surroundings: &Surroundings,
+        surroundings: &Surroundings<'_>,
+        contact: Option<&dyn Contact>,
     ) -> Option<(DVec3, SurfaceBox, FaceHit)> {
         if !point.is_finite() || !direction.is_finite() {
             return None;
@@ -576,18 +702,17 @@ impl Project {
         if let Some((_, envelope)) = own
             && let Some(face) = envelope.face_hit(point, unit)
         {
-            let envelope = SurfaceBox { kind: SurfaceKind::Envelope, ..envelope };
-            best = Some((envelope, face));
+            best = Some((SurfaceBox { kind: SurfaceKind::Envelope, ..envelope }, face));
         }
         for surface in &surroundings.surfaces {
-            if own.is_some_and(|(product, _)| product == surface.id) {
+            if own.is_some_and(|(product, _)| product == surface.box_.id) {
                 continue;
             }
-            let Some(face) = surface.face_hit(point, unit) else {
+            let Some(face) = surface.face_hit(point, unit, contact) else {
                 continue;
             };
             if best.is_none_or(|(_, nearest)| face.distance < nearest.distance) {
-                best = Some((*surface, face));
+                best = Some((surface.box_, face));
             }
         }
         best.map(|(surface, face)| (unit, surface, face))
@@ -596,9 +721,10 @@ impl Project {
 
 /// The eight true corners of a surface box, in world millimetres.
 ///
+///
 /// The corners are the board's own, not the world box around a turned board: a slanted wall meets the
 /// cell on its face, and the loose box around it would reach across the boundary.
-fn surface_corners(surface: SurfaceBox) -> Vec<DVec3> {
+pub(super) fn surface_corners(surface: SurfaceBox) -> Vec<DVec3> {
     let mut corners = Vec::with_capacity(8);
     for x in [surface.local_min.x, surface.local_max.x] {
         for y in [surface.local_min.y, surface.local_max.y] {
@@ -731,7 +857,7 @@ fn order_ring(points: &mut [DVec2]) -> Option<()> {
 }
 
 /// The signed area of a polygon; positive when its corners run counter-clockwise.
-fn signed_area(points: &[DVec2]) -> f64 {
+pub(super) fn signed_area(points: &[DVec2]) -> f64 {
     let mut total = 0.0;
     for index in 0..points.len() {
         let (Some(start), Some(end)) = (points.get(index), points.get((index + 1) % points.len())) else {
@@ -914,12 +1040,12 @@ mod tests {
     fn a_probe_stops_at_the_envelope_virtual_face() {
         let (project, piece) = empty_piece();
         let point = DVec3::new(300.0, 280.0, 300.0);
-        let answer = project.probe(point, DVec3::Z).expect("the envelope stops the ray");
+        let answer = project.probe(point, DVec3::Z, Sight::none(), None).expect("the envelope stops the ray");
         assert_eq!(answer.distance_mm, 420.0, "the roof is 720 - 300 away");
         assert_eq!(answer.hit, ProbeHit { id: piece, kind: SurfaceKind::Envelope });
         assert!((answer.face.normal - -DVec3::Z).length() < 1.0e-9, "the face looks back down the ray");
         assert!((answer.face.point - DVec3::new(300.0, 280.0, 720.0)).length() < 1.0e-9);
-        let down = project.probe(point, -DVec3::Z).expect("the floor is an envelope face too");
+        let down = project.probe(point, -DVec3::Z, Sight::none(), None).expect("the floor is an envelope face too");
         assert_eq!(down.distance_mm, 300.0);
         assert_eq!(down.hit.kind, SurfaceKind::Envelope);
     }
@@ -928,7 +1054,9 @@ mod tests {
     fn a_probe_stops_at_a_panel_and_reports_it() {
         let (mut project, piece) = empty_piece();
         let partition = panel(&mut project, piece, (300, 0, 0), (18, 560, 720));
-        let answer = project.probe(DVec3::new(100.0, 280.0, 300.0), DVec3::X).expect("the panel stops the ray");
+        let answer = project
+            .probe(DVec3::new(100.0, 280.0, 300.0), DVec3::X, Sight::none(), None)
+            .expect("the panel stops the ray");
         assert_eq!(answer.distance_mm, 200.0);
         assert_eq!(answer.hit, ProbeHit { id: partition, kind: SurfaceKind::Panel });
     }
@@ -938,7 +1066,9 @@ mod tests {
         let mut project = clean_project();
         let outer = product(&mut project, (2000, 1000, 1000), (0, 0, 0));
         let inner = product(&mut project, (300, 300, 300), (1000, 400, 400));
-        let answer = project.probe(DVec3::new(500.0, 500.0, 500.0), DVec3::X).expect("the inner shell stops the ray");
+        let answer = project
+            .probe(DVec3::new(500.0, 500.0, 500.0), DVec3::X, Sight::none(), None)
+            .expect("the inner shell stops the ray");
         assert_eq!(answer.distance_mm, 500.0);
         assert_eq!(answer.hit, ProbeHit { id: inner, kind: SurfaceKind::Shell });
         assert_ne!(answer.hit.id, outer, "the shell of the piece the point sits in is not reported as a hit");
@@ -955,9 +1085,64 @@ mod tests {
                 sample_object(90).geometry().clone(),
             )
             .expect("add object");
-        let answer = project.probe(DVec3::new(500.0, 500.0, 500.0), DVec3::X).expect("the body stops the ray");
+        let answer = project
+            .probe(DVec3::new(500.0, 500.0, 500.0), DVec3::X, Sight::none(), None)
+            .expect("the body stops the ray");
         assert_eq!(answer.distance_mm, 100.0);
         assert_eq!(answer.hit, ProbeHit { id: object, kind: SurfaceKind::Body });
+    }
+
+    #[test]
+    fn an_ordinary_cell_keeps_the_planes_the_boxes_gave_it() {
+        // X92: the port answers only for a body the box cannot describe, so a case of panels — and a
+        // baked box standing in it as a wall — is measured exactly as it was before the port existed.
+        // A cell is where a board is cut, and a plane moved by rounding is a silent defect in the part
+        // made from it (ADR 0181).
+        let (mut project, piece) = empty_piece();
+        panel(&mut project, piece, (0, 0, 350), (600, 560, 18));
+        let block =
+            Mesh::cuboid([Length::ZERO; 3], [millimetres(18), millimetres(560), millimetres(350)]).expect("a block");
+        let placement =
+            Placement::IDENTITY.with_translation(millimetres(400), Length::ZERO, Length::ZERO).expect("a placement");
+        project.add_object(piece, "Wall", placement, Geometry::Mesh(block)).expect("add a wall");
+        let point = DVec3::new(200.0, 280.0, 100.0);
+        let by_box = project.niche(point, Sight::none(), None).expect("the cell under the shelf");
+        let by_port =
+            project.niche(point, Sight::none(), Some(&contact_parry::Parry)).expect("the same cell through the port");
+        assert_eq!(by_box, by_port, "the port must not move a plane the boxes already answered");
+        assert!((by_port.local_max().x - 400.0).abs() < 1.0e-9, "the baked box is its own wall: {by_port:?}");
+
+        // The probe answers the same distance and the same face with and without the adapter.
+        assert_eq!(
+            project.probe(DVec3::new(200.0, 280.0, 100.0), DVec3::X, Sight::none(), None),
+            project.probe(DVec3::new(200.0, 280.0, 100.0), DVec3::X, Sight::none(), Some(&contact_parry::Parry)),
+        );
+    }
+
+    #[test]
+    fn a_probe_meets_a_balls_own_side_and_not_the_corner_of_its_box() {
+        // A ball is the body the boxes cannot describe: the corner of its box stands in the free space
+        // beside it, so a ray that meets that corner reads the wall the port answers rather than the
+        // empty air beside the ball's own round side (X92, ADR 0181).
+        let (mut project, piece) = empty_piece();
+        let ball = Primitive::sphere(millimetres(100), 24, 12).expect("a ball");
+        let placement = Placement::IDENTITY
+            .with_translation(millimetres(300), millimetres(280), millimetres(300))
+            .expect("a placement");
+        let object = project.add_object(piece, "Ball", placement, Geometry::Primitive(ball)).expect("add a ball");
+        let point = DVec3::new(150.0, 350.0, 300.0);
+        let by_box = project.probe(point, DVec3::X, Sight::none(), None).expect("the box around the ball");
+        let by_port =
+            project.probe(point, DVec3::X, Sight::none(), Some(&contact_parry::Parry)).expect("the ball's own side");
+        assert_eq!(by_box.distance_mm, 50.0, "the box's near face stands at 200");
+        // The ray runs 70 mm off the ball's axis, so its side is sqrt(100^2 - 70^2) away from the
+        // centre: 300 - 71.4 = 228.6 on the x axis, which is 78.6 mm from the point.
+        assert!((by_port.distance_mm - 78.6).abs() < 1.0, "the ball's own side: {by_port:?}");
+        assert_eq!(by_port.hit, ProbeHit { id: object, kind: SurfaceKind::Body });
+        assert!(
+            by_port.face.normal.dot(DVec3::X) < -0.5,
+            "the face is the ball's side and looks back along the ray: {by_port:?}"
+        );
     }
 
     #[test]
@@ -965,14 +1150,18 @@ mod tests {
         let (mut project, piece) = empty_piece();
         // A sheet from x = 300 to x = 318 stands across the piece.
         panel(&mut project, piece, (300, 0, 0), (18, 560, 720));
-        let niche = project.niche(DVec3::new(450.0, 280.0, 300.0)).expect("a niche to the right of the sheet");
+        let niche = project
+            .niche(DVec3::new(450.0, 280.0, 300.0), Sight::none(), None)
+            .expect("a niche to the right of the sheet");
         assert_eq!(niche.product, piece);
         assert_eq!(niche.local_min, DVec3::new(318.0, 0.0, 0.0), "the sheet is the near wall");
         assert_eq!(niche.size, DVec3::new(282.0, 560.0, 720.0));
         assert_eq!(niche.local_max(), DVec3::new(600.0, 560.0, 720.0));
         assert_eq!(niche.shape, NicheShape::Box);
 
-        let niche = project.niche(DVec3::new(150.0, 280.0, 300.0)).expect("a niche to the left of the sheet");
+        let niche = project
+            .niche(DVec3::new(150.0, 280.0, 300.0), Sight::none(), None)
+            .expect("a niche to the left of the sheet");
         assert_eq!(niche.local_min, DVec3::ZERO);
         assert_eq!(niche.size, DVec3::new(300.0, 560.0, 720.0), "it ends at the sheet's near face");
     }
@@ -982,11 +1171,13 @@ mod tests {
         let (mut project, piece) = empty_piece();
         // A full-width shelf 18 mm thick, its underside at z = 350.
         panel(&mut project, piece, (0, 0, 350), (600, 560, 18));
-        let below = project.niche(DVec3::new(300.0, 280.0, 100.0)).expect("the niche under the shelf");
+        let below =
+            project.niche(DVec3::new(300.0, 280.0, 100.0), Sight::none(), None).expect("the niche under the shelf");
         assert_eq!(below.local_min, DVec3::ZERO);
         assert_eq!(below.size, DVec3::new(600.0, 560.0, 350.0));
         assert_eq!(below.corners.len(), 8, "a box has eight corners");
-        let above = project.niche(DVec3::new(300.0, 280.0, 500.0)).expect("the niche above the shelf");
+        let above =
+            project.niche(DVec3::new(300.0, 280.0, 500.0), Sight::none(), None).expect("the niche above the shelf");
         assert_eq!(above.local_min, DVec3::new(0.0, 0.0, 368.0), "the shelf's top face");
         assert_eq!(above.size, DVec3::new(600.0, 560.0, 352.0));
     }
@@ -995,7 +1186,7 @@ mod tests {
     fn a_niche_reports_a_world_corner_and_a_shape() {
         let mut project = clean_project();
         product(&mut project, (600, 560, 720), (100, 200, 0));
-        let niche = project.niche(DVec3::new(400.0, 480.0, 300.0)).expect("a niche");
+        let niche = project.niche(DVec3::new(400.0, 480.0, 300.0), Sight::none(), None).expect("a niche");
         assert_eq!(niche.local_min, DVec3::ZERO, "the free box starts at the piece's own corner");
         assert_eq!(niche.min, DVec3::new(100.0, 200.0, 0.0), "and it reports that corner in the world");
         assert_eq!(niche.shape, NicheShape::Box);
@@ -1013,7 +1204,8 @@ mod tests {
         let slant = 100.0 / 560.0_f64.hypot(100.0);
         let drop = 560.0 / 560.0_f64.hypot(100.0);
         angular_pair(&mut project, piece, (drop, -slant), (-drop, -slant));
-        let niche = project.niche(DVec3::new(300.0, 280.0, 300.0)).expect("a niche between the posts");
+        let niche =
+            project.niche(DVec3::new(300.0, 280.0, 300.0), Sight::none(), None).expect("a niche between the posts");
         let ring = niche.section().expect("the section is a polygon, not the box around it");
         let corners: Vec<[Length; 2]> = ring.sampled_points(1.0).expect("the ring is line only");
         let expected = [
@@ -1038,7 +1230,9 @@ mod tests {
     fn a_leaned_back_wall_bounds_a_sloped_cell() {
         let (mut project, piece) = empty_piece();
         leaned_back_wall(&mut project, piece);
-        let niche = project.niche(DVec3::new(300.0, 200.0, 300.0)).expect("a cell in front of a leaned wall");
+        let niche = project
+            .niche(DVec3::new(300.0, 200.0, 300.0), Sight::none(), None)
+            .expect("a cell in front of a leaned wall");
         assert_eq!(niche.shape, NicheShape::Sloped, "one ring would be false somewhere in the void");
         assert!(niche.section().is_none());
         assert_eq!(niche.local_min, DVec3::ZERO);
@@ -1057,7 +1251,7 @@ mod tests {
     fn a_shelf_under_a_leaned_wall_is_cut_where_the_wall_leans_in() {
         let (mut project, piece) = empty_piece();
         leaned_back_wall(&mut project, piece);
-        let niche = project.niche(DVec3::new(300.0, 200.0, 300.0)).expect("a cell");
+        let niche = project.niche(DVec3::new(300.0, 200.0, 300.0), Sight::none(), None).expect("a cell");
         // The wall leans 0.268 mm into the void per millimetre of height, so a shelf stops on the
         // wall's face at its own top instead of cutting into it.
         let low = niche.cut(2, (100.0, 118.0), (0, 1)).expect("a low shelf's footprint");
@@ -1075,8 +1269,10 @@ mod tests {
         let (mut project, piece) = empty_piece();
         leaned_ceiling(&mut project, piece);
         // The cursor's own height means nothing: the same cell answers from the front and the back.
-        let front = project.niche(DVec3::new(300.0, 20.0, 300.0)).expect("a cell under the ceiling");
-        let back = project.niche(DVec3::new(300.0, 540.0, 300.0)).expect("the same cell, further back");
+        let front =
+            project.niche(DVec3::new(300.0, 20.0, 300.0), Sight::none(), None).expect("a cell under the ceiling");
+        let back =
+            project.niche(DVec3::new(300.0, 540.0, 300.0), Sight::none(), None).expect("the same cell, further back");
         assert_eq!(front.shape, NicheShape::Sloped);
         assert_eq!(front.size, back.size, "the box is the void's, not the cursor's");
         assert!((front.size.z - 699.5).abs() < 0.5, "the highest point of the ceiling: {}", front.size.z);
@@ -1096,7 +1292,7 @@ mod tests {
     fn a_shelf_under_a_leaned_ceiling_stops_where_it_would_cut_in() {
         let (mut project, piece) = empty_piece();
         leaned_ceiling(&mut project, piece);
-        let niche = project.niche(DVec3::new(300.0, 540.0, 300.0)).expect("a cell");
+        let niche = project.niche(DVec3::new(300.0, 540.0, 300.0), Sight::none(), None).expect("a cell");
         let low = niche.cut(2, (100.0, 118.0), (0, 1)).expect("a low shelf's footprint");
         let deepest = low.iter().map(|point| point.y).fold(f64::MIN, f64::max);
         assert!((deepest - 560.0).abs() < 1.0, "a low shelf reaches the back: {deepest}");
@@ -1114,7 +1310,7 @@ mod tests {
             .expect("a turn");
         project.set_node_placement(piece, turn).expect("turn the piece");
         let inside = turn.transform_point(DVec3::new(300.0, 280.0, 300.0));
-        let niche = project.niche(inside).expect("a turned piece has a niche of its own");
+        let niche = project.niche(inside, Sight::none(), None).expect("a turned piece has a niche of its own");
         assert_eq!(niche.local_min, DVec3::ZERO, "measured in the piece's frame, not the world box");
         assert_eq!(niche.size, DVec3::new(600.0, 560.0, 720.0));
         assert_eq!(niche.shape, NicheShape::Box);
@@ -1138,8 +1334,15 @@ mod tests {
             )
             .expect("add object");
         let point = DVec3::new(300.0, 280.0, 300.0);
-        assert!(project.probe(point, DVec3::X).is_some(), "the piece itself still answers a probe");
-        assert_eq!(project.niche(point), Err(NicheRefusal::Unrepresentable), "a void holding a body is not a cell");
+        assert!(
+            project.probe(point, DVec3::X, Sight::none(), None).is_some(),
+            "the piece itself still answers a probe"
+        );
+        assert_eq!(
+            project.niche(point, Sight::none(), None),
+            Err(NicheRefusal::Unrepresentable),
+            "a void holding a body is not a cell"
+        );
     }
 
     #[test]
@@ -1152,7 +1355,8 @@ mod tests {
         let rotation = geom::DQuat::from_rotation_y(-std::f64::consts::FRAC_PI_2);
         let placement = Placement::new(DVec3::new(318.0, 0.0, 0.0), rotation).expect("a place");
         project.add_panel(piece, "Stub", nominal, None, millimetres(18), placement).expect("add a stub");
-        let niche = project.niche(DVec3::new(150.0, 280.0, 200.0)).expect("the stub bounds the void");
+        let niche =
+            project.niche(DVec3::new(150.0, 280.0, 200.0), Sight::none(), None).expect("the stub bounds the void");
         assert_eq!(niche.shape, NicheShape::Box);
         assert!((niche.local_max().x - 300.0).abs() < 1.0, "the post's inner face: {niche:?}");
         assert!((niche.size.z - 720.0).abs() < 1.0, "the case is still 720 tall: {niche:?}");
@@ -1176,7 +1380,8 @@ mod tests {
             project.add_panel(piece, "Wall", nominal, None, millimetres(18), placement).expect("add a wall");
         }
         for y in [100.0, 300.0, 500.0] {
-            let niche = project.niche(DVec3::new(300.0, y, 300.0)).expect("a niche under the short top");
+            let niche =
+                project.niche(DVec3::new(300.0, y, 300.0), Sight::none(), None).expect("a niche under the short top");
             assert_eq!(niche.shape, NicheShape::Box);
             assert!((niche.size.z - 702.0).abs() < 1.0, "the top still bounds the height: {niche:?}");
         }
@@ -1185,14 +1390,14 @@ mod tests {
     #[test]
     fn a_point_outside_every_product_has_no_niche() {
         let (project, _) = empty_piece();
-        assert_eq!(project.niche(DVec3::new(-100.0, 0.0, 0.0)), Err(NicheRefusal::Outside));
-        assert_eq!(project.niche(DVec3::splat(f64::NAN)), Err(NicheRefusal::Outside));
+        assert_eq!(project.niche(DVec3::new(-100.0, 0.0, 0.0), Sight::none(), None), Err(NicheRefusal::Outside));
+        assert_eq!(project.niche(DVec3::splat(f64::NAN), Sight::none(), None), Err(NicheRefusal::Outside));
     }
 
     #[test]
     fn a_cut_needs_three_axes_and_a_finite_slab() {
         let (project, _) = empty_piece();
-        let niche = project.niche(DVec3::new(300.0, 280.0, 300.0)).expect("a niche");
+        let niche = project.niche(DVec3::new(300.0, 280.0, 300.0), Sight::none(), None).expect("a niche");
         assert!(niche.cut(2, (100.0, 118.0), (0, 1)).is_some());
         assert_eq!(niche.cut(2, (100.0, 118.0), (2, 1)), None, "the cut cannot be seen along its own axis");
         assert_eq!(niche.cut(3, (100.0, 118.0), (0, 1)), None);
@@ -1204,8 +1409,61 @@ mod tests {
     fn a_probe_needs_a_direction_and_finite_numbers() {
         let (project, _) = empty_piece();
         let point = DVec3::new(300.0, 280.0, 300.0);
-        assert_eq!(project.probe(point, DVec3::ZERO), None);
-        assert_eq!(project.probe(DVec3::splat(f64::INFINITY), DVec3::X), None);
-        assert_eq!(project.probe(point, DVec3::splat(f64::NAN)), None);
+        assert_eq!(project.probe(point, DVec3::ZERO, Sight::none(), None), None);
+        assert_eq!(project.probe(DVec3::splat(f64::INFINITY), DVec3::X, Sight::none(), None), None);
+        assert_eq!(project.probe(point, DVec3::splat(f64::NAN), Sight::none(), None), None);
+    }
+
+    /// The sight that switches `node` off, owned by the test so the borrow outlives the query.
+    fn hiding(node: Id) -> HashSet<Id> {
+        [node].into_iter().collect()
+    }
+
+    #[test]
+    fn a_probe_passes_a_part_the_sight_switched_off() {
+        let (mut project, piece) = empty_piece();
+        let partition = panel(&mut project, piece, (300, 0, 0), (18, 560, 720));
+        let point = DVec3::new(100.0, 280.0, 300.0);
+
+        let visible = project.probe(point, DVec3::X, Sight::none(), None).expect("the sheet stops the ray");
+        assert_eq!(visible.hit, ProbeHit { id: partition, kind: SurfaceKind::Panel });
+
+        let hidden = hiding(partition);
+        let passed = project.probe(point, DVec3::X, Sight::of(&hidden), None).expect("the ray reaches the far wall");
+        assert_eq!(passed.distance_mm, 500.0, "it crosses the sheet and stops at the envelope");
+        assert_eq!(passed.hit, ProbeHit { id: piece, kind: SurfaceKind::Envelope });
+    }
+
+    #[test]
+    fn a_niche_spans_a_part_the_sight_switched_off() {
+        let (mut project, piece) = empty_piece();
+        let partition = panel(&mut project, piece, (300, 0, 0), (18, 560, 720));
+        let point = DVec3::new(150.0, 280.0, 300.0);
+
+        let visible = project.niche(point, Sight::none(), None).expect("the void in front of the sheet");
+        assert_eq!(visible.size, DVec3::new(300.0, 560.0, 720.0));
+
+        let hidden = hiding(partition);
+        let spanned = project.niche(point, Sight::of(&hidden), None).expect("the hidden sheet is no wall");
+        assert_eq!(spanned.local_min, DVec3::ZERO, "the cell reaches the case's own walls");
+        assert_eq!(spanned.size, DVec3::new(600.0, 560.0, 720.0));
+        assert_eq!(spanned.shape, NicheShape::Box, "a body the eye cannot see is not a body in the void");
+    }
+
+    #[test]
+    fn a_hidden_container_hides_its_whole_subtree_from_the_tools() {
+        let (mut project, piece) = empty_piece();
+        let drawer = product(&mut project, (300, 300, 300), (100, 100, 100));
+        let sheet = panel(&mut project, drawer, (100, 0, 0), (18, 300, 300));
+        let point = DVec3::new(50.0, 250.0, 250.0);
+
+        let visible = project.probe(point, DVec3::X, Sight::none(), None).expect("the drawer's shell stops the ray");
+        assert_eq!(visible.hit, ProbeHit { id: drawer, kind: SurfaceKind::Shell });
+
+        let hidden = hiding(drawer);
+        let sight = Sight::of(&hidden);
+        let passed = project.probe(point, DVec3::X, sight, None).expect("the ray crosses the whole hidden subtree");
+        assert_eq!(passed.hit, ProbeHit { id: piece, kind: SurfaceKind::Envelope });
+        assert_ne!(passed.hit.id, sheet, "the sheet goes with the container that holds it");
     }
 }

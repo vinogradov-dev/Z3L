@@ -12,6 +12,7 @@ workspace = true
 egui = { workspace = true }
 egui_extras = { workspace = true }
 engine = { workspace = true }
+catalog = { workspace = true }
 geom = { workspace = true }
 model = { workspace = true }
 scene = { workspace = true }

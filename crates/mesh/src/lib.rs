@@ -7,6 +7,11 @@
 //! re-evaluated only when the inputs its mesh was derived from change, so a move, a rename or an
 //! unrelated edit rebuilds no mesh. The cache keeps the derivation inputs beside the mesh and
 //! compares them; a global [`Revision`] alone would invalidate every node on every edit.
+//!
+//! The same entry also holds the **holes a panel receives** from the drilling objects that reach it
+//! ([`model::derive_holes`]). They are derived from the panel, its world placement and those
+//! objects, and compared on those three alone: a hinge that moves re-derives the holes and leaves
+//! the panel's mesh alone, because a hole is not part of the body the mesh draws yet.
 #![forbid(unsafe_code)]
 #![deny(
     clippy::unwrap_used,
@@ -23,8 +28,9 @@ use std::sync::Arc;
 use geom::{Aabb, DVec3, MeshData, triangulate_face};
 use kernel::{BodyId, KernelError, SolidKernel, TessOptions};
 use model::{
-    BandingSpec, Constructive, CornerBanding, EdgeBanding, EdgeBevel, Id, Machining, Mesh, Object, Panel,
-    PanelGeometry, PanelNominalSize, PanelOutline, Path, Primitive, Revision, RingBanding, SegmentSource,
+    BandingSpec, Constructive, CornerBanding, DerivedHoles, Drilling, EdgeBanding, EdgeBevel, HoleError, Id, Machining,
+    Mesh, Object, Panel, PanelGeometry, PanelNominalSize, PanelOutline, Path, Placement, Primitive, Revision,
+    RingBanding, SegmentSource, derive_holes,
 };
 use param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
 use thiserror::Error;
@@ -51,6 +57,9 @@ pub enum MeshError {
     /// The document rejected the derived polygon mesh.
     #[error("invalid primitive mesh: {0}")]
     Model(#[from] model::MeshError),
+    /// The holes a panel receives could not be derived.
+    #[error(transparent)]
+    Holes(#[from] HoleError),
     /// The adapter returned a mesh that is not safe to render.
     #[error("invalid panel mesh: {0}")]
     Invalid(String),
@@ -451,12 +460,86 @@ enum Payload {
     Path(Path),
 }
 
-/// One cached node: the payload it was derived from, the mesh, and the pass that last saw it.
+/// One panel to evaluate: the node, its resolved geometry and the inputs its derivation reads.
+///
+/// A panel's mesh needs its own features and the catalogue's band profiles; its holes need the
+/// panel's world placement and the drilling objects that reach it. The request carries all four, so
+/// a caller states what a panel depends on once and the cache decides what to rebuild.
+pub struct PanelEval<'a> {
+    panel: &'a Panel,
+    geometry: &'a PanelGeometry,
+    placement: Placement,
+    drillings: &'a [Drilling],
+    profile: &'a dyn Fn(&BandingSpec) -> EdgeBandProfile,
+}
+
+impl<'a> PanelEval<'a> {
+    /// Builds one request from a resolved panel.
+    pub const fn new(
+        panel: &'a Panel,
+        geometry: &'a PanelGeometry,
+        placement: Placement,
+        drillings: &'a [Drilling],
+        profile: &'a dyn Fn(&BandingSpec) -> EdgeBandProfile,
+    ) -> Self {
+        Self { panel, geometry, placement, drillings, profile }
+    }
+}
+
+/// The inputs a panel's holes were derived from.
+///
+/// A hole depends on the material the panel has, on where the panel sits in the world and on the
+/// drilling objects that reach it — not on its banding. The catalogue reaches the holes through the
+/// resolved drilling objects themselves, so a directory revision that moves a hinge's part document
+/// re-derives the holes of the panels that hinge reaches and no others.
+#[derive(Clone, Debug, PartialEq)]
+struct HoleInputs {
+    outline: PanelOutline,
+    nominal_size: PanelNominalSize,
+    machining: Vec<Machining>,
+    bevels: Vec<EdgeBevel>,
+    thickness: units::Length,
+    placement: Placement,
+    drillings: Vec<Drilling>,
+}
+
+impl HoleInputs {
+    /// Captures the derivation inputs of one panel, which a miss stores beside the holes.
+    fn capture(request: &PanelEval<'_>) -> Self {
+        Self {
+            outline: request.panel.outline().clone(),
+            nominal_size: request.panel.nominal_size(),
+            machining: request.panel.machining().to_vec(),
+            bevels: request.panel.bevels().to_vec(),
+            thickness: request.geometry.thickness(),
+            placement: request.placement,
+            drillings: request.drillings.to_vec(),
+        }
+    }
+
+    /// Whether the panel still receives the same holes as this capture.
+    ///
+    /// It compares without copying, so a frame that derives nothing allocates nothing.
+    fn matches(&self, request: &PanelEval<'_>) -> bool {
+        self.outline == *request.panel.outline()
+            && self.nominal_size == request.panel.nominal_size()
+            && self.machining.as_slice() == request.panel.machining()
+            && self.bevels.as_slice() == request.panel.bevels()
+            && self.thickness == request.geometry.thickness()
+            && self.placement.same_transform(request.placement)
+            && self.drillings.as_slice() == request.drillings
+    }
+}
+
+/// One cached node: the payload it was derived from, the mesh, the holes and the pass that last saw it.
 #[derive(Clone, Debug)]
 struct Entry {
     revision: Revision,
     payload: Payload,
     geometry: NodeGeometry,
+    holes: DerivedHoles,
+    hole_inputs: Option<HoleInputs>,
+    holes_revision: Revision,
     pass: u64,
 }
 
@@ -527,32 +610,67 @@ impl EvaluationCache {
         self.nodes.get(&id).map(|entry| &entry.geometry)
     }
 
-    /// Evaluates one panel, reusing the cached mesh when its inputs are unchanged.
+    /// The holes one panel received in its last evaluation.
     ///
-    /// The profile closure resolves band dimensions from the session catalogue; it is called again
-    /// only to compare banding with the cached inputs. The kernel is touched only on a miss, and
-    /// every body it builds is released before the call returns.
+    /// A node that is not a panel answers an empty set. The value is read by the panel card, the
+    /// report, the drawing and the CNC program — one list, so they cannot disagree (ADR 0150).
+    pub fn holes(&self, id: Id) -> Option<&DerivedHoles> {
+        self.nodes.get(&id).map(|entry| &entry.holes)
+    }
+
+    /// The revision that last derived one panel's holes.
+    ///
+    /// A panel whose mesh was reused but whose holes were re-derived — a hinge that moved — keeps
+    /// its old mesh revision and reports this one. A frame that derives nothing advances neither.
+    pub fn holes_built_at(&self, id: Id) -> Option<Revision> {
+        self.nodes.get(&id).map(|entry| entry.holes_revision)
+    }
+
+    /// Evaluates one panel, reusing the cached mesh and holes when their inputs are unchanged.
+    ///
+    /// The holes are derived first, because they are cheap and independent of the mesh: a hinge that
+    /// moved re-derives them and leaves the body alone. The profile closure resolves band dimensions
+    /// from the session catalogue; it is called again only to compare banding with the cached
+    /// inputs. The kernel is touched only on a mesh miss, and every body it builds is released
+    /// before the call returns.
     pub fn panel(
         &mut self,
         revision: Revision,
-        panel: &Panel,
-        geometry: &PanelGeometry,
-        profile: &dyn Fn(&BandingSpec) -> EdgeBandProfile,
+        request: &PanelEval<'_>,
         kernel: &mut dyn SolidKernel,
         options: &TessOptions,
     ) -> Result<NodeGeometry, MeshError> {
+        let panel = request.panel;
+        let geometry = request.geometry;
         let id = panel.id();
         let pass = self.pass;
+
+        // The holes are a second derivation with a second key, so a moved hinge costs a clip and no
+        // tessellation. `None` means the stored holes are still the right ones and nothing is built.
+        let holes = match self.nodes.get(&id) {
+            Some(entry) if entry.hole_inputs.as_ref().is_some_and(|inputs| inputs.matches(request)) => None,
+            _ => Some(derive_holes(panel, geometry, request.placement, request.drillings)?),
+        };
+
         if let Some(entry) = self.nodes.get_mut(&id)
             && let Payload::Panel(inputs) = &entry.payload
-            && inputs.matches(panel, geometry, profile)
+            && inputs.matches(panel, geometry, request.profile)
         {
             entry.pass = pass;
+            if let Some(holes) = holes {
+                entry.holes = holes;
+                entry.hole_inputs = Some(HoleInputs::capture(request));
+                entry.holes_revision = revision;
+            }
             return Ok(entry.geometry.clone());
         }
 
-        let inputs = PanelInputs::capture(panel, geometry, profile);
-        let parts = build_panel_parts_with(kernel, panel, geometry, profile)?;
+        let holes = match holes {
+            Some(holes) => holes,
+            None => self.nodes.get(&id).map(|entry| entry.holes.clone()).unwrap_or_default(),
+        };
+        let inputs = PanelInputs::capture(panel, geometry, request.profile);
+        let parts = build_panel_parts_with(kernel, panel, geometry, request.profile)?;
         let body = tessellate_panel(&*kernel, parts.body(), options)?;
         let body_bounds = body.local_bounds();
         let body_edges: Arc<[u32]> = mesh_edges(&body).into();
@@ -584,7 +702,7 @@ impl EvaluationCache {
             band_all_edges,
             polyline: None,
         };
-        self.store(id, revision, Payload::Panel(inputs), geometry.clone());
+        self.store(id, revision, Payload::Panel(inputs), geometry.clone(), holes, Some(HoleInputs::capture(request)));
         Ok(geometry)
     }
 
@@ -647,13 +765,24 @@ impl EvaluationCache {
                 )
             }
         };
-        self.store(id, revision, payload, evaluated.clone());
+        self.store(id, revision, payload, evaluated.clone(), DerivedHoles::default(), None);
         Ok(evaluated)
     }
 
-    /// Stores one freshly derived solid and its edge list, tagged with the current pass.
-    fn store(&mut self, id: Id, revision: Revision, payload: Payload, geometry: NodeGeometry) {
-        self.nodes.insert(id, Entry { revision, payload, geometry, pass: self.pass });
+    /// Stores one freshly derived node, tagged with the current pass.
+    fn store(
+        &mut self,
+        id: Id,
+        revision: Revision,
+        payload: Payload,
+        geometry: NodeGeometry,
+        holes: DerivedHoles,
+        hole_inputs: Option<HoleInputs>,
+    ) {
+        self.nodes.insert(
+            id,
+            Entry { revision, payload, geometry, holes, hole_inputs, holes_revision: revision, pass: self.pass },
+        );
     }
 }
 
@@ -1192,10 +1321,15 @@ mod tests {
         EdgeBandProfile::from_spec(spec)
     }
 
+    /// A request for one panel at the world origin, with no drilling object reaching it.
+    fn plain<'a>(panel: &'a Panel, geometry: &'a PanelGeometry) -> PanelEval<'a> {
+        PanelEval::new(panel, geometry, Placement::IDENTITY, &[], &panel_profile)
+    }
+
     fn band(material: u64, thickness: i64, width: i64) -> EdgeBanding {
         EdgeBanding::new(
             EdgeId::new(1).expect("edge"),
-            model::MaterialId::new(material).expect("material"),
+            model::ItemId::new(1, u32::try_from(material).unwrap_or(u32::MAX)).expect("material"),
             false,
             millimetres(thickness),
             millimetres(width),
@@ -1212,7 +1346,7 @@ mod tests {
 
         cache.start();
         let first = cache
-            .panel(Revision::ZERO, &panel, &geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(Revision::ZERO, &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
             .expect("panel mesh");
         cache.finish();
         assert!(!first.is_empty());
@@ -1224,9 +1358,7 @@ mod tests {
         let second = cache
             .panel(
                 Revision::ZERO.checked_next().expect("revision"),
-                &panel,
-                &geometry,
-                &panel_profile,
+                &plain(&panel, &geometry),
                 &mut kernel,
                 &TessOptions::default(),
             )
@@ -1234,6 +1366,92 @@ mod tests {
         cache.finish();
         assert!(Arc::ptr_eq(first.body().expect("body"), second.body().expect("body")), "the mesh is shared");
         assert_eq!(cache.built_at(panel.id()), Some(Revision::ZERO), "an unchanged node keeps its revision");
+    }
+
+    #[test]
+    fn a_hinge_on_a_door_is_derived_once_and_an_untouched_panel_is_not_rebuilt() {
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let panel = sample_panel();
+        let geometry = panel.geometry_with_fallbacks().expect("geometry");
+        let placement =
+            Placement::new(DVec3::new(1_200.0, 400.0, 300.0), geom::DQuat::IDENTITY).expect("a placed door");
+        let cup = |x: f64| {
+            Drilling::new(
+                Id::new(11).expect("id"),
+                placement.transform_point(DVec3::new(x, 22.0, 18.0)),
+                placement.transform_vector(-DVec3::Z),
+                millimetres(35),
+                millimetres(13),
+            )
+            .expect("a cup bore")
+        };
+        let first_drillings = [cup(350.0)];
+
+        cache.start();
+        let first = cache
+            .panel(
+                Revision::ZERO,
+                &PanelEval::new(&panel, &geometry, placement, &first_drillings, &panel_profile),
+                &mut kernel,
+                &TessOptions::default(),
+            )
+            .expect("panel");
+        cache.finish();
+        let holes = cache.holes(panel.id()).expect("holes").holes();
+        assert_eq!(holes.len(), 1);
+        assert_eq!(holes[0].entry(), [millimetres(350), millimetres(22), millimetres(18)]);
+        assert_eq!(cache.built_at(panel.id()), Some(Revision::ZERO));
+        assert_eq!(cache.holes_built_at(panel.id()), Some(Revision::ZERO));
+
+        // The next frame moves the document but touches neither the panel nor the hinge: the mesh
+        // keeps its revision and the holes are not derived again.
+        let second_revision = Revision::ZERO.checked_next().expect("revision");
+        cache.start();
+        let second = cache
+            .panel(
+                second_revision,
+                &PanelEval::new(&panel, &geometry, placement, &first_drillings, &panel_profile),
+                &mut kernel,
+                &TessOptions::default(),
+            )
+            .expect("panel");
+        cache.finish();
+        assert_eq!(cache.built_at(panel.id()), Some(Revision::ZERO), "an untouched panel is not rebuilt");
+        assert_eq!(cache.holes_built_at(panel.id()), Some(Revision::ZERO), "and its holes are not derived again");
+        assert_eq!(cache.holes(panel.id()).expect("holes").holes()[0].entry()[0], millimetres(350));
+        assert!(Arc::ptr_eq(first.body().expect("body"), second.body().expect("body")));
+
+        // A hinge that moved re-derives the holes by itself: the body is unchanged, so its mesh keeps
+        // both the Arc and the revision the first pass gave it.
+        let third_revision = second_revision.checked_next().expect("revision");
+        let moved_drillings = [cup(400.0)];
+        cache.start();
+        let third = cache
+            .panel(
+                third_revision,
+                &PanelEval::new(&panel, &geometry, placement, &moved_drillings, &panel_profile),
+                &mut kernel,
+                &TessOptions::default(),
+            )
+            .expect("panel");
+        cache.finish();
+        assert_eq!(cache.holes(panel.id()).expect("holes").holes()[0].entry()[0], millimetres(400));
+        assert_eq!(cache.holes_built_at(panel.id()), Some(third_revision), "the moved hinge is re-derived");
+        assert_eq!(cache.built_at(panel.id()), Some(Revision::ZERO), "but the body it drills is not rebuilt");
+        assert!(Arc::ptr_eq(first.body().expect("body"), third.body().expect("body")));
+    }
+
+    #[test]
+    fn a_panel_that_no_drilling_object_reaches_has_no_holes() {
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let panel = sample_panel();
+        let geometry = panel.geometry_with_fallbacks().expect("geometry");
+        cache.start();
+        cache.panel(Revision::ZERO, &plain(&panel, &geometry), &mut kernel, &TessOptions::default()).expect("panel");
+        cache.finish();
+        assert!(cache.holes(panel.id()).expect("a panel has a hole set").is_empty());
     }
 
     #[test]
@@ -1251,10 +1469,10 @@ mod tests {
         let revision = Revision::ZERO;
         cache.start();
         let before = cache
-            .panel(revision, &first_panel, &first_geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(revision, &plain(&first_panel, &first_geometry), &mut kernel, &TessOptions::default())
             .expect("first");
         let untouched = cache
-            .panel(revision, &second_panel, &second_geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(revision, &plain(&second_panel, &second_geometry), &mut kernel, &TessOptions::default())
             .expect("second");
         cache.finish();
 
@@ -1267,10 +1485,10 @@ mod tests {
 
         cache.start();
         let after = cache
-            .panel(revision, &first_panel, &first_geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(revision, &plain(&first_panel, &first_geometry), &mut kernel, &TessOptions::default())
             .expect("first");
         let untouched_after = cache
-            .panel(revision, &second_panel, &second_geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(revision, &plain(&second_panel, &second_geometry), &mut kernel, &TessOptions::default())
             .expect("second");
         cache.finish();
 
@@ -1302,7 +1520,7 @@ mod tests {
         let geometry = panel.geometry_with_fallbacks().expect("geometry");
         cache.start();
         let before = cache
-            .panel(project.revision(), &panel, &geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(project.revision(), &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
             .expect("the first body");
         cache.finish();
 
@@ -1311,7 +1529,7 @@ mod tests {
         let geometry = panel.geometry_with_fallbacks().expect("geometry");
         cache.start();
         let after = cache
-            .panel(project.revision(), &panel, &geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(project.revision(), &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
             .expect("the second body");
         cache.finish();
 
@@ -1330,7 +1548,7 @@ mod tests {
 
         cache.start();
         cache
-            .panel(Revision::ZERO, &panel, &geometry, &panel_profile, &mut kernel, &TessOptions::default())
+            .panel(Revision::ZERO, &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
             .expect("panel mesh");
         cache.finish();
         assert_eq!(cache.len(), 1);

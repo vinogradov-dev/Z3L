@@ -20,7 +20,7 @@ use engine::{PanelCreate, PrimitiveKind, Session};
 use model::Contour;
 use model::{
     ClassCode, Container, Cutout, CutoutDepth, CutoutShape, DEFAULT_BANDS, DEFAULT_SEGMENTS, Envelope, EulerAngles,
-    FaceSide, FillMode, Geometry, MachiningAnchor, MachiningParams, Panel, PivotLocal, Placement,
+    FaceSide, FillMode, Geometry, MachiningAnchor, MachiningParams, Panel, PivotLocal, Placement, Sight,
 };
 use model::{Path, PathCorner, Project};
 use testkit::{cube_mesh, millimetres, open_path, sample_catalog, sample_panel_thickness, sample_project};
@@ -252,7 +252,7 @@ fn a_cutout_ring_enters_the_edit_mode_on_the_panel_selection() {
 #[test]
 fn cancelling_a_path_edit_leaves_the_stored_chain() {
     let (project, object) = open_path_project();
-    let session = Session::with_catalog(project, sample_catalog());
+    let session = Session::with_directory(project, sample_catalog());
     let stored = session.project().object_path(object).expect("path").clone();
     let revision = session.project().revision();
     let mut editor = Editor::new();
@@ -286,7 +286,7 @@ fn a_path_edit_ends_when_its_target_disappears() {
 #[test]
 fn applying_a_contour_edit_is_one_undoable_command() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(panel));
     assert!(editor.start_contour_edit(session.project(), ContourTarget::Panel(panel)));
@@ -308,7 +308,7 @@ fn applying_a_contour_edit_is_one_undoable_command() {
 #[test]
 fn applying_an_untouched_contour_edit_changes_nothing() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(panel));
     assert!(editor.start_contour_edit(session.project(), ContourTarget::Panel(panel)));
@@ -325,7 +325,7 @@ fn another_tool_replaces_the_running_draft_and_writes_nothing() {
     // dropped and the new tool starts empty, and because no draft ever reached the document
     // undo gains no half figure.
     let (project, _panel) = contour_panel_project();
-    let session = Session::with_catalog(project, sample_catalog());
+    let session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let revision = session.project().revision();
 
@@ -351,7 +351,7 @@ fn another_tool_replaces_the_running_draft_and_writes_nothing() {
 #[test]
 fn a_drawing_draft_is_view_state_until_it_is_committed() {
     let (project, _panel) = contour_panel_project();
-    let session = Session::with_catalog(project, sample_catalog());
+    let session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     assert!(editor.drawing().is_none());
     assert_eq!(
@@ -398,7 +398,7 @@ fn starting_a_drawing_leaves_the_other_pointer_modes() {
 fn a_committed_drawing_is_one_path_object_and_one_undo_entry() {
     let (project, panel) = contour_panel_project();
     let root = project.root().id();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(panel));
     editor.start_drawing(DrawTool::Rectangle);
@@ -432,7 +432,7 @@ fn a_committed_drawing_is_one_path_object_and_one_undo_entry() {
 #[test]
 fn a_drawing_in_a_turned_container_is_stored_in_the_parents_frame() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     let parent_world = Placement::IDENTITY
@@ -495,7 +495,7 @@ fn closing_through_a_pending_arc_commits_a_closed_path() {
     // closed path — one undo entry — so the button the user pressed is the command that ran
     // (ADR 0077).
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     editor.start_drawing(DrawTool::Polyline);
@@ -526,7 +526,7 @@ fn closing_through_a_pending_arc_commits_a_closed_path() {
 fn a_panel_draft_refuses_an_open_ring_and_cuts_the_board_on_close() {
     // One draft, two outcomes: the sketch tools commit the figure as a path, and the contour cell
     // cuts a board to the same ring and leaves nothing beside it (ADR 0114).
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
     let product = session.active_product().expect("the frame is open");
@@ -575,7 +575,7 @@ fn the_ribbon_reports_a_close_instead_of_running_it() {
     // closed here and never committed was the bug — the document has to stay untouched until
     // the shell acts.
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     editor.start_drawing(DrawTool::Polyline);
@@ -601,7 +601,7 @@ fn a_refused_close_leaves_the_ring_open_and_the_document_untouched() {
     // refused. The ring reopens: the shape the user drew stays editable instead of becoming a
     // finished draft nothing can change (ADR 0052, "a refused path keeps the draft").
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(exhausted_revision(project), sample_catalog());
+    let mut session = Session::with_directory(exhausted_revision(project), sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     editor.start_drawing(DrawTool::Polyline);
@@ -623,7 +623,7 @@ fn a_refused_close_leaves_the_ring_open_and_the_document_untouched() {
 #[test]
 fn every_new_tool_commits_its_path_and_opens_the_edit() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     let cases: [(DrawTool, &[(i64, i64)]); 8] = [
         (DrawTool::ArcFromCenter, &[(0, 0), (50, 0), (0, 50)]),
@@ -659,7 +659,7 @@ fn every_new_tool_commits_its_path_and_opens_the_edit() {
 #[test]
 fn free_creation_tools_land_at_the_root_beside_a_selected_nested_assembly() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let outer = create_assembly_under(&mut session, root, "Outer");
     let inner = create_assembly_under(&mut session, outer, "Inner");
@@ -708,7 +708,7 @@ fn identical_created_objects_take_numbers_of_their_own() {
     // Three spheres in one root: the tree, the card and the undo history read their names, so the
     // second and the third cannot be the first one's (X63).
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let radius = Length::from_millimetres(100).expect("radius");
     let mut names = Vec::new();
@@ -722,7 +722,7 @@ fn identical_created_objects_take_numbers_of_their_own() {
 #[test]
 fn a_panel_at_the_root_is_refused_because_no_product_is_open() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let mut editor = Editor::new();
 
@@ -739,7 +739,7 @@ fn a_panel_at_the_root_is_refused_because_no_product_is_open() {
 #[test]
 fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
     let product = session.active_product().expect("the frame is open");
@@ -777,7 +777,7 @@ fn an_armed_container_receives_a_path_a_panel_and_a_primitive() {
 #[test]
 fn clearing_the_arm_returns_creation_to_the_scene_root() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let assembly = create_assembly_under(&mut session, root, "Frame");
     let mut editor = Editor::new();
@@ -795,7 +795,7 @@ fn clearing_the_arm_returns_creation_to_the_scene_root() {
 #[test]
 fn deleting_the_armed_container_clears_the_arm() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let outer = create_assembly_under(&mut session, root, "Outer");
     let inner = create_assembly_under(&mut session, outer, "Inner");
@@ -812,7 +812,7 @@ fn deleting_the_armed_container_clears_the_arm() {
 #[test]
 fn a_refused_drawing_keeps_the_draft_and_the_selection() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(Id::new(1).expect("root")));
     editor.start_drawing(DrawTool::Rectangle);
@@ -828,7 +828,7 @@ fn a_refused_drawing_keeps_the_draft_and_the_selection() {
 #[test]
 fn committing_without_a_draft_reports_it() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     assert!(editor.commit_drawing(&mut session, Placement::IDENTITY, text::Lang::En).is_err());
 }
@@ -836,7 +836,7 @@ fn committing_without_a_draft_reports_it() {
 #[test]
 fn an_open_polyline_commits_as_drawn() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.start_drawing(DrawTool::Polyline);
     editor.drawing_point([Length::ZERO, Length::ZERO]).expect("start");
@@ -856,7 +856,7 @@ fn a_sphere_is_drawn_as_its_round_and_keeps_the_radius() {
     // second the rim; the commit stores no path, because the circle's centre and radius are the
     // primitive's placement and its own number (ADR 0139).
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
 
@@ -885,7 +885,7 @@ fn a_sphere_is_drawn_as_its_round_and_keeps_the_radius() {
 #[test]
 fn a_drawn_sphere_lands_on_its_centre_at_the_root_and_in_a_turned_container() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     // A container turned about Z and moved, so a parent-frame placement is not a world one.
@@ -960,7 +960,7 @@ fn only_a_tool_that_places_a_primitive_starts_one() {
 
 #[test]
 fn the_sphere_cell_writes_nothing_until_the_round_is_committed() {
-    let session = Session::with_catalog(sample_project(), sample_catalog());
+    let session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     let revision = session.project().revision();
     editor.start_primitive_drawing(DrawTool::Sphere).expect("the sphere cell draws a round");
@@ -975,7 +975,7 @@ fn the_sphere_cell_writes_nothing_until_the_round_is_committed() {
 #[test]
 fn a_drawn_sphere_names_and_shapes_itself() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
     let id = draw_sphere(&mut editor, &mut session, [mm(0), mm(0)], [mm(100), mm(0)]);
@@ -1011,7 +1011,7 @@ fn path_project(closed: bool) -> (Project, Id) {
 #[test]
 fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     let (project, path) = path_project(true);
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     let height = Length::from_millimetres(18).expect("height");
@@ -1037,7 +1037,7 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
 #[test]
 fn a_pulled_height_becomes_the_next_extrusions_default() {
     let (project, path) = path_project(true);
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
@@ -1064,7 +1064,7 @@ fn a_pulled_height_becomes_the_next_extrusions_default() {
 #[test]
 fn one_undo_restores_the_drawing_a_body_came_from() {
     let (project, path) = path_project(true);
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
@@ -1080,7 +1080,7 @@ fn one_undo_restores_the_drawing_a_body_came_from() {
 #[test]
 fn an_open_path_is_refused_with_a_readable_reason() {
     let (project, path) = path_project(false);
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let revision = session.project().revision();
     let error = editor
@@ -1094,7 +1094,7 @@ fn an_open_path_is_refused_with_a_readable_reason() {
 #[test]
 fn a_body_keeps_the_paths_placement_and_frame() {
     let (project, path) = path_project(true);
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let placement = Placement::IDENTITY
         .with_translation(
@@ -1103,7 +1103,8 @@ fn a_body_keeps_the_paths_placement_and_frame() {
             Length::ZERO,
         )
         .expect("placement");
-    let params = crate::command::json(&engine::NodePlacementSet { node: path, placement }).expect("params");
+    let params =
+        crate::command::json(&engine::NodePlacementSet { node: path, placement, unmeasured: false }).expect("params");
     session.dispatch(engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
     editor
         .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
@@ -1126,7 +1127,7 @@ fn the_ribbon_hands_a_new_polygon_the_default_side_count() {
 #[test]
 fn the_toolbar_creates_the_primitive_at_the_scene_root() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let root = Id::new(1).expect("root");
     editor.select_node(Some(root));
@@ -1403,7 +1404,7 @@ fn product_draft() -> crate::product_card::ProductDraft {
 
 #[test]
 fn creating_a_frame_opens_it_and_the_next_panel_lands_inside() {
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
 
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
@@ -1415,7 +1416,7 @@ fn creating_a_frame_opens_it_and_the_next_panel_lands_inside() {
     assert_eq!(container.placement().translation().length(), 0.0, "the first frame stands at the origin");
     assert_eq!(
         container.envelope(),
-        Some(Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid box"))
+        Some(&Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid box"))
     );
     assert_eq!(editor.selected_node(), Some(product), "the new frame is selected");
     assert_eq!(editor.creation_target(session.project()), product, "the frame is armed for parts");
@@ -1428,7 +1429,7 @@ fn creating_a_frame_opens_it_and_the_next_panel_lands_inside() {
 
 #[test]
 fn a_second_frame_stands_beside_the_first_one_and_opens_in_turn() {
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("the first frame");
     let first = session.active_product().expect("the first frame is open");
@@ -1450,7 +1451,7 @@ fn a_second_frame_stands_beside_the_first_one_and_opens_in_turn() {
 #[test]
 fn a_double_click_opens_the_product_that_owns_the_hit_and_a_loose_part_opens_none() {
     let (project, product, shelf) = product_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
     assert!(editor.enter_viewport_level(&mut session, Some(shelf)), "a click in the product opens it");
@@ -1458,7 +1459,7 @@ fn a_double_click_opens_the_product_that_owns_the_hit_and_a_loose_part_opens_non
     assert_eq!(editor.creation_target(session.project()), product, "the product receives the next part");
 
     // A part that belongs to no product selects itself and opens nothing.
-    let loose = Session::with_catalog(sample_project(), sample_catalog());
+    let loose = Session::with_directory(sample_project(), sample_catalog());
     let mut loose = loose;
     let mut editor = Editor::new();
     assert!(!editor.enter_viewport_level(&mut loose, Some(Id::new(2).expect("the sample panel"))));
@@ -1468,7 +1469,7 @@ fn a_double_click_opens_the_product_that_owns_the_hit_and_a_loose_part_opens_non
 #[test]
 fn the_tree_click_opens_and_closes_the_working_product() {
     let (project, product, _shelf) = product_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
     editor.apply_node_action(&mut session, NodeAction::OpenProduct { node: product }, crate::Lang::En).expect("open");
@@ -1483,7 +1484,7 @@ fn the_tree_click_opens_and_closes_the_working_product() {
 #[test]
 fn double_click_enters_one_level_and_reveals_the_child_under_the_pointer() {
     let (project, group, drawer, front) = grouped_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
     assert!(!editor.enter_viewport_level(&mut session, Some(front)), "a group opens no product");
@@ -1501,7 +1502,7 @@ fn double_click_enters_one_level_and_reveals_the_child_under_the_pointer() {
 #[test]
 fn escape_closes_one_level_and_returns_to_the_parent_container() {
     let (project, group, drawer, front) = grouped_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
     assert!(!editor.exit_level(&mut session), "nothing is open yet");
@@ -1529,7 +1530,7 @@ fn escape_leaves_the_open_product_and_a_loose_node_never_closes_it() {
     // X38: an open product exposes its parts like an open group, so the key that leaves a group has
     // to leave the product too — and only when the selection is inside it.
     let (project, product, shelf) = product_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
     assert!(editor.enter_viewport_level(&mut session, Some(shelf)), "a click in the product opens it");
@@ -1550,7 +1551,7 @@ fn escape_leaves_the_open_product_and_a_loose_node_never_closes_it() {
 
 #[test]
 fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
 
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
@@ -1575,15 +1576,11 @@ fn creating_a_primitive_dispatches_the_primitive_command_and_selects_it() {
 }
 
 #[test]
-fn a_box_draft_that_is_cancelled_writes_nothing() {
+fn a_frame_draft_that_is_cancelled_writes_nothing() {
     let (project, _panel) = contour_panel_project();
-    let session = Session::with_catalog(project, sample_catalog());
+    let session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
-    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_box();
-    editor.click_box([mm(0), mm(0)]).expect("anchor");
-    editor.click_box([mm(600), mm(400)]).expect("base");
-    editor.pull_box_height(mm(720)).expect("pull");
+    draw_the_frame_box(&mut editor);
     editor.cancel_box();
     assert!(editor.box_draft().is_none());
     assert_eq!(session.project().revision().get(), 0, "the draft never reached the document");
@@ -1593,16 +1590,22 @@ fn a_box_draft_that_is_cancelled_writes_nothing() {
 /// A session with nothing in it, so the card and the gesture both land at the origin.
 fn empty_editor_session() -> Session {
     let root = Container::new(Id::new(1).expect("id"), "Scene", Placement::IDENTITY, Vec::new());
-    Session::with_catalog(Project::new(root).expect("a project"), sample_catalog())
+    Session::with_directory(Project::new(root).expect("a project"), sample_catalog())
 }
 
-/// Draw the box whose base runs from `[600, 560]` to the plane origin and whose height is 720 mm.
+/// Draw the frame's base with the sketch's rectangle tool and pull its height.
+///
+/// The frame cell arms the rectangle the box cell arms (N19), so the base is two points of the sketch
+/// draft and the finished figure is the frame's own box: 600 x 560 mm from the plane origin, and the
+/// height the pull holds is 720 mm.
 fn draw_the_frame_box(editor: &mut Editor) {
     let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
-    editor.arm_box();
-    assert!(editor.box_draft().is_some(), "the frame cell arms the box tool");
-    assert!(!editor.click_box([mm(600), mm(560)]).expect("the anchor"), "the first click only anchors");
-    assert!(editor.click_box([mm(0), mm(0)]).expect("the base"), "the second click fixes the base");
+    editor.start_product_box_drawing(DrawTool::Rectangle);
+    assert!(editor.drawing().is_some(), "the frame cell arms the sketch's rectangle tool");
+    editor.drawing_point([mm(0), mm(0)]).expect("the anchor");
+    editor.drawing_point([mm(600), mm(560)]).expect("the opposite corner");
+    editor.start_product_pull(text::Lang::En).expect("the finished rectangle is the base");
+    assert!(editor.drawing().is_none(), "the base is drawn, so the sketch is over");
     editor.pull_box_height(mm(720)).expect("the pull");
 }
 
@@ -1632,18 +1635,47 @@ fn the_frame_tool_draws_the_box_the_ghost_shows_and_creates_it() {
 }
 
 #[test]
-fn the_ribbons_drawn_frame_method_arms_the_box_tool() {
+fn the_ribbons_drawn_frame_method_arms_the_sketchs_rectangle_tool() {
     let mut session = empty_editor_session();
     let mut editor = Editor::new();
     let outcome = editor
-        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrame], text::Lang::En)
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::DrawProductFrame { tool: DrawTool::Rectangle }],
+            text::Lang::En,
+        )
         .expect("the drawn method arms");
-    assert!(editor.box_draft().is_some(), "the box tool draws a frame");
+    assert_eq!(editor.drawing_intent(), crate::DrawIntent::ProductBox, "the figure is a frame's base");
+    assert_eq!(editor.drawing().map(DrawDraft::tool), Some(DrawTool::Rectangle), "and the box cell's own method");
+    assert!(editor.box_draft().is_none(), "the base does not exist before it is drawn");
+    assert!(outcome.started_drawing, "the shell must expect the sketch's clicks");
     assert!(!outcome.open_product_card, "the drawn method opens no card");
     assert_eq!(session.project().revision().get(), 0, "arming writes nothing");
-    editor.cancel_box();
-    assert!(editor.box_draft().is_none(), "Escape drops the draft");
+    editor.cancel_drawing();
+    assert!(editor.drawing().is_none(), "Escape drops the draft");
     assert_eq!(session.project().revision().get(), 0);
+}
+
+#[test]
+fn the_ribbons_contour_method_draws_a_base_outline_and_hands_it_to_the_height_pull() {
+    let mut session = empty_editor_session();
+    let mut editor = Editor::new();
+    let outcome = editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::DrawProductFrameContour], text::Lang::En)
+        .expect("the contour method arms");
+    assert_eq!(editor.drawing_intent(), crate::DrawIntent::Product, "the outline belongs to a product frame");
+    assert!(outcome.started_drawing, "the shell must expect the sketch's clicks");
+    assert!(editor.box_draft().is_none(), "the ring is drawn before any base exists");
+    assert_eq!(session.project().revision().get(), 0, "arming writes nothing");
+
+    for corner in [[0, 0], [600, 0], [600, 400], [0, 400]] {
+        editor.drawing_point([millimetres(corner[0]), millimetres(corner[1])]).expect("a point of the ring");
+    }
+    editor.start_product_pull(text::Lang::En).expect("the closed ring becomes the base");
+    assert!(editor.drawing().is_none(), "the sketch is finished");
+    let draft = editor.box_draft().expect("the height is being pulled");
+    assert!(draft.ring().is_some(), "the base is the drawn ring, not a rectangle");
+    assert_eq!(session.project().revision().get(), 0, "the ring and its height are still a draft");
 }
 
 #[test]
@@ -1667,7 +1699,7 @@ fn the_card_and_the_drawn_gesture_produce_the_same_document() {
 fn the_display_group_asks_the_shell_for_the_shadow_switch() {
     // U107, U110: the switch is the view's, so it leaves `ui` as a view action — a ribbon press
     // writes no document and moves no revision. The intensity is edited in Settings alone.
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     let toggled = editor
         .apply_ribbon_actions(&mut session, vec![ToolAction::ToggleShadows], text::Lang::En)
@@ -1679,7 +1711,7 @@ fn the_display_group_asks_the_shell_for_the_shadow_switch() {
 #[test]
 fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let ctx = egui::Context::default();
     let view = RibbonView { perspective: true, owns_view: true, grid: true, shadows: true };
@@ -1756,7 +1788,7 @@ fn pressed_fill(shapes: &[egui::epaint::ClippedShape], fill: egui::Color32) -> u
 
 #[test]
 fn creating_a_camera_or_a_light_selects_it_and_one_undo_removes_it() {
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     let root = session.project().root().id();
 
@@ -1777,7 +1809,7 @@ fn creating_a_camera_or_a_light_selects_it_and_one_undo_removes_it() {
 
 #[test]
 fn a_created_camera_and_light_stay_selected_on_the_next_frame() {
-    let mut session = Session::with_catalog(sample_project(), sample_catalog());
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
     let mut editor = Editor::new();
     let root = session.project().root().id();
 
@@ -1796,7 +1828,7 @@ fn a_created_camera_and_light_stay_selected_on_the_next_frame() {
 #[test]
 fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(panel));
     editor.set_locked(panel, true);
@@ -1829,7 +1861,7 @@ fn a_locked_node_still_selects_and_refuses_a_destructive_command() {
 #[test]
 fn a_locked_container_refuses_a_group_and_an_ungroup() {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let root = session.project().root().id();
     let first = create_assembly_under(&mut session, root, "First");
     let second = create_assembly_under(&mut session, root, "Second");
@@ -1859,7 +1891,7 @@ fn a_locked_container_refuses_a_group_and_an_ungroup() {
 #[test]
 fn a_deleted_node_drops_its_flags_and_an_undo_starts_clean() {
     let (project, panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.select_node(Some(panel));
     editor.set_hidden(panel, true);
@@ -2006,7 +2038,7 @@ fn a_caret_click_opens_the_list_and_writes_no_revision() {
 /// A session whose only product is open, ready for a fill.
 fn fill_session() -> (Session, Id) {
     let (project, _panel) = contour_panel_project();
-    let mut session = Session::with_catalog(project, sample_catalog());
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
     let product = session.active_product().expect("the frame is open");
@@ -2044,7 +2076,7 @@ fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
 #[test]
 fn the_empty_space_tool_refuses_without_an_open_product() {
     let (project, _panel) = contour_panel_project();
-    let session = Session::with_catalog(project, sample_catalog());
+    let session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let refusal = editor
         .arm_fill(&session, ClassCode::HORIZONTAL_PANEL, FillMode::Fit, crate::Lang::En)
@@ -2060,11 +2092,11 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
     editor.start_drawing(DrawTool::Line);
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Fit, crate::Lang::En).expect("arm the post");
     assert!(editor.drawing().is_none(), "a fill replaces the running draft");
-    editor.arm_box();
+    editor.start_product_box_drawing(DrawTool::Rectangle);
     assert!(editor.fill_arm().is_none(), "the frame tool replaces the fill");
-    assert!(editor.box_draft().is_some());
+    assert!(editor.drawing().is_some(), "and draws its base with the sketch");
     editor.arm_fill(&session, ClassCode::VERTICAL_PANEL, FillMode::Shape, crate::Lang::En).expect("arm the post again");
-    assert!(editor.box_draft().is_none(), "the fill replaces the frame tool");
+    assert!(editor.drawing().is_none(), "the fill replaces the frame tool");
     assert_eq!(editor.fill_arm().map(|arm| arm.mode), Some(FillMode::Shape), "the mode switches with the method");
     editor.cancel_fill();
     assert!(editor.fill_arm().is_none());
@@ -2097,6 +2129,41 @@ fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
 }
 
 #[test]
+fn a_part_switched_off_measures_the_void_behind_it_under_a_still_pointer() {
+    // X73: hiding a part changes the space without moving the pointer, so the atom drops the cell it
+    // held and measures the void the eye now reads.
+    let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+    let product = project
+        .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+        .expect("a product");
+    let nominal = model::PanelNominalSize::new(millimetres(18), millimetres(560)).expect("a sheet size");
+    let at =
+        Placement::IDENTITY.with_translation(millimetres(291), millimetres(0), millimetres(0)).expect("a placement");
+    let sheet = project.add_panel(product, "Sheet", nominal, None, millimetres(720), at).expect("a sheet");
+
+    let mut editor = Editor::new();
+    editor.arm_void();
+    let point = geom::DVec3::new(100.0, 280.0, 360.0);
+    assert!(editor.void_measure(&project, point, None));
+    assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
+
+    editor.set_hidden(sheet, true);
+    assert!(editor.void_measure(&project, point, None), "the still pointer re-measures the new void");
+    assert_eq!(
+        editor.void().size(),
+        Some([millimetres(600), millimetres(560), millimetres(720)]),
+        "the hidden sheet is no wall of the cell"
+    );
+
+    editor.set_hidden(sheet, false);
+    assert!(editor.void_measure(&project, point, None), "and showing it again restores the reading");
+    assert_eq!(editor.void().size(), Some([millimetres(291), millimetres(560), millimetres(720)]));
+}
+
+#[test]
 fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     // The atom is measured once and every consumer reads the same cell: the fill plan behind both
     // builds and the values a surface prints come from one answer, never a second probe (ADR 0118).
@@ -2111,7 +2178,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     let mut editor = Editor::new();
     editor.arm_void();
     let point = geom::DVec3::new(300.0, 280.0, 360.0);
-    assert!(editor.void_measure(&project, point), "the pointer measures the void");
+    assert!(editor.void_measure(&project, point, None), "the pointer measures the void");
     let niche = editor.void().niche().expect("the point is inside the open product").clone();
     assert_eq!(niche.product, product);
     assert_eq!(
@@ -2123,7 +2190,12 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
     // The fill plans its part from the cell the atom holds, and the plan names the same void.
     for (fill, mode) in [(model::Fill::WidthAndDepth, FillMode::Fit), (model::Fill::HeightAndDepth, FillMode::Shape)] {
         let plan = project
-            .fill_plan_in(&niche, product, model::FillRequest::new(point, fill, mode, millimetres(18), None))
+            .fill_plan_in(
+                &niche,
+                product,
+                model::FillRequest::new(point, fill, mode, millimetres(18), None),
+                editor.flags().sight(),
+            )
             .expect("a part fills the measured cell");
         assert_eq!(plan.niche, niche, "the plan is built from the atom's cell, not a second measurement");
     }
@@ -2133,6 +2205,8 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         .fill_plan(
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            editor.flags().sight(),
+            None,
         )
         .expect("the direct query plans the same part");
     let from_atom = project
@@ -2140,6 +2214,7 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
             &niche,
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            editor.flags().sight(),
         )
         .expect("the atom plans the same part");
     assert_eq!(direct, from_atom, "one cell, one plan");
@@ -2158,13 +2233,14 @@ fn one_measured_niche_serves_the_fill_plan_and_the_report_row() {
         envelope.z().millimetres_f64() / 2.0,
     );
     let point = project.world_placement(product).expect("a frame").transform_point(half);
-    assert!(editor.void_measure(project, point), "the fill tool feeds the same atom");
+    assert!(editor.void_measure(project, point, None), "the fill tool feeds the same atom");
     let fill_niche = editor.void().niche().expect("the fill's pointer names the void").clone();
     let plan = project
         .fill_plan_in(
             &fill_niche,
             product,
             model::FillRequest::new(point, model::Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None),
+            Sight::none(),
         )
         .expect("the fill plans from the cell its own pointer measured");
     assert_eq!(plan.niche, fill_niche, "the fill's ghost and the report row read one value");
@@ -2295,7 +2371,7 @@ fn band_product() -> (Session, Id, Id, Id, SceneFrame) {
             Placement::IDENTITY,
         )
         .expect("a right part");
-    let session = Session::with_catalog(project, testkit::sample_catalog());
+    let session = Session::with_directory(project, testkit::sample_catalog());
     let mut frame = SceneFrame::default();
     for (id, at) in [(left, -300.0), (right, 300.0)] {
         let mesh = Arc::new(MeshData {

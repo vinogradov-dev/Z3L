@@ -23,10 +23,15 @@ mod box_gizmo;
 /// The command line: `z3l export` runs before the window exists (K3).
 mod cli;
 mod contour_gizmo;
+/// The workshop's directory, read again when another application changes it (O5).
+mod directory_app;
+mod directory_watch;
 mod document;
 mod draw_gizmo;
 mod extrude_gizmo;
 mod file_menu;
+/// The system file manager: *Open* and *Save as* ask the operating system for a path (X91).
+mod file_picker;
 mod fill_gizmo;
 /// The shell's frame, asserted without a window (U78).
 #[cfg(test)]
@@ -34,6 +39,7 @@ mod frame_tests;
 mod gizmo;
 mod gizmo_math;
 mod header;
+mod logging;
 mod measure_gizmo;
 mod mesh_pick;
 mod open_frame;
@@ -61,6 +67,7 @@ mod void_gizmo;
 mod work_cursor;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use eframe::egui;
 use eframe::egui_wgpu;
@@ -69,12 +76,13 @@ use scene::SceneColors;
 use ui::product_card::ProductCard;
 use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
-use ui::{Palette, icons, theme};
+use ui::{Palette, TransformMode, icons, theme};
 
 use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
+use crate::file_picker::{PickMode, Picker, Started, scene_file};
 use crate::header::{HeaderAction, HeaderState, TabView};
-use crate::scene_build::{empty_session, initial_session};
+use crate::scene_build::empty_session_with;
 
 /// The machine identity of the application: its window class and the directory its settings live in.
 ///
@@ -92,43 +100,42 @@ use crate::strip::strip_rect;
 use crate::tabs::{CloseOutcome, TabId, Tabs};
 use crate::view_cluster::ViewCluster;
 
-/// Which transform gesture the viewport offers, if any.
-///
-/// The mode is view state: it belongs to the window, it is never serialized into a scene and it
-/// adds no undo entry. `Select` is the third state and the one a window opens in, so a person who
-/// only wants to look, pick and read is never handed a handle they did not ask for (ADR 0113).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TransformMode {
-    /// No transform: a click selects, shift adds, a double click enters a level.
-    Select,
-    /// Three world-axis arrows move the selection.
-    Move,
-    /// Three local-axis rings turn the selection about its origin.
-    Rotate,
-}
-
 /// The transform gesture a [`TransformMode`] offers.
 ///
-/// The two gestures read the same pivot and commit through the same command, and `Select` offers
-/// neither, so a caller asks the mode for one of these instead of matching three states twice.
+/// The four gestures read the same pivot and commit through the same command, and `Select` offers
+/// none, so a caller asks the mode for one of these instead of matching five states twice. The five
+/// modes themselves are named in `ui::transform`, beside the key that arms each one and the words
+/// the band, the node menu and the Settings page print, because three surfaces read them (U113);
+/// this file adds the gesture a mode hands the viewport, which is the shell's own business.
+///
+/// A gesture comes in two kinds, and the difference is the rule, not the tool (N22, ADR 0147, X88):
+/// `Move` keeps the pointer's own distance and applies no rule, `Object` moves a body by the
+/// document's own rules, `Rotate` turns the selection through whatever stands beside it, and
+/// `ObjectRotate` turns it until another body stops it (ADR 0165, ADR 0180).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
-    /// Three world-axis arrows move the selection.
+    /// Three world-axis arrows move the selection without a rule.
     Move,
+    /// The arrows move the selection by the document's own rules.
+    Object,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
+    /// The rings turn the selection until the document's bodies stop it.
+    ObjectRotate,
 }
 
-impl TransformMode {
+impl Transform {
     /// The gesture this mode offers, or `None` when it offers no handle at all.
     ///
     /// The viewport draws and updates a gizmo only for a `Some`, so a press where a handle would be
     /// cannot start a drag the mode does not offer.
-    pub(crate) fn transform(self) -> Option<Transform> {
-        match self {
-            Self::Select => None,
-            Self::Move => Some(Transform::Move),
-            Self::Rotate => Some(Transform::Rotate),
+    pub(crate) fn of(mode: TransformMode) -> Option<Self> {
+        match mode {
+            TransformMode::Select => None,
+            TransformMode::Move => Some(Self::Move),
+            TransformMode::Object => Some(Self::Object),
+            TransformMode::Rotate => Some(Self::Rotate),
+            TransformMode::ObjectRotate => Some(Self::ObjectRotate),
         }
     }
 }
@@ -257,6 +264,11 @@ struct App {
     settings: Settings,
     /// Where [`Settings`] is read from and written to.
     settings_store: SettingsStore,
+    /// The worker that hands over a newer nomenclature directory, and its channel to this frame.
+    ///
+    /// The frame only takes what the worker finished: polling the folder's revision and validating
+    /// the packages both happen off the frame path (`docs/domain/nomenclature.md` §13).
+    watch: directory_watch::Watch,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
     /// Whether the Settings window is open.
@@ -269,6 +281,11 @@ struct App {
     product_card: ProductCard,
     /// Why the defaults were used instead of the saved workspace, shown in the status bar.
     settings_notice: Option<crate::settings_store::Notice>,
+    /// The pick the system file manager is answering, if one is in flight (ADR 0182).
+    picker: Picker,
+    /// The tab that asked for the pick in flight, so its answer lands there and not in whichever tab
+    /// is in front when the file manager returns (ADR 0081).
+    pick_tab: Option<TabId>,
     /// The close or the deletion that is waiting for the user's answer.
     pending_question: Option<PendingQuestion>,
     /// Whether the frame should close the window: the context that sends the command is only at
@@ -287,7 +304,32 @@ impl App {
         let (preference, preset, accent) = loaded.settings.install_args();
         theme::install_with(&cc.egui_ctx, preference, preset, accent);
         cc.egui_ctx.set_zoom_factor(ui_scale::factor(loaded.settings.appearance.ui_scale));
-        Self::build(&cc.egui_ctx, Some(render_state), settings_store, loaded, initial_session()?)
+        Self::compose(&cc.egui_ctx, Some(render_state), settings_store, loaded)
+    }
+
+    /// Composes the window around the workshop's directory: the rows a session starts from, and the
+    /// worker that reloads them when the folder changes underneath the editor.
+    ///
+    /// The folder is read once, on the startup path, and watched from there: the stamp is taken
+    /// before the snapshot, so a write that lands between them is a reload and not a lost edit. A
+    /// directory that could not be read keeps the starter rows and says so in the status bar, which
+    /// is the one place the window reports a workspace-level failure.
+    fn compose(
+        ctx: &egui::Context,
+        render_state: Option<egui_wgpu::RenderState>,
+        settings_store: SettingsStore,
+        loaded: crate::settings_store::Loaded,
+    ) -> Result<Self, String> {
+        let root = settings_store.directory_root();
+        let start = directory_watch::open(root.as_deref());
+        let watch = directory_watch::Watch::start(root, start.revision);
+        let session = empty_session_with(start.directory)?;
+        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        if let Some(refusal) = start.refusal {
+            log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
+            app.failed(refusal);
+        }
+        Ok(app)
     }
 
     /// Builds the application without a window and without a GPU.
@@ -322,7 +364,13 @@ impl App {
         theme::install_with(ctx, preference, preset, accent);
         ctx.set_zoom_factor(ui_scale::factor(settings.appearance.ui_scale));
         let loaded = crate::settings_store::Loaded { settings, notice: None };
-        Self::build(ctx, render_state, SettingsStore::at(settings_path), loaded, session)
+        let settings_store = SettingsStore::at(settings_path);
+        // A test drives the same worker the window drives, over the folder beside its own settings
+        // file. The stamp is taken now, so the folder the test wrote before it built the shell is
+        // the state the shell starts from and only a later write is a reload (O5).
+        let root = settings_store.directory_root();
+        let watch = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
+        Self::build(ctx, render_state, settings_store, loaded, session, watch)
     }
 
     /// Composes the shell around one document, one workspace and, when the window has one, its GPU.
@@ -335,6 +383,7 @@ impl App {
         settings_store: SettingsStore,
         loaded: crate::settings_store::Loaded,
         session: engine::Session,
+        watch: directory_watch::Watch,
     ) -> Result<Self, String> {
         let settings = loaded.settings;
         let shell = Shell {
@@ -349,12 +398,15 @@ impl App {
             shell,
             settings,
             settings_store,
+            watch,
             settings_section: SettingsSection::default(),
             settings_open: false,
             home_open: false,
             palette: Palette::new(),
             product_card: ProductCard::new(),
             settings_notice: loaded.notice,
+            picker: Picker::new(),
+            pick_tab: None,
             pending_question: None,
             quit_requested: false,
         })
@@ -368,12 +420,71 @@ impl App {
         self.tabs.active_mut().last_error = Some(error);
     }
 
+    /// Swaps in the directory the worker finished since the last frame.
+    ///
+    /// The folder is the workshop's, so every open tab takes the same snapshot in the same frame,
+    /// and each tab re-derives only what its own cache says changed. Nothing here writes a document:
+    /// a directory update is not an edit, and a scene that was dirty before it is dirty after it
+    /// (`docs/domain/nomenclature.md` §13). A revision that could not be read keeps the rows in use
+    /// and says why in the status bar.
+    fn take_directory(&mut self) {
+        while let Some(reload) = self.watch.take() {
+            match reload {
+                directory_watch::Reload::Loaded(directory) => {
+                    for (_, document) in self.tabs.iter_mut() {
+                        document.set_directory(Arc::clone(&directory));
+                    }
+                }
+                directory_watch::Reload::Refused(refusal) => {
+                    log::warn!("the workshop directory could not be read; the rows in use stay: {refusal}");
+                    self.failed(refusal);
+                }
+            }
+        }
+    }
+
+    /// Performs the gesture the file manager answered, or nothing when the pick was cancelled.
+    ///
+    /// A cancelled pick writes and opens nothing: the person closed the dialog, which is an answer
+    /// and not a failure, so the status bar stays quiet (ADR 0182).
+    fn take_pick(&mut self, ctx: &egui::Context) {
+        let Some((order, answer)) = self.picker.take() else {
+            return;
+        };
+        // The pick is the asking tab's (ADR 0081): its answer lands there even when another tab was
+        // activated behind the file manager's own window.
+        let Some(asking) = self.pick_tab.take() else {
+            return;
+        };
+        let Some(path) = answer else {
+            return;
+        };
+        if self.tabs.document(asking).is_none() {
+            // The tab closed under the dialog: there is nothing left to save or to open into.
+            return;
+        }
+        self.tabs.activate(asking);
+        let action = match order.mode {
+            PickMode::Open => FileAction::Open(path),
+            // The dialog filters by the scene extension but does not append it, so a name typed
+            // without one becomes a file the next *Open* can see.
+            PickMode::Save => FileAction::Save(scene_file(path)),
+            // The editor never asks for a price list: that pick belongs to the directory application.
+            PickMode::Prices => {
+                log::warn!("a price list was picked for a scene: nothing to read");
+                return;
+            }
+        };
+        self.handle_file_action(action, ctx);
+    }
+
     /// Performs the header action the row returned.
     ///
     /// Undo, redo and save are the same operations the menu and the keyboard already take, and every
     /// one of them acts on the active tab only, so the header adds a place to click and never a
     /// second code path into a document.
-    fn handle_header_action(&mut self, action: HeaderAction, lang: text::Lang) {
+    fn handle_header_action(&mut self, action: HeaderAction, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
         match action {
             HeaderAction::Home => {
                 self.home_open = true;
@@ -382,9 +493,9 @@ impl App {
             HeaderAction::Undo => self.tabs.active_mut().undo(),
             HeaderAction::Redo => self.tabs.active_mut().redo(),
             HeaderAction::Save => {
-                let requested = self.tabs.active_mut().request_save();
+                let requested = self.tabs.active_mut().request_save(lang);
                 if let Some(action) = requested {
-                    self.handle_file_action(action, lang);
+                    self.handle_file_action(action, ctx);
                 }
             }
             HeaderAction::Settings => {
@@ -411,16 +522,27 @@ impl App {
     }
 
     /// Performs the operation the File menu returned and reports a failure in the status bar.
-    fn handle_file_action(&mut self, action: FileAction, lang: text::Lang) {
+    fn handle_file_action(&mut self, action: FileAction, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
         self.tabs.active_mut().last_error = None;
         let recorded = match &action {
             FileAction::Open(path) | FileAction::Save(path) => Some(path.clone()),
-            FileAction::New | FileAction::Close | FileAction::Quit => None,
+            FileAction::New | FileAction::Pick(_) | FileAction::Close | FileAction::Quit => None,
         };
         let result = match action {
             FileAction::New => self.new_tab(),
             FileAction::Open(path) => self.open_tab(&path),
             FileAction::Save(path) => self.tabs.active_mut().save(&path),
+            // The file manager is asked, not waited for: the window keeps drawing and the answer
+            // lands at the next frame boundary (ADR 0182).
+            FileAction::Pick(order) => match self.picker.start(ctx, order) {
+                Ok(Started::Asked) => {
+                    self.pick_tab = Some(self.tabs.active_id());
+                    Ok(())
+                }
+                Ok(Started::Busy) => Ok(()),
+                Err(_) => Err(text::Message::PickFailed.text(lang).to_owned()),
+            },
             FileAction::Close => {
                 let active = self.tabs.active_id();
                 self.close_tab(active, lang);
@@ -452,15 +574,15 @@ impl App {
             self.tabs.activate(id);
             return Ok(());
         }
-        let catalog = self.tabs.active().session.catalog().clone();
-        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, &catalog)?;
+        let catalog = self.tabs.active().session.directory_shared();
+        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog)?;
         self.tabs.add(document);
         Ok(())
     }
 
     /// Opens an empty *Untitled* scene in a new tab.
     fn new_tab(&mut self) -> Result<(), String> {
-        let session = empty_session()?;
+        let session = empty_session_with(self.tabs.active().session.directory_shared())?;
         let settings = &self.settings;
         let shell = &self.shell;
         let document = Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new())?;
@@ -568,7 +690,8 @@ impl App {
 
     /// Replaces the last tab with an empty *Untitled* scene.
     fn empty_tab(&mut self, id: TabId) {
-        let built = empty_session().and_then(|session| {
+        let directory = self.tabs.active().session.directory_shared();
+        let built = empty_session_with(directory).and_then(|session| {
             Document::new(self.render_state.as_ref(), &self.settings, &self.shell, session, PreservedSections::new())
         });
         match built {
@@ -752,7 +875,11 @@ impl App {
     fn draw_work_cursor(&mut self, ctx: &egui::Context) {
         let scene = self.tabs.active().scene_rect();
         let widget = self.shell.orientation_rect;
-        let cursor = work_cursor::show(ctx, &self.settings.pointer, scene, widget);
+        // The carry puts the pointer away while a camera gesture moves the view under the piece it
+        // holds, and asks the window to bring it back to the piece once the gesture ends (X69).
+        let hidden = self.tabs.active().hides_pointer();
+        let hand = self.tabs.active().carry_hand();
+        let cursor = work_cursor::show(ctx, &self.settings.pointer, scene, widget, hidden, hand);
         #[cfg(test)]
         {
             self.shell.work_cursor = cursor;
@@ -827,11 +954,16 @@ impl App {
         self.home_open = false;
         match action {
             ui::home::HomeAction::New | ui::home::HomeAction::EmptyTemplate => {
-                self.handle_file_action(FileAction::New, ui::language(ctx));
+                self.handle_file_action(FileAction::New, ctx);
             }
-            ui::home::HomeAction::Open => self.tabs.active_mut().request_open(),
+            ui::home::HomeAction::Open => {
+                let lang = ui::language(ctx);
+                if let Some(action) = self.tabs.active_mut().request_open(lang) {
+                    self.handle_file_action(action, ctx);
+                }
+            }
             ui::home::HomeAction::OpenRecent(path) => {
-                self.handle_file_action(FileAction::Open(path), ui::language(ctx));
+                self.handle_file_action(FileAction::Open(path), ctx);
             }
             ui::home::HomeAction::Close => {}
         }
@@ -849,6 +981,13 @@ impl App {
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        // A directory another application finished writing is swapped in here, at the frame
+        // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
+        // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
+        self.take_directory();
+        // The file manager answers on its own schedule, so its path is taken at the same boundary
+        // and becomes the open or the save the gesture would have been (ADR 0182).
+        self.take_pick(ui.ctx());
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.
@@ -868,8 +1007,8 @@ impl App {
             }
         }
         // A modal — the Settings window, the Home surface, the palette, a destructive question —
-        // owns the keys for the frame it is up, so typing a path or a name never saves, undoes,
-        // reframes or leaves a tool, and a question never answers itself with a second Delete.
+        // owns the keys for the frame it is up, so typing into a field never saves, undoes, reframes
+        // or leaves a tool, and a question never answers itself with a second Delete.
         let modals = self.settings_open
             || self.home_open
             || self.palette.is_open()
@@ -887,12 +1026,12 @@ impl App {
             if shortcuts.palette {
                 self.palette.open();
             }
-            let requested = self.tabs.active_mut().handle_shortcuts(shortcuts);
+            let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
-                self.handle_file_action(action, ui::language(ui.ctx()));
+                self.handle_file_action(action, ui.ctx());
             }
             if shortcuts.new_tab {
-                self.handle_file_action(FileAction::New, ui::language(ui.ctx()));
+                self.handle_file_action(FileAction::New, ui.ctx());
             }
             if shortcuts.close_tab {
                 let active = self.tabs.active_id();
@@ -918,6 +1057,11 @@ impl App {
             }
             if shortcuts.collapse_panels {
                 self.shell.panels.toggle_collapse_all();
+            }
+            // The four gestures are the window's view state, not the tab's: the key arms the mode
+            // for every tab, and no document is written (ADR 0113, U113).
+            if let Some(mode) = shortcuts.mode {
+                self.shell.mode = mode;
             }
         }
 
@@ -952,13 +1096,10 @@ impl App {
             });
         }
         if let Some(action) = file_action {
-            self.handle_file_action(action, ui::language(ui.ctx()));
-        }
-        if let Some(action) = self.tabs.active_mut().show_dialogs(ui.ctx()) {
-            self.handle_file_action(action, ui::language(ui.ctx()));
+            self.handle_file_action(action, ui.ctx());
         }
         if let Some(action) = header_action {
-            self.handle_header_action(action, ui::language(ui.ctx()));
+            self.handle_header_action(action, ui.ctx());
         }
         self.answer_question(ui.ctx());
 
@@ -1003,6 +1144,12 @@ impl App {
             self.panel_card(&ctx, rect);
         }
         self.sync_panels();
+        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
+        // write it: the editor recorded the wish and the shell applies it here, after both menus
+        // have drawn (U113).
+        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
+            self.shell.mode = mode;
+        }
         self.command_palette(ui);
         // The cluster's *Configure…* link is drawn inside the viewport, which only has the shell;
         // the window owns the Settings modal, so it opens it here on the same frame (U64).
@@ -1038,6 +1185,12 @@ impl eframe::App for App {
 /// Reads the command line first: an export or a help request finishes here, before eframe creates a
 /// surface, so the same binary writes a package with no window, no GPU and no person (K3).
 fn main() -> eframe::Result {
+    // The sink is installed before anything can fail: the first tab, the command line and the window
+    // all write through it, and a bug report is the file it names (ADR 0168).
+    if let Some(path) = logging::install() {
+        log::info!(target: "z3l::shell", "log file {}", path.display());
+    }
+    log::info!(target: "z3l::shell", "{} starts", theme::PRODUCT_NAME);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
         Ok(command) => command,
@@ -1047,6 +1200,7 @@ fn main() -> eframe::Result {
         Some(code) => exit_with(code),
         None => match command {
             cli::Command::Scene(path) => run_window(Some(path)),
+            cli::Command::Directory(folder) => directory_app::run(folder),
             _ => run_window(None),
         },
     }

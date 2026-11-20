@@ -12,7 +12,8 @@ Related decisions: [0034](../decisions/0034-nodes-carry-typed-properties.md),
 [0098](../decisions/0098-one-product-is-open-and-parts-are-born-inside-it.md),
 [0099](../decisions/0099-a-niche-is-the-space-a-frame-reserves.md),
 [0100](../decisions/0100-a-frame-is-created-opened-and-drawn.md),
-[0106](../decisions/0106-a-niche-is-a-convex-cell-of-wall-planes.md).
+[0106](../decisions/0106-a-niche-is-a-convex-cell-of-wall-planes.md),
+[0159](../decisions/0159-a-product-frame-reserves-a-footprint.md).
 
 ## 1. The entity
 
@@ -34,7 +35,8 @@ the product's own frame.
 
 - **It is authored, never derived.** It is set when the product is created, before any part exists,
   and no edit to a child changes it. This is the owner's invariant and it matches `AGENTS.md` §4.2:
-  the document stores decisions, everything else is derived.
+  the document stores decisions, everything else is derived. A drawn ring is anchored at its own
+  minimum corner when it is authored, so the shape and the sides always agree.
 - **Content bounds are derived.** The bounding box of the children is computed when asked — an idle
   diagnostic, a report, a drawing. It is never stored, so it can never go stale.
 - **A child may poke out.** It is a diagnostic — «деталь выходит за габарит изделия» — not a silent
@@ -44,8 +46,12 @@ the product's own frame.
 - **Its faces are virtual panels.** The six planes of the envelope stop a probe, accept a snap and
   take a part flush against them exactly as a real panel would (0099). This is the reason a reserved
   space is useful: the maker cuts to it.
-- **It is a box.** Sloped or otherwise shaped envelopes are out of scope; the field is three lengths
-  and a shape would be a new field and a new decision.
+- **It is a box cut to a footprint.** The three sides are the bounds of the reserved space and the
+  `Footprint` says what the base rectangle is cut to: the plain rectangle, a rectangle with one or
+  more corners cut by a chamfer or a fillet, or a closed ring drawn on the plane (0159). A cut corner
+  stores the setback along each edge — two offsets for a chamfer, a radius for a fillet — and never an
+  angle, because the offsets are what a maker measures on a board. Sloped or tapered envelopes are
+  still out of scope: the footprint cuts the base, and the top is the same outline.
 - **It anchors at its base min corner.** The local zero is the corner of the base rectangle, as a
   panel's zero is its base corner (0083), so the reserved space is `[0..W] × [0..D] × [0..H]` in the
   frame and nothing needs an offset. Dragging a max face changes the size; dragging a min face changes
@@ -53,6 +59,24 @@ the product's own frame.
 - **It is edited like a box**, through the shared box tool (0101): a corner grip changes two sizes, a
   face grip one, and the card three numbers. Each gesture is one undo entry. The grips show whenever
   the frame is selected, even when its dashed lines are hidden by the closed-with-parts state (0100).
+  A corner that is cut shows no corner grip, because the corner it would grab no longer exists, and a
+  ring shows only the two height faces: its horizontal shape is drawn, not dragged.
+
+### 2.1 The words a dimension uses
+
+Three conventions decide every number on a wardrobe, and each one was guessed wrong once. `Side` in
+`crates/model/src/side.rs` carries the side names for the code, and a test in `crates/ui`
+ties `Side::Left` to `OpeningView::Left`, so a reader never infers a side from a mirrored picture.
+
+- **A spacing is the clear opening.** "A shelf at 340" and "shelves 320 apart" quote the clear
+  opening between two surfaces, not a step between centres and not a pitch. A count quoted with a
+  spacing is derived from the space, and the one cell that cannot hold a full opening absorbs the
+  remainder — an ordinary cell, never a squeezed spacing.
+- **The depth includes the fronts.** A depth is what the piece occupies in the room, so the fronts
+  are inside the number: an 800 × 560 × 2200 wardrobe has a 542 mm carcass and 560 mm overall.
+- **Left is `+X`.** The front view looks from `+Y` towards `-Y` with `+Z` up, so the side a viewer in
+  front of the piece sees on their left is `+X`; that is `Side::Left`, and `OpeningView::Left` looks
+  from it. A left door and a right door are named by the same rule.
 
 ## 3. Place in the tree
 
@@ -147,7 +171,7 @@ and the type is a later edit rather than a prerequisite.
 **Placement is the gesture's or the card's.** The card puts the frame at the origin in an empty scene,
 and otherwise beside the nearest product, on the floor, clear of every other envelope. A drawn frame
 stands where its base rectangle was drawn. Either way it becomes selected and open, and the maker
-moves it with the furniture move tool (§8).
+moves it with the object move tool (§8).
 
 **Opening is a double click in the viewport**, or the tree. At most one product is open at a time, and
 opening another closes the previous one. Openness is session state per tab, never a document field
@@ -211,9 +235,15 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   whole-face coverage test is gone, so an open front with a short top still offers a niche. A part can
   therefore run past a board's own edge into open space; a surface standing *inside* the cell still
   makes the void non-convex and is refused (0109).
-- A **ghost** of the part follows the cursor through the session preview overlay (ADR 0093); nothing
-  is written until the click. A beveled part's ghost draws the far rim it really ends at, set back
-  at the wall it meets.
+- A **ghost** of the part follows the cursor, drawn as shell paint rather than through the session
+  preview overlay — a part that does not exist yet has no node an overlay entry could be keyed by
+  (0104) — and nothing is written until the click. The hand carries it along the free axis: a face
+  that runs along that axis, a wall behind a shelf, reads the hand's place exactly, while a face
+  square to it names one place for the whole face, so the tool carries the part from the place that
+  face named and moves it by every millimetre the hand travels there (0157). The cell's walls are what
+  stop it, the frame's envelope among them, and a pointer that leaves the piece keeps the ghost, so
+  the click writes exactly what was drawn. A beveled part's ghost draws the far rim it really ends
+  at, set back at the wall it meets.
 - The offset step is **1 mm**; there are no fractional sizes.
 - A click creates the part with exactly the ghost's size, outline, bevels and mode, through one
   command and one undo entry: the outline — a rectangle with its corner cuts, or the ring — and the
@@ -264,11 +294,17 @@ Selecting a frame shows its grips — eight corners and six faces — which edit
 shared box tool (0101): a corner changes two sizes, a face one, the card three numbers, and each drag is
 one undo entry.
 
+The frame is drawn from its footprint: the base outline dashed, the same outline dashed at the
+height, and one dashed vertical at each corner the shape really has — a fillet's tangency is smooth
+and stands none. A plain rectangle therefore still draws twelve edges.
+
 The frame is picked **by its envelope**, not only by its lines: a single click inside the piece, on
-empty space or on a line, selects the frame; a click on a part selects the part. Solids win a tie, so
-a click that hits a panel picks the panel. When several products contain the point, the innermost
-wins — that is how a product standing in the void of another stays reachable. A double click opens the
-product under the cursor. None of this is document data.
+empty space or on a line, selects the frame; a click on a part selects the part. The click is tested
+against the outline, so a cut corner and the space outside a drawn ring reserve nothing. Solids win a
+tie, so a click that hits a panel picks the panel. When several products contain the point, the
+innermost wins — measured by the reserved volume, the outline's own area times the height — which is
+how a product standing in the void of another stays reachable. A double click opens the product under
+the cursor. None of this is document data.
 
 ## 10. What output sees
 
@@ -293,7 +329,7 @@ volume asks the program for it when such a report exists.
 ## 12. Answered questions
 
 - **A code group for products?** No. `level = Product` is a class trait; the code names the product's
-  function (a wall cabinet is `30.01.02`). A code range would put the assembly role back into the
+  function (a wall cabinet is `10.01.02`). A code range would put the assembly role back into the
   digits, which 0094 removed.
 - **The class at creation?** A placeholder class, «изделие общего назначения», assigned by
   `product.create` and changed later from the card; a product always has a class.

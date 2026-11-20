@@ -1,12 +1,13 @@
 //! The floor plate and the shadow the key light casts on it.
 //!
 //! The ground is two things the frame draws and one it does not. The *plate* is a quad on `z = 0`
-//! across the square the grid draws: an unlit surface, so a shadow has something to darken. The
-//! *mask* is the scene projected along the key light onto that plane — a coverage render, not a
-//! depth map, because the receiver is a plane and the only question is whether any body stands
-//! between the light and a point of it. A `coverage` render therefore has no bias, no acne and no
-//! depth target at all. The *blur* turns the mask's hard silhouette into a penumbra of a fixed
-//! world size, and the plate reads the result with one texture fetch.
+//! across the square the grid draws: an unlit, blended surface, so a shadow has something to darken
+//! and a part under the floor is seen through its tint. The *mask* is the scene projected along the
+//! key light onto that plane — a coverage render, not a depth map, because the receiver is a plane
+//! and the only question is whether any body stands between the light and a point of it. A
+//! `coverage` render therefore has no bias, no acne and no depth target at all. The *blur* turns the
+//! mask's hard silhouette into a penumbra of a fixed world size, and the plate reads the result with
+//! one texture fetch.
 //!
 //! Contract: `Ground` owns the two mask textures, the sampler, the three pipelines and the plate's
 //! buffer. It rebuilds the mask only when [`GroundKey`] changes — a new upload, a turned key light
@@ -17,8 +18,8 @@
 //! Refuses: nothing at draw time. The mask's size is a constant, a frame with no drawable leaves
 //! the mask cleared, and a plate with no extent draws no quad at all.
 //!
-//! Does not own frame data: the strength and the colour arrive in the camera uniform, which the
-//! renderer writes per view, so a strength slider never re-uploads a buffer.
+//! Does not own frame data: the strength, the colour and the plate's opacity arrive in the camera
+//! uniform, which the renderer writes per view, so neither slider re-uploads a buffer.
 //!
 //! Changes when: the mask's resolution, the penumbra, the projection or the plate's shape changes.
 
@@ -209,6 +210,9 @@ impl Ground {
     }
 
     /// The plate's triangle buffer, or nothing when the ground has no area.
+    ///
+    /// The plate's own colour is the only thing the buffer carries; its opacity and the shadow it reads
+    /// are frame data, so a change to either draws the same buffer.
     pub(crate) fn plate(
         &mut self,
         device: &wgpu::Device,

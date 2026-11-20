@@ -666,7 +666,7 @@ mod tests {
     fn all_included_edges_inset_the_core_inside_the_nominal_envelope() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let material = MaterialId::new(99).expect("material id");
+        let material = ItemId::new(1, 99).expect("material id");
         for edge in 1..=4 {
             let band =
                 EdgeBanding::new(EdgeId::new(edge).expect("edge id"), material, true, millimetres(2), millimetres(22))
@@ -702,7 +702,7 @@ mod tests {
     fn panel_geometry_accepts_catalogue_resolved_banding_thickness() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let material = MaterialId::new(99).expect("material id");
+        let material = ItemId::new(1, 99).expect("material id");
         let bottom =
             EdgeBanding::new(EdgeId::new(1).expect("edge id"), material, true, millimetres(2), millimetres(22))
                 .expect("valid bottom banding");
@@ -719,7 +719,7 @@ mod tests {
     fn panel_geometry_respects_included_banding_and_application_order() {
         let mut project = sample_project();
         let panel_id = Id::new(2).expect("id");
-        let material = MaterialId::new(99).expect("material id");
+        let material = ItemId::new(1, 99).expect("material id");
 
         let bottom =
             EdgeBanding::new(EdgeId::new(1).expect("edge id"), material, true, millimetres(2), millimetres(22))

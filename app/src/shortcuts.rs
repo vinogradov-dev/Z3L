@@ -11,6 +11,8 @@
 
 use eframe::egui;
 use ui::Editor;
+use ui::TransformMode;
+use ui::inventory::Chord;
 
 /// The global shortcuts, read in one pass and consumed so one key does one thing.
 ///
@@ -44,6 +46,11 @@ pub(crate) struct Shortcuts {
     pub(crate) hide_panels: bool,
     /// Fold both side panels to strips, or unfold the pair the last press folded.
     pub(crate) collapse_panels: bool,
+    /// The transform mode a key armed, if any.
+    ///
+    /// One slot rather than four flags: the four gestures are one value, and a frame that somehow
+    /// carried two keys must leave the viewport in one mode (U113).
+    pub(crate) mode: Option<TransformMode>,
 }
 
 #[cfg(test)]
@@ -69,7 +76,7 @@ impl Shortcuts {
             "view.layout.maximize" => self.maximize,
             "sketch.measure.length" => self.measure,
             "furniture.panels.void" => self.niche,
-            _ => false,
+            _ => ui::TransformMode::ALL.into_iter().any(|mode| mode.id() == id && self.mode == Some(mode)),
         }
     }
 
@@ -92,6 +99,7 @@ impl Shortcuts {
             self.palette,
             self.hide_panels,
             self.collapse_panels,
+            self.mode.is_some(),
         ]
         .iter()
         .filter(|pressed| **pressed)
@@ -143,7 +151,29 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         niche: consume(input, "furniture.panels.void"),
         maximize: consume(input, "view.layout.maximize"),
         palette: consume(input, ui::inventory::PALETTE_OPEN),
+        mode: take_mode(input),
     })
+}
+
+/// Consumes at most one transform-mode key and answers the mode it arms (U113).
+///
+/// The shifted pair is read first: a pattern without `Shift` also matches a press that carries it, so
+/// a plain `W` read first would swallow `Shift+W` and the object move would never run (U78). The
+/// key and its pair come from the inventory's table, so the four cells, the menu entries and the
+/// Settings rows print one spelling.
+fn take_mode(input: &mut egui::InputState) -> Option<TransformMode> {
+    for shifted in [true, false] {
+        for mode in TransformMode::ALL {
+            let Some(binding) = mode.binding() else { continue };
+            if (binding.chord != Chord::Plain) != shifted {
+                continue;
+            }
+            if input.consume_key(binding.chord.modifiers(), binding.key) {
+                return Some(mode);
+            }
+        }
+    }
+    None
 }
 
 /// Consumes the key the inventory binds to `id`, and says whether the frame carried it.
@@ -406,12 +436,23 @@ mod tests {
         output.drop_without_applying_deltas();
         assert_eq!(read, Shortcuts { maximize: true, ..Shortcuts::default() });
 
-        // A plain `W` is a different key and must not expand anything.
+        // A plain `W` is the free move and must not expand anything; `Shift+W` is the object move
+        // beside it, and the shifted pair is the one that has to win the frame it is pressed in (U78).
         let output = ctx.run_ui(key_input(egui::Key::W, egui::Modifiers::NONE), |ui| {
             read = take_shortcuts(ui.ctx());
         });
         output.drop_without_applying_deltas();
-        assert_eq!(read, Shortcuts::default());
+        assert_eq!(read, Shortcuts { mode: Some(TransformMode::Move), ..Shortcuts::default() });
+
+        let output = ctx.run_ui(key_input(egui::Key::W, egui::Modifiers::SHIFT), |ui| {
+            read = take_shortcuts(ui.ctx());
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(
+            read,
+            Shortcuts { mode: Some(TransformMode::Object), ..Shortcuts::default() },
+            "`Shift+W` arms the object move and never its plain twin"
+        );
 
         // One view already fills the workspace, so the key is a no-op in the single layout.
         let mut layout =

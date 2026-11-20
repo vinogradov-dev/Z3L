@@ -2,9 +2,9 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 25,
-    "revision": 4,
-    "next_id": 11,
+    "schema_version": 28,
+    "revision": 6,
+    "next_id": 12,
     "root": {
       "id": 1,
       "name": "Root",
@@ -86,7 +86,7 @@
             "edge_banding": [
               {
                 "edge": 1,
-                "material": 1,
+                "material": "1-1",
                 "included_in_size": false,
                 "last_known_thickness": 2000,
                 "last_known_width": 22000
@@ -108,7 +108,12 @@
                 "angle": 45000
               }
             ],
-            "properties": {}
+            "properties": {
+              "plug.confirmat": {
+                "kind": "item",
+                "id": "712-34"
+              }
+            }
           }
         },
         {
@@ -406,6 +411,55 @@
               "component": {
                 "kind": "bool",
                 "value": true
+              }
+            }
+          }
+        },
+        {
+          "container": {
+            "id": 11,
+            "name": "Corner cabinet",
+            "placement": {
+              "translation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "pivot_local": [
+              0,
+              0,
+              0
+            ],
+            "children": [],
+            "properties": {
+              "class": {
+                "kind": "class",
+                "value": 700100
+              }
+            },
+            "envelope": {
+              "x": 700000,
+              "y": 600000,
+              "z": 900000,
+              "footprint": {
+                "shape": "cut",
+                "corners": [
+                  null,
+                  {
+                    "kind": "chamfer",
+                    "incoming": 120000,
+                    "outgoing": 70000
+                  },
+                  null,
+                  null
+                ]
               }
             }
           }

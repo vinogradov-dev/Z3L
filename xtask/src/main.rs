@@ -36,8 +36,13 @@ const DEV_ONLY: &[&str] = &["testkit"];
 const TRUCK_PREFIX: &str = "truck-";
 const TRUCK_ADAPTER: &str = "kernel-truck";
 
+/// The third-party collision engine is an implementation detail of its adapter, exactly as the
+/// geometry kernel is (ADR 0001, ADR 0179).
+const PARRY_PREFIX: &str = "parry";
+const CONTACT_ADAPTER: &str = "contact-parry";
+
 /// Crates that only the composition root may wire in as normal dependencies.
-const COMPOSITION_ONLY: &[&str] = &[TRUCK_ADAPTER];
+const COMPOSITION_ONLY: &[&str] = &[TRUCK_ADAPTER, CONTACT_ADAPTER];
 
 /// Crates that compile or vendor C/C++ sources. OS bindings that only load a
 /// platform library through Rust FFI are not listed here: the rule is about
@@ -73,8 +78,11 @@ const CRATES: &[CrateRule] = &[
     // `TRUCK_PREFIX` rule below keeps truck out of every crate but the adapter.
     CrateRule { name: "kernel", layer: 1, forbidden: UI_GPU_DEPS },
     CrateRule { name: "model", layer: 1, forbidden: UI_GPU_DEPS },
+    CrateRule { name: "catalog", layer: 2, forbidden: UI_GPU_DEPS },
     // The only crate allowed to depend on truck.
     CrateRule { name: TRUCK_ADAPTER, layer: 2, forbidden: UI_GPU_DEPS },
+    // The only crate allowed to depend on parry: the contact port's implementation (ADR 0179).
+    CrateRule { name: CONTACT_ADAPTER, layer: 2, forbidden: UI_GPU_DEPS },
     CrateRule { name: "param", layer: 2, forbidden: UI_GPU_DEPS },
     CrateRule { name: "project", layer: 2, forbidden: UI_GPU_DEPS },
     CrateRule { name: "export", layer: 3, forbidden: UI_GPU_DEPS },
@@ -239,6 +247,12 @@ fn collect_violations(rules: &[CrateRule], packages: &[serde_json::Value]) -> Re
             if dependency_name.starts_with(TRUCK_PREFIX) && name != TRUCK_ADAPTER {
                 violations.push(format!(
                     "`{name}` must not depend on `{dependency_name}`: only `{TRUCK_ADAPTER}` may use the geometry engine"
+                ));
+            }
+
+            if dependency_name.starts_with(PARRY_PREFIX) && name != CONTACT_ADAPTER {
+                violations.push(format!(
+                    "`{name}` must not depend on `{dependency_name}`: only `{CONTACT_ADAPTER}` may use the collision engine"
                 ));
             }
 

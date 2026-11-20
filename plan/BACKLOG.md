@@ -21,12 +21,15 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:
 `F` — revolution and sweep
 `G` — 2D booleans
 `H` — hardware and accessories
+`J` — MCP and the assistant: the tools an agent calls and the rules it obeys
 `K` — the contract other programs read: the scene file's compatibility and the order package
 `L` — scene lighting
 `M` — a milestone's own work, numbered by the milestone it was filed against
 `N` — the furniture product: its entity, the frame it reserves, the parts inside it and how they are
   placed
+`O` — the materials catalogue and the workshop standards: the files a build reads for its numbers
 `P` — the plan and `xtask` itself
+`Q` — the prototype mechanism: the parts, the card, the dissolve and the library
 `R` — the pre-release rename
 `S` — a structural refactor that changes module boundaries only
 `T` — the semantic classes: the registry table, its traits and the editors it gates
@@ -42,7 +45,997 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Now
 ## Bugs
 ## Next
-- `[ ]` **U109** the floor can be made see-through, and its shadow survives it
+- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
+  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
+   dissolve targets and the card, and no task may cite a decision that does not exist. Four
+   questions are still open, so the record waits for the owner's answers.
+  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
+   open questions in plan/questions.md.
+  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
+   plan/questions.md carries the four questions.
+  `files: docs/domain/prototypes.md,docs/decisions/README.md`
+- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
+  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
+   workshop, and today they are literals in a scenario. Where the file lives is an open
+   question, so the task waits for its answer.
+  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
+   validated on load, offering defaults to the card; a value outside its range is a sentence,
+   not a fallback.
+  Done: A test loads a standards file, a command takes its default from it, and a stale file is
+   a notice.
+  `files: app/src/settings_store.rs,crates/model/src/`
+- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
+  Why: The prototype work needs three facts the document cannot store today: which container is
+   a section, which prototype and card produced a node, so a command works while the library is
+   missing, and which released node the parent must no longer rewrite.
+  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
+   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
+   opens without the library.
+  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
+   and a missing prototype library changes nothing in the load.
+  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
+- `[ ]` **O11** placement rules are typed tables
+  Why: System 32 and a supplier's hinge table are data a workshop owns, not code we write.
+  Shape: RuleTable with typed axes and cells, completeness and overlap checked on load,
+   precedence item then prototype then standard, one command and one undo entry.
+  Done: A 32-panel yields the expected positions, and an uncovered overlay or door thickness is
+   refused with the axis named.
+  `files: crates/catalog/src/directory.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **O12** a contour names its cutter, a groove does not
+  Why: A contour milled with a 2 mm cutter has 2 mm corners, so the document must name the
+   tool; a groove only needs its width.
+  Shape: Milling stores a cutter ItemId, depth and offset; a groove stores width and depth;
+   tools are items and the park is its own package; a missing cutter is a diagnostic with the
+   last offsets.
+  Done: A milling record round-trips with its cutter and a cutter outside the park is a
+   diagnostic, never a narrowed cut.
+  `files: crates/model/src/panel/machining.rs,crates/catalog/src/property.rs,crates/kernel/src/lib.rs`
+- `[ ]` **O13** a part document is authored once and instantiated everywhere
+  Why: A door must pick up an edited hinge, and a copy frozen at insertion cannot.
+  Shape: A part-document contract checked on load, an instance node resolved with the cycle,
+   depth and budget guards, catalogue.detach, a placeholder from the recorded bounds, STL
+   import into an empty document.
+  Done: A changed hinge reaches two doors without a rebuild, a cycle is refused with its chain,
+   and detach turns an instance into nodes in one undo entry.
+  `files: crates/model/src/node.rs,crates/model/src/tree.rs,crates/project/src/lib.rs,crates/engine/src/scene_cmds.rs`
+- `[ ]` **O14** insertion and a fastener line are designed operations
+  Why: Inserting an item and adding a fastener line are gestures, not fields in a card.
+  Shape: Two operations by .pi/skills/design-operation: the armed state machine, the preview,
+   the cancel, one undo entry, the feedback budget and the cursor.
+  Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
+   and committed as one entry each.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+## Done
+
+- `[x]` **O9** selection walks six steps and says why
+  Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
+   RGB.
+  Shape: Six ordered steps ending in a named diagnostic, family equality then rank, the
+   person's explicit choice stored on the node, results cached by revision.
+  Done: An oak corpus picks an oak plug, a white corpus re-picks it, and a miss names the step
+   that failed.
+  `files: crates/catalog/src/view.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs` — `495b17d`
+
+- `[x]` **O8** prices carry provenance and stock is an overlay
+  Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
+  Shape: Price with provenance and unit from the kind, a batched import as one history entry,
+   an on-hand overlay package, external keys with a system registry, a freshness notice.
+  Done: A CSV batch writes one history entry, and a price without a usable currency is refused.
+  `files: crates/catalog/src/view.rs,crates/export/src/rows.rs,app/src/settings_store.rs` — `495b17d`
+
+- `[x]` **O10** holes are derived from the hardware that causes them
+  Why: A hole belongs to the hardware that causes it, and a panel must not store one.
+  Shape: Drilling objects resolved through instances, intersected with the panel body, ordered
+   in panel-local coordinates, cached by panel, placements and revision.
+  Done: A known hinge on a known door yields an exact hole set at exact coordinates, and an
+   untouched panel is not recomputed.
+  `files: crates/model/src/panel/hole.rs,crates/mesh/src/lib.rs,crates/geom/src/ring.rs` — `495b17d`
+
+- `[x]` **X93** a deep crossing of two boards is invisible to the contact port, so the carry and the turn pass through it
+  Why: In the owner's own scene two boards cross by 60 × 60 × 100 mm and the object carry
+   answers `blocked=none`: parry's `contact` reads the pair as touching (`dist = 0.0`) while
+   its `intersection_test` reads a real intersection, and `contact-parry::penetration` treats
+   `dist >= 0` as "no penetration", so `MoveRule::blocked_at` skips the pair. The rule asks
+   only the destination of a frame, so at 60 fps some frame lands in a shallow overlap, where
+   parry answers the true depth and the piece stops, while a hand that jumps 30–50 mm between
+   frames lands every time in the crossed place and the body goes through — which is what the
+   owner saw under Wine and read as "no solid bodies". The object turn asks the same port for
+   the same reason (X88).
+  Shape: The port stops reading a non-negative distance as proof that nothing is inside:
+   `penetration` asks `intersection_test` as well, and a pair that intersects answers a depth
+   from a manifold query instead of `None`, so `overlap`, `sunk` and the write guard keep one
+   reading. The tests are the ones this defect lacked: a port test with two perpendicular
+   boards crossing 60 × 60 × 100 mm, a model test that `blocked_at` stops the carry at that
+   place, a model test that a destination 50 mm past the near face — the quick hand of ADR 0172
+   — is refused, and the same pair asked through the rotate rule and `resting_conflict`, so the
+   turn is covered by the port fix and not by a second code path. No new dependency.
+  Done: A carry of one board into another stops at its face however far the pointer travelled
+   since the last frame; the port answers a real depth for a crossed pair; the object turn
+   stops where the carry does, proven by the same pair; the gate is green.
+  `files: crates/contact-parry/src/lib.rs,crates/model/src/project/move_query.rs,crates/geom/src/contact.rs` — `7af290a`
+
+- `[x]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
+  Why: The assistant and the prototype expander both need the document without a window, and
+   only export reaches the engine from the command line today. A generator that writes the
+   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
+   command gate.
+  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
+   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
+   groups them as one undo entry and writes once; query <scene>
+   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
+   Session::dispatch and SceneFile: no second mutation path.
+  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
+   leaves the file untouched, and query tree prints the ids the fixture created.
+  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/` — `31c8e0c`
+
+- `[x]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
+  Why: The owner asked for a rotation tool that honours the bodies: turning a door into its
+   carcass must stop at the frame, and the simulation of an opening front needs the same rule
+   (owner, 2026-11-19).
+  Shape: A fifth transform mode, object rotate, beside rotate: the rings turn the selection
+   about its pivot and stop where a body meets another, read from the contact port. A rotate
+   rule on the project answers a turn the way the move rule answers a carry - the destination
+   first, then a bisection of the angle against the same free-place predicate - and it reuses
+   the mover, obstacle and measured values, so the drag, the release and the write read one
+   measurement. The inventory carries the row, the key and the words; no icon until the artwork
+   exists.
+  Done: A turn of a board into a neighbour stops on its face and the log names it; a turn away
+   from it is granted whole; a free rotation still passes through (ADR 0180); the gate is
+   green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs` — `0d28e62`
+
+- `[x]` **X92** the probe reads a body the boxes cannot describe, and no other
+  Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against
+   the port moved an ordinary cell's plane by rounding and broke the fill ghost: a cell is
+   where a board is cut, so the reading needs a test of its own before it ships (found in X90,
+   ADR 0181).
+  Shape: The probe asks the port only for a body the boxes cannot describe — one whose own
+   surface leaves a hole or reaches outside its box — and keeps the box reading everywhere
+   else, decided once per surface when its shape is built. The cell then meets a plate's hole,
+   a notched panel and a ball's own side; 's scene proves a ray crosses the hole and stops at
+   the floor behind it, and the fill ghost's board test stays green.
+  Done: A probe crosses a hole in a plate and stops at the face behind it; an ordinary cell's
+   planes are the boxes it always had; the fill ghost keeps following the hand across a board;
+   the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/contact_shape.rs, crates/project/tests/through_a_hole.rs` — `ba23570`
+
+- `[x]` **X91** opening and saving ask the system file manager instead of a path typed into a field
+  Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
+   deletes two characters and the cursor moves by two, so a path can be edited only by retyping
+   it. A path is chosen in a file manager, not typed into a string (owner, 2026-11-19).
+  Shape: The open and save dialogs ask the operating system's own file manager instead of a
+   text field: the system picker through a permissive, pure-Rust binding to the platform's
+   dialog (the portal on Linux, the native sheet on macOS, the common item dialog on Windows),
+   narrowed to the scene extension and started in the folder of the open document. The text
+   field and the nearby-scenes list leave with it; the modal keeps the title, the
+   open-as-a-new-tab hint and the Cancel button. A dependency that compiles C is refused by the
+   rules, so the picker is either an OS binding loaded at run time or a small Rust dialog over
+   the platform API, and the choice is recorded in an ADR.
+  Done: Open and Save as show the system file manager, filtered to scene files and started
+   where the document lives; a cancelled picker writes and opens nothing; the path is never
+   typed; the double-delete defect cannot occur because there is no text field; the gate is
+   green.
+  `files: app/src/file_menu.rs, crates/text/src/messages.rs, crates/ui/src/inventory.rs` — `99a5ef9`
+
+- `[x]` **X90** the probe and the frame budget, the two clauses X85 leaves
+  Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe
+   clause and its frame budget are a separate piece of work that needs its own shape (the port
+   has no ray query yet).
+  Shape: The probe asks the same shapes: a ray case through the port, a face hit derived from
+   the port's answer, and the niche cell measured against the body's own faces; then a
+   per-revision shape cache and a broad phase, with a measured budget for a scene of a few
+   hundred bodies.
+  Done: The niche probe meets a turned body's own face and not the box around it; a rule built
+   over a few hundred bodies keeps its frame budget; the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/move_query.rs, plan/notes/X85.md` — `5c75c31`
+
+- `[x]` **X89** a scene with a plate that has a hole, to carry a ball through it
+  Why: There are no boolean operations in the workspace, so a maker cannot cut a hole to try
+   the contact port on. The owner asked for a scene that proves a body passes through a hole in
+   another body (owner, 2026-11-19).
+  Shape: A scene file under assets/scenes built from a ring mesh: a 300 x 300 plate 10 mm thick
+   with a 120 mm square hole through it, a 60 mm ball above the hole and a turned board beside
+   it, so the object move can carry the ball down through the hole and stop where the plate's
+   own faces stop it. A project-side test writes the file from the model API and reads it back,
+   so the scene is verified rather than drawn by hand.
+  Done: The scene opens in the editor; the object move carries the ball through the hole and
+   the drag is not stopped by the plate; a test builds and re-reads the file; the gate is
+   green.
+  `files: crates/project/tests/through_a_hole.rs, crates/project/src/lib.rs, crates/model/src/mesh.rs` — `f92b4b8`
+
+- `[x]` **X85** a body is measured by its own surface and not by the box around it
+  Why: A turned cone is a box for contact: its invisible cuboid hits a plate long before the
+   apex reaches the corner between two plates, which is the owner report of the sixth session.
+   Every body is measured by an axis-aligned box, so a surface never lives by its own faces.
+   The owner asked for near-physical interaction: any surface lives by its faces, never by the
+   box around it.
+  Shape: Stage A: a new `contact` port crate (L1, next to `kernel`) with a `Shape` (convex
+   polyhedron or triangle mesh), a pose, and four queries — overlap, distance, first touch
+   along a direction, penetration depth and normal — implemented by a `contact-parry` adapter
+   over parry3d 0.31 (Apache-2.0, pure Rust, glam-based, f64 build): a cone, a cylinder, a ball
+   and a convex panel are exact convex shapes, a product keeps its envelope as a shell, a
+   notched panel is a triangle mesh, and a non-convex mover is a compound of convex parts.
+   `model` builds the shape of a node from its own parametric data — never from the render mesh
+   — and `move_query`, `niche` and `resting_conflict` measure the same shapes. The answer keeps
+   its meaning (ADR 0174): the destination is still asked whole, the jump still crosses
+   material, and the hold still rests the piece on the face first — only what counts as a face
+   changes. Stage B: a broad phase and per-revision shape caches so a big scene keeps its frame
+   budget. The mesh never decides contact; the rule stays pure and stateless.
+  Done: A turned cone reaches with its apex into a corner between two plates as far as its own
+   surface allows and stops on the plate face; a ball slips through a hole in a blob when its
+   place is clear and rubs the rim when it is not; a cylinder rests its barrel on a face; a box
+   and a panel answer exactly as today; the drag, the release guard and the log read one
+   measurement; the frame budget is tested; the gate is green.
+  `files: crates/geom/src/lib.rs, crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/model/src/primitive.rs, crates/model/src/project/query.rs` — `df5cf5b`
+
+- `[x]` **X86** a piece already inside another may only come out
+  Why: Today a pair the document already holds overlapping is exempt for the whole drag: a
+   piece left inside another by a hand edit or a typed coordinate can be dragged deeper as
+   easily as out. The owner asked that choosing the object move on such a piece makes it come
+   out.
+  Shape: The exemption of a pair that already overlaps is kept only while the overlap does not
+   grow: the destination is measured against the start depth and refused when it is deeper, so
+   every motion of the drag is a way out. The depth is the shared volume the rule already reads
+   for a box pair and the penetration EPA answers for hulls.
+  Done: A piece standing inside another moves out and never deeper while it still overlaps; a
+   pair that only touches is untouched; the gate is green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs` — `ac84a60`
+
+- `[x]` **X87** an invisible floor stops every body unless the workspace turns it off
+  Why: In a perspective or axonometric view a body dragged on a horizontal carry plane can end
+   up below the floor, and nothing in the document says there is one: only a floor-bound
+   product class keeps its height. The owner wants an invisible floor by default that stops any
+   body, with a checkbox that turns it off, and the furniture classes unchanged — a lower
+   cabinet already never sinks below the floor.
+  Shape: The move rule gains a virtual floor at Z = 0 as a lower bound on every moved body,
+   reported as a contact of its own kind so the log says Floor and not a node id. It is a stop
+   and not a capture, so it does not depend on the snap planes being on; a floor-bound product
+   keeps its class rules exactly as now. The workspace owns the switch — a checkbox beside the
+   snapping boxes, a new text message with a hint, default on, persisted with the other
+   settings, applied to the next drag and never to the one under the hand (ADR 0146) — and off
+   means no floor at all. An ADR records the rule and its scope.
+  Done: A body dragged down in a perspective view stops on the invisible floor and the log
+   names it; the checkbox turns the floor off for the next drag, costs no undo entry and
+   survives a restart; a floor-bound product behaves exactly as before; a wall or ceiling class
+   is unaffected; the gate is green.
+  `files: crates/model/src/project/move_query.rs, crates/ui/src/settings.rs, crates/text/src/messages.rs, app/src/document.rs, app/src/settings_store.rs, docs/decisions/README.md` — `b369337`
+
+- `[x]` **P17** the plan shows one line per stream, so four worktrees do not hide their work behind an idle state
+  Why: The plan holds exactly one live task, so a stream that works its entry leaves the state
+   saying idle while four branches move. The worktree rule papers over the gap: the plan is
+   written in one checkout and a stream's progress lives only in its commits.
+  Shape: state-contract grows a stream: one plan/SESSION.<letter>.md per stream, one
+   in-progress entry per stream in the order, and a status line that prints a row per stream.
+   The one-writer rule stays for the backlog file itself.
+  Done: A gate test accepts one in-progress entry per declared stream and refuses two in the
+   same stream, status prints one row per stream, and the backlog stays one file.
+  `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs` — `4423489`
+
+- `[x]` **X73** a hidden part is still in the way of the tools
+  why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
+   shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
+   void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
+   to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
+   through the part itself — a hidden part "allows building through itself but not being
+   intersected": the part placed there stops at the hidden part's own faces. Today the hidden
+   set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
+   the consumers that project the whole tree ask it: the frame builder and the light rig
+   (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
+   model's own measurements walk the document, where the flag has no home: `Project::probe` and
+   `Project::niche` measure every panel, object and shell
+   (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
+   (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
+   (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
+   drawing and the measuring disagree about what is there.
+  shape: Two halves, which land together because either one alone is wrong. **The sight.** One
+   visibility value in the model — the nodes the user switched off plus the parent walk that
+   makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
+   in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
+   takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
+   rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
+   void that holds one is no longer refused as "not one convex cell". **The boundary.** The
+   part still stops at it: the hidden bodies a cell holds are walls for the material and not
+   for the ray. The plan trims the footprint at every hidden body's face on the axes the part
+   takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
+   X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
+   the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
+   decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
+   cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
+   than the board, a hidden facade that spans the whole opening (the part takes what is left,
+   and a void with nothing left says so), and a hidden container whose children are visible
+   (the subtree goes with it, as the frame already does).
+  done: With a frame's facades hidden the shelf fill measures the case's own void instead of
+   the phantom planes and the ghost lands in the clear space, its depth stopping at the
+   facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
+   while a part created or carried there stops at the hidden faces and never intersects them; a
+   hidden body standing inside a void is a boundary of the part and never a slice of it, in
+   both builds; the niche row, the distance fields, the picking and the drawing name the same
+   parts in both states; showing a part again restores every reading and changes no document
+   field; a hidden container hides its whole subtree for the tools as it does for the frame;
+   cargo xtask ci is green.
+  `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs` — `36a1cd4`
+
+- `[x]` **X84** a cut is measured from where the piece stands
+  Why: In the fourth session the block was carried past the bar and then pulled 1330 mm back
+   across it when the pointer drifted 1 mm into the bar: every axis cut is resolved against the
+   piece start box, though the piece has been carried since. The owner reads it as the block
+   jumping left when it should have stood still.
+  Shape: limits_from(from, proposed) resolves the same proposal from the place the piece was
+   drawn last frame; limits(proposed) stays limits_from(ZERO) so the axis handle and every
+   existing answer keep their meaning. The destination is still asked whole first; a retry pass
+   may free an axis but never lose the face the drag rests on, and a sliver thinner than
+   CONTACT_MM at a face is a touch, not an overlap.
+  Done: A piece resting past a body stays at its face when the hand drifts into the body; the
+   near side is still reachable when the destination is there; both directions along one body
+   answer the same; the gate is green.
+  `files: crates/model/src/project/move_query.rs, app/src/translate_gizmo.rs, docs/decisions/0173-a-cut-is-measured-from-where-the-piece-stands.md` — `21d94d2`
+
+- `[x]` **X83** a crossing rests on the face
+  Why: The owner pushes a horizontal block butt-first into a vertical one: it passes to the
+   other side at once, though it should rest on the face and wait for the cursor to cross the
+   body. The other direction freezes and jumps much later, so the two directions read
+   differently. The hold compares the answer step with the hand step, and this session logged
+   single frames of 500-1000 mm of pointer travel, so a leap across a whole body is read as
+   ordinary travel and no frame shows the piece on the face.
+  Shape: The rule names the body a straight carry passes through (crossing) and the body the
+   hand itself stands inside (enclosing), both with the swept face test the drag already uses.
+   The carry holds a granted place beyond such a body for JUMP_HOLD, whatever the hand did, and
+   keeps the hold age at zero while the hand is still over the body: the wait is the cursor
+   crossing the thickness, not a timer. A cut answer is the face already and is never held.
+  Done: A place granted whole beyond a body is held on the face for JUMP_HOLD even when the
+   pointer crossed the whole body in one frame; the hold keeps no age while the hand is over
+   the body and takes the place the frame it comes out; both directions read the same; a cut
+   answer and a typed number are never held; the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, docs/decisions/0172-a-crossing-rests-on-the-face-before-it-is-taken.md` — `6af7d87`
+
+- `[x]` **X82** the free slot is not refused by the staircase
+  Why: The third logged session has the hand at (-171, 236) and the answer at (-94, 236), held
+   while the pointer kept travelling, and its own blocked=none proves the destination was free.
+   resolve walks the axes one at a time and never asks the placement they add up to, so a free
+   slot in front of a standing body is refused whenever every single axis to it is blocked. The
+   owner reports exactly that: a vertical part passes neither in front of nor behind a
+   horizontal one, though the space is there.
+  Shape: resolve asks the whole proposal first: if the piece may rest there, all three axes are
+   taken and no contact is reported. Only a refused destination is walked axis by axis, as 0166
+   decided, and the walk runs up to three passes so an axis cut on the first pass is asked
+   again once the axes after it have moved the piece. The boxes of the log become a test: the
+   slot in front, the slot behind, and the face when there is none.
+  Done: The whole destination is asked before the axes and taken when free; a cut axis is
+   re-asked after the other axes move; the reported board passes the standing body in front of
+   it and behind it; in line with it, it still stops at its face; the gate is green.
+  `files: crates/model/src/project/move_query.rs, docs/decisions/0171-the-place-the-hand-names-is-asked-before-the-axes.md` — `c6eb56a`
+
+- `[x]` **X81** a report names the part that was in the way
+  Why: The second logged session ends with a panel clamped at 466 mm while the hand asks for
+   2000 and the line names only Id(3). The numbers prove a cut and say nothing about what cut
+   it: a bare id, no kind, no box, and the take line names a bare Id(2) as well. The owner
+   reads the same log and reports that the mechanism works wrongly; neither side can settle it
+   while the obstacle is anonymous.
+  Shape: The take line names the piece: its kind, its name, its world box and its axes. The
+   carry line gains blocked=…, read from MoveRule::blocked_at — one function beside free_at, so
+   the log cannot disagree with the drag — naming the first part the destination would rest
+   inside, its kind and its box. The node itself is never printed, because it carries geometry.
+  Done: A take line says kind, name, box and axes of the piece; every cut names the obstacle
+   with its kind and world box; the log and the drag ask one predicate; the log line still
+   carries no geometry, and the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, docs/decisions/0170-a-report-names-the-part-that-was-in-the-way.md` — `6cb53d6`
+
+- `[x]` **X80** what the log said: a typed zero, a lost bond and a stale hold
+  Why: The owner ran the first logged session and said "плохо. проверь логи". The file answered
+   it in three lines: a typed zero in the carry distance field pinned the piece where it
+   started (0156 frames with asked far from delta and typed=Some(0.0)); the hand-to-pivot bond
+   was lost on 135 frames and the plane branch never read it again, so the carry stood still;
+   and the jump hold was skipped under a typed number, leaving a pending request that would
+   fire on release. The file also carried 13 megabytes of winit tracing spans because the sink
+   passed every crate at debug.
+  Shape: A typed zero releases the face in Distances::place, as every other typed field of the
+   editor already does (0092, 0126), so the pointer takes the face back instead of the part
+   being pinned against the wall. The carry reads the hand-to-pivot offset again when it is
+   missing, from the piece pivot and the hand. A typed number clears the pending jump. The sink
+   passes another crate target only at a warning, and the carry line gains typed, held, offset
+   and the hold age so the next report separates a rule cut from a pin from a hold.
+  Done: A zero typed into a carried piece distance field gives the axis back to the hand and
+   the piece follows again; a camera gesture or a pointer that leaves the work area no longer
+   freezes the carry; a pending jump does not fire when a typed number is released; the log of
+   a session is kilobytes of our own lines and no winit spans; every existing carry and
+   distance test keeps its answer, and the gate is green.
+  `files: crates/ui/src/distance.rs, app/src/translate_gizmo.rs, app/src/logging.rs, docs/decisions/0169-what-the-move-log-said.md` — `352e7da`
+
+- `[x]` **X79** the shell logs the carry, and a jump is measured against the hand
+  Why: The owner asks for a logging system that carries what a bug report needs: the moved
+   object, its coordinate and the cursor's coordinate, so a gesture's behaviour can be read
+   after the fact. The same message reports a regression of X78: the piece now jerks and jumps
+   instead of travelling. The cause is that the jump hold compared the rule's answer with an
+   absolute 15 mm step and the pointer's travel in points, so at a zoom where a few points mean
+   a hundred millimetres every ordinary frame was read as a jump and the piece moved in held
+   bursts.
+  Shape: The shell installs one `log` sink before anything else: a level from `Z3L_LOG`, a file
+   beside the workspace settings bounded at four megabytes, and the same lines on stderr. The
+   carry writes the node, its world coordinate, the cursor in points and the hand's world
+   point, the delta the hand asked for, the delta the rule resolved, the delta the carry
+   settled on, the jump hold and the contact/capture per axis; the held drag writes its
+   one-axis line; take, drop and cancel are info. The jump is measured against the hand's own
+   travel instead of an absolute step, so ordinary motion is never held.
+  Done: A run with `Z3L_LOG=debug` writes a line per carry frame with the object, its
+   coordinate, the cursor and all three deltas, and `Z3L_LOG=trace` adds the rest; the file is
+   bounded and appended across runs; a drag at any zoom follows the hand without held bursts,
+   and only a crossing of an obstacle is still held for a sixth of a second; the gate is green.
+  `files: app/src/logging.rs, app/src/main.rs, app/src/translate_gizmo.rs, README.md` — `a412412`
+
+- `[x]` **X78** a jump is held for a moment, and the object move has its icon
+  Why: Two reports from the owner on one screenshot of a room. A post carried up to a slab's
+   underside flips above the slab instead of resting on its face, which is the destination rule
+   (ADR 0166) crossing a solid in one frame as soon as a place beyond it fits; the owner asks
+   for a pause or a tolerance. And the object move has no icon while the band that names it is
+   text only, though the drawn drafts were approved.
+  Shape: The carry holds a crossing for a sixth of a second: a delta that changes by more than
+   a jump while the pointer barely moved keeps the previous place, and the same request
+   accepted for 0.12 s takes it, so a hand that brushed a face never flips the piece over it. A
+   face that already touches and is carried into is a stop at zero rather than a separation
+   that never closes, which is what made a post touching a slab report no contact at all. The
+   approved drawing becomes assets/icons/transform/object.svg on the 24 grid with the model and
+   modify inks, a transform theme in the icon module, a row in assets/README.md, a glyph beside
+   the object move's word in the status band, and the fallback to the word alone while the
+   asset is a placeholder.
+  Done: A post whose top touches a slab's underside stays on the face while the hand asks for a
+   few millimetres into the slab, and only a continuing request carries it past; a jump is held
+   for a sixth of a second and a fast hand takes it at once; the object move's band cell draws
+   the cube and the arrow, the other three cells stay words, and the narrowest window still
+   holds the band; every contact test keeps its answer where the face is already touched, and
+   the gate is green.
+  `files: app/src/translate_gizmo.rs, crates/model/src/project/move_query.rs, assets/icons/transform/object.svg, crates/ui/src/icons.rs, app/src/status_bar.rs` — `5f156d1`
+
+- `[x]` **X77** the move answers the place the piece lands, not the path it crosses
+  Why: Reported by the owner with screenshots of a room: two plain solids side by side stop at
+   each other and cannot be carried into the empty place beyond, a post cannot be carried past
+   a shelf although the shelf ends, and in perspective and axonometry solids and the carcass
+   pass through one another. The cause is one: the drag's rule stops the piece at the first
+   contact along the path it would travel from the start boxes, so a place beyond an obstacle
+   is unreachable by construction, whatever the pointer names. The second cause is that a shell
+   and a body are skipped entirely in a drag and in the write's guard, because a shelf in a
+   case is a body in a shell, so a carcass and a solid body pass through one another. The third
+   is that per-axis answers combine into a destination inside a turned neighbour, which is how
+   a diagonal carry cuts a corner.
+  Shape: The rule answers the place the drag lands and not the path it crosses: when the whole
+   destination the hand names is free, the piece goes there, jumping past whatever stood
+   between; when it is not, each axis is clamped at its first contact as today, so the piece
+   rests against the face and slides along it. The destination is tested once for the whole
+   vector, so a diagonal carry cannot cut a corner. A legitimate nesting — a piece in a case, a
+   unit inside another — is legal and never a collision, while a shell and a body that are not
+   nested stop each other like two bodies. The write's guard uses the same pair rule, so the
+   drag and the release cannot disagree.
+  Done: A solid body carried to a free place beyond another body lands there, while a carry
+   into it stops at its face; a body and a carcass stop each other, and a shelf inside a case
+   still moves freely within it; a diagonal carry whose per-axis limits would cut a corner is
+   stopped; a panel jumps past a neighbouring panel into the free place beyond it; every
+   existing contact test keeps its answer where the destination is blocked, and the gate is
+   green.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, app/src/translate_gizmo.rs` — `fb7b34a`
+
+- `[x]` **N27** the move tool is the object move, and a solid body stops at another body's faces
+  Why: Owner's request: the move tool is not the furniture move but the object move, because a
+   room is furnished with more than furniture. For a furniture piece nothing changes; a solid
+   body is measured by its own faces, so a turned chair stops where its face touches the
+   neighbouring body and not at the world box around it. Today the tool measures every contact
+   by the world box, which is early by the slack a turned body carries, and it hands a
+   selection that is not furniture no snapping at all, so a loose body cannot be put on the
+   floor plane or on the millimetre grid. The object-type idea (wall, floor, ceiling, skirting,
+   cornice) is the owner's next step and is not this entry.
+  Shape: The rule keeps one reading of contact for a furniture piece and gains an exact one for
+   a solid: a swept separating-axis test over the two boxes' own frames answers the first
+   distance at which the two bodies touch along the world axis the drag runs on, so a contact
+   is measured by faces and a contact that cuts the drag is rounded towards the start, which
+   keeps the release from landing a placement the write would refuse. Every selection now gets
+   the workspace's snapping; a face-measured mover takes the coordinate planes and the grid and
+   not another part's world box, which is the coarse reading it no longer shares. The mode, its
+   id, its key row and its words become Object, and the model's furniture_axes becomes
+   move_axes because it answers any move. The furniture rules (a panel's thickness axis, a
+   floor class's height) are untouched. An ADR records the split between the two readings and
+   why.
+  Done: A turned solid body dragged at a neighbour stops where its own face meets the
+   neighbour, which is later than the world box would allow, and its contact is the same box
+   the write refuses; a loose body drags onto the coordinate planes and the 1 mm grid and is
+   not captured by another part's world box; every furniture test keeps its answer and its
+   snapping; the mode reads Object in the band, the menu and the Settings page, and draws no
+   icon yet; the gate is green and an ADR records the decision.
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, crates/text/src/messages.rs, app/src/gizmo_math.rs, app/src/translate_gizmo.rs, plan/map.md` — `8366029`
+
+- `[x]` **X76** a carried frame leaves its grips behind, and a grip steals the press that puts it down
+  why: Observation, from the owner's screenshot of a carried frame: the frame moved and its
+   fourteen grip rings — eight corners and six face centres — stayed at the place it was taken.
+   The grips are read from the document (`BoxGrips::paint` calls `BoxBody::read(project,
+   node)`) while the body itself follows the drag preview, so the overlay and the picture
+   disagree for the whole gesture. The same defect has a second half: a press within the grip
+   radius of a carried piece arms a grip resize instead of putting the piece down, because the
+   shell's `gripping` test does not know a piece is in hand. Expected: a carried frame's grips
+   ride with it as its corner brackets do, and a press while a piece is in hand is the click
+   that puts it down.
+  shape: The grips read the drag preview the way the brackets and the renderer do: the body's
+   world placement goes through `Preview::moved_world` before a grip is projected, so a
+   translation carries the rings and a rotation turns them. The shell does not arm a grip while
+   the furniture move holds a piece — the next press belongs to the carry.
+  done: The grips of a frame in hand sit on the previewed body in both tools, a translation and
+   a rotation; a press over a carried piece's old grip position puts the piece down instead of
+   resizing it; the envelope's sides are unchanged by that press; `cargo xtask ci` is green.
+  `files: app/src/box_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs` — `0d85cba`
+
+- `[x]` **X75** a carried frame lags the hand and leaves its brackets behind
+  Why: Observation, from the owner, on the furniture move of a product frame bound to the
+   floor: the piece is sluggish — the hand runs away from it — and the corners of the open
+   frame's box stay where the piece was taken. Reproduced headlessly: a floor frame carried 120
+   points across the screen and 80 points up moves 113 and 21, so the piece gives up nearly
+   four fifths of the hand's depth travel. Cause: a multi-axis carry meets the pointer on the
+   camera's own plane through the pivot, and the rule then keeps only the horizontal part of a
+   delta measured in a plane turned away from the floor (ADR 0163), so the piece follows a
+   foreshortened copy of the hand. The brackets are collected from the frame the document still
+   holds, so they do not follow a drag at all. Expected: the piece keeps the screen offset the
+   click gave it, on the plane its class allows — exactly under the hand across the floor — and
+   every mark of the carried level, its corner brackets included, travels with it.
+  Shape: The carry meets the pointer on the plane the piece may travel in: the plane across the
+   one axis its class forbids (the floor, for a floor-bound frame), the camera's own plane only
+   when its three axes are free, and the hand-travel latch for a one-axis panel. The brackets
+   read the drag's preview instead of the placements the document still holds.
+  Done: A floor frame carried by the hand keeps it, its screen travel equal to the pointer's on
+   both screen directions; the same frame given a wall class still follows the hand in depth; a
+   one-axis panel keeps its latch, its fields and a typed gap; the brackets of an open product
+   or group stay on the carried level while the piece is in hand and go back with it; one carry
+   is still one undo entry; ADR 0163 is amended and the map rows are current; cargo xtask ci is
+   green.
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/open_frame.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions` — `c718acb`
+
+- `[x]` **X74** the furniture move carries a frame on every axis its class allows and slides it along the face it meets
+  Why: The owner, using the furniture move on a product frame: it travels one axis at a time,
+   so a floor cabinet cannot be moved across the floor in one gesture and a wall cabinet cannot
+   be moved in the plane it hangs on. The mount trait therefore reads as if it changed nothing,
+   because both a floor and a wall piece still obey the one axis the hand named (ADR 0151,
+   0153). The frame must move on every axis its class allows — a floor piece across the floor
+   plane, a wall piece everywhere — and a face it meets must stop that axis while the other
+   axes keep carrying it.
+  Shape: The furniture carry stops latching one axis for a piece that allows more than one. The
+   pointer is taken on the camera plane through the pivot at the take, so the hand proposes a
+   world vector; the rule answers it axis by axis, which zeroes a forbidden axis (a floor
+   piece's height, a panel's in-plane directions), snaps each allowed axis to a surface and
+   cuts each at its first contact, so a blocked axis stops and the free ones slide. A one-axis
+   piece keeps the hand-travel latch, its exact-distance fields and its typed gap; a multi-axis
+   delta keeps the fields on its dominant allowed axis, so a typed number still pins one face.
+   The class is read where the rule is read, so changing it in the properties card changes the
+   carry at the next take, and a test proves the same node changes behaviour.
+  Done: A floor frame carried diagonally changes X and Y in one gesture and keeps Z; the same
+   frame given a wall class moves in Z as well; a frame dragged into a neighbour stops on that
+   axis and still slides on the free one; a panel still offers its thickness axis only and its
+   typed gap still lands; one carry is one undo entry; an ADR and the map rows are updated;
+   cargo xtask ci is green.
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/move_query.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions` — `cea450f`
+
+- `[x]` **X72** a moved part may come to rest inside another part
+  Why: Observation, from the owner: moving a panel, it sinks into an existing panel, and a part
+   may not come to rest inside another part. Reproduced paths around the rule, not inside it:
+   the rule itself does stop a body at a body (`stop_at_contact` and `blocking` in
+   `move_query.rs`), but it lives in the two gestures and nowhere else. The free `Move` applies
+   no rule at all — ADR 0147 took the furniture rule out of it on purpose and X65's `Done` asks
+   that "the free move still crosses it" — and `Project::move_rule` answers `None` for a panel
+   that is not inside a product (`is_furniture`), so the furniture tool also carries a loose
+   board through anything. Nothing checks the placement a command is asked to write, so a typed
+   distance, a palette command or the assistant can land a board inside another one as well.
+   The live path the owner used is not yet identified; the two open ends are the free move and
+   a panel outside a product.
+  shape: The overlap is refused where the document is written, not only where a gesture runs.
+   The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
+   with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
+   shell that stays behind — touching faces are contact, not overlap, and a panel inside its
+   own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
+   rule is that a switched-off part is invisible to the eye and to the pointer, never to the
+   material (X73), so the guard asks the document, not the sight. The placement commands
+   (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
+   sentence naming the part that is in the way; the gestures read the same answer first, so a
+   piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
+   X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
+   snapping are untouched. A part that already overlaps another (a file written before this
+   rule) can still be dragged out of the overlap: the test refuses a placement that makes an
+   overlap worse, never one that makes it no worse. The awkward cases are decisions, not
+   accidents: a selection of several parts against one neighbour, a shell inside a shell (a
+   piece inside a case), a board that only touches, and a part carried with the camera moving.
+  Done: A panel dragged into another panel stops at its face with both moves; a
+   `node.placement.set` asked for the same overlap is refused with a sentence naming the part
+   and writes nothing, so the revision does not move; a part already overlapping another can be
+   dragged out of it and a touch is never a refusal; a piece inside a case's envelope and a
+   selection of several parts are unchanged; the ADR is written, `docs/decisions/README.md`
+   lists it and X65's clause is amended; cargo xtask ci is green.
+  `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs` — `f9209e6`
+
+- `[x]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
+  why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
+   owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
+   nearest object, with the editable gap in the middle of the arrow (reference picture:
+   Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
+   lags while a number is typed, drifts away from the pieces it measures after a camera gesture
+   and covers the pointer (X66, X69).
+  shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
+   from the piece's face along the free axis to the surface the model probe answered (the
+   neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
+   each end and the gap's own field sitting in the middle of the run. The field keeps the
+   behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
+   the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
+   the face and the opposite face follows. The floating card stops being drawn for the
+   furniture move; the inspector still shows the same two rows from the same Distances (ADR
+   0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
+   area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
+   axis points at the camera. Dimension grammar comes from the drafting skill.
+  done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
+   and Escape behave as the rows do today; the furniture move draws no card; the inspector
+   still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
+   test drives a gap through the arrow's field and asserts one command and one undo entry.
+  `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs` — `4870510`
+
+- `[x]` **N20** the card says the position its class gives, and never asks
+  Why: The owner asked the card for a position, then settled it: the class already dictates how
+   the piece moves (mount: Floor | Wall, ADR 0097), so a product field would be the second
+   source of truth that record refuses. What is missing is only the sentence: the card names a
+   class code and says nothing about whether the piece stands or hangs, so a maker cannot tell
+   why a floor cabinet will not rise or why a wall cabinet does. No field and no filter: the
+   card reads the trait.
+  Shape: One row under the class: the position the chosen class carries, said in words (On the
+   floor / On the wall), dim, and absent when the class has no mount rather than guessed. The
+   class list is not filtered and the class stays the only stored fact. A height above the
+   floor stays the makers placement, as ADR 0100 has it, so the row describes the rule and
+   never sets a height. Two messages carry the words in both languages.
+  Done: A headless test opens the card on the placeholder and reads On the floor, chooses the
+   wall cabinet and reads On the wall; a class without a mount draws no position row; cargo
+   xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/model/src/class.rs,crates/text/src/messages.rs` — `2cb817d`
+
+- `[x]` **O7** a package travels between workshops
+  Why: A workshop extends its directory and hands the extension to another workshop.
+  Shape: Package export and import as a folder, connect and disconnect, requires on registry
+   revisions, a refusal on a duplicated id.
+  Done: A package exports from one directory and imports into a second unchanged, and an id
+   clash is refused with both packages named.
+  `files: crates/catalog/src/source.rs,crates/project/src/lib.rs` — `b2a651b`
+
+- `[x]` **N19** the frame is drawn by the box tool it inherits from the cuboid, not by a card beside it
+  Why: The owner: the frame kept the old card where the box has a typed height field, and the
+   base tool should be one tool shared by both. Today the frame draws through BoxDraft, which
+   labels its two base sides but takes no typed number, while the cuboid draws the sketch
+   rectangle with the sketch field plates and pulls on Z; and the frame pull shows a titled
+   pane with a check and a cancel where the cuboid shows the lettered H plate. Two gestures
+   that build one document read as two tools.
+  Shape: The frame drawn method arms the same rectangle tool the cuboid cell arms, differing
+   only in the owner of the commit (product.create against object.primitive.create) and in the
+   extras the tool card offers while the draft lives (the class, and later the footprint and
+   the position). The base plates, the height pull and its lettered H plate, Enter, Esc and the
+   one undo entry are the shared ones; BoxDraft keeps only what the envelope grips still read
+   from it, or retires with box_tool.rs.
+  Done: The frame cell and the cuboid cell draw the same base plates and the same H plate,
+   compared row for row in a headless test; Esc drops the frame draft with no history entry;
+   one undo takes the created frame; cargo xtask ci is green.
+  `files: crates/ui/src/editor/creation.rs,crates/ui/src/box_tool.rs,app/src/document.rs,app/src/box_gizmo.rs,app/src/extrude_gizmo.rs` — `91063ac`
+
+- `[x]` **O6** the directory application edits a package
+  Why: A directory nobody can edit is a file format.
+  Shape: A second binary on the same stack: item tree, card, property editor, kind registry
+   view; one writer behind the lock, atomic writes, revision bumped last.
+  Done: A new item with properties is authored, saved and read back by the editor on a new
+   revision.
+  `files: crates/catalog/src/source.rs,crates/catalog/src/wire.rs,app/src/cli.rs,app/Cargo.toml` — `bcd0aa1`
+
+- `[x]` **N17** the frame says its footprint: a cut corner or a closed contour, and a height
+  Why: The owner asks for a frame whose reserved space is not a box: a corner kitchen cabinet
+   with one 45-degree cut, an end table with a 120-degree cut, and a frame drawn from a closed
+   contour. Today an envelope is three lengths, and ADR 0097 says in so many words that a
+   sloped or reshaped one is a new field and a new decision, so neither the card nor the
+   gesture can offer a shape before that decision is recorded.
+  Shape: The envelope gains a footprint beside the height: the rectangle it is today, a
+   rectangle with a cut at one or more corners, or a ring drawn on the plane, which is always a
+   reserved space and never a body. A cut stores offsets, not an angle: the offset along each
+   edge is what a maker measures on a board, and it reuses the panel corner language,
+   CornerFeatureKind (a chamfer of two setbacks), so one corner rule serves both. The corner
+   type is chosen first and names the row that follows: a chamfer offers its two offsets, a
+   fillet offers a radius only after the type is chosen. x and y stay the footprint bounds so
+   the readers, the export and the containment diagnostic keep an answer; the scene draws the
+   wireframe from the footprint, picking and the grips read it. An ADR records the footprint
+   and the corner rule (offsets for a chamfer, a radius for a fillet, the type first).
+  Done: A frame with a 45-degree and a frame with a 120-degree cut round-trip through the file
+   as their offsets, draw as the cut outline and are picked inside it; a fillet radius is
+   offered only after the corner type is chosen; a contour frame stores its ring as a reserved
+   space and pulls its height; a cut that eats an edge is a readable refusal; the ADR is
+   written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/container.rs,crates/scene/src/lib.rs,app/src/scene_build.rs,app/src/box_gizmo.rs,crates/ui/src/product_card.rs` — `85cf0b2`
+
+- `[x]` **O5** the editor hot-reloads the directory
+  Why: The directory is edited elsewhere; the editor must apply a new revision without a
+   restart.
+  Shape: A revision watched off the frame path, a snapshot swapped whole at a frame boundary,
+   derived data recomputed and the undo history untouched.
+  Done: A changed fixture re-derives a panel's thickness and appearance live, and the undo
+   stack is intact.
+  `files: app/src/main.rs,crates/engine/src/session.rs,crates/engine/src/lib.rs` — `b0d1c49`
+
+- `[x]` **O1** the default catalogue carries a 4 mm back sheet, so an applied or a grooved back resolves
+  Why: Every back type but the inset one needs a 4 mm sheet, and the default catalogue has no
+   such row, so the back falls back to a number written in code, which is the one thing the
+   material rules forbid.
+  Shape: A row in the default catalogue carrying the thickness, the sheet stock and the edge
+   rule; the back type's planes read it, and an out-of-range material stays a refusal.
+  Done: A test builds an applied back and finds its thickness in the catalogue, and the inset
+   type still uses the 18 mm stock.
+  `files: app/src/scene_build.rs,crates/catalog/src/starter.rs` — `b0d1c49`
+
+- `[x]` **O4** the directory crate holds the item envelope, the registries and the index
+  Why: The directory needs one item envelope, typed registries and an index before anything can
+   read it.
+  Shape: ItemId, kind and trait registry, property registry with typed values, families, an
+   index and the DirectorySource port; the mock, MaterialId and the old loader are deleted in
+   this change.
+  Done: A fixture package of every starter kind loads, a bad row is refused with its package
+   named, and the mock file is gone.
+  `files: crates/catalog/src/lib.rs,crates/catalog/src/directory.rs,crates/model/src/ids.rs,app/src/scene_build.rs` — `b0d1c49`
+
+- `[x]` **N23** the empty-space ghost passes the neighbour it meets and holds at the frame envelope
+  Why: The owner, confirmed: a panel created in a frame runs into its neighbour and freezes
+   there, and should instead stop at it and jump past it into the free space beyond when the
+   pointer crosses; and a panel dragged in an empty frame or an empty part of one should stop
+   at the frame envelope and not vanish when the pointer leaves it. Today the fill plan clamps
+   the free-axis position inside the void and refuses a point outside the open product, so the
+   ghost sticks at the panel it meets and disappears at the envelope.
+  Shape: The point under the pointer names the cell, the ghost fits that cell, and crossing a
+   part re-plans into the cell beyond instead of clamping at the part; a point outside the
+   product clamps to the envelope inner face, so the ghost stays the last part it could place
+   and the click creates what was drawn. A refusal that is not about the pointer (a void
+   thinner than the board, a cell that is not convex, another product void) still says why. The
+   ghost stays the one measurement the click stores, so the picture, the numbers and the
+   panel.create cannot disagree.
+  Done: A shelf ghost at a panel face jumps into the cell above it when the pointer crosses the
+   panel; a pointer beyond the envelope keeps the last ghost and the click creates that part; a
+   void thinner than the board still refuses with its sentence; one click is one undo entry;
+   cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/void.rs` — `0bede29`
+
+- `[x]` **X71** the carry's hand is the pointer the viewport hit-tests while it is displaced
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `0fc31df`
+
+- `[x]` **X70** the carry's hand is the drawn pointer, not the system one
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/main.rs,app/src/work_cursor.rs` — `58c2988`
+
+- `[x]` **X69** the camera gesture hides the pointer and returns it to the middle of the piece
+  `files: app/src/document.rs,app/src/translate_gizmo.rs,app/src/frame_tests.rs` — `3de9d3f`
+
+- `[x]` **X68** a camera change keeps the piece and returns the pointer to it
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/scene/src/camera.rs` — `58324e5`
+
+- `[x]` **X67** a camera change leaves the carried piece in the hand
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/document.rs,app/src/view_layout.rs,crates/scene/src/camera.rs` — `bac9750`
+
+- `[x]` **X65** a carried piece runs away from the cursor when the hand strays off its axis
+  Why: Observation: a board carried by the furniture move runs away from the cursor —
+   reproduced in the divider fixture, where a pointer that moved sideways and up carried the
+   board from a 50 mm contact to -715 mm. Expectation: a carried piece follows the hand, and a
+   hand that moves across the piece's axis moves it none. Suspected cause, reproduced: the
+   distance is the projection of the pointer's ray onto the axis line, and that projection is
+   unstable as soon as the pointer strays sideways from the line — 69 mm of travel for a purely
+   sideways 200 pt move in the default view, hundreds once the axis is oblique to the view.
+  Shape: Measure the carry by the hand's own travel: the pointer's movement projected onto the
+   axis' screen direction, scaled where the piece was anchored (the local slope of the
+   projection, one point along that direction). The anchor is set when the axis is named and on
+   every frame that drives the camera, and nowhere else, so the piece cannot move when the view
+   does and cannot run away from the hand. The held handle keeps the ray's projection, because
+   a handle sits on the line.
+  Done: A pointer that moves across the axis' screen direction changes no distance, at any
+   distance from the line; a pointer that moves along it carries the piece at the scale the
+   projection gives at the take; an axis that points at the camera carries nothing; the rule,
+   the fields and the capture are unchanged; the divider stops at its neighbour and the free
+   move crosses it (amended by X72, ADR 0162: the free move stops at the neighbour too, and the
+   clause is the one X72's `Done` carries).
+  `files: app/src/translate_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `824859f`
+
+- `[x]` **X66** the carried piece's distance plates take the hand that carries it
+  Why: Observation: the gap plates of a carried piece take the hand. The card is anchored at
+   the pointer, so the plates sit where the hand is; a press on one does not put the piece
+   down, it starts the plate's scrub, which pins the number the drag passes through — the piece
+   then jumps to that gap and stops following the pointer, exactly as the owner's two
+   screenshots show. Expectation: while a piece is carried nothing between the hand and the
+   scene may take the pointer, because the press that ends a carry is the drop. Suspected
+   cause: `crates/ui/src/tool_card.rs` draws an interactive `egui::Area`, and the scrub of an
+   unfocused row commits live, so the plate's number is pinned by the drag.
+  Shape: The tool card of a carried piece is drawn without pointer interaction: it keeps the
+   keyboard (the field nearest the pointer still takes it, and typing a gap still pins) and
+   loses every pointer sense, so a press anywhere over it reaches the viewport and puts the
+   piece down. The card of every other gesture keeps its pointer, because those gestures have a
+   button in the hand and the plate is a deliberate target.
+  Done: A press over the carried piece's card puts the piece down and commits one placement; a
+   press-and-drag over the card scrubs nothing and pins nothing; typing a gap on that card
+   still pins the piece; the fill, box, extrude and sketch plates stay interactive; frame tests
+   and cargo xtask ci are green.
+  `files: crates/ui/src/tool_card.rs,crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs` — `824859f`
+
+- `[x]` **N25** a piece in hand blocks nothing, and the view may move under it
+  Why: The owner, using N24: a piece in hand freezes the viewport. Orbit, pan and the wheel are
+   refused while the furniture move carries a piece, so a maker who took a shelf cannot turn
+   the case to see where it goes — the one thing the gesture needs. The hold owns no button, so
+   nothing about it justifies owning the view.
+  Shape: The carried piece blocks nothing. The camera keeps orbiting, panning and zooming under
+   it, and when the view moves the hold re-anchors instead of dragging the piece along: the
+   piece keeps the distance it has and the hand continues from the pointer's new place. A tool
+   that takes the pointer — a draft, a pull, a grip, the ruler, the niche — or a command that
+   lands under the hand (undo, delete, a rename) ends the hold and puts the piece back, because
+   the hold is not a mode. A held handle drag keeps freezing the camera, because the button
+   under the hand is the drag.
+  Done: The camera orbits, pans and zooms while a piece is in hand, and the piece keeps its
+   distance through all three; the next click commits exactly the distance the pointer added
+   after the view moved; a running tool or a command under the hand puts the piece back and
+   writes nothing; a held handle drag is unchanged; frame tests and cargo xtask ci are green.
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,docs/decisions` — `fb6bbc0`
+
+- `[x]` **N24** the furniture move takes the piece by a click and follows the pointer
+  Why: The owner, after using the furniture move: the axis handles are the wrong affordance for
+   it. A maker takes a board by its body, not by a three-point arrow, and holding the button
+   through a 900 mm slide is the long part of the gesture. The tool should take the piece by
+   any part of it, follow the pointer with the hand free, and put it down on a click.
+  Shape: The furniture move draws no handle. A click on a movable body selects it and takes it
+   in hand; from then on the pointer moves it through the document's rule (contact, snapping,
+   the panel axis) with no button held, and the next click drops it as one
+   node.placement.set_many. Escape puts it back, changing the mode does the same, and the
+   camera stays put while a piece is in hand. The axis is the one allowed axis nearest the
+   hand's travel, latched at the first movement, so a panel still only slides along its
+   thickness; the exact-distance fields stay, because a latched axis is a number as before. The
+   free Move keeps its arrows and its held drag.
+  Done: A click on a panel in Furniture mode takes it and the pointer moves it with no button
+   held; a second click commits exactly one revision and one undo entry; Escape restores the
+   placement and writes nothing; a click that never moved writes nothing; a body that may
+   travel nowhere is not taken; a locked piece is not taken; the handles are not drawn and no
+   axis is offered in that mode; the panel still moves only along its thickness; the fields
+   still type a distance; the frame tests and cargo xtask ci are green.
+  `files: app/src/translate_gizmo.rs,app/src/document.rs,app/src/status_bar.rs,crates/text/src/messages.rs,docs/decisions` — `e0e7a37`
+
+- `[x]` **O3** the directory is decided: three records, the domain documents and the task seeds
+  Why: The catalogue outgrew two typed tables; the directory replaces it and every later task
+   reads this decision.
+  Shape: 0148, 0149 and 0150 plus the rewritten domain documents and a pointer where
+   materials.md was.
+  Done: The three records are accepted, the two domain documents state the directory, and the
+   task seeds exist.
+  `files: docs/domain/nomenclature.md,docs/domain/technology.md,docs/decisions/README.md` — `9fec8f9`
+
+- `[x]` **U113** select, move and rotate answer keys, and the status bar prints them
+  Why: The owner asks for keys on the move and rotate tools. The three transform modes are one
+   band in the status bar and have no row in KEYS, so the Settings page cannot list them and a
+   maker reaches for the mouse for the most repeated action in the editor. The one key table
+   already exists (ADR 0117); the modes are simply absent from it.
+  Shape: A binding for Select, Move, Rotate and the furniture mode in inventory KEYS on chords
+   no drawing tool owns: W, E and Q beside Shift+W for the furniture move, with R, M, A, C, N,
+   L, P, V, G, S, O and F already taken by the sketch, the view and the niche. The status bar
+   band carries four states and prints the key beside each label; the node context menu of the
+   tree and the viewport offers the four as session entries in the list node_actions already
+   keeps beside its command rows, because they are view state and write no document, so the
+   action has a place in the menu without inventing a command for it. The Settings page lists
+   the same four rows with the rest. This task waits for N22 to exist before it names the
+   fourth mode; the other three can land first.
+  Done: Each of the four modes answers its key from the shell and the status bar cell shows it;
+   the tree row menu and the viewport menu both offer the four; the Settings shortcut list
+   holds all four; the table test proves no two rows share a key and every binding prints in
+   both languages; cargo xtask ci is green.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/node_actions.rs,app/src/shortcuts.rs,app/src/status_bar.rs,app/src/main.rs,crates/text/src/messages.rs` — `ff5f72c`
+
+- `[x]` **N22** the furniture move is a tool of its own, and the free move keeps its hands off the rules
+  Why: The owner wants two tools: the move the editor has stays free and turns the furniture
+   snapping off, and a furniture move moves the object by its own rules — a panel only along
+   its own Z, parallel to its AB planes, and a frame on all three axes but seeing its
+   neighbours and the walls — with the distance to the neighbour or the wall as a typed field.
+   Today one Move mode decides under the hand: the translate gizmo reads Project::move_rule and
+   applies it whenever the selection is furniture (ADR 0102, 0103), so the same handle is free
+   for a loose body and ruled for a cabinet, and no rule gives a panel its own axis at all.
+  Shape: A fourth transform mode beside Select, Move and Rotate: Furniture. It is view state,
+   never a document field (ADR 0113). The free Move drops the furniture rule and its snapping
+   and keeps the exact micrometre drag; the exact-distance fields stay in both modes, because
+   they are the typed path (ADR 0103) and the owner answer named the snapping alone. The
+   furniture mode reads Project::move_rule and adds the panel rule: a panel moves only along
+   its own local Z, the thickness axis, so it slides parallel to its AB planes and keeps them
+   parallel; a shelf rises and falls in its thickness direction, a divider crosses the case, a
+   back moves front and back. A frame moves on the three world axes subject to its class mount
+   (a floor piece keeps its height), and every drag sees the neighbours, the planes and the
+   walls of N21 through the distance fields of this mode, whose number is the gap to the face
+   that stops it. One undo entry per drag either way; an ADR records the mode, the panel axis
+   and what the free move no longer does.
+  Done: A selected shelf moves only along its own Z and the two in-plane directions are
+   refused; a divider moves across the case and a back moves in and out; a frame moves on three
+   axes, a floor frame keeps its height and a neighbour stops it; the free move keeps a 97.4 mm
+   drag where the furniture move stops at the wall, and the free move does not snap; a typed
+   gap lands the face where typed and the field shows the same number; each drag is one undo
+   entry; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/gizmo_math.rs,app/src/translate_gizmo.rs,app/src/status_bar.rs,app/src/document.rs,app/src/frame_tests.rs,crates/model/src/project/move_query.rs,crates/text/src/messages.rs,crates/ui/src/distance.rs` — `cd44446`
+
+- `[x]` **N21** snapping is a setting: the coordinate planes, the frames and the tolerance
+  Why: The owner: frames stick to each other, and the tolerance is the distance at which a
+   piece jumps to another, like a snap; frames stick to the floor and to walls, and until a
+   house-wall tool exists the virtual coordinate planes stand in for walls. Today the capture
+   is two constants in move_query.rs (a 5 mm snap radius and a 1 mm grid), no coordinate plane
+   is a candidate, and the maker cannot turn any of it off. Snapping is a taste and a workshop
+   standard, not a code literal, so it belongs in the workspace settings like the grid step and
+   the gizmo handle.
+  Shape: One Settings section for snapping (in the View page, beside the grid): the coordinate
+   planes on or off, the frames on or off, and the tolerance in millimetres that captures a
+   drag and makes the piece jump — it lands flush, because the tolerance is the distance at
+   which the snap fires and not a gap to keep. The move rule reads a SnapSettings value the
+   shell passes in instead of the constants; the candidates gain the X=0, Y=0 and Z=0 planes
+   (the floor included) beside the envelopes, the virtual faces and the part faces, and a
+   capture still lands the faces together. A captured face draws a line on the plane or the
+   neighbour and its field says the number, so a snap nobody can see is not a drag that feels
+   broken. One ADR records the settings, the planes as stand-in walls and the tolerance
+   reading.
+  Done: A workspace file round-trips planes, frames and tolerance; a frame dragged within the
+   tolerance of Y=0 jumps onto the plane and one dragged past it does not; two frames within
+   the tolerance meet flush and beyond it stay apart; turning the planes off leaves the piece
+   where the pointer put it; the field at the captured face shows the same number the rule
+   used; the ADR is written and docs/decisions/README.md lists it; cargo xtask ci is green.
+  `files: crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,app/src/document.rs,app/src/translate_gizmo.rs,app/src/settings_store.rs,crates/text/src/messages.rs` — `5499a93`
+
+- `[x]` **U112** the product card aligns its numbers and folds its class list
+  Why: The card is the numeric path into `product.create` and it is about to grow fields
+   (shape, position, corners), so its layout is read before it grows. Today each row label is
+   as wide as its word, so the three number boxes start at three different x positions; the
+   class list is a flat scroll of seventeen rows with no fold, so a maker hunting a wall
+   cabinet reads the whole registry; and the paragraph under the title explains a rule the
+   maker learns from the frame itself and cannot act on.
+  Shape: A fixed label column (LABEL_WIDTH, at least one tree indent) with the shared scrub
+   field beside it, so Width, Depth and Height start on one x. The class list becomes the
+   registry tree the picker already builds: a foldable family caption, a foldable type row that
+   is itself selectable, and its variant rows under it, drawn with egui CollapsingState like
+   the scene tree; the type that holds the current class opens by default and a search opens
+   every group it keeps. `class_picker::product_rows` returns that tree instead of a flat list
+   of depths. The ProductCardHint message is deleted from the table in both languages.
+  Done: A headless test draws the card and finds the three fields labels and numbers on one
+   column; a closed type lists no variant and the type of the chosen class lists them; the hint
+   is gone from both languages; cargo xtask ci is green.
+  `files: crates/ui/src/product_card.rs,crates/ui/src/class_picker.rs,crates/text/src/messages.rs` — `b2f83b7`
+
+- `[x]` **T10** the group digits follow the order of the work, so the case is 10 and the seat is 80
+  Why: T9 made the picker sort the families by a presentation constant, which leaves the stored
+   digits in the old order: a saved node still says 30.01 for a cabinet and 10.01 for a chair,
+   and every export, report and reader still meets the seating first. The order belongs in the
+   number, as the owner asked: the case starts at 10 and the seat ends at 80. No build has
+   shipped, so a code may still move (ADR 0094 immortalises a code only once it ships).
+  Shape: Remap the group digit of every class, host prefix, constant, doc table and test
+   literal: 30 to 10 storage, 70 to 20 boards and trim, 40 to 30 surfaces, 20 to 40 lying, 80
+   to 70 general, 10 to 80 seating; 50 and 60 keep their numbers. The type and variant digits
+   stay, so 30.01.02 becomes 10.01.02 and the old 10.01 cabinet of furntypes.md is true again.
+   presentation_rank and PRESENTATION_ORDER leave model, the picker and the product card walk
+   registry() again, and docs/domain/classes.md section 7 lists the families ascending, which
+   is now the order of the work. One ADR records that the digits follow the work and that group
+   10 names storage, not the product role of 0097.
+  Done: The cabinet is 10.01 and the chair is 80.01, the picker's first family is 10 and its
+   last is 80 with no sort in the way, and a test proves every stored code resolves to the row
+   the document gives it.
+  `files: crates/model/src/class.rs,docs/domain/classes.md,crates/ui/src/class_picker.rs` — `f0f8f68`
+
+- `[x]` **T9** the class list follows what a shop builds, not the order of the digits
+  Why: A person meets the chair and the stool first, because the registry is ordered by family
+   code, and the case a cabinet shop actually builds sits third while the placeholder product
+   sits last. The picker's tree and the product card's list are both drawn in that order, so
+   the first row of a new product is a scene prop.
+  Shape: A presentation order in model: a constant list of family codes and presentation_rank
+   by family, read by the class picker's tree and the product card's list; the table stays
+   ascending by code because ClassCode::row binary-searches it. The order is 80 general, 30
+   storage, 70 boards and trim, 40 surfaces, 20 lying, 50 fittings, 60 appliances, 10 seating.
+   docs/domain/classes.md section 7 lists the heading paragraph in that order, and the existing
+   family test compares the sequence instead of only the count.
+  Done: The picker's first family is 80 and seating is last, the product card's first row is
+   the placeholder and its last row is a seating class, and a family left out of the order
+   fails a test.
+  `files: crates/model/src/class.rs,crates/ui/src/class_picker.rs,docs/domain/classes.md` — `7322b60`
+
+- `[x]` **U111** the drawing's words are fixed: a spacing is the clear opening, left is +X, and the depth includes the fronts
+  Why: Three conventions decide every wardrobe dimension, and one of them was read backwards:
+   340 and 320 were taken as axis spacing instead of clear openings, so the shelves landed on
+   the wrong side. The code has no single place that says which side Left is, so a reader
+   infers it from a mirrored picture.
+  Shape: A Side helper with Left, Right, Front and Back and their axes, tied by a test to
+   OpeningView::Left.direction(); a glossary paragraph in docs/domain/products.md fixing that a
+   spacing is a clear opening, that depth is measured with the fronts, and that left is +X seen
+   from the front.
+  Done: A test asserts that Side::Left equals OpeningView::Left.direction(), the glossary
+   states the three conventions, and cargo test -p model -p ui is green.
+  `files: crates/ui/src/display.rs,crates/model/src/,docs/domain/products.md` — `17aee02`
+
+- `[x]` **U109** the floor can be made see-through, and its shadow survives it
   Why: Owner, 2026-11-17: the floor should be see-through with a setting of its own, and the
    shadow must not suffer for it. U108 already made the plate write no depth, so a part under
    the floor is drawn over it; what is still missing is the *tint*: the plate is opaque, so
@@ -69,9 +1062,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    of the value re-uploads nothing; the value survives a restart and Reset display restores it;
    a shot pair at 100 % and 40 % with a part under the floor and a shadow on it; the ADR is
    written and docs/decisions/README.md lists it; cargo xtask ci is green.
-  `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs`
-
-## Done
+  `files: crates/render/src/ground.rs,crates/render/src/pipelines.rs,crates/render/src/scene.wgsl,crates/render/src/lib.rs,crates/scene/src/lib.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/document.rs,app/src/ui_shots.rs` — `b03823d`
 
 - `[x]` **L1** the shadow map reaches the panels, so a shelf darkens the back panel and a niche reads
   Why: The ground shadow says what stands on the floor and says nothing about the inside of a
@@ -1445,7 +2436,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A package carries a per-sheet cutting plan for one material and a price per line; the
    columns are additive; the golden file records them; cargo xtask ci is green.
   now: export: the parts price, the sheets table and the manifest rules and money blocks
-  `files: crates/model/src/catalog.rs` — `2a634da`
+  `files: crates/export/src/rows.rs,crates/catalog/src/view.rs` — `2a634da`
 
 - `[x]` **K3** the order package is written from a command line, without opening a window
   Why: A package is useless if producing it needs a window and a person. The report pipeline

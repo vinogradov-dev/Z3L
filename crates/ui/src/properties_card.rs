@@ -405,6 +405,10 @@ fn edit_row(
             PropertyValue::Reference { id } => {
                 ui.label(format!("#{}", id.get()));
             }
+            // A catalogue record reads as the id a person can find in the directory: `712-34`.
+            PropertyValue::Item { id } => {
+                ui.label(id.to_string());
+            }
             PropertyValue::Structured { value } => {
                 ui.label(RichText::new(value.to_string()).weak());
             }
@@ -440,7 +444,7 @@ mod tests {
 
     #[test]
     fn applying_a_property_edit_dispatches_one_undoable_change() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(
             &mut session,
@@ -458,7 +462,7 @@ mod tests {
 
     #[test]
     fn clearing_a_missing_property_is_an_error() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         assert!(apply(&mut session, panel, Edit::Clear { key: "missing".to_owned() }).is_err());
     }
@@ -484,7 +488,7 @@ mod tests {
 
     #[test]
     fn a_dragged_length_is_one_undo_entry() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(&mut session, panel, Edit::Set { key: "thickness".to_owned(), value: length_property(10), scope: None })
             .expect("set property");
@@ -527,7 +531,7 @@ mod tests {
 
     #[test]
     fn choosing_a_class_is_one_undoable_change() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let mut card = PropertiesCard::default();
         let ctx = egui::Context::default();
@@ -559,7 +563,7 @@ mod tests {
             output.drop_without_applying_deltas();
         }
 
-        let shelf: ClassCode = "30.11".parse().expect("the horizontal panel code");
+        let shelf: ClassCode = "10.11".parse().expect("the horizontal panel code");
         assert_eq!(session.project().class(drawer), Some(shelf), "Enter takes the first match the search leaves");
         session.undo().expect("one undo returns the previous class");
         assert_eq!(session.project().class(drawer), Some(ClassCode::UNCLASSIFIED));
@@ -612,7 +616,7 @@ mod tests {
 
     #[test]
     fn a_click_on_a_picker_row_assigns_the_class_and_one_undo_returns_it() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let drawer = Id::new(3).expect("drawer id");
         let mut card = PropertiesCard::default();
         let ctx = egui::Context::default();
@@ -636,7 +640,7 @@ mod tests {
         card_frame(&ctx, vec![button(true)], &mut session, &mut card, drawer);
         card_frame(&ctx, vec![button(false)], &mut session, &mut card, drawer);
 
-        let shelf: ClassCode = "30.11".parse().expect("the horizontal panel code");
+        let shelf: ClassCode = "10.11".parse().expect("the horizontal panel code");
         assert_eq!(session.project().class(drawer), Some(shelf), "the click assigns the row under the pointer");
         session.undo().expect("one undo returns the previous class");
         assert_eq!(session.project().class(drawer), Some(ClassCode::UNCLASSIFIED));
@@ -645,7 +649,7 @@ mod tests {
 
     #[test]
     fn a_length_is_drawn_as_a_number_with_the_unit_outside_it() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let panel = Id::new(2).expect("panel id");
         apply(&mut session, panel, Edit::Set { key: "thickness".to_owned(), value: length_property(18), scope: None })
             .expect("set property");

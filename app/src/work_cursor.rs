@@ -93,10 +93,22 @@ pub(crate) fn show(
     settings: &PointerSettings,
     scene: Option<egui::Rect>,
     widget: Option<egui::Rect>,
+    hidden: bool,
+    hand: Option<egui::Pos2>,
 ) -> Option<WorkCursor> {
-    let pointer = ctx.pointer_hover_pos()?;
+    // The carry owns the hand while it is displaced: a camera gesture moved the view and not the
+    // piece, so the square is drawn on the piece and the mouse moves it by its own movement (X69).
+    let pointer = hand.or_else(|| ctx.pointer_hover_pos())?;
     let scene = scene?;
     if !scene.contains(pointer) || over_system_surface(ctx, pointer, widget) {
+        return None;
+    }
+    // A pointer the carry has put away: a camera gesture under a piece in hand moves the world and
+    // not the piece, and a square standing still over the moving scene is the picture of a piece
+    // being left behind. The system arrow stays hidden all the same, so nothing shows at all
+    // (ADR 0156, X69).
+    if hidden {
+        ctx.set_cursor_icon(egui::CursorIcon::None);
         return None;
     }
     let cursor = WorkCursor::new(pointer, settings.size_points(), settings.crosshair, scene);
@@ -221,7 +233,7 @@ mod tests {
         let output = ctx.run_ui(input(), |ui| {
             let field = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(160.0, 24.0));
             ui.put(field, egui::TextEdit::singleline(&mut text));
-            shown = show(ui.ctx(), &settings, Some(screen), None);
+            shown = show(ui.ctx(), &settings, Some(screen), None, false, None);
         });
         assert_eq!(output.platform_output.cursor_icon, egui::CursorIcon::Text, "the field owns the pointer");
         assert!(shown.is_none(), "the square must not cover the I-beam it would replace");

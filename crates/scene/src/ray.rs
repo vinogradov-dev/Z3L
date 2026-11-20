@@ -24,7 +24,7 @@
 //!
 //! Changes when: the ray primitive, a cast primitive or the pick tolerance changes.
 
-use geom::{Aabb, DMat4, DVec3, MeshData};
+use geom::{Aabb, DMat4, DVec2, DVec3, MeshData};
 
 use crate::camera::Camera;
 use crate::{Drawable, Polyline, ProductEnvelope};
@@ -34,6 +34,12 @@ use crate::{Drawable, Polyline, ProductEnvelope};
 /// A path is drawn one pixel wide, so a ray rarely crosses it exactly; this radius makes a click
 /// near the line select the path without making a whole viewport region its target.
 pub const LINE_PICK_RADIUS_POINTS: f64 = 6.0;
+
+/// Geometric slack of the picking tests, in millimetres.
+///
+/// A micrometre is a thousandth of the smallest step the document stores, so an exact boundary stays
+/// on the inside after the inverse of a rotation rounds it a few floating-point steps out.
+const SLACK_MM: f64 = 1.0e-6;
 
 // How many mesh triangles a cast has tested on this thread in a test build.
 //
@@ -100,16 +106,22 @@ impl Ray {
     }
 }
 
-/// Distance along `ray` to the face where it enters a product envelope, if it crosses the box.
+/// Distance along `ray` to where it enters the space a product envelope reserves, if it does.
 ///
-/// The envelope is three sides in the product's own frame, so the ray is moved into that frame and
-/// tested against the axis-aligned box `[0..size]`; a rigid transform keeps the direction a unit
-/// vector. A malformed size or a transform that cannot be inverted is no hit, never a panic. The
-/// distance is the entry point clamped to zero, so a ray that starts inside the box reports its
-/// origin instead of a negative value.
+/// The envelope's footprint is a closed outline on the product's base plane, so the ray is moved
+/// into the product frame and the reserved space is the prism that outline sweeps up by `height`.
+/// The box around the prism is the cheap rejection and the floor of the answer; the outline itself
+/// is the shape, so a click into a cut corner, or outside a drawn ring, is no hit even though it is
+/// inside that box (ADR 0100, ADR 0159).
+///
+/// The ray's own path is split at every point where it crosses the prism's boundary, and each piece
+/// is tested at its middle: even-odd crossing counts and holes aside, the first piece that is inside
+/// is the answer. A malformed outline, a non-positive height or a transform that cannot be inverted
+/// is no hit, never a panic, and the answer is clamped to zero so a ray that starts inside reports
+/// its origin.
 pub(crate) fn ray_hit_product_envelope(ray: Ray, envelope: &ProductEnvelope) -> Option<f64> {
-    let size = envelope.size;
-    if !size.is_finite() || size.min_element() <= 0.0 || !envelope.world_transform.is_finite() {
+    let (min, max) = envelope.local_bounds()?;
+    if !envelope.world_transform.is_finite() {
         return None;
     }
     let inverse = envelope.world_transform.try_inverse()?;
@@ -121,7 +133,110 @@ pub(crate) fn ray_hit_product_envelope(ray: Ray, envelope: &ProductEnvelope) -> 
     if !origin.is_finite() || !direction.is_finite() {
         return None;
     }
-    ray_slab(origin, direction, DVec3::ZERO, size)
+    let (near, far) = ray_slab_interval(origin, direction, min, max)?;
+    let start = near.max(0.0);
+    let end = far.max(start);
+    let mut crossings = Vec::new();
+    for index in 0..envelope.outline.len() {
+        let (Some(from), Some(to)) =
+            (envelope.outline.get(index), envelope.outline.get((index + 1) % envelope.outline.len()))
+        else {
+            continue;
+        };
+        let Some(along) = ray_crosses_edge(origin, direction, *from, *to) else {
+            continue;
+        };
+        if !(start..=end).contains(&along) {
+            continue;
+        }
+        let height = origin.z + direction.z * along;
+        if (-SLACK_MM..=envelope.height + SLACK_MM).contains(&height) {
+            crossings.push(along);
+        }
+    }
+    crossings.push(start);
+    crossings.push(end);
+    crossings.sort_by(f64::total_cmp);
+    for window in crossings.windows(2) {
+        let (Some(low), Some(high)) = (window.first(), window.get(1)) else {
+            continue;
+        };
+        if high <= low {
+            continue;
+        }
+        let middle = low + (high - low) * 0.5;
+        if inside_prism(origin, direction, middle, &envelope.outline, envelope.height) {
+            return Some(low.max(0.0));
+        }
+    }
+    None
+}
+
+/// Where the ray crosses one outline edge, measured along the ray.
+///
+/// The outline lies on the base plane, so this solves the two planar directions only: the crossing
+/// must fall on the segment (a parameter between zero and one) and on the ray, and the height is the
+/// caller's test. A ray parallel to the edge never crosses it.
+fn ray_crosses_edge(origin: DVec3, direction: DVec3, from: DVec2, to: DVec2) -> Option<f64> {
+    let edge = to - from;
+    let denominator = direction.x * edge.y - direction.y * edge.x;
+    if denominator.abs() < 1.0e-12 {
+        return None;
+    }
+    let offset = from - origin.truncate();
+    let along = (offset.x * edge.y - offset.y * edge.x) / denominator;
+    let across = (offset.x * direction.y - offset.y * direction.x) / denominator;
+    (-SLACK_MM..=1.0 + SLACK_MM).contains(&across).then_some(along).filter(|along| along.is_finite())
+}
+
+/// Whether the point `along` the ray lies inside the outline's prism.
+fn inside_prism(origin: DVec3, direction: DVec3, along: f64, outline: &[DVec2], height: f64) -> bool {
+    let height_at = origin.z + direction.z * along;
+    if !(-SLACK_MM..=height + SLACK_MM).contains(&height_at) {
+        return false;
+    }
+    let point = (origin + direction * along).truncate();
+    point_in_outline(point, outline)
+}
+
+/// The even-odd test of a point against a closed outline, in the outline's own plane.
+///
+/// A point within [`SLACK_MM`] of the outline counts as inside, so a click on the line between the
+/// reserved space and the room is the piece's own edge and a ray that grazes a face is still a hit.
+fn point_in_outline(point: DVec2, outline: &[DVec2]) -> bool {
+    let Some(last) = outline.last() else {
+        return false;
+    };
+    let mut previous = *last;
+    for current in outline {
+        if distance_to_segment(point, previous, *current) <= SLACK_MM {
+            return true;
+        }
+        previous = *current;
+    }
+    let mut previous = *last;
+    let mut inside = false;
+    for current in outline {
+        if (current.y > point.y) != (previous.y > point.y) {
+            let crossing = previous.x + (point.y - previous.y) / (previous.y - current.y) * (current.x - previous.x);
+            if point.x < crossing {
+                inside = !inside;
+            }
+        }
+        previous = *current;
+    }
+    inside
+}
+
+/// The distance from `point` to the segment `from..to`, in the plane.
+fn distance_to_segment(point: DVec2, from: DVec2, to: DVec2) -> f64 {
+    let span = to - from;
+    let length_squared = span.length_squared();
+    if !length_squared.is_finite() || length_squared <= 0.0 {
+        return point.distance(from);
+    }
+    let along = ((point - from).dot(span) / length_squared).clamp(0.0, 1.0);
+    point.distance(from + span * along)
 }
 
 /// The near distance where a ray crosses the box `min..max`, or `None` when it does not reach it.
@@ -138,12 +253,14 @@ pub(crate) fn ray_hit_box(ray: Ray, bounds: Aabb) -> Option<f64> {
 }
 
 fn ray_slab(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<f64> {
+    ray_slab_interval(origin, direction, min, max).map(|(near, _)| near.max(0.0))
+}
+
+/// The near and far distances where a ray crosses the box `min..max`, both measured along the ray.
+fn ray_slab_interval(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<(f64, f64)> {
     if !origin.is_finite() || !direction.is_finite() || !min.is_finite() || !max.is_finite() {
         return None;
     }
-    // The inverse of a rotation puts a point that lies on a face a few floating-point steps
-    // outside it; a micrometre of slack keeps an exact boundary inside the box.
-    const SLACK_MM: f64 = 1.0e-6;
     let mut near = f64::NEG_INFINITY;
     let mut far = f64::INFINITY;
     for (origin, direction, minimum, maximum) in [
@@ -166,7 +283,7 @@ fn ray_slab(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<f
     if far < near || far < 0.0 {
         return None;
     }
-    Some(near.max(0.0))
+    Some((near, far))
 }
 
 /// Distance along `ray` to the nearest triangle of `drawable`, if it crosses one before `limit`.

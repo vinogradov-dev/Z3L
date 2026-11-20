@@ -581,4 +581,38 @@ impl Camera {
             }
         }
     }
+
+    /// Scales the view about a world point, which keeps that point where it is on screen.
+    ///
+    /// A plain [`Self::zoom`] scales everything about the target, so whatever the maker is looking at
+    /// slides away from the pointer: a carried piece left the hand on every wheel step (X67). The
+    /// target slides towards the anchor by the share the zoom did not take, in the view's own plane —
+    /// the anchor's depth is the point's and not the view's, and a target that moved along the view
+    /// direction would change the distance the maker just asked for.
+    ///
+    /// The point is taken on the plane through the target, which is where the projection's scale is
+    /// exact; a point in front of or behind that plane moves a little, as it does in every program
+    /// that zooms towards the pointer.
+    pub fn zoom_about(&mut self, factor: f64, anchor: Option<DVec3>) {
+        let Some(anchor) = anchor.filter(|anchor| anchor.is_finite()) else {
+            self.zoom(factor);
+            return;
+        };
+        if self.fixed.is_some() || !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let previous = self.distance;
+        self.zoom(factor);
+        let applied = self.distance / previous;
+        if !applied.is_finite() || applied <= 0.0 {
+            return;
+        }
+        let offset = anchor - self.target;
+        let forward = self.forward();
+        let planar = offset - forward * offset.dot(forward);
+        let shift = planar * (1.0 - applied);
+        if shift.is_finite() {
+            self.target += shift;
+        }
+    }
 }

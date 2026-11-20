@@ -212,12 +212,14 @@ pub(crate) fn polyline_vertices(polylines: &[Polyline], line_ink: [f32; 4]) -> R
 
 /// Flattens the product envelopes into one dashed line list in world space.
 ///
-/// Each envelope is the twelve edges of a box in the product's own frame. A line is not a body, so
-/// the chain is dashed and the dashes are the renderer's promise that this box is reserved space,
-/// never a solid (ADR 0100). The state chooses the ink: active for the open product, inactive for a
-/// closed empty one, and nothing at all for a closed product whose parts speak for themselves.
+/// Each envelope is the space its footprint reserves: the outline dashed on the base plane, the same
+/// outline dashed at the height, and one dashed vertical at each corner of the shape. A line is not a
+/// body, so the chain is dashed and the dashes are the renderer's promise that this space is
+/// reserved, never a solid (ADR 0100, ADR 0159). The state chooses the ink: active for the open
+/// product, inactive for a closed empty one, and nothing at all for a closed product whose parts
+/// speak for themselves.
 ///
-/// A malformed size or transform is a [`RenderError`] naming the offender, so the shell can report
+/// A malformed outline or transform is a [`RenderError`] naming the offender, so the shell can report
 /// it; the vertex budget is checked before the dashes are pushed. The list is one flat buffer drawn
 /// with the line pipeline, which writes no depth.
 pub(crate) fn product_envelope_vertices(
@@ -245,50 +247,69 @@ fn push_product_envelope_vertices(
         ProductEnvelopeState::ClosedEmpty => inactive,
         ProductEnvelopeState::ClosedWithParts => return Ok(()),
     };
-    let size = envelope.size;
-    if !size.is_finite() || size.min_element() <= 0.0 || !envelope.world_transform.is_finite() {
+    let Some((min, max)) = envelope.local_bounds() else {
+        return Err(RenderError::InvalidProductEnvelope { index });
+    };
+    if !envelope.world_transform.is_finite() {
         return Err(RenderError::InvalidProductEnvelope { index });
     }
     let color = sanitize_color(color);
-    let longest = size.max_element();
+    let longest = (max - min).max_element();
     let cycle = (longest / ENVELOPE_CYCLES_PER_SIDE).max(MIN_ENVELOPE_DASH_MM);
     let dash = cycle * ENVELOPE_DASH_DUTY;
-    let capacity = envelope_vertex_count(size, cycle);
+    let capacity = envelope_vertex_count(envelope, cycle);
     if vertices.len().saturating_add(capacity) > MAX_VERTICES {
         return Err(RenderError::ProductEnvelopeTooLarge { index });
     }
-    for (start, end) in ENVELOPE_EDGES {
-        let start = envelope.world_transform.transform_point3(corner(start, size));
-        let end = envelope.world_transform.transform_point3(corner(end, size));
-        if !start.is_finite() || !end.is_finite() {
+    let outline = envelope.outline.iter().copied().collect::<Vec<_>>();
+    let mut edges = Vec::with_capacity(outline.len());
+    for (position, point) in outline.iter().enumerate() {
+        let Some(next) = outline.get((position + 1) % outline.len()) else {
+            continue;
+        };
+        edges.push((*point, *next));
+    }
+    for height in [0.0, envelope.height] {
+        for (start, end) in &edges {
+            let start = envelope.world_transform.transform_point3(DVec3::new(start.x, start.y, height));
+            let end = envelope.world_transform.transform_point3(DVec3::new(end.x, end.y, height));
+            if !start.is_finite() || !end.is_finite() {
+                return Err(RenderError::InvalidProductEnvelope { index });
+            }
+            push_dashes(vertices, start, end, cycle, dash, color);
+        }
+    }
+    for corner in envelope.corners.iter() {
+        let base = envelope.world_transform.transform_point3(DVec3::new(corner.x, corner.y, 0.0));
+        let top = envelope.world_transform.transform_point3(DVec3::new(corner.x, corner.y, envelope.height));
+        if !base.is_finite() || !top.is_finite() {
             return Err(RenderError::InvalidProductEnvelope { index });
         }
-        push_dashes(vertices, start, end, cycle, dash, color);
+        push_dashes(vertices, base, top, cycle, dash, color);
     }
     Ok(())
 }
 
-/// One corner of the local box; a bit in `bits` is the high side of one axis.
-fn corner(bits: usize, size: DVec3) -> DVec3 {
-    DVec3::new(
-        if bits & 1 == 0 { 0.0 } else { size.x },
-        if bits & 2 == 0 { 0.0 } else { size.y },
-        if bits & 4 == 0 { 0.0 } else { size.z },
-    )
-}
-
-/// The twelve edges of a box as corner-index pairs; a pair differs in one bit.
-const ENVELOPE_EDGES: [(usize, usize); 12] =
-    [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)];
-
-/// How many line-list vertices the dashes of one box need, so the budget is checked before the walk.
-fn envelope_vertex_count(size: DVec3, cycle: f64) -> usize {
+/// How many line-list vertices the dashes of one envelope need, so the budget precedes the walk.
+fn envelope_vertex_count(envelope: &ProductEnvelope, cycle: f64) -> usize {
+    let dashes = |length: f64| -> usize {
+        if !length.is_finite() || length <= 0.0 {
+            return 0;
+        }
+        let count = (length / cycle).ceil().max(1.0) as usize;
+        count.saturating_mul(2)
+    };
+    let outline = &envelope.outline;
     let mut total = 0usize;
-    for (start, end) in ENVELOPE_EDGES {
-        let length = corner(start, size).distance(corner(end, size));
-        let dashes = (length / cycle).ceil().max(1.0) as usize;
-        total = total.saturating_add(dashes.saturating_mul(2));
+    for (position, point) in outline.iter().enumerate() {
+        let Some(next) = outline.get((position + 1) % outline.len()) else {
+            continue;
+        };
+        total = total.saturating_add(dashes(point.distance(*next)));
     }
+    // The base and the top ring of the same outline.
+    total = total.saturating_mul(2);
+    total = total.saturating_add(dashes(envelope.height).saturating_mul(envelope.corners.len()));
     total
 }
 

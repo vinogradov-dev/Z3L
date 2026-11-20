@@ -183,15 +183,20 @@ fn add(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
     if at == edit::At::Top {
         let status = read(root, "plan/STATUS.md")?;
-        let mut status = edit::set_state(&status, &[("task".to_owned(), id.clone())])?;
-        if edit::has_section(&status, "Next") {
-            let body = match options.value("next") {
-                Some(next) => next.to_owned(),
-                None => format!("{id} is next: {}", lead.trim()),
-            };
-            status = edit::set_section(&status, "Next", &body)?;
+        // A declared stream's entry joins the order without touching the state line, which describes
+        // the plan's own checkout alone.
+        let streams = crate::Streams::parse(&status).map_err(|sentences| sentences.join("; "))?;
+        if streams.owner(&id).is_primary() {
+            let mut status = edit::set_state(&status, &[("task".to_owned(), id.clone())])?;
+            if edit::has_section(&status, "Next") {
+                let body = match options.value("next") {
+                    Some(next) => next.to_owned(),
+                    None => format!("{id} is next: {}", lead.trim()),
+                };
+                status = edit::set_section(&status, "Next", &body)?;
+            }
+            changes = changes.with("plan/STATUS.md", status);
         }
-        changes = changes.with("plan/STATUS.md", status);
     }
     apply(root, changes, &options, git)?;
     if !options.dry_run {
@@ -258,11 +263,21 @@ fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let id = options.words.first().ok_or("task start needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
     let task = find(&summary.tasks, &id)?;
-    let head_of_next = summary.tasks.iter().find(|task| task.section == "Next" && task.status != TaskStatus::Done);
+    let status = read(root, "plan/STATUS.md")?;
+    let streams = crate::Streams::parse(&status).map_err(|sentences| sentences.join("; "))?;
+    let stream = streams.owner(&id).clone();
+    let note_path = stream.note_path();
+    // The head of `## Next` and the occupation of `## Now` are read inside the task's own stream: a
+    // checklist that works one entry at a time does not hold another checkout's order hostage.
+    let same_stream = |task: &crate::Task| streams.owner(&task.id).key == stream.key;
+    let head_of_next = summary
+        .tasks
+        .iter()
+        .find(|task| task.section == "Next" && task.status != TaskStatus::Done && same_stream(task));
     let takes = task.section != "Now"
         && task.section == "Next"
         && head_of_next.is_some_and(|head| head.id == id)
-        && first_open(&summary.tasks).is_none();
+        && first_open_in(&streams, &summary.tasks, &stream).is_none();
     if task.section != "Now" && !takes {
         return Err(match task.section.as_str() {
             "Next" => format!(
@@ -272,33 +287,49 @@ fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
             _ => format!("task {id} sits in `## {}`; only a task in `## Now` can start", task.section),
         });
     }
-    if let Some(other) = summary.tasks.iter().find(|task| task.status == TaskStatus::Doing && task.id != id) {
-        return Err(format!(
-            "task {} is still in progress; close it before starting {id} (`cargo xtask task close {}`)",
-            other.id, other.id
-        ));
+    if let Some(other) =
+        summary.tasks.iter().find(|task| task.status == TaskStatus::Doing && task.id != id && same_stream(task))
+    {
+        return Err(if stream.is_primary() {
+            format!(
+                "task {} is still in progress; close it before starting {id} (`cargo xtask task close {}`)",
+                other.id, other.id
+            )
+        } else {
+            format!(
+                "task {} still works the `{}` stream; close it before starting {id} (`cargo xtask task close {}`)",
+                other.id, stream.key, other.id
+            )
+        });
     }
     // Starting the task that is already running would overwrite the note a session is working from.
     if task.status == TaskStatus::Doing && !options.flag("force") {
         return Err(format!(
-            "task {id} is already in progress; `--force` rewrites `plan/SESSION.md`, `task step` adds to it"
+            "task {id} is already in progress; `--force` rewrites `{note_path}`, `task step` adds to it"
         ));
     }
     let backlog = read(root, "plan/BACKLOG.md")?;
     let backlog = if takes { edit::move_entry(&backlog, &id, "Now", edit::At::End)? } else { backlog };
     let backlog = edit::set_marker(&backlog, &id, edit::DOING)?;
-    let status = read(root, "plan/STATUS.md")?;
-    let status =
-        edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "doing".to_owned())])?;
-    // Taking the head of `## Next` changes which task is current, and the paragraph has to name it.
-    let status =
-        if takes { edit::set_section(&status, "Next", &format!("{id} is next: {}", task.lead))? } else { status };
+    let status = if stream.is_primary() {
+        let status =
+            edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "doing".to_owned())])?;
+        // Taking the head of `## Next` changes which task is current, and the paragraph names it.
+        if takes { edit::set_section(&status, "Next", &format!("{id} is next: {}", task.lead))? } else { status }
+    } else {
+        // A stream beside the plan's own keeps its own note and marker; the state line stays the
+        // primary checkout's, which is what one writer of one line means.
+        status
+    };
     let session = session_note(&id, task, &options);
-    let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog).with("plan/STATUS.md", status);
-    changes = changes.with("plan/SESSION.md", session);
+    let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
+    if stream.is_primary() {
+        changes = changes.with("plan/STATUS.md", status);
+    }
+    changes = changes.with(&note_path, session);
     apply(root, changes, &options, git)?;
     if !options.dry_run {
-        println!("task {id} started; `plan/SESSION.md` holds the note");
+        println!("task {id} started; `{note_path}` holds the note");
     }
     Ok(())
 }
@@ -351,7 +382,8 @@ fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         .iter()
         .filter_map(|key| options.value(key).map(|value| (*key, value.to_owned())))
         .collect();
-    let session = read(root, "plan/SESSION.md")?;
+    let note_path = stream_of(root, &id)?.note_path();
+    let session = read(root, &note_path)?;
     let mut session = if let Some(text) = options.value("add") {
         edit::add_step(&session, text)?
     } else if fields.is_empty() || options.flag("tick") {
@@ -362,10 +394,10 @@ fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     for (key, value) in fields {
         session = edit::set_session_field(&session, key, &value)?;
     }
-    let changes = Changes::new(root).with("plan/SESSION.md", session);
+    let changes = Changes::new(root).with(&note_path, session);
     apply(root, changes, &options, git)?;
     if !options.dry_run {
-        println!("task {id}: the session note changed");
+        println!("task {id}: `{note_path}` changed");
     }
     Ok(())
 }
@@ -415,9 +447,13 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let backlog = edit::append_to_entry(&backlog, &id, &suffix)?;
     let backlog = edit::move_entry(&backlog, &id, "Done", edit::At::Top)?;
     let status = read(root, "plan/STATUS.md")?;
+    let streams = crate::Streams::parse(&status).map_err(|sentences| sentences.join("; "))?;
+    let stream = streams.owner(&id).clone();
+    let note_path = stream.note_path();
     let tasks = crate::parse_backlog(&backlog);
     // The order may end here: `task=-` says no task is scheduled, and `## Next` says so in words.
-    let next = first_open(&tasks);
+    // Both speak for the plan's own stream, so another stream's close leaves them alone.
+    let next = if stream.is_primary() { first_open_in(&streams, &tasks, &stream) } else { None };
     let current = next.map_or_else(|| crate::NO_TASK.to_owned(), |task| task.id.clone());
     // The plan describes the tree that is checked out now, so `base` and `updated` follow `HEAD`,
     // not the commit the closed task names (a task may be closed long after it landed).
@@ -428,25 +464,28 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     if let Some(date) = git.commit_date("HEAD") {
         values.push(("updated".to_owned(), date));
     }
-    let status = edit::set_state(&status, &values)?;
+    let status = if stream.is_primary() { edit::set_state(&status, &values)? } else { status };
     // The `## Next` paragraph names the task `STATE:` does, so the close writes it in every case
     // rather than refusing one: a next task without `--next` gets the sentence `task take` writes for
     // an empty slot, an order that ends here gets the sentence that says so, and `--next` supplies
     // the words a person wants. Four closes in the reviewed period were refused on this one rule.
-    let paragraph = match (options.value("next"), next) {
-        (Some(text), Some(_)) => Some(text.to_owned()),
-        (Some(text), None) if text.trim().starts_with(crate::NOTHING_SCHEDULED) => Some(text.to_owned()),
-        (Some(text), None) => Some(format!("{}: {text}", crate::NOTHING_SCHEDULED)),
-        (None, Some(task)) => Some(format!("{} is next: {}", task.id, task.lead)),
-        (None, None) => Some(nothing_scheduled(&tasks)),
+    // The paragraph names the plan's own next task, so a stream's close leaves it alone: the note
+    // that changed belongs to the stream, and the plan's prose still describes the plan's order.
+    let paragraph = match (stream.is_primary(), options.value("next"), next) {
+        (false, _, _) => None,
+        (true, Some(text), Some(_)) => Some(text.to_owned()),
+        (true, Some(text), None) if text.trim().starts_with(crate::NOTHING_SCHEDULED) => Some(text.to_owned()),
+        (true, Some(text), None) => Some(format!("{}: {text}", crate::NOTHING_SCHEDULED)),
+        (true, None, Some(task)) => Some(format!("{} is next: {}", task.id, task.lead)),
+        (true, None, None) => Some(nothing_scheduled(&tasks)),
     };
     let status = match paragraph {
         Some(body) if edit::has_section(&status, "Next") => edit::set_section(&status, "Next", &body)?,
         _ => status,
     };
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog).with("plan/STATUS.md", status);
-    if root.join("plan/SESSION.md").exists() {
-        changes = changes.removed("plan/SESSION.md");
+    if root.join(&note_path).exists() {
+        changes = changes.removed(&note_path);
     }
     apply(root, changes, &options, git)?;
     if !options.dry_run {
@@ -486,20 +525,23 @@ fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     if task.section == "Now" {
         return Err(format!("task {id} is already in `## Now`"));
     }
+    let streams = streams_of(root)?;
+    let stream = streams.owner(&id).clone();
     // The head of the order is the slot `STATE:` names, so nothing may take it from a task in
     // progress; the end of `## Now` is behind that task and disturbs nothing.
     if matches!(at, edit::At::Top)
-        && let Some(other) = tasks.iter().find(|task| task.status == TaskStatus::Doing)
+        && let Some(other) =
+            tasks.iter().find(|task| task.status == TaskStatus::Doing && streams.owner(&task.id).key == stream.key)
     {
         return Err(format!(
             "task {} is still in progress; `task take {id}` joins the end of `## Now` without taking its place",
             other.id
         ));
     }
-    let occupied = first_open(&tasks).is_some();
+    let occupied = first_open_in(&streams, &tasks, &stream).is_some();
     let backlog = edit::move_entry(&backlog_text, &id, "Now", at)?;
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
-    if !occupied {
+    if !occupied && stream.is_primary() {
         let status = read(root, "plan/STATUS.md")?;
         let status =
             edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "idle".to_owned())])?;
@@ -544,11 +586,13 @@ fn defer(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     }
     let backlog = edit::move_entry(&backlog_text, &id, "Next", edit::At::End)?;
     let moved = crate::parse_backlog(&backlog);
+    let streams = streams_of(root)?;
+    let stream = streams.owner(&id).clone();
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
-    if first_open(&tasks).is_some_and(|head| head.id == id) {
+    if stream.is_primary() && first_open_in(&streams, &tasks, &stream).is_some_and(|head| head.id == id) {
         // Deferring the head hands the order to the next open entry, or leaves it empty; either way
         // `STATE:` and `## Next` say the same thing in the same write.
-        let next = first_open(&moved);
+        let next = first_open_in(&streams, &moved, &stream);
         let current = next.map_or_else(|| crate::NO_TASK.to_owned(), |task| task.id.clone());
         let status = read(root, "plan/STATUS.md")?;
         let status = edit::set_state(&status, &[("task".to_owned(), current)])?;
@@ -583,7 +627,12 @@ fn reopen(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let backlog = edit::set_marker(&backlog, &id, edit::OPEN)?;
     let backlog = edit::move_entry(&backlog, &id, "Now", edit::At::Top)?;
     let status = read(root, "plan/STATUS.md")?;
-    let status = edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "idle".to_owned())])?;
+    // Only the plan's own stream moves the state line; a reopened stream task is its own to start.
+    let status = if is_primary(root, &id) {
+        edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "idle".to_owned())])?
+    } else {
+        status
+    };
     // The reopened task becomes the current one, so `## Next` has to name it in the same write;
     // otherwise the gate refuses, and two hand edits are the only way to say what the plan means.
     let status = match options.value("next") {
@@ -615,6 +664,13 @@ fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let backlog = read(root, "plan/BACKLOG.md")?;
     let backlog = edit::remove_entry(&backlog, &id)?;
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
+    // A session note about a task that no longer exists would be refused by the gate as a leftover.
+    if let Ok(stream) = stream_of(root, &id) {
+        let session_note = stream.note_path();
+        if root.join(&session_note).exists() {
+            changes = changes.removed(&session_note);
+        }
+    }
     let note = format!("plan/notes/{id}.md");
     if !options.flag("keep-note") && root.join(&note).exists() {
         changes = changes.removed(&note);
@@ -624,6 +680,37 @@ fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         println!("task {id} dropped");
     }
     Ok(())
+}
+
+/// The stream a task belongs to, read from the plan the way the gate reads it.
+fn stream_of(root: &Path, id: &str) -> Result<crate::Stream, String> {
+    let status = read(root, "plan/STATUS.md")?;
+    let streams = crate::Streams::parse(&status).map_err(|violations| violations.join("; "))?;
+    Ok(streams.owner(id).clone())
+}
+
+/// Whether `id` is the plan's own stream's task, the one `STATE: task=` schedules.
+fn is_primary(root: &Path, id: &str) -> bool {
+    stream_of(root, id).is_ok_and(|stream| stream.is_primary())
+}
+
+/// The first unfinished task of one stream in `## Now`: the stamp a close, a defer and a take read.
+///
+/// The order holds every stream's entries, so the head a `STATE:` line names is the head of the plan's
+/// own stream — another stream's entry is in front of it and is not this checkout's work.
+fn first_open_in<'a>(
+    streams: &crate::Streams,
+    tasks: &'a [crate::Task],
+    stream: &crate::Stream,
+) -> Option<&'a crate::Task> {
+    tasks.iter().find(|task| {
+        task.section == "Now" && task.status != TaskStatus::Done && streams.owner(&task.id).key == stream.key
+    })
+}
+
+/// The stream declaration of `plan/STATUS.md`, or the gate's sentences when it cannot be read.
+fn streams_of(root: &Path) -> Result<crate::Streams, String> {
+    crate::Streams::parse(&read(root, "plan/STATUS.md")?).map_err(|violations| violations.join("; "))
 }
 
 /// The task with this id, or a message naming the id that is missing.
@@ -643,10 +730,6 @@ fn nothing_scheduled(tasks: &[crate::Task]) -> String {
         1 => format!("{}: 1 open task waits in `## Next`.", crate::NOTHING_SCHEDULED),
         count => format!("{}: {count} open tasks wait in `## Next`.", crate::NOTHING_SCHEDULED),
     }
-}
-
-fn first_open(tasks: &[crate::Task]) -> Option<&crate::Task> {
-    tasks.iter().find(|task| task.section == "Now" && task.status != TaskStatus::Done)
 }
 
 /// The files a verb wants to change, and the files it wants gone.
@@ -703,9 +786,16 @@ fn apply(root: &Path, changes: Changes, options: &Options, git: &dyn Git) -> Res
     }
     let status = resulting(root, &changes, "plan/STATUS.md").ok_or("`plan/STATUS.md` is missing")?;
     let backlog = resulting(root, &changes, "plan/BACKLOG.md").ok_or("`plan/BACKLOG.md` is missing")?;
-    let session = resulting(root, &changes, "plan/SESSION.md");
+    // The declaration in the new `plan/STATUS.md` names the notes, so a stream's own note is checked
+    // beside the plan's: a verb that writes one cannot quietly break another.
+    let streams = crate::Streams::parse(&status).unwrap_or_else(|_| crate::Streams::one());
+    let sessions: Vec<(String, String)> = streams
+        .notes()
+        .into_iter()
+        .filter_map(|path| resulting(root, &changes, &path).map(|text| (path, text)))
+        .collect();
     let notes = notes_after(root, &changes)?;
-    let plan = crate::PlanText { status: &status, backlog: &backlog, session: session.as_deref(), notes: Some(&notes) };
+    let plan = crate::PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: Some(&notes) };
     let after = violations_of(root, &plan, git);
     let repairing = if after.is_empty() {
         false
@@ -914,6 +1004,14 @@ pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> 
             let body = options.body("body")?;
             let status = read(root, "plan/STATUS.md")?;
             let status = edit::set_section(&status, "Where we are", &body)?;
+            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git);
+        }
+        // `state streams agent=J catalog=O` declares the checkouts beside this one; no pairs puts the
+        // plan back on its single stream.
+        Some("streams") => {
+            let pairs: Vec<String> = options.words.iter().skip(1).cloned().collect();
+            let status = read(root, "plan/STATUS.md")?;
+            let status = edit::set_streams(&status, &pairs)?;
             return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git);
         }
         Some("set") => {}
@@ -1315,6 +1413,51 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
 ## Next\n\n\
 - `[ ]` **R1** the rename\n  Why: the name is in three places\n  `files: src/a.rs`\n\n\
 ## Done\n";
+
+    /// A plan that declares one stream beside its own, with the agent's head parked in `## Next`.
+    const STREAM_STATUS: &str = "# Status\n\nSTATE: milestone=M1 phase=J task=- state=idle base=abc1234 \
+                                  updated=2026-11-10\nSTREAMS: agent=J\n\n## Next\n\nNothing is scheduled: the \
+                                  plan's own order is empty.\n";
+    const STREAM_BACKLOG: &str = "## Now\n\n## Bugs\n\n## Next\n\n\
+- `[ ]` **J2** the report\n  `files: src/b.rs`\n\n## Done\n";
+
+    #[test]
+    fn a_declared_stream_works_its_own_note_and_leaves_the_state_line_alone() {
+        let root = project("stream-start", STREAM_STATUS, STREAM_BACKLOG, None);
+        let before = text(&root, "plan/STATUS.md");
+        run(&root, &["start", "J2"]).expect("the agent's head starts");
+        assert!(text(&root, "plan/BACKLOG.md").contains("- `[~]` **J2**"), "the marker moved");
+        let note = text(&root, "plan/SESSION.agent.md");
+        assert!(note.contains("task: J2"), "the stream keeps its own note: {note}");
+        assert!(!root.join("plan/SESSION.md").exists(), "the plan's own note is not touched");
+        assert_eq!(text(&root, "plan/STATUS.md"), before, "the state line is the plan's own");
+
+        run(&root, &["step", "J2", "--now", "the line parser"]).expect("the step lands in the stream's note");
+        assert!(text(&root, "plan/SESSION.agent.md").contains("now: the line parser"));
+        assert!(!root.join("plan/SESSION.md").exists(), "`step` writes the stream's note and no other");
+
+        run(&root, &["close", "J2", "--commit", "abc1234"]).expect("the task closes");
+        assert!(text(&root, "plan/BACKLOG.md").contains("- `[x]` **J2**"), "the entry is done");
+        assert!(!root.join("plan/SESSION.agent.md").exists(), "the note goes with the session");
+        assert_eq!(text(&root, "plan/STATUS.md"), before, "the state line is still the plan's own");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_stream_works_one_task_and_the_refusal_names_the_other_one() {
+        // Both in the order: the refusal is the stream's, not the order's.
+        let backlog = STREAM_BACKLOG
+            .replace("## Now\n\n", "## Now\n\n- `[~]` **J1** the runner\n  `files: src/a.rs`\n\n")
+            .replace("## Bugs", "- `[ ]` **J2** the report\n  `files: src/b.rs`\n\n## Bugs")
+            .replace("- `[ ]` **J2** the report\n  `files: src/b.rs`\n\n## Done\n", "## Done\n");
+        let note = "task: J1\ngoal: run a recipe\nnow: the parser\nrun: cargo test\n";
+        let root = project("stream-two", STREAM_STATUS, &backlog, None);
+        std::fs::write(root.join("plan/SESSION.agent.md"), note).expect("the stream's note is writable");
+        let error = run(&root, &["start", "J2"]).expect_err("the agent stream already works J1");
+        assert!(error.contains("still works the `agent` stream"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn taking_a_bug_moves_the_entry_whole() {

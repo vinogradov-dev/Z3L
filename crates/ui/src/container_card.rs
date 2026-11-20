@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn renaming_a_component_dispatches_through_the_engine() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let container = Id::new(3).expect("container id");
         rename_container(&mut session, container, "Drawer box".to_owned()).expect("rename");
         assert_eq!(session.project().container(container).expect("container").name(), "Drawer box");
@@ -182,14 +182,14 @@ mod tests {
 
     #[test]
     fn an_unmarked_container_shows_as_a_group() {
-        let session = Session::with_catalog(sample_project(), sample_catalog());
+        let session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         assert_eq!(container_summary(session.project(), root).expect("summary").0, ContainerKind::Group);
     }
 
     #[test]
     fn renaming_the_root_container_dispatches_through_the_engine() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         rename_container(&mut session, root, "Workshop".to_owned()).expect("rename root");
         assert_eq!(session.project().root().name(), "Workshop");

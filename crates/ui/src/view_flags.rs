@@ -9,13 +9,15 @@
 //! The set is *explicit*: hiding a container does not write a flag on each child. The consumers
 //! that must agree — the scene builder, picking, the light rig and the camera glyphs — ask
 //! [`ViewFlags::hides`], which walks the parent chain, so a child of a hidden container disappears
-//! even though only the container is in the set.
+//! even though only the container is in the set. The tools that measure free space are handed
+//! [`ViewFlags::sight`], the same walk as one [`model::Sight`] value, so the ray of a niche and the
+//! frame it is drawn in name the same parts (ADR 0175).
 //!
 //! Changes when: a flag is introduced, or the rule that hides a subtree changes.
 
 use std::collections::HashSet;
 
-use model::{Id, Project};
+use model::{Id, Project, Sight};
 
 /// The hidden and locked nodes of one editor session.
 #[derive(Clone, Debug, Default)]
@@ -43,23 +45,22 @@ impl ViewFlags {
         self.locked.contains(&id)
     }
 
+    /// The session's visibility as one query value, for the model's own measurements.
+    ///
+    /// The scene builder, the pick and the light rig ask [`ViewFlags::hides`]; a query that looks at
+    /// free space — the probe, the niche and the fill — is handed this value instead, so the tools
+    /// and the frame name the same parts without the document holding view state (X73, ADR 0175).
+    pub fn sight(&self) -> Sight<'_> {
+        Sight::of(&self.hidden)
+    }
+
     /// Whether the node is hidden, by its own flag or by an ancestor's.
     ///
     /// This is the question every consumer that projects the whole tree asks: the frame builder,
     /// picking, the light rig and the camera glyphs. The walk is bounded by the document's nesting
     /// limit, so a malformed tree cannot spin here.
     pub fn hides(&self, project: &Project, id: Id) -> bool {
-        let mut current = Some(id);
-        for _ in 0..=Project::MAX_ASSEMBLY_DEPTH {
-            let Some(node) = current else {
-                return false;
-            };
-            if self.hidden.contains(&node) {
-                return true;
-            }
-            current = project.parent_of(node);
-        }
-        false
+        self.sight().hides(project, id)
     }
 
     /// A counter that moves whenever the visible set changes; the scene rebuilds on a change.

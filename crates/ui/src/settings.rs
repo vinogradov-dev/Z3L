@@ -32,6 +32,21 @@ pub const MIN_GRID_STEP_MM: u32 = 1;
 /// The largest grid step the settings offer, in millimetres.
 pub const MAX_GRID_STEP_MM: u32 = 10_000;
 
+/// The smallest snap tolerance the settings offer, in millimetres.
+///
+/// One millimetre is the move grid itself, so the smallest setting still captures a drag that
+/// has already landed: below it the field would offer a number no drag can use.
+pub const MIN_SNAP_MM: u32 = 1;
+
+/// The largest snap tolerance the settings offer, in millimetres.
+///
+/// Five centimetres is a hand's width across the shop: past it a piece jumps to a surface it was
+/// nowhere near, and the drag stops feeling like the maker's own.
+pub const MAX_SNAP_MM: u32 = 50;
+
+/// The tolerance a fresh workspace snaps at, in millimetres.
+pub const DEFAULT_SNAP_MM: u32 = 5;
+
 /// The smallest hand-turn step of the roll ring, in degrees.
 pub const MIN_ROLL_STEP_DEGREES: u32 = 1;
 
@@ -82,6 +97,21 @@ pub const DEFAULT_EDGE_STRENGTH: u32 = 70;
 /// The view's switch is beside it in the View tab's Display group, which is where the intensity is
 /// edited (U107); this is only the value a workspace starts with and the one the reset restores.
 pub const DEFAULT_SHADOW_STRENGTH: u32 = 40;
+
+/// The most transparent the floor plate can be drawn, in percent.
+///
+/// Zero is a real answer, not the absence of one: the plate and the shadow it carries are gone,
+/// because a shadow needs a surface to darken (U109).
+pub const MIN_FLOOR_OPACITY: u32 = 0;
+
+/// The most the floor plate can be drawn: opaque, the floor a workspace opens with.
+pub const MAX_FLOOR_OPACITY: u32 = 100;
+
+/// The floor opacity a fresh workspace opens with, in percent.
+///
+/// Opaque, so a new workspace draws exactly the floor it drew before U109 gained the field; the
+/// person who wants to see a part through the ground lowers it.
+pub const DEFAULT_FLOOR_OPACITY: u32 = 100;
 
 /// How many recent files the workspace remembers.
 pub const MAX_RECENT: usize = 10;
@@ -286,6 +316,13 @@ pub struct ViewportSettings {
     /// One value for every view and a workspace default, because the shadow's *switch* is the view's
     /// leaf and its intensity is a taste knob nobody wants four different answers to.
     pub shadow_strength: u32,
+    /// How opaque the floor plate is, in percent (U109).
+    ///
+    /// Below 100 the plate is blended over what stands under it, so a part below the floor is seen
+    /// through the floor's tint; at 0 the plate and its shadow are gone, because a shadow needs a
+    /// surface to darken. Like the strengths it is read when the frame draws, so a drag costs no
+    /// upload.
+    pub floor_opacity: u32,
     /// Whether the edge pass draws every triangle edge, diagonals included.
     pub all_edges: bool,
     /// The direction a viewport opens from.
@@ -303,6 +340,7 @@ impl Default for ViewportSettings {
             grid_strength: DEFAULT_GRID_STRENGTH,
             edge_strength: DEFAULT_EDGE_STRENGTH,
             shadow_strength: DEFAULT_SHADOW_STRENGTH,
+            floor_opacity: DEFAULT_FLOOR_OPACITY,
             all_edges: false,
             opening_view: OpeningView::default(),
             roll_step_degrees: 1,
@@ -340,6 +378,58 @@ impl GizmoSettings {
     /// The ring radius as a fraction of the camera distance.
     pub fn ring_factor(&self) -> f64 {
         f64::from(self.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT)) / 100.0
+    }
+}
+
+/// The *Snapping* section: what an object drag captures and stops at, and how near it must come.
+///
+/// Snapping is a taste and a workshop standard, so the values are the workspace's and never the
+/// document's: turning the planes off costs no undo entry and leaves no revision behind. The model
+/// owns what each value means (`model::SnapSettings`, `model::MoveSettings`) and the shell hands them
+/// over once when a drag starts, so a change applies to the next drag and never to the one under the
+/// hand (ADR 0146). The floor is a stop beside them rather than a capture: it answers whether a body
+/// may sink below Z = 0 at all (X87, ADR 0177).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SnapSettings {
+    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
+    ///
+    /// Until a house-wall tool exists they stand in for the walls of a room: a base cabinet against
+    /// the back wall of a shop and a piece standing on the floor are the same snap.
+    pub planes: bool,
+    /// Whether another product's envelope captures a drag with its virtual faces.
+    pub frames: bool,
+    /// How near a surface must be to capture a drag, in millimetres; zero captures nothing.
+    pub tolerance_mm: u32,
+    /// Whether the invisible floor at Z = 0 stops every moved body.
+    ///
+    /// It is a stop and not a snap, so it holds whatever the two switches above say, and a workspace
+    /// that turns it off has no floor at all (ADR 0177).
+    pub floor: bool,
+}
+
+impl Default for SnapSettings {
+    fn default() -> Self {
+        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true }
+    }
+}
+
+impl SnapSettings {
+    /// The value the move rule reads: the same facts, with the tolerance as the document's own unit so
+    /// the model never sees a millimetre as a number.
+    pub fn move_settings(&self) -> model::MoveSettings {
+        let tolerance = i64::from(self.tolerance_mm.clamp(MIN_SNAP_MM, MAX_SNAP_MM));
+        model::MoveSettings {
+            axes: model::MoveAxes::Document,
+            snaps: Some(model::SnapSettings {
+                planes: self.planes,
+                frames: self.frames,
+                tolerance: units::Length::from_micrometres(tolerance * 1000),
+            }),
+            floor: self.floor,
+            // The snapping section feeds the object tool, which is the one the document measures.
+            measured: true,
+        }
     }
 }
 
@@ -440,6 +530,8 @@ pub struct Settings {
     pub viewport: ViewportSettings,
     /// The size of the two transform gizmos.
     pub gizmo: GizmoSettings,
+    /// What an object drag snaps to, and how near.
+    pub snaps: SnapSettings,
     /// The size of the work cursor and whether it draws a crosshair.
     pub pointer: PointerSettings,
     /// Recently opened scenes, newest first.
@@ -457,6 +549,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             viewport: ViewportSettings::default(),
             gizmo: GizmoSettings::default(),
+            snaps: SnapSettings::default(),
             pointer: PointerSettings::default(),
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
@@ -543,10 +636,12 @@ impl Settings {
         self.viewport.grid_strength = self.viewport.grid_strength.min(MAX_DISPLAY_STRENGTH);
         self.viewport.edge_strength = self.viewport.edge_strength.min(MAX_DISPLAY_STRENGTH);
         self.viewport.shadow_strength = self.viewport.shadow_strength.min(MAX_DISPLAY_STRENGTH);
+        self.viewport.floor_opacity = self.viewport.floor_opacity.clamp(MIN_FLOOR_OPACITY, MAX_FLOOR_OPACITY);
         self.viewport.roll_step_degrees =
             self.viewport.roll_step_degrees.clamp(MIN_ROLL_STEP_DEGREES, MAX_ROLL_STEP_DEGREES);
         self.gizmo.handle_points = self.gizmo.handle_points.clamp(MIN_HANDLE_POINTS, MAX_HANDLE_POINTS);
         self.gizmo.ring_percent = self.gizmo.ring_percent.clamp(MIN_RING_PERCENT, MAX_RING_PERCENT);
+        self.snaps.tolerance_mm = self.snaps.tolerance_mm.clamp(MIN_SNAP_MM, MAX_SNAP_MM);
         self.pointer.cursor_size = self.pointer.cursor_size.clamp(MIN_CURSOR_POINTS, MAX_CURSOR_POINTS);
         let mut seen = Vec::new();
         self.recent.retain(|path| {
@@ -933,11 +1028,38 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
                 .speed(5.0),
         )
         .changed();
+    // Snapping sits beside the grid because it is the other half of the same question: what a
+    // piece lands on when it is dragged (N21, ADR 0146).
+    ui.add_space(theme::STEP);
+    ui.label(egui::RichText::new(Message::Snapping.text(lang)).strong());
+    changed |= ui
+        .checkbox(&mut settings.snaps.planes, Message::SnapPlanes.text(lang))
+        .on_hover_text(Message::SnapPlanesHint.text(lang))
+        .changed();
+    changed |= ui
+        .checkbox(&mut settings.snaps.frames, Message::SnapFrames.text(lang))
+        .on_hover_text(Message::SnapFramesHint.text(lang))
+        .changed();
+    ui.horizontal(|ui| {
+        ui.label(Message::SnapTolerance.text(lang));
+        changed |= ui
+            .add(Scrub::new(&mut settings.snaps.tolerance_mm).range(MIN_SNAP_MM..=MAX_SNAP_MM).unit("mm").speed(0.5))
+            .on_hover_text(Message::SnapToleranceHint.text(lang))
+            .changed();
+    });
+    // The floor follows the captures because it answers the same question, and is one line apart
+    // from them because it is not a capture: a body is not carried under the bench by accident, and
+    // a workspace with no floor says so here (X87, ADR 0177).
+    changed |= ui
+        .checkbox(&mut settings.snaps.floor, Message::FloorStop.text(lang))
+        .on_hover_text(Message::FloorStopHint.text(lang))
+        .changed();
     ui.separator();
     // The strengths the floating cluster used to draw: they describe how a view is painted, so
     // they live with the other display defaults and the cluster keeps only its switches (U64). The
     // shadow's intensity is here alone: its *switch* is the view's, which is why the View tab draws
-    // the switch and no number (U107, U110).
+    // the switch and no number (U107, U110). The floor's opacity joined them because the ground is
+    // painted, not modelled: it is the fourth answer to "how is this view drawn" (U109).
     ui.label(egui::RichText::new(Message::DisplayHeading.text(lang)).strong());
     for (value, label, hint) in [
         (&mut settings.viewport.grid_strength, Message::GridStrength, Message::GridStrengthHint),
@@ -949,11 +1071,21 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
             .on_hover_text(hint.text(lang))
             .changed();
     }
+    // The floor's own value has its own endpoints, because zero means something here that it does
+    // not mean for a strength: no plate and no shadow at all (U109).
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut settings.viewport.floor_opacity, MIN_FLOOR_OPACITY..=MAX_FLOOR_OPACITY)
+                .text(Message::FloorOpacity.text(lang)),
+        )
+        .on_hover_text(Message::FloorOpacityHint.text(lang))
+        .changed();
     ui.horizontal(|ui| {
         if ui.button(Message::ResetDisplay.text(lang)).on_hover_text(Message::ResetDisplayHint.text(lang)).clicked() {
             settings.viewport.grid_strength = DEFAULT_GRID_STRENGTH;
             settings.viewport.edge_strength = DEFAULT_EDGE_STRENGTH;
             settings.viewport.shadow_strength = DEFAULT_SHADOW_STRENGTH;
+            settings.viewport.floor_opacity = DEFAULT_FLOOR_OPACITY;
             changed = true;
         }
         ui.label(egui::RichText::new(Message::ResetDisplayHint.text(lang)).small().color(theme::text_dim(ui)));
@@ -1040,11 +1172,13 @@ mod tests {
                 grid_strength: 30,
                 edge_strength: 80,
                 shadow_strength: 55,
+                floor_opacity: 45,
                 all_edges: true,
                 opening_view: OpeningView::Top,
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
+            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
@@ -1074,6 +1208,37 @@ mod tests {
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
         assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
+        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false });
+    }
+
+    #[test]
+    fn the_snap_settings_default_to_the_maker_capture_and_are_clamped_on_read() {
+        let defaults = SnapSettings::default();
+        assert!(defaults.planes && defaults.frames, "a fresh workspace snaps to the planes and the frames");
+        assert!(defaults.floor, "and keeps its floor, so a body is not carried under the bench");
+        assert_eq!(defaults.tolerance_mm, DEFAULT_SNAP_MM);
+        assert_eq!(DEFAULT_SNAP_MM, model::SnapSettings::DEFAULT_TOLERANCE_MM as u32, "one default, two crates");
+
+        // The rule reads the workspace value as the document's own unit, never as millimetres.
+        let settings = defaults.move_settings();
+        assert!(settings.floor);
+        let Some(snaps) = settings.snaps else { panic!("the object move snaps") };
+        assert_eq!(snaps.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
+        assert!(snaps.planes && snaps.frames);
+
+        // A hand-edited file cannot set a tolerance no field offers.
+        let json = r#"{"version":1,"snaps":{"planes":false,"frames":false,"tolerance_mm":0}}"#;
+        let settings = Settings::from_json(json).expect("parse and clamp");
+        assert_eq!(settings.snaps.tolerance_mm, MIN_SNAP_MM, "zero captures nothing, so it is not offered");
+        assert!(!settings.snaps.planes && !settings.snaps.frames, "the switches survive the clamp");
+        assert!(settings.snaps.floor, "and a file written before the floor existed keeps it on");
+        let json = r#"{"version":1,"snaps":{"tolerance_mm":900}}"#;
+        let settings = Settings::from_json(json).expect("parse and clamp");
+        assert_eq!(settings.snaps.tolerance_mm, MAX_SNAP_MM);
+
+        // A workspace written before the section existed snaps the way the editor always did.
+        let settings = Settings::from_json(r#"{"version":1}"#).expect("parse");
+        assert_eq!(settings.snaps, SnapSettings::default());
     }
 
     #[test]
@@ -1144,7 +1309,7 @@ mod tests {
 
     #[test]
     fn a_value_outside_its_range_is_clamped_on_read() {
-        let json = r#"{"version":1,"appearance":{"ui_scale":900,"panel_opacity":5},"viewport":{"grid_step_mm":0,"roll_step_degrees":0,"grid_strength":900,"edge_strength":900,"shadow_strength":900}}"#;
+        let json = r#"{"version":1,"appearance":{"ui_scale":900,"panel_opacity":5},"viewport":{"grid_step_mm":0,"roll_step_degrees":0,"grid_strength":900,"edge_strength":900,"shadow_strength":900,"floor_opacity":900}}"#;
         let settings = Settings::from_json(json).expect("parse and repair");
         assert_eq!(settings.appearance.ui_scale, ui_scale::MAX_PERCENT);
         assert_eq!(settings.appearance.panel_opacity, MIN_PANEL_OPACITY);
@@ -1153,6 +1318,7 @@ mod tests {
         assert_eq!(settings.viewport.grid_strength, MAX_DISPLAY_STRENGTH);
         assert_eq!(settings.viewport.edge_strength, MAX_DISPLAY_STRENGTH);
         assert_eq!(settings.viewport.shadow_strength, MAX_DISPLAY_STRENGTH);
+        assert_eq!(settings.viewport.floor_opacity, MAX_FLOOR_OPACITY);
     }
 
     #[test]
@@ -1163,16 +1329,19 @@ mod tests {
             (60, 70, 40),
             "a fresh workspace draws the owner's default display"
         );
+        assert_eq!(defaults.floor_opacity, MAX_FLOOR_OPACITY, "a new workspace opens with the opaque floor");
         let mut settings = Settings::default();
         settings.viewport.grid_strength = 0;
         settings.viewport.edge_strength = 50;
         settings.viewport.shadow_strength = 100;
+        settings.viewport.floor_opacity = 35;
         let json = settings.to_json().expect("serialise");
         let read = Settings::from_json(&json).expect("parse");
         assert_eq!(read.viewport.grid_strength, 0);
         assert_eq!(read.viewport.edge_strength, 50);
         assert_eq!(read.viewport.shadow_strength, 100);
-        assert_eq!(read, settings, "the workspace file keeps all three strengths");
+        assert_eq!(read.viewport.floor_opacity, 35, "the floor's opacity survives a restart");
+        assert_eq!(read, settings, "the workspace file keeps every display value");
 
         // A file written before the strengths moved out of the view cluster has no key for them.
         let json = r#"{"version":1,"viewport":{"grid":true}}"#;
@@ -1181,6 +1350,22 @@ mod tests {
             (settings.viewport.grid_strength, settings.viewport.edge_strength, settings.viewport.shadow_strength),
             (DEFAULT_GRID_STRENGTH, DEFAULT_EDGE_STRENGTH, DEFAULT_SHADOW_STRENGTH)
         );
+        assert_eq!(
+            settings.viewport.floor_opacity, DEFAULT_FLOOR_OPACITY,
+            "a file from before the field loads the solid floor"
+        );
+    }
+
+    #[test]
+    fn the_floor_opacity_is_a_percentage_that_can_reach_zero() {
+        // Zero is a real answer here, not a clamp: the plate and its shadow are gone (U109).
+        assert_eq!(MIN_FLOOR_OPACITY, 0);
+        const { assert!(MIN_FLOOR_OPACITY < DEFAULT_FLOOR_OPACITY) };
+        const { assert!(DEFAULT_FLOOR_OPACITY <= MAX_FLOOR_OPACITY) };
+        let mut settings = Settings::default();
+        settings.viewport.floor_opacity = 0;
+        settings.sanitize();
+        assert_eq!(settings.viewport.floor_opacity, 0, "an empty floor is a legal display");
     }
 
     #[test]
@@ -1382,6 +1567,7 @@ mod tests {
         for key in [
             "ui_scale",
             "grid_step_mm",
+            "tolerance_mm",
             "roll_step_degrees",
             "panel_opacity",
             "accent",
@@ -1404,6 +1590,23 @@ mod tests {
                 "{} is missing from the shortcut page",
                 tool.label().text(Lang::En)
             );
+        }
+    }
+
+    #[test]
+    fn the_shortcut_table_names_every_transform_mode_with_its_key() {
+        // U113: the band's four gestures are keys too, so the Settings page lists them with the rest
+        // and prints the table's own spelling of the pair — one row per mode, in both languages.
+        for lang in [Lang::En, Lang::Ru] {
+            let rows = shortcut_table(lang);
+            for mode in crate::transform::TransformMode::ALL {
+                let key = mode.key().expect("a mode is bound to a key");
+                assert!(
+                    rows.iter().any(|(printed, action)| printed == key && action == mode.label(lang)),
+                    "`{}` is missing from the shortcut page in {lang:?}",
+                    mode.id()
+                );
+            }
         }
     }
 

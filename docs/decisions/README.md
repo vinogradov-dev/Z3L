@@ -9,7 +9,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0002](0002-vendored-truck-shapeops.md) | Vendored `truck-shapeops` without the VTK stack | Accepted |
 | [0003](0003-length-is-integer-micrometres.md) | Lengths are integer micrometres | Accepted |
 | [0004](0004-panel-local-frame.md) | Panel-local frame, faces and topology ids | Accepted; frame origin superseded by 0009 |
-| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Accepted |
+| [0005](0005-material-catalogue.md) | Material catalogue is external and session-scoped | Superseded by 0148 |
 | [0006](0006-panel-nominal-and-resolved-geometry.md) | Panels store nominal size; geometry is resolved | Accepted; core-origin placement superseded by 0009 |
 | [0007](0007-edge-banding-v1.md) | Edge banding v1: ordered bands and butt joints | Accepted; per-path banding unit superseded by 0014 |
 | [0008](0008-panel-diagnostics.md) | Panel diagnostics and command invalidation | Accepted |
@@ -101,7 +101,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0094](0094-a-class-registry-gives-the-machine-its-semantics.md) | A class registry gives the machine its semantics; the code identifies, the traits decide | Accepted; supersedes the registry role and top-level grouping of 0035 |
 | [0095](0095-the-order-package-is-a-published-snapshot.md) | The order package is a published snapshot, not the internal database | Accepted |
 | [0096](0096-before-the-first-release-the-format-has-no-past.md) | Before the first release the data format has no past | Accepted; amends the compatibility clause of `AGENTS.md` §4.5; retires the migration clauses until 1.0 |
-| [0097](0097-a-product-is-a-container-with-an-authored-envelope.md) | A product is a container with an authored envelope | Accepted; amends the trait list of 0094 |
+| [0097](0097-a-product-is-a-container-with-an-authored-envelope.md) | A product is a container with an authored envelope | Accepted; amends the trait list of 0094; its group-10 sentence and code examples superseded by 0145 |
 | [0098](0098-one-product-is-open-and-parts-are-born-inside-it.md) | One product is open, and furniture parts are born inside it | Accepted |
 | [0099](0099-a-niche-is-the-space-a-frame-reserves.md) | A niche is the space a frame reserves | Accepted; refines 0097 |
 | [0100](0100-a-frame-is-created-opened-and-drawn.md) | A frame is created, opened and drawn: the lifecycle | Accepted; amends 0097 and 0098 |
@@ -147,8 +147,49 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0139](0139-a-sphere-is-drawn-around-its-centre.md) | A sphere is drawn around its centre | Accepted |
 | [0140](0140-the-corner-display-is-a-diagnostic-block-the-maker-can-read.md) | The corner display is a diagnostic block the maker can read | Accepted |
 | [0141](0141-a-cone-is-drawn-by-its-base-circle.md) | A cone is drawn by its base circle | Accepted |
-| [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071 |
+| [0142](0142-the-ground-shadow-is-the-silhouette-the-key-light-casts.md) | The ground shadow is the silhouette the key light casts on a floor plate | Accepted; supersedes 0071; the plate's place in the pass and its opacity superseded by 0144 |
 | [0143](0143-the-shadow-map-is-the-key-lights-depth-pass.md) | The shadow map is the key light's depth pass, read by every face | Accepted |
+| [0144](0144-the-floor-plate-is-blended-so-it-tints-what-stands-under-it.md) | The floor plate is blended, so it tints what stands under it and keeps its shadow | Accepted |
+| [0145](0145-the-group-digits-follow-the-order-of-the-work.md) | The group digits follow the order of the work | Accepted; reassigns the group digits of 0094 and supersedes the group-10 sentence of 0097 |
+| [0146](0146-snapping-is-a-workspace-setting-and-the-coordinate-planes-stand-in-for-walls.md) | Snapping is a workspace setting, and the coordinate planes stand in for walls | Accepted; the snap constants of 0102 and 0103 become settings, and the floor snap joins the three planes |
+| [0147](0147-the-furniture-move-is-its-own-tool-and-a-panel-slides-along-its-thickness.md) | The furniture move is its own tool, and a panel slides along its thickness | Accepted; adds a fourth transform mode, takes the furniture rule and its snapping out of the free move, and adds the panel axis; its handle half is superseded by 0151 |
+| [0148](0148-a-nomenclature-directory-is-a-set-of-packages.md) | A nomenclature directory is a set of packages | Accepted; supersedes 0005 |
+| [0149](0149-a-catalogue-part-is-a-document-instantiated-in-the-scene.md) | A catalogue part is a document, and the scene holds an instance of it | Accepted |
+| [0150](0150-machining-is-derived-and-rules-are-tables.md) | Machining is derived from geometry, and placement rules are tables | Accepted |
+| [0151](0151-the-furniture-move-takes-the-piece-by-a-click-and-follows-the-pointer.md) | The furniture move takes the piece by a click and follows the pointer | Accepted; supersedes the handle half of 0147; its single-axis latch is superseded by 0163 |
+| [0152](0152-a-piece-in-hand-blocks-nothing-and-the-view-moves-under-it.md) | A piece in hand blocks nothing, and the view moves under it | Accepted; narrows 0151 |
+| [0153](0153-a-carried-piece-is-measured-by-the-hand-not-by-the-ray.md) | A carried piece is measured by the hand, not by the ray that points at it | Accepted; replaces 0151's distance mapping; its one-axis carry is narrowed by 0163 |
+| [0154](0154-the-wheel-zooms-towards-the-pointer.md) | The wheel zooms towards the pointer | Accepted |
+| [0155](0155-a-carried-piece-keeps-its-place-under-the-hand.md) | A carried piece keeps its place under the hand | Superseded by 0156 |
+| [0156](0156-the-pointer-comes-back-to-a-carried-piece.md) | The pointer comes back to a carried piece | Accepted; replaces 0155 |
+| [0157](0157-a-fill-is-carried-by-the-hand-across-a-board.md) | A fill is carried by the hand across a board | Accepted; refines 0103 and 0109 |
+| [0158](0158-the-directory-is-edited-by-a-window-of-its-own.md) | The directory is edited by a window of its own, one record per save | Accepted; implements `nomenclature.md` §12–§14, refines 0148 |
+| [0159](0159-a-product-frame-reserves-a-footprint.md) | A product frame reserves a footprint, and a cut corner is two offsets | Accepted; refines 0097, 0100 and 0101 |
+| [0160](0160-a-frames-box-is-the-box-tools-and-a-drawn-rectangle-is-the-plain-envelope.md) | A frame's box is the box tool's, and a drawn rectangle is the plain envelope | Accepted; amends the creation gesture of 0101, refines 0138 and 0159 |
+| [0161](0161-a-carried-pieces-gaps-are-dimensioned-in-the-scene.md) | A carried piece's gaps are dimensioned in the scene | Accepted; amends 0119's placement for the furniture move, refines 0103 |
+| [0162](0162-a-placement-may-not-put-a-part-inside-another.md) | A placement may not put a part inside another part | Accepted; carries 0102's contact rules into the write, narrows 0147's free move and X65's crossing clause |
+| [0163](0163-the-furniture-move-carries-on-every-allowed-axis.md) | The furniture move carries a piece on every axis its class allows | Accepted; supersedes the single-axis latch of 0151 and narrows the one-axis carry of 0153; its camera-plane carry is superseded by 0164 |
+| [0164](0164-a-carried-piece-is-met-on-the-plane-its-class-allows.md) | A carried piece is met on the plane its class allows | Accepted; supersedes 0163's camera-plane carry |
+| [0165](0165-the-move-tool-is-the-object-move-and-a-solid-body-is-measured-by-its-faces.md) | The move tool is the object move, and a solid body is measured by its faces | Accepted; supersedes 0147's furniture-only scope, narrows 0162's snapping clause and 0163's world-box contact |
+| [0166](0166-the-move-answers-the-place-the-piece-lands.md) | The move answers the place the piece lands, not the path it crosses | Accepted; supersedes 0165's swept stop and 0163's contact reading, narrows 0102's containment clause |
+| [0167](0167-a-jump-is-held-for-a-moment-before-the-carry-takes-it.md) | A jump is held for a moment before the carry takes it | Accepted; refines 0166's destination rule and the touch reading of 0162's contact |
+| [0168](0168-the-shell-writes-one-log-and-the-carry-logs-its-frame.md) | The shell writes one log, and the carry logs its frame | Accepted; installs the `log` sink the stack table promises, and measures a jump against the hand |
+| [0169](0169-what-the-move-log-said.md) | What the move log said: a typed zero, a lost bond, and a stale hold | Accepted; fixes what 0168's first session showed, carries 0092's zero convention into the carry |
+| [0170](0170-a-report-names-the-part-that-was-in-the-way.md) | A report names the part that was in the way | Accepted; extends what 0168 writes, so a cut names the obstacle and a take names the piece |
+| [0171](0171-the-place-the-hand-names-is-asked-before-the-axes.md) | The place the hand names is asked before the axes | Accepted; narrows how 0166 resolves a blocked destination, so a free slot is taken whole |
+| [0172](0172-a-crossing-rests-on-the-face-before-it-is-taken.md) | A crossing rests on the face before it is taken | Accepted; replaces 0167's step comparison with a geometric crossing and a cursor gate |
+| [0173](0173-a-cut-is-measured-from-where-the-piece-stands.md) | A cut is measured from where the piece stands | Accepted; completes 0171's axis walk, so a piece resting past a body is not pulled back across it |
+| [0174](0174-the-move-answers-places-and-the-jump-stays.md) | The move answers places, and the jump stays | Accepted; the reference record of the move at `21d94d2`, and the owner's call that the jump crosses material too |
+| [0175](0175-a-hidden-part-is-sight-not-material.md) | A hidden part is sight, not material: the tools pass it and the part stops at its faces | Accepted |
+| [0176](0176-the-plan-shows-a-stream-and-one-line-keeps-one-writer.md) | The plan shows a stream, and one line keeps one writer | Accepted; amends 0085's one-live-task rule |
+| [0177](0177-the-invisible-floor-stops-a-body-and-not-a-drag-only-snap.md) | The invisible floor stops a body, and it is not the floor snap | Accepted; amends 0146's scope to dragging |
+| [0178](0178-a-piece-the-document-holds-inside-another-may-only-come-out.md) | A piece the document holds inside another may only come out | Accepted; amends 0162's exemption and 0166's answer |
+| [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
+| [0181](0181-a-drag-prepares-the-bodies-it-reaches.md) | A drag prepares the bodies it reaches, and the port can cast a ray | Accepted; the rule's build is a walk over boxes, and the probe keeps the box reading until X92 |
+| [0182](0182-the-file-manager-chooses-the-path.md) | The file manager chooses the path, and the window keeps drawing | Accepted |
+| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted |
+| [0184](0184-a-price-names-its-money-and-its-source.md) | A price names its money, its source and its age; stock is an overlay | Accepted |
+| [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
 
 ## Format
 

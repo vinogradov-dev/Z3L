@@ -6,7 +6,9 @@
 //! placeholder when the caller names none. `product.envelope.set` edits the box and never a child
 //! size: the content bounds of the parts are derived when asked and never stored.
 
-use model::{Catalog, ClassCode, Envelope, Id, Placement, Project};
+use catalog::Directory;
+use geom::Contact;
+use model::{ClassCode, Envelope, Id, Placement, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -70,8 +72,9 @@ fn product_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn product_create_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductCreate>(params, PRODUCT_CREATE_ID)?;
     validate_name(&params.name, PRODUCT_CREATE_ID)?;
@@ -113,8 +116,9 @@ fn product_envelope_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn product_envelope_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ProductEnvelopeSet>(params, PRODUCT_ENVELOPE_SET_ID)?;
     project.set_product_envelope(params.node, params.envelope)?;
@@ -148,7 +152,7 @@ mod tests {
     }
 
     fn session_with_product() -> (Session, Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let parent = session.project().root().id();
         let product = session
             .dispatch(PRODUCT_CREATE_ID, &create_params(parent, None))
@@ -160,7 +164,7 @@ mod tests {
 
     #[test]
     fn creating_a_product_stores_a_class_and_an_envelope_in_one_undo_step() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let params = create_params(root, Some(ClassCode::GENERAL_PRODUCT));
 
@@ -172,7 +176,7 @@ mod tests {
         assert!(product.is_product());
         assert!(product.is_component());
         assert_eq!(product.class(), ClassCode::GENERAL_PRODUCT);
-        assert_eq!(product.envelope(), Some(envelope(600, 560, 720)));
+        assert_eq!(product.envelope().cloned(), Some(envelope(600, 560, 720)));
         assert_eq!(session.project().product_of(id), Some(id));
 
         session.undo().expect("undo create");
@@ -191,7 +195,7 @@ mod tests {
 
     #[test]
     fn a_refused_product_writes_nothing() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let registry = CommandRegistry::new();
         let create = registry.get(PRODUCT_CREATE_ID).expect("product.create is registered");
@@ -205,11 +209,11 @@ mod tests {
         assert!(session.dispatch(PRODUCT_CREATE_ID, &blank).is_err());
 
         let mut shelf_class = create_params(root, None);
-        shelf_class["class"] = serde_json::json!("30.11".parse::<ClassCode>().expect("class").value());
+        shelf_class["class"] = serde_json::json!("10.11".parse::<ClassCode>().expect("class").value());
         assert!(!create.enabled(&session, &shelf_class));
         assert_eq!(
             session.dispatch(PRODUCT_CREATE_ID, &shelf_class),
-            Err(CommandError::Model(ProjectError::NotAProductClass { class: "30.11".parse().expect("class") }))
+            Err(CommandError::Model(ProjectError::NotAProductClass { class: "10.11".parse().expect("class") }))
         );
 
         let unknown = serde_json::json!({"parent": root.get(), "name": "X", "envelope": {"x": 1}, "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}});
@@ -246,10 +250,16 @@ mod tests {
 
         let revision = session.project().revision();
         session.dispatch(PRODUCT_ENVELOPE_SET_ID, &params).expect("set envelope");
-        assert_eq!(session.project().container(product).expect("product").envelope(), Some(envelope(900, 560, 2000)));
+        assert_eq!(
+            session.project().container(product).expect("product").envelope().cloned(),
+            Some(envelope(900, 560, 2000))
+        );
         assert_eq!(session.project().revision(), revision.checked_next().expect("revision"));
         session.undo().expect("undo the envelope edit");
-        assert_eq!(session.project().container(product).expect("product").envelope(), Some(envelope(600, 560, 720)));
+        assert_eq!(
+            session.project().container(product).expect("product").envelope().cloned(),
+            Some(envelope(600, 560, 720))
+        );
 
         let shelf = Id::new(2).expect("sample shelf");
         let wrong = serde_json::to_value(ProductEnvelopeSet { node: shelf, envelope: envelope(1, 1, 1) })
@@ -266,7 +276,7 @@ mod tests {
         let request = ProductCreate {
             parent: Id::new(1).expect("id"),
             name: "Wall cabinet".to_owned(),
-            class: Some("30.01.02".parse().expect("class")),
+            class: Some("10.01.02".parse().expect("class")),
             envelope: envelope(600, 320, 720),
             placement: Placement::IDENTITY,
         };

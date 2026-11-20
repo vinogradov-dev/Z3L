@@ -346,7 +346,7 @@ fn markdown(summary: &Summary, view: &TaskView, facts: &[Fact], decisions: &[Str
     }
 
     if let Some(session) = &view.session {
-        out.push_str("## Session — plan/SESSION.md\n\n");
+        out.push_str(&format!("## Session — {}\n\n", view.session_path.as_deref().unwrap_or(crate::NOTE)));
         for (key, value) in [
             ("goal", &session.goal),
             ("now", &session.now),
@@ -630,6 +630,7 @@ mod tests {
             debt: vec!["[mesh] a gap in crates/x".to_owned(), "[render] elsewhere".to_owned()],
             questions: Vec::new(),
             session: None,
+            session_path: None,
         };
         let summary = Summary {
             state: crate::State {
@@ -641,7 +642,7 @@ mod tests {
                 updated: "2026-11-10".to_owned(),
             },
             tasks: vec![task],
-            session: None,
+            streams: Vec::new(),
             head: Some("fedcba9c0ffee".to_owned()),
             interrupted: false,
         };

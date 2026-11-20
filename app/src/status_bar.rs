@@ -12,16 +12,18 @@
 //! Changes when: what the bar reports or the buttons it offers change — not when a tool gains a
 //! gesture, which belongs to the tool's own module.
 
+use catalog::Directory;
 use eframe::egui;
-use model::{Catalog, Geometry, Id, Node, Project};
+use model::{Geometry, Id, Node, Project};
 use scene::Projection;
 use text::{Lang, Message};
+use ui::TransformMode;
 use ui::{DrawTool, MeasureStage, MeshElement, VoidRefusal, theme};
 use units::Length;
 
+use crate::App;
 use crate::document::Document;
 use crate::view_cluster::NavigationMode;
-use crate::{App, TransformMode};
 
 /// What separates the parts of the selection context.
 const SUMMARY_SEPARATOR: &str = " · ";
@@ -40,6 +42,8 @@ struct StatusInfo {
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
     void: Option<Result<[Length; 3], VoidRefusal>>,
+    /// Whether the object move is carrying a piece the pointer moves with no button held.
+    holding: bool,
     grid: bool,
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
@@ -93,7 +97,7 @@ impl StatusSummary {
     /// no tree walk, no geometry solve and no second look at the document. The warning is the
     /// cheapest one to know — the editor's lock flag and a catalogue lookup; an outline that does not
     /// resolve needs the panel's geometry, which the inspector already computes.
-    fn of(project: &Project, catalog: &Catalog, selection: &[Id], locked: Option<Id>, lang: Lang) -> Self {
+    fn of(project: &Project, directory: &Directory, selection: &[Id], locked: Option<Id>, lang: Lang) -> Self {
         if selection.is_empty() {
             return Self::default();
         }
@@ -104,7 +108,7 @@ impl StatusSummary {
         };
         // The warning is the primary's in either case; name, size and material describe one node,
         // so a multi-selection carries the count and stops there.
-        summary.warning = warning_of(catalog, node, locked, lang);
+        summary.warning = warning_of(directory, node, locked, lang);
         if summary.count > 1 {
             return summary;
         }
@@ -116,14 +120,12 @@ impl StatusSummary {
                 summary.size = Some(
                     Message::StatusSize.with(lang, [nominal.length(), nominal.width(), panel.last_known_thickness()]),
                 );
-                summary.material = panel
-                    .material()
-                    .and_then(|id| catalog.panel_material(id))
-                    .map(|material| material.name().to_owned());
+                summary.material =
+                    panel.material().and_then(|id| directory.board(id)).map(|material| material.name.to_owned());
                 summary.banding = panel.edge_banding().first().map(|band| {
-                    let thickness = catalog
-                        .edge_material(band.material())
-                        .map_or_else(|| band.last_known_thickness(), |material| material.thickness());
+                    let thickness = directory
+                        .banding(band.material())
+                        .map_or_else(|| band.last_known_thickness(), |material| material.thickness);
                     Message::StatusBanding.with(lang, [thickness])
                 });
             }
@@ -182,7 +184,7 @@ impl StatusSummary {
 /// Every check is a flag or a catalogue lookup, so the frame path stays free of derived geometry.
 /// A missing edge material or an unresolved outline is a panel diagnostic: it needs the resolved
 /// panel, which the inspector computes for its own section and the bar does not repeat per frame.
-fn warning_of(catalog: &Catalog, node: &Node, locked: Option<Id>, lang: Lang) -> Option<StatusWarning> {
+fn warning_of(directory: &Directory, node: &Node, locked: Option<Id>, lang: Lang) -> Option<StatusWarning> {
     if locked == Some(node.id()) {
         return Some(StatusWarning {
             text: Message::LockedStatus.with(lang, [node.name()]),
@@ -194,7 +196,7 @@ fn warning_of(catalog: &Catalog, node: &Node, locked: Option<Id>, lang: Lang) ->
     };
     match panel.material() {
         None => Some(StatusWarning { text: Message::DiagNoMaterial.text(lang).to_owned(), hint: None }),
-        Some(material) if catalog.panel_material(material).is_none() => {
+        Some(material) if directory.board(material).is_none() => {
             Some(StatusWarning { text: Message::DiagPanelMaterialMissing.with(lang, [material]), hint: None })
         }
         Some(_) => None,
@@ -341,7 +343,9 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         hint(ui, mode.gesture().text(lang));
         return (done.then_some(StatusAction::EndNavigation), None);
     }
-    ui.label(egui::RichText::new(Message::Gizmo.text(lang)).color(theme::text_dim(ui)));
+    // The band names itself: five cells of words and keys say what they are, and the hint beside
+    // them says what the armed one does, so the dim "Gizmo" caption is the row's to spend elsewhere.
+    // Five gestures with their keys need the room in the longer language (X88).
     let moved = transform_mode_ui(ui, info.mode);
     theme::divider(ui);
     if let Some((element, count)) = info.mesh {
@@ -361,18 +365,32 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         };
         ui.label(counted.text(lang));
         ui.label(egui::RichText::new(Message::MeshEditHint.text(lang)).color(theme::text_dim(ui)));
+    } else if info.holding {
+        // The piece follows the pointer rather than a button, so the left zone says what ends the
+        // hold: a click puts it down and Escape puts it back (ADR 0151).
+        hint(ui, Message::ObjectHold.text(lang));
     } else {
         hint(ui, Message::ViewportHint.text(lang));
     }
     (None, moved)
 }
 
-/// The window's transform mode as one control: *Select*, *Move*, *Rotate*, side by side in one band.
+/// The window's transform mode as one control: *Select*, *Move*, *Furniture*, *Rotate*, side by
+/// side in one band.
 ///
-/// Three states of one value are one control, not three switches: the filled cell is the mode the
-/// viewport is in, and the band behind them says the three belong together (ADR 0113). The mode is
-/// the window's view state, so the control reads it and returns the chosen one; the caller writes
-/// it, and no command and no undo entry is involved.
+/// States of one value are one control, not separate switches: the filled cell is the mode the
+/// viewport is in, and the band behind them says the four belong together (ADR 0113). The two moves
+/// sit next to each other because they are one decision made two ways — the free move keeps the
+/// pointer's distance and the object move obeys the document's rules (ADR 0147) — and each cell
+/// says in a hover line which of the two it is, because "Move" alone no longer names the choice.
+/// The mode is the window's view state, so the control reads it and returns the chosen one; the
+/// caller writes it, and no command and no undo entry is involved.
+/// The size a mode's glyph takes in the band, in points.
+///
+/// It is the inline size: the band is chrome on the narrowest window the shell opens, and a toolbar
+/// glyph would push the last cell under the readouts on the right (U113).
+const MODE_ICON_POINT_SIZE: f32 = 14.0;
+
 fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<TransformMode> {
     let lang = ui::language(ui.ctx());
     let band = egui::Frame::new()
@@ -382,15 +400,27 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
     let mut chosen = mode;
     let changed = band
         .show(ui, |ui| {
-            // Touching cells are what makes one band out of three states; the row's own gap stays.
+            // Touching cells are what makes one band out of four states; the row's own gap stays.
             ui.spacing_mut().item_spacing.x = 0.0;
+            // A cell is a word and a key, not a word and two paddings: the five keys are what U113
+            // and X88 add to the band, and the narrowest window in the longer language still has to
+            // hold the whole band beside the readouts. One point a side is what five cells leave.
+            ui.spacing_mut().button_padding.x = 1.0;
             let mut clicked = false;
-            for (entry, label) in [
-                (TransformMode::Select, Message::Select),
-                (TransformMode::Move, Message::Move),
-                (TransformMode::Rotate, Message::Rotate),
-            ] {
-                clicked |= ui.selectable_value(&mut chosen, entry, label.text(lang)).clicked();
+            for entry in TransformMode::ALL {
+                let text = entry.cell(ui, lang);
+                let image = entry.icon().and_then(|icon| ui::icons::icon_image(ui, icon, MODE_ICON_POINT_SIZE));
+                let response = match image {
+                    Some(image) => {
+                        let response = ui.add(egui::Button::image_and_text(image, text).selected(chosen == entry));
+                        if response.clicked() {
+                            chosen = entry;
+                        }
+                        response
+                    }
+                    None => ui.selectable_value(&mut chosen, entry, text),
+                };
+                clicked |= response.on_hover_text(entry.hint(lang)).clicked();
             }
             clicked
         })
@@ -596,6 +626,7 @@ impl Document {
             void: self.editor.void_armed().then(|| {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),
+            holding: self.holding_piece(),
             grid: self.draw_gizmo.grid(),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
@@ -606,7 +637,7 @@ impl Document {
             }),
             navigation,
             creation_parent: self.editor.creation_parent_name(project).map(str::to_owned),
-            summary: StatusSummary::of(project, self.session.catalog(), selection, locked, lang),
+            summary: StatusSummary::of(project, self.session.directory(), selection, locked, lang),
             projection: self.projection(),
             rebuilding,
         }
@@ -664,6 +695,7 @@ mod tests {
             preview_error: None,
             measure: None,
             void: None,
+            holding: false,
             grid: true,
             mesh: None,
             navigation: None,
@@ -696,14 +728,14 @@ mod tests {
     }
 
     #[test]
-    fn the_transform_mode_is_one_control_of_three_states() {
-        // U87: Select, Move and Rotate are one control rather than three switches, so the three
-        // captions sit side by side and one press returns the state it names. The mode is the
+    fn the_transform_mode_is_one_control_of_four_states() {
+        // U87, N22: Select, both moves and Rotate are one control rather than four switches, so the
+        // four captions sit side by side and one press returns the state it names. The mode is the
         // window's view state: the control returns a value, it runs no command and no undo entry.
         let ctx = egui::Context::default();
         ui::theme::install(&ctx);
         let info = StatusInfo { mode: TransformMode::Select, ..idle_status() };
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, theme::STATUS_HEIGHT));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, theme::STATUS_HEIGHT));
         let row = |events: Vec<egui::Event>| {
             let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
             let mut chosen = None;
@@ -716,15 +748,16 @@ mod tests {
         let (idle, chosen) = row(Vec::new());
         let texts = drawn_text(&idle.shapes);
         assert_eq!(chosen, None, "drawing the control changes nothing");
-        for caption in [Message::Select, Message::Move, Message::Rotate] {
-            let caption = caption.text(Lang::En);
-            assert!(texts.iter().any(|text| text == caption), "the control names {caption}: {texts:?}");
+        for mode in TransformMode::ALL {
+            let caption = mode.caption(Lang::En);
+            assert!(texts.contains(&caption), "the control names {caption}: {texts:?}");
         }
+        let furniture = TransformMode::Object.caption(Lang::En);
         let at = drawn_text_rects(&idle.shapes)
             .into_iter()
-            .find(|(_, text)| text == Message::Rotate.text(Lang::En))
+            .find(|(_, text)| *text == furniture)
             .map(|(rect, _)| rect.center())
-            .expect("the control drew Rotate");
+            .expect("the control drew Furniture");
         idle.drop_without_applying_deltas();
 
         let button = |pressed: bool| egui::Event::PointerButton {
@@ -740,7 +773,49 @@ mod tests {
         assert_eq!(chosen, None, "the press alone is not a click");
         let (released, chosen) = row(vec![button(false)]);
         released.drop_without_applying_deltas();
-        assert_eq!(chosen, Some(TransformMode::Rotate), "a click on Rotate returns Rotate");
+        assert_eq!(chosen, Some(TransformMode::Object), "a click on Furniture returns Furniture");
+    }
+
+    #[test]
+    fn the_five_mode_cells_fit_the_narrowest_window_with_their_keys() {
+        // The band is window chrome, so it must fit the narrowest window the shell opens (640 pt) with
+        // the hint and the right-hand readouts beside it: a mode nobody can see is a mode nobody has
+        // (ADR 0113, ADR 0147). U113 adds a key to every cell, so the floor is measured again: the
+        // last cell's right edge has to stay inside the left zone, where the readouts begin. X88's
+        // fifth gesture is what spends the room the dim caption used to take, and the cells keep
+        // their words and their keys: 431 pt in the longer language, against 448 available.
+        let ctx = egui::Context::default();
+        ui::theme::install(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
+        // The right zone takes 30 % of the row, and nothing left of it may grow into it.
+        let readouts = screen.right() - (screen.width() * 0.30).clamp(120.0, 260.0);
+        // Russian is the longer language, so the narrower window is asked about both: a sheet of text
+        // that fits one and not the other is a band a third of the users cannot read.
+        for lang in [Lang::En, Lang::Ru] {
+            ui::set_language(&ctx, lang);
+            let mut out = StatusOut::default();
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| {
+                ui.set_width(screen.width());
+                ui.set_height(theme::STATUS_HEIGHT);
+                status_row_ui(ui, &idle_status(), &mut out);
+            });
+            let texts = drawn_text(&output.shapes);
+            let cells = drawn_text_rects(&output.shapes);
+            for mode in TransformMode::ALL {
+                let caption = mode.caption(lang);
+                assert!(texts.contains(&caption), "the narrowest window still names {caption} in {lang:?}: {texts:?}");
+                let (rect, _) =
+                    cells.iter().find(|(_, text)| *text == caption).expect("a drawn caption has a rectangle");
+                assert!(
+                    rect.right() <= readouts,
+                    "{caption} in {lang:?} ends at {} and the readouts start at {readouts}",
+                    rect.right()
+                );
+            }
+
+            output.drop_without_applying_deltas();
+        }
     }
 
     #[test]
@@ -863,7 +938,7 @@ mod tests {
                 .expect("the shelf panel is valid");
         let root =
             Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, vec![front.into(), shelf.into()]);
-        let mut session = Session::with_catalog(Project::new(root).expect("the project is valid"), sample_catalog());
+        let mut session = Session::with_directory(Project::new(root).expect("the project is valid"), sample_catalog());
         let params = serde_json::to_value(PanelEdgeBandingSet {
             panel: Id::new(2).expect("id"),
             edge: RectEdge::Bottom.id(),
@@ -879,7 +954,7 @@ mod tests {
     fn the_summary_reads_only_the_resolved_selection() {
         let session = banded_session();
         let front = Id::new(2).expect("id");
-        let summary = StatusSummary::of(session.project(), session.catalog(), &[front], None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &[front], None, Lang::En);
         let line = summary.line(Lang::En).expect("a selected panel has context");
         assert_eq!(summary.count, 1);
         assert_eq!(summary.name.as_deref(), Some("Front"));
@@ -899,7 +974,7 @@ mod tests {
     fn a_multi_selection_reports_its_count_and_nothing_more() {
         let session = banded_session();
         let selection = [Id::new(2).expect("id"), Id::new(4).expect("id")];
-        let summary = StatusSummary::of(session.project(), session.catalog(), &selection, None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &selection, None, Lang::En);
         assert_eq!(summary.count, 2);
         assert_eq!(summary.line(Lang::En).as_deref(), Some("Selected: 2"));
         assert!(summary.name.is_none(), "no single name describes two nodes");
@@ -908,7 +983,7 @@ mod tests {
     #[test]
     fn an_empty_selection_has_no_context() {
         let session = banded_session();
-        let summary = StatusSummary::of(session.project(), session.catalog(), &[], None, Lang::En);
+        let summary = StatusSummary::of(session.project(), session.directory(), &[], None, Lang::En);
         assert_eq!(summary, StatusSummary::default());
         assert_eq!(summary.line(Lang::En), None);
     }
@@ -917,13 +992,13 @@ mod tests {
     fn the_summary_warns_about_a_lock_before_a_missing_material() {
         let session = banded_session();
         let front = Id::new(2).expect("id");
-        let locked = StatusSummary::of(session.project(), session.catalog(), &[front], Some(front), Lang::En);
+        let locked = StatusSummary::of(session.project(), session.directory(), &[front], Some(front), Lang::En);
         let warning = locked.warning.expect("a locked node warns");
         assert_eq!(warning.text, "Locked · Front");
         assert!(warning.hint.is_some(), "the chip says what unlocks it");
 
         let shelf = Id::new(4).expect("id");
-        let plain = StatusSummary::of(session.project(), session.catalog(), &[shelf], None, Lang::En);
+        let plain = StatusSummary::of(session.project(), session.directory(), &[shelf], None, Lang::En);
         assert_eq!(plain.warning.expect("a panel without a material warns").text, "No panel material is assigned.");
 
         // The sample project's panels carry no catalogue material either, and an unlocked node with
@@ -1047,6 +1122,6 @@ mod tests {
         output.drop_without_applying_deltas();
         assert!(texts.iter().any(|text| text.contains("Front · Panel")), "the centre draws: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Snap 10 mm")), "the right draws: {texts:?}");
-        assert!(texts.iter().any(|text| text.contains("Gizmo")), "the left draws: {texts:?}");
+        assert!(texts.iter().any(|text| text.contains("Select")), "the left draws the gesture band: {texts:?}");
     }
 }

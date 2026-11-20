@@ -1,11 +1,11 @@
 //! Creation: the armed container, the frame tool and the five `create` commands.
 //!
 //! Every creation lands in the container armed here, or at the scene root when nothing is armed
-//! (ADR 0056). A product frame is drawn: the ribbon starts a draft whose base rectangle and pulled
-//! height become one `product.create` (ADR 0101). A solid body is a profile drawn in the sketch and
-//! swept on Z (ADR 0138), and a sphere is the circle drawn in the sketch whose centre and radius
-//! become its parameters (ADR 0139), so neither waits for a bare work-plane click. A create command's
-//! node becomes the selection.
+//! (ADR 0056). A product frame is drawn: the frame cell arms the sketch's own rectangle tool, whose
+//! figure fixes the base, and the height pulled from it becomes one `product.create` (ADR 0101). A
+//! solid body is a profile drawn in the sketch and swept on Z (ADR 0138), and a sphere is the circle
+//! drawn in the sketch whose centre and radius become its parameters (ADR 0139), so none of them waits
+//! for a bare work-plane click. A create command's node becomes the selection.
 //!
 //! Refuses an arm for the root or for a node that cannot own children, and a panel creation without a
 //! panel material in the catalogue; each reason is a sentence for the user. An arm whose container
@@ -20,8 +20,8 @@ use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
 use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
-    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, LightKind, MaterialId, PanelNominalSize, PanelOutline,
-    Placement, Primitive, Project,
+    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, PanelNominalSize, PanelOutline, Placement,
+    Primitive, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -148,12 +148,13 @@ impl Editor {
     }
 
     /// The material every created panel takes: the catalogue's first panel material.
-    fn panel_material(session: &Session) -> Result<MaterialId, String> {
+    fn panel_material(session: &Session) -> Result<ItemId, String> {
         session
-            .catalog()
-            .panel_materials()
+            .directory()
+            .boards()
+            .collect::<Vec<_>>()
             .first()
-            .map(|material| material.id())
+            .map(|material| material.id)
             .ok_or_else(|| "Add a panel material to the catalogue first.".to_owned())
     }
 
@@ -167,7 +168,7 @@ impl Editor {
     pub fn create_product(&mut self, session: &mut Session, draft: ProductDraft, lang: Lang) -> Result<(), String> {
         let project = session.project();
         let root = project.root().id();
-        let placement = project.product_placement(draft.envelope);
+        let placement = project.product_placement(draft.envelope.clone());
         let base = draft.class.label().map(|label| label.text(lang)).unwrap_or(Message::CmdCreateProduct.text(lang));
         let name = project.unique_child_name(root, base);
         let params =
@@ -192,16 +193,6 @@ impl Editor {
         Ok(())
     }
 
-    /// Arms the frame tool: the next clicks draw its base rectangle and pull its height.
-    ///
-    /// A frame reserves a box of three independent sides, so it is drawn rather than placed by one
-    /// click from one extent (ADR 0101). Arming drops the other pointer modes but writes nothing; a
-    /// solid body is not drawn here, because it is a profile swept on Z (ADR 0138).
-    pub fn arm_box(&mut self) {
-        self.leave_pointer_modes();
-        self.box_draft = Some(BoxDraft::new());
-    }
-
     /// Drops every pointer mode a creation tool replaces.
     pub(super) fn leave_pointer_modes(&mut self) {
         self.mesh_edit = None;
@@ -216,26 +207,17 @@ impl Editor {
         self.box_draft = None;
     }
 
-    /// The box being drawn, when the box tool is armed or its height is being pulled.
+    /// The base being pulled, once the sketch has drawn it.
+    ///
+    /// The draft exists only after a figure fixed the base, so a frame is never waiting for a click of
+    /// its own: the rectangle and the ring are the sketch's (N19, ADR 0101, ADR 0159).
     pub fn box_draft(&self) -> Option<&BoxDraft> {
         self.box_draft.as_ref()
     }
 
-    /// The corner the live base rectangle runs to.
-    pub fn set_box_corner(&mut self, corner: [Length; 2]) {
-        if let Some(draft) = self.box_draft.as_mut() {
-            draft.set_live(corner);
-        }
-    }
-
-    /// A click on the work plane: anchors the base, then fixes it, then does nothing.
-    pub fn click_box(&mut self, corner: [Length; 2]) -> Result<bool, BoxDraftError> {
-        self.box_draft.as_mut().ok_or(BoxDraftError::NoBase)?.click(corner)
-    }
-
     /// Sets the height the box pull shows.
     pub fn pull_box_height(&mut self, height: Length) -> Result<(), BoxDraftError> {
-        self.box_draft.as_mut().ok_or(BoxDraftError::NoBase)?.set_height(height)
+        self.box_draft.as_mut().ok_or(BoxDraftError::NotStarted)?.set_height(height)
     }
 
     /// Drops a box draft without creating anything.
@@ -251,16 +233,16 @@ impl Editor {
     /// create does, and is opened for its parts (ADR 0098, ADR 0101). The whole gesture is one undo
     /// entry.
     pub fn commit_box(&mut self, session: &mut Session, placement: Placement, lang: Lang) -> Result<Id, String> {
-        let Some(draft) = self.box_draft else {
-            return Err(BoxDraftError::NoBase.to_string());
+        let Some(draft) = self.box_draft.clone() else {
+            return Err(BoxDraftError::NotStarted.to_string());
         };
-        let Some([width, depth, height]) = draft.sizes() else {
-            return Err(BoxDraftError::NoBase.to_string());
-        };
+        // A rectangle base and a drawn ring both arrive as one envelope, so the command never learns
+        // which method drew the frame (ADR 0101, ADR 0159).
+        let envelope = draft.envelope().map_err(|error| error.to_string())?;
         // A frame is a top-level piece: its parent is the root whatever container is armed.
         let parent = session.project().root().id();
         let placement = session.project().placement_in_parent(parent, placement).map_err(|error| error.to_string())?;
-        self.create_drawn_product(session, parent, [width, depth, height], placement, lang)?;
+        self.create_drawn_product(session, parent, envelope, placement, lang)?;
         self.box_draft = None;
         self.selection.primary().ok_or_else(|| "The box command created no node.".to_owned())
     }
@@ -276,12 +258,10 @@ impl Editor {
         &mut self,
         session: &mut Session,
         parent: Id,
-        sizes: [Length; 3],
+        envelope: Envelope,
         placement: Placement,
         lang: Lang,
     ) -> Result<(), String> {
-        let [width, depth, height] = sizes;
-        let envelope = Envelope::new(width, depth, height).map_err(|error| error.to_string())?;
         let class = ProductCreate::PLACEHOLDER_CLASS;
         let name = class.label().map_or_else(|| Message::CmdCreateProduct.text(lang), |label| label.text(lang));
         let params = json(&ProductCreate { parent, name: name.to_owned(), class: Some(class), envelope, placement })?;

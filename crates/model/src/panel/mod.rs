@@ -16,6 +16,7 @@ mod banding;
 mod classify;
 mod contour;
 mod geometry;
+mod hole;
 mod machining;
 
 pub use banding::{BandingSpec, CornerBanding, EdgeBanding, RingBanding};
@@ -25,6 +26,7 @@ pub use geometry::{
     EntryFace, FaceSide, PanelDimensionError, PanelGeometry, PanelGeometryError, PanelNominalSize, PanelRect,
     PanelRectError, RectCorner, RectEdge,
 };
+pub use hole::{DerivedHoles, Drilling, Hole, HoleDiagnostic, HoleError, derive_holes};
 pub use machining::{
     CoreViolation, Cutout, CutoutDepth, CutoutShape, EdgeRef, MACHINING_DESCRIPTORS, Machining, MachiningAnchor,
     MachiningCapabilities, MachiningCategory, MachiningDescriptor, MachiningKind, MachiningParams, MachiningStage,
@@ -38,7 +40,7 @@ use crate::panel::banding::{normalize_band_order, validate_corner_banding};
 use crate::panel::geometry::validate_dimension;
 use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, validate_contour_features};
 use crate::{
-    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, MachiningId, MaterialId, PivotLocal,
+    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, PivotLocal,
     Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
 };
 
@@ -117,7 +119,7 @@ pub struct Panel {
     name: String,
     nominal_size: PanelNominalSize,
     outline: PanelOutline,
-    material: Option<MaterialId>,
+    material: Option<ItemId>,
     last_known_thickness: Length,
     placement: Placement,
     pivot_local: PivotLocal,
@@ -147,7 +149,7 @@ impl Panel {
         id: Id,
         name: impl Into<String>,
         nominal_size: PanelNominalSize,
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Self, PanelDimensionError> {
@@ -180,7 +182,7 @@ impl Panel {
         id: Id,
         name: impl Into<String>,
         contour: Contour,
-        material: Option<MaterialId>,
+        material: Option<ItemId>,
         last_known_thickness: Length,
         placement: Placement,
     ) -> Result<Self, PanelError> {
@@ -280,7 +282,7 @@ impl Panel {
     }
 
     /// The selected panel material, if any.
-    pub const fn material(&self) -> Option<MaterialId> {
+    pub const fn material(&self) -> Option<ItemId> {
         self.material
     }
 
@@ -342,7 +344,7 @@ impl Panel {
     }
 
     /// Replaces the selected material.
-    pub(crate) fn set_material(&mut self, material: Option<MaterialId>) {
+    pub(crate) fn set_material(&mut self, material: Option<ItemId>) {
         self.material = material;
     }
 
@@ -914,7 +916,7 @@ pub(crate) struct PanelWire {
     #[serde(default)]
     outline: PanelOutline,
     #[serde(default)]
-    material: Option<MaterialId>,
+    material: Option<ItemId>,
     last_known_thickness: Length,
     placement: Placement,
     #[serde(default)]
@@ -1231,7 +1233,7 @@ mod tests {
         let mut banded = value;
         banded["edge_banding"] = serde_json::json!([{
             "edge": 1,
-            "material": 1,
+            "material": "1-1",
             "included_in_size": true,
             "last_known_thickness": 2_000,
             "last_known_width": 20_000,
@@ -1444,7 +1446,7 @@ mod tests {
         banded["bevels"] = bevel(1);
         banded["edge_banding"] = serde_json::json!([{
             "edge": 1,
-            "material": 1,
+            "material": "1-1",
             "included_in_size": false,
             "last_known_thickness": 2_000,
             "last_known_width": 22_000,

@@ -5,6 +5,13 @@
 //! from the new face to the first surface a model probe found. The fields are the scrubbing field of
 //! ADR 0092 — a bare number with `mm` outside — not a dialog, and exactly one of them is active.
 //!
+//! Two layouts draw the same measurement. A tool whose hand holds a button shows one
+//! [card](ToolView) beside the pointer. A carried piece — the object move, which holds nothing but
+//! the piece — draws its two gaps *in the scene* (N26, ADR 0161): an arrow per side from the piece's
+//! face to the surface that stops it, and the gap's own [plate](crate::tool_card::plate) sitting in
+//! the middle of that run. The shell measures the arrow's two ends; this module places the field and
+//! reads its keys.
+//!
 //! This module owns the two things the shell must not re-invent: the **measurement** (two faces of
 //! the part, the surfaces that stop them, and the pin or lock on either side) and the **field
 //! anatomy**. The numbers come from the caller: it hands over the coordinates the model probe
@@ -288,6 +295,14 @@ impl Distances {
         if !value.is_finite() || value < 0.0 {
             return Err(DistanceRefusal::OutOfVoid);
         }
+        // Zero is the way out of a lock, exactly as it is in every other typed field of the editor
+        // (ADR 0092, ADR 0126): the pointer takes the face back. Without this a carried piece whose
+        // gap was typed as 0 is pinned against the wall and stops following the hand (X80).
+        if value == 0.0 {
+            self.pins[side.index()] = None;
+            self.locks[side.index()] = false;
+            return Ok(());
+        }
         if self.locks[side.opposite().index()] {
             // The field is a span from the locked face: taking it would change the extent.
             return Err(DistanceRefusal::WouldResize);
@@ -404,9 +419,9 @@ impl Distances {
 
 /// Where one field draws this frame.
 ///
-/// The card itself sits beside the pointer; the placement only says which gap is nearest the hand,
-/// so the field a fresh gesture opens is the one the maker is looking at. The leader line from the
-/// face to the wall is the shell's paint, drawn from the same two points.
+/// A card sits beside the pointer, where the placement only says which gap is nearest the hand; a
+/// carried piece's field stands in the middle of the run it measures. The arrow from the face to the
+/// wall is the shell's paint, drawn from the same two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FieldPlacement {
     /// Which direction the field measures.
@@ -420,6 +435,9 @@ pub struct FieldPlacement {
 pub struct DistanceOutcome {
     /// The card the fields drew, so a press on it is chrome and never a pick.
     pub rect: Option<Rect>,
+    /// Where each gap's own plate drew in the scene, by side, when the fields stand where they
+    /// measure (N26). A side the scene has no run for draws none.
+    pub plates: [Option<Rect>; 2],
     /// The measurement changed: the shell re-reads [`Distances::pinned_low`] and re-plans the ghost.
     pub changed: bool,
     /// Escape returned the direction to the pointer; the shell must not also end the tool.
@@ -486,7 +504,68 @@ impl DistanceFields {
         title: Option<Message>,
         opacity: u32,
     ) -> DistanceOutcome {
+        let (request, escape, enter) = self.begin(ui, state, placements);
+        let mut view = ToolView { title, rows: state.rows(), commit: ToolCommit::Gesture };
+        let (reported, rect) =
+            crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
+        let mut outcome = self.end(ui, state, reported, escape, enter);
+        outcome.rect = Some(rect);
+        outcome
+    }
+
+    /// Draws one gap's field where the gap is, and reads the keyboard for the active one.
+    ///
+    /// This is the carried piece's layout (N26, ADR 0161): the shell measured the arrow that runs
+    /// from the piece's face to the surface that stops it, and each measured side receives a plate
+    /// of its own in the middle of that run. The plate takes no pointer — a press anywhere in the
+    /// work area is the click that puts the piece down (X66) — so this layout asks for no chrome
+    /// rectangle; its fields take the keyboard exactly as the card's rows do.
+    pub fn show_in_scene(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut Distances,
+        placements: &[FieldPlacement],
+        viewport: Rect,
+        opacity: u32,
+    ) -> DistanceOutcome {
+        let (request, escape, enter) = self.begin(ui, state, placements);
+        let mut rows = state.rows();
+        let mut reported = ToolOutcome::default();
         let mut outcome = DistanceOutcome::default();
+        for placement in placements {
+            let Some(row) = rows.get_mut(placement.side.index()) else {
+                continue;
+            };
+            let id = Id::unique(("distance_plate", placement.side.index()));
+            let focus = request == Some(placement.side);
+            let (plate, rect) = crate::tool_card::plate(ui, viewport, placement.position, id, row, focus, opacity);
+            outcome.plates[placement.side.index()] = Some(rect);
+            reported.edits.extend(plate.edits);
+            reported.lock = reported.lock.or(plate.lock);
+            reported.centre = reported.centre.or(plate.centre);
+            reported.error = reported.error.or(plate.error);
+            if plate.focused.is_some() {
+                reported.focused = plate.focused;
+            }
+        }
+        let ended = self.end(ui, state, reported, escape, enter);
+        outcome.changed = ended.changed;
+        outcome.cancel = ended.cancel;
+        outcome
+    }
+
+    /// Reads the keys the two layouts share: Tab walks to the opposite gap, and the gap nearest the
+    /// hand owns the keyboard until the maker asks for another.
+    ///
+    /// The keys are read *before* the fields draw, because a focused text edit consumes Escape and
+    /// Enter on its own frame; they are acted on after it, in [`Self::end`]. The answer is the side
+    /// that asks for the keyboard this frame.
+    fn begin(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut Distances,
+        placements: &[FieldPlacement],
+    ) -> (Option<Side>, bool, bool) {
         // Tab belongs to the gesture, not to egui's focus order: consume it before a text edit
         // sees it, so the field's own Tab cannot move the keyboard somewhere else.
         let tab = ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab));
@@ -512,11 +591,19 @@ impl DistanceFields {
         if request.is_none() && ui.memory(|memory| memory.focused()).is_none() {
             request = state.active();
         }
-        let mut view = ToolView { title, rows: state.rows(), commit: ToolCommit::Gesture };
-        let (reported, rect) =
-            crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
-        outcome.rect = Some(rect);
-        outcome.changed = self.apply(state, &reported);
+        (request, escape, enter)
+    }
+
+    /// Takes what the fields drew and closed this frame into the measurement.
+    fn end(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut Distances,
+        reported: ToolOutcome,
+        escape: bool,
+        enter: bool,
+    ) -> DistanceOutcome {
+        let mut outcome = DistanceOutcome { changed: self.apply(state, &reported), ..DistanceOutcome::default() };
         if let Some(side) = reported.focused.and_then(Side::of_param) {
             state.activate(Some(side));
             self.suspended = false;
@@ -611,6 +698,18 @@ mod tests {
     fn distances() -> Distances {
         // A 600 mm void, an 18 mm part sitting 100 mm from the low wall.
         Distances::new(Some(0.0), Some(600.0), 100.0, 118.0).expect("a usable measurement")
+    }
+
+    #[test]
+    fn a_typed_zero_gives_the_face_back_to_the_pointer() {
+        // X80: a carried piece whose gap was typed as 0 was pinned against the wall and stopped
+        // following the hand. Zero is the way out of a lock, as it is in every other typed field.
+        let mut state = distances();
+        state.place(Side::Low, 40.0).expect("the gap is taken");
+        assert_eq!(state.pinned_low(), Some(40.0), "a typed gap puts the face 40 mm from the wall and pins it");
+        state.place(Side::Low, 0.0).expect("zero is taken as a release");
+        assert_eq!(state.pinned_low(), None, "and gives the face back");
+        assert_eq!(state.value(Side::Low), Some(40.0), "the face stays where the pin left it");
     }
 
     #[test]
@@ -770,6 +869,81 @@ mod tests {
         assert!(outcome.rect.is_some(), "the card took one rectangle, not one per direction");
         assert_eq!(state.active(), Some(Side::Low), "exactly one field owns the keyboard");
         assert!(locked, "the locked field draws the lock glyph");
+    }
+
+    #[test]
+    fn a_carried_piece_draws_a_field_in_the_middle_of_each_gap() {
+        // N26: the two gaps of a carried piece stand where they are measured — one plate in the
+        // middle of each run — and the typed number reaches the same measurement the card's rows do.
+        let context = egui::Context::default();
+        crate::set_language(&context, crate::Lang::En);
+        let mut state = distances();
+        let placements = [
+            FieldPlacement { side: Side::Low, position: Pos2::new(200.0, 300.0) },
+            FieldPlacement { side: Side::High, position: Pos2::new(520.0, 300.0) },
+        ];
+        let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut fields = DistanceFields::default();
+        let mut last = None;
+        for _ in 0..3 {
+            last = scene_frame(&context, &mut fields, &mut state, &placements, viewport, Vec::new());
+        }
+        let outcome = last.expect("the plates drew");
+        assert!(outcome.rect.is_none(), "a carried piece draws no card");
+        let low = outcome.plates[0].expect("the low gap drew its field");
+        let high = outcome.plates[1].expect("the high gap drew its field");
+        assert!(low.contains(Pos2::new(200.0, 300.0)), "the field sits in the middle of its run: {low:?}");
+        assert!(high.contains(Pos2::new(520.0, 300.0)), "and so does the other: {high:?}");
+        assert!(!low.intersects(high), "the two fields are told apart on screen: {low:?} {high:?}");
+        assert_eq!(state.active(), Some(Side::Low), "the field nearest the hand owns the keyboard");
+
+        let mut typed = None;
+        for character in "250".chars() {
+            typed = scene_frame(
+                &context,
+                &mut fields,
+                &mut state,
+                &placements,
+                viewport,
+                vec![egui::Event::Text(character.to_string())],
+            );
+        }
+        let entered = scene_frame(
+            &context,
+            &mut fields,
+            &mut state,
+            &placements,
+            viewport,
+            vec![egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert!(typed.is_some(), "the typing frames drew");
+        assert!(entered.is_some_and(|outcome| outcome.changed), "the typed number reached the measurement");
+        assert_eq!(state.value(Side::Low), Some(250.0), "the low gap is where it was typed");
+        assert_eq!(state.high(), 268.0, "and the part keeps its extent");
+    }
+
+    /// One frame of the in-scene layout, for a test that types into the gap it drew.
+    fn scene_frame(
+        context: &egui::Context,
+        fields: &mut DistanceFields,
+        state: &mut Distances,
+        placements: &[FieldPlacement],
+        viewport: Rect,
+        events: Vec<egui::Event>,
+    ) -> Option<DistanceOutcome> {
+        let mut outcome = None;
+        let output = context
+            .run_ui(egui::RawInput { screen_rect: Some(viewport), events, ..Default::default() }, |ui| {
+                outcome = Some(fields.show_in_scene(ui, state, placements, viewport, 92))
+            });
+        output.drop_without_applying_deltas();
+        outcome
     }
 
     /// Whether any image sits inside `rect`, which is how the lock glyph reaches the screen.

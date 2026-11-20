@@ -9,7 +9,7 @@ Related documents:
 
 - [Scene document](document.md) — the document this file carries, its schema and migrations.
 - [Geometry objects](geometry.md) — objects with a baked mesh, a parametric primitive or a feature history.
-- [Materials and catalogue](materials.md) — the external catalogue the file does not store.
+- [Nomenclature directory](nomenclature.md) — the external directory the file does not store.
 
 Related decisions: [0005](../decisions/0005-material-catalogue.md),
 [0029](../decisions/0029-view-state-belongs-to-the-session.md),

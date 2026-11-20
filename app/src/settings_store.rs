@@ -84,6 +84,15 @@ impl SettingsStore {
         self.path.as_deref()
     }
 
+    /// The folder the workshop's nomenclature directory lives in, beside the settings file.
+    ///
+    /// Settings and the directory sit beside each other in the application's config folder, so a
+    /// workshop moves both by copying one folder — and a test that hands the shell a scratch settings
+    /// file hands it a scratch directory too, instead of reaching into the developer's own.
+    pub(crate) fn directory_root(&self) -> Option<PathBuf> {
+        self.path().and_then(Path::parent).map(|folder| folder.join(crate::directory_watch::DIRECTORY_DIR))
+    }
+
     /// Reads the settings, or returns defaults with the reason they were used.
     ///
     /// A first run has no file yet; that is the ordinary case, not an error, and the notice simply
@@ -128,8 +137,9 @@ fn notice(repair: ui::settings::Repair) -> Notice {
 /// The application's config directory, following each platform's convention.
 ///
 /// Every branch names the directory [`APP_ID`], so a rename moves one constant and nothing here
-/// (ADR 0135).
-fn config_dir() -> Option<PathBuf> {
+/// (ADR 0135). The shell reads the workspace settings and the nomenclature directory from it, so
+/// both sit beside each other and a workshop copies one folder.
+pub(crate) fn config_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         return std::env::var_os("APPDATA").map(PathBuf::from).map(|appdata| appdata.join(APP_ID));
     }
@@ -205,6 +215,10 @@ mod tests {
         settings.appearance.accent = Some([0x11, 0x99, 0x44]);
         settings.appearance.ui_scale = 125;
         settings.viewport.grid_step_mm = 25;
+        settings.snaps.planes = false;
+        settings.snaps.frames = true;
+        settings.snaps.tolerance_mm = 12;
+        settings.snaps.floor = false;
         settings.appearance.panel_opacity = 70;
         settings.recent.push(PathBuf::from("/tmp/cabinet.z3l"));
         settings
@@ -231,6 +245,16 @@ mod tests {
         let loaded = store.load();
         assert_eq!(loaded.settings, settings);
         assert_eq!(loaded.notice, None);
+        assert_eq!(
+            (
+                loaded.settings.snaps.planes,
+                loaded.settings.snaps.frames,
+                loaded.settings.snaps.tolerance_mm,
+                loaded.settings.snaps.floor,
+            ),
+            (false, true, 12, false),
+            "the snapping section and its floor survive the file"
+        );
         assert!(!directory.join(format!("{FILE_NAME}.tmp")).exists(), "the temporary file is renamed away");
     }
 

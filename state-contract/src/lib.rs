@@ -2,7 +2,9 @@
 //!
 //! A project keeps its plan in three files: `plan/STATUS.md` with exactly one `STATE:` line,
 //! `plan/BACKLOG.md` with `## Now`, `## Next` and `## Done` sections, and `plan/SESSION.md` while a
-//! task is in progress; `plan/notes/<ID>.md` holds the research note of one task. This crate parses
+//! task is in progress; `plan/notes/<ID>.md` holds the research note of one task. A project whose
+//! work runs in several checkouts declares them beside the state line ([`Streams`]), and each one
+//! keeps its own note (`plan/SESSION.agent.md` and the like) beside the primary's. This crate parses
 //! them, checks that they agree with each other and with the files they name, renders the block a
 //! session starts from, and prints one task in full — its fields, map rows, notes, debt, questions
 //! and the session fields — so a host need not grep the plan files. It changes nothing by itself:
@@ -43,6 +45,7 @@ mod notes;
 mod parse;
 mod section;
 mod status;
+pub mod streams;
 mod task;
 mod validate;
 
@@ -55,6 +58,7 @@ pub use notes::{MAX_NOTE_LINES, note, note_path};
 pub use parse::parse_backlog;
 pub use section::{Section, Style, sections, wrap};
 pub use status::{render, render_with_detail};
+pub use streams::{NOTE, PRIMARY, STREAMS_PREFIX, Stream, Streams};
 pub use task::{
     Closed, RelatedNote, TaskOptions, TaskView, task, task_sections, task_view, task_view_with, task_with, touches,
 };
@@ -67,15 +71,52 @@ pub struct Summary {
     pub state: State,
     /// Backlog tasks, in file order.
     pub tasks: Vec<Task>,
-    /// The parsed session note, when `plan/SESSION.md` exists.
-    pub session: Option<Session>,
+    /// Every declared stream, the primary first: one row per checkout the plan knows about.
+    pub streams: Vec<StreamState>,
     /// The `HEAD` commit, filled in by whichever caller resolved it; `None` outside a checkout.
     pub head: Option<String>,
     /// Whether the session looks cut short: `doing`, a note with open steps, and commits past `base`.
     pub interrupted: bool,
 }
 
-/// The parts of `plan/SESSION.md` a fresh session resumes from.
+impl Summary {
+    /// The primary stream: the plan's own checkout, whose task `STATE:` names.
+    pub fn primary(&self) -> Option<&StreamState> {
+        self.streams.iter().find(|stream| stream.primary)
+    }
+
+    /// The stream that works `id`, by the live task each stream holds.
+    pub fn stream_of(&self, id: &str) -> Option<&StreamState> {
+        self.streams.iter().find(|stream| stream.live.as_deref() == Some(id))
+    }
+
+    /// The parsed note a task's own stream keeps, when that note is about the task.
+    pub fn note_of(&self, id: &str) -> Option<&Session> {
+        self.stream_of(id)?.session.as_ref()
+    }
+
+    /// The streams beside the primary that are working a task.
+    pub fn others_working(&self) -> impl Iterator<Item = &StreamState> {
+        self.streams.iter().filter(|stream| !stream.primary && stream.live.is_some())
+    }
+}
+
+/// One stream as the plan holds it right now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamState {
+    /// The stream's key: `app`, `agent`, `catalog`, `prototypes`.
+    pub key: String,
+    /// Whether this is the primary stream, whose task `STATE: task=` schedules.
+    pub primary: bool,
+    /// The `[~]` task of this stream, when it is working one.
+    pub live: Option<String>,
+    /// The note this stream keeps: `plan/SESSION.md`, `plan/SESSION.agent.md`.
+    pub note_path: String,
+    /// The parsed note, when the file exists.
+    pub session: Option<Session>,
+}
+
+/// The parts of a `plan/SESSION*.md` note a fresh session resumes from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Session {
     /// `task:` — the task the note is about.
@@ -195,12 +236,22 @@ pub fn check(root: &Path) -> Result<Summary, Vec<String>> {
 pub fn check_with(root: &Path, git: &dyn Git) -> Result<Summary, Vec<String>> {
     let status = read(&root.join("plan/STATUS.md"), "plan/STATUS.md")?;
     let backlog = read(&root.join("plan/BACKLOG.md"), "plan/BACKLOG.md")?;
-    let session = match std::fs::read_to_string(root.join("plan/SESSION.md")) {
-        Ok(text) => Some(text),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(vec![format!("cannot read `plan/SESSION.md`: {error}")]),
-    };
-    let plan = PlanText { status: &status, backlog: &backlog, session: session.as_deref(), notes: None };
+    // The declaration names the notes before they are read, so a plan's own text decides which files
+    // belong to it; a note nothing declares is reported instead of ignored.
+    let streams = Streams::parse(&status)?;
+    let mut sessions: Vec<(String, String)> = Vec::new();
+    for path in streams.notes() {
+        match std::fs::read_to_string(root.join(&path)) {
+            Ok(text) => sessions.push((path, text)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(vec![format!("cannot read `{path}`: {error}")]),
+        }
+    }
+    let stray = stray_note_violations(root, &streams);
+    if !stray.is_empty() {
+        return Err(stray);
+    }
+    let plan = PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: None };
     check_text(root, &plan, git)
 }
 
@@ -213,8 +264,8 @@ pub struct PlanText<'a> {
     pub status: &'a str,
     /// `plan/BACKLOG.md`.
     pub backlog: &'a str,
-    /// `plan/SESSION.md`, or `None` when the plan has no note.
-    pub session: Option<&'a str>,
+    /// The session notes the plan has, as `(path, text)`; empty when no stream is working.
+    pub sessions: &'a [(String, String)],
     /// `plan/notes/` as `(file name, text)`, when the caller changed it; `None` reads the disk.
     pub notes: Option<&'a [(String, String)]>,
 }
@@ -223,7 +274,7 @@ pub struct PlanText<'a> {
 /// applies, with the plan files supplied instead of read.
 pub fn check_text(root: &Path, plan: &PlanText<'_>, git: &dyn Git) -> Result<Summary, Vec<String>> {
     let mut violations = Vec::new();
-    let mut summary = match analyze(plan.status, plan.backlog, plan.session) {
+    let mut summary = match analyze(plan.status, plan.backlog, plan.sessions) {
         Ok(summary) => Some(summary),
         Err(errors) => {
             violations.extend(errors);
@@ -233,7 +284,9 @@ pub fn check_text(root: &Path, plan: &PlanText<'_>, git: &dyn Git) -> Result<Sum
     if let Some(summary) = summary.as_mut() {
         // One git call answers both the `base` rule and the head line the block prints.
         summary.head = git.head();
-        summary.interrupted = session_interrupted(&summary.state, plan.session, summary.head.as_deref(), git);
+        let primary = summary.primary().map(|stream| stream.note_path.clone()).unwrap_or_else(|| NOTE.to_owned());
+        let primary_note = note_text(plan, &primary);
+        summary.interrupted = session_interrupted(&summary.state, primary_note, summary.head.as_deref(), git);
         violations.extend(workspace_violations(root, summary, git, plan.notes));
         // The reference files are the plan too: a stale map row or an undeclared debt tag rots it.
         if let Ok(map) = std::fs::read_to_string(root.join("plan/map.md")) {
@@ -277,6 +330,36 @@ pub fn status_with_detail(root: &Path, git: &dyn Git, detail: Option<&str>) -> R
 
 fn read(path: &Path, name: &str) -> Result<String, Vec<String>> {
     std::fs::read_to_string(path).map_err(|error| vec![format!("cannot read `{name}`: {error}")])
+}
+
+/// The text of one stream's note as the plan being checked holds it.
+fn note_text<'a>(plan: &'a PlanText<'_>, path: &str) -> Option<&'a str> {
+    plan.sessions.iter().find(|(note, _)| note == path).map(|(_, text)| text.as_str())
+}
+
+/// A note file in `plan/` that no stream declares: a renamed stream leaves one behind, and a plan
+/// that ignores it keeps a second, stale record of work nobody is doing.
+fn stray_note_violations(root: &Path, streams: &Streams) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root.join("plan")) else { return Vec::new() };
+    let declared = streams.notes();
+    let mut stray: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("SESSION.") && name.ends_with(".md") && name != "SESSION.template.md")
+        .map(|name| format!("plan/{name}"))
+        .filter(|path| !declared.contains(path))
+        .collect();
+    stray.sort();
+    stray
+        .into_iter()
+        .map(|path| {
+            format!(
+                "`{path}` is a session note no stream declares; the notes are {} — name the stream in \
+                 `{STREAMS_PREFIX}` or delete the file",
+                declared.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// Whether the session looks cut short: work was running, the plan edit rides on commits past the

@@ -133,17 +133,38 @@ impl Project {
     /// The root contributes its own placement, which is normally the identity. Returns `None` for
     /// an unknown id or a tree deeper than [`Project::MAX_ASSEMBLY_DEPTH`].
     pub fn world_placement(&self, id: Id) -> Option<Placement> {
-        fn walk(node: &Node, id: Id, parent: Placement, depth: u32) -> Option<Placement> {
+        self.world_placement_with(id, &[])
+    }
+
+    /// The world placement of a node when `overrides` replace the stored placements they name.
+    ///
+    /// A placement write is refused before it lands, and the refusal has to measure the box the node
+    /// *would* carry: this is that measurement (`Project::resting_conflict`). An override of an
+    /// ancestor composes with the overrides below it, so a batch that names a container and one of
+    /// its children is measured as the tree would hold them afterwards. An override naming the root is
+    /// ignored: the root's placement is the world frame, and no command writes it.
+    pub fn world_placement_with(&self, id: Id, overrides: &[(Id, Placement)]) -> Option<Placement> {
+        fn walk(
+            node: &Node,
+            id: Id,
+            parent: Placement,
+            overrides: &[(Id, Placement)],
+            depth: u32,
+        ) -> Option<Placement> {
             if depth > Project::MAX_ASSEMBLY_DEPTH {
                 return None;
             }
-            let world = Placement::compose(parent, node.placement()).ok()?;
+            let own = overrides
+                .iter()
+                .find(|(node_id, _)| *node_id == node.id())
+                .map_or_else(|| node.placement(), |(_, placement)| *placement);
+            let world = Placement::compose(parent, own).ok()?;
             if node.id() == id {
                 return Some(world);
             }
             let children = node.children()?;
             for child in children {
-                if let Some(found) = walk(child, id, world, depth.saturating_add(1)) {
+                if let Some(found) = walk(child, id, world, overrides, depth.saturating_add(1)) {
                     return Some(found);
                 }
             }
@@ -154,8 +175,15 @@ impl Project {
         if self.root.id() == id {
             return Some(root_world);
         }
+        let root_own = overrides
+            .iter()
+            .find(|(node_id, _)| *node_id == self.root.id())
+            .map_or_else(|| self.root.placement(), |(_, placement)| *placement);
+        if root_own != root_world {
+            return None;
+        }
         for child in self.root.children() {
-            if let Some(found) = walk(child, id, root_world, 1) {
+            if let Some(found) = walk(child, id, root_world, overrides, 1) {
                 return Some(found);
             }
         }
@@ -479,7 +507,7 @@ impl ProductBox {
     /// A turned piece no longer has axis-aligned sides, so its eight corners are collected and the
     /// tightest box around them is used: placement is used for containment, never for a decision a
     /// maker reads off an axis.
-    fn of(envelope: Envelope, world: Placement) -> Option<Self> {
+    fn of(envelope: &Envelope, world: Placement) -> Option<Self> {
         let size =
             DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
         let mut min = DVec3::splat(f64::INFINITY);
@@ -611,11 +639,11 @@ mod tests {
         let group = project.group_nodes(&[Id::new(2).expect("id"), Id::new(3).expect("id")], "G").expect("group");
         assert!(!project.is_component(group));
 
-        project.set_property(group, SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        project.set_property(group, SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         assert!(project.is_component(group));
         project.set_property(group, SYSTEM_COMPONENT, PropertyValue::bool(false)).expect("false marker");
         assert!(project.is_component(group), "an explicit false does not erase the furniture type");
-        assert_eq!(project.class(group), Some(class("30.11")));
+        assert_eq!(project.class(group), Some(class("10.11")));
         assert_eq!(project.class(root), Some(ClassCode::UNCLASSIFIED));
 
         assert_eq!(project.ungroup_group(group), Err(ProjectError::NotAComponent { id: group }));
@@ -631,19 +659,19 @@ mod tests {
         let panel = Id::new(2).expect("panel");
         let front = Id::new(4).expect("front");
         let drawer = Id::new(3).expect("drawer");
-        project.set_property(drawer, SYSTEM_CLASS, PropertyValue::class(class("30.11"))).expect("class");
+        project.set_property(drawer, SYSTEM_CLASS, PropertyValue::class(class("10.11"))).expect("class");
         project.set_property(panel, "role", PropertyValue::text("shelf")).expect("role");
 
         assert_eq!(project.query(&NodeQuery::any()), vec![panel, drawer, front]);
         assert_eq!(project.query(&NodeQuery::any().with_kind(StructuralKind::Container)), vec![drawer]);
         assert_eq!(project.query(&NodeQuery::any().with_kind(StructuralKind::Panel)), vec![panel, front]);
         assert_eq!(
-            project.query(&NodeQuery::any().with_class_under(class("30"))),
+            project.query(&NodeQuery::any().with_class_under(class("10"))),
             vec![drawer],
             "a query on a group matches every type below it"
         );
-        assert_eq!(project.query(&NodeQuery::any().with_class_under(class("30.11"))), vec![drawer]);
-        assert!(project.query(&NodeQuery::any().with_class_under(class("40"))).is_empty());
+        assert_eq!(project.query(&NodeQuery::any().with_class_under(class("10.11"))), vec![drawer]);
+        assert!(project.query(&NodeQuery::any().with_class_under(class("30"))).is_empty());
         assert_eq!(
             project.query(&NodeQuery::any().with_class_under(ClassCode::UNCLASSIFIED)),
             vec![panel, front],

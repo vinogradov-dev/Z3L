@@ -11,6 +11,11 @@
 //! Rings keep a roughly constant screen radius. A ring seen edge-on is not drawn: its plane is
 //! nearly parallel to the view direction, the pointer cannot define an angle on it and a drag would
 //! jump by half a turn.
+//!
+//! Two turns share the rings (X88): the free one follows the hand through whatever stands beside it,
+//! and the object turn asks the document's rule how far it may go, so the ring stops where another
+//! body stops it and the release writes a placement the write's guard accepts. The rule is read once,
+//! when the drag starts, and every frame it answers the same angle the preview draws (ADR 0180).
 
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Response, Stroke, Ui};
@@ -20,7 +25,7 @@ use scene::Camera;
 
 use crate::gizmo_math::{
     ACTIVE_COLOR, Axis, MoveTarget, PlacementCommit, Preview, PreviewKey, Target, commit_rotation, distance_to_segment,
-    ray_plane, ray_to, screen_point,
+    ray_plane, ray_to, screen_point, stop_text,
 };
 
 /// Number of line segments in a ring.
@@ -41,7 +46,37 @@ struct Drag {
     targets: Vec<MoveTarget>,
     pivot: DVec3,
     previous_angle: f64,
+    /// The angle the hand has turned, which the ring follows unchecked.
     angle: f64,
+    /// The angle the document grants, which the preview draws and the release writes.
+    ///
+    /// It is the hand's own angle for the free turn, and the last angle the rule granted for the
+    /// object turn, so the ring never shows a turn the release would refuse (X88).
+    granted: f64,
+    /// The body that stopped the turn, when one did.
+    stop: Option<model::Stop>,
+    /// The rule this drag is measured by, when the object turn is armed.
+    rule: Option<model::RotateRule>,
+    /// Whether the document's bodies measure this drag (ADR 0180).
+    measured: bool,
+}
+
+impl Drag {
+    /// Asks the rule how far the hand's angle may go, and keeps the answer for the frame.
+    ///
+    /// The bisection runs on the rule's own boxes and bodies, never on the document: the drag still
+    /// writes nothing until the release, and every frame asks the same question of the same snapshot.
+    fn measure(&mut self) {
+        let (granted, stop) = match &self.rule {
+            Some(rule) => {
+                let limit = rule.limit(self.axis.direction(), self.angle);
+                (limit.angle, limit.contact)
+            }
+            None => (self.angle, None),
+        };
+        self.granted = if granted.is_finite() { granted } else { 0.0 };
+        self.stop = stop;
+    }
 }
 
 /// Persistent state of the rotate gizmo.
@@ -66,23 +101,26 @@ impl RotateGizmo {
     /// The drawable ids, pivot and world turn the renderer should preview, if a drag turned something.
     pub(crate) fn preview(&self) -> Option<Preview<'_>> {
         let drag = self.drag.as_ref()?;
-        if drag.angle == 0.0 || !drag.angle.is_finite() {
+        if drag.granted == 0.0 || !drag.granted.is_finite() {
             return None;
         }
         Some(Preview::Rotation {
             drawables: &drag.drawables,
             pivot: drag.pivot,
-            rotation: DQuat::from_axis_angle(drag.axis.direction(), drag.angle),
+            rotation: DQuat::from_axis_angle(drag.axis.direction(), drag.granted),
         })
     }
 
     /// The preview identity used to avoid re-uploading an unchanged drag.
+    ///
+    /// It names the angle the preview draws, so a frame the rule holds at a face does not re-upload:
+    /// a ring pressed into a body is still, and still is not a change (X88).
     pub(crate) fn preview_key(&self) -> Option<PreviewKey> {
         let drag = self.drag.as_ref()?;
-        if drag.angle == 0.0 || !drag.angle.is_finite() {
+        if drag.granted == 0.0 || !drag.granted.is_finite() {
             return None;
         }
-        Some(PreviewKey::Rotation { node: drag.node, angle: drag.angle.to_bits() })
+        Some(PreviewKey::Rotation { node: drag.node, angle: drag.granted.to_bits() })
     }
 
     /// Starts, continues or finishes a drag and returns a placement to dispatch on release.
@@ -120,10 +158,24 @@ impl RotateGizmo {
                     drag.previous_angle = angle;
                 }
             }
+            drag.measure();
+            log::debug!(
+                target: "z3l::rotate",
+                "turn node={:?} axis={} pivot=({:.1},{:.1},{:.1}) asked={:.4} granted={:.4} contact={:?} blocked={}",
+                drag.node,
+                drag.axis.label(),
+                drag.pivot.x,
+                drag.pivot.y,
+                drag.pivot.z,
+                drag.angle,
+                drag.granted,
+                drag.stop,
+                drag.stop.map_or_else(|| "none".to_owned(), stop_text),
+            );
             if !down {
                 self.consumed_click = true;
-                let turn = DQuat::from_axis_angle(drag.axis.direction(), drag.angle);
-                let commit = commit_rotation(&drag.targets, drag.pivot, turn)?;
+                let turn = DQuat::from_axis_angle(drag.axis.direction(), drag.granted);
+                let commit = commit_rotation(&drag.targets, drag.pivot, turn, drag.measured)?;
                 return Ok(commit);
             }
             self.drag = Some(drag);
@@ -165,6 +217,10 @@ impl RotateGizmo {
             pivot,
             previous_angle: start_angle,
             angle: 0.0,
+            granted: 0.0,
+            stop: None,
+            rule: target.rotate_rule(),
+            measured: target.rotate_kind.measured(),
         });
         if !ui.input(|input| input.pointer.primary_down()) {
             self.drag = None;
@@ -297,6 +353,7 @@ mod tests {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     use model::Placement;
+    use units::Length;
 
     use super::*;
 
@@ -324,6 +381,10 @@ mod tests {
             pivot: DVec3::ZERO,
             previous_angle: 0.0,
             angle,
+            granted: angle,
+            stop: None,
+            rule: None,
+            measured: false,
         }
     }
 
@@ -332,7 +393,8 @@ mod tests {
         let start = Placement::new(DVec3::new(1.0, 2.0, 3.0), DQuat::from_rotation_z(FRAC_PI_4)).expect("placement");
         let target = move_target(2, start, Placement::IDENTITY, DVec3::ZERO);
         let turn = DQuat::from_axis_angle(Axis::Y.direction(), FRAC_PI_2);
-        let commit = commit_rotation(&[target], world_pivot(&target), turn).expect("valid rotation").expect("a turn");
+        let commit =
+            commit_rotation(&[target], world_pivot(&target), turn, false).expect("valid rotation").expect("a turn");
         assert_eq!(commit.changes.len(), 1);
         let change = commit.changes[0];
         assert_eq!(change.placement.translation(), start.translation());
@@ -347,7 +409,8 @@ mod tests {
         let target = move_target(2, start, parent, DVec3::new(1.0, 2.0, 3.0));
         let angle = FRAC_PI_2;
         let turn = DQuat::from_axis_angle(Axis::Y.direction(), angle);
-        let commit = commit_rotation(&[target], world_pivot(&target), turn).expect("valid rotation").expect("a turn");
+        let commit =
+            commit_rotation(&[target], world_pivot(&target), turn, false).expect("valid rotation").expect("a turn");
         let change = commit.changes[0];
 
         // In world space the preview and the commit must be the same left-multiplied turn.
@@ -366,15 +429,26 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_is_never_measured_by_the_documents_bodies() {
+        // A rotation changes where a body lies without asking any other body: the commit says so, and
+        // the shell's write is the one the guard does not refuse (ADR 0180).
+        let target = move_target(2, Placement::IDENTITY, Placement::IDENTITY, DVec3::ZERO);
+        let turn = DQuat::from_axis_angle(Axis::Z.direction(), 0.5);
+        let commit =
+            commit_rotation(&[target], world_pivot(&target), turn, false).expect("valid rotation").expect("a turn");
+        assert!(!commit.measured, "a turn is the maker's own hand");
+    }
+
+    #[test]
     fn a_zero_or_full_turn_dispatches_nothing() {
         let target = move_target(2, Placement::IDENTITY, Placement::IDENTITY, DVec3::ZERO);
         let pivot = world_pivot(&target);
         for angle in [0.0, std::f64::consts::TAU, -std::f64::consts::TAU] {
             let turn = DQuat::from_axis_angle(Axis::X.direction(), angle);
-            assert_eq!(commit_rotation(&[target], pivot, turn).expect("no error"), None);
+            assert_eq!(commit_rotation(&[target], pivot, turn, false).expect("no error"), None);
         }
         assert_eq!(
-            commit_rotation(&[], pivot, DQuat::from_axis_angle(Axis::X.direction(), 0.5)).expect("no error"),
+            commit_rotation(&[], pivot, DQuat::from_axis_angle(Axis::X.direction(), 0.5), false).expect("no error"),
             None
         );
     }
@@ -384,7 +458,8 @@ mod tests {
         let start = Placement::new(DVec3::new(10.0, 20.0, 30.0), DQuat::IDENTITY).expect("placement");
         let target = move_target(2, start, Placement::IDENTITY, DVec3::new(1.0, 2.0, 3.0));
         let turn = DQuat::from_axis_angle(Axis::Z.direction(), FRAC_PI_2);
-        let commit = commit_rotation(&[target], world_pivot(&target), turn).expect("valid rotation").expect("a turn");
+        let commit =
+            commit_rotation(&[target], world_pivot(&target), turn, false).expect("valid rotation").expect("a turn");
         let change = commit.changes[0];
 
         let before = start.transform_point(target.pivot_local);
@@ -401,7 +476,8 @@ mod tests {
         let start = Placement::new(DVec3::new(1.0, 2.0, 3.0), DQuat::from_rotation_z(FRAC_PI_4)).expect("placement");
         let target = move_target(2, start, Placement::IDENTITY, DVec3::ZERO);
         let turn = DQuat::from_axis_angle(Axis::Y.direction(), FRAC_PI_2);
-        let commit = commit_rotation(&[target], world_pivot(&target), turn).expect("valid rotation").expect("a turn");
+        let commit =
+            commit_rotation(&[target], world_pivot(&target), turn, false).expect("valid rotation").expect("a turn");
         assert_eq!(commit.changes[0].placement.translation(), start.translation());
     }
 
@@ -416,7 +492,7 @@ mod tests {
         let pivot = world_pivot(&targets[1]);
         assert_eq!(pivot, DVec3::new(0.0, 210.0, 0.0));
         let turn = DQuat::from_axis_angle(Axis::Z.direction(), FRAC_PI_2);
-        let commit = commit_rotation(&targets, pivot, turn).expect("valid rotation").expect("a turn");
+        let commit = commit_rotation(&targets, pivot, turn, false).expect("valid rotation").expect("a turn");
         assert_eq!(commit.changes.len(), 2);
 
         // The anchor's stored pivot stays where it was; the other node orbits the same point.
@@ -511,5 +587,72 @@ mod tests {
             world_radius(closer, TEST_RING_FACTOR) < world_radius(camera, TEST_RING_FACTOR),
             "the ring keeps its share of the camera distance"
         );
+    }
+
+    /// A project whose root holds a board and a wall the board's turn reaches.
+    ///
+    /// The board is an object 500 x 20 x 700 mm with its own base corner at the world origin; the wall
+    /// is a slab whose face stands at y = 200, inside the sweep of the board's far end. A turn about Z
+    /// is what a hinge makes of it (X88).
+    fn board_and_wall() -> (model::Project, Id, Id) {
+        use model::{Container, Geometry, Mesh};
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = model::Project::new(root).expect("a project");
+        let root = project.root().id();
+        let at = |point: DVec3| {
+            Placement::IDENTITY
+                .with_translation(
+                    Length::from_micrometres((point.x * 1000.0).round() as i64),
+                    Length::from_micrometres((point.y * 1000.0).round() as i64),
+                    Length::from_micrometres((point.z * 1000.0).round() as i64),
+                )
+                .expect("a placement")
+        };
+        let box_mesh = |size: (i64, i64, i64)| {
+            let half = [size.0 / 2, size.1 / 2, size.2 / 2];
+            let length = |value: i64| Length::from_millimetres(value).expect("a length");
+            Mesh::cuboid(half.map(|value| length(-value)), half.map(length)).expect("a box")
+        };
+        let board = project
+            .add_object(root, "Board", at(DVec3::new(250.0, 10.0, 350.0)), Geometry::Mesh(box_mesh((500, 20, 700))))
+            .expect("a board");
+        let wall = project
+            .add_object(root, "Wall", at(DVec3::new(0.0, 210.0, 350.0)), Geometry::Mesh(box_mesh((3000, 20, 700))))
+            .expect("a wall");
+        (project, board, wall)
+    }
+
+    #[test]
+    fn a_measured_turn_stops_at_the_body_and_a_free_one_keeps_the_hands_angle() {
+        // X88's split, at the gizmo: the same drag asks the rule and stops on the wall's own face, or
+        // takes the hand's angle and passes through. The release says which of the two it was, so the
+        // write is refused where the ring was free (ADR 0180).
+        let (project, board, wall) = board_and_wall();
+        let rule = project.rotate_rule(&[board], Some(&contact_parry::Parry)).expect("a rotate rule");
+
+        let mut measured = drag(Axis::Z, FRAC_PI_2);
+        measured.pivot = rule.pivot();
+        measured.rule = Some(rule);
+        measured.measured = true;
+        measured.measure();
+        assert!(measured.granted > 0.0 && measured.granted < FRAC_PI_2, "the turn is cut: {measured:?}");
+        assert_eq!(measured.stop.and_then(model::Stop::node), Some(wall), "and the wall is what stopped it");
+        assert!(measured.measured, "the object turn's release is measured");
+
+        let mut free = drag(Axis::Z, FRAC_PI_2);
+        free.measure();
+        assert_eq!(free.granted, FRAC_PI_2, "the free turn keeps the hand's own angle");
+        assert_eq!(free.stop, None);
+        assert!(!free.measured, "and its release writes what it showed");
+
+        // The preview draws the granted angle, so a ring pressed into a wall does not show a turn the
+        // release would refuse.
+        let gizmo = RotateGizmo { drag: Some(measured), hover: None, consumed_click: false };
+        let preview = gizmo.preview().expect("the turned board is previewed");
+        let Preview::Rotation { rotation, .. } = preview else {
+            panic!("a ring drag previews a rotation");
+        };
+        let expected = DQuat::from_axis_angle(DVec3::Z, gizmo.drag.as_ref().expect("a drag").granted);
+        assert!((rotation.dot(expected).abs() - 1.0).abs() < 1.0e-12, "the preview draws the granted turn");
     }
 }

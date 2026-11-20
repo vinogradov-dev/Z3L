@@ -14,7 +14,7 @@ use testkit::{millimetres, sample_catalog, sample_product_project};
 use units::Degrees;
 
 /// The scene the exporter tests and the golden package are built from.
-pub fn fixture() -> (Project, model::Catalog) {
+pub fn fixture() -> (Project, catalog::Directory) {
     let (mut project, product) = sample_product_project();
     let catalog = sample_catalog();
     add_parts(&mut project, product);
@@ -72,7 +72,7 @@ fn add_parts(project: &mut Project, product: Id) {
         )
         .expect("a door is added");
     project
-        .set_property(door, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(302_000).expect("a hinged door")))
+        .set_property(door, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(102_000).expect("a hinged door")))
         .expect("a facade class");
 
     let fitting = project.add_component(product, "Hinge", Placement::IDENTITY).expect("a fitting container");
@@ -105,7 +105,7 @@ fn add_second_product(project: &mut Project) {
         )
         .expect("a back panel");
     project
-        .set_property(back, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(301_200).expect("a back panel")))
+        .set_property(back, SYSTEM_CLASS, PropertyValue::class(ClassCode::from_code(101_200).expect("a back panel")))
         .expect("a back class");
 
     // A round shelf draws arcs, so the contour table carries a curve and not only lines.

@@ -199,7 +199,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "thickness_um",
@@ -265,7 +265,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "thickness_um",
@@ -364,7 +364,7 @@
         },
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "length_um",
@@ -476,7 +476,7 @@
       "columns": [
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "name",
@@ -517,6 +517,14 @@
         {
           "name": "price_minor",
           "type": "integer"
+        },
+        {
+          "name": "price_date",
+          "type": "string"
+        },
+        {
+          "name": "price_stale",
+          "type": "integer"
         }
       ]
     },
@@ -527,7 +535,7 @@
       "columns": [
         {
           "name": "material_id",
-          "type": "integer"
+          "type": "string"
         },
         {
           "name": "stock_group",
@@ -555,6 +563,14 @@
         },
         {
           "name": "price_minor",
+          "type": "integer"
+        },
+        {
+          "name": "price_date",
+          "type": "string"
+        },
+        {
+          "name": "price_stale",
           "type": "integer"
         },
         {

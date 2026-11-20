@@ -525,7 +525,7 @@ mod tests {
     }
 
     fn session(project: Project) -> Session {
-        Session::with_catalog(project, sample_catalog())
+        Session::with_directory(project, sample_catalog())
     }
 
     #[test]

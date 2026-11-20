@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use geom::{Aabb, DMat4, DQuat, DVec3, DVec4, MeshData};
+use geom::{Aabb, DMat4, DQuat, DVec2, DVec3, DVec4, MeshData};
 use model::Id;
 
 use crate::ray::{ray_hit_drawable, ray_hit_polyline, ray_hit_product_envelope};
@@ -558,19 +558,31 @@ impl ProductEnvelopeState {
     }
 }
 
-/// One product's authored envelope in world space: the box it reserves, never a body.
+/// One product's authored envelope in world space: the space it reserves, never a body.
 ///
-/// The document stores three sides in the product's own frame (ADR 0097), so the scene carries them
-/// with the rigid local-to-world transform instead of eight world corners: the renderer draws the
-/// twelve edges of that box and picking casts the ray into the product frame. The envelope is
-/// picked even when its lines are hidden, which is how a closed product with parts stays reachable
-/// (ADR 0100).
+/// The document stores the footprint and the height in the product's own frame (ADR 0097, ADR 0159),
+/// so the scene carries the footprint as a **base outline** in local millimetres plus the rigid
+/// local-to-world transform: the renderer dashes the two rings and a vertical at each corner, and
+/// picking casts the ray into the product frame and tests the outline's prism. The outline is the
+/// shape the frame really reserves — a rectangle, a rectangle with a cut corner or a drawn ring —
+/// and `x`/`y` are only its bounds. The envelope is picked even when its lines are hidden, which is
+/// how a closed product with parts stays reachable (ADR 0100).
+///
+/// The points are the outline's own polyline in its travel order and are closed implicitly; a caller
+/// that has a contour samples it and says which of the samples are corners.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProductEnvelope {
-    /// The product container this box belongs to.
+    /// The product container this envelope belongs to.
     pub id: Id,
-    /// Width, depth and height in the product's own frame, in millimetres.
-    pub size: DVec3,
+    /// The base outline in the product's own frame, in millimetres, counter-clockwise.
+    pub outline: Arc<[DVec2]>,
+    /// The outline's corners: the points where a vertical edge stands.
+    ///
+    /// An arc is sampled into many points but is smooth, so it draws no vertical edge; a corner of the
+    /// shape is one line up the side of the reserved space.
+    pub corners: Arc<[DVec2]>,
+    /// The height of the reserved space, in millimetres.
+    pub height: f64,
     /// Rigid local-to-world transform of the product.
     pub world_transform: DMat4,
     /// Open, closed and empty, or closed with parts.
@@ -578,17 +590,63 @@ pub struct ProductEnvelope {
 }
 
 impl ProductEnvelope {
-    /// The volume of the box in cubic millimetres, or `None` when the box is not usable.
+    /// One product's envelope with the plain rectangular footprint its three sides describe.
+    ///
+    /// The shape a frame reserves is normally derived from the document's footprint (ADR 0159); this
+    /// is the rectangle case, which is also what a caller that has only three sides can state.
+    pub fn rectangular(id: Id, size: DVec3, world_transform: DMat4, state: ProductEnvelopeState) -> Self {
+        let outline =
+            [DVec2::new(0.0, 0.0), DVec2::new(size.x, 0.0), DVec2::new(size.x, size.y), DVec2::new(0.0, size.y)];
+        Self { id, outline: Arc::from(outline), corners: Arc::from(outline), height: size.z, world_transform, state }
+    }
+
+    /// The volume of the reserved space in cubic millimetres, or `None` when it is not usable.
     ///
     /// Picking uses it to prefer the innermost product when several envelopes contain the point:
-    /// the tightest box is the one the maker means. A non-finite or non-positive side has no
-    /// volume, so a hostile frame never wins a pick.
+    /// the tightest space is the one the maker means. The area is the outline's own shoelace area,
+    /// not its bounding rectangle, so a cut corner really is a smaller piece. A non-finite, empty or
+    /// flat outline has no volume, so a hostile frame never wins a pick.
     fn volume(&self) -> Option<f64> {
-        if !self.size.is_finite() || self.size.min_element() <= 0.0 {
+        let volume = self.footprint_area()? * self.height;
+        (volume.is_finite() && volume > 0.0).then_some(volume)
+    }
+
+    /// The area the base outline encloses, in square millimetres, or `None` when it is not a ring.
+    fn footprint_area(&self) -> Option<f64> {
+        if !self.height.is_finite() || self.height <= 0.0 || self.outline.len() < 3 {
             return None;
         }
-        let volume = self.size.x * self.size.y * self.size.z;
-        (volume.is_finite() && volume > 0.0).then_some(volume)
+        if self.outline.iter().any(|point| !point.is_finite()) {
+            return None;
+        }
+        let mut twice = 0.0;
+        for index in 0..self.outline.len() {
+            let start = self.outline.get(index)?;
+            let next = self.outline.get((index + 1) % self.outline.len())?;
+            twice += start.x * next.y - next.x * start.y;
+        }
+        let area = twice.abs() / 2.0;
+        (area.is_finite() && area > 0.0).then_some(area)
+    }
+
+    /// The local box the reserved space lives in: the outline's bounds and `0..height`.
+    ///
+    /// This is the cheap first test picking and drawing both make; the shape itself is the outline,
+    /// so the box is only ever a rejection and never the answer.
+    pub fn local_bounds(&self) -> Option<(DVec3, DVec3)> {
+        if !self.height.is_finite() || self.height <= 0.0 || self.outline.len() < 3 {
+            return None;
+        }
+        let mut min = DVec2::splat(f64::INFINITY);
+        let mut max = DVec2::splat(f64::NEG_INFINITY);
+        for point in self.outline.iter() {
+            if !point.is_finite() {
+                return None;
+            }
+            min = min.min(*point);
+            max = max.max(*point);
+        }
+        Some((DVec3::new(min.x, min.y, 0.0), DVec3::new(max.x, max.y, self.height)))
     }
 }
 
@@ -624,6 +682,13 @@ pub struct SceneFrame {
     /// single-sided so a view from below keeps the model. It is view state, never document data:
     /// the ground of a workspace, like the grid, not a board on the floor.
     pub floor: [f32; 4],
+    /// How opaque the floor plate is, from 0 to 1, read at draw time.
+    ///
+    /// One is the opaque floor of ADR 0142; below one the plate is blended over what stands under
+    /// it, so a part below the floor is seen *through* the plate's tint instead of beside it. A
+    /// shadow needs a surface to darken, so zero draws neither the plate nor its shadow (U109,
+    /// ADR 0144). Workspace data like the display strengths, never document data.
+    pub floor_opacity: f32,
     /// The key light.
     pub lighting: Lighting,
     /// The clear colour, in gamma space.
@@ -655,6 +720,7 @@ impl Default for SceneFrame {
             grid: colors.grid,
             contact_shadows: ContactShadows::default(),
             floor: colors.floor,
+            floor_opacity: 1.0,
             lighting: Lighting::default(),
             background: colors.background,
             line_ink: colors.line_ink,
@@ -970,6 +1036,15 @@ mod tests {
     }
 
     #[test]
+    fn the_floor_is_opaque_until_the_workspace_says_otherwise() {
+        let mut frame = SceneFrame::default();
+        assert_eq!(frame.floor_opacity, 1.0, "a frame that says nothing draws the floor as it always did");
+        frame.floor_opacity = 0.4;
+        frame.apply_colors(SceneColors::LIGHT);
+        assert_eq!(frame.floor_opacity, 0.4, "a theme repaints the ground without making it solid again");
+    }
+
+    #[test]
     fn the_contact_shadow_switch_removes_the_shadow() {
         let mut frame = SceneFrame::default();
         assert!(frame.contact_shadows.draws(), "a frame draws the shadow by default");
@@ -1031,6 +1106,36 @@ mod tests {
         camera.zoom(f64::NAN);
         camera.zoom(0.0);
         assert_eq!(camera.distance(), distance);
+    }
+
+    #[test]
+    fn a_zoom_about_a_point_leaves_that_point_on_screen() {
+        // X67: the wheel zooms towards the pointer. A zoom about the target slides everything the
+        // maker is looking at out from under the pointer — a carried piece leaves the hand on the
+        // first wheel step — so the anchor keeps its own place in both projections.
+        for orthographic in [false, true] {
+            let mut camera = Camera::default();
+            camera.orbit(0.6, 0.35);
+            if orthographic {
+                camera.set_orthographic();
+            }
+            let anchor = camera.target() + camera.right() * 400.0 + camera.up() * 220.0;
+            let before = camera.project_ndc(anchor, 1.6).expect("the anchor is on screen");
+            for factor in [0.5, 0.8, 1.0, 1.4, 2.0] {
+                let mut zoomed = camera;
+                zoomed.zoom_about(factor, Some(anchor));
+                let after = zoomed.project_ndc(anchor, 1.6).expect("the anchor is still on screen");
+                assert!(
+                    (after - before).length() < 1.0e-9,
+                    "a zoom by {factor} keeps the point: {after:?} from {before:?}"
+                );
+                assert_eq!(zoomed.distance(), camera.distance() * factor, "the wheel still zooms");
+            }
+            // A point on the view's own axis has nowhere to slide to, and a plain zoom is the answer.
+            let mut centred = camera;
+            centred.zoom_about(0.5, None);
+            assert_eq!(centred.target(), camera.target(), "a zoom with no anchor moves only the distance");
+        }
     }
 
     #[test]
@@ -1840,12 +1945,7 @@ mod tests {
     }
 
     fn envelope(id: u64, size: DVec3, translation: DVec3, state: ProductEnvelopeState) -> ProductEnvelope {
-        ProductEnvelope {
-            id: Id::new(id).expect("id"),
-            size,
-            world_transform: DMat4::from_translation(translation),
-            state,
-        }
+        ProductEnvelope::rectangular(Id::new(id).expect("id"), size, DMat4::from_translation(translation), state)
     }
 
     #[test]
@@ -1898,6 +1998,59 @@ mod tests {
         assert_eq!(frame.pick(outside, 600.0), None);
         let beside = Ray::new(DVec3::new(50.0, 50.0, 1000.0), -DVec3::X).expect("ray");
         assert_eq!(frame.pick(beside, 600.0), None, "a ray may miss the box entirely");
+    }
+
+    /// A footprint whose outline leaves one corner of its bounding box empty: the shape of a corner
+    /// cabinet, and of any drawn ring that is not a rectangle.
+    fn cut_corner_envelope(id: u64) -> ProductEnvelope {
+        let outline = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(100.0, 0.0),
+            DVec2::new(100.0, 40.0),
+            DVec2::new(40.0, 40.0),
+            DVec2::new(40.0, 100.0),
+            DVec2::new(0.0, 100.0),
+        ];
+        ProductEnvelope {
+            id: Id::new(id).expect("id"),
+            outline: Arc::from(outline),
+            corners: Arc::from(outline),
+            height: 100.0,
+            world_transform: DMat4::IDENTITY,
+            state: ProductEnvelopeState::Open,
+        }
+    }
+
+    #[test]
+    fn a_cut_footprint_is_picked_inside_its_outline_and_never_in_the_cut() {
+        let id = Id::new(61).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push_product_envelope(cut_corner_envelope(61));
+
+        for point in [DVec3::new(20.0, 20.0, 50.0), DVec3::new(20.0, 80.0, 50.0), DVec3::new(80.0, 20.0, 50.0)] {
+            let ray = Ray::new(point + DVec3::Z * 1000.0, -DVec3::Z).expect("ray");
+            assert_eq!(frame.pick(ray, 600.0), Some(id), "a click inside the reserved shape selects the piece");
+        }
+        for point in [DVec3::new(80.0, 80.0, 50.0), DVec3::new(60.0, 60.0, 50.0)] {
+            let ray = Ray::new(point + DVec3::Z * 1000.0, -DVec3::Z).expect("ray");
+            assert_eq!(frame.pick(ray, 600.0), None, "the cut corner reserves nothing, so it picks nothing");
+        }
+        let beside = Ray::new(DVec3::new(200.0, 20.0, 2000.0), -DVec3::Z).expect("ray");
+        assert_eq!(frame.pick(beside, 600.0), None, "outside the outline nothing is reserved, however tall it is");
+    }
+
+    #[test]
+    fn a_cut_footprint_is_smaller_than_its_box_when_the_innermost_piece_wins() {
+        // The cut shape sits inside a large plain box: the click inside the shape reaches the cut
+        // piece because its reserved volume, not its bounding box, is the tighter one.
+        let cut = Id::new(71).expect("id");
+        let outer = Id::new(72).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push_product_envelope(cut_corner_envelope(71));
+        frame.push_product_envelope(envelope(72, DVec3::splat(1000.0), DVec3::ZERO, ProductEnvelopeState::Open));
+        let ray = Ray::new(DVec3::new(20.0, 20.0, 2000.0), -DVec3::Z).expect("ray");
+        assert_eq!(frame.pick(ray, 600.0), Some(cut));
+        assert_ne!(outer, cut);
     }
 
     #[test]

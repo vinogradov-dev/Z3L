@@ -4,9 +4,10 @@
 //! no longer fits — are computed from the project and catalogue on demand. They are never stored in
 //! the document and never make a scene unreadable.
 
+use catalog::Directory;
 use model::{
-    Catalog, ContourSegmentId, CoreViolation, CutoutDepth, EdgeId, Id, MachiningId, MaterialId, PanelGeometryError,
-    Project, ProjectError, VertexId,
+    ContourSegmentId, CoreViolation, CutoutDepth, EdgeId, Id, ItemId, MachiningId, PanelGeometryError, Project,
+    ProjectError, VertexId,
 };
 use units::Length;
 
@@ -18,28 +19,28 @@ pub enum PanelDiagnostic {
     /// The panel's material id is absent from the catalogue.
     MissingMaterial {
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
     },
     /// Edge banding refers to a material that is absent from the catalogue.
     MissingBandingMaterial {
         /// The edge whose banding is unresolved.
         edge: EdgeId,
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
     },
     /// Corner banding refers to a material that is absent from the catalogue.
     MissingCornerBandingMaterial {
         /// The corner whose banding is unresolved.
         corner: VertexId,
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
     },
     /// Ring banding refers to a material that is absent from the catalogue.
     MissingRingBandingMaterial {
         /// The ring segment whose banding is unresolved.
         segment: ContourSegmentId,
         /// The missing material id.
-        material: MaterialId,
+        material: ItemId,
     },
     /// The resolved core has a non-positive length or width.
     NonPositiveCore,
@@ -69,7 +70,7 @@ pub enum PanelDiagnostic {
 ///
 /// A missing panel has no issues to report and yields an empty list. The function is read-only and
 /// can run on every rebuild.
-pub fn diagnose_panel(project: &Project, catalog: &Catalog, panel_id: Id) -> Vec<PanelDiagnostic> {
+pub fn diagnose_panel(project: &Project, catalog: &Directory, panel_id: Id) -> Vec<PanelDiagnostic> {
     let Some(panel) = project.panel(panel_id) else {
         return Vec::new();
     };
@@ -78,19 +79,19 @@ pub fn diagnose_panel(project: &Project, catalog: &Catalog, panel_id: Id) -> Vec
     match panel.material() {
         None => diagnostics.push(PanelDiagnostic::NoMaterial),
         Some(material_id) => {
-            if catalog.panel_material(material_id).is_none() {
+            if catalog.board(material_id).is_none() {
                 diagnostics.push(PanelDiagnostic::MissingMaterial { material: material_id });
             }
         }
     }
 
     for band in panel.edge_banding() {
-        if catalog.edge_material(band.material()).is_none() {
+        if catalog.banding(band.material()).is_none() {
             diagnostics.push(PanelDiagnostic::MissingBandingMaterial { edge: band.edge(), material: band.material() });
         }
     }
     for band in panel.corner_banding() {
-        if catalog.edge_material(band.material()).is_none() {
+        if catalog.banding(band.material()).is_none() {
             diagnostics.push(PanelDiagnostic::MissingCornerBandingMaterial {
                 corner: band.corner(),
                 material: band.material(),
@@ -98,7 +99,7 @@ pub fn diagnose_panel(project: &Project, catalog: &Catalog, panel_id: Id) -> Vec
         }
     }
     for band in panel.ring_banding() {
-        if catalog.edge_material(band.material()).is_none() {
+        if catalog.banding(band.material()).is_none() {
             diagnostics.push(PanelDiagnostic::MissingRingBandingMaterial {
                 segment: band.segment(),
                 material: band.material(),
@@ -165,8 +166,8 @@ mod tests {
     use super::*;
 
     use model::{
-        Catalog, Contour, CornerBanding, CornerFeature, CornerFeatureKind, CutoutShape, EdgeBanding, EdgeId, FaceSide,
-        MaterialId, PanelMaterial, Placement, RectCorner, RingBanding,
+        Contour, CornerBanding, CornerFeature, CornerFeatureKind, CutoutShape, EdgeBanding, EdgeId, FaceSide, ItemId,
+        Placement, RectCorner, RingBanding,
     };
     use testkit::{
         sample_blind_depth, sample_catalog, sample_material_id, sample_panel_thickness, sample_project,
@@ -180,7 +181,7 @@ mod tests {
     #[test]
     fn missing_materials_are_diagnostics() {
         let mut project = sample_project();
-        let missing = MaterialId::new(999).expect("material id");
+        let missing = ItemId::new(1, 999).expect("material id");
         let band = EdgeBanding::new(
             EdgeId::new(1).expect("edge"),
             missing,
@@ -216,7 +217,7 @@ mod tests {
                 .expect("chamfer"),
             )
             .expect("set chamfer");
-        let missing = MaterialId::new(999).expect("material id");
+        let missing = ItemId::new(1, 999).expect("material id");
         project
             .set_corner_banding(
                 panel_id(),
@@ -265,7 +266,7 @@ mod tests {
             .first()
             .expect("segment")
             .id();
-        let missing = MaterialId::new(999).expect("material id");
+        let missing = ItemId::new(1, 999).expect("material id");
         let band = RingBanding::new(
             segment,
             missing,
@@ -300,10 +301,7 @@ mod tests {
             )
             .expect("blind cutout");
         project.set_panel_material(panel_id(), sample_material_id(), sample_thin_panel_thickness()).expect("material");
-        let thin =
-            PanelMaterial::new(sample_material_id(), "Thin board", "mdf", sample_thin_panel_thickness(), "white")
-                .expect("thin material");
-        let catalog = Catalog::new(vec![thin], Vec::new(), None).expect("catalog");
+        let catalog = testkit::sample_catalog_with_thickness(sample_thin_panel_thickness());
         let diagnostics = diagnose_panel(&project, &catalog, panel_id());
         assert!(diagnostics.iter().any(|diagnostic| matches!(
             diagnostic,
@@ -315,7 +313,7 @@ mod tests {
     #[test]
     fn a_broken_banding_is_a_diagnostic_not_a_load_error() {
         let broken = r#"{
-            "schema_version": 25,
+            "schema_version": 28,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -331,7 +329,7 @@ mod tests {
                     "machining": [],
                     "edge_banding": [{
                         "edge": 1,
-                        "material": 999,
+                        "material": "1-999",
                         "included_in_size": true,
                         "last_known_thickness": 500000,
                         "last_known_width": 22000
@@ -348,7 +346,7 @@ mod tests {
     #[test]
     fn machining_outside_the_core_is_a_diagnostic() {
         let broken = r#"{
-            "schema_version": 25,
+            "schema_version": 28,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -386,7 +384,7 @@ mod tests {
 
     fn project_with_through_cutout(x: i64, y: i64, width: i64, height: i64) -> Project {
         let value = serde_json::json!({
-            "schema_version": 25,
+            "schema_version": 28,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -430,7 +428,7 @@ mod tests {
 
     fn project_with_contour_cutout(points: &[[i64; 2]], depth: serde_json::Value) -> Project {
         let value = serde_json::json!({
-            "schema_version": 25,
+            "schema_version": 28,
             "revision": 0,
             "next_id": 20,
             "root": {

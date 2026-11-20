@@ -112,20 +112,28 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::CreateProductCard),
         },
-        ToolKind::ProductDraw => Ready {
+        // The drawn frame is the box gesture with the envelope as its owner: the same rectangle
+        // method, the same plates and the same base a solid begins with (N19, ADR 0101).
+        ToolKind::ProductBox(draw) => Ready {
             enabled: true,
             armed: is_armed(active, kind),
-            // The drawn frame is the box gesture with the envelope as its owner: the first step is
-            // the base rectangle, exactly as it is for a solid (ADR 0101).
             hint: Message::PrimitiveDrawBase.with(lang, [tool.label.text(lang)]),
-            action: Some(ToolAction::DrawProductFrame),
+            action: Some(ToolAction::DrawProductFrame { tool: draw }),
+        },
+        ToolKind::ProductContour => Ready {
+            enabled: true,
+            armed: is_armed(active, kind),
+            // The drawn footprint is the sketch tool with the envelope as its owner: the ring is the
+            // frame's base, and its height is pulled from there (ADR 0159).
+            hint: Message::ProductContourDraw.with(lang, [tool.label.text(lang)]),
+            action: Some(ToolAction::DrawProductFrameContour),
         },
         ToolKind::PanelContour => {
             // A contour panel is a part of the open product (ADR 0098) and takes its thickness from a
             // catalogue material; the cell then arms the free-outline tool, whose close is the one
             // command that cuts the board (ADR 0114).
             let draw = Message::PanelContourDraw.with(lang, [tool.label.text(lang)]);
-            // A furniture tool always names itself: the missing product disables the cell but is not
+            // A object tool always names itself: the missing product disables the cell but is not
             // written in its hint, so a dim cell still says which tool it is (X46).
             let hint = if !has_panel_material { Message::FillNeedsMaterial.text(lang) } else { draw.as_str() };
             let enabled = product_open && has_panel_material;

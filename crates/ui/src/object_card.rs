@@ -1300,7 +1300,7 @@ mod tests {
     }
 
     fn constructive_session() -> (Session, Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let value = json(&ObjectExtrudeCreate {
             parent: session.project().root().id(),
             name: "Top".to_owned(),
@@ -1365,7 +1365,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let id = project.add_object(root, "Shape", Placement::IDENTITY, Geometry::Primitive(primitive)).expect("add");
-        let session = Session::with_catalog(project, sample_catalog());
+        let session = Session::with_directory(project, sample_catalog());
         (session, id)
     }
 
@@ -1563,7 +1563,7 @@ mod tests {
     #[test]
     fn renaming_an_object_dispatches_through_the_engine() {
         let (project, id) = object_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         rename_object(&mut session, id, "Bracket".to_owned()).expect("rename");
         assert_eq!(session.project().object(id).expect("object").name(), "Bracket");
         session.undo().expect("undo");
@@ -1617,7 +1617,7 @@ mod tests {
 
     #[test]
     fn extrude_parameters_create_the_object_the_card_expects() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let value = json(&ObjectExtrudeCreate {
             parent: session.project().root().id(),
             name: "Top".to_owned(),
@@ -1636,7 +1636,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let id = project.add_object(root, "Figure", Placement::IDENTITY, Geometry::Path(path)).expect("add object");
-        (Session::with_catalog(project, sample_catalog()), id)
+        (Session::with_directory(project, sample_catalog()), id)
     }
 
     fn figure_draft(id: Id, path: &Path) -> FigureDraft {
@@ -1794,7 +1794,7 @@ mod tests {
         let root = project.root().id();
         let id =
             project.add_object(root, "Top", Placement::IDENTITY, Geometry::Constructive(body)).expect("add the body");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
 
         let summary = object_summary(session.project(), id).expect("summary");
         let stored = summary.path.as_ref().expect("a body carries the path it owns");
@@ -1855,7 +1855,7 @@ mod tests {
     #[test]
     fn the_card_draws_only_the_blocks_the_selected_kind_can_use() {
         let (project, id) = object_project();
-        let mut mesh = Session::with_catalog(project, sample_catalog());
+        let mut mesh = Session::with_directory(project, sample_catalog());
         let mesh = drew_card(&mut mesh, id);
         assert!(drew(&mesh, "Edit mesh"), "a mesh is edited element by element: {mesh:?}");
         assert!(drew(&mesh, "Vertices"), "and its counts are its measure: {mesh:?}");
@@ -1892,7 +1892,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let id = project.add_object(root, "Top", Placement::IDENTITY, Geometry::Constructive(body)).expect("body");
-        let mut figure_session = Session::with_catalog(project, sample_catalog());
+        let mut figure_session = Session::with_directory(project, sample_catalog());
         let figure = drew_card(&mut figure_session, id);
         assert!(drew(&figure, "Edit contour"), "a body is reshaped in the viewport: {figure:?}");
         assert!(drew(&figure, "Collapse to mesh"), "and can be baked: {figure:?}");

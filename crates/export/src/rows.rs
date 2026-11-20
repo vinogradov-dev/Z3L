@@ -7,15 +7,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use catalog::{Directory, StockView};
 use geom::DVec3;
 use model::{
-    Catalog, ClassCode, Contour, ContourSegment, CutoutDepth, CutoutShape, Extent, FaceSide, Fill, Id, Level,
-    MachiningParams, MaterialId, Measure, Mount, Nesting, Node, Opening, Panel, PanelGeometry, PanelMaterial,
-    PanelNominalSize, PanelStock, Placement, Project, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT,
-    SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION, Supply,
+    ClassCode, Contour, ContourSegment, CutoutDepth, CutoutShape, Extent, FaceSide, Fill, Id, ItemId, Level,
+    MachiningParams, Measure, Mount, Nesting, Node, Opening, Panel, PanelGeometry, PanelNominalSize, Placement,
+    Project, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS,
+    SYSTEM_PROTOTYPE_VERSION, Supply,
 };
 use serde_json::{Value, json};
 use text::Lang;
+
+use crate::write::PriceAging;
 use units::Length;
 
 use crate::error::ExportError;
@@ -23,8 +26,8 @@ use crate::manifest::{ROTATION_SCALE, RULES};
 use crate::table::{Cell, Tables};
 
 /// Builds every table of one package, ordered by its key.
-pub fn build(project: &Project, catalog: &Catalog) -> Result<Tables, ExportError> {
-    let mut context = Context::default();
+pub fn build(project: &Project, catalog: &Directory, aging: PriceAging) -> Result<Tables, ExportError> {
+    let mut context = Context { aging, ..Context::default() };
     for product in project.products() {
         context.products.insert(product.get(), ProductAgg::default());
     }
@@ -64,9 +67,11 @@ struct Context {
     machining: BTreeMap<u64, Vec<Cell>>,
     properties: BTreeMap<(u64, String), Vec<Cell>>,
     products: BTreeMap<u64, ProductAgg>,
-    materials: BTreeMap<u64, MaterialFacts>,
-    sheets: BTreeMap<u64, SheetAgg>,
+    materials: BTreeMap<ItemId, MaterialFacts>,
+    sheets: BTreeMap<ItemId, SheetAgg>,
     classes: BTreeSet<u32>,
+    /// How old a price may be before this package calls it stale.
+    aging: PriceAging,
 }
 
 /// What a product's parts add up to.
@@ -96,6 +101,10 @@ struct StockFacts {
     sheet_length_um: i64,
     sheet_width_um: i64,
     price_minor: i64,
+    /// The day the price was measured, `YYYY-MM-DD`, empty when the record names none.
+    price_date: String,
+    /// One when the price is older than the workshop's limit, zero otherwise.
+    price_stale: i64,
     sheet_area_mm2: i64,
 }
 
@@ -112,7 +121,7 @@ struct MaterialFacts {
 /// One banding strip with its resolved length and profile.
 struct BandFacts {
     unit: String,
-    material: MaterialId,
+    material: ItemId,
     thickness: Length,
     width: Length,
     included: bool,
@@ -133,7 +142,7 @@ struct PanelFacts<'a> {
 /// Walks the children of one container, in tree order.
 fn walk(
     project: &Project,
-    catalog: &Catalog,
+    catalog: &Directory,
     context: &mut Context,
     children: &[Node],
     parent: Id,
@@ -165,15 +174,16 @@ fn walk(
 }
 
 /// Builds the part, banding, contour, machining and facade rows of one panel.
-fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel: &Panel) -> Result<(), ExportError> {
+fn panel_rows(project: &Project, catalog: &Directory, context: &mut Context, panel: &Panel) -> Result<(), ExportError> {
     let facts = panel_facts(panel, catalog)?;
     let product = project.product_of(panel.id());
     let product_id = product.map_or(0, Id::get);
-    let material_id = panel.material().map_or(0, MaterialId::get);
+    let material_id = panel.material().map(|id| id.to_string()).unwrap_or_default();
     let class = facts.class;
     let size = panel.nominal_size();
     let area_mm2 = rounded_i64(facts.geometry.core_region().area()).unwrap_or(0);
-    let stock = panel.material().and_then(|material| catalog.panel_material(material)).and_then(PanelMaterial::stock);
+    let stock = panel.material().and_then(|material| catalog.item(material)).and_then(|item| catalog.stock(item));
+    let stock = stock.as_ref();
     let price_minor = part_cost(stock, area_mm2);
 
     context.parts.insert(
@@ -182,7 +192,7 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
             Cell::Integer(panel.id().get() as i64),
             Cell::Integer(product_id as i64),
             Cell::Text(class_text(class)),
-            Cell::Integer(material_id as i64),
+            Cell::Text(material_id.clone()),
             Cell::Integer(facts.thickness.micrometres()),
             Cell::Integer(size.length().micrometres()),
             Cell::Integer(size.width().micrometres()),
@@ -203,7 +213,7 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
             vec![
                 Cell::Integer(panel.id().get() as i64),
                 Cell::Text(band.unit.clone()),
-                Cell::Integer(band.material.get() as i64),
+                Cell::Text(band.material.to_string()),
                 Cell::Integer(band.thickness.micrometres()),
                 Cell::Integer(band.width.micrometres()),
                 Cell::Boolean(band.included),
@@ -241,8 +251,9 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
     if class.traits().and_then(|traits| traits.opening()) == Some(Opening::Closes) {
         let glass = panel
             .material()
-            .and_then(|material| catalog.panel_material(material))
-            .is_some_and(|material| material.kind().to_ascii_lowercase().contains("glass"));
+            .and_then(|material| catalog.item(material))
+            .and_then(|item| catalog.text(item, catalog::MATERIAL_SLUG))
+            .is_some_and(|made_of| made_of.to_ascii_lowercase().contains("glass"));
         context.facades.insert(panel.id().get(), facade_row(&facts, product_id, glass));
     }
 
@@ -250,15 +261,13 @@ fn panel_rows(project: &Project, catalog: &Catalog, context: &mut Context, panel
 }
 
 /// Resolves a panel once: thickness, geometry, nominal segments and every banding strip.
-fn panel_facts<'a>(panel: &'a Panel, catalog: &Catalog) -> Result<PanelFacts<'a>, ExportError> {
+fn panel_facts<'a>(panel: &'a Panel, catalog: &Directory) -> Result<PanelFacts<'a>, ExportError> {
     let thickness = panel
         .material()
-        .and_then(|material| catalog.panel_material(material))
-        .map_or_else(|| panel.last_known_thickness(), |material| material.nominal_thickness());
+        .and_then(|material| catalog.board(material))
+        .map_or_else(|| panel.last_known_thickness(), |material| material.thickness);
     let geometry = panel.geometry_with_banding(thickness, |spec| {
-        catalog
-            .edge_material(spec.material())
-            .map_or_else(|| spec.last_known_thickness(), |material| material.thickness())
+        catalog.banding(spec.material()).map_or_else(|| spec.last_known_thickness(), |material| material.thickness)
     })?;
     let (ring, sources) = panel.outline().ring_and_sources_for(panel.nominal_size())?;
     let segments: Vec<(geom::Segment, model::SegmentSource)> = ring.segments().iter().copied().zip(sources).collect();
@@ -312,10 +321,8 @@ fn panel_class(panel: &Panel) -> ClassCode {
 }
 
 /// The catalogue profile of a banding material, or the record's fallback.
-fn edge_profile(catalog: &Catalog, material: MaterialId, fallback: Length, fallback_width: Length) -> (Length, Length) {
-    catalog
-        .edge_material(material)
-        .map_or((fallback, fallback_width), |material| (material.thickness(), material.width()))
+fn edge_profile(catalog: &Directory, material: ItemId, fallback: Length, fallback_width: Length) -> (Length, Length) {
+    catalog.banding(material).map_or((fallback, fallback_width), |material| (material.thickness, material.width))
 }
 
 /// The nominal length of the segment a band covers, in micrometres.
@@ -442,12 +449,12 @@ fn push_products(
 fn facade_row(facts: &PanelFacts<'_>, product_id: u64, glass: bool) -> Vec<Cell> {
     let panel = facts.panel;
     let size = panel.nominal_size();
-    let material_id = panel.material().map_or(0, MaterialId::get);
+    let material_id = panel.material().map(|id| id.to_string()).unwrap_or_default();
     vec![
         Cell::Integer(panel.id().get() as i64),
         Cell::Integer(product_id as i64),
         Cell::Text(class_text(facts.class)),
-        Cell::Integer(material_id as i64),
+        Cell::Text(material_id.clone()),
         Cell::Integer(size.length().micrometres()),
         Cell::Integer(size.width().micrometres()),
         Cell::Integer(facts.thickness.micrometres()),
@@ -632,6 +639,9 @@ fn property_json(value: &PropertyValue) -> Value {
         PropertyValue::Text { value } => Value::String(value.clone()),
         PropertyValue::Choice { key, label } => json!({ "key": key, "label": label }),
         PropertyValue::Reference { id } => Value::from(id.get()),
+        // A catalogue record is written as the id a reader can look up in the package's own rows, so a
+        // report never carries a number that means nothing outside this machine.
+        PropertyValue::Item { id } => Value::String(id.to_string()),
         PropertyValue::Class { value } => Value::String(value.to_string()),
         PropertyValue::Structured { value } => value.clone(),
     }
@@ -640,31 +650,37 @@ fn property_json(value: &PropertyValue) -> Value {
 /// Records a material row the order uses, once.
 fn note_material(
     context: &mut Context,
-    catalog: &Catalog,
-    material: MaterialId,
+    catalog: &Directory,
+    material: ItemId,
     fallback_thickness: Length,
     fallback_width: Length,
 ) {
-    let key = material.get();
+    let key = material;
     if context.materials.contains_key(&key) {
         return;
     }
-    let facts = if let Some(panel) = catalog.panel_material(material) {
+    let made_of = catalog
+        .item(material)
+        .and_then(|item| catalog.text(item, catalog::MATERIAL_SLUG))
+        .unwrap_or_default()
+        .to_owned();
+    let stocked = catalog.item(material).and_then(|item| catalog.stock(item));
+    let facts = if let Some(board) = catalog.board(material) {
         MaterialFacts {
-            name: panel.name().to_owned(),
-            kind: panel.kind().to_owned(),
-            thickness: panel.nominal_thickness(),
+            name: board.name.clone(),
+            kind: made_of,
+            thickness: board.thickness,
             width: Length::ZERO,
-            color: panel.color().to_owned(),
-            stock: panel.stock().map(stock_facts),
+            color: board.color.clone().unwrap_or_default(),
+            stock: stocked.as_ref().map(|stock| stock_facts(stock, context.aging)),
         }
-    } else if let Some(edge) = catalog.edge_material(material) {
+    } else if let Some(band) = catalog.banding(material) {
         MaterialFacts {
-            name: edge.name().to_owned(),
-            kind: edge.kind().to_owned(),
-            thickness: edge.thickness(),
-            width: edge.width(),
-            color: edge.color().to_owned(),
+            name: band.name.clone(),
+            kind: made_of,
+            thickness: band.thickness,
+            width: band.width,
+            color: band.color.clone().unwrap_or_default(),
             stock: None,
         }
     } else {
@@ -681,27 +697,40 @@ fn note_material(
 }
 
 /// The stock block of one material as the package repeats it, with the sheet area resolved once.
-fn stock_facts(stock: &PanelStock) -> StockFacts {
-    let sheet = stock.sheet();
+fn stock_facts(stock: &StockView, aging: PriceAging) -> StockFacts {
     StockFacts {
-        stock_group: stock.group().unwrap_or("").to_owned(),
-        sheet_length_um: sheet.length().micrometres(),
-        sheet_width_um: sheet.width().micrometres(),
-        price_minor: stock.price().map_or(0, |price| i64::try_from(price.minor()).unwrap_or(i64::MAX)),
-        sheet_area_mm2: sheet_area_mm2(sheet.length(), sheet.width()),
+        stock_group: stock.group.clone().unwrap_or_default(),
+        sheet_length_um: stock.length.micrometres(),
+        sheet_width_um: stock.width.micrometres(),
+        price_minor: stock.price.as_ref().map_or(0, |price| i64::try_from(price.value().minor()).unwrap_or(i64::MAX)),
+        // The date travels even when the package makes no judgement: a reader that knows its own
+        // shelf life can still see how old the number is.
+        price_date: stock
+            .price
+            .as_ref()
+            .and_then(|price| price.price.date())
+            .map(catalog::Date::iso)
+            .unwrap_or_default(),
+        price_stale: stock
+            .price
+            .as_ref()
+            .and_then(|price| aging.freshness(&price.price))
+            .is_some_and(catalog::Freshness::is_stale)
+            .into(),
+        sheet_area_mm2: sheet_area_mm2(stock.length, stock.width),
     }
 }
 
 /// Records that one part is cut from a stocked material's sheet, so the sheet table can group it.
-fn note_stock(context: &mut Context, material: Option<MaterialId>, stock: Option<&PanelStock>, area_mm2: i64) {
+fn note_stock(context: &mut Context, material: Option<ItemId>, stock: Option<&StockView>, area_mm2: i64) {
     let (Some(material), Some(stock)) = (material, stock) else {
         return;
     };
-    let aggregate = context.sheets.entry(material.get()).or_default();
+    let aggregate = context.sheets.entry(material).or_default();
     aggregate.part_count = aggregate.part_count.saturating_add(1);
     aggregate.part_area_mm2 = aggregate.part_area_mm2.saturating_add(i128::from(area_mm2));
     if aggregate.stock.is_none() {
-        aggregate.stock = Some(stock_facts(stock));
+        aggregate.stock = Some(stock_facts(stock, context.aging));
     }
 }
 
@@ -710,16 +739,15 @@ fn note_stock(context: &mut Context, material: Option<MaterialId>, stock: Option
 /// A sheet price buys a whole nominal sheet, so a part costs what its core area is of that sheet. No
 /// nesting efficiency is applied: how many parts a sheet really holds is the reader's layout, and a
 /// guessed efficiency would be a rule the package never declared.
-fn part_cost(stock: Option<&PanelStock>, part_area_mm2: i64) -> i64 {
-    let (Some(stock), Some(price)) = (stock, stock.and_then(PanelStock::price)) else {
+fn part_cost(stock: Option<&StockView>, part_area_mm2: i64) -> i64 {
+    let (Some(stock), Some(price)) = (stock, stock.and_then(|stock| stock.price.as_ref())) else {
         return 0;
     };
-    let sheet = stock.sheet();
-    let sheet_area_mm2 = sheet_area_mm2(sheet.length(), sheet.width());
+    let sheet_area_mm2 = sheet_area_mm2(stock.length, stock.width);
     if part_area_mm2 <= 0 || sheet_area_mm2 <= 0 {
         return 0;
     }
-    let numerator = i128::from(price.minor()) * i128::from(part_area_mm2);
+    let numerator = i128::from(price.value().minor()) * i128::from(part_area_mm2);
     let denominator = i128::from(sheet_area_mm2);
     i64::try_from((numerator + denominator / 2) / denominator).unwrap_or(i64::MAX)
 }
@@ -731,12 +759,12 @@ fn sheet_area_mm2(length: Length, width: Length) -> i64 {
 }
 
 /// Writes the material rows in ascending id order.
-fn push_materials(tables: &mut Tables, materials: &BTreeMap<u64, MaterialFacts>) -> Result<(), ExportError> {
+fn push_materials(tables: &mut Tables, materials: &BTreeMap<ItemId, MaterialFacts>) -> Result<(), ExportError> {
     let table = tables.table_mut("materials").ok_or(ExportError::MissingTable("materials"))?;
     for (id, material) in materials {
         let stock = material.stock.as_ref();
         table.push(vec![
-            Cell::Integer(i64::try_from(*id).unwrap_or(i64::MAX)),
+            Cell::Text(id.to_string()),
             Cell::Text(material.name.clone()),
             Cell::Text(material.kind.clone()),
             Cell::Integer(material.thickness.micrometres()),
@@ -746,6 +774,8 @@ fn push_materials(tables: &mut Tables, materials: &BTreeMap<u64, MaterialFacts>)
             Cell::Integer(stock.map_or(0, |stock| stock.sheet_width_um)),
             Cell::Text(stock.map(|stock| stock.stock_group.clone()).unwrap_or_default()),
             Cell::Integer(stock.map_or(0, |stock| stock.price_minor)),
+            Cell::Text(stock.map(|stock| stock.price_date.clone()).unwrap_or_default()),
+            Cell::Integer(stock.map_or(0, |stock| stock.price_stale)),
         ])?;
     }
     Ok(())
@@ -756,25 +786,24 @@ fn push_materials(tables: &mut Tables, materials: &BTreeMap<u64, MaterialFacts>)
 /// The row is the sheet geometry, the usable rectangle after the declared trim, the price and what the
 /// order asks of it. It carries no layout and no sheet count: where a part lands and how many sheets
 /// that needs is the nesting of the program that reads the package.
-fn push_sheets(tables: &mut Tables, sheets: &BTreeMap<u64, SheetAgg>) -> Result<(), ExportError> {
+fn push_sheets(tables: &mut Tables, sheets: &BTreeMap<ItemId, SheetAgg>) -> Result<(), ExportError> {
     let table = tables.table_mut("sheets").ok_or(ExportError::MissingTable("sheets"))?;
     for (id, aggregate) in sheets {
         let Some(stock) = &aggregate.stock else {
             continue;
         };
-        let Ok(material_id) = i64::try_from(*id) else {
-            continue;
-        };
         let part_count = i64::try_from(aggregate.part_count).unwrap_or(i64::MAX);
         let part_area = i64::try_from(aggregate.part_area_mm2).unwrap_or(i64::MAX);
         table.push(vec![
-            Cell::Integer(material_id),
+            Cell::Text(id.to_string()),
             Cell::Text(stock.stock_group.clone()),
             Cell::Integer(stock.sheet_length_um),
             Cell::Integer(stock.sheet_width_um),
             Cell::Integer(RULES.usable_length(stock.sheet_length_um)),
             Cell::Integer(RULES.usable_width(stock.sheet_width_um)),
             Cell::Integer(stock.price_minor),
+            Cell::Text(stock.price_date.clone()),
+            Cell::Integer(stock.price_stale),
             Cell::Integer(part_count),
             Cell::Integer(part_area),
             Cell::Integer(stock.sheet_area_mm2),

@@ -46,8 +46,12 @@ pub enum ToolKind {
     Extrude,
     /// Opens the card that creates a product frame.
     Product,
-    /// Draws the product frame's reserved box: base rectangle, then height, then `product.create`.
-    ProductDraw,
+    /// Draws the product frame's reserved box exactly as a body cell draws a solid's profile: the same
+    /// rectangle methods, the same plates, the same preview. The finished figure fixes the frame's base
+    /// and the height is pulled from it; the pull dispatches `product.create` (N19, ADR 0101).
+    ProductBox(DrawTool),
+    /// Draws the product frame's base outline as a closed ring, then pulls its height.
+    ProductContour,
     /// Arms the free-outline tool whose closed ring becomes one panel cut to it.
     PanelContour,
     /// Arms the empty-space tool with `class`; its `fill` trait picks the size pair, and `mode`
@@ -837,13 +841,22 @@ const FURNITURE: [GroupSpec; 6] = [
             run: Some(ToolKind::Product),
             method: None,
             // The card is the numeric method and the drawn box the pointer method; the split cell
-            // runs whichever the workspace pinned (U74, ADR 0101).
-            variants: &[VariantSpec {
-                id: "furniture.product.frame.draw",
-                label: Message::ToolProductFrameDraw,
-                icon: Some(icons::scene::PRODUCT),
-                run: Some(ToolKind::ProductDraw),
-            }],
+            // runs whichever the workspace pinned (U74, ADR 0101). The drawn method carries the
+            // sketch's own rectangle tool, so the frame's base is drawn by the tool a solid uses.
+            variants: &[
+                VariantSpec {
+                    id: "furniture.product.frame.draw",
+                    label: Message::ToolProductFrameDraw,
+                    icon: Some(icons::scene::PRODUCT),
+                    run: Some(ToolKind::ProductBox(DrawTool::Rectangle)),
+                },
+                VariantSpec {
+                    id: "furniture.product.frame.contour",
+                    label: Message::ToolProductFrameContour,
+                    icon: Some(icons::scene::PRODUCT),
+                    run: Some(ToolKind::ProductContour),
+                },
+            ],
         }],
     },
     GroupSpec {
@@ -1354,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn the_frame_cell_offers_the_card_and_the_drawn_method() {
+    fn the_frame_cell_offers_the_card_and_the_two_drawn_methods() {
         let frame = tab("furniture")
             .expect("furniture")
             .live_groups()
@@ -1366,13 +1379,19 @@ mod tests {
             methods,
             vec![
                 ("furniture.product.frame", Some(ToolKind::Product)),
-                ("furniture.product.frame.draw", Some(ToolKind::ProductDraw)),
+                ("furniture.product.frame.draw", Some(ToolKind::ProductBox(DrawTool::Rectangle))),
+                ("furniture.product.frame.contour", Some(ToolKind::ProductContour)),
             ],
-            "the card is the tool's own method, the drawn box its second (ADR 0101)"
+            "the card is the tool's own method, the drawn box its second and the drawn outline its third (ADR 0101, ADR 0159)"
         );
-        let drawn = frame.variants.first().expect("the drawn method");
+        let drawn = frame.variants.first().expect("the drawn box");
         assert_eq!(drawn.label.text(text::Lang::En), "Frame by drawing");
-        assert!(drawn.run.is_some(), "the split cell only offers a method that runs");
+        let contour = frame.variants.get(1).expect("the drawn outline");
+        assert_eq!(contour.label.text(text::Lang::En), "Frame from contour");
+        assert!(
+            frame.variants.iter().all(|variant| variant.run.is_some()),
+            "the split cell only offers a method that runs"
+        );
     }
 
     #[test]
@@ -1382,7 +1401,8 @@ mod tests {
             ToolKind::CancelDraft,
             ToolKind::Extrude,
             ToolKind::Product,
-            ToolKind::ProductDraw,
+            ToolKind::ProductBox(DrawTool::Rectangle),
+            ToolKind::ProductContour,
             ToolKind::PanelContour,
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },

@@ -2,12 +2,15 @@
 
 use std::sync::Arc;
 
-use model::{BandingSpec, Catalog, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
+use catalog::Directory;
+use geom::Contact;
+use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
 use param::EdgeBandProfile;
 use serde_json::Value;
 
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
+use crate::no_contact::NoContact;
 use crate::preview::Preview;
 use crate::resolve;
 
@@ -35,11 +38,22 @@ pub struct Session {
     undo: Vec<Project>,
     redo: Vec<Project>,
     dirty: bool,
-    catalog: Arc<Catalog>,
+    /// The workshop's directory, shared with every tab of the window: a reload swaps one `Arc`.
+    directory: Arc<Directory>,
+    /// How often the shell installed a newer directory. The directory is not the document, so a
+    /// reload moves no document revision; the frame follows this counter instead
+    /// (`docs/domain/nomenclature.md` §13).
+    directory_version: u64,
     edit: Option<OpenEdit>,
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
     preview: Preview,
+    /// The contact adapter every command and every drag of this session measures a body with.
+    ///
+    /// The shell installs the real one once ([`Session::with_contact`]); a session that never had it
+    /// installed keeps the world-box reading, which is what the document did before the port existed
+    /// (ADR 0179).
+    contact: Arc<dyn Contact>,
     /// The one product the user is working in, or `None` while every product is closed.
     ///
     /// Openness is view state per session (ADR 0098, ADR 0029): it is opened and closed by a view
@@ -49,13 +63,16 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a clean session around a document with an empty catalogue.
+    /// Creates a clean session around a document with an empty directory.
     pub fn new(project: Project) -> Self {
-        Self::with_catalog(project, Catalog::default())
+        Self::with_directory(project, Directory::default())
     }
 
-    /// Creates a clean session around a document and its read-only material catalogue.
-    pub fn with_catalog(project: Project, catalog: Catalog) -> Self {
+    /// Creates a clean session around a document and its read-only nomenclature directory.
+    ///
+    /// The directory arrives as one value or as an `Arc` of one: a new tab hands over the snapshot
+    /// the window is already on rather than copying every record of it.
+    pub fn with_directory(project: Project, directory: impl Into<Arc<Directory>>) -> Self {
         let saved_project = project.clone();
         Self {
             project,
@@ -63,12 +80,28 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             dirty: false,
-            catalog: Arc::new(catalog),
+            directory: directory.into(),
+            directory_version: 0,
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
+            contact: Arc::new(NoContact),
             active_product: None,
         }
+    }
+
+    /// The same session, measuring contact with the adapter the shell built.
+    ///
+    /// It is set once, when the window is composed, and never swapped while a document is open: a
+    /// session measures one way, so a drag and the write it commits cannot disagree (ADR 0179).
+    pub fn with_contact(mut self, contact: Arc<dyn Contact>) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// The contact adapter this session measures a body with.
+    pub fn contact(&self) -> &dyn Contact {
+        &*self.contact
     }
 
     /// The one open product, or `None` when every product is closed (ADR 0098).
@@ -145,36 +178,61 @@ impl Session {
         self.preview.geometry(node).or_else(|| self.project.object(node).map(|object| object.geometry()))
     }
 
-    /// The session-scoped, read-only material catalogue.
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    /// The session-scoped, read-only nomenclature directory.
+    pub fn directory(&self) -> &Directory {
+        &self.directory
     }
 
-    /// Resolves one panel's geometry against the session catalogue.
+    /// The directory as the one value every tab shares, for a tab that is about to open.
+    pub fn directory_shared(&self) -> Arc<Directory> {
+        Arc::clone(&self.directory)
+    }
+
+    /// How often a newer directory was installed, so the shell knows its frame is stale.
+    pub fn directory_version(&self) -> u64 {
+        self.directory_version
+    }
+
+    /// Installs a newer snapshot of the directory.
+    ///
+    /// The directory is not the document: this swaps one value, writes no field of the project,
+    /// pushes no undo entry and leaves the saved-content marker alone, so a directory that changed
+    /// underneath the editor invalidates nothing a person did (`docs/domain/nomenclature.md` §13,
+    /// ADR 0148). What was derived from the old rows is not thrown away either: the panel meshes are
+    /// keyed by the thicknesses they were built from, so a rebuild follows the rows that moved. The
+    /// preview a running operation filled does not survive, because its geometry was measured
+    /// against the rows that are gone.
+    pub fn set_directory(&mut self, directory: Arc<Directory>) {
+        self.directory = directory;
+        self.preview.clear();
+        self.directory_version = self.directory_version.wrapping_add(1);
+    }
+
+    /// Resolves one panel's geometry against the session directory.
     ///
     /// Catalogue material dimensions take precedence; the stored fallbacks are used only when a
     /// material is missing. This keeps rendering, diagnostics and the panel card on one source of
     /// truth.
     pub fn panel_geometry(&self, panel_id: Id) -> Result<PanelGeometry, ProjectError> {
-        resolve::panel_geometry(&self.project, &self.catalog, panel_id)
+        resolve::panel_geometry(&self.project, &self.directory, panel_id)
     }
 
-    /// Resolves a banding profile against the session catalogue.
+    /// Resolves a banding profile against the session directory.
     ///
-    /// The catalogue supplies both the thickness that widens the core and the visible band width;
-    /// stored fallbacks cover a material that is missing from the catalogue.
+    /// The directory supplies both the thickness that widens the core and the visible band width;
+    /// stored fallbacks cover a material that is missing from the directory.
     pub fn band_profile(&self, band: &EdgeBanding) -> EdgeBandProfile {
         self.band_spec_profile(&band.spec())
     }
 
     /// Resolves a banding profile for either an edge or a corner owner.
     pub fn band_spec_profile(&self, spec: &BandingSpec) -> EdgeBandProfile {
-        EdgeBandProfile::new(resolve::spec_thickness(spec, &self.catalog), resolve::spec_width(spec, &self.catalog))
+        EdgeBandProfile::new(resolve::spec_thickness(spec, &self.directory), resolve::spec_width(spec, &self.directory))
     }
 
-    /// Resolves the derived issues of one panel against the session catalogue.
+    /// Resolves the derived issues of one panel against the session directory.
     pub fn panel_diagnostics(&self, panel_id: Id) -> Vec<PanelDiagnostic> {
-        diagnose_panel(&self.project, &self.catalog, panel_id)
+        diagnose_panel(&self.project, &self.directory, panel_id)
     }
 
     /// Whether an earlier document state can be restored.
@@ -295,7 +353,7 @@ impl Session {
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
-        let outcome = spec.run(&mut working, &self.catalog, params)?;
+        let outcome = spec.run(&mut working, &self.directory, params, &*self.contact)?;
         spec.creation_refusal(self, params).map_err(|refusal| CommandError::creation(spec.id(), refusal))?;
         let previous = std::mem::replace(&mut self.project, working);
         Ok((outcome, previous))
@@ -344,10 +402,10 @@ mod tests {
     use super::*;
 
     use model::{
-        Catalog, ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth,
-        CutoutShape, EdgeBandingMaterial, EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor,
-        MachiningParams, PanelContourError, PanelMaterial, PanelNominalSize, PanelOutline, PivotLocal, Placement,
-        ProjectError, PropertyValue, RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
+        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor, MachiningParams, PanelContourError,
+        PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue, RectCorner, RectEdge,
+        Revision, SYSTEM_CLASS, SegmentSource, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -373,13 +431,13 @@ mod tests {
     };
 
     fn sample_session() -> Session {
-        Session::with_catalog(sample_project(), sample_catalog())
+        Session::with_directory(sample_project(), sample_catalog())
     }
 
     /// The sample scene with one product open, so a furniture command has somewhere to build.
     fn product_session() -> Session {
         let (project, product) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
         session
     }
@@ -422,7 +480,7 @@ mod tests {
         let source = project
             .add_object(product, "Counter", Placement::IDENTITY, Geometry::Constructive(constructive))
             .expect("contour source");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
         (session, source)
     }
@@ -495,7 +553,7 @@ mod tests {
         let second = project
             .add_product(root, "Other", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
             .expect("a second product");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(second), "the second product is open");
         let closed = json_params(&PanelCreate { parent: first, ..panel_create(&session, "Back") });
         assert!(matches!(
@@ -550,13 +608,13 @@ mod tests {
         // the same command: a click is one entry, not a create followed by an assignment.
         let mut session = product_session();
         let mut request = panel_create(&session, "Shelf");
-        request.class = Some("30.11".parse::<ClassCode>().expect("a shelf class"));
+        request.class = Some("10.11".parse::<ClassCode>().expect("a shelf class"));
         let params = json_params(&request);
         let before = session.project().revision();
 
         let outcome = session.dispatch("panel.create", &params).expect("create the shelf");
         let id = outcome.created_id().expect("an id");
-        let shelf = "30.11".parse::<ClassCode>().expect("a shelf class");
+        let shelf = "10.11".parse::<ClassCode>().expect("a shelf class");
         assert_eq!(session.project().class(id), Some(shelf));
         assert!(session.project().revision() > before, "the class is part of the same creation");
 
@@ -582,7 +640,7 @@ mod tests {
             Length::from_millimetres(560).expect("a width"),
         )
         .expect("a size");
-        let fill = "30.11".parse::<ClassCode>().expect("a shelf class");
+        let fill = "10.11".parse::<ClassCode>().expect("a shelf class");
         let request = PanelCreate {
             parent: product,
             name: "Shelf".to_owned(),
@@ -805,7 +863,7 @@ mod tests {
         ));
 
         let mut unknown_material = contour_panel_create(&session, source, "Top");
-        unknown_material.material = model::MaterialId::new(9_999).expect("id");
+        unknown_material.material = model::ItemId::new(1, 9_999).expect("id");
         assert!(!spec.enabled(&session, &json_params(&unknown_material)));
         assert_eq!(session.project().revision(), before);
     }
@@ -838,7 +896,7 @@ mod tests {
             .with_rotation_euler(EulerAngles { z: Degrees::from_millidegrees(40_000), ..EulerAngles::default() })
             .expect("rotation");
         let parent = project.add_component(product, "Frame", parent_world).expect("container");
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product is open");
 
         let create = PanelContourCreate {
@@ -1072,6 +1130,67 @@ mod tests {
         let mut object = value.as_object().cloned().expect("object");
         object.insert("extra".to_owned(), Value::Bool(true));
         assert!(serde_json::from_value::<PanelRename>(Value::Object(object)).is_err());
+    }
+
+    #[test]
+    fn a_new_directory_re_derives_the_panel_and_leaves_the_history_alone() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        for name in ["Side", "Shelf 2"] {
+            session
+                .dispatch("panel.rename", &json_params(&PanelRename { panel: panel_id, name: name.to_owned() }))
+                .expect("rename the panel");
+        }
+        session
+            .dispatch(
+                "panel.material.set",
+                &json_params(&PanelMaterialSet { panel: panel_id, material: sample_material_id() }),
+            )
+            .expect("the panel is cut from the fixture board");
+        session.mark_saved();
+        let stored = session.project().clone();
+        let thickness = session.panel_geometry(panel_id).expect("resolved geometry").thickness();
+        assert_eq!(thickness, testkit::sample_panel_thickness(), "the fixture board is 18 mm");
+
+        session.set_directory(Arc::new(testkit::sample_catalog_with_thickness(
+            Length::from_millimetres(25).expect("25 mm"),
+        )));
+
+        assert_eq!(
+            session.panel_geometry(panel_id).expect("resolved geometry").thickness(),
+            Length::from_millimetres(25).expect("25 mm"),
+            "a panel's thickness follows the board its document names"
+        );
+        assert!(session.project().same_content(&stored), "the directory writes no field of the document");
+        assert!(!session.is_dirty(), "nor does it make a saved scene dirty");
+        assert!(session.can_undo(), "a directory update takes no undo entry away");
+        assert_eq!(session.directory_version(), 1, "the shell is told the frame it holds is stale");
+
+        // The three steps the history held before the swap are still the three it holds after it.
+        session.undo().expect("the material is still undoable");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf 2");
+        session.undo().expect("and the second rename too");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Side");
+        session.undo().expect("and the first one");
+        assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf");
+        assert!(session.can_redo(), "the redo branch survives the swap as well");
+    }
+
+    #[test]
+    fn a_new_directory_drops_the_preview_measured_against_the_old_rows() {
+        let mut session = sample_session();
+        let node = Id::new(2).expect("id");
+        session.set_preview_geometry(
+            node,
+            Geometry::Mesh(testkit::cube_mesh(Length::from_millimetres(10).expect("10 mm"))),
+        );
+        assert!(session.drawn_geometry(node).is_some(), "the overlay is what the viewport draws");
+
+        session.set_directory(Arc::new(testkit::sample_catalog_with_thickness(
+            Length::from_millimetres(25).expect("25 mm"),
+        )));
+
+        assert!(session.preview().geometry(node).is_none(), "a preview was measured against rows that are gone");
     }
 
     #[test]
@@ -1553,11 +1672,8 @@ mod tests {
 
     #[test]
     fn material_set_accepts_machining_that_no_longer_fits() {
-        let panel_material =
-            PanelMaterial::new(sample_material_id(), "Thin board", "mdf", sample_thin_panel_thickness(), "white")
-                .expect("thin material");
-        let catalog = Catalog::new(vec![panel_material], Vec::new(), None).expect("catalog");
-        let mut session = Session::with_catalog(sample_project(), catalog);
+        let catalog = testkit::sample_catalog_with_thickness(sample_thin_panel_thickness());
+        let mut session = Session::with_directory(sample_project(), catalog);
         let panel_id = Id::new(4).expect("id");
         let blind = cutout_request(
             panel_id,
@@ -1577,7 +1693,7 @@ mod tests {
     #[test]
     fn unknown_materials_are_rejected_without_mutation() {
         let mut session = sample_session();
-        let missing = model::MaterialId::new(999).expect("id");
+        let missing = model::ItemId::new(1, 999).expect("id");
         let params = json_params(&PanelMaterialSet { panel: Id::new(2).expect("id"), material: missing });
         let error = session.dispatch("panel.material.set", &params).expect_err("unknown material");
         assert!(matches!(error, CommandError::UnknownMaterial { material } if material == missing));
@@ -1642,17 +1758,8 @@ mod tests {
 
     #[test]
     fn edge_banding_set_rejects_a_band_that_empties_the_core() {
-        let edge_material = EdgeBandingMaterial::new(
-            sample_edge_material_id(),
-            "Wide edge",
-            "pvc",
-            sample_wide_band_thickness(),
-            sample_band_width(),
-            "white",
-        )
-        .expect("wide edge material");
-        let catalog = Catalog::new(Vec::new(), vec![edge_material], None).expect("catalog");
-        let mut session = Session::with_catalog(sample_project(), catalog);
+        let catalog = testkit::sample_catalog_with_band(sample_wide_band_thickness(), sample_band_width());
+        let mut session = Session::with_directory(sample_project(), catalog);
         let params = PanelEdgeBandingSet {
             panel: Id::new(2).expect("id"),
             edge: EdgeId::new(1).expect("edge id"),
@@ -2407,7 +2514,7 @@ mod tests {
         assert!(ungroup.enabled(&session, &json_params(&NodeUngroup { node: group_id })));
         assert!(!convert.enabled(&session, &json_params(&NodeComponentConvertToGroup { node: group_id })));
 
-        let class: ClassCode = "30.11".parse().expect("class");
+        let class: ClassCode = "10.11".parse().expect("class");
         session
             .dispatch(
                 "node.property.set",
@@ -2444,11 +2551,80 @@ mod tests {
             serde_json::json!({"translation": [10.0, 20.0, 30.0], "rotation": [0.0, 0.0, 0.0, 1.0]}),
         )
         .expect("placement");
-        let request = NodePlacementSet { node: panel, placement };
+        let request = NodePlacementSet { node: panel, placement, unmeasured: false };
         session.dispatch("node.placement.set", &json_params(&request)).expect("place panel");
         assert_eq!(session.project().panel(panel).expect("panel").placement(), placement);
         session.undo().expect("undo placement");
         assert_eq!(session.project().panel(panel).expect("panel").placement(), Placement::IDENTITY);
+    }
+
+    #[test]
+    fn a_placement_that_sinks_a_board_into_its_neighbour_is_refused_and_writes_nothing() {
+        // X72: the rule lives in the document, so a typed distance, a palette command or a batch is
+        // refused with a sentence naming the part in the way — and nothing is written, so the
+        // revision does not move and the history gains no entry.
+        let mut project = sample_project();
+        let root = project.root().id();
+        let loose = project
+            .add_panel(
+                root,
+                "Loose",
+                sample_panel_nominal_size(),
+                None,
+                sample_panel_thickness(),
+                placement(2000.0, 0.0, 0.0),
+            )
+            .expect("a board of its own");
+        let mut session = Session::with_directory(project, sample_catalog());
+        let shelf = Id::new(2).expect("shelf id");
+        let front = Id::new(4).expect("front id");
+        // The sample scene holds the shelf and the drawer's front in one box, which no rule polices
+        // after the fact; pulling the shelf clear is a legal move out of that overlap.
+        let clear = NodePlacementSet { node: shelf, placement: placement(1000.0, 0.0, 0.0), unmeasured: false };
+        session.dispatch("node.placement.set", &json_params(&clear)).expect("the shelf comes clear");
+        let revision = session.project().revision();
+
+        // 500 puts 200 mm of the shelf inside the front, which is more than the nothing it shared.
+        let sinking = NodePlacementSet { node: shelf, placement: placement(500.0, 0.0, 0.0), unmeasured: false };
+        let error = session
+            .dispatch("node.placement.set", &json_params(&sinking))
+            .expect_err("a board may not come to rest inside another");
+        let CommandError::RestingInTheWay { moved, standing, .. } = &error else {
+            panic!("the refusal names both parts: {error:?}");
+        };
+        assert_eq!((moved.as_str(), standing.as_str()), ("Shelf", "Front"), "the sentence names the part in the way");
+        assert_eq!(session.project().revision(), revision, "a refusal writes nothing");
+        assert_eq!(
+            session.project().panel(shelf).expect("panel").placement(),
+            placement(1000.0, 0.0, 0.0),
+            "and the board stands where it was"
+        );
+
+        // The batch asks the same rule, so a selection cannot smuggle an overlap past it: the second
+        // entry is a legal move and it is refused with the first, because a batch is one change.
+        let batch = NodePlacementSetMany {
+            unmeasured: false,
+            placements: vec![
+                NodePlacement { node: shelf, placement: placement(500.0, 0.0, 0.0) },
+                NodePlacement { node: loose, placement: placement(2500.0, 0.0, 0.0) },
+            ],
+        };
+        assert!(matches!(
+            session.dispatch("node.placement.set_many", &json_params(&batch)),
+            Err(CommandError::RestingInTheWay { .. })
+        ));
+        assert_eq!(session.project().revision(), revision, "and the whole batch is refused, not half of it");
+        assert_eq!(
+            session.project().panel(loose).expect("panel").placement(),
+            placement(2000.0, 0.0, 0.0),
+            "the entry that was legal did not land either"
+        );
+
+        // One undo takes the shelf's own move back and nothing follows it: the refusals made no entry.
+        session.undo().expect("undo the move out of the overlap");
+        assert_eq!(session.project().panel(shelf).expect("panel").placement(), Placement::IDENTITY);
+        assert!(!session.can_undo(), "a refusal records no history");
+        assert_ne!(front, loose);
     }
 
     #[test]
@@ -2459,6 +2635,7 @@ mod tests {
         let moved = placement(10.0, 0.0, 0.0);
         let raised = placement(0.0, 0.0, 25.0);
         let request = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: drawer, placement: raised },
@@ -2505,7 +2682,7 @@ mod tests {
         let mut expected = project.clone();
         expected.set_node_placement(front, zeroed).expect("expected world-zero placement");
 
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         session
             .dispatch("node.placement.world_zero", &json_params(&NodePlacementWorldZero { node: front }))
             .expect("zero the nested translation");
@@ -2537,7 +2714,10 @@ mod tests {
         }))
         .expect("turned placement");
         session
-            .dispatch("node.placement.set", &json_params(&NodePlacementSet { node: panel, placement: turned }))
+            .dispatch(
+                "node.placement.set",
+                &json_params(&NodePlacementSet { node: panel, placement: turned, unmeasured: false }),
+            )
             .expect("place the panel");
 
         let spec = CommandRegistry::new().get("node.placement.world_zero").expect("registered");
@@ -2568,11 +2748,12 @@ mod tests {
         let spec = CommandRegistry::new().get("node.placement.set_many").expect("registered");
         let revision = session.project().revision();
 
-        let empty = NodePlacementSetMany { placements: Vec::new() };
+        let empty = NodePlacementSetMany { placements: Vec::new(), unmeasured: false };
         assert!(!spec.enabled(&session, &json_params(&empty)));
         assert!(session.dispatch("node.placement.set_many", &json_params(&empty)).is_err());
 
         let duplicate = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: panel, placement: moved },
@@ -2582,6 +2763,7 @@ mod tests {
         assert!(session.dispatch("node.placement.set_many", &json_params(&duplicate)).is_err());
 
         let with_root = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: root, placement: moved },
@@ -2591,6 +2773,7 @@ mod tests {
         assert!(session.dispatch("node.placement.set_many", &json_params(&with_root)).is_err());
 
         let with_missing = NodePlacementSetMany {
+            unmeasured: false,
             placements: vec![
                 NodePlacement { node: panel, placement: moved },
                 NodePlacement { node: missing, placement: moved },
@@ -2784,7 +2967,7 @@ mod tests {
 
     #[test]
     fn a_worktop_resizes_by_length_only() {
-        let (mut session, panel) = classed_shelf("70.01");
+        let (mut session, panel) = classed_shelf("20.01");
         let registry = CommandRegistry::new();
         let resize = registry.get("panel.resize").expect("panel.resize is registered");
         let revision = session.project().revision();
@@ -2814,14 +2997,14 @@ mod tests {
 
     #[test]
     fn changing_the_class_flips_the_same_resize_command() {
-        let (mut session, panel) = classed_shelf("30.11");
+        let (mut session, panel) = classed_shelf("10.11");
         let registry = CommandRegistry::new();
         let resize = registry.get("panel.resize").expect("panel.resize is registered");
         let wider = resize_request(panel, 700, 600);
         assert!(resize.enabled(&session, &wider), "a horizontal panel resizes freely");
         session.dispatch("panel.resize", &wider).expect("widen the shelf");
 
-        let class: ClassCode = "70.01".parse().expect("the worktop code");
+        let class: ClassCode = "20.01".parse().expect("the worktop code");
         session
             .dispatch(
                 "node.property.set",
@@ -2871,7 +3054,7 @@ mod tests {
 
     #[test]
     fn a_class_without_cutouts_refuses_a_cutout() {
-        let (mut session, plinth) = classed_shelf("70.02");
+        let (mut session, plinth) = classed_shelf("20.02");
         let shape = CutoutShape::Rectangle(sample_cutout_rect());
         let params = json_params(&cutout_request(plinth, shape, CutoutDepth::Through, FaceSide::A));
         let registry = CommandRegistry::new();
@@ -2882,7 +3065,7 @@ mod tests {
             CommandError::ClassRefused { command: "panel.machining.add", refusal: ClassRefusal::Operation(_) }
         ));
 
-        let (mut session, worktop) = classed_shelf("70.01");
+        let (mut session, worktop) = classed_shelf("20.01");
         let params = json_params(&cutout_request(
             worktop,
             CutoutShape::Rectangle(sample_cutout_rect()),
@@ -2898,7 +3081,7 @@ mod tests {
         let mut session = sample_session();
         let drawer = Id::new(3).expect("drawer id");
         let front = Id::new(4).expect("front id");
-        let worktop: ClassCode = "70.01".parse().expect("the worktop code");
+        let worktop: ClassCode = "20.01".parse().expect("the worktop code");
         session
             .dispatch(
                 "node.property.set",
@@ -2955,7 +3138,7 @@ mod product_tests {
 
     /// A session with two products, created through the one creation command.
     fn session_with_two_products() -> (Session, model::Id, model::Id) {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let mut create = |name: &str| {
             let placement = session.project().product_placement(box_());
@@ -3003,7 +3186,7 @@ mod product_tests {
 
     #[test]
     fn only_a_product_container_can_be_opened() {
-        let mut session = Session::with_catalog(sample_project(), sample_catalog());
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let panel = model::Id::new(2).expect("the sample panel");
         assert!(!session.open_product(root), "the root is a frame, not a product");
@@ -3021,7 +3204,7 @@ mod product_tests {
         assert!(!text.contains("\"open\""), "no open flag is stored on a node");
 
         let reloaded = serde_json::from_str::<model::Project>(&text).expect("load the scene");
-        let next = Session::with_catalog(reloaded, sample_catalog());
+        let next = Session::with_directory(reloaded, sample_catalog());
         assert_eq!(next.active_product(), None, "a reloaded scene starts with every product closed");
     }
 
@@ -3035,5 +3218,103 @@ mod product_tests {
 
         session.undo().expect("undo the first product");
         assert_eq!(session.active_product(), None, "the open product left with the undo");
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    #![allow(clippy::expect_used)]
+
+    use std::sync::Arc;
+
+    use geom::DVec3;
+    use model::{Geometry, Id, Placement, Primitive};
+    use serde_json::json;
+    use units::Length;
+
+    use crate::{CommandRegistry, NoContact, Session, node_cmds::NODE_PLACEMENT_SET_ID};
+
+    fn millimetres(value: i64) -> Length {
+        Length::from_millimetres(value).expect("a length")
+    }
+
+    /// A session holding one ball and one block: the block stands 30 mm off the ball's line, so the
+    /// box around the ball meets it while the ball's own surface passes it.
+    fn ball_and_block(contact: Arc<dyn geom::Contact>) -> (Session, Id) {
+        let root_node = model::Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = model::Project::new(root_node).expect("an empty project");
+        let root = project.root().id();
+        let ball = project
+            .add_object(
+                root,
+                "Ball",
+                Placement::IDENTITY,
+                Geometry::Primitive(Primitive::sphere(millimetres(50), 16, 8).expect("a ball")),
+            )
+            .expect("add the ball");
+        let block_mesh = model::Mesh::cuboid([millimetres(-50); 3], [millimetres(50); 3]).expect("a cube");
+        project
+            .add_object(
+                root,
+                "Block",
+                Placement::IDENTITY.with_translation(millimetres(300), millimetres(80), Length::ZERO).expect("a place"),
+                Geometry::Mesh(block_mesh),
+            )
+            .expect("add the block");
+        (Session::with_directory(project, testkit::sample_catalog()).with_contact(contact), ball)
+    }
+
+    /// A placement 211 mm along X, which the ball's own surface leaves free and its box does not.
+    fn grazing() -> Placement {
+        Placement::IDENTITY.with_translation(millimetres(210), Length::ZERO, Length::ZERO).expect("a place")
+    }
+
+    #[test]
+    fn the_write_refuses_a_place_the_box_around_the_body_covers() {
+        let (mut session, ball) = ball_and_block(Arc::new(NoContact));
+        let params = json!({ "node": ball, "placement": grazing() });
+        assert!(
+            session.dispatch(NODE_PLACEMENT_SET_ID, &params).is_err(),
+            "a session with no adapter measures the box, and the box puts the ball inside the block"
+        );
+        assert_eq!(session.project().world_placement(ball), Some(Placement::IDENTITY), "nothing was written");
+    }
+
+    #[test]
+    fn the_write_grants_the_place_the_body_itself_leaves_free() {
+        let (mut session, ball) = ball_and_block(Arc::new(contact_parry::Parry));
+        let params = json!({ "node": ball, "placement": grazing() });
+        session.dispatch(NODE_PLACEMENT_SET_ID, &params).expect("the ball's own surface passes the block's corner");
+        assert_eq!(session.project().world_placement(ball), Some(grazing()), "and the place is written");
+        assert!(session.project().world_box(ball).is_some(), "and the document holds the ball");
+    }
+
+    #[test]
+    fn the_makers_own_hand_is_not_refused() {
+        // A free move or a rotation writes what the gesture showed: the same placement the guard
+        // refuses is granted when the write says it was not measured (ADR 0180).
+        let (mut session, ball) = ball_and_block(Arc::new(contact_parry::Parry));
+        let measured = json!({ "node": ball, "placement": Placement::IDENTITY.with_translation(millimetres(0), Length::ZERO, Length::ZERO).expect("a place") });
+        assert!(session.dispatch(NODE_PLACEMENT_SET_ID, &measured).is_ok(), "a zero move is no change");
+        let inside =
+            Placement::IDENTITY.with_translation(millimetres(300), Length::ZERO, Length::ZERO).expect("a place");
+        let asked = json!({ "node": ball, "placement": inside });
+        assert!(
+            session.dispatch(NODE_PLACEMENT_SET_ID, &asked).is_err(),
+            "a measured write is refused inside the block"
+        );
+
+        let unmeasured = json!({ "node": ball, "placement": inside, "unmeasured": true });
+        session.dispatch(NODE_PLACEMENT_SET_ID, &unmeasured).expect("the hand is not refused");
+        assert_eq!(session.project().world_placement(ball), Some(inside), "and the place is written");
+    }
+
+    #[test]
+    fn a_session_without_an_adapter_is_the_world_it_always_was() {
+        let registry = CommandRegistry;
+        assert!(registry.get(NODE_PLACEMENT_SET_ID).is_some(), "the placement command exists");
+        let (session, _) = ball_and_block(Arc::new(NoContact));
+        let hull = geom::Shape::convex(vec![DVec3::ZERO; 4]).expect("a hull");
+        assert!(session.contact().prepare(&hull, geom::Pose::IDENTITY).is_none(), "no adapter, no body");
     }
 }

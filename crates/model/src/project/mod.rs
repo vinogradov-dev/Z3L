@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 mod camera_light_cmds;
+mod contact_shape;
 mod error;
 mod fill;
 #[cfg(test)]
@@ -22,13 +23,18 @@ mod panel_cmds;
 mod product_cmds;
 mod property_cmds;
 mod query;
+mod sight;
 mod surface;
 mod wire;
 
 pub use error::ProjectError;
 pub use fill::{FillMode, FillPlan, FillRefusal, FillRequest, free_axis};
-pub use move_query::{MoveAxis, MoveLimit, MoveRule};
+pub use move_query::{
+    Capture, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings, Resting, RotateLimit, RotateRule, SnapEnd,
+    SnapSettings, SnapSurface, Stop,
+};
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
+pub use sight::Sight;
 pub use surface::SurfaceKind;
 pub(crate) use wire::ProjectWire;
 
@@ -57,7 +63,7 @@ impl Project {
     /// A file with any other number is refused with one readable sentence, older and newer alike:
     /// before the first release the format has no past, so there is no migration and no alias for a
     /// field an earlier layout used (ADR 0096). Bumping this number is the whole procedure.
-    pub const CURRENT_SCHEMA_VERSION: u32 = 25;
+    pub const CURRENT_SCHEMA_VERSION: u32 = 28;
 
     /// Maximum nesting depth of containers, including the root at depth one.
     pub const MAX_ASSEMBLY_DEPTH: u32 = 64;

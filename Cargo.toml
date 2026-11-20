@@ -15,8 +15,10 @@ rust-version = "1.95"
 units = { path = "crates/units" }
 text = { path = "crates/text" }
 geom = { path = "crates/geom" }
+contact-parry = { path = "crates/contact-parry" }
 kernel = { path = "crates/kernel" }
 model = { path = "crates/model" }
+catalog = { path = "crates/catalog" }
 kernel-truck = { path = "crates/kernel-truck" }
 param = { path = "crates/param" }
 mesh = { path = "crates/mesh" }
@@ -38,16 +40,26 @@ glam = { version = "0.34", features = ["serde"] }
 log = "0.4"
 # Writes the interface shots U81 renders; already in the tree through `epaint`.
 png = "0.18"
-# Runs wgpu's futures on a test thread; already in the tree through `eframe`.
+# Runs a future on the thread that owns it: the test harness drives wgpu's futures with it, and the
+# shell parks the file manager's answer on a worker thread with it (X91). Already in the tree
+# through `eframe`.
 pollster = "1.0"
 # The interface rules read the UI sources as Rust, not as text: `syn` gives the
 # expression tree and `proc-macro2` keeps the source location of each node.
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
+# The system file manager behind *Open* and *Save as*: MIT, pure Rust, and on each platform a binding
+# to the dialog the operating system already provides — the desktop portal on Linux, the native
+# sheet on macOS, the common item dialog on Windows. No GTK, so it is not a second GUI toolkit, and
+# nothing C is compiled: the portal's D-Bus client is loaded at run time (ADR 0182).
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal", "wayland"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 syn = { version = "2.0", features = ["full", "visit"] }
 thiserror = "2.0"
 truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation"] }
+# The collision engine behind the contact port: Apache-2.0, pure Rust, no build
+# script, glam-based, and the double build the document's micrometres need.
+parry3d-f64 = "0.31"
 truck-modeling = "0.6"
 truck-shapeops = { version = "0.4", default-features = false }
 wgpu = "30.0"

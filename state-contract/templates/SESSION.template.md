@@ -1,8 +1,10 @@
 # Session
 
 Copy this file to `plan/SESSION.md` when a task starts, fill it in, and delete it when the task is
-committed. It exists only while `STATE: ... state=doing`. Keep it under 50 lines: it is a working note,
-not a report.
+committed. A declared stream copies it to `plan/SESSION.<key>.md` instead, and starts it with
+`cargo xtask task start <ID>`: the tool writes the note of the stream the task's id names. A note
+exists only while its stream has a `[~]` entry. Keep it under 50 lines: it is a working note, not a
+report.
 
 ```text
 task: {{TASK_ID}}

@@ -8,10 +8,12 @@
 //! in world space. `node.ungroup` refuses a component; `node.component.convert_to_group` clears the
 //! marker first.
 
+use geom::Contact;
 use std::collections::HashSet;
 
+use catalog::Directory;
 use model::{
-    Catalog, ClassCode, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange, PropertyValue,
+    ClassCode, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange, PropertyValue,
     SYSTEM_CLASS,
 };
 use serde::{Deserialize, Serialize};
@@ -56,8 +58,9 @@ fn assembly_create_enabled(session: &Session, params: &Value) -> bool {
 
 fn assembly_create_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<AssemblyCreate>(params, ASSEMBLY_CREATE_ID)?;
     validate_name(&params.name, ASSEMBLY_CREATE_ID)?;
@@ -92,7 +95,12 @@ fn node_rename_enabled(session: &Session, params: &Value) -> bool {
     valid_name(&params.name) && session.project().contains_node(params.node)
 }
 
-fn node_rename_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn node_rename_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeRename>(params, NODE_RENAME_ID)?;
     validate_name(&params.name, NODE_RENAME_ID)?;
     if !project.contains_node(params.node) {
@@ -127,7 +135,12 @@ fn node_delete_enabled(session: &Session, params: &Value) -> bool {
     session.project().node(params.node).is_some()
 }
 
-fn node_delete_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn node_delete_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDelete>(params, NODE_DELETE_ID)?;
     project.remove_node(params.node)?;
     Ok(CommandOutcome::changed())
@@ -165,8 +178,9 @@ fn node_delete_many_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_delete_many_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDeleteMany>(params, NODE_DELETE_MANY_ID)?;
     let targets = delete_targets(project, &params.nodes);
@@ -217,8 +231,9 @@ fn node_duplicate_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_duplicate_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDuplicate>(params, NODE_DUPLICATE_ID)?;
     let id = project.duplicate_node(params.node)?;
@@ -252,7 +267,12 @@ fn node_group_enabled(session: &Session, params: &Value) -> bool {
     valid_name(&params.name) && session.project().validate_group(&params.nodes).is_ok()
 }
 
-fn node_group_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn node_group_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeGroup>(params, NODE_GROUP_ID)?;
     validate_name(&params.name, NODE_GROUP_ID)?;
     let id = project.group_nodes(&params.nodes, params.name)?;
@@ -285,7 +305,12 @@ fn node_ungroup_enabled(session: &Session, params: &Value) -> bool {
     params.node != project.root().id() && project.container(params.node).is_some_and(|c| !c.is_component())
 }
 
-fn node_ungroup_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn node_ungroup_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeUngroup>(params, NODE_UNGROUP_ID)?;
     project.ungroup_group(params.node)?;
     Ok(CommandOutcome::changed())
@@ -305,6 +330,14 @@ pub struct NodePlacementSet {
     pub node: Id,
     /// The new rigid placement.
     pub placement: Placement,
+    /// Whether this write is the maker's own hand rather than a measured placement.
+    ///
+    /// The free move and the rotation carry a body where the pointer puts it — through a neighbour and
+    /// below the workspace's floor — so the write they ask for is not refused by the body rules. Every
+    /// other writer, the inspector's fields included, leaves it false and keeps the refusal (ADR 0162,
+    /// ADR 0180).
+    #[serde(default)]
+    pub unmeasured: bool,
 }
 
 /// The `node.placement.set` command.
@@ -324,12 +357,35 @@ fn node_placement_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_placement_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSet>(params, NODE_PLACEMENT_SET_ID)?;
+    if !params.unmeasured {
+        refuse_resting(project, NODE_PLACEMENT_SET_ID, &[(params.node, params.placement)], contact)?;
+    }
     project.set_node_placement(params.node, params.placement)?;
     Ok(CommandOutcome::changed())
+}
+
+/// Refuses a placement that would land a part inside one that stays behind (X72, ADR 0162).
+///
+/// The document answers this question itself (`Project::resting_conflict`), so the gesture that
+/// previews the move and the write that records it read one rule: the drag stops at the neighbour,
+/// and a typed distance, a palette command or the assistant is refused with a sentence naming the
+/// part in the way instead of writing an overlap. Nothing has changed when this returns, so the
+/// revision does not move and no undo entry is made.
+pub(crate) fn refuse_resting(
+    project: &Project,
+    command: &'static str,
+    placements: &[(Id, Placement)],
+    contact: &dyn Contact,
+) -> Result<(), CommandError> {
+    match project.resting_conflict(placements, Some(contact)) {
+        Some(resting) => Err(CommandError::resting(command, project, resting)),
+        None => Ok(()),
+    }
 }
 
 /// Stable id of the world-zero placement command.
@@ -367,8 +423,9 @@ fn node_placement_world_zero_enabled(session: &Session, params: &Value) -> bool 
 
 fn node_placement_world_zero_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementWorldZero>(params, NODE_PLACEMENT_WORLD_ZERO_ID)?;
     if params.node == project.root().id() {
@@ -405,6 +462,12 @@ pub struct NodePlacement {
 pub struct NodePlacementSetMany {
     /// The nodes to place; at least one, each listed once, none the root.
     pub placements: Vec<NodePlacement>,
+    /// Whether this write is the maker's own hand rather than a measured placement.
+    ///
+    /// A finished free move or rotation sets it: the body goes where the gesture put it and the write
+    /// is not refused by the body rules. A drag of the object tool leaves it false (ADR 0162, ADR 0180).
+    #[serde(default)]
+    pub unmeasured: bool,
 }
 
 /// The `node.placement.set_many` command.
@@ -427,12 +490,16 @@ fn node_placement_set_many_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_placement_set_many_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePlacementSetMany>(params, NODE_PLACEMENT_SET_MANY_ID)?;
     let placements: Vec<(Id, Placement)> =
         params.placements.iter().map(|entry| (entry.node, entry.placement)).collect();
+    if !params.unmeasured {
+        refuse_resting(project, NODE_PLACEMENT_SET_MANY_ID, &placements, contact)?;
+    }
     project.set_node_placements(&placements)?;
     Ok(CommandOutcome::changed())
 }
@@ -476,8 +543,9 @@ fn node_pivot_set_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_pivot_set_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePivotSet>(params, NODE_PIVOT_SET_ID)?;
     project.set_node_pivot(params.node, params.pivot)?;
@@ -512,8 +580,9 @@ fn node_pivot_center_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_pivot_center_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePivotCenter>(params, NODE_PIVOT_CENTER_ID)?;
     project.center_node_pivot(params.node)?;
@@ -554,8 +623,9 @@ fn node_origin_rebase_enabled(session: &Session, params: &Value) -> bool {
 
 fn node_origin_rebase_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeOriginRebase>(params, NODE_ORIGIN_REBASE_ID)?;
     project.rebase_origin(params.node, params.strategy)?;
@@ -612,7 +682,12 @@ fn property_set_enabled(session: &Session, params: &Value) -> bool {
         && class_allows_parent(project, params.node, &params.key, &params.value, NODE_PROPERTY_SET_ID).is_ok()
 }
 
-fn property_set_run(project: &mut Project, _catalog: &Catalog, params: &Value) -> Result<CommandOutcome, CommandError> {
+fn property_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertySet>(params, NODE_PROPERTY_SET_ID)?;
     class_allows_parent(project, params.node, &params.key, &params.value, NODE_PROPERTY_SET_ID)?;
     project.set_property(params.node, &params.key, params.value)?;
@@ -668,8 +743,9 @@ fn property_set_many_enabled(session: &Session, params: &Value) -> bool {
 
 fn property_set_many_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertySetMany>(params, NODE_PROPERTY_SET_MANY_ID)?;
     for entry in &params.properties {
@@ -709,8 +785,9 @@ fn property_clear_enabled(session: &Session, params: &Value) -> bool {
 
 fn property_clear_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePropertyClear>(params, NODE_PROPERTY_CLEAR_ID)?;
     project.clear_property(params.node, &params.key)?;
@@ -743,8 +820,9 @@ fn component_convert_to_group_enabled(session: &Session, params: &Value) -> bool
 
 fn component_convert_to_group_run(
     project: &mut Project,
-    _catalog: &Catalog,
+    _catalog: &Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeComponentConvertToGroup>(params, NODE_COMPONENT_CONVERT_TO_GROUP_ID)?;
     project.convert_to_group(params.node)?;

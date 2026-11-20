@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use model::{
-    CameraNode, CameraProjection, Constructive, Container, CutoutDepth, CutoutShape, EdgeBanding, EdgeBevel, EdgeId,
-    EdgeRef, FaceSide, Geometry, Id, LightKind, LightNode, MaterialId, Object, Panel, PanelNominalSize, PanelRect,
-    Path, Placement, Primitive, Project,
+    CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth, CutoutShape,
+    EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightKind, LightNode,
+    Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -99,7 +99,7 @@ fn scene() -> SceneFile {
             id(2),
             EdgeBanding::new(
                 EdgeId::new(1).expect("edge"),
-                MaterialId::new(1).expect("material"),
+                ItemId::new(1, 1).expect("material"),
                 false,
                 millimetres(2),
                 millimetres(22),
@@ -124,7 +124,26 @@ fn scene() -> SceneFile {
                 .expect("a 45 degree end bevel"),
         )
         .expect("bevel on the shelf");
+    // A person's catalogue choice is a property of its own kind and not a document reference: the
+    // record lives in the directory and outlives the scene (ADR 0148, 0184).
+    project
+        .set_property(id(2), "plug.confirmat", model::PropertyValue::item(ItemId::new(712, 34).expect("a record")))
+        .expect("the shelf names the plug a person chose");
     project.set_active_camera(Some(id(6))).expect("an active camera");
+    // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
+    // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
+    // (ADR 0159).
+    let footprint = Footprint::cut([
+        None,
+        Some(CornerFeatureKind::Chamfer { incoming: millimetres(120), outgoing: millimetres(70) }),
+        None,
+        None,
+    ]);
+    let envelope = Envelope::with_footprint(millimetres(700), millimetres(600), millimetres(900), footprint)
+        .expect("a corner cabinet reserves a valid footprint");
+    project
+        .add_product(id(1), "Corner cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+        .expect("a product at the root");
 
     let mut extra = BTreeMap::new();
     extra.insert("generator".to_owned(), Value::String("z3l golden".to_owned()));

@@ -413,7 +413,7 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     };
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("box-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The fill cells live on the Furniture tab, and the picture must show the armed cell, not the
@@ -427,7 +427,9 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     // Two points on the work plane, and the height the pointer pulls above the base.
     let corners = {
         let document = app.tabs.active_mut();
-        document.editor.arm_box();
+        // The frame cell arms the sketch's own rectangle tool, so the base is two clicks of the
+        // sketch draft and the height is pulled from the figure it makes (N19).
+        document.editor.start_product_box_drawing(ui::DrawTool::Rectangle);
         let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
         let camera = document.camera();
         let project = document.session.project();
@@ -478,8 +480,9 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     }
     {
         let document = app.tabs.active_mut();
-        let draft = document.editor.box_draft().copied().expect("the gesture is pulling its height");
-        assert!(draft.is_pulling() && draft.height().is_positive(), "the height follows the pointer");
+        let draft = document.editor.box_draft().cloned().expect("the gesture is pulling its height");
+        assert!(draft.height().is_positive(), "the height follows the pointer");
+        assert_eq!(draft.sizes().map(|sizes| sizes[0].is_positive()), Some(true), "the base is the drawn box");
         assert!(document.tool_card_is_up(), "the height pull draws its tool card: {draft:?}");
     }
     let pixels_per_point = ctx.pixels_per_point();
@@ -493,6 +496,58 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the box tool is in {}", path.display());
+}
+
+/// Draws the product card in both theme variants: its number column and its folded class tree.
+///
+/// The picture answers the two questions a rectangle cannot: whether the three fields start on one
+/// x with their unit outside the box, and whether a fold reads as the scene tree's fold rather than
+/// as an indent. The card is the numeric path into `product.create` (ADR 0100), so a picture of it
+/// is read before the fields it is about to grow are added.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/product-card-{dark,light}.png"]
+fn the_product_card_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    for variant in VARIANTS {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join("product-card-workspace.json");
+        let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        // The picture is the settled card, not a frame of its fade-in: an `Area` fades over the
+        // style's animation time, which the shot's rapid frames never reach.
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        app.product_card.start();
+        let jobs = settle(&mut app, &ctx, &render_state, screen);
+        assert!(app.product_card.is_open(), "the card is up");
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the card paints");
+        let name = match variant {
+            ThemeChoice::Light => "product-card-light.png",
+            ThemeChoice::Dark | ThemeChoice::System => "product-card-dark.png",
+        };
+        let path = directory.join(name);
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        let picture = Picture { width: size[0], height: size[1], rgba };
+        assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+        println!("the product card is in {}", path.display());
+    }
 }
 
 /// Draws a cone's base round and its pull card into one picture.
@@ -513,7 +568,7 @@ fn the_cone_pull_is_painted_offscreen() {
     };
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("cone-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
     // The picture must show the Model tab the cone cell lives on, not the tab a fresh workspace opens.
@@ -677,7 +732,7 @@ fn gizmo_picture(
 ) -> Result<Picture, String> {
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("gizmo-workspace.json");
-    let session = engine::Session::with_catalog(testkit::sample_project(), testkit::sample_catalog());
+    let session = engine::Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
     let mut settings = Settings::default();
     settings.gizmo.handle_points = handle_points;
     settings.gizmo.ring_percent = ring_percent;
@@ -797,7 +852,7 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     let ctx = egui::Context::default();
     let workspace = testkit::scratch_dir("ui-shots").join("fill-workspace.json");
     let (project, product) = empty_product();
-    let mut session = engine::Session::with_catalog(project, testkit::sample_catalog());
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
     assert!(session.open_product(product), "the fixture product opens");
     let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
         .expect("the application builds");
@@ -886,7 +941,7 @@ fn deep_session() -> Result<(engine::Session, model::Id), String> {
         .add_panel(last, "Shelf", size, None, millimetres(18)?, Placement::IDENTITY)
         .map_err(|error| error.to_string())?;
     project.validate().map_err(|error| error.to_string())?;
-    let session = engine::Session::with_catalog(project, crate::scene_build::default_catalog()?);
+    let session = engine::Session::with_directory(project, crate::scene_build::default_catalog()?);
     Ok((session, panel))
 }
 
@@ -1157,7 +1212,7 @@ fn card_session() -> Result<(engine::Session, [model::Id; 3]), String> {
     let object = project
         .add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(sphere))
         .map_err(|error| error.to_string())?;
-    Ok((engine::Session::with_catalog(project, testkit::sample_catalog()), [panel, object, frame]))
+    Ok((engine::Session::with_directory(project, testkit::sample_catalog()), [panel, object, frame]))
 }
 
 /// Draws the rubber band mid-drag in both themes, for each of its two rules.
@@ -1216,11 +1271,11 @@ fn the_wireframe_on_the_dark_theme_draws_the_black_ink() {
 }
 
 #[test]
-#[ignore = "needs a GPU adapter; writes target/ui-shots/floor-underground.png"]
-fn a_body_under_the_floor_shows_through_the_plate() {
-    // U108: the plate carries the shadow in its own fragment, so it can stop writing depth; a part
-    // that stands under the floor then draws over the plate instead of being hidden behind it, and
-    // the shadow under the part that stands on the floor is still there.
+#[ignore = "needs a GPU adapter; writes target/ui-shots/floor-opacity-*.png"]
+fn the_floor_at_full_and_at_forty_percent_shows_what_stands_under_it() {
+    // U109: the plate is blended, so one scene under the same camera at 100 % and at 40 % is the pair
+    // that says what the setting does — the shelf moved under the floor is hidden by the opaque
+    // plate and seen through the tinted one, and the shadow beside it is drawn in both.
     let render_state = match render_state() {
         Ok(render_state) => render_state,
         Err(reason) => {
@@ -1230,31 +1285,79 @@ fn a_body_under_the_floor_shows_through_the_plate() {
     };
     let directory = testkit::ui_shots_dir().expect("the shots directory is created");
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
-    let ctx = egui::Context::default();
-    let workspace = testkit::scratch_dir("ui-shots").join("floor-underground.json");
-    let mut settings = Settings::default();
-    settings.appearance.theme = ThemeChoice::Dark;
-    settings.viewport.shadow_strength = 65;
-    let mut session = crate::scene_build::demo_session().expect("the sample session builds");
-    let shelf =
-        find_named(std::slice::from_ref(&model::Node::Container(session.project().root().clone())), "Loose shelf")
-            .expect("the demo scene holds the loose shelf");
-    let below =
-        model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
-    let params = serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below }).expect("params");
-    session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
-    let mut app =
-        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
-    let _ = settle(&mut app, &ctx, &render_state, screen);
-    let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
-    let pixels_per_point = ctx.pixels_per_point();
-    let size =
-        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
-    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
-    let path = directory.join("floor-underground.png");
-    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
-    app.tabs.active_mut().release_target();
-    println!("the shelf under the floor is in {}", path.display());
+    for opacity in [100, 40] {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("floor-opacity-{opacity}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = ThemeChoice::Dark;
+        settings.viewport.shadow_strength = 65;
+        settings.viewport.floor_opacity = opacity;
+        let mut session = crate::scene_build::demo_session().expect("the sample session builds");
+        let shelf =
+            find_named(std::slice::from_ref(&model::Node::Container(session.project().root().clone())), "Loose shelf")
+                .expect("the demo scene holds the loose shelf");
+        let below =
+            model::Placement::new(geom::DVec3::new(150.0, -500.0, -500.0), geom::DQuat::IDENTITY).expect("a placement");
+        let params =
+            serde_json::to_value(engine::NodePlacementSet { node: shelf, placement: below, unmeasured: false })
+                .expect("params");
+        session.dispatch("node.placement.set", &params).expect("the shelf moves under the floor");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("floor-opacity-{opacity}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the floor at {opacity} % over a shelf below it is in {}", path.display());
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/settings-view-*.png"]
+fn the_settings_window_draws_the_floor_opacity_beside_the_three_strengths() {
+    // U109: the floor's opacity is the fourth value in Settings › View, under one *Reset display*
+    // with the three display strengths. The picture is the check that the row fits the page and
+    // speaks both languages' words, which no assertion can see.
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    for (name, variant) in [("dark", ThemeChoice::Dark), ("light", ThemeChoice::Light)] {
+        let ctx = egui::Context::default();
+        let workspace = testkit::scratch_dir("ui-shots").join(format!("settings-view-{name}.json"));
+        let mut settings = Settings::default();
+        settings.appearance.theme = variant;
+        settings.viewport.floor_opacity = 40;
+        let session = crate::scene_build::demo_session().expect("the sample session builds");
+        let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session)
+            .expect("the application builds");
+        app.settings_open = true;
+        app.settings_section = ui::settings::SettingsSection::Viewport;
+        let _ = settle(&mut app, &ctx, &render_state, screen);
+        let jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+        let pixels_per_point = ctx.pixels_per_point();
+        let size = [
+            (WINDOW.x * pixels_per_point).round().max(1.0) as u32,
+            (WINDOW.y * pixels_per_point).round().max(1.0) as u32,
+        ];
+        let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+        let path = directory.join(format!("settings-view-{name}.png"));
+        testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+        app.tabs.active_mut().release_target();
+        println!("the {name} Settings › View page is in {}", path.display());
+    }
 }
 
 #[test]

@@ -7,6 +7,7 @@
 //!
 //! [ADR 0037]: ../docs/decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md
 
+use geom::Contact;
 use model::{Id, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -62,8 +63,9 @@ fn mesh_vertices_move_enabled(session: &Session, params: &Value) -> bool {
 
 fn mesh_vertices_move_run(
     project: &mut Project,
-    _catalog: &model::Catalog,
+    _catalog: &catalog::Directory,
     params: &Value,
+    _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<MeshVerticesMove>(params)?;
     if params.moves.is_empty() {
@@ -131,7 +133,7 @@ mod tests {
         let root = project.root().id();
         let mesh = cube_mesh(millimetres(100));
         let id = project.add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(mesh)).expect("object");
-        (Session::with_catalog(project, sample_catalog()), id)
+        (Session::with_directory(project, sample_catalog()), id)
     }
 
     fn move_params(object: Id, moves: &[(u32, [Length; 3])]) -> Value {
@@ -259,7 +261,7 @@ mod tests {
         use model::{ClassCode, PropertyValue, SYSTEM_CLASS};
 
         let (mut session, object) = cube_session();
-        let class: ClassCode = "70.01".parse().expect("the worktop code");
+        let class: ClassCode = "20.01".parse().expect("the worktop code");
         let assignment = serde_json::json!({
             "node": object,
             "key": SYSTEM_CLASS,

@@ -41,7 +41,7 @@ impl Editor {
         view: toolbars::RibbonView,
     ) -> Result<toolbars::RibbonOutcome, String> {
         self.retain_creation_parent(session.project());
-        let has_panel_material = !session.catalog().panel_materials().is_empty();
+        let has_panel_material = !session.directory().boards().collect::<Vec<_>>().is_empty();
         let selected = self.selection.primary();
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let active = toolbars::tool_activity(
@@ -99,7 +99,14 @@ impl Editor {
                     outcome.started_drawing = true;
                 }
                 ToolAction::CreateProductCard => outcome.open_product_card = true,
-                ToolAction::DrawProductFrame => self.arm_box(),
+                ToolAction::DrawProductFrame { tool } => {
+                    self.start_product_box_drawing(tool);
+                    outcome.started_drawing = true;
+                }
+                ToolAction::DrawProductFrameContour => {
+                    self.start_product_drawing();
+                    outcome.started_drawing = true;
+                }
                 ToolAction::DrawPanelContour => {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;

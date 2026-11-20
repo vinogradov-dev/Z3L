@@ -7,8 +7,9 @@
 
 use std::path::Path;
 
-use crate::parse::{markdown_bullets, parse_backlog, parse_map, parse_session, parse_state, session_field};
+use crate::parse::{markdown_bullets, parse_backlog, parse_map, parse_state, session_field};
 use crate::section::{DIM, GREEN, Section, Style, YELLOW, paint, sections, truncate};
+use crate::streams::Streams;
 use crate::task::{TaskOptions, task_sections, view_from};
 use crate::{Git, ProcessGit, Summary, Task, TaskStatus};
 
@@ -45,17 +46,24 @@ pub fn dashboard(root: &Path, opts: &DashboardOptions) -> Result<String, Vec<Str
 pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Result<String, Vec<String>> {
     let status = read(root, "plan/STATUS.md")?;
     let backlog = read(root, "plan/BACKLOG.md")?;
-    let (session_path, session) = match read_optional(root, "plan/SESSION.md")? {
-        Some(text) => (Some("plan/SESSION.md"), Some(text)),
-        None => (None, None),
-    };
+    // The declaration names the notes, so a stream that is working shows its own note beside the
+    // plan's own; a plan that declares nothing reads exactly the one file it always read.
+    let streams = Streams::parse(&status).unwrap_or_else(|_| Streams::one());
+    let mut sessions: Vec<(String, String)> = Vec::new();
+    for path in streams.notes() {
+        if let Some(text) = read_optional(root, &path)? {
+            sessions.push((path, text));
+        }
+    }
+    let primary_path = streams.primary().note_path();
+    let session = sessions.iter().find(|(path, _)| *path == primary_path).map(|(_, text)| text.as_str());
     let questions = read_optional(root, "plan/questions.md")?;
     let debt = read_optional(root, "plan/debt.md")?;
     let map = read_optional(root, "plan/map.md")?;
 
     let state = parse_state(&status)?;
     let head = git.head();
-    let interrupted = crate::session_interrupted(&state, session.as_deref(), head.as_deref(), git);
+    let interrupted = crate::session_interrupted(&state, session, head.as_deref(), git);
     let style = Style::new(opts.width, opts.color);
     let mut blocks: Vec<Section> = Vec::new();
 
@@ -69,14 +77,16 @@ pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Re
         state.updated
     )));
 
+    let tasks = parse_backlog(&backlog);
+    let summary = Summary {
+        state: state.clone(),
+        streams: crate::validate::stream_states(&streams, &sessions, &tasks),
+        tasks: tasks.clone(),
+        head: head.clone(),
+        interrupted,
+    };
+
     if let Some(id) = opts.task.as_deref() {
-        let summary = Summary {
-            state: state.clone(),
-            tasks: parse_backlog(&backlog),
-            session: session.as_deref().map(parse_session),
-            head: head.clone(),
-            interrupted,
-        };
         let notes = crate::note(root, id)?;
         let mut view = view_from(&summary, id, map.as_deref(), debt.as_deref(), questions.as_deref(), notes, git)?;
         view.related = crate::notes::related_notes(root, &view.task);
@@ -84,7 +94,6 @@ pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Re
         blocks.extend(task_sections(&view, &opts));
     }
 
-    let tasks = parse_backlog(&backlog);
     for section in ["Now", "Bugs", "Next"] {
         let listed: Vec<&Task> = tasks.iter().filter(|task| task.section == section).collect();
         if listed.is_empty() {
@@ -95,16 +104,16 @@ pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Re
         blocks.push(block);
     }
 
-    if state.status == "doing"
-        && let Some(session) = session.as_deref()
-    {
-        let name = session_path.unwrap_or("plan/SESSION.md");
-        let mut block = Section::new("SESSION", name);
-        if interrupted {
+    // One block per stream that is working: the plan's own note and every declared stream's, so a
+    // dashboard of four checkouts shows four sessions instead of the primary's alone.
+    for stream in summary.streams.iter().filter(|stream| stream.live.is_some()) {
+        let Some(note) = sessions.iter().find(|(path, _)| *path == stream.note_path) else { continue };
+        let mut block = Section::new("SESSION", stream.note_path.as_str());
+        if interrupted && stream.primary {
             block.marker = Some("INTERRUPTED".to_owned());
         }
         for key in ["task", "now", "blocked", "run", "resume"] {
-            match session_field(session, key) {
+            match session_field(&note.1, key) {
                 Some(value) => block.push(format!("{key}: {value}")),
                 // An empty field still says something: the note left the question open.
                 None => block.push(format!("{key}: -")),

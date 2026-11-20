@@ -182,9 +182,11 @@ fn family_caption(ui: &mut Ui, family: &ClassRow, lang: Lang) {
 
 /// The families and classes a query leaves visible, in registry order.
 ///
-/// A family or a type that matches brings its children with it, so a person who types `Хранение`
-/// or `storage` still sees the cabinet rows; a class is listed only when it is assignable at all.
-/// A retired row is never listed, although it still renders where a document already stores it.
+/// The registry is held in code order and the digits carry the order of the work (ADR 0145), so the
+/// tree needs no sort: the case is family `10` and the seat is `80`. A family or a type that matches
+/// brings its children with it, so a person who types `Хранение` or `storage` still sees the cabinet
+/// rows; a class is listed only when it is assignable at all. A retired row is never listed, although
+/// it still renders where a document already stores it.
 fn visible_rows<'a>(rows: &'a [ClassRow], query: &str, lang: Lang) -> Vec<FamilyRows<'a>> {
     let mut families = Vec::new();
     for family in rows.iter().filter(|row| row.is_family()) {
@@ -210,20 +212,44 @@ fn visible_rows<'a>(rows: &'a [ClassRow], query: &str, lang: Lang) -> Vec<Family
     families
 }
 
-/// The product classes a query leaves, as the product card lists them.
+/// One product type and the variants under it, as the product card folds them.
 ///
-/// A row is a product when its traits name the role `level = Product` (ADR 0097), so the list
-/// grows by adding a registry row and never by editing the card. A matching family, type or
-/// variant brings its relatives with it, exactly as the tree picker does, and a retired row is not
-/// offered.
+/// The type is itself a class a piece may carry, so its row is selectable; the fold only hides the
+/// variants below it. The card reads this structure and never re-derives a parent from a code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProductType {
+    /// The type's code, the identity of its fold.
+    pub code: ClassCode,
+    /// The row the type draws: its code and its label.
+    pub label: String,
+    /// The variants under the type, in registry order.
+    pub variants: Vec<(ClassCode, String)>,
+}
+
+/// One registry family and the product types under it, as the product card folds them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProductFamily {
+    /// The family's code, the identity of its fold.
+    pub code: ClassCode,
+    /// The caption the family draws: its code and its label.
+    pub label: String,
+    /// The product types of the family, in registry order.
+    pub types: Vec<ProductType>,
+}
+
+/// The product classes a query leaves, as the product card's tree lists them.
 ///
-/// Returns each class with the text a row draws (its code and label) and its depth for indenting:
-/// `1` for a type and `2` for a variant.
-pub(crate) fn product_rows(query: &str, lang: Lang) -> Vec<(ClassCode, String, u8)> {
+/// A class is a product when its traits name the role `level = Product` (ADR 0097), so the list
+/// grows by adding a registry row and never by editing the card. A matching type or variant brings
+/// its relatives with it, exactly as the tree picker does, and a retired row is not offered.
+///
+/// The answer is the registry tree the picker already draws — family, type, variant — because the
+/// card folds it: a flat list with depths cannot say which row closes which children.
+pub(crate) fn product_rows(query: &str, lang: Lang) -> Vec<ProductFamily> {
     product_rows_in(model::registry(), query, lang)
 }
 
-fn product_rows_in(rows: &[ClassRow], query: &str, lang: Lang) -> Vec<(ClassCode, String, u8)> {
+fn product_rows_in(rows: &[ClassRow], query: &str, lang: Lang) -> Vec<ProductFamily> {
     let products = rows
         .iter()
         .filter(|row| row.is_assignable())
@@ -232,20 +258,47 @@ fn product_rows_in(rows: &[ClassRow], query: &str, lang: Lang) -> Vec<(ClassCode
         .collect::<Vec<_>>();
     let matching =
         products.iter().filter(|(_code, row)| matches(row, query, lang)).map(|(code, _row)| *code).collect::<Vec<_>>();
-    let mut listed = Vec::new();
-    for (code, row) in products {
-        let related =
-            matching.iter().any(|matched| matched.is_ancestor_or_self(code) || code.is_ancestor_or_self(*matched));
-        if !related {
+    // A class is listed when it or one of its relatives answers the query: typing a variant keeps
+    // its type above it, and typing a type keeps every variant below it.
+    let related = |code: ClassCode| {
+        matching.iter().any(|matched| matched.is_ancestor_or_self(code) || code.is_ancestor_or_self(*matched))
+    };
+    let mut families = Vec::new();
+    for family in rows.iter().filter(|row| row.is_family()) {
+        let Some(family_code) = ClassCode::from_code(family.code()) else { continue };
+        let mut types = Vec::new();
+        for type_row in rows.iter().filter(|row| row.is_assignable() && row.parent() == Some(family_code)) {
+            let Some(type_code) = ClassCode::from_code(type_row.code()) else { continue };
+            if !type_code.is_product_class() {
+                continue;
+            }
+            let type_related = related(type_code);
+            let variants = rows
+                .iter()
+                .filter(|row| row.is_assignable() && row.parent() == Some(type_code))
+                .filter_map(|row| Some((ClassCode::from_code(row.code())?, row)))
+                .filter(|(code, _row)| code.is_product_class() && (type_related || related(*code)))
+                .map(|(code, row)| (code, format!("{code}   {}", row.label().text(lang))))
+                .collect::<Vec<_>>();
+            if !type_related && variants.is_empty() {
+                continue;
+            }
+            types.push(ProductType {
+                code: type_code,
+                label: format!("{type_code}   {}", type_row.label().text(lang)),
+                variants,
+            });
+        }
+        if types.is_empty() {
             continue;
         }
-        let depth = match row.parent() {
-            Some(parent) if !parent.parent().is_unclassified() => 2,
-            _ => 1,
-        };
-        listed.push((code, format!("{code}   {}", row.label().text(lang)), depth));
+        families.push(ProductFamily {
+            code: family_code,
+            label: format!("{family_code}   {}", family.label().text(lang)),
+            types,
+        });
     }
-    listed
+    families
 }
 
 /// Whether `row` answers `query` by its label in either language, its slug, an alias or its code.
@@ -291,7 +344,32 @@ mod tests {
     }
 
     fn shelf() -> ClassCode {
-        "30.11".parse().expect("the horizontal panel code")
+        "10.11".parse().expect("the horizontal panel code")
+    }
+
+    #[test]
+    fn the_tree_opens_on_the_case_and_ends_on_the_seat() {
+        let families = visible_rows(model::registry(), "", Lang::En)
+            .into_iter()
+            .map(|family| family.family.slug())
+            .collect::<Vec<_>>();
+        assert_eq!(families.first(), Some(&"storage"), "the case a shop builds is family 10: {families:?}");
+        assert_eq!(families.get(1), Some(&"boards-trim"), "the trim of that case follows it: {families:?}");
+        assert_eq!(families.last(), Some(&"seating"), "a chair belongs to a scene, so seating is last: {families:?}");
+    }
+
+    #[test]
+    fn the_product_list_opens_on_the_cabinet_and_ends_on_the_seat() {
+        let products = product_rows_in(model::registry(), "", Lang::En)
+            .into_iter()
+            .flat_map(|family| family.types)
+            .flat_map(|kind| std::iter::once(kind.code).chain(kind.variants.into_iter().map(|(code, _text)| code)))
+            .collect::<Vec<_>>();
+        assert_eq!(products.first().and_then(|code| code.slug()), Some("cabinet"), "{products:?}");
+        assert_eq!(products.last().and_then(|code| code.slug()), Some("sofa"), "{products:?}");
+        let placeholder = products.iter().position(|code| *code == ClassCode::GENERAL_PRODUCT);
+        let sitting = products.iter().position(|code| code.slug() == Some("chair"));
+        assert!(placeholder < sitting, "the placeholder product precedes the seating: {products:?}");
     }
 
     #[test]
@@ -324,7 +402,7 @@ mod tests {
         let rows = [
             ClassRow::family(200_000, "lying", Message::ClassFamilyLying),
             ClassRow::class(
-                200_100,
+                400_100,
                 "bed",
                 Message::ClassBed,
                 TraitSet::new(
@@ -372,7 +450,7 @@ mod tests {
         }
 
         assert!(texts.iter().any(|text| text.contains("Горизонтальная панель")), "the row is drawn: {texts:?}");
-        assert!(texts.iter().any(|text| text.contains("30.11")), "the code is visible: {texts:?}");
+        assert!(texts.iter().any(|text| text.contains("10.11")), "the code is visible: {texts:?}");
         assert!(texts.iter().any(|text| text == "без классификации"), "the unclassified row is explicit: {texts:?}");
         assert!(!texts.iter().any(|text| text.contains("Стул")), "the search hides the rest: {texts:?}");
         assert!(picker.open, "drawing keeps the picker open");

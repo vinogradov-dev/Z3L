@@ -31,9 +31,10 @@ pub fn render_with_detail(summary: &Summary, detail: Option<&str>) -> String {
         state.updated
     );
     let _ = writeln!(text, "head: {}", summary.head.as_deref().map_or("(no checkout)", short));
-    if let Some(session) = &summary.session {
+    if let Some(session) = summary.primary().and_then(|stream| stream.session.as_ref()) {
         render_session(&mut text, session);
     }
+    render_streams(&mut text, summary);
     if summary.interrupted {
         // The one fact `AGENTS.md` §1.1 otherwise asks the reader to derive from `base`, `HEAD` and
         // the note's steps.
@@ -72,6 +73,28 @@ fn short(hash: &str) -> &str {
     hash.get(..7).unwrap_or(hash)
 }
 
+/// One row per stream the plan declares, so a checkout that works its own entry is visible while the
+/// plan's own state line is idle.
+///
+/// A plan with one stream prints nothing here: the first line already names its task, and a block that
+/// repeats itself is a block a reader learns to skip.
+fn render_streams(text: &mut String, summary: &Summary) {
+    if summary.streams.len() < 2 {
+        return;
+    }
+    for stream in &summary.streams {
+        let task = stream.live.as_deref().unwrap_or("-");
+        let status = if stream.live.is_some() { "doing" } else { "idle" };
+        let _ = write!(text, "  stream {} · {task} · {status}", stream.key);
+        if !stream.primary
+            && let Some(now) = stream.session.as_ref().and_then(|session| session.now.as_deref())
+        {
+            let _ = write!(text, " · now: {now}");
+        }
+        text.push('\n');
+    }
+}
+
 /// The fields a fresh session resumes from; an absent one prints as `-`.
 fn render_session(text: &mut String, session: &Session) {
     for (key, value) in [
@@ -89,7 +112,7 @@ fn render_session(text: &mut String, session: &Session) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Field, State, Task, TaskStatus};
+    use crate::{Field, State, StreamState, Task, TaskStatus};
 
     /// One backlog task as the parser would hand it over.
     fn task(id: &str, status: TaskStatus, section: &str, lead: &str, files: Option<&str>) -> Task {
@@ -119,10 +142,37 @@ mod tests {
                 task("A3", TaskStatus::Open, "Now", "arcs in the card", Some("crates/ui/src/object_card.rs")),
                 task("A4", TaskStatus::Open, "Next", "stable ids", None),
             ],
-            session,
+            streams: vec![StreamState {
+                key: "app".to_owned(),
+                primary: true,
+                live: (status == "doing").then(|| "A3".to_owned()),
+                note_path: "plan/SESSION.md".to_owned(),
+                session,
+            }],
             head: head.map(str::to_owned),
             interrupted: false,
         }
+    }
+
+    /// A primary stream beside a declared one, the shape a plan with four checkouts prints.
+    fn declared() -> Summary {
+        let mut list = summary("idle", Some("fedcba9"), None);
+        list.streams[0].live = None;
+        list.streams.push(StreamState {
+            key: "agent".to_owned(),
+            primary: false,
+            live: Some("J1".to_owned()),
+            note_path: "plan/SESSION.agent.md".to_owned(),
+            session: Some(Session { now: Some("the recipe parser".to_owned()), ..note() }),
+        });
+        list.streams.push(StreamState {
+            key: "catalog".to_owned(),
+            primary: false,
+            live: None,
+            note_path: "plan/SESSION.catalog.md".to_owned(),
+            session: None,
+        });
+        list
     }
 
     /// A note that carries every field the block prints.
@@ -228,5 +278,22 @@ mod tests {
         for line in ["  now: -\n", "  blocked: -\n", "  run: -\n"] {
             assert!(text.contains(line), "an empty field is still named: {text}");
         }
+    }
+
+    #[test]
+    fn a_declared_plan_prints_one_row_per_stream() {
+        let text = render(&declared());
+        for line in [
+            "  stream app · - · idle\n",
+            "  stream agent · J1 · doing · now: the recipe parser\n",
+            "  stream catalog · - · idle\n",
+        ] {
+            assert!(text.contains(line), "every stream is a row, `{line}` is missing: {text}");
+        }
+        assert!(
+            !render(&summary("idle", Some("fedcba9"), None)).contains("stream "),
+            "a plan with one stream repeats nothing: {}",
+            render(&summary("idle", Some("fedcba9"), None))
+        );
     }
 }

@@ -25,6 +25,7 @@ use super::Editor;
 use crate::contour_edit::ContourTarget;
 use model::PathShape;
 
+use crate::box_tool::{BoxBase, BoxDraft};
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 
 /// The name a drawn body commits under: the cell the profile belongs to, not the tool.
@@ -92,6 +93,74 @@ impl Editor {
     pub fn start_body_drawing(&mut self, tool: DrawTool) {
         self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
         self.drawing_intent = DrawIntent::Body;
+    }
+
+    /// Arms the base rectangle of a product frame: the figure a body cell draws before its height.
+    ///
+    /// A frame reserves a box of three independent sides, and the sketch's rectangle tool is the one
+    /// that draws it (N19, ADR 0101): the plates, the typed width and depth, the Enter that places the
+    /// second corner and the preview are the sketch's own, exactly as they are for a solid's profile.
+    /// Only what the finished figure becomes differs — a body is swept on Z, a frame is pulled — so the
+    /// intent, not the tool, says which cell armed the draft. Nothing reaches the document before the
+    /// pull's one `product.create`.
+    pub fn start_product_box_drawing(&mut self, tool: DrawTool) {
+        self.start_drawing_with(tool, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::ProductBox;
+    }
+
+    /// Arms the base outline of a product frame: the ring its reserved space stands on.
+    ///
+    /// The free-outline tool draws any closed ring, because a frame is not always a rectangle: a
+    /// corner cabinet and a drawn end table are the same gesture with a different base (ADR 0159).
+    /// The ring is view state until the height is pulled from it, and nothing is written before that
+    /// pull's one `product.create`.
+    pub fn start_product_drawing(&mut self) {
+        self.start_drawing_with(DrawTool::Polyline, DEFAULT_POLYGON_SIDES);
+        self.drawing_intent = DrawIntent::Product;
+    }
+
+    /// Turns the closed figure a frame draft drew into the box draft whose height is pulled.
+    ///
+    /// The figure becomes the draft's base. A rectangle drawn between two corners is the box's own
+    /// base: its minimum corner is the frame's zero and its bounds are the width and the depth, so a
+    /// drawn frame reserves the same plain box the card writes, and the corner grips still read it as
+    /// a box (ADR 0101). Any other closed figure is kept as the ring it was drawn as, anchored by the
+    /// envelope's own rule (ADR 0159). The height pull and its commit are the drawn frame's own, so a
+    /// footprint and a rectangle end in one command. A ring that is still open is refused with the
+    /// sentence the *Close* operation would give, and the draft stays editable.
+    pub fn start_product_pull(&mut self, lang: Lang) -> Result<(), String> {
+        if self.drawing.is_none() {
+            return Err(DrawDraftError::NotStarted.to_string());
+        }
+        // A fixed figure is closed by the tool that drew it; only a chain is closed here, and only a
+        // chain that can close — a rectangle of two corners has no closing segment.
+        if self.drawing.as_ref().is_some_and(|draft| draft.tool().closes()) {
+            self.close_drawing().map_err(|_| Message::PanelContourOpen.text(lang).to_owned())?;
+        }
+        let Some(draft) = self.drawing.as_ref() else {
+            return Err(DrawDraftError::NotStarted.to_string());
+        };
+        let path = draft.to_path().map_err(|error| error.to_string())?;
+        let contour = path.to_contour().map_err(|error| error.to_string())?;
+        let (min, max) = contour.bounds_micrometres();
+        let corner = [Length::from_micrometres(min[0]), Length::from_micrometres(min[1])];
+        let span = |axis: usize| -> Option<Length> {
+            let low = min.get(axis).copied()?;
+            let high = max.get(axis).copied()?;
+            Some(Length::from_micrometres(high.saturating_sub(low)))
+        };
+        let base = match (draft.tool(), span(0), span(1)) {
+            // A rectangle on the plane's own axes is the box: three sides and no footprint, which is
+            // the document the card writes and the shape the corner grips edit.
+            (DrawTool::Rectangle, Some(width), Some(depth)) => {
+                BoxDraft::from_rectangle(BoxBase { corner, width, depth })
+            }
+            _ => BoxDraft::from_ring(corner, contour),
+        };
+        self.box_draft = Some(base);
+        self.drawing = None;
+        self.drawing_intent = DrawIntent::Path;
+        Ok(())
     }
 
     /// Arms a primitive's placement: the circle a sphere is built around (ADR 0139).
@@ -221,6 +290,11 @@ impl Editor {
             }
             DrawIntent::Panel => self.commit_panel(&draft, session, parent, placement, lang)?,
             DrawIntent::Primitive(kind) => self.commit_primitive(&draft, session, parent, placement, kind, scope)?,
+            // A frame's base is not a node: the figure waits for the height pull and the one
+            // `product.create` that the shell runs from the frame draft (ADR 0101, ADR 0159).
+            DrawIntent::Product | DrawIntent::ProductBox => {
+                return Err(Message::ProductFrameNeedsHeight.text(Lang::En).to_owned());
+            }
         };
         self.drawing = None;
         self.drawing_intent = DrawIntent::Path;

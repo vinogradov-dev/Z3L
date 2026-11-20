@@ -763,8 +763,7 @@ mod tests {
     use kernel_truck::TruckKernel;
     use model::{
         Constructive, Container, Contour, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow,
-        EdgeId, Id, MaterialId, Mesh, PanelNominalSize, PanelRect, Placement, Project, RectCorner, RectEdge,
-        RingBanding,
+        EdgeId, Id, ItemId, Mesh, PanelNominalSize, PanelRect, Placement, Project, RectCorner, RectEdge, RingBanding,
     };
     use testkit::millimetres;
     use units::Length;
@@ -1208,8 +1207,8 @@ mod tests {
         project.panel(panel_id).expect("panel exists").clone()
     }
 
-    fn edge_material() -> MaterialId {
-        MaterialId::new(101).expect("material id")
+    fn edge_material() -> ItemId {
+        ItemId::new(1, 101).expect("material id")
     }
 
     fn panel_with_bands(bands: &[(u32, bool)], band_width: Length) -> Panel {
@@ -1338,7 +1337,7 @@ mod tests {
         project
             .set_ring_banding(
                 panel_id,
-                RingBanding::new(segment, MaterialId::new(1).expect("material"), true, millimetres(2), millimetres(20))
+                RingBanding::new(segment, ItemId::new(1, 1).expect("material"), true, millimetres(2), millimetres(20))
                     .expect("ring band"),
             )
             .expect("set ring banding");

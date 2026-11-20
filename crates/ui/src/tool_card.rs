@@ -2,9 +2,12 @@
 //!
 //! An armed tool that asks for a number shows it here (ADR 0119): a `Middle`-layer plate beside the
 //! pointer, one row per parameter, each row the shared scrubbing field of ADR 0092 with its unit
-//! *outside* the box. The exact-distance fields of a niche keep their own placement beside the gap
-//! they measure, but they draw through the same [row](row), so the two surfaces share one layout, one
-//! commit path and one edit scope.
+//! *outside* the box. The exact-distance fields of a niche draw through the same [row](row), so the
+//! two surfaces share one layout, one commit path and one edit scope.
+//!
+//! A carried piece has no card at all (N26, ADR 0161): its two gaps are dimensioned in the scene, and
+//! each field is a [plate](plate) of its own sitting in the middle of the arrow that measures it. The
+//! plate is the one row that takes the keyboard and never the pointer.
 //!
 //! The inspector draws the same rows from the same draft: the shell builds one [`ToolView`] and both
 //! surfaces read it, so the number at the hand and the number in the panel cannot drift apart. How
@@ -15,7 +18,9 @@
 //!
 //! Nothing here writes a document. The surface reports the numbers its fields committed, the button
 //! pressed this frame, the field that took Enter and the rectangle it drew, which the shell hands to
-//! `Chrome`, so a press inside the card is chrome and never a pick or a camera gesture (ADR 0080).
+//! `Chrome` for a card, so a press inside one is chrome and never a pick or a camera gesture
+//! (ADR 0080). A plate returns its own rectangle for the caller to know where it stands, but it is
+//! not chrome: a press on it belongs to the scene behind it (X66).
 //! The shell still owns Escape, Enter and Tab for the running tool — `handle_keys` reads them before
 //! the frame and the card only reports what its own focused field saw — so the card adds no second
 //! key reader (ADR 0076).
@@ -251,6 +256,49 @@ pub fn show(
     (outcome, rect)
 }
 
+/// Draws one row as a plate of its own, centred on `at`, and reports what its field asked for.
+///
+/// This is the shape a gap takes in the scene: a carried piece's field sits in the middle of the
+/// arrow that measures it (N26, ADR 0161), so the plate is one row of the shared field and nothing
+/// else — no title, no label word and no button pair. Two surfaces are told apart by their id, so
+/// each gap's field keeps its own keyboard focus as the plate travels with the piece.
+///
+/// The plate takes no pointer. A carried piece holds no button, so a press anywhere in the work area
+/// is the click that puts it down; a plate that sensed the hand would take that click and scrub a
+/// number into the gap the piece would then jump to (X66). Its field still takes the keyboard, which
+/// is how a gap is typed.
+pub fn plate(
+    ui: &mut Ui,
+    viewport: Rect,
+    at: Pos2,
+    id: Id,
+    row: &mut ToolRow,
+    focus: bool,
+    opacity: u32,
+) -> (ToolOutcome, Rect) {
+    let fill = theme::at_opacity(theme::floating(ui), opacity.clamp(80, 100));
+    let mut outcome = ToolOutcome::default();
+    let rect = egui::Area::new(id)
+        .order(Order::Middle)
+        .pivot(Align2::CENTER_CENTER)
+        .fixed_pos(at)
+        .interactable(false)
+        .constrain_to(viewport)
+        .show(ui.ctx(), |ui| {
+            let frame = egui::Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, theme::line(ui)))
+                .corner_radius(CornerRadius::same(theme::RADIUS))
+                .inner_margin(Margin::symmetric(5, 2));
+            frame.show(ui, |ui| {
+                outcome = one_row(ui, row, focus);
+            });
+        })
+        .response
+        .rect;
+    (outcome, rect)
+}
+
 /// Draws the same rows inside the inspector, under the tool's name, and separates them from the
 /// node's card below.
 ///
@@ -298,6 +346,21 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
                 outcome.action = Some(ToolAction::Cancel);
             }
         });
+    }
+    outcome
+}
+
+/// Draws the one row of a plate and reports what it asked for, refusal included.
+fn one_row(ui: &mut Ui, row: &mut ToolRow, focus: bool) -> ToolOutcome {
+    let lang = language(ui.ctx());
+    let mut outcome = ToolOutcome::default();
+    if row.disabled {
+        ui.label(RichText::new(Message::DistanceNoNeighbour.text(lang)).small().color(theme::text_dim(ui)));
+        return outcome;
+    }
+    row_ui(ui, row, false, focus, &mut outcome);
+    if let Some(message) = outcome.error {
+        ui.colored_label(theme::danger(ui), message.text(lang));
     }
     outcome
 }
@@ -434,6 +497,47 @@ mod tests {
             states.push(focused);
         }
         assert_eq!(states, vec![false, true, true, true], "the ask lands on the second frame and is kept");
+    }
+
+    #[test]
+    fn a_gap_plate_is_click_through_so_a_press_over_it_puts_the_piece_down() {
+        // X66: the gap's field sits in the scene, over the piece and the space around it, so the
+        // pointer must reach whatever is behind it — the press there is the click that puts the
+        // piece down and never a scrub of the number it covers. A card instead senses the pointer:
+        // its plate is a deliberate target (ADR 0119).
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let mut row = ToolRow::height(120.0, 1.0..=10_000.0, 3);
+        let at = Pos2::new(200.0, 200.0);
+        let mut rect = Rect::NOTHING;
+        let mut layer = None;
+        for _ in 0..3 {
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
+                let shown = plate(ui, viewport(), at, Id::unique("gap_plate"), &mut row, false, 92);
+                rect = shown.1;
+                layer = ui.ctx().layer_id_at(at).map(|layer| layer.id);
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert!(rect.contains(at), "the plate covers the point it measures: {rect:?}");
+        assert_ne!(layer, Some(Id::unique("gap_plate")), "a gap's plate leaves the press to the scene");
+    }
+
+    #[test]
+    fn a_gap_plate_still_takes_the_keyboard() {
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let mut row = ToolRow::height(120.0, 1.0..=10_000.0, 3);
+        let mut focused = false;
+        for frame in 0..4 {
+            let focus = frame < 2;
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
+                plate(ui, viewport(), Pos2::new(200.0, 200.0), Id::unique("gap_plate"), &mut row, focus, 92);
+                focused = ui.ctx().text_edit_focused();
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert!(focused, "a gap's plate still lets a number be typed");
     }
 
     #[test]

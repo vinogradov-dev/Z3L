@@ -1,6 +1,6 @@
 # 0142. The ground shadow is the silhouette the key light casts on a floor plate
 
-- Status: Accepted; supersedes 0071
+- Status: Accepted; supersedes 0071; the plate's place in the pass and its opacity superseded by 0144
 - Date: 2026-11-17
 
 ## Context

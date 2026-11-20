@@ -7,18 +7,19 @@
 use std::sync::Arc;
 
 use engine::Session;
-use geom::{Aabb, DMat4, DVec3};
+use geom::{Aabb, DMat4, DVec2, DVec3};
 use kernel::{SolidKernel, TessOptions};
 use kernel_truck::TruckKernel;
-use mesh::EvaluationCache;
+use mesh::{EvaluationCache, PanelEval};
 use model::{
-    CameraProjection, Catalog, Container, EdgeBandingMaterial, Envelope, Id, LightKind, MaterialId, Node, NodeQuery,
-    Panel, PanelMaterial, PanelStock, Placement, Project, SheetSize, StructuralKind,
+    CameraProjection, Container, Envelope, Id, LightKind, Node, NodeQuery, Panel, Placement, Project, StructuralKind,
 };
 // The demonstration fixture is the only caller of these: a test build evaluates the same document
 // a maker builds, and nothing else in the shell creates cutouts, bands or a named panel size.
 #[cfg(test)]
 use geom::{DQuat, MeshData};
+#[cfg(test)]
+use model::ItemId;
 #[cfg(test)]
 use model::{CutoutDepth, CutoutShape, EdgeBanding, EdgeId, FaceSide, PanelNominalSize, PanelRect};
 use scene::{
@@ -28,6 +29,7 @@ use scene::{
 #[cfg(test)]
 use std::f64::consts::FRAC_PI_2;
 use ui::ViewFlags;
+#[cfg(test)]
 use units::Length;
 
 /// A panel's surface colour, taken in tree order, in linear RGB: v1 has no per-panel material
@@ -40,12 +42,20 @@ const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
 /// The default surface colour of a geometry object; v1 has no per-object material.
 const OBJECT_COLOR: [f32; 4] = [0.58, 0.60, 0.64, 1.0];
 
-/// Default catalogue ids. The catalogue is not scene data and is never written to a file, so
-/// these numbers are this catalogue's own labels.
-const DEFAULT_OAK_MATERIAL: u64 = 1;
-const DEFAULT_WHITE_MATERIAL: u64 = 2;
-const DEFAULT_OAK_EDGE: u64 = 101;
-const DEFAULT_WHITE_EDGE: u64 = 102;
+/// The demonstration fixture's item ids: the starter package's own rows.
+///
+/// A scene is not the directory and never writes it, so these numbers label one fixture.
+#[cfg(test)]
+const DEFAULT_OAK_MATERIAL: u32 = 1;
+#[cfg(test)]
+const DEFAULT_WHITE_MATERIAL: u32 = 2;
+#[cfg(test)]
+const DEFAULT_OAK_EDGE: u32 = 101;
+#[cfg(test)]
+const DEFAULT_WHITE_EDGE: u32 = 102;
+/// The starter package's 4 mm HDF sheet: what an applied or a grooved back is cut from.
+#[cfg(test)]
+const DEFAULT_HDF_BACK: u32 = 3;
 
 /// A world-space axis-aligned box built from evaluated meshes.
 ///
@@ -224,68 +234,60 @@ pub fn demo_session() -> Result<Session, String> {
         .map_err(describe)?;
 
     project.validate().map_err(describe)?;
-    Ok(Session::with_catalog(project, default_catalog()?))
+    Ok(Session::with_directory(project, default_catalog()?).with_contact(contact_engine()))
 }
 
-/// The session the window opens with: an empty scene and the default catalogue.
-pub fn initial_session() -> Result<Session, String> {
-    empty_session()
-}
-
-/// Builds an empty scene: a root container with no children.
+/// Builds an empty scene around the default catalogue: a root container with no children.
 ///
-/// A new document still carries the session catalogue; the catalogue is not scene data and is
-/// never written to the file, so starting from the default materials only affects what the
-/// inspector can offer, not what a save contains.
+/// The window opens its first tab through `App::compose` and a new tab through the
+/// snapshot the workspace is on, so this is the fixture path — a test or a shot that wants an empty
+/// document and the starter rows without a workspace around it. The catalogue is not scene data and
+/// is never written to the file, so the rows only decide what the inspector can offer.
+#[cfg(test)]
 pub fn empty_session() -> Result<Session, String> {
+    empty_session_with(default_catalog()?)
+}
+
+/// Builds an empty scene around a directory the window already holds.
+///
+/// A new tab takes the snapshot the workspace is on instead of reading the folder again: the folder
+/// is watched off the frame path, and a second read here would give the tab rows the window has
+/// already replaced.
+pub fn empty_session_with(directory: impl Into<std::sync::Arc<catalog::Directory>>) -> Result<Session, String> {
     let root = Container::new(id(1)?, "Scene", Placement::IDENTITY, Vec::new());
     let project = Project::new(root).map_err(describe)?;
-    Ok(Session::with_catalog(project, default_catalog()?))
+    Ok(Session::with_directory(project, directory).with_contact(contact_engine()))
 }
 
-/// Builds the catalogue a new session starts from: two panel materials and their edges.
+/// The contact adapter every session of this shell measures a body with.
 ///
-/// Both boards are stocked as a 2800 x 2070 mm sheet under a stock group of their own, so an order
-/// exported from the default catalogue carries the sheet plan. No price and no currency is invented
-/// here: money is the workshop's data and the catalogue file the shop loads is where it appears.
-pub fn default_catalog() -> Result<Catalog, String> {
-    let thickness = millimetres(18)?;
-    let sheet = SheetSize::new(millimetres(2800)?, millimetres(2070)?).map_err(describe)?;
-    let group = |name: &str| PanelStock::new(sheet, Some(name.to_owned()), None).map_err(describe);
-    let oak =
-        PanelMaterial::new(material_id(DEFAULT_OAK_MATERIAL)?, "Oak veneered chipboard", "chipboard", thickness, "oak")
-            .map_err(describe)?
-            .with_stock(group("chipboard-18-oak")?);
-    let white = PanelMaterial::new(
-        material_id(DEFAULT_WHITE_MATERIAL)?,
-        "White melamine chipboard",
-        "chipboard",
-        thickness,
-        "white",
-    )
-    .map_err(describe)?
-    .with_stock(group("chipboard-18-white")?);
-    let edge_thickness = millimetres(2)?;
-    let edge_width = millimetres(22)?;
-    let oak_edge = EdgeBandingMaterial::new(
-        material_id(DEFAULT_OAK_EDGE)?,
-        "Oak ABS edge",
-        "abs",
-        edge_thickness,
-        edge_width,
-        "oak",
-    )
-    .map_err(describe)?;
-    let white_edge = EdgeBandingMaterial::new(
-        material_id(DEFAULT_WHITE_EDGE)?,
-        "White ABS edge",
-        "abs",
-        edge_thickness,
-        edge_width,
-        "white",
-    )
-    .map_err(describe)?;
-    Catalog::new(vec![oak, white], vec![oak_edge, white_edge], None).map_err(describe)
+/// One adapter for the window: the drag's rule and the write's guard ask the same one, so a release
+/// cannot refuse a place the preview showed (ADR 0166, ADR 0179). It is a value, not a service: the
+/// engine holds it behind an `Arc` and no state changes under it.
+pub fn contact_engine() -> Arc<dyn geom::Contact> {
+    Arc::new(contact_parry::Parry)
+}
+
+/// Builds the directory a new session starts from: the workshop's packages, or the starter one.
+///
+/// The shell reads `nomenclature/` beside `settings.json`, so a workshop's directory replaces the
+/// starter rows without a rebuild, and a failure is reported rather than swallowed: the editor keeps
+/// working on the starter package and says which file was refused (`docs/domain/nomenclature.md`
+/// §13). A caller that watches the folder — the window — reads it through `directory_watch`
+/// instead and keeps the refusal for the status bar; this one is the command line's and the
+/// fixtures' way in.
+pub fn default_catalog() -> Result<catalog::Directory, String> {
+    // A test never reads the machine's folder: one `nomenclature/` beside `settings.json` would change
+    // what a fixture builds, so the starter rows are the only directory a test opens.
+    if cfg!(test) {
+        return catalog::default_directory().map_err(describe);
+    }
+    let root = crate::settings_store::config_dir().map(|folder| folder.join(crate::directory_watch::DIRECTORY_DIR));
+    let start = crate::directory_watch::open(root.as_deref());
+    if let Some(refusal) = &start.refusal {
+        log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
+    }
+    Ok(start.directory)
 }
 
 /// Evaluates a constructive object into world-space drawables and product envelopes.
@@ -390,6 +392,32 @@ pub fn authored_lighting_with(project: &Project, previewed: &[(Id, Placement)], 
     any_authored.then_some(lighting)
 }
 
+/// The tolerance a footprint's arcs are flattened with, in millimetres.
+///
+/// A quarter of a millimetre is far finer than a dashed wireframe can show and far coarser than the
+/// half-micrometre a panel profile samples with, so a rounded corner costs a handful of points rather
+/// than a curve drawn as code.
+const FOOTPRINT_SAMPLE_MM: f64 = 0.25;
+
+/// The base outline of a product envelope and the points where its vertical edges stand.
+///
+/// The footprint draws itself through the panel's own outline generator (ADR 0159), so a frame and a
+/// board cut to the same profile agree to the micrometre. The ring is flattened here because the scene
+/// carries points, not curves; a smooth joint — a fillet's tangency — draws no vertical edge, so only
+/// the shape's real corners are named.
+fn envelope_outline(envelope: &Envelope) -> Result<(Vec<DVec2>, Vec<DVec2>), String> {
+    let ring = envelope.footprint().outline(envelope.x(), envelope.y()).map_err(describe)?;
+    let points = ring.sample(FOOTPRINT_SAMPLE_MM).map_err(describe)?;
+    let mut corners = Vec::new();
+    for (index, segment) in ring.segments().iter().enumerate() {
+        if ring.joint_is_smooth(index, geom::DEFAULT_TANGENT_TOLERANCE) == Some(true) {
+            continue;
+        }
+        corners.push(segment.start());
+    }
+    Ok((points, corners))
+}
+
 /// A node's world placement, preferring a previewed one during a drag.
 pub fn previewed_world(project: &Project, id: Id, previewed: &[(Id, Placement)]) -> Option<Placement> {
     previewed
@@ -461,7 +489,7 @@ impl<'a> Evaluation<'a> {
                     let world = Placement::compose(parent, container.placement()).map_err(describe)?;
                     let subtree = self.collect(container.children(), world)?;
                     let subtree = match container.envelope() {
-                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree),
+                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
                         None => subtree,
                     };
                     // Recorded for every container, open or not: which of them are open is view
@@ -485,7 +513,13 @@ impl<'a> Evaluation<'a> {
     /// a closed product with nothing in it still shows its box. The envelope joins the drawn bounds
     /// so *Frame all* sees an empty piece; it never joins the solid bounds, because a reserved box is
     /// not a body and casts no contact shadow.
-    fn collect_product(&mut self, id: Id, envelope: Envelope, world: Placement, mut bounds: Bounds) -> Bounds {
+    fn collect_product(
+        &mut self,
+        id: Id,
+        envelope: &Envelope,
+        world: Placement,
+        mut bounds: Bounds,
+    ) -> Result<Bounds, String> {
         let state = if self.open_product == Some(id) {
             ProductEnvelopeState::Open
         } else if !bounds.is_empty() {
@@ -493,18 +527,23 @@ impl<'a> Evaluation<'a> {
         } else {
             ProductEnvelopeState::ClosedEmpty
         };
-        let size =
-            DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
+        let (outline, corners) = envelope_outline(envelope)?;
+        let height = envelope.z().millimetres_f64();
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
-        for bits in 0..8 {
-            bounds.include_point(transform.transform_point3(DVec3::new(
-                if bits & 1 == 0 { 0.0 } else { size.x },
-                if bits & 2 == 0 { 0.0 } else { size.y },
-                if bits & 4 == 0 { 0.0 } else { size.z },
-            )));
+        for point in &outline {
+            for z in [0.0, height] {
+                bounds.include_point(transform.transform_point3(DVec3::new(point.x, point.y, z)));
+            }
         }
-        self.frame.push_product_envelope(ProductEnvelope { id, size, world_transform: transform, state });
-        bounds
+        self.frame.push_product_envelope(ProductEnvelope {
+            id,
+            outline: outline.into(),
+            corners: corners.into(),
+            height,
+            world_transform: transform,
+            state,
+        });
+        Ok(bounds)
     }
 
     fn collect_panel(&mut self, panel: &Panel, parent: Placement) -> Result<Bounds, String> {
@@ -512,10 +551,11 @@ impl<'a> Evaluation<'a> {
         let session = self.session;
         let geometry = session.panel_geometry(panel.id()).map_err(describe)?;
         let revision = session.project().revision();
-        let evaluated = self
-            .cache
-            .panel(revision, panel, &geometry, &|spec| session.band_spec_profile(spec), self.kernel, &self.options)
-            .map_err(describe)?;
+        // The drilling objects that reach a panel come from the hardware instances that drill it;
+        // until the instance node lands, a panel is drawn and reported undrilled (task O13).
+        let band_profile = |spec: &model::BandingSpec| session.band_spec_profile(spec);
+        let request = PanelEval::new(panel, &geometry, world, &[], &band_profile);
+        let evaluated = self.cache.panel(revision, &request, self.kernel, &self.options).map_err(describe)?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
         let color = PANEL_COLORS[self.palette_index % PANEL_COLORS.len()];
         self.palette_index = self.palette_index.saturating_add(1);
@@ -638,10 +678,12 @@ fn id(value: u64) -> Result<Id, String> {
     Id::new(value).ok_or_else(|| "ids start at one".to_owned())
 }
 
-fn material_id(value: u64) -> Result<MaterialId, String> {
-    MaterialId::new(value).ok_or_else(|| "material ids start at one".to_owned())
+#[cfg(test)]
+fn material_id(value: u32) -> Result<ItemId, String> {
+    ItemId::new(1, value).ok_or_else(|| "material ids start at one".to_owned())
 }
 
+#[cfg(test)]
 fn millimetres(value: i64) -> Result<Length, String> {
     Length::from_millimetres(value).ok_or_else(|| format!("{value} mm does not fit a length"))
 }
@@ -652,7 +694,7 @@ fn add_band(
     panel: Id,
     edge: u32,
     included_in_size: bool,
-    material: MaterialId,
+    material: ItemId,
 ) -> Result<(), String> {
     let edge = EdgeId::new(edge).ok_or_else(|| "edge ids start at one".to_owned())?;
     let band =
@@ -696,6 +738,40 @@ mod tests {
                 Node::Object(_) | Node::Camera(_) | Node::Light(_) => {}
             }
         }
+    }
+
+    #[test]
+    fn a_back_panel_resolves_its_thickness_from_the_catalogue_row_it_names() {
+        // The two back constructions are two rows and not two numbers in code: an applied or grooved
+        // back is cut from the 4 mm sheet, an inset one from the 18 mm carcass board, and both panels
+        // store the same fallback — so the resolved planes come from the catalogue alone.
+        let directory = catalog::default_directory().expect("the starter package");
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let envelope = Envelope::new(
+            millimetres(600).expect("width"),
+            millimetres(560).expect("depth"),
+            millimetres(720).expect("height"),
+        )
+        .expect("an envelope");
+        let product = project
+            .add_product(root, "Case", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a product");
+        let size = panel_nominal_size(600, 400).expect("a back");
+        let fallback = millimetres(18).expect("18 mm");
+        let row = |serial: u32| material_id(serial).expect("an item id");
+        let thin = project
+            .add_panel(product, "Back (applied)", size, Some(row(DEFAULT_HDF_BACK)), fallback, Placement::IDENTITY)
+            .expect("the thin back");
+        let inset = project
+            .add_panel(product, "Back (inset)", size, Some(row(DEFAULT_OAK_MATERIAL)), fallback, Placement::IDENTITY)
+            .expect("the inset back");
+
+        let session = Session::with_directory(project, directory);
+        let resolved = |panel| session.panel_geometry(panel).expect("resolved geometry").thickness();
+        assert_eq!(resolved(thin), millimetres(4).expect("4 mm"), "the 4 mm sheet answers the applied back");
+        assert_eq!(resolved(inset), millimetres(18).expect("18 mm"), "the inset back keeps the carcass board");
     }
 
     #[test]
@@ -906,18 +982,18 @@ mod tests {
     #[test]
     fn the_demo_materials_resolve_from_the_catalogue() {
         let session = demo_session().expect("the demo session");
-        let catalog = session.catalog();
+        let catalog = session.directory();
         let mut panel_materials = Vec::new();
         let mut panels = Vec::new();
         panels_in(session.project().root().children(), &mut panels);
         for panel in &panels {
             let material = panel.material().expect("a demo panel has a material");
-            let resolved = catalog.panel_material(material).expect("a demo panel material resolves");
-            assert!(!resolved.name().is_empty());
+            let resolved = catalog.board(material).expect("a demo panel material resolves");
+            assert!(!resolved.name.is_empty());
             panel_materials.push(material);
             for band in panel.edge_banding() {
-                let resolved = catalog.edge_material(band.material()).expect("a demo edge material resolves");
-                assert!(!resolved.name().is_empty());
+                let resolved = catalog.banding(band.material()).expect("a demo edge material resolves");
+                assert!(!resolved.name.is_empty());
             }
         }
         assert_eq!(panel_materials.len(), 3);
@@ -941,14 +1017,50 @@ mod tests {
     }
 
     #[test]
+    fn a_new_directory_rebuilds_the_panels_of_the_board_it_changed() {
+        // A directory revision is not a document revision, so the cache is the only thing that
+        // decides what to rebuild: a panel is keyed by the thickness it resolved, which is exactly
+        // what a changed board row moves (ADR 0053, ADR 0148).
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let size = panel_nominal_size(600, 400).expect("a panel");
+        let fallback = millimetres(18).expect("18 mm");
+        let cut_from = |project: &mut Project, name: &str, serial: u32| {
+            let material = material_id(serial).expect("an item id");
+            project.add_panel(root, name, size, Some(material), fallback, Placement::IDENTITY).expect("a panel")
+        };
+        let changed = cut_from(&mut project, "Side", 1);
+        let untouched = cut_from(&mut project, "Shelf", 2);
+        let mut session = Session::with_directory(project, testkit::sample_catalog());
+
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let before = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("the frame");
+        assert_eq!(top_of(&before, changed), 18.0, "the fixture board is 18 mm");
+
+        session.set_directory(std::sync::Arc::new(testkit::sample_catalog_with_thickness(
+            millimetres(25).expect("25 mm"),
+        )));
+        let after = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("the frame");
+
+        assert_eq!(top_of(&after, changed), 25.0, "the panel of the changed board is cut again, from the new row");
+        assert!(!Arc::ptr_eq(mesh_of(&before, changed), mesh_of(&after, changed)), "as a new mesh");
+        assert!(
+            Arc::ptr_eq(mesh_of(&before, untouched), mesh_of(&after, untouched)),
+            "and a panel nothing in the directory touched keeps the mesh it had"
+        );
+    }
+
+    #[test]
     fn the_editor_opens_a_document_with_nothing_in_it() {
-        // The launcher calls this function; a demonstration scene there would put three panels, a
-        // group and a drawer in front of the maker's first piece.
-        let session = initial_session().expect("the initial session");
+        // The window opens its first tab from an empty session; a demonstration scene there would
+        // put three panels, a group and a drawer in front of the maker's first piece.
+        let session = empty_session().expect("the initial session");
         assert!(session.project().root().children().is_empty(), "a new document has no object");
         assert!(!session.is_dirty(), "opening a document is not an edit");
         assert!(
-            !session.catalog().panel_materials().is_empty(),
+            !session.directory().boards().collect::<Vec<_>>().is_empty(),
             "the default materials stay: a panel needs one to be created"
         );
     }
@@ -991,7 +1103,7 @@ mod tests {
         let mut project = Project::new(root).expect("project");
         let root = project.root().id();
         project.add_object(root, "Sketch", Placement::IDENTITY, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1086,7 +1198,7 @@ mod tests {
                 .add_object(root, "Ball", placement, Geometry::Primitive(primitive.clone()))
                 .expect("a ball in the field");
         }
-        Session::with_catalog(project, default_catalog().expect("catalogue"))
+        Session::with_directory(project, default_catalog().expect("catalogue"))
     }
 
     /// Measures what one edit costs the uploader: one drawable rebuilt, the rest kept (X57).
@@ -1296,7 +1408,7 @@ mod tests {
         let root = project.root().id();
         let object =
             project.add_object(root, "Top", Placement::IDENTITY, Geometry::Constructive(constructive)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1319,7 +1431,7 @@ mod tests {
         let root = project.root().id();
         let object =
             project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(primitive)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1352,7 +1464,7 @@ mod tests {
         let root = project.root().id();
         let placement = Placement::new(DVec3::new(10.0, 20.0, 30.0), DQuat::IDENTITY).expect("placement");
         let object = project.add_object(root, "Sketch", placement, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1390,7 +1502,7 @@ mod tests {
         let mut project = Project::new(root).expect("project");
         let root = project.root().id();
         project.add_object(root, "Sketch", Placement::IDENTITY, Geometry::Path(path)).expect("object");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
 
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
@@ -1572,7 +1684,7 @@ mod tests {
     /// again.
     #[test]
     fn a_hidden_container_takes_its_whole_subtree_out_of_the_frame() {
-        let session = Session::with_catalog(sample_project(), default_catalog().expect("catalogue"));
+        let session = Session::with_directory(sample_project(), default_catalog().expect("catalogue"));
         let shelf = Id::new(2).expect("shelf id");
         let drawer = Id::new(3).expect("drawer id");
         let front = Id::new(4).expect("front id");
@@ -1641,7 +1753,7 @@ mod tests {
             vec![hidden_panel.into(), shown_panel.into()],
         );
         let project = Project::new(root).expect("project");
-        let session = Session::with_catalog(project, default_catalog().expect("catalogue"));
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
         let camera = scene::Camera::new(DVec3::ZERO, 1500.0).expect("camera");
         let viewport = eframe::egui::Rect::from_min_size(eframe::egui::Pos2::ZERO, eframe::egui::vec2(800.0, 600.0));
         let pointer = viewport.center();
@@ -1713,7 +1825,9 @@ mod tests {
         assert_eq!(envelopes.len(), 1);
         assert_eq!(envelopes[0].id, product);
         assert_eq!(envelopes[0].state, ProductEnvelopeState::ClosedEmpty);
-        assert_eq!(envelopes[0].size, DVec3::splat(1000.0));
+        assert_eq!(envelopes[0].height, 1000.0);
+        assert_eq!(envelopes[0].outline.len(), 4, "a plain frame draws its four base sides");
+        assert_eq!(envelopes[0].corners.len(), 4, "and one vertical at each corner");
         assert_eq!(
             DVec3::new(
                 envelopes[0].world_transform.w_axis.x,
@@ -1740,6 +1854,55 @@ mod tests {
             "the panel is drawn inside the closed piece"
         );
         assert!(closed.frame.drawables().iter().all(|drawable| drawable.id != product), "the envelope is never a body");
+    }
+
+    #[test]
+    fn a_cut_footprint_reaches_the_scene_as_its_cut_outline() {
+        let root = Container::new(id(1).expect("id"), "Scene", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let footprint = model::Footprint::cut([
+            None,
+            Some(model::CornerFeatureKind::Chamfer {
+                incoming: millimetres(120).expect("length"),
+                outgoing: millimetres(120).expect("length"),
+            }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(
+            millimetres(800).expect("length"),
+            millimetres(600).expect("length"),
+            millimetres(900).expect("length"),
+            footprint,
+        )
+        .expect("a corner cabinet");
+        let root_id = project.root().id();
+        project
+            .add_product(root_id, "Corner", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("product");
+        let session = Session::with_directory(project, default_catalog().expect("catalogue"));
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), None).expect("scene");
+        let envelope = &evaluated.frame.product_envelopes()[0];
+        // A chamfered rectangle: the cut replaces one corner, so five edges and five corners stand.
+        assert_eq!(envelope.outline.len(), 5, "the outline is the cut shape: {:?}", envelope.outline);
+        assert_eq!(envelope.corners.len(), 5, "two verticals stand at the cut: {:?}", envelope.corners);
+        assert!(
+            envelope.corners.iter().any(|point| (point.x - 680.0).abs() < 0.01 && point.y.abs() < 0.01)
+                && envelope
+                    .corners
+                    .iter()
+                    .any(|point| (point.x - 800.0).abs() < 0.01 && (point.y - 120.0).abs() < 0.01),
+            "the cut's two ends are corners: {:?}",
+            envelope.corners
+        );
+        assert!(
+            !envelope.outline.iter().any(|point| (point.x - 800.0).abs() < 0.01 && point.y.abs() < 0.01),
+            "the square corner is gone: {:?}",
+            envelope.outline
+        );
+        assert!(evaluated.bounds.radius().is_some_and(|radius| radius > 0.0), "the piece is framed");
     }
 
     #[test]

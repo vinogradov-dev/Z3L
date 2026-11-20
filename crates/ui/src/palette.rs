@@ -469,11 +469,11 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
         }
         PANEL_CREATE_ID => {
             let material = session
-                .catalog()
-                .panel_materials()
-                .first()
+                .directory()
+                .boards()
+                .next()
                 .ok_or_else(|| Message::PaletteAddPanelMaterial.text(lang).to_owned())?
-                .id();
+                .id;
             json(&PanelCreate {
                 parent: create_parent(session, context),
                 name: Message::ToolPanel.text(lang).to_owned(),
@@ -559,7 +559,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> (Session, PaletteContext, NodeId) {
-        let session = Session::with_catalog(sample_project(), sample_catalog());
+        let session = Session::with_directory(sample_project(), sample_catalog());
         let root = session.project().root().id();
         let shelf = NodeId::new(2).expect("the sample shelf id");
         (session, PaletteContext::new(vec![shelf], root), shelf)

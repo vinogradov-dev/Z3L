@@ -66,9 +66,12 @@ pub struct Editor {
     contour_edit: Option<ContourEdit>,
     drawing: Option<DrawDraft>,
     /// What the running draft will become: a path of its own, a board cut to its ring, a body's
-    /// profile or a drawn primitive.
+    /// profile, a drawn primitive or a frame's base.
     drawing_intent: DrawIntent,
-    /// The base rectangle and the height of a box being drawn, before its one command.
+    /// The base a product frame's height is pulled from, and the height, before its one command.
+    ///
+    /// The base arrives from the drawing: the frame cell arms the sketch's rectangle or its free
+    /// outline, and the finished figure becomes this draft (N19, ADR 0101, ADR 0159).
     box_draft: Option<BoxDraft>,
     /// The class the next click fills a niche with, when the empty-space tool is armed.
     fill: Option<FillArm>,
@@ -78,8 +81,18 @@ pub struct Editor {
     void: crate::void::Void,
     /// Whether the niche tool itself owns the pointer, rather than a fill that consumes its value.
     void_armed: bool,
+    /// The visibility revision the measured niche was taken at, so a stale cell is dropped.
+    ///
+    /// Switching a part off changes the void without moving the pointer, so a hand that holds still
+    /// still needs a new cell (X73).
+    void_revision: u64,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
+    /// The transform mode a menu entry asked for, until the window takes it.
+    ///
+    /// The mode is the window's view state and this editor belongs to one tab, so a menu entry
+    /// records the wish here and the shell writes it once per frame (U113).
+    mode_request: Option<crate::transform::TransformMode>,
     toolbars: toolbars::Toolbars,
     card: PanelCard,
     container_card: ContainerCard,
@@ -103,5 +116,14 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn toolbars_mut(&mut self) -> &mut toolbars::Toolbars {
         &mut self.toolbars
+    }
+
+    /// Takes the transform mode a menu entry asked for, leaving none behind.
+    ///
+    /// The window owns the mode, so it drains this once per frame after the menus have drawn. One
+    /// slot rather than a queue: only one menu is open at a time, and the last press is the one that
+    /// counts.
+    pub fn take_mode_request(&mut self) -> Option<crate::transform::TransformMode> {
+        self.mode_request.take()
     }
 }

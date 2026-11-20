@@ -138,6 +138,10 @@ impl Editor {
     /// A locked node refuses every edit that removes or restructures it here, before the dispatch,
     /// and a document edit is one command with one undo entry while a view entry writes session
     /// state only (ADR 0065, ADR 0115).
+    ///
+    /// One entry of four — the transform mode — is the window's and not this tab's: it is recorded
+    /// for the shell to take ([`Editor::take_mode_request`]), because the mode every tab shares
+    /// cannot live in one tab's editor (U113).
     pub fn apply_node_action(
         &mut self,
         session: &mut Session,
@@ -216,6 +220,9 @@ impl Editor {
                 self.flags.isolate(session.project(), node);
             }
             NodeAction::ShowAll => self.flags.show_all(),
+            // View state with no document behind it, so it leaves no revision and no undo entry:
+            // the shell writes the mode after the menus have drawn.
+            NodeAction::Mode(mode) => self.mode_request = Some(mode),
         }
         Ok(())
     }
@@ -254,7 +261,7 @@ mod tests {
             .add_object(root, "Cube", Placement::IDENTITY, Geometry::Mesh(cube_mesh(millimetres(100))))
             .expect("the sample project takes a mesh object");
         let panel = project.root().children()[0].id();
-        (Session::with_catalog(project, sample_catalog()), panel, cube, product)
+        (Session::with_directory(project, sample_catalog()), panel, cube, product)
     }
 
     /// Draws the inspector for one selection and answers the texts it painted.

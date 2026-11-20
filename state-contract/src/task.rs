@@ -75,6 +75,8 @@ pub struct TaskView {
     pub questions: Vec<String>,
     /// The live session note, while it is about this task.
     pub session: Option<Session>,
+    /// The note the task's own stream keeps: `plan/SESSION.md`, `plan/SESSION.agent.md`.
+    pub session_path: Option<String>,
 }
 
 impl TaskView {
@@ -174,7 +176,10 @@ pub(crate) fn view_from(
             }
         }
     }
-    let session = summary.session.clone().filter(|_| summary.state.status == "doing" && summary.state.task == task.id);
+    // The note the task's own stream keeps: a declared stream resumes from its own file.
+    let session = summary.note_of(&task.id).cloned().filter(|_| task.status == TaskStatus::Doing);
+    let session_path =
+        session.as_ref().and_then(|_| summary.stream_of(&task.id).map(|stream| stream.note_path.clone()));
     Ok(TaskView {
         map: map
             .map(parse_map)
@@ -190,6 +195,7 @@ pub(crate) fn view_from(
         next,
         notes,
         session,
+        session_path,
     })
 }
 
@@ -287,7 +293,8 @@ pub fn task_sections(view: &TaskView, opts: &TaskOptions) -> Vec<Section> {
     }
 
     if let Some(session) = &view.session {
-        blocks.push(Section::new("SESSION", "plan/SESSION.md").lines(session_lines(session, width)));
+        let path = view.session_path.as_deref().unwrap_or(crate::NOTE);
+        blocks.push(Section::new("SESSION", path).lines(session_lines(session, width)));
     }
     blocks
 }
@@ -478,7 +485,7 @@ mod tests {
                 updated: "2026-11-10".to_owned(),
             },
             tasks,
-            session: None,
+            streams: Vec::new(),
             head: Some("fedcba9".to_owned()),
             interrupted: false,
         }

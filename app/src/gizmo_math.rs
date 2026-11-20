@@ -13,8 +13,9 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
 use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, Placement, Project};
+use model::{Id, MoveAxis, MoveSettings, Placement, Project};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
+use ui::TransformMode;
 use units::Length;
 
 /// Radius inside which a pointer hits a handle, in points: the largest a handle may have.
@@ -111,6 +112,15 @@ impl Axis {
         }
     }
 
+    /// This axis' component of a world vector.
+    pub(crate) fn component(self, vector: DVec3) -> f64 {
+        match self {
+            Self::X => vector.x,
+            Self::Y => vector.y,
+            Self::Z => vector.z,
+        }
+    }
+
     /// The local dimension this axis changes, for the class gate.
     pub(crate) const fn dimension(self) -> Dimension {
         match self {
@@ -137,11 +147,107 @@ pub(crate) struct Target<'a> {
     pub(crate) camera: Camera,
     /// The document whose nodes are being placed.
     pub(crate) project: &'a Project,
+    /// The contact adapter the document's rule measures a body with, exactly as the write's guard
+    /// asks it: one adapter, so a preview cannot show a place the release refuses (ADR 0179).
+    pub(crate) contact: &'a dyn geom::Contact,
     /// The selected nodes, oldest first; the last movable one anchors the gizmo.
     pub(crate) selection: &'a [Id],
+    /// What an object drag snaps to and stops at, as the workspace settings chose it (ADR 0146,
+    /// ADR 0177).
+    ///
+    /// It travels here rather than as another argument because a drag that starts reads it once,
+    /// with the camera and the selection it starts under.
+    pub(crate) moves: MoveSettings,
+    /// Which move a translate drag is: the free one, or the furniture one that obeys the document's
+    /// rules and offers only the axes they allow (N22, ADR 0147).
+    pub(crate) move_kind: MoveKind,
+    /// Which turn a ring drag is: the free one, or the one the document's bodies stop (X88).
+    pub(crate) rotate_kind: RotateKind,
+}
+
+/// Which move a translate drag makes.
+///
+/// The two tools share every other part of the gesture — the pivot, the preview, the exact-distance
+/// fields and the one `node.placement.set_many` on release — and differ in one question: does the
+/// document's rule measure the drag, or the pointer's own travel (N22, ADR 0147).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MoveKind {
+    /// The pointer's own distance, rounded to the document's micrometre: no contact and no snap.
+    Free,
+    /// The document's rules: the axes a piece allows, contact measured by its faces, and the
+    /// workspace's snaps.
+    Object,
+}
+
+impl MoveKind {
+    /// Which of the two moves a mode makes, or the free one where the mode is not a move at all.
+    ///
+    /// A rotate has no use for it, and `Select` draws no gizmo, so the two answer the free move: the
+    /// question is only ever asked by a translate drag. The mode is the window's, named in
+    /// `ui::transform` beside its key (U113); this is the gesture it hands the gizmo.
+    pub(crate) fn of(mode: TransformMode) -> Self {
+        match mode {
+            TransformMode::Object => Self::Object,
+            TransformMode::Select | TransformMode::Move | TransformMode::Rotate | TransformMode::ObjectRotate => {
+                Self::Free
+            }
+        }
+    }
+
+    /// The axes a drag of this kind offers the selection.
+    ///
+    /// The free move keeps the three world axes everywhere; the object move asks the document
+    /// which axes the pieces may travel along, so a panel is held to its own thickness axis and a
+    /// floor-bound frame keeps its height (N22).
+    pub(crate) fn axes(self, project: &Project, selection: &[Id]) -> [bool; 3] {
+        match self {
+            Self::Free => ALL_AXES,
+            Self::Object => project.move_axes(selection),
+        }
+    }
+}
+
+/// Which turn a ring drag makes.
+///
+/// The two turns share the rings, the pivot, the preview and the one `node.placement.set_many` on
+/// release, and differ in one question: does the document's rule measure the turn, or the hand
+/// alone (X88, ADR 0180).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RotateKind {
+    /// The hand's own angle: the rings turn the selection through whatever stands beside it.
+    Free,
+    /// The document's rules: the ring stops where another body does, and the release is refused where
+    /// it would put a body inside one.
+    Object,
+}
+
+impl RotateKind {
+    /// Which of the two turns a mode makes, or the free one where the mode is not a turn at all.
+    ///
+    /// A move has no use for it, and `Select` draws no gizmo, so the two answer the free turn: the
+    /// question is only ever asked by a ring drag.
+    pub(crate) fn of(mode: TransformMode) -> Self {
+        match mode {
+            TransformMode::ObjectRotate => Self::Object,
+            TransformMode::Select | TransformMode::Move | TransformMode::Object | TransformMode::Rotate => Self::Free,
+        }
+    }
+
+    /// Whether the document's bodies measure a turn of this kind.
+    pub(crate) const fn measured(self) -> bool {
+        matches!(self, Self::Object)
+    }
 }
 
 impl Target<'_> {
+    /// The rule a ring drag of this kind is measured by, or `None` when the hand turns alone.
+    ///
+    /// It is read once, when the drag starts, exactly as the move rule is: the document does not
+    /// change while the ring is held, so the preview and the release read one measurement (X88).
+    pub(crate) fn rotate_rule(&self) -> Option<model::RotateRule> {
+        self.rotate_kind.measured().then(|| self.project.rotate_rule(self.selection, Some(self.contact))).flatten()
+    }
+
     /// The movable nodes the active gizmo acts on, in selection order.
     pub(crate) fn move_targets(&self) -> Vec<MoveTarget> {
         move_targets(self.project, self.selection)
@@ -164,7 +270,7 @@ impl Target<'_> {
     /// Every scene item that moves with the selection, in target order.
     ///
     /// A panel, an object and a path carry their own id. A product's dashed envelope does too, so
-    /// the frame follows a furniture drag instead of staying behind until the release.
+    /// the frame follows an object drag instead of staying behind until the release.
     pub(crate) fn drawables(&self) -> Vec<Id> {
         let mut drawables = Vec::new();
         for target in self.move_targets() {
@@ -174,6 +280,21 @@ impl Target<'_> {
             drawables.extend(self.project.geometry_ids_under(target.node).unwrap_or_default());
         }
         drawables
+    }
+}
+
+/// What a stop names in a log, with the way the rule measured it.
+///
+/// The move and the turn both stop at a body, and a report that said only "blocked" would leave the
+/// reader to guess which one: the id, the kind and the bounds of the surface are the rule's own
+/// reading, so the line is the measurement rather than a second opinion (ADR 0170, X88).
+pub(crate) fn stop_text(stop: model::Stop) -> String {
+    match stop {
+        model::Stop::Floor => "Some(Floor)".to_owned(),
+        model::Stop::Node { id, kind, min, max } => format!(
+            "Some({id:?} {kind:?} ({:.1},{:.1},{:.1})..({:.1},{:.1},{:.1}))",
+            min.x, min.y, min.z, max.x, max.y, max.z
+        ),
     }
 }
 
@@ -229,6 +350,12 @@ pub(crate) struct PlacementChange {
 pub(crate) struct PlacementCommit {
     /// The changed nodes; never empty.
     pub(crate) changes: Vec<PlacementChange>,
+    /// Whether the document's bodies measured this gesture.
+    ///
+    /// A drag of the object tool is measured and its write is refused when it lands a body inside
+    /// another; the free move and the rotation are the maker's own hand and write what they showed
+    /// (ADR 0180).
+    pub(crate) measured: bool,
 }
 
 /// Converts a world-space shift into one placement per target, or `None` when nothing moved.
@@ -239,6 +366,7 @@ pub(crate) struct PlacementCommit {
 pub(crate) fn commit_translation(
     targets: &[MoveTarget],
     delta_world: DVec3,
+    measured: bool,
 ) -> Result<Option<PlacementCommit>, String> {
     if delta_world == DVec3::ZERO {
         return Ok(None);
@@ -260,7 +388,7 @@ pub(crate) fn commit_translation(
             changes.push(PlacementChange { node: target.node, placement });
         }
     }
-    Ok(unchanged_or(changes))
+    Ok(unchanged_or(changes, measured))
 }
 
 /// Converts a world-space turn about `pivot_world` into one placement per target.
@@ -268,10 +396,13 @@ pub(crate) fn commit_translation(
 /// The anchor is the last target: its stored pivot defines the centre exactly, and every other
 /// target is turned about the same world point. A node whose translation already sits on the centre
 /// keeps its translation bit-for-bit; every other translation is rounded to whole micrometres.
+/// `measured` is the drag's own answer: the object turn's release is refused where it would put a
+/// body inside another, while the free turn writes what it showed (ADR 0180, X88).
 pub(crate) fn commit_rotation(
     targets: &[MoveTarget],
     pivot_world: DVec3,
     rotation_world: DQuat,
+    measured: bool,
 ) -> Result<Option<PlacementCommit>, String> {
     if !rotation_world.is_finite() || (rotation_world.length() - 1.0).abs() > 1.0e-9 {
         return Err("the drag produced a non-finite rotation".to_owned());
@@ -311,12 +442,12 @@ pub(crate) fn commit_rotation(
             changes.push(PlacementChange { node: target.node, placement });
         }
     }
-    Ok(unchanged_or(changes))
+    Ok(unchanged_or(changes, measured))
 }
 
 /// Packs the changed nodes into a commit, or `None` when a drag ended where it started.
-fn unchanged_or(changes: Vec<PlacementChange>) -> Option<PlacementCommit> {
-    if changes.is_empty() { None } else { Some(PlacementCommit { changes }) }
+fn unchanged_or(changes: Vec<PlacementChange>, measured: bool) -> Option<PlacementCommit> {
+    if changes.is_empty() { None } else { Some(PlacementCommit { changes, measured }) }
 }
 
 /// Rounds a placement's translation to whole micrometres at the editing boundary.
@@ -353,6 +484,18 @@ impl Preview<'_> {
     pub(crate) fn drawables(&self) -> &[Id] {
         match self {
             Self::Translation { drawables, .. } | Self::Rotation { drawables, .. } => drawables,
+        }
+    }
+
+    /// The world point a preview puts `point` at.
+    ///
+    /// It is the rigid transform the drawables take, applied to one point: an overlay that marks a
+    /// carried node — the corner brackets of the level that is open — reads this instead of the
+    /// placement the document still holds (X75).
+    pub(crate) fn moved_point(&self, point: DVec3) -> DVec3 {
+        match self {
+            Self::Translation { delta, .. } => point + *delta,
+            Self::Rotation { pivot, rotation, .. } => *pivot + *rotation * (point - *pivot),
         }
     }
 
@@ -411,6 +554,78 @@ pub(crate) fn screen_point(camera: Camera, viewport: egui::Rect, point: DVec3) -
     let x = viewport.left() + (ndc.x as f32 + 1.0) * 0.5 * viewport.width();
     let y = viewport.top() + (1.0 - ndc.y as f32) * 0.5 * viewport.height();
     (x.is_finite() && y.is_finite()).then_some(Pos2::new(x, y))
+}
+
+/// The world point under the pointer, taken on the plane through the camera's target.
+///
+/// The wheel zooms about this point, so what the maker is looking at keeps its place: a zoom about
+/// the view's centre slid a carried piece out of the hand on every step (X67). The plane through the
+/// target is where the projection's scale is exact for both projections; a ray along the view
+/// direction has no point on it, which is the answer `None`.
+pub(crate) fn view_plane_point(pointer: Pos2, viewport: egui::Rect, camera: Camera) -> Option<DVec3> {
+    plane_point(pointer, viewport, camera, camera.target(), camera.forward())
+}
+
+/// The world point where the pointer's ray meets the plane through `origin` with `normal`.
+///
+/// A carried piece that may travel on more than one axis is met on such a plane: the pointer meets
+/// it at one world point, and the difference of two such points is the delta the document's rule
+/// measures axis by axis. A plane the ray runs along, or one that lies behind the eye, has no point
+/// on it — a pointer can only meet a plane it looks at — which is the answer `None`.
+pub(crate) fn plane_point(
+    pointer: Pos2,
+    viewport: egui::Rect,
+    camera: Camera,
+    origin: DVec3,
+    normal: DVec3,
+) -> Option<DVec3> {
+    let ray = ray_to(pointer, viewport, camera);
+    let facing = ray.direction().dot(normal);
+    if facing.abs() <= f64::EPSILON {
+        return None;
+    }
+    let depth = (origin - ray.origin()).dot(normal) / facing;
+    (depth > 0.0 && depth.is_finite()).then(|| ray.origin() + ray.direction() * depth)
+}
+
+/// The plane a carried piece travels in while its class lets it move on more than one axis.
+///
+/// The hand keeps the piece: the pointer meets this plane at one world point, and the difference of
+/// two such points is the delta the document's rule answers axis by axis. Which plane that is
+/// decides whether the piece stays under the pointer, so the plane is the one the piece may really
+/// move in and not the one facing the eye (X75): a floor-bound frame is met on the floor, and only a
+/// piece whose three axes are free — a camera, a light, a body — is met on the camera's own plane,
+/// where a delta in depth is a delta the piece can take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CarryPlane {
+    /// The plane that faces the camera, for a piece no axis holds back.
+    Camera,
+    /// The plane across the one axis the piece may not travel on — the floor for a floor-bound
+    /// product, whose height its class keeps.
+    Across(Axis),
+}
+
+impl CarryPlane {
+    /// The plane a piece whose axes are `allowed` is carried in, from the axes the tool offers.
+    ///
+    /// One allowed axis is not a plane and never reaches here (a panel keeps the hand-travel latch);
+    /// three leave nothing to hold the piece back, and two are met across the axis they refuse.
+    pub(crate) fn of(allowed: [bool; 3]) -> Self {
+        let mut refused = Axis::ALL.into_iter().filter(|axis| !axis_allowed(allowed, *axis));
+        match (refused.next(), refused.next()) {
+            (Some(axis), None) => Self::Across(axis),
+            _ => Self::Camera,
+        }
+    }
+
+    /// The world point the pointer holds the piece at on this plane through `origin`.
+    pub(crate) fn point(self, pointer: Pos2, viewport: egui::Rect, camera: Camera, origin: DVec3) -> Option<DVec3> {
+        let normal = match self {
+            Self::Camera => camera.forward(),
+            Self::Across(axis) => axis.direction(),
+        };
+        plane_point(pointer, viewport, camera, origin, normal)
+    }
 }
 
 /// The reference guide as screen polylines: the axis and the sweep sampled on the work plane and
@@ -849,6 +1064,98 @@ pub(crate) fn hit_axis(
     best.map(|(_, axis)| axis)
 }
 
+/// The axis a hand's travel names, for a tool that draws no handle.
+///
+/// The object move is taken by the piece's body rather than by an arrow (N24, ADR 0151), so the
+/// direction has to be read from the pointer itself: each axis the tool may travel is projected at
+/// the piece's pivot and the one whose screen direction lies nearest to `travel` wins, whichever way
+/// the travel points, because the sign is the hand's and not this choice. An axis that points at the
+/// camera is not a candidate, exactly as it draws no handle.
+///
+/// The handle it answers with carries the axis' screen direction, which is what the carry measures
+/// the hand against. `travel` is the pointer's movement since the piece was taken, in points; a
+/// travel too short to have a direction names nothing, so the piece does not jump on the first frame.
+pub(crate) fn named_axis(
+    camera: Camera,
+    viewport: egui::Rect,
+    origin_world: DVec3,
+    travel: Vec2,
+    axes: [bool; 3],
+) -> Option<AxisHandle> {
+    let travel = screen_direction(travel)?;
+    let origin = screen_point(camera, viewport, origin_world)?;
+    let step = (camera.distance() * 0.01).max(1.0);
+    let mut best: Option<(f32, AxisHandle)> = None;
+    for axis in Axis::ALL {
+        if !axis_allowed(axes, axis) || axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
+            continue;
+        }
+        let Some(end) = screen_point(camera, viewport, origin_world + axis.direction() * step) else {
+            continue;
+        };
+        let Some(direction) = screen_direction(end - origin) else { continue };
+        let score = direction.dot(travel).abs();
+        if best.is_none_or(|(nearest, _)| score > nearest) {
+            best = Some((score, AxisHandle { axis, tip: origin, direction }));
+        }
+    }
+    best.map(|(_, handle)| handle)
+}
+
+/// The allowed axis a carried delta travels furthest along, if one moves at all.
+///
+/// A piece that may travel on more than one axis has no single direction to measure a gap by. The
+/// exact-distance fields follow the axis the hand carries it furthest along, which is the one whose
+/// face a typed number is about; the carry itself moves on every allowed axis at once.
+pub(crate) fn dominant_axis(delta: DVec3, axes: [bool; 3]) -> Option<Axis> {
+    let mut best: Option<(f64, Axis)> = None;
+    for axis in Axis::ALL {
+        if !axis_allowed(axes, axis) {
+            continue;
+        }
+        let reach = axis.component(delta).abs();
+        if reach.is_finite() && reach > 0.0 && best.is_none_or(|(widest, _)| reach > widest) {
+            best = Some((reach, axis));
+        }
+    }
+    best.map(|(_, axis)| axis)
+}
+
+/// Whether the axes let a hand carry a piece in more than one direction at once.
+///
+/// A panel offers exactly one axis and keeps the carry the hand's travel names (N22, ADR 0147); a
+/// product, a body or a group offers two or three and is carried on the camera's own plane (X74).
+pub(crate) fn planar(axes: [bool; 3]) -> bool {
+    axes.into_iter().filter(|allowed| *allowed).count() > 1
+}
+
+/// The screen frame a carried piece's hand travel is read in: the axis' unit direction at the
+/// pivot, and the millimetres along the axis one point of travel in it means.
+///
+/// The piece travels along a world line, and this is the inverse of how long that travel looks on
+/// screen: one point of the hand is however many millimetres the axis needs to move the piece by one
+/// point. The object move is carried by the hand (N24), so its distance is measured in points of
+/// the hand and never by projecting a ray onto the line — that projection is unstable away from the
+/// line (X65) and its slope at the pointer is not the piece's own.
+pub(crate) fn travel_frame(
+    camera: Camera,
+    viewport: egui::Rect,
+    origin_world: DVec3,
+    axis: Axis,
+) -> Option<(Vec2, f64)> {
+    // An axis that points at the camera has neither a direction on screen nor a distance to travel.
+    if axis.direction().dot(camera.forward()).abs() > VIEW_ALIGNMENT_LIMIT {
+        return None;
+    }
+    let origin = screen_point(camera, viewport, origin_world)?;
+    let step = (camera.distance() * 0.01).max(1.0);
+    let along = screen_point(camera, viewport, origin_world + axis.direction() * step)?;
+    let direction = screen_direction(along - origin)?;
+    let on_screen = f64::from((along - origin).length());
+    let per_point = step / on_screen;
+    (per_point.is_finite() && per_point.abs() > f64::EPSILON).then_some((direction, per_point))
+}
+
 /// The hit radius of a handle of `length` points.
 fn hit_radius(length: f32) -> f32 {
     (length.max(0.0) * HIT_RADIUS_FRACTION).clamp(MIN_HIT_RADIUS, HIT_RADIUS)
@@ -983,7 +1290,15 @@ mod tests {
     }
 
     fn target<'a>(project: &'a Project, selection: &'a [Id]) -> Target<'a> {
-        Target { camera: Camera::default(), project, selection }
+        Target {
+            camera: Camera::default(),
+            project,
+            contact: &engine::NoContact,
+            selection,
+            moves: MoveSettings::default(),
+            move_kind: MoveKind::Free,
+            rotate_kind: RotateKind::Free,
+        }
     }
 
     /// The handle length the tests draw and grab with, in points.
@@ -1000,6 +1315,88 @@ mod tests {
 
     fn origin_screen(camera: Camera) -> Pos2 {
         screen_point(camera, viewport(), camera.target()).expect("the target is in front")
+    }
+
+    #[test]
+    fn a_hand_travel_names_the_axis_it_points_along() {
+        // N24: the object move draws no handle, so the axis is read from the pointer's own
+        // travel. The default view projects Z up and X to the right, which is what makes the two
+        // travels below unambiguous.
+        let camera = Camera::default();
+        let origin = camera.target();
+        let handles = axis_handles(camera, viewport(), origin, origin_screen(camera), spec(ALL_AXES));
+        let direction = |axis: Axis| {
+            handles.iter().find(|handle| handle.axis == axis).map(|handle| handle.direction).expect("a drawn axis")
+        };
+        for axis in Axis::ALL {
+            let travel = direction(axis) * 40.0;
+            assert_eq!(
+                named_axis(camera, viewport(), origin, travel, ALL_AXES).map(|handle| handle.axis),
+                Some(axis),
+                "a travel along {axis:?} names {axis:?}"
+            );
+            // The same travel, backwards: the axis is the same and the sign comes from the hand.
+            assert_eq!(
+                named_axis(camera, viewport(), origin, -travel, ALL_AXES).map(|handle| handle.axis),
+                Some(axis),
+                "and so does its opposite"
+            );
+        }
+        // The handle carries the axis' own screen direction, which the carry measures the hand by.
+        let named = named_axis(camera, viewport(), origin, direction(Axis::Z) * 40.0, ALL_AXES).expect("an axis");
+        assert!(
+            (named.direction - direction(Axis::Z)).length() < 1.0e-5,
+            "the named handle keeps the projected direction"
+        );
+        // Only one axis is offered, so the hand's travel is not consulted at all.
+        let travel = direction(Axis::Z) * 40.0;
+        assert_eq!(
+            named_axis(camera, viewport(), origin, travel, [true, false, false]).map(|handle| handle.axis),
+            Some(Axis::X)
+        );
+        // Nothing offered, nothing named.
+        assert!(named_axis(camera, viewport(), origin, travel, [false; 3]).is_none(), "no axis is offered");
+        // A hand that has not moved says nothing, so a taken piece never jumps on its first frame.
+        assert!(named_axis(camera, viewport(), origin, Vec2::ZERO, ALL_AXES).is_none(), "a still hand names nothing");
+        assert!(named_axis(camera, viewport(), origin, Vec2::new(0.3, 0.0), ALL_AXES).is_none(), "so does a stray");
+    }
+
+    #[test]
+    fn the_travel_is_the_hand_s_own_and_the_ray_s_is_unstable() {
+        // X65: a carried piece is measured by the hand's screen travel along the axis, scaled by how
+        // long a millimetre of that axis looks. The defect this replaces was the ray's projection
+        // onto the axis line, which ran away as soon as the pointer strayed sideways from that line.
+        let camera = Camera::default();
+        let origin = camera.target();
+        let handles = axis_handles(camera, viewport(), origin, origin_screen(camera), spec(ALL_AXES));
+        let direction =
+            |axis: Axis| handles.iter().find(|h| h.axis == axis).map(|h| h.direction).expect("a drawn axis");
+        let (screen, per_point) = travel_frame(camera, viewport(), origin, Axis::Z).expect("Z has a frame");
+        assert!((screen - direction(Axis::Z)).length() < 1.0e-5, "the frame keeps the axis' screen direction");
+        assert!(per_point > 0.0, "up the screen is up the world in the default view: {per_point}");
+
+        // The scale is the axis' own, so one point of the hand is one point of the piece: the
+        // millimetres it names move the piece exactly that far on screen, whatever the pointer does.
+        let near = origin_screen(camera);
+        let far = screen_point(camera, viewport(), origin + Axis::Z.direction() * per_point).expect("on screen");
+        assert!(
+            (f64::from((far - near).length()) - 1.0).abs() < 0.05,
+            "one point of the hand is {} points of the piece",
+            (far - near).length()
+        );
+
+        // The ray's own projection onto that line is what used to be read, and a hand that strays
+        // sideways moves it by much more than the piece could have moved.
+        let sideways = Vec2::new(-screen.y, screen.x);
+        let parameter =
+            |pointer: Pos2| ray_to(pointer, viewport(), camera).closest_parameter_on_line(origin, Axis::Z.direction());
+        let from = parameter(near).expect("a ray through the axis");
+        let jumped = parameter(near + sideways * 200.0).expect("a ray through the axis") - from;
+        assert!(jumped.abs() > 10.0, "the ray's projection moves {jumped} mm for a sideways move of the hand");
+
+        // An axis that points at the camera has no frame at all.
+        let top = orthographic_view(DVec3::new(0.0, 0.0, 1.0));
+        assert!(travel_frame(top, viewport(), top.target(), Axis::Z).is_none());
     }
 
     #[test]
@@ -1165,7 +1562,7 @@ mod tests {
         let targets = move_targets(&project, &selection);
         let delta = DVec3::new(10.0, 4.0, -2.0);
 
-        let commit = commit_translation(&targets, delta).expect("valid").expect("a move");
+        let commit = commit_translation(&targets, delta, true).expect("valid").expect("a move");
         assert_eq!(commit.changes.len(), 2);
         for (change, target) in commit.changes.iter().zip(&targets) {
             let before = target.parent.transform_point(target.start_local.translation());
@@ -1185,7 +1582,7 @@ mod tests {
         assert_eq!(pivot, anchor.start_local.transform_point(anchor.pivot_local));
         let turn = DQuat::from_axis_angle(DVec3::Z, std::f64::consts::FRAC_PI_2);
 
-        let commit = commit_rotation(&targets, pivot, turn).expect("valid").expect("a turn");
+        let commit = commit_rotation(&targets, pivot, turn, false).expect("valid").expect("a turn");
         assert_eq!(commit.changes.len(), 2);
         for (change, target) in commit.changes.iter().zip(&targets) {
             let before = target.parent.transform_point(target.start_local.translation());
@@ -1205,10 +1602,10 @@ mod tests {
         let project = nested_project();
         let targets = move_targets(&project, &[id(4), id(3)]);
 
-        assert_eq!(commit_translation(&targets, DVec3::ZERO).expect("no error"), None);
-        assert_eq!(commit_rotation(&targets, DVec3::ZERO, DQuat::IDENTITY).expect("no error"), None);
-        assert_eq!(commit_translation(&[], DVec3::X).expect("no error"), None);
-        assert_eq!(commit_rotation(&[], DVec3::ZERO, DQuat::from_rotation_z(0.5)).expect("no error"), None);
+        assert_eq!(commit_translation(&targets, DVec3::ZERO, true).expect("no error"), None);
+        assert_eq!(commit_rotation(&targets, DVec3::ZERO, DQuat::IDENTITY, false).expect("no error"), None);
+        assert_eq!(commit_translation(&[], DVec3::X, true).expect("no error"), None);
+        assert_eq!(commit_rotation(&[], DVec3::ZERO, DQuat::from_rotation_z(0.5), false).expect("no error"), None);
     }
 
     #[test]
@@ -1232,6 +1629,36 @@ mod tests {
 
         let parallel = Ray::new(DVec3::new(0.0, 0.0, 10.0), DVec3::X).expect("ray");
         assert!(ray_plane(parallel, DVec3::ZERO, DVec3::Z).is_none());
+    }
+
+    #[test]
+    fn a_carried_piece_is_met_on_the_plane_its_class_allows() {
+        // X75: the plane decides whether the piece stays under the hand. Two allowed axes are met
+        // across the axis the class refuses — the floor, for a floor-bound product — and only a piece
+        // with all three free is met on the camera's own plane.
+        assert_eq!(CarryPlane::of([true, true, false]), CarryPlane::Across(Axis::Z));
+        assert_eq!(CarryPlane::of([false, true, true]), CarryPlane::Across(Axis::X));
+        assert_eq!(CarryPlane::of([true, false, true]), CarryPlane::Across(Axis::Y));
+        assert_eq!(CarryPlane::of([true, true, true]), CarryPlane::Camera);
+
+        // The pointer meets the floor at the point a maker sees there, so the piece's own screen
+        // travel is the hand's: the projection of the hit is the pointer again.
+        let camera = Camera::default();
+        let viewport = egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(800.0, 600.0));
+        let origin = DVec3::new(100.0, -200.0, 0.0);
+        for pointer in [Pos2::new(400.0, 300.0), Pos2::new(260.0, 520.0)] {
+            let hit =
+                CarryPlane::Across(Axis::Z).point(pointer, viewport, camera, origin).expect("the hand meets the floor");
+            assert!(hit.z.abs() < 1.0e-9, "the floor keeps the height: {hit:?}");
+            let shown = screen_point(camera, viewport, hit).expect("the hit is in front of the camera");
+            assert!((shown - pointer).length() < 0.5, "the hand is on the piece: {shown:?} vs {pointer:?}");
+        }
+        // A camera turned away from the plane leaves the plane's own point behind the ray: the answer
+        // is `None`, and the carry keeps the distance it has instead of throwing the piece out.
+        let mut behind = Camera::default();
+        behind.orbit(std::f64::consts::PI, 0.0);
+        let above = origin + DVec3::Z * 5000.0;
+        assert!(CarryPlane::Across(Axis::Z).point(Pos2::new(400.0, 300.0), viewport, behind, above).is_none());
     }
 
     #[test]
@@ -1554,7 +1981,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid envelope");
-        let class: ClassCode = "30.01.01".parse().expect("a base cabinet");
+        let class: ClassCode = "10.01.01".parse().expect("a base cabinet");
         let product = project.add_product(root, "Cabinet", class, envelope, Placement::IDENTITY).expect("a product");
         let selection = [product];
         assert!(
@@ -1576,7 +2003,7 @@ mod tests {
         let origin = origin_screen(camera);
         assert_eq!(axis_handles(camera, viewport(), camera.target(), origin, spec(ALL_AXES)).len(), 3);
 
-        let (project, worktop) = classed_cube("70.01");
+        let (project, worktop) = classed_cube("20.01");
         let axes = editable_axes(&project, worktop);
         assert_eq!(axes, [true, false, false], "a worktop changes its length only");
         let handles = axis_handles(camera, viewport(), camera.target(), origin, spec(axes));

@@ -1,11 +1,13 @@
-//! The frame tool: the base rectangle, the pulled height and the grips of a selected frame.
+//! The frame tool: the pulled height and the grips of a selected frame.
 //!
-//! A product frame reserves a box and is drawn the way the extrusion is (ADR 0101): the first click
-//! anchors the base rectangle on the active work plane, the second fixes it, the pointer then pulls
-//! the height along the plane's normal, and the click after that — or the command bar's ✓ — commits
-//! one `product.create`. Nothing reaches the document before the commit, so Escape costs nothing, and
-//! the wireframe prism the pointer pulls is shell paint: an overlay entry is keyed by the id of a node
-//! the document holds, and a frame that does not exist yet has none (ADR 0093, ADR 0104).
+//! A product frame reserves a prism and is drawn the way the extrusion is (ADR 0101): the sketch draws
+//! the base on the active work plane — the rectangle tool the box cell arms, or a ring when the
+//! footprint is not a box (ADR 0159) — and the pointer then pulls the height along the plane's
+//! normal. What this module owns is that pull: its prism, its number and the click, the Enter or the
+//! field's own Enter that commits one `product.create`. Nothing reaches the document before the
+//! commit, so Escape costs nothing, and the wireframe prism the pointer pulls is shell paint: an
+//! overlay entry is keyed by the id of a node the document holds, and a frame that does not exist yet
+//! has none (ADR 0093, ADR 0104).
 //!
 //! A solid box is not drawn here: it is a profile swept on Z, so its body is an extrusion and its
 //! grips are the contour's corner grips (ADR 0138).
@@ -29,15 +31,13 @@ use engine::node_cmds::NODE_PLACEMENT_SET_ID;
 use engine::product_cmds::{PRODUCT_ENVELOPE_SET_ID, ProductEnvelopeSet};
 use engine::{EditScope, NodePlacementSet, Session};
 use geom::{DVec2, DVec3};
-use model::{Envelope, Id, Placement, Project};
+use model::{Envelope, Id, Placement, Project, RectCorner};
 use scene::Camera;
 use ui::{BoxDraft, Editor};
 use units::Length;
 
-use crate::gizmo_math::{ACTIVE_COLOR, WorkPlane, ray_plane, ray_to, screen_point};
+use crate::gizmo_math::{ACTIVE_COLOR, Preview, WorkPlane, ray_plane, ray_to, screen_point};
 
-/// Colour of the base rectangle while its second corner is being drawn.
-const BASE_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
 /// Colour of the pulled prism and of an idle grip.
 const BOX_COLOR: Color32 = Color32::from_rgb(255, 220, 96);
 /// Colour of a live size label.
@@ -48,20 +48,17 @@ const SIZE_BACKGROUND: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 19
 const GRIP_RADIUS: f32 = 4.5;
 /// Pointer distance that grabs a grip, in points.
 const GRIP_HIT_RADIUS: f32 = 9.0;
+/// The tolerance a drawn ring is flattened with when its ghost is painted, in millimetres.
+///
+/// The scene samples a footprint at the same quarter millimetre, so the wireframe the pointer pulls
+/// and the one the document draws are the same ring.
+const RING_SAMPLE_MM: f64 = 0.25;
+
 /// Smallest side a grip or a pull leaves, in millimetres: a box keeps three positive sides.
 pub(crate) const MIN_SIDE_MM: i64 = 1;
 
 /// Largest side a grip or a pull leaves, in millimetres: the primitive bound the document validates.
 pub(crate) const MAX_SIDE_MM: i64 = model::MAX_PRIMITIVE_SIZE.micrometres() / 1_000;
-
-/// What one frame of the box creation gesture asks the shell to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BoxEvent {
-    /// A click on the work plane: it anchors the base or fixes it.
-    Click([Length; 2]),
-    /// A click with the base fixed: the ✓ of the gesture, which commits the box.
-    Commit,
-}
 
 /// A work-plane point as a float vector in millimetres.
 fn plane_millimetres(point: [Length; 2]) -> DVec2 {
@@ -74,18 +71,6 @@ fn length_micrometres(millimetres: f64) -> Option<Length> {
         return None;
     }
     Some(Length::from_micrometres((millimetres * 1_000.0).round() as i64))
-}
-
-/// The plane point under the pointer, in work-plane millimetres rounded to the micrometre.
-pub(crate) fn plane_point(
-    camera: Camera,
-    viewport: egui::Rect,
-    plane: WorkPlane,
-    pointer: Pos2,
-) -> Option<[Length; 2]> {
-    let world = ray_plane(ray_to(pointer, viewport, camera), DVec3::ZERO, plane.normal())?;
-    let local = plane.local(world);
-    Some([length_micrometres(local.x)?, length_micrometres(local.y)?])
 }
 
 /// The height under the pointer, measured along the plane's normal from the base corner.
@@ -109,40 +94,49 @@ pub(crate) fn pulled_height(
     Length::from_millimetres(whole)
 }
 
-/// The work plane's frame with its origin on the box's own zero: the base rectangle's minimum corner.
+/// The work plane's frame with its origin on the frame's own zero: the base's minimum corner.
 pub(crate) fn base_placement(plane: WorkPlane, draft: &BoxDraft) -> Option<Placement> {
-    let base = draft.base()?;
-    plane.placement_at(plane_millimetres(base.corner))
+    plane.placement_at(plane_millimetres(draft.base_corner()))
 }
 
-/// The frame and the three sides the ✓ would commit — exactly what the ghost shows.
-pub(crate) fn commit_frame(plane: WorkPlane, draft: &BoxDraft) -> Option<(Placement, [Length; 3])> {
-    Some((base_placement(plane, draft)?, draft.sizes()?))
-}
-
-/// Reads one click of the box creation gesture.
+/// The frame and the envelope the commit would write — exactly what the ghost shows.
 ///
-/// The gizmo never touches the document: it reports the click or the commit, and the editor's draft
-/// holds the numbers, exactly as the drawing gizmo hands its clicks to the drawing draft.
-pub(crate) fn update_box(
-    ui: &Ui,
-    response: &Response,
-    viewport: egui::Rect,
-    camera: Camera,
-    plane: WorkPlane,
-    draft: &BoxDraft,
-) -> Option<BoxEvent> {
+/// A rectangle base and a drawn ring both answer one envelope, so the ghost and the command never
+/// disagree about which shape is being made (ADR 0159).
+pub(crate) fn commit_frame(plane: WorkPlane, draft: &BoxDraft) -> Option<(Placement, Envelope)> {
+    let envelope = draft.envelope().ok()?;
+    Some((base_placement(plane, draft)?, envelope))
+}
+
+/// The ring's outline sampled into plane millimetres: the shape the pointer's prism is drawn from.
+///
+/// The tolerance is the same quarter millimetre the scene flattens a footprint with, so the ghost the
+/// pointer pulls and the wireframe the document later draws trace the same ring.
+fn ring_outline(draft: &BoxDraft) -> Option<(Vec<DVec2>, Vec<DVec2>)> {
+    let ring = draft.ring()?;
+    let outline = ring.contour.to_geometry().ok()?;
+    let points = outline.sample(RING_SAMPLE_MM).ok()?;
+    let mut corners = Vec::new();
+    for (index, segment) in outline.segments().iter().enumerate() {
+        if outline.joint_is_smooth(index, geom::DEFAULT_TANGENT_TOLERANCE) == Some(true) {
+            continue;
+        }
+        corners.push(segment.start());
+    }
+    Some((points, corners))
+}
+
+/// Reads the click that accepts the pulled height of a frame.
+///
+/// The base is already fixed — it is what the draft exists for — so a click on the scene is the
+/// gesture's own accept, exactly as a click elsewhere finishes an extrusion's pull. The gizmo never touches
+/// the document: it reports the answer and the editor's draft holds the numbers.
+pub(crate) fn update_box(ui: &Ui, response: &Response) -> bool {
     if !response.clicked_by(egui::PointerButton::Primary) {
-        return None;
+        return false;
     }
-    if draft.is_pulling() {
-        // The click that accepts the height is the gesture's own ✓; the command bar accepts the
-        // same pull, and a second click finds no draft to commit.
-        return Some(BoxEvent::Commit);
-    }
-    let corner = plane_point(camera, viewport, plane, response.interact_pointer_pos()?)?;
     ui.ctx().request_repaint();
-    Some(BoxEvent::Click(corner))
+    true
 }
 
 /// The four corners of the rectangle between two opposite corners, in plane millimetres.
@@ -158,7 +152,7 @@ fn rectangle_corners(first: [Length; 2], second: [Length; 2]) -> [[Length; 2]; 4
     [point(min_x, min_y), point(max_x, min_y), point(max_x, max_y), point(min_x, max_y)]
 }
 
-/// Paints the base rectangle being drawn and the prism its height pulls.
+/// Paints the prism the pulled height makes — the ring or the rectangle the base already is.
 pub(crate) fn paint_box(
     ui: &Ui,
     viewport: egui::Rect,
@@ -167,46 +161,59 @@ pub(crate) fn paint_box(
     pointer: Option<Pos2>,
     draft: &BoxDraft,
 ) {
-    let Some(first) = draft.first() else {
-        return;
-    };
     let painter = ui.painter().with_clip_rect(viewport);
     let project = |point: [Length; 2], height: Length| -> Option<Pos2> {
         let local = plane_millimetres(point);
         let world = plane.world(local) + plane.normal() * height.millimetres_f64();
         screen_point(camera, viewport, world)
     };
-    // The base rectangle while it is being drawn; once it is fixed the prism's bottom ring is the
-    // same rectangle, so drawing it again would only hide it.
-    if draft.base().is_none() {
-        let mut base = Vec::with_capacity(5);
-        for corner in rectangle_corners(first, draft.live().unwrap_or(first)) {
-            match project(corner, Length::ZERO) {
-                Some(position) => base.push(position),
-                None => return,
+    // A drawn ring: its own outline twice, and a vertical where the shape turns.
+    if draft.ring().is_some() {
+        let drawn = |draft: &BoxDraft| -> Option<()> {
+            let (outline, corners) = ring_outline(draft)?;
+            let height = draft.height();
+            let stroke = Stroke::new(1.8, BOX_COLOR);
+            for level in [Length::ZERO, height] {
+                let mut ring: Vec<Pos2> = Vec::with_capacity(outline.len() + 1);
+                for point in &outline {
+                    let corner = [length_micrometres(point.x)?, length_micrometres(point.y)?];
+                    ring.push(project(corner, level)?);
+                }
+                if let Some(&first_point) = ring.first() {
+                    ring.push(first_point);
+                    painter.add(egui::Shape::line(ring, stroke));
+                }
             }
-        }
-        if let Some(&first_point) = base.first() {
-            base.push(first_point);
-            painter.add(egui::Shape::line(base, Stroke::new(1.6, BASE_COLOR)));
-        }
+            for corner in &corners {
+                let point = [length_micrometres(corner.x)?, length_micrometres(corner.y)?];
+                let (low, high) = (project(point, Length::ZERO)?, project(point, height)?);
+                painter.line_segment([low, high], stroke);
+            }
+            if let Some(pointer) = pointer
+                && let Ok(envelope) = draft.envelope()
+            {
+                let [width, depth] = [envelope.x(), envelope.y()].map(Length::millimetres_f64);
+                let label = format!("{} × {} × {}", width, depth, height.millimetres_f64());
+                paint_size(&painter, pointer, &label);
+            }
+            Some(())
+        };
+        drawn(draft);
         return;
     }
     let Some(sizes) = draft.sizes() else {
         return;
     };
-    let Some(base) = draft.base() else {
-        return;
-    };
-    // The pulled prism: four verticals and the two rings, which is the box the ✓ builds.
+    let corner = draft.base_corner();
+    // The pulled prism: four verticals and the two rings, which is the box the commit builds.
     let stroke = Stroke::new(1.8, BOX_COLOR);
     let mut low_ring = Vec::with_capacity(5);
     let mut high_ring = Vec::with_capacity(5);
     for corner in rectangle_corners(
-        base.corner,
+        corner,
         [
-            Length::from_micrometres(base.corner[0].micrometres().saturating_add(sizes[0].micrometres())),
-            Length::from_micrometres(base.corner[1].micrometres().saturating_add(sizes[1].micrometres())),
+            Length::from_micrometres(corner[0].micrometres().saturating_add(sizes[0].micrometres())),
+            Length::from_micrometres(corner[1].micrometres().saturating_add(sizes[1].micrometres())),
         ],
     ) {
         let (Some(low), Some(high)) = (project(corner, Length::ZERO), project(corner, sizes[2])) else {
@@ -247,9 +254,8 @@ pub(crate) fn commit_box(
     plane: WorkPlane,
     lang: text::Lang,
 ) -> Result<Id, String> {
-    let draft = editor.box_draft().copied().ok_or_else(|| "No box is being drawn.".to_owned())?;
-    let (placement, _) =
-        commit_frame(plane, &draft).ok_or_else(|| "The box has no base corner or height.".to_owned())?;
+    let draft = editor.box_draft().cloned().ok_or_else(|| "No frame is being drawn.".to_owned())?;
+    let (placement, _) = commit_frame(plane, &draft).ok_or_else(|| "The frame has no height yet.".to_owned())?;
     editor.commit_box(session, placement, lang)
 }
 
@@ -305,8 +311,8 @@ pub(crate) enum BoxGrip {
     },
 }
 
-/// A selected frame read from the document: the node, its frames and its three sides.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A selected frame read from the document: the node, its frames, its three sides and its shape.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BoxBody {
     /// The node whose envelope the grips edit.
     node: Id,
@@ -316,6 +322,12 @@ pub(crate) struct BoxBody {
     world: Placement,
     /// The stored width, depth and height.
     sides: [Length; 3],
+    /// The stored footprint, so a grip that moves one side keeps the shape the maker chose.
+    footprint: model::Footprint,
+    /// Which nominal corners are cut, in [`RectCorner::ALL`] order.
+    cut: [bool; 4],
+    /// Whether the footprint is a drawn ring, whose horizontal shape is not a rectangle.
+    ring: bool,
 }
 
 /// Whether one node is a box the grips can edit.
@@ -328,8 +340,33 @@ impl BoxBody {
     pub(crate) fn read(project: &Project, node: Id) -> Option<Self> {
         let world = project.world_placement(node)?;
         let container = project.container(node).filter(|container| container.is_product())?;
-        let sides = container.envelope()?.components();
-        Some(Self { node, placement: container.placement(), world, sides })
+        let envelope = container.envelope()?;
+        let sides = envelope.components();
+        let footprint = envelope.footprint();
+        let cut = RectCorner::ALL.map(|corner| footprint.corner_cut(corner).is_some());
+        Some(Self {
+            node,
+            placement: container.placement(),
+            world,
+            sides,
+            footprint: footprint.clone(),
+            cut,
+            ring: footprint.is_ring(),
+        })
+    }
+
+    /// The same frame as a drag preview puts it, so its grips ride with a piece in hand.
+    ///
+    /// Only the world frame moves: a preview is a rigid transform of the node, and the sides, the
+    /// footprint and the local placement are what the document holds until the release (X76).
+    fn carried(self, carried: Option<Preview<'_>>) -> Self {
+        let Some(preview) = carried.filter(|preview| preview.drawables().contains(&self.node)) else {
+            return self;
+        };
+        match preview.moved_world(self.world) {
+            Some(world) => Self { world, ..self },
+            None => self,
+        }
     }
 
     /// The local point of a grip handle, in millimetres.
@@ -358,25 +395,45 @@ impl BoxBody {
         self.local_point(grip).map(|local| self.world.transform_point(local))
     }
 
-    /// Every grip a selected frame shows: its eight corners and its six faces.
+    /// Every grip a selected frame shows.
+    ///
+    /// A frame reserves a tall space whose top corners are the ones at eye level, so it carries all
+    /// eight — except the corners that are cut away: a cut corner's grip would stand in empty space,
+    /// outside the piece it edits (ADR 0159). A drawn ring shows only its two height faces, because
+    /// its horizontal shape is drawn rather than dragged; each corner drags in its own horizontal
+    /// plane and changes the same two sides (docs/domain/products.md §9).
     pub(crate) fn grips(&self) -> Vec<BoxGrip> {
-        // A frame reserves a tall space whose top corners are the ones at eye level, so it carries
-        // all eight; each corner drags in its own horizontal plane and changes the same two sides
-        // (docs/domain/products.md §9).
         let mut grips = Vec::with_capacity(8 + 6);
-        for top in [false, true] {
-            for min_x in [true, false] {
-                for min_y in [true, false] {
+        if !self.ring {
+            for top in [false, true] {
+                for (index, corner) in RectCorner::ALL.into_iter().enumerate() {
+                    if self.cut.get(index).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let (min_x, min_y) = corner_sides(corner);
                     grips.push(BoxGrip::Corner { min_x, min_y, top });
                 }
             }
         }
         for side in [BoxSide::Width, BoxSide::Depth, BoxSide::Height] {
+            if self.ring && side != BoxSide::Height {
+                continue;
+            }
             for max in [true, false] {
                 grips.push(BoxGrip::Face { side, max });
             }
         }
         grips
+    }
+}
+
+/// Which two sides a nominal corner sits on: whether it is the minimum X one and the minimum Y one.
+fn corner_sides(corner: RectCorner) -> (bool, bool) {
+    match corner {
+        RectCorner::BottomLeft => (true, true),
+        RectCorner::BottomRight => (false, true),
+        RectCorner::TopRight => (false, false),
+        RectCorner::TopLeft => (true, false),
     }
 }
 
@@ -462,7 +519,7 @@ impl BoxGrips {
                 self.drag = None;
                 return GripUpdate::Idle;
             };
-            let edit = self.edit_for(drag, body, camera, viewport, pointer);
+            let edit = self.edit_for(drag, &body, camera, viewport, pointer);
             if !ui.input(|input| input.pointer.primary_down()) {
                 // The release keeps what the last move wrote: one drag is one edit, one undo entry.
                 self.drag = None;
@@ -495,7 +552,7 @@ impl BoxGrips {
     fn edit_for(
         &self,
         drag: GripDrag,
-        body: BoxBody,
+        body: &BoxBody,
         camera: Camera,
         viewport: egui::Rect,
         pointer: Pos2,
@@ -546,7 +603,9 @@ impl BoxGrips {
             return None;
         }
         let [width, depth, height] = sides;
-        let change = BoxChange::Envelope(Envelope::new(width, depth, height).ok()?);
+        // The footprint travels with the sides: a face grip resizes the reserved space and never
+        // turns a cut corner or a drawn ring back into a plain box (ADR 0159).
+        let change = BoxChange::Envelope(Envelope::with_footprint(width, depth, height, body.footprint.clone()).ok()?);
         let placement = if shift.length_squared() > 0.0 {
             let moved = body.placement.transform_vector(shift);
             Placement::new(body.placement.translation() + moved, body.placement.rotation()).ok()
@@ -571,9 +630,22 @@ impl BoxGrips {
         best.map(|(_, grip)| grip)
     }
 
-    /// Paints the grips of the selected box.
-    pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, camera: Camera, project: &Project, selected: Option<Id>) {
-        let Some(body) = selected.and_then(|node| BoxBody::read(project, node)) else {
+    /// Paints the grips of the selected box, where the drag preview puts it.
+    ///
+    /// `carried` is the drag a gizmo is previewing: a carried frame's rings ride with the piece and
+    /// come back with it, as its corner brackets do, instead of staying at the place it was taken
+    /// (X76). A held handle and a rotate ring move the same body, so the grips follow them too.
+    pub(crate) fn paint(
+        &self,
+        ui: &Ui,
+        viewport: egui::Rect,
+        camera: Camera,
+        project: &Project,
+        selected: Option<Id>,
+        carried: Option<Preview<'_>>,
+    ) {
+        let Some(body) = selected.and_then(|node| BoxBody::read(project, node)).map(|body| body.carried(carried))
+        else {
             return;
         };
         let painter = ui.painter().with_clip_rect(viewport);
@@ -620,7 +692,7 @@ pub(crate) fn apply_grip_edit(session: &mut Session, edit: GripEdit, scope: Edit
         }
     }
     if let Some(placement) = edit.placement {
-        let params = serde_json::to_value(NodePlacementSet { node: edit.node, placement })
+        let params = serde_json::to_value(NodePlacementSet { node: edit.node, placement, unmeasured: false })
             .map_err(|error| format!("could not encode the placement: {error}"))?;
         session.dispatch_in(scope, NODE_PLACEMENT_SET_ID, &params).map_err(|error| error.to_string())?;
     }
@@ -661,6 +733,104 @@ mod tests {
             body.grip_point(BoxGrip::Face { side: BoxSide::Height, max: true }),
             Some(DVec3::new(300.0, 280.0, 720.0)),
             "the centre of the top face"
+        );
+    }
+
+    #[test]
+    fn a_carried_frames_grips_ride_with_it() {
+        // X76: the grips were read from the document while the body followed the drag preview, so a
+        // carried frame left its fourteen rings at the place it was taken. The rings now read the
+        // same preview the renderer takes: a translation carries them and a turn turns them.
+        let (project, id) = sample_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        let corner = BoxGrip::Corner { min_x: false, min_y: false, top: true };
+        let standing = body.grip_point(corner).expect("a grip point");
+
+        let delta = DVec3::new(120.0, -80.0, 0.0);
+        let carried = body.clone().carried(Some(Preview::Translation { drawables: &[id], delta }));
+        let moved = carried.grip_point(corner).expect("a grip point");
+        assert!((moved - (standing + delta)).length() < 1.0e-9, "the ring travels with the piece: {moved:?}");
+
+        // A turn about the box's own base corner swings the far top corner round it.
+        let pivot = body.grip_point(BoxGrip::Corner { min_x: true, min_y: true, top: false }).expect("a pivot");
+        let turn = geom::DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2);
+        let turned = body.clone().carried(Some(Preview::Rotation { drawables: &[id], pivot, rotation: turn }));
+        let want = pivot + turn * (standing - pivot);
+        let at = turned.grip_point(corner).expect("a grip point");
+        assert!((at - want).length() < 1.0e-9, "a turn swings the rings: {at:?} vs {want:?}");
+
+        // A drag that carries something else leaves this frame's grips where they are.
+        let other = Id::new(99).expect("an id");
+        let untouched = body.clone().carried(Some(Preview::Translation { drawables: &[other], delta }));
+        assert_eq!(untouched.grip_point(corner), Some(standing));
+        assert_eq!(body.carried(None).grip_point(corner), Some(standing));
+    }
+
+    /// A product whose base is a rectangle with its right-hand near corner cut by a chamfer.
+    fn corner_product_project() -> (Project, Id) {
+        let mut project = testkit::sample_project();
+        let root = project.root().id();
+        let footprint = model::Footprint::cut([
+            None,
+            Some(model::CornerFeatureKind::Chamfer { incoming: millimetres(120), outgoing: millimetres(70) }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(560), millimetres(720), footprint)
+            .expect("a corner cabinet");
+        let id = project
+            .add_product(root, "Corner", model::ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("the product is added");
+        (project, id)
+    }
+
+    /// A product whose base is a drawn ring rather than a rectangle.
+    fn ring_product_project() -> (Project, Id) {
+        let mut project = testkit::sample_project();
+        let root = project.root().id();
+        let ring = model::Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(500), Length::ZERO],
+                [millimetres(500), millimetres(400)],
+                [Length::ZERO, millimetres(400)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a drawn frame");
+        let id = project
+            .add_product(root, "Table", model::ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("the product is added");
+        (project, id)
+    }
+
+    #[test]
+    fn a_cut_corner_shows_no_grip_and_a_ring_shows_only_its_height() {
+        let (project, id) = corner_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        let grips = body.grips();
+        assert_eq!(grips.len(), 12, "the cut corner takes its base and its top grip with it");
+        assert!(
+            !grips.iter().any(|grip| matches!(grip, BoxGrip::Corner { min_x: false, min_y: true, .. })),
+            "a grip would stand in the empty corner, outside the piece: {grips:?}"
+        );
+        assert!(
+            grips.iter().any(|grip| matches!(grip, BoxGrip::Corner { min_x: true, min_y: false, .. })),
+            "the three square corners keep theirs: {grips:?}"
+        );
+
+        let (project, id) = ring_product_project();
+        let body = BoxBody::read(&project, id).expect("a frame body");
+        assert_eq!(
+            body.grips(),
+            vec![
+                BoxGrip::Face { side: BoxSide::Height, max: true },
+                BoxGrip::Face { side: BoxSide::Height, max: false },
+            ],
+            "a drawn ring moves by its height only: its shape is drawn, not dragged"
         );
     }
 
@@ -708,21 +878,51 @@ mod tests {
 
     #[test]
     fn the_committed_frame_is_the_ghost_the_maker_saw() {
-        let mut editor = Editor::new();
-        editor.arm_box();
-        editor.click_box([millimetres(600), millimetres(400)]).expect("anchor");
-        editor.click_box([millimetres(0), millimetres(0)]).expect("base");
-        editor.pull_box_height(millimetres(720)).expect("pull");
-        let (placement, sizes) =
-            commit_frame(WorkPlane::WORLD_XY, editor.box_draft().expect("a draft")).expect("frame");
-        assert_eq!(sizes, [millimetres(600), millimetres(400), millimetres(720)]);
+        // A drawn rectangle reaches the draft as the box's base: its corner is the frame's zero and
+        // its two sides are the width and the depth (N19, ADR 0101).
+        let base =
+            ui::BoxBase { corner: [Length::ZERO, Length::ZERO], width: millimetres(600), depth: millimetres(400) };
+        let mut draft = BoxDraft::from_rectangle(base);
+        draft.set_height(millimetres(720)).expect("the pull");
+        let (placement, envelope) = commit_frame(WorkPlane::WORLD_XY, &draft).expect("frame");
+        assert_eq!(envelope.components(), [millimetres(600), millimetres(400), millimetres(720)]);
+        assert!(envelope.footprint().is_rectangle(), "a drawn rectangle reserves a plain box");
         assert!(placement.translation().length() < 1.0e-9, "the base corner is the plane origin here");
+    }
+
+    #[test]
+    fn a_grip_keeps_the_footprint_it_resizes() {
+        // A face grip changes the sides and never the shape: a cut corner stays cut and a drawn ring
+        // stays a ring (ADR 0159). Both are one drag on a height or width face.
+        let (project, id) = corner_product_project();
+        let mut session = Session::with_directory(project, sample_catalog());
+        let project = session.project().clone();
+        let camera = Camera::new(DVec3::new(300.0, 200.0, 360.0), 3_000.0).expect("camera");
+        let grips = BoxGrips::default();
+        let scope = session.edit_scope();
+        let body = BoxBody::read(&project, id).expect("a box body");
+        let pointer = screen_point(camera, viewport(), DVec3::new(300.0, 280.0, 820.0)).expect("on screen");
+        let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: true }, scope };
+        let edit = grips.edit_for(drag, &body, camera, viewport(), pointer).expect("a taller frame");
+        let BoxChange::Envelope(envelope) = &edit.change;
+        assert!(!envelope.footprint().is_rectangle(), "the cut corner survives a grip: {envelope:?}");
+        assert_eq!(envelope.footprint().cuts(), body.footprint.cuts());
+
+        let (project, id) = ring_product_project();
+        let session = Session::with_directory(project, sample_catalog());
+        let project = session.project().clone();
+        let body = BoxBody::read(&project, id).expect("a box body");
+        let pointer = screen_point(camera, viewport(), DVec3::new(250.0, 200.0, 820.0)).expect("on screen");
+        let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: true }, scope };
+        let edit = grips.edit_for(drag, &body, camera, viewport(), pointer).expect("a taller frame");
+        let BoxChange::Envelope(envelope) = &edit.change;
+        assert!(envelope.footprint().is_ring(), "the drawn ring survives a grip: {envelope:?}");
     }
 
     #[test]
     fn a_corner_grip_moves_two_sides_and_a_face_grip_one() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let project = session.project().clone();
         let camera = Camera::new(DVec3::new(300.0, 200.0, 360.0), 3_000.0).expect("camera");
         let grips = BoxGrips::default();
@@ -739,15 +939,16 @@ mod tests {
 
         // The far corner of the base: both horizontal sides follow it.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: false }, scope };
-        let edit =
-            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0))).expect("an edit");
+        let edit = grips
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0)))
+            .expect("an edit");
         close(&edit, [700.0, 660.0, 720.0]);
         assert_eq!(edit.placement, None, "a maximum corner does not move the frame's zero");
 
         // One face centre: one side follows it, the other two stay.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Width, max: true }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 280.0, 360.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 280.0, 360.0)))
             .expect("an edit");
         close(&edit, [700.0, 560.0, 720.0]);
         assert_eq!(edit.placement, None);
@@ -755,7 +956,7 @@ mod tests {
         // The floor moves down: the height grows and the box's zero moves with the floor.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Height, max: false }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 280.0, -100.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(300.0, 280.0, -100.0)))
             .expect("an edit");
         close(&edit, [600.0, 560.0, 820.0]);
         let placement = edit.placement.expect("the floor moved, so the zero did too");
@@ -775,7 +976,7 @@ mod tests {
     #[test]
     fn a_frame_corner_grip_changes_two_sizes_and_a_face_grip_one() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let camera = Camera::new(DVec3::new(300.0, 280.0, 360.0), 3_000.0).expect("camera");
         let grips = BoxGrips::default();
         let body = BoxBody::read(session.project(), id).expect("a frame body");
@@ -784,8 +985,9 @@ mod tests {
 
         // A base corner: width and depth follow the pointer, the height stays.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: false }, scope };
-        let edit =
-            grips.edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0))).expect("an edit");
+        let edit = grips
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(700.0, 660.0, 0.0)))
+            .expect("an edit");
         let sides = edited_sides(&edit);
         assert!((sides[0] - 700.0).abs() <= 5.0, "the width follows the corner: {sides:?}");
         assert!((sides[1] - 660.0).abs() <= 5.0, "the depth follows the corner: {sides:?}");
@@ -795,7 +997,7 @@ mod tests {
         // The top corner drags in the plane through the top: the same two sides, not the height.
         let drag = GripDrag { node: id, grip: BoxGrip::Corner { min_x: false, min_y: false, top: true }, scope };
         let top = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(640.0, 600.0, 720.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(640.0, 600.0, 720.0)))
             .expect("an edit");
         let top_sides = edited_sides(&top);
         assert!((top_sides[0] - 640.0).abs() <= 5.0, "a top corner reads the ceiling: {top_sides:?}");
@@ -805,7 +1007,7 @@ mod tests {
         // One face: one side, the other two stay.
         let drag = GripDrag { node: id, grip: BoxGrip::Face { side: BoxSide::Depth, max: true }, scope };
         let edit = grips
-            .edit_for(drag, body, camera, viewport(), pointer_at(DVec3::new(300.0, 700.0, 360.0)))
+            .edit_for(drag, &body, camera, viewport(), pointer_at(DVec3::new(300.0, 700.0, 360.0)))
             .expect("an edit");
         let sides = edited_sides(&edit);
         assert_eq!((sides[0], sides[2]), (600.0, 720.0), "a face moves one side: {sides:?}");
@@ -815,7 +1017,7 @@ mod tests {
     #[test]
     fn a_frame_corner_drag_writes_one_undo_entry() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let before = session.project().revision().get();
         let scope = session.edit_scope();
         let envelope = |width: i64, depth: i64| {
@@ -835,7 +1037,7 @@ mod tests {
     #[test]
     fn a_frame_minimum_face_drag_keeps_the_opposite_face_still_in_the_world() {
         let (project, id) = sample_product_project();
-        let mut session = Session::with_catalog(project, sample_catalog());
+        let mut session = Session::with_directory(project, sample_catalog());
         let scope = session.edit_scope();
         // Drag the min-X face 100 mm to the left: the reserved box grows to 700 and the zero moves
         // 100 mm in the frame's own axis, so the far face does not move.

@@ -34,7 +34,10 @@ pub use table::{
     MACHINING_COLUMNS, MATERIAL_COLUMNS, NODE_COLUMNS, PART_COLUMNS, PRODUCT_COLUMNS, PROPERTY_COLUMNS, SHEET_COLUMNS,
     TABLES, TableData, TableSpec, Tables, table,
 };
-pub use write::{ExportOptions, OrderPackage, csv_name, now_timestamp, record_json, table_csv, timestamp_from_unix};
+pub use write::{
+    ExportOptions, OrderPackage, PriceAging, csv_name, exported_on, now_timestamp, record_json, table_csv,
+    timestamp_from_unix,
+};
 
 #[cfg(test)]
 mod fixtures;

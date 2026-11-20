@@ -11,12 +11,16 @@
 //! number the status bar prints, and it is drawn as a wireframe so the void reads through the boards
 //! around it.
 //!
+//! The fill tool also reads its free axis here ([`free_at`]): the cell names the measured sides, and
+//! the face under the pointer decides whether the point can say where the hand is along the one axis
+//! that moves (N23).
+//!
 //! Changes when: the niche gains a second shape to draw, or the pointer stops resolving through the
 //! atom's cursor rule.
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
-use model::{Id, Niche, Project};
+use model::{Id, Niche, Project, Sight};
 use scene::Camera;
 use ui::{Message, theme};
 use units::Length;
@@ -31,9 +35,34 @@ const LABEL_PADDING: egui::Vec2 = egui::vec2(6.0, 2.0);
 /// The one cursor rule both niche tools share: the ray enters the product's own envelope and stops at
 /// the first surface inside it (ADR 0109). A pointer outside the product, or a ray that misses the
 /// envelope, answers `None`.
-pub(crate) fn point_at(project: &Project, product: Id, camera: Camera, rect: Rect, pointer: Pos2) -> Option<DVec3> {
+pub(crate) fn point_at(
+    project: &Project,
+    product: Id,
+    camera: Camera,
+    rect: Rect,
+    pointer: Pos2,
+    sight: Sight<'_>,
+    contact: Option<&dyn geom::Contact>,
+) -> Option<DVec3> {
     let ray = crate::gizmo_math::ray_to(pointer, rect, camera);
-    ui::pointer_point(project, product, ray)
+    ui::pointer_point(project, product, ray, sight, contact)
+}
+
+/// What the pointer says about the cell's free axis, or `None` when it names no point at all.
+///
+/// The one cursor rule becomes one ray at the caller's end, and [`ui::free_place`] answers both
+/// halves of the reading: the place the point names and the hand's own place on the cell's axis,
+/// with the face that decides which of them the tool acts on (N23).
+pub(crate) fn free_at(
+    project: &Project,
+    product: Id,
+    niche: &Niche,
+    axis: usize,
+    ray: scene::Ray,
+    sight: Sight<'_>,
+    contact: Option<&dyn geom::Contact>,
+) -> Option<ui::FreePlace> {
+    ui::free_place(project, product, niche, axis, ray, sight, contact)
 }
 
 /// The niche tool's live overlay: nothing of its own, because the atom holds every number.
@@ -56,6 +85,7 @@ impl VoidGizmo {
         rect: Rect,
         camera: Camera,
         project: &Project,
+        contact: &dyn geom::Contact,
         editor: &mut ui::Editor,
         product: Option<Id>,
         pointer_over_widget: bool,
@@ -67,12 +97,13 @@ impl VoidGizmo {
         let (Some(pointer), Some(product)) = (pointer, product) else {
             return false;
         };
-        let Some(point) = point_at(project, product, camera, rect, pointer) else {
+        let sight = editor.flags().sight();
+        let Some(point) = point_at(project, product, camera, rect, pointer, sight, Some(contact)) else {
             // The pointer is in the scene but outside the open product: the row says what to point
             // at rather than keeping the cell the hand has already left.
             return editor.void_clear();
         };
-        editor.void_measure(project, point)
+        editor.void_measure(project, point, Some(contact))
     }
 
     /// Paints the cell's twelve edges and its three sides, in the theme's accent.
