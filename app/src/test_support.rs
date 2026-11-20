@@ -82,6 +82,9 @@ pub(crate) fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
 ///
 /// A test that asks whether a row is clipped needs where the glyphs landed, not only what they say:
 /// the panels' scrollers are the surface that must keep the last row clear of the bar (X39).
+/// A shape clipped to nothing is not drawn: `epaint` skips it, so a test skips it too. A hidden
+/// measuring pass leaves its galleys in the list this way, and a test that counted them would
+/// believe the row drew what the row only measured (X94).
 pub(crate) fn drawn_text_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<(egui::Rect, String)> {
     fn walk(shape: &egui::Shape, out: &mut Vec<(egui::Rect, String)>) {
         match shape {
@@ -98,7 +101,9 @@ pub(crate) fn drawn_text_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<(eg
     }
     let mut out = Vec::new();
     for clipped in shapes {
-        walk(&clipped.shape, &mut out);
+        if clipped.clip_rect.is_positive() {
+            walk(&clipped.shape, &mut out);
+        }
     }
     out
 }

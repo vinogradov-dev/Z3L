@@ -44,47 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X94** the status bar's three zones draw over one another
-  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
-  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
-  its own rectangle — the command on the left at its natural width, the centre elided, the
-  right readouts at their reserve — and no shape is painted under another.
-  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
-  left zone draws the five-cell transform band and up to three buttons at their natural width
-  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
-  so an armed contour or draft can paint past the split; the right zone is a separate
-  allocation starting at the same edge. The 1024 px test asserts that each zone drew
-  something and never that a shape stayed inside its rect. The cause is confirmed by a test
-  before the fix.
-  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
-  contour edit and a long selection armed, and asserts that no drawn shape crosses the
-  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
-  green.
-  `files: app/src/status_bar.rs,crates/ui/src/theme.rs`
-- `[ ]` **U115** the status bar reports and no longer carries a control
-  Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
-  where it stays within reach; the bar reports, it does not act. Today it holds the five-cell
-  transform band, the contour's along/free switch with Apply and Cancel, the draft's Close,
-  Finish and Cancel, the cross that clears the creation parent, the niche and navigation
-  Done, and the snap toggle — nine controls in one thin row, each competing with the readout
-  beside it (and with X94's overlap).
-  Shape: The place of each control is decided by the `.pi/skills/place-capability` rows and places,
-  not by hand: the five transform modes become one band in the header's right cluster beside
-  the ribbon and panel switches, always visible and five keys unchanged; the snap toggle
-  keeps its `view.snaps.grid` row and moves to the View tab's Snaps group, which already
-  draws it, and the bar keeps a readout only; the draft and contour actions move to the armed
-  tool's card and to the command bar M71 built, so the row that names the tool holds its two
-  buttons; the cross of the creation parent moves to the container card; the niche and
-  navigation Done disappear, because Escape already ends both and the hint says so. The bar
-  keeps three zones of text — the armed tool and step, the selection or measured value, the
-  window's readouts — and every moved capability keeps its id, key, label and icon through
-  its row. No new `Place`; no ADR for a reversible move.
-  Done: The bar draws no button, toggle or band in any state; each moved control is reachable from
-  its new place and answers the same key and command; the inventory rows name the places that
-  draw them and `cargo xtask ui-rules` is green; a headless test drives the bar in an armed
-  draft, an armed contour and an idle frame and finds labels only; the status bar's `//!`
-  says what it owns; `cargo xtask ci` is green.
-  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs`
 - `[ ]` **G3** the three contour booleans run on two closed rings and store one
   Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
   `geom::boolean` and the panel core already unions its cutouts through them, but no tool
@@ -310,6 +269,49 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **U115** the status bar reports and no longer carries a control
+  Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
+  where it stays within reach; the bar reports, it does not act. Today it holds the five-cell
+  transform band, the contour's along/free switch with Apply and Cancel, the draft's Close,
+  Finish and Cancel, the cross that clears the creation parent, the niche and navigation
+  Done, and the snap toggle — nine controls in one thin row, each competing with the readout
+  beside it (and with X94's overlap).
+  Shape: The place of each control is decided by the `.pi/skills/place-capability` rows and places,
+  not by hand: the five transform modes become one band in the header's right cluster beside
+  the ribbon and panel switches, always visible and five keys unchanged; the snap toggle
+  keeps its `view.snaps.grid` row and moves to the View tab's Snaps group, which already
+  draws it, and the bar keeps a readout only; the draft and contour actions move to the armed
+  tool's card and to the command bar M71 built, so the row that names the tool holds its two
+  buttons; the cross of the creation parent moves to the container card; the niche and
+  navigation Done disappear, because Escape already ends both and the hint says so. The bar
+  keeps three zones of text — the armed tool and step, the selection or measured value, the
+  window's readouts — and every moved capability keeps its id, key, label and icon through
+  its row. No new `Place`; no ADR for a reversible move.
+  Done: The bar draws no button, toggle or band in any state; each moved control is reachable from
+  its new place and answers the same key and command; the inventory rows name the places that
+  draw them and `cargo xtask ui-rules` is green; a headless test drives the bar in an armed
+  draft, an armed contour and an idle frame and finds labels only; the status bar's `//!`
+  says what it owns; `cargo xtask ci` is green.
+  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs` — `f24506d`
+
+- `[x]` **X94** the status bar's three zones draw over one another
+  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
+  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
+  its own rectangle — the command on the left at its natural width, the centre elided, the
+  right readouts at their reserve — and no shape is painted under another.
+  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
+  left zone draws the five-cell transform band and up to three buttons at their natural width
+  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
+  so an armed contour or draft can paint past the split; the right zone is a separate
+  allocation starting at the same edge. The 1024 px test asserts that each zone drew
+  something and never that a shape stayed inside its rect. The cause is confirmed by a test
+  before the fix.
+  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
+  contour edit and a long selection armed, and asserts that no drawn shape crosses the
+  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
+  green.
+  `files: app/src/status_bar.rs,crates/ui/src/theme.rs` — `342c9dd`
 
 - `[x]` **U118** the five scene shading styles are one band, and each split view has an icon
   Why: The owner: the view buttons in the bottom toolbar mean the scene's shading styles —

@@ -171,6 +171,19 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[panel]` Nothing in the editor shows or edits a material's stock block or price: the catalogue is a
   file the shell loads, and until a catalogue editor exists the workshop edits the JSON by hand.
 - `[vendor]` `vendor/truck-shapeops` is updated by hand when `truck` moves; see `vendor/AGENTS.md`.
+- `[ui]` The header is one fixed row: at the narrowest window (640 pt) in Russian the band, the four
+  view switches and the gear leave `Файл` as the last left-hand control that fits, so *Save*, *Undo*
+  and *Redo* and the whole tab row are clipped away (they keep their keys and the File menu). The
+  band is always visible by the owner's decision (U115). A responsive header — hide the wordmark,
+  then the tab row, then the dividers by measured width, and never a control that is the only way to
+  an action — is its own task and needs the owner's shape.
+
+- `[ui]` A widget inside an `egui::Area` is missing from the accessibility tree: the frame's
+  `accesskit_update` carries the root ui's widgets only, so the tool card's ✓ and ✕ — and every other
+  floating surface built as an area — carry no name a screen reader can read (found while aiming a
+  test at the card's buttons, U115). Give those surfaces an accessible parent when `egui` exposes
+  one, or draw the card in a layer the tree walks.
+
 - `[ui]` The panel card is the last inspector surface that still stacks a header per group: thirteen
   of them on one panel node (name, dimensions, nominal size, resolved, material, shape, outline,
   bowed edges, bevels, banding, machining, diagnostics), every one open by default, so a 700 x 500

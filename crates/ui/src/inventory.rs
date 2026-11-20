@@ -40,7 +40,8 @@ pub enum Place {
     Ribbon,
     /// The context menu offers it for a matching selection (U92).
     ContextMenu,
-    /// The armed tool shows and edits its parameters in the tool card (U97).
+    /// The armed tool shows and edits its parameters in the tool card, or commits a running draft
+    /// and a contour edit from that card's one row (U97, U115).
     ToolCard,
     /// The palette can build its parameters and dispatch it.
     Palette,
@@ -388,7 +389,9 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "panel.outline.set",
         label: Message::CmdSetPanelOutline,
-        places: &[Place::Card],
+        // A contour edit commits from its card's one row as well as from the panel's card: the ✓ is
+        // the same command, whichever surface the hand is nearest (U115).
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,
     },
@@ -542,7 +545,9 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "panel.machining.update",
         label: Message::CmdUpdateMachining,
-        places: &[Place::Card],
+        // The ring of a contour cutout is edited in the viewport and committed by the tool card's
+        // ✓, which is this command (U115).
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,
     },
@@ -696,7 +701,7 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "object.contour.replace",
         label: Message::CmdReplaceContour,
-        places: &[Place::Card],
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Object),
         icon: None,
     },
@@ -717,7 +722,7 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "object.path.replace",
         label: Message::CmdReplacePath,
-        places: &[Place::Card],
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Object),
         icon: None,
     },

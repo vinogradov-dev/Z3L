@@ -585,7 +585,7 @@ fn whole_sides(value: f64) -> Option<u32> {
 
 /// Whether the hovered point is the chain's first one, where a click closes the ring.
 ///
-/// The same `can_close` the ribbon and the status bar read decides whether the ring can finish, so
+/// The same `can_close` the ribbon's Draft cell reads decides whether the ring can finish, so
 /// the green node never promises a closure the command would refuse. A pending arc counts: it is
 /// the closing segment, so the first node stays green while the arc waits and the pointer is on it.
 fn closes_at(draft: &DrawDraft, point: [Length; 2]) -> bool {

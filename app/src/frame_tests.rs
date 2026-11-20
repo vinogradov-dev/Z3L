@@ -296,13 +296,17 @@ impl Harness {
     ///
     /// The status bar is the one strip under the scene rectangle, so the caption a test reads there
     /// is the control it presses instead of a coordinate the bar's layout would have to repeat.
+    /// The middle of the header's mode cell that prints `caption`.
+    ///
+    /// The five gestures are one band in the header's right cluster (U115), so a cell is found above
+    /// the scene: below it is the status bar, which now reports and draws no control.
     fn mode_cell(&self, caption: &str) -> egui::Pos2 {
-        let below_scene = self.scene().bottom();
+        let above_scene = self.scene().top();
         self.drawn_rects
             .iter()
-            .find(|(rect, text)| text == caption && rect.center().y > below_scene)
+            .find(|(rect, text)| text == caption && rect.center().y < above_scene)
             .map(|(rect, _)| rect.center())
-            .unwrap_or_else(|| panic!("the status bar drew no cell named {caption}"))
+            .unwrap_or_else(|| panic!("the header drew no mode cell named {caption}"))
     }
 
     /// Runs frames until `done` holds, the way a window left open does while something outside it
@@ -1000,7 +1004,7 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
             && harness.drew(Message::Move.text(Lang::En))
             && harness.drew(Message::Object.text(Lang::En))
             && harness.drew(Message::Rotate.text(Lang::En)),
-        "the bar offers Select beside the three gestures"
+        "the header's band offers Select beside the four gestures"
     );
 
     harness.app.tabs.active_mut().editor.select_node(Some(panel));
@@ -1017,10 +1021,10 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision(), revision, "and a drag there moves nothing: no gizmo is armed");
 
-    // The bar's own cell changes the mode, and the same drag now moves the part.
+    // The header's own cell changes the mode, and the same drag now moves the part.
     let cell = harness.mode_cell(&TransformMode::Move.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
-    assert_eq!(harness.app.shell.mode, TransformMode::Move, "the bar's cell changes the mode");
+    assert_eq!(harness.app.shell.mode, TransformMode::Move, "the header's cell changes the mode");
     let revision = harness.revision();
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
@@ -1138,8 +1142,97 @@ fn each_of_the_five_gestures_answers_its_key_and_the_bar_prints_the_pair() {
     }
     for mode in TransformMode::ALL {
         let caption = mode.caption(Lang::En);
-        assert!(harness.drew(&caption), "the bar prints `{caption}`: {:?}", harness.drawn);
+        assert!(harness.drew(&caption), "the header's band prints `{caption}`: {:?}", harness.drawn);
     }
+}
+
+#[test]
+fn the_tool_card_stays_where_it_opened_so_the_hand_reaches_it() {
+    // U115: the card is the only surface that finishes a draft and applies a contour edit, so it has
+    // to be reachable. A card anchored to the pointer every frame could never be reached, because the
+    // hand that chases it is what moves it: the owner saw exactly that. It opens where the hand was
+    // and then stays, and the hand walks onto it.
+    let (session, _object) = one_sketch_path();
+    let mut harness = Harness::with_session("frame-card-reach", session);
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let opened = harness.app.tabs.active().tool_card_rect().expect("the draft draws its card");
+    let mut at = scene.center() + egui::vec2(120.0, 0.0);
+    for _ in 0..16 {
+        at += egui::vec2(6.0, 6.0);
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        if opened.contains(at) {
+            break;
+        }
+    }
+    let now = harness.app.tabs.active().tool_card_rect().expect("the card is still up");
+    assert_eq!(now, opened, "the card stays where it opened instead of following the hand");
+    let pointer = harness.ctx.input(|input| input.pointer.hover_pos()).expect("the frame has a pointer");
+    assert!(now.contains(pointer), "the hand reaches the card it was chasing: {pointer:?} is not in {now:?}");
+}
+
+#[test]
+fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
+    // U115: the status bar's *Finish*, *Apply*, *Cancel* and the along/free switch are the armed
+    // tool's card — the one row that names the tool and holds its two buttons. The card writes
+    // nothing itself: it reports the press and the shell runs the path that already owns it.
+    let (session, object) = one_sketch_path();
+    let mut harness = Harness::with_session("frame-card-commit", session);
+    harness.settle();
+    let ctx = harness.ctx.clone();
+
+    // A running draft draws one row: its tool's name, no number, the finish pair.
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    // Two points, so the draft can be finished: the card's check appears only for a draft the commit
+    // would accept, which is the draft's own word (ADR 0077).
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let view = harness.app.tabs.active().card_view().expect("a running draft draws its card");
+    assert!(view.rows.is_empty(), "a draft asks for no number");
+    assert_eq!(view.title, Some(Message::ToolPolyline), "the row names the tool");
+    assert!(matches!(view.commit, ui::ToolCommit::Pair { .. }), "and holds its two buttons");
+    // The cross is the bar's old *Cancel*: the draft is dropped and the document never changed.
+    let revision = harness.revision();
+    harness.app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome { action: Some(ui::ToolAction::Cancel), ..ui::ToolOutcome::default() },
+    );
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the card's cross drops the draft");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+
+    // A live contour edit draws its own row: the ring's name, its one switch and the pair.
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(object));
+        assert!(
+            document.editor.start_contour_edit(document.session.project(), ui::ContourTarget::Path(object)),
+            "an open chain is editable"
+        );
+    }
+    let view = harness.app.tabs.active().card_view().expect("a contour edit draws its card");
+    assert_eq!(view.title, Some(Message::ContourEdit), "the row names the edit");
+    let toggle = view.toggle.expect("the corner motion is one switch on the card");
+    assert_eq!(toggle.words, Message::FreeMove, "free movement is the default");
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .apply_tool_outcome(&ctx, ui::ToolOutcome { toggle: true, ..ui::ToolOutcome::default() });
+    let view = harness.app.tabs.active().card_view().expect("the card stays up");
+    assert_eq!(view.toggle.expect("the switch is still there").words, Message::AlongContour, "the press flips it");
+    // The check is the edit's one command: it ends the mode and leaves one undo entry.
+    harness.app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome { action: Some(ui::ToolAction::Apply), ..ui::ToolOutcome::default() },
+    );
+    assert!(harness.app.tabs.active().editor.contour_edit().is_none(), "the check applies and leaves the edit");
+    assert!(harness.app.tabs.active().last_error.is_none(), "and the applied working copy is accepted");
 }
 
 #[test]
@@ -1187,7 +1280,7 @@ fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
 
     let cell = harness.mode_cell(&TransformMode::Object.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
-    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the bar's cell arms the object move");
+    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the header's cell arms the object move");
     harness.settle();
 
     let axes = harness.app.tabs.active().session.project().move_axes(&[panel]);

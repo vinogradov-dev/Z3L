@@ -505,7 +505,7 @@ impl DistanceFields {
         opacity: u32,
     ) -> DistanceOutcome {
         let (request, escape, enter) = self.begin(ui, state, placements);
-        let mut view = ToolView { title, rows: state.rows(), commit: ToolCommit::Gesture };
+        let mut view = ToolView { title, rows: state.rows(), toggle: None, commit: ToolCommit::Gesture };
         let (reported, rect) =
             crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
         let mut outcome = self.end(ui, state, reported, escape, enter);

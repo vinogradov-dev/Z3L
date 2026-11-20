@@ -509,6 +509,9 @@ impl App {
                 self.tabs.active_mut().set_ribbon_open(open);
                 self.sync_ribbon_fold();
             }
+            // A gesture is the window's view state: the band arms it for every tab and no document
+            // is written (ADR 0113, U115).
+            HeaderAction::SetMode(mode) => self.shell.mode = mode,
             HeaderAction::NewTab => {
                 if let Err(error) = self.new_tab() {
                     self.failed(error);
@@ -1083,6 +1086,7 @@ impl App {
                 ribbon_open: self.tabs.active().ribbon_open(),
                 panels_hidden: !self.shell.panels.any_visible(),
                 panels_collapsed: self.shell.panels.all_collapsed(),
+                mode: self.shell.mode,
             }
         };
         let mut header_action = None;

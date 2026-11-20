@@ -376,8 +376,8 @@ impl Editor {
 
     /// Closes the running ring and commits it as one node.
     ///
-    /// This is the only operation behind *Close*, whichever surface asked for it: the ribbon, the
-    /// status bar and a click on the first draft point all end here (ADR 0052). Closing and
+    /// This is the only operation behind *Close*, whichever surface asked for it: the ribbon's
+    /// Draft cell and a click on the first draft point all end here (ADR 0052, U115). Closing and
     /// committing belong together, because a closed draft that never reached the document is a ring
     /// the user already finished and cannot edit.
     ///

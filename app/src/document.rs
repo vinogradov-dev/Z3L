@@ -335,11 +335,11 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The point the tool card hangs from, frozen while the pointer is on the card itself.
+    /// The point the tool card hangs from, kept for as long as the card is up.
     ///
-    /// A card that follows the pointer would move away from the hand reaching for its field: the
-    /// anchor is the last point in the scene, and it is kept while the pointer is over the card
-    /// (ADR 0119).
+    /// A card that followed the pointer could never be reached, because the hand that chases it is
+    /// what moves it: the card opens where the hand was and stays there until the tool ends, so its
+    /// fields and its two buttons are within reach (ADR 0119, U115).
     tool_card_anchor: Option<egui::Pos2>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
@@ -1146,8 +1146,8 @@ impl Document {
 
     /// Closes the running ring and commits it in one step.
     ///
-    /// The only close path: a click on the first draft point, the ribbon's *Close* and the status
-    /// bar's *Close* all end here, so no surface can close a ring and forget to commit it (ADR 0052).
+    /// The only close path: a click on the first draft point and the ribbon's *Close* both end here,
+    /// so no surface can close a ring and forget to commit it (ADR 0052, U115).
     /// The ring is closed before the commit and reopened if the document refuses it, so a refusal
     /// leaves the shape the user drew editable instead of a finished draft that cannot be changed.
     pub(crate) fn close_draft(&mut self, lang: Lang) -> Result<(), String> {
@@ -1585,7 +1585,7 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
-        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        let card_anchor = self.card_anchor(Some(pointer));
         // The point under the pointer names the cell. A pointer that names none — the hand left the
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
         // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
@@ -1999,20 +1999,13 @@ impl Document {
     /// it, and a number that leaves the field's range is refused by the field itself, so the preview
     /// keeps the last height the document could hold. A niche's two gaps draw the same card from
     /// `update_fill`, and the inspector draws the same rows from the same draft.
-    fn show_tool_card(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport: egui::Rect,
-        pointer: Option<egui::Pos2>,
-        card_before: Option<egui::Rect>,
-        opacity: u32,
-    ) {
-        let Some(mut view) = self.height_view() else {
+    fn show_tool_card(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, pointer: Option<egui::Pos2>, opacity: u32) {
+        let Some(mut view) = self.card_view() else {
             // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
             // — and the rectangle is not this path's to clear.
             return;
         };
-        let anchor = self.card_anchor(pointer, card_before);
+        let anchor = self.card_anchor(pointer);
         // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
         // a click; the flag is cleared by the read so the field never holds the focus against the
         // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
@@ -2025,20 +2018,17 @@ impl Document {
         self.apply_tool_outcome(ui.ctx(), reported);
     }
 
-    /// The point the card hangs from: the pointer, or the last scene point while the hand is on the
-    /// card.
+    /// The point the card hangs from: where the hand was when the card opened, and nothing else.
     ///
-    /// A card that followed the pointer would slide out from under the hand reaching for its field,
-    /// so the anchor is frozen across the whole time the pointer is inside the card's rectangle. It
-    /// is the same rule `egui` applies to a tooltip and the one the context menu relies on: a
-    /// floating surface must not move while it is being used.
-    fn card_anchor(&mut self, pointer: Option<egui::Pos2>, card_before: Option<egui::Rect>) -> egui::Pos2 {
-        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
-        if card_before.is_some_and(|card| card.contains(pointer))
-            && let Some(anchor) = self.tool_card_anchor
-        {
+    /// A card that followed the pointer would slide away from the hand reaching for its field — and
+    /// a hand can never catch a surface that moves with it — so the anchor is taken once, when the
+    /// card first draws, and kept until the card closes. It is the rule `egui` applies to a tooltip
+    /// and the one the context menu relies on: a floating surface must not move while it is used.
+    fn card_anchor(&mut self, pointer: Option<egui::Pos2>) -> egui::Pos2 {
+        if let Some(anchor) = self.tool_card_anchor {
             return anchor;
         }
+        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
         self.tool_card_anchor = Some(pointer);
         pointer
     }
@@ -2067,6 +2057,44 @@ impl Document {
         Some(ToolView::pull(height.millimetres_f64(), top.map(Length::millimetres_f64), range, 3))
     }
 
+    /// The view the card at the pointer draws: a tool's numbers, or a draft's or a contour edit's own
+    /// commit row (U115).
+    ///
+    /// A running draft and a live contour edit ask for no number, so their card is one row that
+    /// names the tool and holds its accept and its drop: the bar reported those two as buttons, and
+    /// the hand that is drawing should not travel to the window's bottom edge to finish. The
+    /// inspector keeps the numbers it already mirrors — `tool_view` — and gains no button row.
+    pub(crate) fn card_view(&self) -> Option<ToolView> {
+        if let Some(view) = self.height_view() {
+            return Some(view);
+        }
+        if let Some(draft) = self.editor.drawing() {
+            // A draft the commit would refuse draws no card: a check that answers with a refusal is
+            // worse than no check, and the bar still says what the tool waits for. The draft's own
+            // reading is the rule, so the card and the commit cannot disagree (ADR 0077).
+            if !draft.is_complete() {
+                return None;
+            }
+            return Some(ToolView::actions(
+                Some(draft.tool().label()),
+                ui::ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc },
+            ));
+        }
+        self.editor.contour_edit()?;
+        // The corner's motion is the one method of the contour edit: free, or along the segment the
+        // corner starts, and the switch names the state the next drag takes (ADR 0075, U115).
+        let along = self.contour_gizmo.along();
+        Some(ToolView {
+            title: Some(Message::ContourEdit),
+            rows: Vec::new(),
+            toggle: Some(ui::ToolToggle {
+                words: if along { Message::AlongContour } else { Message::FreeMove },
+                on: along,
+            }),
+            commit: ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+        })
+    }
+
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
@@ -2083,11 +2111,12 @@ impl Document {
             return Some(ToolView {
                 title: arm.class.label(),
                 rows: distances.rows(),
+                toggle: None,
                 commit: ui::ToolCommit::Gesture,
             });
         }
         let measured = self.move_distances.as_ref()?;
-        Some(ToolView { title: None, rows: measured.distances.rows(), commit: ui::ToolCommit::Gesture })
+        Some(ToolView { title: None, rows: measured.distances.rows(), toggle: None, commit: ui::ToolCommit::Gesture })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
@@ -2096,8 +2125,14 @@ impl Document {
     /// or re-previews the body, and a gap goes through the distance card's own `apply`, so one number
     /// has one refusal whichever surface the maker typed it into. The ✓ and the ✕ are the shell's
     /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
-    fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
+    pub(crate) fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
         let mut repull = false;
+        // The contour edit's one method is a switch, not a number: its press flips the motion the
+        // next drag takes and writes nothing (U115).
+        if reported.toggle && self.editor.contour_edit().is_some() {
+            self.contour_gizmo.toggle_along();
+            ctx.request_repaint();
+        }
         for edit in &reported.edits {
             let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
                 continue;
@@ -2152,7 +2187,19 @@ impl Document {
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.drawing().is_some() {
+                    // A draft's check is its finish: the same path the ribbon's *Close* and a click on
+                    // the first point end in, so one commit has one home (ADR 0052).
+                    if let Err(error) = self.commit_drawing(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.contour_edit().is_some() {
+                    // A contour edit's check is its one command: the working copy becomes the panel's
+                    // outline, the object's contour or the machining record, as one undo entry.
+                    if let Err(error) = self.apply_contour_edit() {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.box_draft().is_some() {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
@@ -2164,7 +2211,12 @@ impl Document {
                 }
             }
             Some(ToolAction::Cancel) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.drawing().is_some() {
+                    // The cross drops the draft and ends the tool; the document never changed.
+                    self.cancel_drawing();
+                } else if self.editor.contour_edit().is_some() {
+                    self.cancel_contour_edit();
+                } else if self.editor.box_draft().is_some() {
                     self.cancel_box();
                 } else {
                     self.cancel_extrude();
@@ -2339,6 +2391,11 @@ impl Document {
         // which is the one on screen while the card stays open. The plates of the point being placed
         // are the same kind of surface: a press on a number is the number's, never a point (ADR 0126).
         let card_before = self.tool_card_rect;
+        // The card's anchor lives as long as the card does: a frame with no card behind it forgets
+        // where the last one opened, so the next card appears at the hand that armed its tool.
+        if card_before.is_none() {
+            self.tool_card_anchor = None;
+        }
         let pointer_on_chrome = dismiss_press
             || pointer.is_some_and(|pointer| {
                 chrome.covers(pointer)
@@ -3281,7 +3338,7 @@ impl Document {
             Some(ClusterAction::OpenSettings) => shell.open_settings = true,
             None => {}
         }
-        self.show_tool_card(ui, content, pointer, card_before, opacity);
+        self.show_tool_card(ui, content, pointer, opacity);
         self.show_draft_menu(ui, content, opacity);
         self.paint_view_frames(ui, content, &regions);
         self.show_context_menu(ui, content, opacity);
@@ -3291,7 +3348,7 @@ impl Document {
     ///
     /// A polyline keeps its chain, so the right button cannot finish it the way it finishes a fixed
     /// figure: the menu chooses whether the next segment is straight or an arc — the switch that
-    /// used to sit on Tab — and offers the finish the status bar's *Finish* runs (ADR 0126, 0128).
+    /// used to sit on Tab — and offers the finish the tool card's check runs (ADR 0126, 0128, U115).
     fn show_draft_menu(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
         let Some((arc, can_finish)) = self
             .editor
@@ -3313,8 +3370,8 @@ impl Document {
             ui::DraftMenuChoice::Arc => {
                 self.editor.set_drawing_arc_mode(true);
             }
-            // Finish is the status bar's own finish: the same commit path, so a chain committed
-            // from the menu and from the bar cannot differ.
+            // Finish is the card's own finish: the same commit path, so a chain committed from
+            // the menu, from the card and by Enter cannot differ.
             ui::DraftMenuChoice::Finish => {
                 if let Err(error) = self.commit_drawing(ui::language(ui.ctx())) {
                     self.last_error = Some(error);

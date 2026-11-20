@@ -77,7 +77,7 @@ pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use point_fields::{CURSOR_CLEARANCE, FieldAction, FieldEdit, FieldLabel, FieldParam, FieldRow, FieldSet};
 pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
-pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
+pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolToggle, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use transform::TransformMode;
 pub use view_flags::ViewFlags;
