@@ -1119,6 +1119,7 @@ version = "0.1.0"
 dependencies = [
  "catalog",
  "contact-parry",
+ "export",
  "geom",
  "mesh",
  "model",

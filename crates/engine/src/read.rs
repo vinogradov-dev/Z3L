@@ -1,0 +1,536 @@
+//! The read model: one question about the scene, and the answer a derivation already owns.
+//!
+//! A question is answered from the document and the catalogue and nothing else: no window, no second
+//! definition of a number. Every answer reuses the derivation that already exists — `parts` is the
+//! published `parts` table of the order package, `tree` reads the document's own node tree,
+//! `diagnostics` is [`Session::panel_diagnostics`] and `niche` is [`Project::niche`] — so an answer
+//! and the editor cannot disagree (`docs/domain/prototypes.md` §8).
+//!
+//! Nothing here writes: a question reads the session and leaves its revision, its history and its
+//! dirty flag exactly where they were, which is what makes it safe to ask one in the middle of a
+//! person's edit.
+//!
+//! The answer is one JSON value with the rows a caller reads. Lengths are whole micrometres, as the
+//! document stores them, and a world coordinate is millimetres under a `_mm` key, because a
+//! placement is a float at the geometry boundary. The report's envelope — which question, which file
+//! and which revision it read — belongs to the door that prints it, because a path is the shell's
+//! business and not the document's.
+//!
+//! Changes when: a question is added, or an answer's fields change.
+
+use export::{DocumentMeta, ExportError, ExportOptions, OrderPackage, TableData};
+use geom::DVec3;
+use model::{Id, NicheRefusal, Node, NodeQuery, Project, Sight};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+
+use crate::diagnostics::PanelDiagnostic;
+use crate::session::Session;
+
+/// One question about the scene, with the arguments it takes.
+///
+/// The selector is typed, so a question cannot carry an argument it does not read: a point belongs
+/// to `niche` alone, a node to the two that narrow one, and a resource to the questions that take
+/// neither. The name of a variant is the stable id
+/// of the question on every door — the command line prints it, and the JSON wire form tags the
+/// object with it — so [`Query::NAMES`] is the one list a refusal and a help text read.
+///
+/// The JSON form is one object per question, `{"kind": "tree", "node": 5}`, which is the shape a
+/// tool schema describes (ADR 0185, ADR 0195).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind", deny_unknown_fields)]
+pub enum Query {
+    /// Every node with its id, kind, name and children, from `node` down.
+    ///
+    /// The walk stops at the document's own nesting limit, so a tree that somehow holds more levels
+    /// than the loader allows is cut short instead of exhausting the stack.
+    Tree {
+        /// The node the answer starts at; absent starts at the document root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<Id>,
+    },
+    /// The box every product reserves, or the one `node` names.
+    ///
+    /// The box is authored data: its size is the product's own envelope (ADR 0097, ADR 0101) and
+    /// its origin is where that envelope's minimum corner stands in the world.
+    Box {
+        /// The product the answer is about; absent answers for every product.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<Id>,
+    },
+    /// The cut list, as the order package's `parts` table prints it.
+    Parts,
+    /// Every panel problem the catalogue resolves, with a stable code.
+    Diagnostics,
+    /// The empty space around a point, as the fill tool measures it.
+    ///
+    /// The point is world millimetres and comes from the caller, so a question about a node's own
+    /// origin is the caller's `origin_world` and not a second argument here.
+    Niche {
+        /// The point the void is measured at, in world millimetres.
+        at: [f64; 3],
+    },
+}
+
+impl Query {
+    /// Every question's name, in the order a refusal and a help text list them.
+    pub const NAMES: [&'static str; 5] = ["tree", "box", "parts", "diagnostics", "niche"];
+
+    /// The question's own name, as the JSON tag and the command line spell it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tree { .. } => "tree",
+            Self::Box { .. } => "box",
+            Self::Parts => "parts",
+            Self::Diagnostics => "diagnostics",
+            Self::Niche { .. } => "niche",
+        }
+    }
+}
+
+/// Why a question has no answer: every variant prints one sentence the caller can act on.
+#[derive(Debug, thiserror::Error)]
+pub enum QueryError {
+    /// No node holds the id the question named.
+    #[error("no node has id {0}")]
+    NoNode(Id),
+    /// The node is not a product, so it reserves no box.
+    #[error("node {0} is not a product; `box` reports the box a product reserves")]
+    NotAProduct(Id),
+    /// The point stands outside every product, or the free space around it is not one cell.
+    #[error(
+        "no niche at [{}, {}, {}]: {}",
+        .at[0],
+        .at[1],
+        .at[2],
+        refusal_word(*refusal)
+    )]
+    NoNiche {
+        /// The point the question measured, in world millimetres.
+        at: [f64; 3],
+        /// Why the cell could not be measured.
+        refusal: NicheRefusal,
+    },
+    /// The order package the cut list comes from cannot be built.
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    /// The package publishes no `parts` table, which is a build the table registry did not make.
+    #[error("the order package publishes no `parts` table")]
+    NoPartsTable,
+}
+
+/// Answers one question, reading the session and writing nothing.
+pub(crate) fn answer(session: &Session, query: Query) -> Result<Value, QueryError> {
+    let project = session.project();
+    match query {
+        Query::Tree { node } => tree(project, node),
+        Query::Box { node } => box_report(project, node),
+        Query::Parts => parts(project, session),
+        Query::Diagnostics => Ok(diagnostics(session)),
+        Query::Niche { at } => niche(session, at),
+    }
+}
+
+/// The node tree: the root with its subtree, or one node with its own.
+fn tree(project: &Project, id: Option<Id>) -> Result<Value, QueryError> {
+    let Some(id) = id else {
+        let root = project.root();
+        let mut value = json!({"id": root.id().get(), "kind": "container", "name": root.name()});
+        let children: Vec<Value> = root.children().iter().map(|child| node_value(child, 0)).collect();
+        insert(&mut value, "children", Value::Array(children));
+        return Ok(value);
+    };
+    let node = project.node(id).ok_or(QueryError::NoNode(id))?;
+    Ok(node_value(node, 0))
+}
+
+/// One node, its kind, its name and its subtree.
+fn node_value(node: &Node, depth: u32) -> Value {
+    let mut value = json!({"id": node.id().get(), "kind": kind(node), "name": node.name()});
+    if depth < Project::MAX_ASSEMBLY_DEPTH
+        && let Some(children) = node.children()
+    {
+        let children: Vec<Value> = children.iter().map(|child| node_value(child, depth.saturating_add(1))).collect();
+        insert(&mut value, "children", Value::Array(children));
+    }
+    value
+}
+
+/// The node kind a report prints.
+const fn kind(node: &Node) -> &'static str {
+    match node {
+        Node::Container(_) => "container",
+        Node::Panel(_) => "panel",
+        Node::Object(_) => "object",
+        Node::Camera(_) => "camera",
+        Node::Light(_) => "light",
+    }
+}
+
+/// The box every product reserves, or the one `--id` names.
+fn box_report(project: &Project, id: Option<Id>) -> Result<Value, QueryError> {
+    let products: Vec<Id> = match id {
+        Some(id) => {
+            let named = project
+                .container(id)
+                .filter(|container| container.envelope().is_some())
+                .ok_or(QueryError::NotAProduct(id))?;
+            vec![named.id()]
+        }
+        None => project.products(),
+    };
+    let rows: Vec<Value> = products
+        .into_iter()
+        .filter_map(|product| {
+            let container = project.container(product)?;
+            let envelope = container.envelope()?;
+            let origin =
+                project.world_placement(product).map(|placement| placement.translation()).unwrap_or(DVec3::ZERO);
+            Some(json!({
+                "node_id": product.get(),
+                "name": container.name(),
+                "size_um": {
+                    "x": envelope.x().micrometres(),
+                    "y": envelope.y().micrometres(),
+                    "z": envelope.z().micrometres(),
+                },
+                "origin_mm": [origin.x, origin.y, origin.z],
+            }))
+        })
+        .collect();
+    Ok(Value::Array(rows))
+}
+
+/// The cut list, read from the one derivation the order package publishes.
+fn parts(project: &Project, session: &Session) -> Result<Value, QueryError> {
+    // The cut list asks for no price verdict and no timestamp: the age flag belongs to `export`, and
+    // a package built for one table needs no clock of its own.
+    let document = DocumentMeta { file: None, revision: project.revision().get(), hash: None };
+    let options = ExportOptions { timestamp: None, document, order: None, price_max_age_days: None };
+    let package = OrderPackage::build(project, session.directory(), options)?;
+    let table = package.table("parts").ok_or(QueryError::NoPartsTable)?;
+    Ok(rows_of(table))
+}
+
+/// Every panel's issues, with a stable code and the id the issue names.
+fn diagnostics(session: &Session) -> Value {
+    let project = session.project();
+    let rows: Vec<Value> = project
+        .query(&NodeQuery::any())
+        .into_iter()
+        .filter(|id| project.panel(*id).is_some())
+        .map(|id| {
+            let issues: Vec<Value> = session.panel_diagnostics(id).iter().map(issue).collect();
+            let name = project.panel(id).map(|panel| panel.name().to_owned()).unwrap_or_default();
+            json!({"node_id": id.get(), "name": name, "issues": issues})
+        })
+        .collect();
+    Value::Array(rows)
+}
+
+/// One diagnostic as a code and, when it names something, that id.
+fn issue(diagnostic: &PanelDiagnostic) -> Value {
+    let mut value = json!({"code": diagnostic_code(diagnostic)});
+    let named = match diagnostic {
+        PanelDiagnostic::NoMaterial
+        | PanelDiagnostic::NonPositiveCore
+        | PanelDiagnostic::InvalidOutline
+        | PanelDiagnostic::CoreRemoved
+        | PanelDiagnostic::CoreDisconnected => None,
+        PanelDiagnostic::MissingMaterial { material } => Some(material.to_string()),
+        PanelDiagnostic::MissingBandingMaterial { edge, .. } => Some(edge.get().to_string()),
+        PanelDiagnostic::MissingCornerBandingMaterial { corner, .. } => Some(corner.get().to_string()),
+        PanelDiagnostic::MissingRingBandingMaterial { segment, .. } => Some(segment.get().to_string()),
+        PanelDiagnostic::MachiningOutsideCore { machining } => Some(machining.to_string()),
+        PanelDiagnostic::BlindDepthNotLessThanThickness { machining, depth, thickness } => {
+            insert(&mut value, "depth_um", Value::from(depth.micrometres()));
+            insert(&mut value, "thickness_um", Value::from(thickness.micrometres()));
+            Some(machining.to_string())
+        }
+    };
+    if let Some(named) = named {
+        insert(&mut value, "ref", Value::from(named));
+    }
+    value
+}
+
+/// The stable code of one diagnostic.
+///
+/// The code is the answer's contract, so it is a fixed English word and not a translation; the
+/// sentence a person reads stays in `ui::panel_card::diagnostic_message`. A new variant turns this
+/// match into a compile error instead of printing a silent word.
+const fn diagnostic_code(diagnostic: &PanelDiagnostic) -> &'static str {
+    match diagnostic {
+        PanelDiagnostic::NoMaterial => "no_material",
+        PanelDiagnostic::MissingMaterial { .. } => "missing_material",
+        PanelDiagnostic::MissingBandingMaterial { .. } => "missing_banding_material",
+        PanelDiagnostic::MissingCornerBandingMaterial { .. } => "missing_corner_banding_material",
+        PanelDiagnostic::MissingRingBandingMaterial { .. } => "missing_ring_banding_material",
+        PanelDiagnostic::NonPositiveCore => "non_positive_core",
+        PanelDiagnostic::InvalidOutline => "invalid_outline",
+        PanelDiagnostic::MachiningOutsideCore { .. } => "machining_outside_core",
+        PanelDiagnostic::CoreRemoved => "core_removed",
+        PanelDiagnostic::CoreDisconnected => "core_disconnected",
+        PanelDiagnostic::BlindDepthNotLessThanThickness { .. } => "blind_depth_not_less_than_thickness",
+    }
+}
+
+/// The empty space around a point, as the fill tool measures it.
+///
+/// The sight passes everything — a question has no window and therefore no hidden set — and the
+/// contact adapter is the session's own, so a splayed post or a plate with a hole bounds the cell
+/// here exactly as it does in the window (ADR 0183, X92).
+fn niche(session: &Session, at: [f64; 3]) -> Result<Value, QueryError> {
+    let point = DVec3::new(at[0], at[1], at[2]);
+    let no_niche = |refusal| QueryError::NoNiche { at, refusal };
+    let cell = session.project().niche(point, Sight::none(), Some(session.contact())).map_err(no_niche)?;
+    let planes: Vec<Value> = cell
+        .planes
+        .iter()
+        .map(|plane| json!({"normal": [plane.normal.x, plane.normal.y, plane.normal.z], "offset_mm": plane.offset}))
+        .collect();
+    let corners: Vec<Value> = cell.corners.iter().map(|corner| json!([corner.x, corner.y, corner.z])).collect();
+    Ok(json!({
+        "product_id": cell.product.get(),
+        "shape": shape_word(&cell.shape),
+        "local_min_mm": [cell.local_min.x, cell.local_min.y, cell.local_min.z],
+        "size_mm": [cell.size.x, cell.size.y, cell.size.z],
+        "min_mm": [cell.min.x, cell.min.y, cell.min.z],
+        "planes": planes,
+        "corners_mm": corners,
+    }))
+}
+
+/// Why a point has no niche, in the answer's words.
+const fn refusal_word(refusal: NicheRefusal) -> &'static str {
+    match refusal {
+        NicheRefusal::Outside => "the point is outside every product",
+        NicheRefusal::Unrepresentable => "the free space is not one convex cell",
+    }
+}
+
+/// The niche's shape as the answer names it.
+const fn shape_word(shape: &model::NicheShape) -> &'static str {
+    match shape {
+        model::NicheShape::Box => "box",
+        model::NicheShape::Section(_) => "section",
+        model::NicheShape::Sloped => "sloped",
+    }
+}
+
+/// One table as an array of records, its columns naming each field.
+fn rows_of(table: &TableData) -> Value {
+    let columns = table.spec().columns;
+    Value::Array(
+        table
+            .rows()
+            .iter()
+            .map(|row| {
+                let mut record = Map::new();
+                for (column, cell) in columns.iter().zip(row) {
+                    record.insert(column.name.to_owned(), cell.json());
+                }
+                Value::Object(record)
+            })
+            .collect(),
+    )
+}
+
+/// Adds one field to a report object, leaving a value that is not an object alone.
+fn insert(value: &mut Value, key: &str, field: Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(key.to_owned(), field);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use std::sync::Arc;
+
+    use geom::DQuat;
+    use model::{ClassCode, Envelope, LightKind, Placement};
+    use testkit::{millimetres, sample_catalog, sample_project};
+
+    use super::*;
+
+    /// The fixture every answer is measured on: one product with a light inside it, a panel beside
+    /// it, and the sample's own shelf and drawer.
+    fn session() -> Session {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a valid box");
+        let product = project
+            .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a product beside the sample nodes");
+        let size = model::PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
+        project.add_panel(root, "Side", size, None, millimetres(18), Placement::IDENTITY).expect("the side is added");
+        let centre = Placement::new(DVec3::new(300.0, 280.0, 360.0), DQuat::IDENTITY).expect("a unit placement");
+        project.add_light(product, "Key", centre, LightKind::Sun, [1.0; 3], 1.0).expect("the light is added");
+        // The real contact adapter, so the niche of a splayed body is measured as the window does.
+        Session::with_directory(project, sample_catalog()).with_contact(Arc::new(contact_parry::Parry))
+    }
+
+    #[test]
+    fn the_tree_answer_names_every_node_the_fixture_holds() {
+        let session = session();
+        let answer = session.read(Query::Tree { node: None }).expect("the tree is answered");
+        assert_eq!(answer["id"], 1, "the answer starts at the document root");
+        let children = answer["children"].as_array().expect("the root has children");
+        let ids: Vec<u64> = children.iter().filter_map(|child| child["id"].as_u64()).collect();
+        assert_eq!(ids, vec![2, 3, 5, 6], "the sample's shelf and drawer, the product and the panel: {ids:?}");
+        let product = children.iter().find(|child| child["id"] == 5).expect("the product is listed");
+        assert_eq!(product["kind"], "container");
+        assert_eq!(product["name"], "Cabinet");
+        let inside = product["children"].as_array().expect("the product holds the light");
+        assert_eq!(inside.len(), 1);
+        assert_eq!(inside[0]["kind"], "light");
+    }
+
+    #[test]
+    fn a_tree_of_one_node_holds_that_subtree_only() {
+        let session = session();
+        let answer = session.read(Query::Tree { node: Id::new(5) }).expect("the subtree is answered");
+        assert_eq!(answer["name"], "Cabinet");
+        assert_eq!(answer["children"].as_array().map(Vec::len), Some(1));
+
+        let missing = Id::new(9_999).expect("an id");
+        let error = session.read(Query::Tree { node: Some(missing) }).expect_err("the id is not in the document");
+        assert!(error.to_string().contains("9999"), "{error}");
+    }
+
+    #[test]
+    fn the_box_answer_prints_the_reserved_box_of_a_product() {
+        let session = session();
+        let answer = session.read(Query::Box { node: None }).expect("the boxes are answered");
+        let rows = answer.as_array().expect("one row per product");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["node_id"], 5);
+        assert_eq!(rows[0]["size_um"]["x"], 600_000);
+        assert_eq!(rows[0]["size_um"]["y"], 560_000);
+        assert_eq!(rows[0]["size_um"]["z"], 720_000);
+        assert_eq!(rows[0]["origin_mm"], json!([0.0, 0.0, 0.0]));
+
+        let panel = Id::new(2).expect("an id");
+        let error = session.read(Query::Box { node: Some(panel) }).expect_err("a panel reserves no box");
+        assert!(error.to_string().contains("is not a product"), "{error}");
+    }
+
+    #[test]
+    fn the_parts_answer_is_the_published_table() {
+        let session = session();
+        let answer = session.read(Query::Parts).expect("the cut list is answered");
+        let rows = answer.as_array().expect("one row per part");
+        let ids: Vec<u64> = rows.iter().filter_map(|row| row["node_id"].as_u64()).collect();
+        assert_eq!(ids, vec![2, 4, 6], "the sample's shelf and front and the panel the fixture added: {ids:?}");
+        assert!(rows.iter().all(|row| row.get("length_um").is_some() && row.get("product_id").is_some()));
+    }
+
+    #[test]
+    fn the_diagnostics_answer_names_a_panel_without_material() {
+        let session = session();
+        let answer = session.read(Query::Diagnostics).expect("the issues are answered");
+        let rows = answer.as_array().expect("one row per panel");
+        assert_eq!(rows.len(), 3, "one row per panel in the fixture");
+        let issues: Vec<&Value> = rows.iter().flat_map(|row| row["issues"].as_array().into_iter().flatten()).collect();
+        assert!(issues.iter().any(|issue| issue["code"] == "no_material"), "a panel with no material is reported");
+        assert!(issues.iter().all(|issue| issue["code"].as_str().is_some()), "every issue carries a code");
+    }
+
+    #[test]
+    fn a_niche_is_measured_at_the_point_it_names() {
+        let session = session();
+        let answer = session.read(Query::Niche { at: [300.0, 280.0, 360.0] }).expect("the void is answered");
+        assert_eq!(answer["product_id"], 5);
+        assert_eq!(answer["shape"], "box", "an empty product reserves a box");
+        // The sample's own shelf stands under the void, so the free space starts at its top face.
+        assert_eq!(answer["size_mm"], json!([600.0, 560.0, 702.0]));
+        assert!(
+            answer["planes"].as_array().is_some_and(|planes| planes.len() >= 6),
+            "the envelope's six planes bound the void: {answer}"
+        );
+    }
+
+    #[test]
+    fn a_niche_outside_every_product_is_a_sentence() {
+        let session = session();
+        let error = session.read(Query::Niche { at: [5_000.0; 3] }).expect_err("the point is outside");
+        let message = error.to_string();
+        assert!(message.contains("5000"), "the sentence names the point: {message}");
+        assert!(message.contains("outside every product"), "{message}");
+    }
+
+    #[test]
+    fn every_question_has_one_name_and_the_wire_form_speaks_it() {
+        // The name is the id of a question on every door, so the list a refusal prints and the tag
+        // the JSON form carries come from the same five variants.
+        let questions = [
+            Query::Tree { node: None },
+            Query::Box { node: None },
+            Query::Parts,
+            Query::Diagnostics,
+            Query::Niche { at: [0.0; 3] },
+        ];
+        let names: Vec<&str> = questions.iter().map(|query| query.name()).collect();
+        assert_eq!(names, Query::NAMES, "the list is the enum's own names, in the same order");
+
+        let node = Id::new(5).expect("an id");
+        let wire = json!({"kind": "tree", "node": node});
+        assert_eq!(
+            serde_json::from_value::<Query>(wire.clone()).expect("the wire form parses"),
+            Query::Tree { node: Some(node) }
+        );
+        assert_eq!(serde_json::to_value(Query::Tree { node: Some(node) }).expect("it writes back"), wire);
+        assert_eq!(
+            serde_json::from_value::<Query>(json!({"kind": "niche", "at": [1.0, 2.0, 3.0]}))
+                .expect("a point is a niche"),
+            Query::Niche { at: [1.0, 2.0, 3.0] }
+        );
+
+        let error = serde_json::from_value::<Query>(json!({"kind": "boxes"})).expect_err("there is no such question");
+        let message = error.to_string();
+        assert!(message.contains("boxes"), "the refusal quotes the name: {message}");
+        assert!(message.contains("tree"), "and lists the five: {message}");
+
+        // The schema a tool publishes names the same five kinds, so a model reads the selector the
+        // parser enforces (ADR 0185, ADR 0195).
+        let schema = serde_json::to_string(&schemars::schema_for!(Query)).expect("the schema is JSON");
+        for name in Query::NAMES {
+            assert!(schema.contains(&format!("\"{name}\"")), "the schema names `{name}`: {schema}");
+        }
+    }
+
+    #[test]
+    fn a_question_leaves_the_revision_and_the_history_untouched() {
+        // The one rule of the read model: it reads. A question asked in the middle of a person's
+        // edit must not add an undo entry, move the revision or mark the document dirty.
+        let mut session = session();
+        let product = Id::new(5).expect("an id");
+        let rename = json!({"node": product, "name": "Case"});
+        session.dispatch(crate::node_cmds::NODE_RENAME_ID, &rename).expect("the fixture is edited once");
+        let before = session.project().revision();
+        assert!(session.can_undo(), "the edit is one entry below the questions");
+
+        for query in [
+            Query::Tree { node: None },
+            Query::Box { node: None },
+            Query::Parts,
+            Query::Diagnostics,
+            Query::Niche { at: [300.0, 280.0, 360.0] },
+        ] {
+            session.read(query).expect("every question is answered");
+            assert_eq!(session.project().revision(), before, "`{}` moves no revision", query.name());
+            assert!(session.can_undo(), "`{}` adds no undo entry", query.name());
+            assert!(!session.can_redo(), "`{}` clears no history", query.name());
+            assert!(session.is_dirty(), "`{}` writes no revision", query.name());
+        }
+        session.undo().expect("the one edit is still the one entry");
+        assert_eq!(
+            session.project().container(product).map(model::Container::name),
+            Some("Cabinet"),
+            "undo restores the name, so no question touched the history"
+        );
+    }
+}

@@ -12,6 +12,7 @@ use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
 use crate::no_contact::NoContact;
 use crate::preview::Preview;
+use crate::read::{self, Query, QueryError};
 use crate::resolve;
 
 /// One edit by the user — a drag or a run of keystrokes — as a single undo entry.
@@ -233,6 +234,16 @@ impl Session {
     /// Resolves the derived issues of one panel against the session directory.
     pub fn panel_diagnostics(&self, panel_id: Id) -> Vec<PanelDiagnostic> {
         diagnose_panel(&self.project, &self.directory, panel_id)
+    }
+
+    /// Answers one question about the scene, reading it and writing nothing.
+    ///
+    /// The five questions are the read model of [`Query`] and every answer reuses the derivation
+    /// that already owns it, so a headless caller, the assistant and the window cannot disagree
+    /// about what the document holds. A question never enters the history and never moves the
+    /// revision: [`Session::can_undo`] and `project().revision()` are the same after it as before.
+    pub fn read(&self, query: Query) -> Result<Value, QueryError> {
+        read::answer(self, query)
     }
 
     /// Whether an earlier document state can be restored.
