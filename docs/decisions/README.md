@@ -32,7 +32,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0025](0025-one-manipulation-pivot.md) | Move and Rotate share one pivot at the first corner of the local bounds | Superseded by 0026 |
 | [0026](0026-the-manipulation-pivot-is-stored-node-data.md) | The manipulation pivot is stored, editable node data | Accepted; supersedes 0025 |
 | [0027](0027-the-rotate-gizmo-uses-world-aligned-rings.md) | The rotate gizmo uses world-aligned rings | Accepted; batch commit extended by 0033 |
-| [0028](0028-the-assistant-is-a-client-of-the-command-registry.md) | The assistant is a client of the command registry | Accepted |
+| [0028](0028-the-assistant-is-a-client-of-the-command-registry.md) | The assistant is a client of the command registry | Accepted; registry narrowed by 0185, layering by 0186, listening clarified by 0188 |
 | [0029](0029-view-state-belongs-to-the-session.md) | View state belongs to the session | Accepted; camera and light objects carved out by 0036 |
 | [0030](0030-construction-knowledge-is-code.md) | Construction knowledge is code, not prose | Superseded by 0034 |
 | [0031](0031-external-resources-keep-their-own-system-of-record.md) | External resources keep their own system of record | Accepted |
@@ -187,8 +187,17 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
 | [0181](0181-a-drag-prepares-the-bodies-it-reaches.md) | A drag prepares the bodies it reaches, and the port can cast a ray | Accepted; the rule's build is a walk over boxes, and the probe keeps the box reading until X92 |
 | [0182](0182-the-file-manager-chooses-the-path.md) | The file manager chooses the path, and the window keeps drawing | Accepted |
-| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted |
+| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted; "one headless door" narrowed by 0185 |
 | [0184](0184-a-price-names-its-money-and-its-source.md) | A price names its money, its source and its age; stock is an overlay | Accepted |
+| [0185](0185-the-tool-registry-is-one-table-and-every-door-reads-it.md) | The tool registry is one table, and the CLI and the MCP server are its doors | Accepted; narrows 0028 and 0183 |
+| [0186](0186-the-mcp-crate-sits-beside-the-ui.md) | The MCP crate sits beside the UI, and the chat panel lives in the shell | Accepted; narrows 0028 |
+| [0187](0187-a-chat-turn-is-one-undo-entry-and-a-plan-first.md) | A chat turn is one undo entry, and the first turn is a plan | Accepted; its two modes named by 0190 |
+| [0188](0188-a-local-control-channel-is-not-a-network-service.md) | A local control channel is not a network service | Accepted; clarifies 0028 |
+| [0189](0189-the-model-is-an-openai-compatible-endpoint.md) | The model is an OpenAI-compatible endpoint, and the key is not in the settings file | Accepted |
+| [0190](0190-plan-and-build-are-the-persons-switch.md) | Plan and build are the person's switch | Accepted; refines 0187 |
+| [0191](0191-the-inspectors-first-seven-findings.md) | The inspector's first seven findings | Accepted |
+| [0192](0192-a-recipe-is-rust-that-emits-commands.md) | A recipe is Rust that emits commands, and the recipe language waits | Accepted |
+| [0193](0193-an-agent-task-is-the-acceptance-test.md) | An agent task is the acceptance test | Accepted |
 | [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
 
 ## Format
