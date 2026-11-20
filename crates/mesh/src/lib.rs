@@ -514,9 +514,11 @@ fn constructive_mesh_with(
         return object_mesh(&build_constructive_mesh(body)?);
     }
     let handle = param::evaluate_constructive_body(kernel, body, inputs)?;
-    let data = tessellate_panel(&*kernel, handle, options)?;
+    // The body is released even when tessellation refuses it: a node that cannot be built must not
+    // leave a solid behind in the kernel for the rest of the session (W1).
+    let data = tessellate_panel(&*kernel, handle, options);
     kernel.clear();
-    Ok(data)
+    data
 }
 
 /// One panel to evaluate: the node, its resolved geometry and the inputs its derivation reads.

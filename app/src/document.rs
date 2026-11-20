@@ -407,6 +407,15 @@ pub(crate) struct Document {
     uploaded_preview: Option<PreviewKey>,
     /// The failure this tab last reported, drawn by the status bar of the window.
     pub(crate) last_error: Option<String>,
+    /// The nodes the last rebuild could not build, with the sentence each one reports.
+    ///
+    /// A boolean whose tool leaves no solid is a diagnostic on that body, not a dead frame: the
+    /// rest of the scene still draws and still follows the pointer, and this list says which node
+    /// went missing and why (W1).
+    pub(crate) scene_failures: Vec<crate::scene_build::SceneFailure>,
+    /// The sentence the last rebuild reported for its first failure, so the bar can drop it once
+    /// the scene builds again instead of keeping a stale complaint under a working picture.
+    scene_error: Option<String>,
     /// The window's display state, kept so a frame rebuilt outside the viewport draws what the
     /// viewport would.
     display: Display,
@@ -432,6 +441,11 @@ impl Document {
         let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), session.active_product())?;
         let scene_bounds = evaluated.bounds;
         let level_bounds = evaluated.levels;
+        // A node the kernel refuses is reported from the first frame, exactly as it is from every
+        // rebuild afterwards (W1).
+        let scene_failures = evaluated.failures.clone();
+        let scene_error = scene_failures.first().map(|failure| failure.message.clone());
+        let last_error = scene_error.clone();
         let fit = home_camera(scene_bounds)?;
         let layout = Layout::new(fit, settings.viewport.opening_view, settings.viewport.style);
         let display = Display::of(&settings.viewport, shell.colors);
@@ -496,7 +510,9 @@ impl Document {
             uploaded_preview: None,
             level_bounds,
             brackets: Vec::new(),
-            last_error: None,
+            last_error,
+            scene_failures,
+            scene_error,
             display,
         })
     }
@@ -924,6 +940,7 @@ impl Document {
         let evaluated = evaluate(&mut self.cache, &mut self.kernel, &self.session, self.editor.flags(), product)?;
         self.scene_bounds = evaluated.bounds;
         self.level_bounds = evaluated.levels;
+        self.note_scene_failures(evaluated.failures);
         let mut scene = evaluated.frame;
         self.layout.apply_frame_display(&mut scene);
         self.display.apply(&mut scene);
@@ -939,6 +956,32 @@ impl Document {
         self.rebuild.record(elapsed);
         self.osd.record_rebuild(elapsed);
         uploaded
+    }
+
+    /// Records the nodes this rebuild could not build and tells the armed boolean about its own.
+    ///
+    /// An armed boolean whose preview the kernel could not turn into a solid is not a result: the
+    /// arm drops its ✓ and keeps the sentence, so Enter refuses instead of storing a step that
+    /// leaves the body undrawable. The arm, the preview and the command ask the document's own
+    /// rule; this is the one part of the answer only the shell can see, because only the shell
+    /// owns the kernel (W1).
+    fn note_scene_failures(&mut self, failures: Vec<crate::scene_build::SceneFailure>) {
+        let message = failures.first().map(|failure| failure.message.clone());
+        match &message {
+            Some(message) => self.last_error = Some(message.clone()),
+            // The scene builds again: the sentence the bar showed for the missing body goes with
+            // it, unless something else has replaced it in the meantime.
+            None if self.last_error == self.scene_error => self.last_error = None,
+            None => {}
+        }
+        self.scene_error = message;
+        if let Some(arm) = self.editor.boolean_arm() {
+            let base = arm.base();
+            if let Some(failure) = failures.iter().find(|failure| failure.id == base) {
+                self.editor.refuse_boolean(failure.message.clone());
+            }
+        }
+        self.scene_failures = failures;
     }
 
     pub(crate) fn upload_scene(&mut self) -> Result<(), String> {

@@ -107,7 +107,9 @@ primitive is described in section 5.
   operation and the tool's id, never a copy of its geometry: the tool stays in the tree, may serve
   several bodies and may carry steps of its own, so an edit to it reaches every body that names it.
   A tool that is missing, is not a constructive body, names its own body or closes a cycle is a
-  readable load error, and a node a step names cannot be deleted until the step is gone.
+  readable load error, and a node a step names cannot be deleted until the step is gone. The pair is
+  one shape to the placement guard and to the drag, so a cutter may be carried into the body it
+  cuts.
 - Later features — a chamfer, a fillet — are added to the same list. None of them may reference a
   face or an edge of the evaluated result
   ([0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md)).
@@ -274,7 +276,8 @@ in one viewport mode. Its state is view state, not document data
   nodes that no longer exist.
 - An evaluation failure — no kernel, a contour the kernel rejects, a boolean that yields no solid —
   keeps the object and its data and reports a diagnostic on the node. It is not a load error and it
-  does not delete anything.
+  does not delete anything, and it never freezes the frame: the node draws nothing, the rest of the
+  scene still draws and still follows the pointer, and the status bar names the node.
 - `object.collapse` refuses to run while the current evaluation fails.
 
 ## 9. Collapse

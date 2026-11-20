@@ -52,6 +52,16 @@ unrelated edit re-derives none. A history with one extrusion keeps the analytic 
 kernel at all; a boolean body is built by the kernel and tessellated by the call the panel path
 already uses.
 
+**A boolean pair is one shape, not a collision.** The placement guard and the drag let a tool and
+the body it cuts interpenetrate — a cutter that could not be carried into a body would only cut a
+body it happened to be born inside — while every other pair keeps the rule that a part may not come
+to rest inside another (`Project::boolean_partners`).
+
+**A node the kernel refuses is a diagnostic, not a dead frame.** A body whose step leaves no solid
+draws nothing and says so in the status bar; the rest of the scene still draws and still follows the
+pointer, and an armed boolean whose preview is not a solid drops its ✓ instead of storing a body
+nobody can build. One unbuildable node must never freeze the picture at the last frame that built.
+
 **The mode is the contour boolean's, with bodies instead of rings.** The three Model cells arm it,
 the target is the selected body, the next picked body is the tool, the result fills the session
 overlay (ADR 0093), Enter dispatches `object.boolean.set` and Escape writes nothing. The object card

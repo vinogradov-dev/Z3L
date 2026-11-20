@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use engine::Session;
 use geom::{Aabb, DMat4, DVec2, DVec3};
-use kernel::{SolidKernel, TessOptions};
+use kernel::TessOptions;
 use kernel_truck::TruckKernel;
 use mesh::{EvaluationCache, PanelEval};
 use model::{
@@ -188,6 +188,21 @@ pub struct EvaluatedScene {
     pub bounds: Bounds,
     /// One box per container, in tree order: what the shell draws the bracket of an open level on.
     pub levels: Vec<LevelBounds>,
+    /// The nodes this pass could not build, in tree order, each with its sentence.
+    ///
+    /// A node whose geometry the kernel refuses — a boolean that leaves no solid, a contour it
+    /// cannot tessellate — is a diagnostic on that node, never a reason to lose the picture: the
+    /// rest of the scene still draws and still follows the pointer (`geometry.md` §8).
+    pub failures: Vec<SceneFailure>,
+}
+
+/// One node the evaluation could not build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneFailure {
+    /// The node whose geometry failed.
+    pub id: Id,
+    /// The sentence the status bar prints, already naming the node.
+    pub message: String,
 }
 
 /// Builds the demonstration project the interface tests draw.
@@ -311,24 +326,15 @@ pub fn evaluate(
     let mut evaluation = Evaluation::new(cache, kernel, session, flags, open_product);
     let mut scene_bounds = Bounds::empty();
     for child in project.root().children() {
-        let subtree = match evaluation.collect(std::slice::from_ref(child), root_world) {
-            Ok(subtree) => subtree,
-            Err(error) => {
-                // A failed pass must not leave half-evaluated bodies in the kernel, nor a stale
-                // entry that claims a mesh the document no longer produces.
-                evaluation.kernel.clear();
-                return Err(error);
-            }
-        };
-        scene_bounds.include_bounds(subtree);
+        scene_bounds.include_bounds(evaluation.collect(std::slice::from_ref(child), root_world));
     }
-    let Evaluation { cache, frame, levels, .. } = evaluation;
+    let Evaluation { cache, frame, levels, failures, .. } = evaluation;
     cache.finish();
     let mut frame = frame;
     if let Some(lighting) = authored_lighting_with(project, &[], flags) {
         frame.lighting = lighting;
     }
-    Ok(EvaluatedScene { frame, bounds: scene_bounds, levels })
+    Ok(EvaluatedScene { frame, bounds: scene_bounds, levels, failures })
 }
 
 /// The frame lighting from the authored lights.
@@ -452,6 +458,8 @@ struct Evaluation<'a> {
     /// The world box of every container met, so the shell can bracket the open ones without a
     /// second walk of the tree.
     levels: Vec<LevelBounds>,
+    /// The nodes this pass could not build, with the sentence each one reports.
+    failures: Vec<SceneFailure>,
     palette_index: usize,
 }
 
@@ -472,11 +480,12 @@ impl<'a> Evaluation<'a> {
             options: TessOptions::default(),
             frame: SceneFrame::default(),
             levels: Vec::new(),
+            failures: Vec::new(),
             palette_index: 0,
         }
     }
 
-    fn collect(&mut self, children: &[Node], parent: Placement) -> Result<Bounds, String> {
+    fn collect(&mut self, children: &[Node], parent: Placement) -> Bounds {
         let mut bounds = Bounds::empty();
         for child in children {
             // A hidden node takes its whole subtree with it, so the frame, its bounds, its
@@ -484,26 +493,36 @@ impl<'a> Evaluation<'a> {
             if self.flags.is_hidden(child.id()) {
                 continue;
             }
-            let child_bounds = match child {
-                Node::Container(container) => {
-                    let world = Placement::compose(parent, container.placement()).map_err(describe)?;
-                    let subtree = self.collect(container.children(), world)?;
-                    let subtree = match container.envelope() {
-                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
-                        None => subtree,
-                    };
-                    // Recorded for every container, open or not: which of them are open is view
-                    // state that moves without a rebuild, so the filtering happens at paint time.
-                    self.levels.push(LevelBounds { id: container.id(), corners: subtree.corners() });
-                    subtree
-                }
-                Node::Panel(panel) => self.collect_panel(panel, parent)?,
-                Node::Object(object) => self.collect_object(object, parent)?,
-                Node::Camera(_) | Node::Light(_) => Bounds::empty(),
-            };
-            bounds.include_bounds(child_bounds);
+            match self.collect_child(child, parent) {
+                Ok(child_bounds) => bounds.include_bounds(child_bounds),
+                // One node the geometry kernel refuses is a diagnostic on that node: the rest of
+                // the scene draws, so a person can see and fix the part that failed instead of a
+                // picture frozen at the last frame that happened to build (`geometry.md` §8).
+                Err(message) => self.failures.push(SceneFailure { id: child.id(), message }),
+            }
         }
-        Ok(bounds)
+        bounds
+    }
+
+    /// One child of the tree, or the sentence saying why it could not be built.
+    fn collect_child(&mut self, child: &Node, parent: Placement) -> Result<Bounds, String> {
+        Ok(match child {
+            Node::Container(container) => {
+                let world = Placement::compose(parent, container.placement()).map_err(describe)?;
+                let subtree = self.collect(container.children(), world);
+                let subtree = match container.envelope() {
+                    Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
+                    None => subtree,
+                };
+                // Recorded for every container, open or not: which of them are open is view
+                // state that moves without a rebuild, so the filtering happens at paint time.
+                self.levels.push(LevelBounds { id: container.id(), corners: subtree.corners() });
+                subtree
+            }
+            Node::Panel(panel) => self.collect_panel(panel, parent)?,
+            Node::Object(object) => self.collect_object(object, parent)?,
+            Node::Camera(_) | Node::Light(_) => Bounds::empty(),
+        })
     }
 
     /// Records one product's authored box as a scene item and returns the subtree bounds with it.

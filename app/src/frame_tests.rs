@@ -5794,3 +5794,109 @@ fn the_cross_on_a_booleans_card_leaves_it_and_writes_nothing() {
     assert!(document.session.project().object(base).is_some(), "both sources stay");
     assert!(document.session.project().object(other).is_some());
 }
+
+#[test]
+fn a_boolean_that_leaves_no_solid_is_a_diagnostic_and_not_a_frozen_frame() {
+    // The owner's report: a cut whose tool no longer meets the body left the whole picture frozen
+    // at the last frame that built, so a move showed only its handles. A node the kernel refuses
+    // is a diagnostic on that node and the rest of the scene keeps drawing and following the
+    // pointer (geometry.md §8).
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut harness = Harness::with_session("frame-boolean-empty", session);
+    {
+        let document = harness.app.tabs.active_mut();
+        document
+            .session
+            .dispatch(
+                engine::OBJECT_BOOLEAN_SET_ID,
+                &serde_json::json!({ "object": slab.get(), "op": "difference", "tool": cutter.get() }),
+            )
+            .expect("the step is stored");
+        // The cutter leaves the slab, so the difference removes nothing.
+        let away =
+            model::Placement::new(geom::DVec3::new(-800.0, 0.0, 0.0), geom::DQuat::IDENTITY).expect("a placement");
+        document
+            .session
+            .dispatch(
+                engine::node_cmds::NODE_PLACEMENT_SET_ID,
+                &serde_json::json!({ "node": cutter.get(), "placement": away }),
+            )
+            .expect("the cutter moves away");
+    }
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    assert_eq!(drawn_bodies(&harness), vec![cutter], "the body that cannot be built draws nothing");
+    assert_eq!(document.scene_failures.len(), 1, "the node reports its own failure");
+    assert_eq!(document.scene_failures.first().expect("one failure").id, slab);
+    let reported = document.last_error.clone().unwrap_or_default();
+    assert!(reported.starts_with("Slab:"), "the status bar names the body: {reported}");
+    assert!(document.can_undo(), "the move reached the document");
+    let recorded = document.session.project().revision().get();
+    assert!(recorded >= 2, "the document moved: revision {recorded}");
+
+    // Moving the cutter back into the slab rebuilds the body and drops the sentence with it: the
+    // failure is a reading of the scene, not a latch on the tab.
+    {
+        let document = harness.app.tabs.active_mut();
+        // Back through the slab: a boolean pair may interpenetrate, so the move that brings the
+        // cutter home is one the guard allows (ADR 0197).
+        let back =
+            model::Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a placement");
+        document
+            .session
+            .dispatch(
+                engine::node_cmds::NODE_PLACEMENT_SET_ID,
+                &serde_json::json!({ "node": cutter.get(), "placement": back }),
+            )
+            .expect("the cutter comes back");
+    }
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert_eq!(drawn_bodies(&harness), vec![slab, cutter], "the cut draws again once the tool meets the body");
+    assert!(document.scene_failures.is_empty(), "the scene builds");
+    assert!(document.last_error.is_none(), "the sentence goes with the failure: {:?}", document.last_error);
+}
+
+#[test]
+fn an_armed_boolean_whose_result_is_not_a_solid_refuses_its_enter() {
+    // The preview asks the kernel the same question the ✓ will: a cut that leaves nothing has no
+    // result to store, so the card drops its check and Enter keeps the mode without writing.
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut project = session.project().clone();
+    project
+        .set_node_placement(
+            cutter,
+            model::Placement::new(geom::DVec3::new(-800.0, 0.0, 0.0), geom::DQuat::IDENTITY).expect("a placement"),
+        )
+        .expect("the cutter moves away");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut harness = Harness::with_session("frame-boolean-empty-armed", session);
+    harness.settle();
+    let revision = harness.revision();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![cutter, slab]);
+        assert!(
+            document.editor.arm_body_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the mode arms on the body"
+        );
+    }
+    harness.settle();
+
+    {
+        let document = harness.app.tabs.active();
+        let arm = document.editor.boolean_arm().expect("the mode is armed");
+        assert!(!arm.is_ready(), "a cut that leaves no solid is not a result");
+        assert!(arm.refusal().is_some(), "the arm says why");
+        assert_eq!(harness.revision(), revision, "nothing was written");
+    }
+
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_some(), "a refused commit keeps the mode alive");
+    assert_eq!(harness.revision(), revision, "a refused commit writes nothing");
+    let body = document.session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    assert_eq!(body.booleans().count(), 0, "the body keeps its history");
+}

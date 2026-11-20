@@ -176,6 +176,18 @@ impl Editor {
         });
     }
 
+    /// Marks the last preview as one the kernel could not build, and keeps the sentence.
+    ///
+    /// The arm's own rule asks the document; whether the *result* is a solid only the shell knows,
+    /// because only the shell owns the geometry kernel. A refusal drops the ✓ — a check that would
+    /// store a body nobody can draw is worse than no check — and the status bar says why (W1).
+    pub fn refuse_boolean(&mut self, reason: String) {
+        if let Some(arm) = self.boolean.as_mut() {
+            arm.previewed = false;
+            arm.refusal = Some(reason);
+        }
+    }
+
     /// Drops the arm and the preview it drew; nothing was written, so undo is untouched.
     pub fn cancel_boolean(&mut self, session: &mut Session) {
         self.boolean = None;

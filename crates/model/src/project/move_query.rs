@@ -343,7 +343,12 @@ impl Project {
         if !pivot.is_finite() {
             return None;
         }
-        Some(RotateRule { pivot, movers, obstacles: self.obstacles(&targets), contact: contact.map(Contact::handle) })
+        Some(RotateRule {
+            pivot,
+            movers,
+            obstacles: self.obstacles_outside_booleans(&targets),
+            contact: contact.map(Contact::handle),
+        })
     }
 
     /// The rule that measures a drag of `targets` under the workspace's settings.
@@ -368,7 +373,7 @@ impl Project {
         let floor = settings.floor.then(|| floor_bound(&movers)).flatten();
         // A drag the document does not measure carries no obstacles at all: the free move goes where
         // the hand puts it and only the pointer's own distance reaches the placement (ADR 0180).
-        let obstacles = if settings.measured { self.obstacles(targets) } else { Vec::new() };
+        let obstacles = if settings.measured { self.obstacles_outside_booleans(targets) } else { Vec::new() };
         Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps, contact: contact.map(Contact::handle) })
     }
 
@@ -393,7 +398,9 @@ impl Project {
         if targets.is_empty() {
             return None;
         }
-        let obstacles = self.obstacles(&targets);
+        let partners = self.boolean_partners(&targets);
+        let obstacles: Vec<Obstacle> =
+            self.obstacles(&targets).into_iter().filter(|obstacle| !partners.contains(&obstacle.box_.id)).collect();
         for moved in &targets {
             let Some(lands) =
                 self.world_placement_with(*moved, placements).and_then(|world| self.box_at(*moved, world))
@@ -415,6 +422,62 @@ impl Project {
             }
         }
         None
+    }
+
+    /// The obstacles a move or a turn of `targets` must respect: every other part, minus the nodes
+    /// that stand in a boolean relation with one of them.
+    ///
+    /// A tool and the body it cuts are one shape, so the pair is not "resting inside" and the drag
+    /// that brings them together is the drag a boolean needs (W1, ADR 0197). Everything else keeps
+    /// the rule, and the filter is applied once per rule instead of once per pair (X90).
+    fn obstacles_outside_booleans(&self, targets: &[Id]) -> Vec<Obstacle> {
+        let partners = self.boolean_partners(targets);
+        self.obstacles(targets).into_iter().filter(|obstacle| !partners.contains(&obstacle.box_.id)).collect()
+    }
+
+    /// Every node in a boolean relation with any of `nodes`, in either direction.
+    pub fn boolean_partners(&self, nodes: &[Id]) -> HashSet<Id> {
+        let all = self.geometry_ids_under(self.root.id()).unwrap_or_default();
+        let mut partners = HashSet::new();
+        for node in nodes {
+            for other in &all {
+                if other != node && self.boolean_pair(*node, *other) {
+                    partners.insert(*other);
+                }
+            }
+        }
+        partners
+    }
+
+    /// Whether two nodes are operands of one boolean: one names the other as its tool, directly or
+    /// through a tool of its own.
+    ///
+    /// A boolean is a relationship, not a collision: the cutter and the body it cuts are one shape,
+    /// so the placement guard must let them interpenetrate while every other pair keeps the rule
+    /// that a part may not come to rest inside another (W1, ADR 0197).
+    pub fn boolean_pair(&self, a: Id, b: Id) -> bool {
+        self.names_boolean_tool(a, b) || self.names_boolean_tool(b, a)
+    }
+
+    /// Whether the boolean steps of `from`, or of a tool it names, name `target`.
+    fn names_boolean_tool(&self, from: Id, target: Id) -> bool {
+        let mut pending = vec![from];
+        let mut seen = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id.get()) {
+                continue;
+            }
+            let Some(body) = self.object(id).and_then(|object| object.geometry().as_constructive()) else {
+                continue;
+            };
+            for step in body.booleans() {
+                if step.tool() == target {
+                    return true;
+                }
+                pending.push(step.tool());
+            }
+        }
+        false
     }
 
     /// The world axes a move of this selection offers, in [`MoveAxis`] order.
@@ -2305,6 +2368,94 @@ mod tests {
             None,
             "a selection that moves rigidly stays as it was"
         );
+    }
+
+    #[test]
+    fn a_cutter_may_sink_into_the_body_it_cuts_and_no_other_part_may() {
+        // A boolean is a relationship, not a collision: the placement guard lets the pair
+        // interpenetrate, because a cutter that cannot enter the body cannot cut it (W1, ADR 0197).
+        // Every other pair keeps the rule that a part may not come to rest inside another.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let block = |project: &mut Project, name: &str, at: (i64, i64, i64)| {
+            let body = Constructive::extrude(
+                Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a ring"),
+                millimetres(18),
+            )
+            .expect("a body");
+            project.add_object(root, name, place3(at), Geometry::Constructive(body)).expect("a body")
+        };
+        let slab = block(&mut project, "Slab", (0, 0, 0));
+        let cutter = block(&mut project, "Cutter", (200, 0, 0));
+        let stranger = block(&mut project, "Stranger", (400, 0, 0));
+
+        // Without a step, sinking one body into another is refused, whatever the two are called.
+        assert_eq!(
+            project.resting_conflict(&[(cutter, place3((50, 50, 0)))], None),
+            Some(Resting { moved: cutter, standing: slab })
+        );
+
+        project.set_object_boolean(slab, BooleanOp::Difference, cutter).expect("the slab cuts with the cutter");
+        assert!(project.boolean_pair(slab, cutter), "the pair is an operand of one step");
+        assert_eq!(project.resting_conflict(&[(cutter, place3((50, 50, 0)))], None), None, "the cutter may sink in");
+        assert_eq!(
+            project.resting_conflict(&[(stranger, place3((50, 50, 0)))], None),
+            Some(Resting { moved: stranger, standing: slab }),
+            "a body nobody cuts with keeps the rule"
+        );
+    }
+
+    #[test]
+    fn a_cutter_drags_into_the_body_it_cuts() {
+        // The drag reads the same relation as the write guard: a cutter that could not be carried
+        // into the body would only cut a body it happened to be born inside (W1, ADR 0197).
+        let mut project = empty_project();
+        let root = project.root().id();
+        let slab = project
+            .add_object(
+                root,
+                "Slab",
+                place3((0, 0, 0)),
+                Geometry::Constructive(
+                    Constructive::extrude(
+                        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)])
+                            .expect("a ring"),
+                        millimetres(18),
+                    )
+                    .expect("a body"),
+                ),
+            )
+            .expect("a slab");
+        let cutter = project
+            .add_object(
+                root,
+                "Cutter",
+                place3((300, 0, 0)),
+                Geometry::Constructive(
+                    Constructive::extrude(
+                        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)])
+                            .expect("a ring"),
+                        millimetres(40),
+                    )
+                    .expect("a body"),
+                ),
+            )
+            .expect("a cutter");
+
+        // Without the step the slab stops the drag at its own face.
+        let blocked = limit(&project, &[cutter], MoveAxis::X, -250.0);
+        assert_eq!(stops(blocked), (-200.0, Some(slab)), "the slab stops a body nobody cuts with");
+
+        project.set_object_boolean(slab, BooleanOp::Difference, cutter).expect("the slab cuts with the cutter");
+        let free = limit(&project, &[cutter], MoveAxis::X, -250.0);
+        assert_eq!(stops(free), (-250.0, None), "the cutter travels into the body it cuts");
+    }
+
+    /// A placement at whole millimetres.
+    fn place3(at: (i64, i64, i64)) -> Placement {
+        Placement::IDENTITY
+            .with_translation(millimetres(at.0), millimetres(at.1), millimetres(at.2))
+            .expect("a placement")
     }
 
     #[test]
