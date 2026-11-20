@@ -221,7 +221,7 @@ impl FolderWriter {
         let systems = crate::external::ExternalSystemRegistry::new(rows.systems)?;
         let saved = items
             .iter()
-            .map(|item| Ok((item, ItemWire::from_item(item, &kinds, &properties)?)))
+            .map(|item| Ok((item, ItemWire::from_item(item, &kinds, &properties, &families)?)))
             .collect::<Result<Vec<(&NomenclatureItem, ItemWire)>, CatalogError>>()?;
 
         // The candidate: every record this folder carries, the batch in place of its old selves.
@@ -234,7 +234,7 @@ impl FolderWriter {
                 replaced.push(path.clone());
                 continue;
             }
-            records.push(wire.to_item(&kinds, &properties)?);
+            records.push(wire.to_item(&kinds, &properties, &families)?);
         }
         records.extend(items.iter().cloned());
         // The cheapest gate there is: the directory the reader would build decides, so a save and a

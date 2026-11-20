@@ -228,6 +228,9 @@ pub struct FamilyWire {
     pub slug: String,
     /// The family's name.
     pub label: String,
+    /// The record the family is read against, when a package names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<model::ItemId>,
 }
 
 /// One record, in written form.
@@ -251,6 +254,12 @@ pub struct ItemWire {
     /// The keys other systems know the record by.
     #[serde(default)]
     pub external: Vec<ExternalKey>,
+    /// The record's family, by slug, when it belongs to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Where the record sits inside its family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u16>,
 }
 
 impl ManifestWire {
@@ -305,11 +314,15 @@ impl RegistryWire {
             .families
             .iter()
             .map(|family| {
-                Family::new(
+                let row = Family::new(
                     FamilyCode::new(family.code).ok_or(CatalogError::Empty { row: "a family code" })?,
                     Slug::new(family.slug.clone())?,
                     family.label.clone(),
-                )
+                )?;
+                Ok(match family.sample {
+                    Some(sample) => row.sampled(sample),
+                    None => row,
+                })
             })
             .collect::<Result<Vec<_>, CatalogError>>()?;
         let systems = self
@@ -356,6 +369,7 @@ impl ItemWire {
         item: &NomenclatureItem,
         kinds: &crate::kind::KindRegistry,
         properties: &crate::property::PropertyRegistry,
+        families: &crate::family::FamilyRegistry,
     ) -> Result<Self, CatalogError> {
         let kind = kinds.get(item.kind()).ok_or(CatalogError::UnknownKind { item: item.id(), kind: item.kind() })?;
         let mut props = BTreeMap::new();
@@ -364,6 +378,13 @@ impl ItemWire {
                 properties.get(*code).ok_or(CatalogError::UnknownProperty { item: item.id(), property: *code })?;
             props.insert(row.slug().as_str().to_owned(), value.clone());
         }
+        let family = match item.family() {
+            Some(code) => {
+                let row = families.get(code).ok_or(CatalogError::UnknownFamily { code })?;
+                Some(row.slug().as_str().to_owned())
+            }
+            None => None,
+        };
         Ok(Self {
             id: item.id(),
             kind: kind.slug().as_str().to_owned(),
@@ -372,6 +393,8 @@ impl ItemWire {
             archived: item.is_archived(),
             props,
             external: item.external().to_vec(),
+            family,
+            rank: item.rank(),
         })
     }
 
@@ -384,6 +407,7 @@ impl ItemWire {
         &self,
         kinds: &crate::kind::KindRegistry,
         properties: &crate::property::PropertyRegistry,
+        families: &crate::family::FamilyRegistry,
     ) -> Result<NomenclatureItem, CatalogError> {
         let kind = kinds.by_slug(&self.kind).ok_or(CatalogError::UnknownKindSlug { slug: self.kind.clone() })?;
         let mut props = BTreeMap::new();
@@ -406,6 +430,12 @@ impl ItemWire {
         }
         for key in &self.external {
             item = item.with_external(key.clone())?;
+        }
+        if let Some(slug) = &self.family {
+            let family = families.by_slug(slug).ok_or(CatalogError::UnknownFamilySlug { slug: slug.clone() })?;
+            item = item.in_family(family.code(), self.rank);
+        } else if self.rank.is_some() {
+            return Err(CatalogError::RankWithoutFamily { item: self.id });
         }
         Ok(item)
     }
@@ -513,8 +543,10 @@ mod tests {
                 PropertyValue::Length(units::Length::from_micrometres(18_000)),
             )]),
             external: Vec::new(),
+            family: None,
+            rank: None,
         };
-        let item = wire.to_item(&kinds, &properties).expect("a record");
+        let item = wire.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect("a record");
         assert_eq!(item.kind(), KindCode::new(1).expect("a code"));
         assert!(item.prop(PropertyCode::new(1).expect("a code")).is_some(), "the slug became its code");
     }
@@ -551,13 +583,61 @@ mod tests {
             archived: false,
             props: BTreeMap::from([("price".to_owned(), PropertyValue::Money(price.clone()))]),
             external: Vec::new(),
+            family: None,
+            rank: None,
         };
         let json = serde_json::to_string(&wire).expect("serialize");
         assert!(json.contains("\"minor\":320000") && json.contains("supplier-egger"), "{json}");
         let back: ItemWire = serde_json::from_str(&json).expect("read back");
-        let item = back.to_item(&kinds, &properties).expect("a record");
+        let item = back.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect("a record");
         let read = item.prop(PropertyCode::new(1).expect("a code")).expect("the price");
         assert_eq!(read, &PropertyValue::Money(price));
+    }
+
+    #[test]
+    fn a_record_names_its_family_by_slug_and_keeps_its_rank() {
+        let families = crate::family::FamilyRegistry::new([crate::family::Family::new(
+            crate::family::FamilyCode::new(1).expect("a code"),
+            Slug::new("oak").expect("a slug"),
+            "Oak",
+        )
+        .expect("a family")])
+        .expect("one family");
+        let kinds = crate::kind::KindRegistry::new([Kind::new(
+            KindCode::new(1).expect("a code"),
+            Slug::new("sheet-material").expect("a slug"),
+            "Sheet material",
+            [],
+            [],
+            [Trait::Sheet],
+        )
+        .expect("a kind")])
+        .expect("one kind");
+        let properties = crate::property::PropertyRegistry::default();
+        let record = |family: Option<&str>, rank: Option<u16>| ItemWire {
+            id: ItemId::new(712, 34).expect("an id"),
+            kind: "sheet-material".to_owned(),
+            name: "Oak board".to_owned(),
+            slug: "oak".to_owned(),
+            archived: false,
+            props: BTreeMap::new(),
+            external: Vec::new(),
+            family: family.map(str::to_owned),
+            rank,
+        };
+
+        let item = record(Some("oak"), Some(2)).to_item(&kinds, &properties, &families).expect("a record");
+        assert_eq!(item.family().map(|code| code.get()), Some(1));
+        assert_eq!(item.rank(), Some(2));
+        let written = ItemWire::from_item(&item, &kinds, &properties, &families).expect("a record in writing");
+        assert_eq!(written.family.as_deref(), Some("oak"), "a file names the family by its slug");
+        assert_eq!(written.rank, Some(2));
+
+        let refusal = record(Some("walnut"), Some(1)).to_item(&kinds, &properties, &families).expect_err("no family");
+        assert!(refusal.to_string().contains("walnut"), "{refusal}");
+
+        let refusal = record(None, Some(1)).to_item(&kinds, &properties, &families).expect_err("a rank with none");
+        assert!(refusal.to_string().contains("names no family"), "{refusal}");
     }
 
     #[test]
@@ -581,8 +661,11 @@ mod tests {
             archived: false,
             props: BTreeMap::from([("colour".to_owned(), PropertyValue::Text("white".to_owned()))]),
             external: Vec::new(),
+            family: None,
+            rank: None,
         };
-        let refusal = wire.to_item(&kinds, &properties).expect_err("no such kind");
+        let refusal =
+            wire.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect_err("no such kind");
         assert!(refusal.to_string().contains("sheet-material"), "{refusal}");
     }
 }

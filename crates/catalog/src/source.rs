@@ -449,7 +449,7 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
 
     let mut records = Vec::with_capacity(items.len());
     for item in &items {
-        let record = item.value.to_item(&kinds, &properties).map_err(|error| LoadError::File {
+        let record = item.value.to_item(&kinds, &properties, &families).map_err(|error| LoadError::File {
             package: item.package.clone(),
             path: item.path.clone(),
             reason: error.to_string(),

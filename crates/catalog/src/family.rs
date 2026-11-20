@@ -49,13 +49,15 @@ impl From<FamilyCode> for u16 {
 ///
 /// A family is the answer to "the plug that belongs to this corpus" (`§10`), so it is a registry row
 /// of its own and one registry serves every record: a board decor, its matching edge banding and a
-/// plug meet in the same family. The rank orders the members from the reference sample outwards, and
-/// it is the *member's* rank, which is why a family row carries the sample and not the order.
+/// plug meet in the same family. The **member** carries the rank an item has inside its family, so a
+/// member nearest the family's reference sample wins; the family row names that sample and nothing
+/// else, because one row cannot order many members.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Family {
     code: FamilyCode,
     slug: Slug,
     label: String,
+    sample: Option<model::ItemId>,
 }
 
 impl Family {
@@ -65,7 +67,18 @@ impl Family {
         if label.trim().is_empty() {
             return Err(CatalogError::Empty { row: "a family label" });
         }
-        Ok(Self { code, slug, label })
+        Ok(Self { code, slug, label, sample: None })
+    }
+
+    /// The same family with the record a workshop holds up as its reference sample.
+    pub fn sampled(mut self, sample: model::ItemId) -> Self {
+        self.sample = Some(sample);
+        self
+    }
+
+    /// The record the family is read against, when a package names one.
+    pub const fn sample(&self) -> Option<model::ItemId> {
+        self.sample
     }
 
     /// The row's code.
@@ -151,6 +164,14 @@ mod tests {
         assert_eq!(registry.by_slug("oak").map(Family::label), Some("Oak"));
         assert!(registry.by_slug("white").is_none());
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn a_family_may_name_the_record_it_is_read_against() {
+        let sample = model::ItemId::new(712, 34).expect("an item id");
+        let row = family("oak").sampled(sample);
+        assert_eq!(row.sample(), Some(sample));
+        assert_eq!(family("white").sample(), None, "a family without a sample is read by rank alone");
     }
 
     #[test]

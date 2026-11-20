@@ -26,6 +26,7 @@ pub struct Directory {
     by_kind: BTreeMap<KindCode, Vec<ItemId>>,
     by_slug: BTreeMap<KindCode, BTreeMap<String, ItemId>>,
     by_external: BTreeMap<(String, String), ItemId>,
+    by_family: BTreeMap<crate::family::FamilyCode, Vec<ItemId>>,
     overlays: Vec<StockOverlay>,
     on_hand: BTreeMap<ItemId, OnHand>,
     pub(crate) currency: Option<crate::money::Currency>,
@@ -59,6 +60,16 @@ impl Directory {
             directory.by_kind.entry(kind).or_default().push(id);
             directory.items.insert(id, item);
         }
+        // A family orders its members by rank, so two members of one family cannot hold one rank:
+        // a substitution would answer whichever came first in the file (`§6`).
+        let mut ranks: BTreeMap<(crate::family::FamilyCode, u16), ItemId> = BTreeMap::new();
+        for item in directory.items.values() {
+            if let (Some(family), Some(rank)) = (item.family(), item.rank())
+                && let Some(other) = ranks.insert((family, rank), item.id())
+            {
+                return Err(CatalogError::DuplicateRank { family, rank, item: item.id(), other });
+            }
+        }
         let ids: Vec<ItemId> = directory.items.keys().copied().collect();
         for id in ids {
             let Some(item) = directory.items.get(&id).cloned() else {
@@ -66,6 +77,26 @@ impl Directory {
             };
             item.check(&directory)?;
             directory.index_external(&item)?;
+            if let Some(family) = item.family() {
+                directory.by_family.entry(family).or_default().push(item.id());
+            }
+        }
+        // A family read against a record that is not one of its members is a mistake in the package: the
+        // rank it would order by belongs to another family.
+        for family in directory.families.iter() {
+            if let Some(sample) = family.sample()
+                && !directory.items.get(&sample).is_some_and(|item| item.family() == Some(family.code()))
+            {
+                return Err(CatalogError::SampleNotMember { family: family.code(), sample });
+            }
+        }
+        for members in directory.by_family.values_mut() {
+            members.sort_by_key(|id| {
+                let Some(item) = directory.items.get(id) else {
+                    return (u16::MAX, *id);
+                };
+                (item.rank().unwrap_or(u16::MAX), *id)
+            });
         }
         // Prices outlive the rows that wrote them: the currency is the one every record agrees on, and
         // a second one is a package mistake rather than a reader's guess (`§11`).
@@ -152,6 +183,19 @@ impl Directory {
     /// The registry of the foreign systems an item's keys name.
     pub const fn systems(&self) -> &ExternalSystemRegistry {
         &self.systems
+    }
+
+    /// The records of `family`, nearest the reference sample first.
+    ///
+    /// Ordered by rank and then by id, so a substitution that walks the list is stable across two
+    /// loads of one directory: a file written in another order still answers the same member (`§10`).
+    pub fn family_members(&self, family: crate::family::FamilyCode) -> impl Iterator<Item = &NomenclatureItem> {
+        self.by_family.get(&family).into_iter().flatten().filter_map(|id| self.items.get(id))
+    }
+
+    /// How many records the family holds.
+    pub fn family_size(&self, family: crate::family::FamilyCode) -> usize {
+        self.by_family.get(&family).map_or(0, Vec::len)
     }
 
     /// The record a foreign system knows by `key`, when one claims it.
@@ -461,6 +505,69 @@ mod tests {
         let sentence = refusal.to_string();
         assert!(sentence.contains("712-35") && sentence.contains("712-34"), "both records are named: {sentence}");
         assert!(sentence.contains("EUR") && sentence.contains("RUB"), "and both currencies: {sentence}");
+    }
+
+    /// A family registry with one `oak` family, optionally read against `sample`.
+    fn oak_family(sample: Option<ItemId>) -> FamilyRegistry {
+        let row = Family::new(FamilyCode::new(1).expect("a family code"), Slug::new("oak").expect("a slug"), "Oak")
+            .expect("a family");
+        let row = match sample {
+            Some(sample) => row.sampled(sample),
+            None => row,
+        };
+        FamilyRegistry::new([row]).expect("one family")
+    }
+
+    fn ranked(serial: u32, rank: Option<u16>) -> NomenclatureItem {
+        board(serial, "White melamine", &format!("white-{serial}"))
+            .in_family(FamilyCode::new(1).expect("a family code"), rank)
+    }
+
+    #[test]
+    fn a_family_orders_its_members_by_rank_and_then_by_id() {
+        let directory = Directory::new(
+            [ranked(35, Some(2)), ranked(34, None), ranked(36, Some(1))],
+            KindRegistry::new([kind()]).expect("one kind"),
+            PropertyRegistry::new([thickness()]).expect("one property"),
+            oak_family(None),
+            ExternalSystemRegistry::default(),
+        )
+        .expect("a directory");
+        let family = FamilyCode::new(1).expect("a family code");
+        let order: Vec<ItemId> = directory.family_members(family).map(NomenclatureItem::id).collect();
+        assert_eq!(order, vec![id(712, 36), id(712, 35), id(712, 34)], "rank one, rank two, then the unranked");
+        assert_eq!(directory.family_size(family), 3);
+        assert_eq!(directory.family_members(FamilyCode::new(2).expect("a code")).count(), 0);
+    }
+
+    #[test]
+    fn two_members_of_one_family_cannot_hold_one_rank() {
+        let refusal = Directory::new(
+            [ranked(34, Some(1)), ranked(35, Some(1))],
+            KindRegistry::new([kind()]).expect("one kind"),
+            PropertyRegistry::new([thickness()]).expect("one property"),
+            oak_family(None),
+            ExternalSystemRegistry::default(),
+        )
+        .expect_err("a family ranks each member once");
+        let sentence = refusal.to_string();
+        assert!(
+            sentence.contains("712-35") && sentence.contains("712-34") && sentence.contains("rank 1"),
+            "{sentence}"
+        );
+    }
+
+    #[test]
+    fn a_family_read_against_a_record_of_another_family_is_refused() {
+        let refusal = Directory::new(
+            [ranked(34, Some(1))],
+            KindRegistry::new([kind()]).expect("one kind"),
+            PropertyRegistry::new([thickness()]).expect("one property"),
+            oak_family(Some(id(712, 99))),
+            ExternalSystemRegistry::default(),
+        )
+        .expect_err("712-99 is not an oak member");
+        assert!(refusal.to_string().contains("712-99"), "{refusal}");
     }
 
     #[test]

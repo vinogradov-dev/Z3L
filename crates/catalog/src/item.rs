@@ -89,6 +89,12 @@ pub struct NomenclatureItem {
     props: PropertySet,
     #[serde(default)]
     external: Vec<ExternalKey>,
+    /// The family the record stands in for its kin in, when it belongs to one (`§6`).
+    #[serde(default)]
+    family: Option<crate::family::FamilyCode>,
+    /// Where the record sits inside its family, from the reference sample outwards.
+    #[serde(default)]
+    rank: Option<u16>,
 }
 
 impl NomenclatureItem {
@@ -108,13 +114,33 @@ impl NomenclatureItem {
         if length > MAX_ITEM_NAME_CHARS {
             return Err(CatalogError::TooLong { text: name, length, limit: MAX_ITEM_NAME_CHARS });
         }
-        Ok(Self { id, kind, name, slug, archived: false, props, external: Vec::new() })
+        Ok(Self { id, kind, name, slug, archived: false, props, external: Vec::new(), family: None, rank: None })
     }
 
     /// The same item marked out of production: it still resolves, and every card says so.
     pub fn archived(mut self) -> Self {
         self.archived = true;
         self
+    }
+
+    /// The same record placed in `family` at `rank`, which is where a substitution reads it (`§10`).
+    ///
+    /// The registry decides whether the family exists and whether the rank is free; this value only
+    /// carries what the package wrote.
+    pub fn in_family(mut self, family: crate::family::FamilyCode, rank: Option<u16>) -> Self {
+        self.family = Some(family);
+        self.rank = rank;
+        self
+    }
+
+    /// The family the record belongs to, when it belongs to one.
+    pub const fn family(&self) -> Option<crate::family::FamilyCode> {
+        self.family
+    }
+
+    /// Where the record sits inside its family, from the reference sample outwards.
+    pub const fn rank(&self) -> Option<u16> {
+        self.rank
     }
 
     /// The same item with one more foreign key.
@@ -221,6 +247,11 @@ impl NomenclatureItem {
             if !self.props.contains_key(required) {
                 return Err(CatalogError::MissingProperty { item: self.id, kind: self.kind, property: *required });
             }
+        }
+        if let Some(family) = self.family
+            && directory.families().get(family).is_none()
+        {
+            return Err(CatalogError::UnknownFamily { code: family });
         }
         let mut systems: BTreeSet<&str> = BTreeSet::new();
         for key in &self.external {

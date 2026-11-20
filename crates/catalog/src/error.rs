@@ -229,6 +229,40 @@ pub enum CatalogError {
         /// The family that was asked for.
         code: FamilyCode,
     },
+    /// Two members of one family hold one rank.
+    #[error(
+        "item `{item}` and item `{other}` both hold rank {rank} in family `{family}`; a family ranks each member once"
+    )]
+    DuplicateRank {
+        /// The family both belong to.
+        family: crate::family::FamilyCode,
+        /// The rank both claim.
+        rank: u16,
+        /// The record that claims it.
+        item: ItemId,
+        /// The record that already holds it.
+        other: ItemId,
+    },
+    /// A family's reference sample is not one of its members.
+    #[error("family `{family}` is read against item `{sample}`, which is not one of its members")]
+    SampleNotMember {
+        /// The family.
+        family: crate::family::FamilyCode,
+        /// The record it names as its sample.
+        sample: ItemId,
+    },
+    /// A record names a family by a slug no connected package declares.
+    #[error("`{slug}` is not a family any connected package declares")]
+    UnknownFamilySlug {
+        /// The slug the file used.
+        slug: String,
+    },
+    /// A record carries a rank and names no family to hold it.
+    #[error("item `{item}` carries a rank and names no family; a rank orders the members of a family")]
+    RankWithoutFamily {
+        /// The record.
+        item: ItemId,
+    },
     /// A record names a kind by a slug no connected package declares.
     #[error("`{slug}` is not a kind any connected package declares")]
     UnknownKindSlug {
