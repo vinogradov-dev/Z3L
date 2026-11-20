@@ -2518,6 +2518,39 @@ fn a_contour_boolean_commits_one_object_and_one_undo_entry() {
 }
 
 #[test]
+fn an_extruded_body_arms_a_boolean_and_a_primitive_arms_nothing() {
+    // The owner's habit: draw a square, extrude it, draw a second, extrude it, and combine them. A
+    // body's profile is the ring it was extruded from, so the armed mode takes a body exactly as it
+    // takes the drawing, while a primitive that draws no ring stays out (X98).
+    let (mut project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    for id in &ids {
+        project.extrude_object_path(*id, millimetres(18)).expect("the ring becomes a body");
+    }
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    editor.select_node(Some(sphere));
+    assert!(!editor.arm_boolean(engine::ContourOp::Union, session.project()), "a primitive draws no ring");
+
+    editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()), "two bodies arm the mode");
+    assert!(editor.update_boolean(&mut session), "two bodies preview their union");
+    assert!(editor.boolean_arm().is_some_and(BooleanArm::is_ready));
+    let created = editor.commit_boolean(&mut session, crate::Lang::En).expect("the result is stored");
+    let path = session
+        .project()
+        .object(created)
+        .expect("the new object")
+        .geometry()
+        .as_path()
+        .expect("two crossing profiles leave one ring");
+    assert_eq!(path.bounds_micrometres(), ([0, 0], [150_000, 75_000]), "the profiles are read where they stand");
+}
+
+#[test]
 fn a_boolean_cell_without_a_ring_arms_nothing_and_a_second_press_drops_it() {
     let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
     let mut session = Session::with_directory(project, sample_catalog());

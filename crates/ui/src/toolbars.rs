@@ -382,6 +382,9 @@ pub struct RibbonContext {
     pub selected: Option<Id>,
     /// Whether the selection is a path, and whether that path is closed.
     pub selected_path: Option<bool>,
+    /// Whether the selection draws one closed ring a boolean can take: a path object or a body's
+    /// own profile (X98).
+    pub selected_ring: bool,
     /// The tool that owns the next click.
     pub active: Option<ToolActivity>,
     /// The view is perspective rather than orthographic.
@@ -814,7 +817,7 @@ mod tests {
 
     use super::*;
     use crate::draw::DEFAULT_POLYGON_SIDES;
-    use crate::toolbars::ready::extrude_hint;
+    use crate::toolbars::ready::{extrude_hint, ready};
     use crate::toolbars::spec::{self, TabSpec, VariantSpec};
 
     /// A context where every live tool can run and the viewport owns its view.
@@ -824,6 +827,7 @@ mod tests {
             product_open: true,
             selected: None,
             selected_path: None,
+            selected_ring: false,
             active: None,
             perspective: true,
             owns_view: true,
@@ -1353,6 +1357,28 @@ mod tests {
         assert_eq!(size, Some(egui::vec2(RIBBON_CELL_WIDTH, RIBBON_ROW_HEIGHT)), "the cell is the metric");
         assert_eq!(images, 1, "the icon is painted as one image");
         assert!(texts.is_empty(), "a cell carries no caption: {texts:?}");
+    }
+
+    #[test]
+    fn a_body_enables_the_three_boolean_cells_and_a_path_payload_alone_does_not() {
+        // The context's ring is the profile a body grew from, so the three cells run on a body
+        // exactly as on the drawing it was extruded from (X98); the extrude cell keeps its own rule,
+        // because a body has no path payload to extrude a second time.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("sketch"));
+        let node = Id::new(7).expect("id");
+        let body = RibbonContext { selected: Some(node), selected_ring: true, ..full_context() };
+        let path = RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() };
+        for id in ["sketch.booleans.union", "sketch.booleans.subtract", "sketch.booleans.intersect"] {
+            let cell = tool(id);
+            let kind = cell.run.expect("a boolean cell runs a tool");
+            assert!(ready(kind, cell, &state, body, Lang::En).enabled, "{id} runs on a body's profile");
+            assert!(!ready(kind, cell, &state, path, Lang::En).enabled, "{id} needs a ring, not a path alone");
+        }
+        let extrude = tool("model.create.extrude");
+        let kind = extrude.run.expect("the extrude cell runs a tool");
+        assert!(!ready(kind, extrude, &state, body, Lang::En).enabled, "a body is not a path to extrude");
+        assert!(ready(kind, extrude, &state, path, Lang::En).enabled, "a closed path still extrudes");
     }
 
     #[test]

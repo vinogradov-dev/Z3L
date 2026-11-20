@@ -39,6 +39,11 @@ a figure with a hole, and a hole needs the region vocabulary of G4. Such an oper
 nothing and says so, exactly as an empty intersection or a result equal to one operand does: a
 refusal writes nothing, and the sources stay.
 
+**An operand's ring is the one chain its node draws.** A path object answers with the chain the
+user drew and a constructive body with the profile it was extruded from (ADR 0074), so a body that
+was drawn, extruded and kept combines exactly as the drawing it was made of, while a contour set
+draws several rings and a primitive and a mesh draw none (X98).
+
 **A panel outline is never an operand.** A panel's cutouts are its parameters, and a cutout that
 would split the board into two is that command's refusal, not a boolean over a panel's contour.
 

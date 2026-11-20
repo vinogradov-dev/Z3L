@@ -426,6 +426,20 @@ impl Geometry {
         }
     }
 
+    /// The one chain a payload draws, when it draws one.
+    ///
+    /// A path object draws the chain the user drew; a constructive body draws the path it grew from
+    /// ([`Constructive::path`]), so a body's profile is editable and combinable wherever the ring
+    /// lives instead of only in the object that happens to store it (X98). A contour set draws
+    /// several rings, which no single chain describes; a mesh and a primitive draw none.
+    pub const fn profile(&self) -> Option<&Path> {
+        match self {
+            Self::Path(path) => Some(path),
+            Self::Constructive(constructive) => Some(constructive.path()),
+            Self::Mesh(_) | Self::Primitive(_) | Self::Contours(_) => None,
+        }
+    }
+
     /// The ring set, when the payload is a contour set.
     pub const fn as_contours(&self) -> Option<&Contours> {
         match self {
@@ -911,6 +925,23 @@ mod tests {
             Err(ProjectError::NodeNotFound { id: Id::new(99).expect("id") })
         );
         assert_eq!(project.revision(), Revision::ZERO, "a refused command does not bump the revision");
+    }
+
+    #[test]
+    fn the_profile_is_a_paths_chain_or_the_one_a_body_grew_from() {
+        // The one chain a payload draws, which is what a contour boolean reads: a body answers with
+        // the path it was extruded from, so the ring is reachable wherever it lives (X98).
+        let path = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("a rectangle");
+        assert_eq!(Geometry::Path(path.clone()).profile(), Some(&path), "a drawing is its own profile");
+        let body = Constructive::extrude(path.clone(), millimetres(18)).expect("a body");
+        assert_eq!(Geometry::Constructive(body).profile(), Some(&path), "a body owns the profile it grew from");
+        let mesh = Geometry::Mesh(box_mesh());
+        assert_eq!(mesh.profile(), None, "a baked mesh draws no chain");
+        let sphere = Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+        assert_eq!(Geometry::Primitive(sphere).profile(), None, "a primitive draws no chain");
+        let set = Contours::new(vec![path.clone()]).expect("a set");
+        assert_eq!(Geometry::Contours(set).profile(), None, "a contour set draws several rings, not one");
     }
 
     #[test]

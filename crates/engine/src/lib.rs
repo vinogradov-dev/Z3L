@@ -36,6 +36,7 @@ pub use commands::{CommandError, CommandOutcome, CommandRegistry, CommandSpec, C
 pub use contour_cmds::{
     BooleanError, CONTOUR_INTERSECT_ID, CONTOUR_INTERSECT_LABEL, CONTOUR_SUBTRACT_ID, CONTOUR_SUBTRACT_LABEL,
     CONTOUR_UNION_ID, CONTOUR_UNION_LABEL, ContourBoolean, ContourBooleanPlan, ContourOp, MAX_BOOLEAN_OPERANDS,
+    is_contour_operand,
 };
 pub use diagnostics::{PanelDiagnostic, diagnose_panel};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
