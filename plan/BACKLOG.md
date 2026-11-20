@@ -64,19 +64,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test loads a standards file, a command takes its default from it, and a stale file is
    a notice.
   `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
-  Why: The assistant and the prototype expander both need the document without a window, and
-   only export reaches the engine from the command line today. A generator that writes the
-   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
-   command gate.
-  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
-   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
-   groups them as one undo entry and writes once; query <scene>
-   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
-   Session::dispatch and SceneFile: no second mutation path.
-  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
-   leaves the file untouched, and query tree prints the ids the fixture created.
-  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
 - `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
   Why: The prototype work needs three facts the document cannot store today: which container is
    a section, which prototype and card produced a node, so a command works while the library is
@@ -140,6 +127,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
+  Why: The assistant and the prototype expander both need the document without a window, and
+   only export reaches the engine from the command line today. A generator that writes the
+   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
+   command gate.
+  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
+   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
+   groups them as one undo entry and writes once; query <scene>
+   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
+   Session::dispatch and SceneFile: no second mutation path.
+  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
+   leaves the file untouched, and query tree prints the ids the fixture created.
+  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/` — `31c8e0c`
 
 - `[x]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
   Why: The owner asked for a rotation tool that honours the bodies: turning a door into its
