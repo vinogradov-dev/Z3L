@@ -529,6 +529,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    asserts a section named beside `--at end` receives the task; the interjection test passes
    with no `--section`; `cargo xtask ci` is green.
   `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md`
+- `[ ]` **G4** an area between contours is picked and extruded, the SketchUp way
+  Why: A drawing made of several contours encloses areas between them and inside their holes,
+   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
+   rings, so a maker who drew a frame cannot extrude the opening it leaves.
+  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
+   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
+   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
+   tool measures its cell. The hover highlights that region through the session overlay (ADR
+   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
+   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
+   has, so an area is a query result and not a document field.
+  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
+   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
+   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
+   revision. The area is derived on read and cached by the set, its revision and its placement.
+  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs`
 
 ## Done
 
