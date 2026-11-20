@@ -2,8 +2,8 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 27,
-    "revision": 5,
+    "schema_version": 28,
+    "revision": 6,
     "next_id": 12,
     "root": {
       "id": 1,
@@ -108,7 +108,12 @@
                 "angle": 45000
               }
             ],
-            "properties": {}
+            "properties": {
+              "plug.confirmat": {
+                "kind": "item",
+                "id": "712-34"
+              }
+            }
           }
         },
         {

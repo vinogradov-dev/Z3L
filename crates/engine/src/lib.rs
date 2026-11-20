@@ -52,5 +52,6 @@ pub use panel_cmds::{
 };
 pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};
+pub use resolve::{SelectionCache, Stamp, anchor_of, choice_of, resolve_slot};
 pub use scene_cmds::{CameraCreate, CameraProjectionSet, LightCreate, LightParamsSet, SceneActiveCameraSet};
 pub use session::{EditScope, Session};

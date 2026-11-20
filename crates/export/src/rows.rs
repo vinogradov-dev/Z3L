@@ -639,6 +639,9 @@ fn property_json(value: &PropertyValue) -> Value {
         PropertyValue::Text { value } => Value::String(value.clone()),
         PropertyValue::Choice { key, label } => json!({ "key": key, "label": label }),
         PropertyValue::Reference { id } => Value::from(id.get()),
+        // A catalogue record is written as the id a reader can look up in the package's own rows, so a
+        // report never carries a number that means nothing outside this machine.
+        PropertyValue::Item { id } => Value::String(id.to_string()),
         PropertyValue::Class { value } => Value::String(value.to_string()),
         PropertyValue::Structured { value } => value.clone(),
     }
