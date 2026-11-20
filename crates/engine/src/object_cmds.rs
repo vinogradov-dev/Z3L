@@ -16,6 +16,7 @@ use model::{
     rebase_origin_at,
 };
 use param::validate_extrusion_contour;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::Length;
@@ -48,7 +49,7 @@ pub use model::{MAX_PRIMITIVE_SIZE, PrimitiveKind};
 /// size by [`Primitive::from_kind`].
 ///
 /// [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPrimitiveCreate {
     /// Id of the container that receives the new object.
@@ -62,7 +63,7 @@ pub struct ObjectPrimitiveCreate {
 }
 
 /// The `object.primitive.create` command.
-pub(crate) const OBJECT_PRIMITIVE_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PRIMITIVE_CREATE: CommandSpec = CommandSpec::new::<ObjectPrimitiveCreate>(
     OBJECT_PRIMITIVE_CREATE_ID,
     OBJECT_PRIMITIVE_CREATE_LABEL,
     object_primitive_create_enabled,
@@ -89,7 +90,7 @@ fn object_primitive_create_run(
 }
 
 /// Parameters for `object.primitive.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPrimitiveReplace {
     /// The parametric primitive whose parameters change.
@@ -99,7 +100,7 @@ pub struct ObjectPrimitiveReplace {
 }
 
 /// The `object.primitive.replace` command.
-pub(crate) const OBJECT_PRIMITIVE_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PRIMITIVE_REPLACE: CommandSpec = CommandSpec::new::<ObjectPrimitiveReplace>(
     OBJECT_PRIMITIVE_REPLACE_ID,
     OBJECT_PRIMITIVE_REPLACE_LABEL,
     object_primitive_replace_enabled,
@@ -131,7 +132,7 @@ pub const OBJECT_EXTRUDE_CREATE_ID: &str = "object.extrude.create";
 pub const OBJECT_EXTRUDE_CREATE_LABEL: Message = Message::CmdCreateExtrusion;
 
 /// Parameters for `object.extrude.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectExtrudeCreate {
     /// Id of the container that receives the new object.
@@ -148,7 +149,7 @@ pub struct ObjectExtrudeCreate {
 }
 
 /// The `object.extrude.create` command.
-pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new::<ObjectExtrudeCreate>(
     OBJECT_EXTRUDE_CREATE_ID,
     OBJECT_EXTRUDE_CREATE_LABEL,
     object_extrude_create_enabled,
@@ -211,7 +212,7 @@ pub const OBJECT_CONTOUR_REPLACE_ID: &str = "object.contour.replace";
 pub const OBJECT_CONTOUR_REPLACE_LABEL: Message = Message::CmdReplaceContour;
 
 /// Parameters for `object.contour.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectContourReplace {
     /// The constructive object whose path changes.
@@ -221,7 +222,7 @@ pub struct ObjectContourReplace {
 }
 
 /// The `object.contour.replace` command.
-pub(crate) const OBJECT_CONTOUR_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_CONTOUR_REPLACE: CommandSpec = CommandSpec::new::<ObjectContourReplace>(
     OBJECT_CONTOUR_REPLACE_ID,
     OBJECT_CONTOUR_REPLACE_LABEL,
     object_contour_replace_enabled,
@@ -268,7 +269,7 @@ pub const OBJECT_PATH_EXTRUDE_ID: &str = "object.path.extrude";
 pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudePath;
 
 /// Parameters for `object.path.extrude`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathExtrude {
     /// The path node that becomes the body.
@@ -278,7 +279,7 @@ pub struct ObjectPathExtrude {
 }
 
 /// The `object.path.extrude` command.
-pub(crate) const OBJECT_PATH_EXTRUDE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_EXTRUDE: CommandSpec = CommandSpec::new::<ObjectPathExtrude>(
     OBJECT_PATH_EXTRUDE_ID,
     OBJECT_PATH_EXTRUDE_LABEL,
     object_path_extrude_enabled,
@@ -329,7 +330,7 @@ pub const OBJECT_EXTRUDE_HEIGHT_SET_ID: &str = "object.extrude.height.set";
 pub const OBJECT_EXTRUDE_HEIGHT_SET_LABEL: Message = Message::CmdSetExtrusionHeight;
 
 /// Parameters for `object.extrude.height.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectExtrudeHeightSet {
     /// The constructive object whose extrusion height changes.
@@ -339,7 +340,7 @@ pub struct ObjectExtrudeHeightSet {
 }
 
 /// The `object.extrude.height.set` command.
-pub(crate) const OBJECT_EXTRUDE_HEIGHT_SET: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_EXTRUDE_HEIGHT_SET: CommandSpec = CommandSpec::new::<ObjectExtrudeHeightSet>(
     OBJECT_EXTRUDE_HEIGHT_SET_ID,
     OBJECT_EXTRUDE_HEIGHT_SET_LABEL,
     object_extrude_height_set_enabled,
@@ -384,7 +385,7 @@ pub const OBJECT_PATH_CREATE_ID: &str = "object.path.create";
 pub const OBJECT_PATH_CREATE_LABEL: Message = Message::CmdCreatePath;
 
 /// Parameters for `object.path.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathCreate {
     /// Id of the container that receives the new object.
@@ -399,7 +400,7 @@ pub struct ObjectPathCreate {
 }
 
 /// The `object.path.create` command.
-pub(crate) const OBJECT_PATH_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_CREATE: CommandSpec = CommandSpec::new::<ObjectPathCreate>(
     OBJECT_PATH_CREATE_ID,
     OBJECT_PATH_CREATE_LABEL,
     object_path_create_enabled,
@@ -434,7 +435,7 @@ pub const OBJECT_PATH_REPLACE_ID: &str = "object.path.replace";
 pub const OBJECT_PATH_REPLACE_LABEL: Message = Message::CmdReplacePath;
 
 /// Parameters for `object.path.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathReplace {
     /// The path object whose drawing changes.
@@ -444,7 +445,7 @@ pub struct ObjectPathReplace {
 }
 
 /// The `object.path.replace` command.
-pub(crate) const OBJECT_PATH_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_REPLACE: CommandSpec = CommandSpec::new::<ObjectPathReplace>(
     OBJECT_PATH_REPLACE_ID,
     OBJECT_PATH_REPLACE_LABEL,
     object_path_replace_enabled,
@@ -476,7 +477,7 @@ pub const OBJECT_COLLAPSE_ID: &str = "object.collapse";
 pub const OBJECT_COLLAPSE_LABEL: Message = Message::CmdCollapseToMesh;
 
 /// Parameters for `object.collapse`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectCollapse {
     /// The constructive or primitive object to bake.
@@ -484,8 +485,12 @@ pub struct ObjectCollapse {
 }
 
 /// The `object.collapse` command.
-pub(crate) const OBJECT_COLLAPSE: CommandSpec =
-    CommandSpec::new(OBJECT_COLLAPSE_ID, OBJECT_COLLAPSE_LABEL, object_collapse_enabled, object_collapse_run);
+pub(crate) const OBJECT_COLLAPSE: CommandSpec = CommandSpec::new::<ObjectCollapse>(
+    OBJECT_COLLAPSE_ID,
+    OBJECT_COLLAPSE_LABEL,
+    object_collapse_enabled,
+    object_collapse_run,
+);
 
 /// Whether a geometry payload is derived from parameters and can be baked to a mesh.
 fn is_derived(geometry: &Geometry) -> bool {

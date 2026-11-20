@@ -15,6 +15,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use schemars::JsonSchema;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use text::Message;
@@ -51,7 +52,7 @@ pub enum ClassCodeError {
 /// A code is valid whether or not the registry knows it: the shape is a property of the digits, the
 /// meaning arrives with the row (ADR 0094). An unknown code is kept on load and refused on
 /// assignment ([`ClassCode::is_assignable`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 pub struct ClassCode(u32);
 
 impl ClassCode {

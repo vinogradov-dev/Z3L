@@ -5,6 +5,7 @@
 //!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
+use schemars::JsonSchema;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,7 +20,7 @@ use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue}
 /// of the camera object, not of the viewport ([ADR 0036]).
 ///
 /// [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CameraProjection {
     /// A perspective view with a vertical field of view.

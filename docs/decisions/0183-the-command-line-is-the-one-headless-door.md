@@ -1,6 +1,6 @@
 # 0183. The command line is the one headless door into the document
 
-- Status: Accepted
+- Status: Accepted; "one headless door" narrowed by 0185, parameter-schema gap closed by 0194
 - Date: 2026-11-20
 
 ## Context

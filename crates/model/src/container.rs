@@ -4,6 +4,7 @@
 //! an explicit marker says so; an unmarked container is a group and can be flattened.
 //! The project root is a container too, with an immutable id and a zero pivot.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -23,7 +24,7 @@ use crate::{
 /// rectangle — a corner kitchen cabinet with one corner off, an end table drawn as a ring — and `x`
 /// and `y` stay the bounds of whatever shape it is, so every reader that only wants the reserved box
 /// still gets one answer (ADR 0159).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "EnvelopeWire")]
 pub struct Envelope {
     x: Length,
@@ -102,7 +103,7 @@ impl Envelope {
 }
 
 /// The serialized form of [`Envelope`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EnvelopeWire {
     x: Length,

@@ -5,6 +5,7 @@
 //!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
 
+use schemars::JsonSchema;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -17,7 +18,7 @@ use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue}
 /// built-in key light is a default, not a node ([ADR 0036]).
 ///
 /// [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LightKind {
     /// A directional light, like the sun.

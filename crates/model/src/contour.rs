@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use std::f64::consts::TAU;
 
 use geom::{Arc, DVec2, Line, Segment};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::{Degrees, Length};
@@ -1740,7 +1741,7 @@ pub const MAX_CONTOUR_SEGMENTS: usize = 256;
 pub const MAX_CONTOUR_COORDINATE: Length = Length::from_micrometres(1_000_000_000);
 
 /// Serialized form of [`Contour`]; validation happens in its `TryFrom` implementation.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ContourWire {
     segments: Vec<ContourSegmentEntryWire>,
@@ -1748,7 +1749,7 @@ struct ContourWire {
 }
 
 /// Serialized form of one ring element: the curve and its stable id.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ContourSegmentEntryWire {
     Line { id: ContourSegmentId, start: [Length; 2], end: [Length; 2] },
@@ -1802,7 +1803,7 @@ impl From<ContourSegmentEntry> for ContourSegmentEntryWire {
 /// stores its centre, radius and angles, so its endpoints are derived and can miss the point the
 /// user drew by more than a micrometre on a large radius; requiring exact equality would refuse a
 /// ring the user legitimately drew (ADR 0072).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "ContourWire", into = "ContourWire")]
 pub struct Contour {
     entries: Vec<ContourSegmentEntry>,
@@ -2260,7 +2261,7 @@ const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 1;
 /// A closed path may also remember the figure it was drawn as ([`PathShape`]). The tag stores no
 /// dimensions: the centre, the radius and the side count are read from the segments, and the tag
 /// only decides which constraint set the edit grips apply (ADR 0073). A structural edit clears it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "PathWire", into = "PathWire")]
 pub struct Path {
     entries: Vec<ContourSegmentEntry>,
@@ -2274,7 +2275,7 @@ pub struct Path {
 /// The tag is edit intent, not geometry: every dimension is derived from the segments, so a path
 /// cannot contradict itself by storing a radius that its arcs do not have. A tag that does not fit
 /// the stored segments is a load error (`PathError::ShapeMismatch`) rather than a silent downgrade.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PathShape {
     /// Four axis-aligned lines, the figure [`Path::rectangle`] builds.
@@ -3178,7 +3179,7 @@ pub enum PathError {
 }
 
 /// Serialized form of [`Path`]; validation happens in its `TryFrom` implementation.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PathWire {
     segments: Vec<ContourSegmentEntryWire>,
