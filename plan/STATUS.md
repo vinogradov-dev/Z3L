@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=31c8e0c updated=2026-11-20
+STATE: milestone=M7 phase=T task=- state=idle base=7af290a updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -33,7 +33,8 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-Nothing is scheduled: 10 open tasks wait in `## Next`.
+Nothing is scheduled: the contact port answers a real depth for a crossed pair, so the carry and the
+turn stop at a neighbour however far the pointer jumped
 
 ## Index
 
