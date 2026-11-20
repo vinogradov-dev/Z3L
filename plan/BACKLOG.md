@@ -177,20 +177,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   inside the footprint; a non-convex footprint is a readable refusal and never a board outside
   the case; the box case keeps today's answers; `cargo xtask ci` is green.
   `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
-- `[~]` **J3** a question about the scene is one tool, and its answers are resources
-  Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that
-   shells out for state cannot see what its own last call did. MCP carries both a call and a
-   read, and the read is the half that makes a turn cheap: the tree, the parts table, the
-   diagnostics and the envelope change only when the document does.
-  Shape: The five reports become one `query` tool with a typed selector, and the stable ones
-   also become resources read by URI. Each reuses the derivation that already owns the answer,
-   and the report envelope keeps the query, the file and the revision it read, so a stored
-   answer can say what it is about. Nothing on this surface writes.
-  Done: A test lists the resources and asserts the tree resource equals the same derivation
-   read through `z3l query tree`; an unknown selector is a readable refusal; a query leaves the
-   revision and the history untouched.
-  `files: app/src/cli/query.rs,crates/engine/src/session.rs`
-
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -586,6 +572,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 
 ## Done
+
+- `[x]` **J3** a question about the scene is one tool, and its answers are resources
+  Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that
+   shells out for state cannot see what its own last call did. MCP carries both a call and a
+   read, and the read is the half that makes a turn cheap: the tree, the parts table, the
+   diagnostics and the envelope change only when the document does.
+  Shape: The five reports become one `query` tool with a typed selector, and the stable ones
+   also become resources read by URI. Each reuses the derivation that already owns the answer,
+   and the report envelope keeps the query, the file and the revision it read, so a stored
+   answer can say what it is about. Nothing on this surface writes.
+  Done: A test lists the resources and asserts the tree resource equals the same derivation
+   read through `z3l query tree`; an unknown selector is a readable refusal; a query leaves the
+   revision and the history untouched.
+  `files: app/src/cli/query.rs,crates/engine/src/session.rs` — `b5c9d7f`
 
 - `[x]` **X98** a body's profile is a contour a boolean can take
   Why: The extrude cell rewrites a drawn ring into a body in place (`extrude_object_path` keeps
