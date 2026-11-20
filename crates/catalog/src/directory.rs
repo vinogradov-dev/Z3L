@@ -12,6 +12,7 @@ use crate::external::ExternalSystemRegistry;
 use crate::family::FamilyRegistry;
 use crate::item::NomenclatureItem;
 use crate::kind::{KindCode, KindRegistry};
+use crate::overlay::{OnHand, StockOverlay};
 use crate::property::PropertyRegistry;
 
 /// Everything the connected packages declare, indexed for the queries consumers use.
@@ -25,6 +26,8 @@ pub struct Directory {
     by_kind: BTreeMap<KindCode, Vec<ItemId>>,
     by_slug: BTreeMap<KindCode, BTreeMap<String, ItemId>>,
     by_external: BTreeMap<(String, String), ItemId>,
+    overlays: Vec<StockOverlay>,
+    on_hand: BTreeMap<ItemId, OnHand>,
     pub(crate) currency: Option<crate::money::Currency>,
 }
 
@@ -103,6 +106,47 @@ impl Directory {
     /// The family registry.
     pub const fn families(&self) -> &FamilyRegistry {
         &self.families
+    }
+
+    /// The overlays whose counts the directory carries, in name order.
+    pub fn overlays(&self) -> &[StockOverlay] {
+        &self.overlays
+    }
+
+    /// How many of `id` are on hand, with the overlay that measured it.
+    ///
+    /// A record with no overlay answers `None` and not a zero: a workshop may know a material it does
+    /// not stock, and a zero is a count somebody measured.
+    pub fn on_hand(&self, id: ItemId) -> Option<&OnHand> {
+        self.on_hand.get(&id)
+    }
+
+    /// The same directory with the stock overlays a package carries, refusing a record counted twice.
+    ///
+    /// Stock is an overlay and not a property (`§11`): it resolves beside the records, it survives a
+    /// record being absent, and removing the file leaves every other query answering as before.
+    pub fn with_overlays(mut self, overlays: impl IntoIterator<Item = StockOverlay>) -> Result<Self, CatalogError> {
+        let mut counted: BTreeMap<ItemId, OnHand> = BTreeMap::new();
+        let mut names: BTreeMap<ItemId, String> = BTreeMap::new();
+        let mut held: Vec<StockOverlay> = Vec::new();
+        for overlay in overlays {
+            for (id, count) in overlay.rows() {
+                if let Some(other) = names.get(&id) {
+                    return Err(CatalogError::StockClaimed {
+                        item: id,
+                        overlay: overlay.name().to_owned(),
+                        other: other.clone(),
+                    });
+                }
+                names.insert(id, overlay.name().to_owned());
+                counted.insert(id, OnHand::of(&overlay, count));
+            }
+            held.push(overlay);
+        }
+        held.sort_by(|left, right| left.name().cmp(right.name()));
+        self.overlays = held;
+        self.on_hand = counted;
+        Ok(self)
     }
 
     /// The registry of the foreign systems an item's keys name.

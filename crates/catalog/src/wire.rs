@@ -20,7 +20,7 @@ use crate::error::CatalogError;
 use crate::family::{Family, FamilyCode};
 use crate::item::{ExternalKey, ExternalSystemId, NomenclatureItem};
 use crate::kind::{Kind, KindCode, Trait};
-use crate::property::{Property, PropertyCode, PropertyType, PropertyValue};
+use crate::property::{Date, Property, PropertyCode, PropertyType, PropertyValue};
 use crate::slug::Slug;
 
 /// The registry schema this build writes and reads.
@@ -158,6 +158,54 @@ pub enum PropertyTypeWire {
     Date,
     /// A colour, for display.
     Color,
+}
+
+/// The schema of an overlay file: one version per layout, refused when it is not this build's.
+pub const OVERLAY_VERSION: u32 = 1;
+
+/// One overlay file, in written form: stock on hand, measured by a system on a day.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayWire {
+    /// The schema of this file.
+    pub version: u32,
+    /// The system that measured the counts; a registry row in the package's own registry.
+    pub source: String,
+    /// The day it measured them.
+    pub date: Date,
+    /// One row per record the overlay counts.
+    pub rows: Vec<StockRowWire>,
+}
+
+/// One overlay row, in written form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StockRowWire {
+    /// The record the count belongs to.
+    pub id: ItemId,
+    /// How many are on hand.
+    pub on_hand: u64,
+}
+
+impl OverlayWire {
+    /// The overlay, with its source resolved through the registry the packages declare.
+    ///
+    /// A source nobody declared is refused naming the overlay and the system: stock a card cannot
+    /// attribute is worse than no stock, because a person cannot tell whose count it is.
+    pub fn to_overlay(
+        &self,
+        name: &str,
+        systems: &crate::external::ExternalSystemRegistry,
+    ) -> Result<crate::overlay::StockOverlay, CatalogError> {
+        let source = crate::item::ExternalSystemId::new(self.source.clone())?;
+        if !systems.has(&source) {
+            return Err(CatalogError::UnknownStockSource {
+                overlay: name.to_owned(),
+                system: source.as_str().to_owned(),
+            });
+        }
+        crate::overlay::StockOverlay::new(name, source, self.date, self.rows.iter().map(|row| (row.id, row.on_hand)))
+    }
 }
 
 /// One foreign system, in written form.

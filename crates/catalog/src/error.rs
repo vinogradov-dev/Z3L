@@ -169,6 +169,32 @@ pub enum CatalogError {
         /// The system id that repeated.
         system: String,
     },
+    /// One overlay file names one item twice.
+    #[error("overlay `{overlay}` names item `{item}` twice; one file holds one count per record")]
+    DuplicateStock {
+        /// The overlay's name.
+        overlay: String,
+        /// The item it names twice.
+        item: ItemId,
+    },
+    /// Two overlays of the directory name one item, so its count has two answers.
+    #[error("item `{item}` is counted by overlay `{overlay}` and by `{other}`; one record has one stock")]
+    StockClaimed {
+        /// The item.
+        item: ItemId,
+        /// The overlay that claims it.
+        overlay: String,
+        /// The overlay that already holds it.
+        other: String,
+    },
+    /// An overlay names a source no connected package declares.
+    #[error("overlay `{overlay}` is written by `{system}`, which no connected package declares")]
+    UnknownStockSource {
+        /// The overlay's name.
+        overlay: String,
+        /// The system it names.
+        system: String,
+    },
     /// An item names a foreign system no connected package declares.
     #[error("item `{item}` names foreign system `{system}`, which no connected package declares")]
     UnknownSystem {
