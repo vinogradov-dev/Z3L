@@ -386,7 +386,9 @@ writes `plan/SESSION.md` from the entry in one validated step — a declared str
 the head of `## Next` into the order, which is where the old `take` then `start` pair came from. A
 task that arrives out of the work
 order — an owner-directed interjection — is filed with `cargo xtask task add --at top`, which puts it
-first in `## Now` and points `state` at it; an entry filed under `## Bugs` or `## Next` joins the
+first in `## Now` and points `state` at it; without `--at top` a new entry lands at the end of `## Next`,
+the section work is collected in before a stream takes it, so filing never disturbs the order a session
+is working through, and `--section Bugs` files a defect; an entry filed under `## Bugs` or `## Next` joins the
 order with `cargo xtask task take <ID> [--at top|end]`, which leaves `STATE:` alone when `## Now`
 still has work and becomes the current task when it is empty; `cargo xtask task defer <ID>` moves an
 open entry the other way, out of the order and back under `## Next`, and points `STATE:` at the next
