@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U118 state=idle base=495b17ddd9c51024bf561b9509812c783b13a2e4 updated=2026-11-20
+STATE: milestone=M7 phase=T task=X94 state=idle base=eb14b3b updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -44,7 +44,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-U118 is next: the five scene shading styles are one band, and each split view has an icon
+X94 is next: the status bar's three zones draw over one another
 
 ## Index
 

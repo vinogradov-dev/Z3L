@@ -44,29 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U118** the five scene shading styles are one band, and each split view has an icon
-  Why: The owner: the view buttons in the bottom toolbar mean the scene's shading styles —
-  wireframe, translucent and the rest — and they must be grouped; and the split-view buttons
-  (one view, two, four) carry text only and need their own icons. Today `style_buttons` draws
-  the five cells as an unnamed run between two dividers, so the set reads as five separate
-  switches rather than one choice, and `layout_popover` lists four text rows behind the single
-  generic `layout.svg`.
-  Shape: The five shades become one band in the anatomy the transform band already uses (ADR 0113):
-  states of one value are one control, so the cells touch with no gap, sit in one tinted frame,
-  the view's style draws pressed and one divider borders the band on either side; the group's
-  accessible name and hover line say it is the shading, not five switches. The four split
-  choices get artwork of their own under `assets/icons/view/` — one view, two columns, two
-  rows, four views — drawn with the `draw-icon` skill, listed in `assets/README.md` and named in
-  `icons::view`. `LayoutKind` gains `icon()`, `layout_popover` draws each row as glyph plus name
-  the way `preset_row` does, and the cluster's layout cell draws the active layout's icon
-  instead of the generic one, so the current split reads without opening the popover. No ADR:
-  the band copies a decided control, and the four drawings are reversible.
-  Done: The five styles draw as one band with the active cell pressed and one accessible name; the
-  four layout choices draw their own glyphs in the popover and the cluster's layout cell shows
-  the active one; every new file loads, the theme table lists the four rows, and a headless test
-  drives the cluster and reads the band's order and the chosen style; `cargo xtask ci` is green.
-  `files: app/src/view_cluster.rs,app/src/view_layout.rs,crates/ui/src/display.rs,crates/ui/src/icons.rs,assets/icons/view,assets/README.md,crates/text/src/messages.rs`
-
 - `[ ]` **X94** the status bar's three zones draw over one another
   Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
   row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
@@ -333,6 +310,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **U118** the five scene shading styles are one band, and each split view has an icon
+  Why: The owner: the view buttons in the bottom toolbar mean the scene's shading styles —
+  wireframe, translucent and the rest — and they must be grouped; and the split-view buttons
+  (one view, two, four) carry text only and need their own icons. Today `style_buttons` draws
+  the five cells as an unnamed run between two dividers, so the set reads as five separate
+  switches rather than one choice, and `layout_popover` lists four text rows behind the single
+  generic `layout.svg`.
+  Shape: The five shades become one band in the anatomy the transform band already uses (ADR 0113):
+  states of one value are one control, so the cells touch with no gap, sit in one tinted frame,
+  the view's style draws pressed and one divider borders the band on either side; the group's
+  accessible name and hover line say it is the shading, not five switches. The four split
+  choices get artwork of their own under `assets/icons/view/` — one view, two columns, two
+  rows, four views — drawn with the `draw-icon` skill, listed in `assets/README.md` and named in
+  `icons::view`. `LayoutKind` gains `icon()`, `layout_popover` draws each row as glyph plus name
+  the way `preset_row` does, and the cluster's layout cell draws the active layout's icon
+  instead of the generic one, so the current split reads without opening the popover. No ADR:
+  the band copies a decided control, and the four drawings are reversible.
+  Done: The five styles draw as one band with the active cell pressed and one accessible name; the
+  four layout choices draw their own glyphs in the popover and the cluster's layout cell shows
+  the active one; every new file loads, the theme table lists the four rows, and a headless test
+  drives the cluster and reads the band's order and the chosen style; `cargo xtask ci` is green.
+  `files: app/src/view_cluster.rs,app/src/view_layout.rs,crates/ui/src/display.rs,crates/ui/src/icons.rs,assets/icons/view,assets/README.md,crates/text/src/messages.rs` — `eb14b3b`
 
 - `[x]` **O9** selection walks six steps and says why
   Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
