@@ -420,7 +420,12 @@ impl Session {
     /// Installing is the batch's only write: the state the batch started from becomes the entry
     /// `undo` restores, the redo branch the batch invalidates is dropped, the saved marker decides
     /// whether the document is dirty, and a product the batch deleted stops being the open one.
+    ///
+    /// A batch is its own entry, so it closes an edit scope that happened to be open, the way a plain
+    /// dispatch does: a drag that lands afterwards must not merge into the entry this batch pushed,
+    /// or one undo would take the person's drag and somebody else's batch back together.
     fn land(&mut self, project: Project) {
+        self.edit = None;
         let previous = std::mem::replace(&mut self.project, project);
         self.undo.push(previous);
         self.redo.clear();
@@ -1385,6 +1390,34 @@ mod tests {
         assert_eq!(container.children().len(), 0, "one undo removes both panels");
         assert_eq!(container.name(), "Cabinet", "and takes the rename back");
         assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_batch_lands_over_an_open_edit_as_its_own_entry() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let panel = session.dispatch("panel.create", &create).expect("a panel").created_id().expect("an id");
+
+        // A drag is open when the batch arrives: it owns the entry it already pushed.
+        let scope = session.begin_edit();
+        let resize = json_params(&PanelResize { panel, nominal_size: sample_resized_panel_nominal_size() });
+        session.dispatch_in(scope, "panel.resize", &resize).expect("the drag");
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let report = session.batch(&[BatchStep::new("node.rename", rename)], BatchOptions::default());
+        assert_eq!(report.effect(), BatchEffect::Landed);
+
+        session.undo().expect("the first undo takes the batch back alone");
+        assert_eq!(session.project().container(product).expect("product").name(), "Cabinet");
+        assert_eq!(
+            session.project().panel(panel).expect("panel").nominal_size(),
+            sample_resized_panel_nominal_size(),
+            "the drag is still applied"
+        );
+        session.undo().expect("the second undo takes the drag back");
+        assert_eq!(session.project().panel(panel).expect("panel").nominal_size(), sample_panel_nominal_size());
+        session.undo().expect("the third undo takes the panel's creation back");
+        assert!(!session.can_undo(), "the creation, the drag and the batch are three entries");
     }
 
     #[test]
