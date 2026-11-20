@@ -1,313 +1,247 @@
-//! The read model: one JSON report about a saved scene.
+//! The read door: one question about the scene, one JSON answer, and the resources a client reads.
 //!
-//! A question is answered from the document and the catalogue and nothing else: no session state, no
-//! window, no second definition of a number. Three of the five reports reuse a derivation that
-//! already exists — `parts` is the published `parts` table of the order package, `tree` is the
-//! document's own node walk and `diagnostics` is [`engine::Session::panel_diagnostics`] — so a
-//! report and the editor cannot disagree (`docs/domain/prototypes.md` §8).
+//! A question is answered by [`engine::Session::read`] and by nothing else, so this module is only
+//! the door: it turns words into one typed [`Query`], prints the answer with the envelope a caller
+//! needs — which question, which file and which revision it read — and lists the questions that are
+//! stable enough to be read at an address instead of being called.
 //!
-//! Every report is one JSON object with the query name, the document it read and its rows, because a
-//! caller that stores an answer must be able to say which revision it is about. Lengths are whole
-//! micrometres, as the document stores them, and a world coordinate is millimetres with a `_mm` key,
-//! because a placement is a float at the geometry boundary.
+//! A **resource** is a question with no argument: the tree, the reserved boxes, the cut list and the
+//! panels' issues change only when the document does, so a client reads one by URI and caches the
+//! answer by the revision it carries. The niche takes a point, so it is an argument of the tool call
+//! and not a resource (ADR 0183, ADR 0185, ADR 0196).
 //!
-//! Changes when: a report kind is added, or a report's fields change.
+//! Nothing here writes: the session is built, read and dropped, so a query on a saved file is safe
+//! to run while an editor holds the same scene open.
+//!
+//! Changes when: a question is added, a report's fields change, or the resource table grows.
 
-use engine::{PanelDiagnostic, Session};
-use export::{DocumentMeta, ExportOptions, OrderPackage, TableData};
-use geom::DVec3;
-use model::{Id, Node, NodeQuery, Project, Sight};
+use engine::Query;
+use model::Project;
 use project::SceneFile;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::{CliError, QueryArgs};
 
-/// The five reports a query can ask for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueryKind {
-    /// Every node with its parent, class, level, path and placement.
-    Tree,
-    /// The box a product reserves, in its own frame and in world millimetres.
-    Box,
-    /// The cut list, as the order package's `parts` table prints it.
-    Parts,
-    /// Every panel problem the catalogue resolves.
-    Diagnostics,
-    /// The empty space around a point.
-    Niche,
+/// The media type of every answer.
+pub const MIME: &str = "application/json";
+
+/// One resource: a stable question, read at an address instead of being called.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Resource {
+    /// The URI the resource is read at, and the one a client caches by.
+    pub uri: &'static str,
+    /// The short name a resource list carries; it is the question's own name.
+    pub name: &'static str,
+    /// The sentence that says what an answer holds.
+    pub description: &'static str,
+    /// The question the URI names.
+    pub query: Query,
 }
 
-impl QueryKind {
-    /// The words a line or a refusal may name, in the order the help lists them.
-    pub const WORDS: &'static str = "tree, box, parts, diagnostics or niche";
-
-    /// Reads one report name.
-    pub fn parse(word: &str) -> Result<Self, CliError> {
-        match word {
-            "tree" => Ok(Self::Tree),
-            "box" => Ok(Self::Box),
-            "parts" => Ok(Self::Parts),
-            "diagnostics" => Ok(Self::Diagnostics),
-            "niche" => Ok(Self::Niche),
-            other => Err(CliError::Usage(format!("`{other}` is not a report; name {}", Self::WORDS))),
-        }
-    }
-
-    /// The report's own name, as the JSON envelope repeats it.
-    pub const fn word(self) -> &'static str {
-        match self {
-            Self::Tree => "tree",
-            Self::Box => "box",
-            Self::Parts => "parts",
-            Self::Diagnostics => "diagnostics",
-            Self::Niche => "niche",
-        }
+impl Resource {
+    /// Whether the resource answers at `uri`.
+    fn is_at(&self, uri: &str) -> bool {
+        self.uri.eq_ignore_ascii_case(uri)
     }
 }
 
-/// Reads a scene and prints the report the line asked for.
+/// The stable questions, and the URI each answers to.
 ///
-/// Nothing here writes: the session is built, read and dropped, so a query on a saved file is safe
-/// to run while an editor holds the same scene open.
+/// The four that need no argument are here; `niche` measures the space around a point, so its answer
+/// is about a place the caller chose and it stays a tool argument.
+pub const RESOURCES: [Resource; 4] = [
+    Resource {
+        uri: "z3l://scene/tree",
+        name: "tree",
+        description: "every node with its id, kind, name and children",
+        query: Query::Tree { node: None },
+    },
+    Resource {
+        uri: "z3l://scene/box",
+        name: "box",
+        description: "the box a product reserves, in its own frame and in world millimetres",
+        query: Query::Box { node: None },
+    },
+    Resource {
+        uri: "z3l://scene/parts",
+        name: "parts",
+        description: "the cut list -- the published `parts` table of the order package",
+        query: Query::Parts,
+    },
+    Resource {
+        uri: "z3l://scene/diagnostics",
+        name: "diagnostics",
+        description: "every panel problem the catalogue resolves, with a stable code",
+        query: Query::Diagnostics,
+    },
+];
+
+/// What one query line asks for: the table of resources, a question, or one resource.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ask {
+    /// Print the resource table, which needs no scene.
+    Resources,
+    /// One of the five questions, by the name the word form uses.
+    Question(&'static str),
+    /// One resource, by the URI a client reads it at.
+    Resource(&'static Resource),
+}
+
+impl Ask {
+    /// Reads what a line asks for.
+    ///
+    /// A URI is a resource and a bare word is a question; anything else is refused here, before a
+    /// scene is read, with the sentence that names what is accepted.
+    pub fn parse(word: &str) -> Result<Self, CliError> {
+        if word.starts_with("z3l:") {
+            return resource_at(word).map(Self::Resource).ok_or_else(|| CliError::Usage(no_resource(word)));
+        }
+        let Some(name) = Query::NAMES.iter().find(|name| name.eq_ignore_ascii_case(word)) else {
+            return Err(CliError::Usage(format!(
+                "`{word}` is neither a report nor a resource; name {} or {}",
+                Self::names(),
+                uris()
+            )));
+        };
+        Ok(Self::Question(name))
+    }
+
+    /// The names a help text and a refusal list, in the order the answers follow one another.
+    pub fn names() -> String {
+        Query::NAMES.join(", ")
+    }
+}
+
+/// The resource whose URI is `uri`, compared without case so a client's spelling is not a trap.
+pub fn resource_at(uri: &str) -> Option<&'static Resource> {
+    RESOURCES.iter().find(|resource| resource.is_at(uri))
+}
+
+/// Reads the scene and prints the answer the line asked for.
+///
+/// The resource table needs no scene, so a caller can list what it may read before it holds a file.
+/// Every other line opens the session the window would open and asks it one question.
 pub fn report(args: &QueryArgs) -> Result<String, CliError> {
-    let scene = SceneFile::read(&args.scene).map_err(CliError::Scene)?;
-    let file = args.scene.file_name().map(|name| name.to_string_lossy().into_owned());
+    if args.ask == Ask::Resources {
+        return text(listing());
+    }
+    let path = args
+        .scene
+        .as_deref()
+        .ok_or_else(|| CliError::Usage("query needs a scene: `z3l query <scene.z3l> tree`".to_owned()))?;
+    let file = path.file_name().map(|name| name.to_string_lossy().into_owned());
+    let scene = SceneFile::read(path).map_err(CliError::Scene)?;
     let session = super::recipe::session_of(scene.into_document())?;
-    let project = session.project();
-    let rows = match args.kind {
-        QueryKind::Tree => tree(project, args.id)?,
-        QueryKind::Box => box_report(project, args.id)?,
-        QueryKind::Parts => parts(project)?,
-        QueryKind::Diagnostics => diagnostics(&session),
-        QueryKind::Niche => niche(project, args)?,
-    };
-    let envelope = json!({
-        "query": args.kind.word(),
-        "document": {"file": file, "revision": project.revision().get()},
+    let query = query_of(args, session.project())?;
+    let rows = session.read(query).map_err(|error| CliError::Query(error.to_string()))?;
+    let mut envelope = json!({
+        "query": query.name(),
+        "document": {"file": file, "revision": session.project().revision().get()},
         "rows": rows,
     });
-    serde_json::to_string_pretty(&envelope).map_err(|error| CliError::Query(error.to_string()))
-}
-
-/// The node tree: the root with its subtree, or one node with its own.
-fn tree(project: &Project, id: Option<Id>) -> Result<Value, CliError> {
-    let Some(id) = id else {
-        let root = project.root();
-        let mut value = json!({"id": root.id().get(), "kind": "container", "name": root.name()});
-        let children: Vec<Value> = root.children().iter().map(|child| node_value(child, 0)).collect();
-        insert(&mut value, "children", Value::Array(children));
-        return Ok(value);
-    };
-    let node = project.node(id).ok_or_else(|| CliError::Query(no_node(id)))?;
-    Ok(node_value(node, 0))
-}
-
-/// One node, its kind, its name and its subtree.
-///
-/// The walk stops at the document's own nesting limit, so a tree that somehow holds more levels than
-/// the loader allows is cut short instead of exhausting the stack.
-fn node_value(node: &Node, depth: u32) -> Value {
-    let mut value = json!({"id": node.id().get(), "kind": kind(node), "name": node.name()});
-    if depth < Project::MAX_ASSEMBLY_DEPTH
-        && let Some(children) = node.children()
-    {
-        let children: Vec<Value> = children.iter().map(|child| node_value(child, depth.saturating_add(1))).collect();
-        insert(&mut value, "children", Value::Array(children));
+    if let Ask::Resource(resource) = args.ask {
+        insert(&mut envelope, "uri", Value::from(resource.uri));
     }
-    value
+    text(envelope)
 }
 
-/// The node kind a report prints.
-const fn kind(node: &Node) -> &'static str {
-    match node {
-        Node::Container(_) => "container",
-        Node::Panel(_) => "panel",
-        Node::Object(_) => "object",
-        Node::Camera(_) => "camera",
-        Node::Light(_) => "light",
+/// The question a line asks, with the argument it named resolved against the document.
+///
+/// Every refusal here is about the argument rather than the question, so the reason names the flag
+/// that has no place instead of repeating the report's name.
+fn query_of(args: &QueryArgs, project: &Project) -> Result<Query, CliError> {
+    match args.ask {
+        // `check` refused every scene and every flag the resource table would have carried.
+        Ask::Resource(resource) => Ok(resource.query),
+        Ask::Resources => Err(CliError::Usage("the resource list needs no scene".to_owned())),
+        Ask::Question("tree") => Ok(Query::Tree { node: args.id }),
+        Ask::Question("box") => Ok(Query::Box { node: args.id }),
+        Ask::Question("parts") => Ok(Query::Parts),
+        Ask::Question("diagnostics") => Ok(Query::Diagnostics),
+        Ask::Question(_) => Ok(Query::Niche { at: point_of(args, project)? }),
     }
 }
 
-/// The box every product reserves, or the one `--id` names.
-///
-/// The box is authored data: `wide`, `deep` and `high` are the product's own envelope (ADR 0097,
-/// ADR 0101) and the origin is where that envelope's minimum corner stands in the world.
-fn box_report(project: &Project, id: Option<Id>) -> Result<Value, CliError> {
-    let products: Vec<Id> = match id {
-        Some(id) => {
-            let named = project.container(id).filter(|container| container.envelope().is_some()).ok_or_else(|| {
-                CliError::Query(format!("node {id} is not a product; `box` reports the box a product reserves"))
-            })?;
-            vec![named.id()]
+/// The point `niche` measures: the one the line names, or the origin of the node it names.
+fn point_of(args: &QueryArgs, project: &Project) -> Result<[f64; 3], CliError> {
+    match (args.at, args.id) {
+        (Some(at), _) => Ok(at),
+        (None, Some(id)) => {
+            let origin = project.origin_world(id).ok_or_else(|| CliError::Query(format!("no node has id {id}")))?;
+            Ok([origin.x, origin.y, origin.z])
         }
-        None => project.products(),
-    };
-    let rows: Vec<Value> = products
-        .into_iter()
-        .filter_map(|product| {
-            let container = project.container(product)?;
-            let envelope = container.envelope()?;
-            let origin =
-                project.world_placement(product).map(|placement| placement.translation()).unwrap_or(DVec3::ZERO);
-            Some(json!({
-                "node_id": product.get(),
-                "name": container.name(),
-                "size_um": {
-                    "x": envelope.x().micrometres(),
-                    "y": envelope.y().micrometres(),
-                    "z": envelope.z().micrometres(),
-                },
-                "origin_mm": [origin.x, origin.y, origin.z],
-            }))
-        })
-        .collect();
-    Ok(Value::Array(rows))
-}
-
-/// The cut list, read from the one derivation the order package publishes.
-fn parts(project: &Project) -> Result<Value, CliError> {
-    let catalog = crate::scene_build::default_catalog().map_err(CliError::Catalog)?;
-    let document = DocumentMeta { file: None, revision: project.revision().get(), hash: None };
-    // `query parts` asks for the cut list, not for a price verdict: the age flag belongs to `export`.
-    let options = ExportOptions { timestamp: None, document, order: None, price_max_age_days: None };
-    let package = OrderPackage::build(project, &catalog, options).map_err(CliError::Export)?;
-    let table = package
-        .table("parts")
-        .ok_or_else(|| CliError::Query("the order package publishes no `parts` table".to_owned()))?;
-    Ok(rows_of(table))
-}
-
-/// Every panel's issues, with a stable code and the id the issue names.
-fn diagnostics(session: &Session) -> Value {
-    let project = session.project();
-    let rows: Vec<Value> = project
-        .query(&NodeQuery::any())
-        .into_iter()
-        .filter(|id| project.panel(*id).is_some())
-        .map(|id| {
-            let issues: Vec<Value> = session.panel_diagnostics(id).iter().map(issue).collect();
-            let name = project.panel(id).map(|panel| panel.name().to_owned()).unwrap_or_default();
-            json!({"node_id": id.get(), "name": name, "issues": issues})
-        })
-        .collect();
-    Value::Array(rows)
-}
-
-/// One diagnostic as a code and, when it names something, that id.
-fn issue(diagnostic: &PanelDiagnostic) -> Value {
-    let mut value = json!({"code": diagnostic_code(diagnostic)});
-    let named = match diagnostic {
-        PanelDiagnostic::NoMaterial
-        | PanelDiagnostic::NonPositiveCore
-        | PanelDiagnostic::InvalidOutline
-        | PanelDiagnostic::CoreRemoved
-        | PanelDiagnostic::CoreDisconnected => None,
-        PanelDiagnostic::MissingMaterial { material } => Some(material.to_string()),
-        PanelDiagnostic::MissingBandingMaterial { edge, .. } => Some(edge.get().to_string()),
-        PanelDiagnostic::MissingCornerBandingMaterial { corner, .. } => Some(corner.get().to_string()),
-        PanelDiagnostic::MissingRingBandingMaterial { segment, .. } => Some(segment.get().to_string()),
-        PanelDiagnostic::MachiningOutsideCore { machining } => Some(machining.to_string()),
-        PanelDiagnostic::BlindDepthNotLessThanThickness { machining, depth, thickness } => {
-            insert(&mut value, "depth_um", Value::from(depth.micrometres()));
-            insert(&mut value, "thickness_um", Value::from(thickness.micrometres()));
-            Some(machining.to_string())
-        }
-    };
-    if let Some(named) = named {
-        insert(&mut value, "ref", Value::from(named));
+        (None, None) => Err(CliError::Usage("`niche` needs a point: `--at x,y,z` or `--id <node>`".to_owned())),
     }
-    value
 }
 
-/// The stable code of one diagnostic.
+/// Refuses an argument the question the line names does not read.
 ///
-/// The code is the report's contract, so it is a fixed English word and not a translation; the
-/// sentence a person reads stays in `ui::panel_card::diagnostic_message`. A new variant turns this
-/// match into a compile error instead of printing a silent word.
-const fn diagnostic_code(diagnostic: &PanelDiagnostic) -> &'static str {
-    match diagnostic {
-        PanelDiagnostic::NoMaterial => "no_material",
-        PanelDiagnostic::MissingMaterial { .. } => "missing_material",
-        PanelDiagnostic::MissingBandingMaterial { .. } => "missing_banding_material",
-        PanelDiagnostic::MissingCornerBandingMaterial { .. } => "missing_corner_banding_material",
-        PanelDiagnostic::MissingRingBandingMaterial { .. } => "missing_ring_banding_material",
-        PanelDiagnostic::NonPositiveCore => "non_positive_core",
-        PanelDiagnostic::InvalidOutline => "invalid_outline",
-        PanelDiagnostic::MachiningOutsideCore { .. } => "machining_outside_core",
-        PanelDiagnostic::CoreRemoved => "core_removed",
-        PanelDiagnostic::CoreDisconnected => "core_disconnected",
-        PanelDiagnostic::BlindDepthNotLessThanThickness { .. } => "blind_depth_not_less_than_thickness",
+/// The words a line writes are the shell's, so the shell is where an argument that belongs to another
+/// question is caught: a client that sends a typed selector cannot make the mistake at all.
+pub fn check(args: &QueryArgs) -> Result<(), CliError> {
+    if args.ask == Ask::Resources {
+        return match (args.scene.is_some(), args.id, args.at) {
+            (false, None, None) => Ok(()),
+            _ => Err(CliError::Usage("the resource table is printed on its own: `z3l query --resources`".to_owned())),
+        };
     }
-}
-
-/// The empty space around a point, as the fill tool measures it.
-///
-/// `--at` names the point in world millimetres; `--id` asks for the space at that node's origin, so
-/// a caller that already holds a node id needs no second measurement. The sight passes everything —
-/// a query has no session and therefore no hidden set — and the contact adapter is the shell's own,
-/// so a splayed post or a plate with a hole bounds the cell here exactly as it does in the window.
-fn niche(project: &Project, args: &QueryArgs) -> Result<Value, CliError> {
-    let point = match (args.at, args.id) {
-        (Some(at), _) => DVec3::new(at[0], at[1], at[2]),
-        (None, Some(id)) => project.origin_world(id).ok_or_else(|| CliError::Query(no_node(id)))?,
-        (None, None) => {
-            return Err(CliError::Usage("`niche` needs a point: `--at x,y,z` or `--id <node>`".to_owned()));
-        }
+    if args.scene.is_none() {
+        return Err(CliError::Usage("query needs a scene: `z3l query <scene.z3l> tree`".to_owned()));
+    }
+    let (takes_node, takes_point) = match args.ask {
+        Ask::Question("niche") => (true, true),
+        Ask::Question("tree" | "box") => (true, false),
+        _ => (false, false),
     };
-    let contact = crate::scene_build::contact_engine();
-    let niche = project.niche(point, Sight::none(), Some(&*contact)).map_err(|refusal| {
-        CliError::Query(format!("no niche at [{}, {}, {}]: {}", point.x, point.y, point.z, refusal_word(refusal)))
-    })?;
-    let planes: Vec<Value> = niche
-        .planes
-        .iter()
-        .map(|plane| json!({"normal": [plane.normal.x, plane.normal.y, plane.normal.z], "offset_mm": plane.offset}))
-        .collect();
-    let corners: Vec<Value> = niche.corners.iter().map(|corner| json!([corner.x, corner.y, corner.z])).collect();
-    Ok(json!({
-        "product_id": niche.product.get(),
-        "shape": shape_word(&niche.shape),
-        "local_min_mm": [niche.local_min.x, niche.local_min.y, niche.local_min.z],
-        "size_mm": [niche.size.x, niche.size.y, niche.size.z],
-        "min_mm": [niche.min.x, niche.min.y, niche.min.z],
-        "planes": planes,
-        "corners_mm": corners,
-    }))
+    if !takes_node && let Some(id) = args.id {
+        return Err(CliError::Usage(format!("`--id {id}` has no place: {}", what(args.ask))));
+    }
+    if !takes_point && args.at.is_some() {
+        return Err(CliError::Usage(format!("`--at` is a point, and {}", what(args.ask))));
+    }
+    Ok(())
 }
 
-/// The niche's shape as the report names it.
-const fn shape_word(shape: &model::NicheShape) -> &'static str {
-    match shape {
-        model::NicheShape::Box => "box",
-        model::NicheShape::Section(_) => "section",
-        model::NicheShape::Sloped => "sloped",
+/// What the thing a line names takes, for the sentence that refuses an argument.
+fn what(ask: Ask) -> String {
+    match ask {
+        Ask::Question("niche") => "`niche` takes a point and a node".to_owned(),
+        Ask::Question(name) => format!("`{name}` takes a node"),
+        Ask::Resource(resource) => format!("`{}` is a resource, so it takes no `--id` or `--at`", resource.uri),
+        Ask::Resources => "the resource table takes no argument".to_owned(),
     }
 }
 
-/// Why a point has no niche, in the report's words.
-const fn refusal_word(refusal: model::NicheRefusal) -> &'static str {
-    match refusal {
-        model::NicheRefusal::Outside => "the point is outside every product",
-        model::NicheRefusal::Unrepresentable => "the free space is not one convex cell",
-    }
-}
-
-/// One table as an array of records, its columns naming each field.
-fn rows_of(table: &TableData) -> Value {
-    let columns = table.spec().columns;
+/// The resource table as one JSON array: the URI, the name, the sentence and the media type.
+fn listing() -> Value {
     Value::Array(
-        table
-            .rows()
+        RESOURCES
             .iter()
-            .map(|row| {
-                let mut record = Map::new();
-                for (column, cell) in columns.iter().zip(row) {
-                    record.insert(column.name.to_owned(), cell.json());
-                }
-                Value::Object(record)
+            .map(|resource| {
+                json!({
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "description": resource.description,
+                    "mimeType": MIME,
+                })
             })
             .collect(),
     )
+}
+
+/// Every URI a line may name, for the sentence that lists them.
+fn uris() -> String {
+    RESOURCES.iter().map(|resource| resource.uri).collect::<Vec<_>>().join(", ")
+}
+
+/// The sentence a line gets for a URI no resource answers at.
+fn no_resource(uri: &str) -> String {
+    format!("`{uri}` is not a resource; read one of {}", uris())
+}
+
+/// One JSON value as the text the command writes.
+fn text(value: Value) -> Result<String, CliError> {
+    serde_json::to_string_pretty(&value).map_err(|error| CliError::Query(error.to_string()))
 }
 
 /// Adds one field to a report object, leaving a value that is not an object alone.
@@ -317,17 +251,12 @@ fn insert(value: &mut Value, key: &str, field: Value) {
     }
 }
 
-/// The sentence a report gives for an id the document does not hold.
-fn no_node(id: Id) -> String {
-    format!("no node has id {id}")
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use geom::DQuat;
-    use model::{ClassCode, Envelope, LightKind, Placement};
+    use geom::{DQuat, DVec3};
+    use model::{ClassCode, Envelope, LightKind, PanelNominalSize, Placement};
     use testkit::{millimetres, sample_project, scratch_dir};
 
     use super::*;
@@ -345,7 +274,7 @@ mod tests {
         let product = project
             .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
             .expect("a product beside the sample nodes");
-        let size = model::PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
+        let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
         project.add_panel(root, "Side", size, None, millimetres(18), Placement::IDENTITY).expect("the side is added");
         let centre = Placement::new(DVec3::new(300.0, 280.0, 360.0), DQuat::IDENTITY).expect("a unit placement");
         project.add_light(product, "Key", centre, LightKind::Sun, [1.0; 3], 1.0).expect("the light is added");
@@ -359,145 +288,160 @@ mod tests {
         line.iter().map(|word| (*word).to_owned()).collect()
     }
 
-    /// The query a line names, already parsed.
-    fn args_of(line: &[&str]) -> QueryArgs {
-        let command = crate::cli::parse(&words(line)).expect("the line parses");
-        match command {
-            crate::cli::Command::Query(args) => args,
-            other => panic!("the line names a query, not {other:?}"),
-        }
-    }
-
     /// The report a line asks for, parsed back into JSON.
     fn report_of(line: &[&str]) -> Value {
-        let text = report(&args_of(line)).expect("the report is written");
+        let command = crate::cli::parse(&words(line)).expect("the line parses");
+        let crate::cli::Command::Query(args) = command else {
+            panic!("the line names a query");
+        };
+        let text = report(&args).expect("the report is written");
         serde_json::from_str(&text).expect("the report is JSON")
     }
 
+    /// The report a line is refused with.
+    fn refusal(line: &[&str]) -> String {
+        let command = crate::cli::parse(&words(line)).expect("the line reads its words");
+        let crate::cli::Command::Query(args) = command else {
+            panic!("the line names a query");
+        };
+        report(&args).expect_err("the line is refused").to_string()
+    }
+
     #[test]
-    fn the_tree_report_names_every_node_the_fixture_holds() {
-        let directory = scratch_dir("cli-query-tree");
+    fn a_report_names_the_question_the_file_and_the_revision_it_read() {
+        let directory = scratch_dir("cli-query-envelope");
         let path = saved(&directory);
         let answer = report_of(&["query", &path.display().to_string(), "tree"]);
         assert_eq!(answer["query"], "tree");
         assert_eq!(answer["document"]["file"], "cabinet.z3l");
-        let root = &answer["rows"];
-        assert_eq!(root["id"], 1, "the report starts at the document root");
-        let children = root["children"].as_array().expect("the root has children");
-        let ids: Vec<u64> = children.iter().filter_map(|child| child["id"].as_u64()).collect();
-        assert_eq!(ids, vec![2, 3, 5, 6], "the sample's shelf and drawer, the product and the panel: {ids:?}");
-        let product = children.iter().find(|child| child["id"] == 5).expect("the product is listed");
-        assert_eq!(product["kind"], "container");
-        assert_eq!(product["name"], "Cabinet");
-        let inside = product["children"].as_array().expect("the product holds the light");
-        assert_eq!(inside.len(), 1);
-        assert_eq!(inside[0]["kind"], "light");
+        assert!(
+            answer["document"]["revision"].as_u64().is_some_and(|revision| revision > 0),
+            "the answer says which revision it read: {answer}"
+        );
+        assert!(answer["rows"]["children"].as_array().is_some_and(|children| !children.is_empty()));
+        assert!(answer.get("uri").is_none(), "a question asked by name is no resource read");
     }
 
     #[test]
-    fn a_tree_of_one_node_holds_that_subtree_only() {
-        let directory = scratch_dir("cli-query-subtree");
+    fn every_question_the_word_form_names_is_answered() {
+        let directory = scratch_dir("cli-query-each");
         let path = saved(&directory);
-        let answer = report_of(&["query", &path.display().to_string(), "tree", "--id", "5"]);
-        assert_eq!(answer["rows"]["name"], "Cabinet");
-        assert_eq!(answer["rows"]["children"].as_array().map(Vec::len), Some(1));
-
-        let args = args_of(&["query", &path.display().to_string(), "tree", "--id", "9999"]);
-        let message = report(&args).expect_err("the id is not in the document").to_string();
-        assert!(message.contains("9999"), "{message}");
-    }
-
-    #[test]
-    fn the_box_report_prints_the_reserved_box_of_a_product() {
-        let directory = scratch_dir("cli-query-box");
-        let path = saved(&directory);
-        let answer = report_of(&["query", &path.display().to_string(), "box"]);
-        let rows = answer["rows"].as_array().expect("one row per product");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["node_id"], 5);
-        assert_eq!(rows[0]["size_um"]["x"], 600_000);
-        assert_eq!(rows[0]["size_um"]["y"], 560_000);
-        assert_eq!(rows[0]["size_um"]["z"], 720_000);
-        assert_eq!(rows[0]["origin_mm"], json!([0.0, 0.0, 0.0]));
-
-        let args = args_of(&["query", &path.display().to_string(), "box", "--id", "2"]);
-        let message = report(&args).expect_err("a panel reserves no box").to_string();
-        assert!(message.contains("is not a product"), "{message}");
-    }
-
-    #[test]
-    fn the_parts_report_is_the_published_table() {
-        let directory = scratch_dir("cli-query-parts");
-        let path = saved(&directory);
-        let answer = report_of(&["query", &path.display().to_string(), "parts"]);
-        let rows = answer["rows"].as_array().expect("one row per part");
-        let ids: Vec<u64> = rows.iter().filter_map(|row| row["node_id"].as_u64()).collect();
-        assert_eq!(ids, vec![2, 4, 6], "the sample's shelf and front and the panel the fixture added: {ids:?}");
-        assert!(rows.iter().all(|row| row.get("length_um").is_some() && row.get("product_id").is_some()));
-    }
-
-    #[test]
-    fn the_diagnostics_report_names_a_panel_without_material() {
-        let directory = scratch_dir("cli-query-diagnostics");
-        let path = saved(&directory);
-        let answer = report_of(&["query", &path.display().to_string(), "diagnostics"]);
-        let rows = answer["rows"].as_array().expect("one row per panel");
-        assert_eq!(rows.len(), 3, "one row per panel in the fixture");
-        let issues: Vec<&Value> = rows.iter().flat_map(|row| row["issues"].as_array().into_iter().flatten()).collect();
-        assert!(issues.iter().any(|issue| issue["code"] == "no_material"), "a panel with no material is reported");
-        assert!(issues.iter().all(|issue| issue["code"].as_str().is_some()), "every issue carries a code");
+        let scene = path.display().to_string();
+        for (line, expected) in [
+            (vec!["query", &scene, "tree"], "tree"),
+            (vec!["query", &scene, "box"], "box"),
+            (vec!["query", &scene, "parts"], "parts"),
+            (vec!["query", &scene, "diagnostics"], "diagnostics"),
+            (vec!["query", &scene, "niche", "--at", "300,280,360"], "niche"),
+        ] {
+            let answer = report_of(&line);
+            assert_eq!(answer["query"], expected, "`{expected}` is answered by its own name");
+            assert!(answer["rows"].is_array() || answer["rows"].is_object(), "{answer}");
+        }
     }
 
     #[test]
     fn a_niche_is_measured_at_a_point_or_at_a_node() {
         let directory = scratch_dir("cli-query-niche");
         let path = saved(&directory);
-        let answer = report_of(&["query", &path.display().to_string(), "niche", "--at", "300,280,360"]);
-        assert_eq!(answer["query"], "niche");
-        let rows = &answer["rows"];
-        assert_eq!(rows["product_id"], 5);
-        assert_eq!(rows["shape"], "box", "an empty product reserves a box");
-        // The sample's own shelf stands under the void, so the free space starts at its top face.
-        assert_eq!(rows["size_mm"], json!([600.0, 560.0, 702.0]));
+        let scene = path.display().to_string();
+        let by_point = report_of(&["query", &scene, "niche", "--at", "300,280,360"]);
+        let by_node = report_of(&["query", &scene, "niche", "--id", "7"]);
+        assert_eq!(by_node["rows"], by_point["rows"], "the light's origin is the point the fixture names");
+        assert_eq!(by_point["rows"]["product_id"], 5);
+        assert_eq!(by_point["rows"]["size_mm"], json!([600.0, 560.0, 702.0]));
+
+        let missing = refusal(&["query", &scene, "niche", "--at", "5000,5000,5000"]);
+        assert!(missing.contains("outside every product"), "{missing}");
+    }
+
+    #[test]
+    fn the_resources_are_listed_and_the_tree_resource_is_the_tree_report() {
+        // One derivation, two doors: the URI is an address for the answer the word form prints.
+        let listed = report_of(&["query", "--resources"]);
+        let resources = listed.as_array().expect("one row per resource");
+        assert_eq!(resources.len(), RESOURCES.len(), "every resource is listed");
+        let uris: Vec<&str> = resources.iter().filter_map(|row| row["uri"].as_str()).collect();
+        assert_eq!(uris, vec!["z3l://scene/tree", "z3l://scene/box", "z3l://scene/parts", "z3l://scene/diagnostics"]);
+        assert!(resources.iter().all(|row| row["mimeType"] == MIME && row["description"].is_string()));
         assert!(
-            rows["planes"].as_array().is_some_and(|planes| planes.len() >= 6),
-            "the envelope's six planes bound the void: {rows}"
+            !uris.iter().any(|uri| uri.ends_with("/niche")),
+            "a niche takes a point, so it is no resource: {uris:?}"
         );
 
-        let by_id = report_of(&["query", &path.display().to_string(), "niche", "--id", "7"]);
-        assert_eq!(by_id["rows"]["product_id"], 5, "the light stands inside the product");
-        assert_eq!(by_id["rows"]["size_mm"], json!([600.0, 560.0, 702.0]), "the same void from a node's origin");
-    }
-
-    #[test]
-    fn a_niche_outside_every_product_is_a_sentence() {
-        let directory = scratch_dir("cli-query-outside");
+        let directory = scratch_dir("cli-query-resource");
         let path = saved(&directory);
-        let args = args_of(&["query", &path.display().to_string(), "niche", "--at", "5000,5000,5000"]);
-        let message = report(&args).expect_err("the point is outside").to_string();
-        assert!(message.contains("5000"), "the sentence names the point: {message}");
-        assert!(message.contains("outside every product"), "{message}");
+        let scene = path.display().to_string();
+        let by_name = report_of(&["query", &scene, "tree"]);
+        let by_uri = report_of(&["query", &scene, "z3l://scene/tree"]);
+        assert_eq!(by_uri["uri"], "z3l://scene/tree");
+        assert_eq!(by_uri["query"], by_name["query"]);
+        assert_eq!(by_uri["document"], by_name["document"]);
+        assert_eq!(by_uri["rows"], by_name["rows"], "the resource and the report are the same derivation");
+
+        // Every listed resource answers on the scene the fixture saved.
+        for uri in uris {
+            let answer = report_of(&["query", &scene, uri]);
+            assert_eq!(answer["uri"], uri);
+            assert!(answer["rows"].is_array() || answer["rows"].is_object(), "{answer}");
+        }
     }
 
     #[test]
-    fn a_query_names_what_it_could_not_answer() {
+    fn an_unknown_selector_is_a_readable_refusal() {
         let error = crate::cli::parse(&words(&["query", "scene.z3l", "boxes"])).expect_err("there is no such report");
-        assert!(error.to_string().contains("tree"), "the refusal lists the reports: {error}");
+        let message = error.to_string();
+        assert!(message.contains("boxes"), "the refusal quotes the name: {message}");
+        for name in Query::NAMES {
+            assert!(message.contains(name), "the refusal lists `{name}`: {message}");
+        }
+
+        let error = crate::cli::parse(&words(&["query", "scene.z3l", "z3l://scene/boxes"]))
+            .expect_err("there is no such resource");
+        let message = error.to_string();
+        assert!(message.contains("z3l://scene/boxes"), "{message}");
+        assert!(message.contains("z3l://scene/tree"), "the refusal lists the URIs: {message}");
+
         let error = crate::cli::parse(&words(&["query", "scene.z3l"])).expect_err("a report is required");
         assert!(error.to_string().contains("tree"), "{error}");
-        let error = crate::cli::parse(&words(&["query", "scene.z3l", "tree", "--id", "0"])).expect_err("zero is no id");
-        assert!(error.to_string().contains("not a node id"), "{error}");
-        let error = crate::cli::parse(&words(&["query", "scene.z3l", "niche", "--at", "1,2"]))
-            .expect_err("three coordinates are required");
-        assert!(error.to_string().contains("three coordinates"), "{error}");
-        let error = crate::cli::parse(&words(&["query", "scene.z3l", "niche", "--at", "1,2,3,4"]))
-            .expect_err("three coordinates are enough");
-        assert!(error.to_string().contains("more than three"), "{error}");
+    }
 
-        let directory = scratch_dir("cli-query-refused");
+    #[test]
+    fn an_argument_the_question_does_not_read_is_refused_by_name() {
+        assert_eq!(Ask::parse("TREE").expect("a name is not case sensitive"), Ask::Question("tree"));
+        assert_eq!(
+            resource_at("z3l://scene/parts").map(|resource| resource.query),
+            Some(Query::Parts),
+            "a URI names a resource and the question it reads"
+        );
+
+        for (line, expected) in [
+            (vec!["query", "scene.z3l", "tree", "--at", "1,2,3"], "`--at` is a point"),
+            (vec!["query", "scene.z3l", "parts", "--id", "5"], "`--id 5` has no place"),
+            (vec!["query", "scene.z3l", "diagnostics", "--id", "5"], "`--id 5` has no place"),
+            (vec!["query", "scene.z3l", "z3l://scene/tree", "--id", "5"], "takes no `--id` or `--at`"),
+        ] {
+            let error = crate::cli::parse(&words(&line)).expect_err("the argument has no place");
+            assert!(error.to_string().contains(expected), "`{expected}` is missing from: {error}");
+        }
+
+        let error = crate::cli::parse(&words(&["query", "--resources", "scene.z3l", "tree"]))
+            .expect_err("the resource table takes no scene");
+        assert!(error.to_string().contains("resource"), "{error}");
+    }
+
+    #[test]
+    fn a_query_reads_the_file_and_never_writes_it() {
+        let directory = scratch_dir("cli-query-pure");
         let path = saved(&directory);
-        let args = args_of(&["query", &path.display().to_string(), "niche"]);
-        let message = report(&args).expect_err("a niche needs a point").to_string();
-        assert!(message.contains("--at"), "{message}");
+        let before = std::fs::read_to_string(&path).expect("the fixture reads");
+        for line in [
+            vec!["query", &path.display().to_string(), "tree"],
+            vec!["query", &path.display().to_string(), "parts"],
+            vec!["query", &path.display().to_string(), "diagnostics"],
+        ] {
+            report_of(&line);
+        }
+        assert_eq!(std::fs::read_to_string(&path).expect("the fixture still reads"), before, "nothing was written");
     }
 }

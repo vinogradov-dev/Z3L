@@ -16,6 +16,9 @@ catalog = { workspace = true }
 param = { workspace = true }
 text = { workspace = true }
 units = { workspace = true }
+# The cut list a read asks for is the published `parts` table, and the order package owns it: one
+# derivation for the window, the command line and a client, never a second (ADR 0183, ADR 0196).
+export = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

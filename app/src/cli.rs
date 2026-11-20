@@ -23,7 +23,7 @@ mod commands;
 mod query;
 mod recipe;
 
-pub use query::QueryKind;
+pub use query::Ask;
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -52,7 +52,9 @@ usage: z3l                 open the editor
                     [--price-max-age <days>]
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
+       z3l query --resources
        z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
+       z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
 
 export writes an order package from a saved scene without opening a window:
   --out <path>       the package directory for `bundle`, the package file for `single`
@@ -75,7 +77,7 @@ commands run in order, and the result is written once, at the end -- or not at a
                      by itself, and a part can only be created inside an open one
   --dry-run          dispatch every command and write nothing, so the recipe can be checked first
 
-query reads the scene and prints one JSON report; it never writes:
+query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
   box          the box a product reserves, in its own frame and in world millimetres
   parts        the cut list -- the published `parts` table of the order package
@@ -84,6 +86,10 @@ query reads the scene and prints one JSON report; it never writes:
                of a node for the space at its origin
   --id <node>  the node a report is about, where the report takes one
   --at <x,y,z> the point `niche` measures, in world millimetres
+  --resources  list the questions a client may read by URI instead of calling, and the media
+               type of their answers; the reserved boxes, the tree, the cut list and the issues
+               are stable, so a resource is read at z3l://scene/<name> and cached by the
+               revision the answer carries
 ";
 
 /// What one run of the program does.
@@ -136,11 +142,11 @@ pub struct RunArgs {
 /// One `query` request, already checked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryArgs {
-    /// The saved scene to read.
-    pub scene: PathBuf,
-    /// Which report to print.
-    pub kind: QueryKind,
-    /// The node the report is about, when the report takes one.
+    /// The saved scene to read; absent lists the resources instead.
+    pub scene: Option<PathBuf>,
+    /// The question, or the table of resources to print.
+    pub ask: Ask,
+    /// The node the question is about, where the question takes one.
     pub id: Option<Id>,
     /// The point `niche` measures, in world millimetres.
     pub at: Option<[f64; 3]>,
@@ -360,23 +366,29 @@ fn run_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
 }
 
-/// Reads the words after `query`: one scene, one report kind, and the flag that report takes.
+/// Reads the words after `query`: the resource table, or one scene and one report.
+///
+/// `--resources` names a table that needs no scene, so the first two words a line writes are read
+/// together: `--resources` or a scene, and then the report. A flag combination the chosen report does
+/// not read is refused here, before any file is opened.
 fn query_args(args: &[String]) -> Result<Command, CliError> {
     let mut scene: Option<PathBuf> = None;
-    let mut kind: Option<QueryKind> = None;
+    let mut report: Option<Ask> = None;
+    let mut resources = false;
     let mut id: Option<Id> = None;
     let mut at: Option<[f64; 3]> = None;
     let mut words = args.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
             "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--resources" => resources = true,
             "--id" => id = Some(node_id(value(&mut words, "--id")?)?),
             "--at" => at = Some(point(value(&mut words, "--at")?)?),
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not a query option; run `z3l --help`")));
             }
-            other if scene.is_none() => scene = Some(PathBuf::from(other)),
-            other if kind.is_none() => kind = Some(QueryKind::parse(other)?),
+            other if scene.is_none() && report.is_none() && !resources => scene = Some(PathBuf::from(other)),
+            other if report.is_none() => report = Some(Ask::parse(other)?),
             other => {
                 return Err(CliError::Usage(format!(
                     "a query reads one scene and one report, so `{other}` has no place"
@@ -384,9 +396,24 @@ fn query_args(args: &[String]) -> Result<Command, CliError> {
             }
         }
     }
-    let scene = scene.ok_or_else(|| CliError::Usage("query needs a scene: `z3l query <scene.z3l> tree`".to_owned()))?;
-    let kind = kind.ok_or_else(|| CliError::Usage(format!("query needs a report: {}", QueryKind::WORDS)))?;
-    Ok(Command::Query(QueryArgs { scene, kind, id, at }))
+    if resources && report.is_some() {
+        return Err(CliError::Usage(format!(
+            "`--resources` lists every resource, so `{}` has no place",
+            match report {
+                Some(Ask::Question(name)) => name.to_owned(),
+                Some(Ask::Resource(resource)) => resource.uri.to_owned(),
+                _ => "--resources".to_owned(),
+            }
+        )));
+    }
+    let ask = if resources {
+        Ask::Resources
+    } else {
+        report.ok_or_else(|| CliError::Usage(format!("query needs a report: {}", Ask::names())))?
+    };
+    let args = QueryArgs { scene, ask, id, at };
+    query::check(&args)?;
+    Ok(Command::Query(args))
 }
 
 /// Reads a node id: a non-zero whole number, because zero is the document's "no entity".
@@ -699,6 +726,7 @@ mod tests {
             "--dry-run",
             "--id",
             "--at",
+            "--resources",
             "tree|box|parts|diagnostics|niche",
         ] {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
@@ -740,11 +768,15 @@ mod tests {
         assert_eq!(
             query,
             Command::Query(QueryArgs {
-                scene: PathBuf::from("scene.z3l"),
-                kind: QueryKind::Niche,
+                scene: Some(PathBuf::from("scene.z3l")),
+                ask: Ask::Question("niche"),
                 id: None,
                 at: Some([1.5, -2.0, 3.0]),
             })
+        );
+        assert_eq!(
+            parse(&words(&["query", "--resources"])).expect("the resource table"),
+            Command::Query(QueryArgs { scene: None, ask: Ask::Resources, id: None, at: None })
         );
     }
 

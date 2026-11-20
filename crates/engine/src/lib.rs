@@ -1,9 +1,9 @@
-//! Session state, the command registry and undo/redo.
+//! Session state, the command registry, undo/redo and the read model.
 //!
 //! Every user-visible change to the document is a command with a stable id, typed parameters and a
 //! `Result`. Commands mutate the project only through [`Session::dispatch`], which snapshots the
-//! document for undo and restores it if the command fails. This crate must not depend on `wgpu` or
-//! `egui`.
+//! document for undo and restores it if the command fails. A read asks one [`Query`] through
+//! [`Session::read`] and writes nothing. This crate must not depend on `wgpu` or `egui`.
 #![forbid(unsafe_code)]
 #![deny(
     clippy::unwrap_used,
@@ -25,6 +25,7 @@ pub mod object_cmds;
 pub mod panel_cmds;
 mod preview;
 pub mod product_cmds;
+mod read;
 mod resolve;
 pub mod scene_cmds;
 mod session;
@@ -58,6 +59,7 @@ pub use panel_cmds::{
 };
 pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};
+pub use read::{Query, QueryError};
 pub use resolve::{SelectionCache, Stamp, anchor_of, choice_of, resolve_slot};
 pub use scene_cmds::{CameraCreate, CameraProjectionSet, LightCreate, LightParamsSet, SceneActiveCameraSet};
 pub use session::{EditScope, Session};
