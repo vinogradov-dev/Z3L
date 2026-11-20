@@ -217,6 +217,8 @@ pub const MATERIAL_COLUMNS: &[Column] = &[
     Column::integer("sheet_width_um").in_unit("um"),
     Column::text("stock_group"),
     Column::integer("price_minor"),
+    Column::text("price_date"),
+    Column::integer("price_stale"),
 ];
 
 /// The columns of `sheets`.
@@ -228,6 +230,8 @@ pub const SHEET_COLUMNS: &[Column] = &[
     Column::integer("usable_length_um").in_unit("um"),
     Column::integer("usable_width_um").in_unit("um"),
     Column::integer("price_minor"),
+    Column::text("price_date"),
+    Column::integer("price_stale"),
     Column::integer("part_count"),
     Column::integer("part_area_mm2").in_unit("mm2"),
     Column::integer("sheet_area_mm2").in_unit("mm2"),

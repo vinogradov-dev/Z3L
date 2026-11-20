@@ -125,6 +125,25 @@ pub struct DirectoryEditor {
     status: Option<String>,
     /// Whether the person asked for a price list this frame; the shell takes it and asks for a file.
     import_requested: bool,
+    /// Today, and the age past which a price is called stale, as the shell supplies them.
+    ///
+    /// The directory has no clock: the day a card judges a price against is the shell's, and the limit
+    /// is the workshop's, so this window keeps neither rule of its own.
+    price_aging: PriceAging,
+}
+
+/// How the card judges the age of a price: the day it is, and the workshop's limit in days.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PriceAging {
+    today: Option<catalog::Date>,
+    max_age_days: Option<u32>,
+}
+
+impl PriceAging {
+    /// How old a price is by this judgement, when both halves are known.
+    fn freshness(&self, price: &Price) -> Option<catalog::Freshness> {
+        Some(price.freshness(self.today?, self.max_age_days?))
+    }
 }
 
 impl DirectoryEditor {
@@ -148,6 +167,7 @@ impl DirectoryEditor {
             view: View::Items,
             status: None,
             import_requested: false,
+            price_aging: PriceAging::default(),
         };
         editor.reload();
         editor
@@ -278,6 +298,14 @@ impl DirectoryEditor {
         }
         self.status = Some(Message::DirectorySaved.text(lang).to_owned());
         Ok(id)
+    }
+
+    /// Sets the day a card judges a price against and the workshop's limit, in days.
+    ///
+    /// `None` in either half means "no verdict": a price is shown with its date and nothing is said
+    /// about its age, because a rule the shell did not supply is not the card's to invent.
+    pub fn set_price_aging(&mut self, today: Option<catalog::Date>, max_age_days: Option<u32>) {
+        self.price_aging = PriceAging { today, max_age_days };
     }
 
     /// Whether the person pressed *Import prices*, as a request the shell performs.
@@ -529,7 +557,8 @@ impl DirectoryEditor {
                     // The number box draws its unit as a caption beside itself, which a grid cell
                     // cannot hold: a row of its own gives the field the layout it expects.
                     let mut written = None;
-                    ui.horizontal(|ui| written = field(ui, row.ty(), value));
+                    let aging = self.price_aging;
+                    ui.horizontal(|ui| written = field(ui, row.ty(), value, aging, lang));
                     if let Some(value) = written {
                         draft.values.insert(row.code(), value);
                     }
@@ -699,7 +728,13 @@ impl ValueDraft {
 
 /// One property's field: the one number box for a number, a line of text for a text, a list for a
 /// closed set, and a read-only value for the rows this build has no field for yet.
-fn field(ui: &mut Ui, ty: &PropertyType, value: Option<ValueDraft>) -> Option<ValueDraft> {
+fn field(
+    ui: &mut Ui,
+    ty: &PropertyType,
+    value: Option<ValueDraft>,
+    aging: PriceAging,
+    lang: Lang,
+) -> Option<ValueDraft> {
     let mut written = None;
     match (ty, value) {
         (PropertyType::Length { min, max }, Some(ValueDraft::Number(mut millimetres))) => {
@@ -724,11 +759,25 @@ fn field(ui: &mut Ui, ty: &PropertyType, value: Option<ValueDraft>) -> Option<Va
                     Some(price) => {
                         ui.small(format!("{} · {}", price.currency().code(), price.source()));
                         if let Some(date) = price.date() {
-                            ui.small(format!("{}-{:02}-{:02}", date.year(), date.month(), date.day()));
+                            ui.small(date.iso());
+                        }
+                        // The age is said in the card's own words and only when the shell supplied
+                        // both halves of the rule, so a card never invents a shelf life.
+                        match aging.freshness(price) {
+                            Some(catalog::Freshness::Stale { days, limit_days }) => {
+                                ui.small(Message::PriceStale.with(lang, [days, limit_days]));
+                            }
+                            Some(catalog::Freshness::Fresh { days }) => {
+                                ui.small(Message::PriceFresh.with(lang, [days]));
+                            }
+                            Some(catalog::Freshness::Undated) => {
+                                ui.small(Message::PriceUndated.text(lang));
+                            }
+                            None => {}
                         }
                     }
                     None => {
-                        ui.small("no currency in this package");
+                        ui.small(Message::PriceNoCurrency.text(lang));
                     }
                 }
                 if outcome.commit {
@@ -930,6 +979,31 @@ mod tests {
         )
         .expect("the record");
         root
+    }
+
+    #[test]
+    fn the_card_judges_a_price_by_the_day_and_the_limit_the_shell_gives_it() {
+        // O8: a card warns about a price older than the workshop's limit, and says nothing at all
+        // about the age when the shell supplied no rule.
+        let system = catalog::ExternalSystemId::new("erp").expect("a system");
+        let currency = catalog::Currency::new("RUB", 100).expect("a currency");
+        let price = Price::imported(
+            Money::from_minor(320_000),
+            currency,
+            system,
+            catalog::Date::new(2026, 1, 1).expect("a date"),
+        );
+        let today = catalog::Date::new(2026, 11, 20).expect("a date");
+        let aging = PriceAging { today: Some(today), max_age_days: Some(180) };
+        assert_eq!(aging.freshness(&price), Some(catalog::Freshness::Stale { days: 323, limit_days: 180 }));
+        let patient = PriceAging { max_age_days: Some(365), ..aging };
+        assert_eq!(patient.freshness(&price), Some(catalog::Freshness::Fresh { days: 323 }));
+        assert_eq!(PriceAging { max_age_days: None, ..aging }.freshness(&price), None, "no limit, no verdict");
+        assert_eq!(PriceAging::default().freshness(&price), None, "and no day either");
+
+        let mut editor = DirectoryEditor::open(folder("directory-aging"));
+        editor.set_price_aging(Some(today), Some(180));
+        assert_eq!(editor.price_aging, aging, "the window keeps the rule it was given and no other");
     }
 
     #[test]

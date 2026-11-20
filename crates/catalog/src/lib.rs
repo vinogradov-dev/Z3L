@@ -54,7 +54,7 @@ pub use item::{ExternalKey, ExternalSystemId, MAX_EXTERNAL_KEYS, MAX_ITEM_NAME_C
 pub use kind::{Kind, KindCode, KindRegistry, Trait};
 pub use money::{Currency, CurrencyError, Money};
 pub use overlay::{OnHand, StockOverlay};
-pub use price::{Price, PriceSource, PriceUnit, PriceView};
+pub use price::{Freshness, Price, PriceSource, PriceUnit, PriceView};
 pub use property::{Date, Property, PropertyCode, PropertyType, PropertyValue, Rgb};
 pub use slug::{MAX_SLUG_CHARS, Slug};
 pub use source::{DirectorySource, FolderSource, LoadError, Revision};

@@ -34,11 +34,14 @@ usage: z3l                 open the editor
        z3l directory [<folder>]  open the nomenclature directory application
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
+                    [--price-max-age <days>]
 
 export writes an order package from a saved scene without opening a window:
   --out <path>       the package directory for `bundle`, the package file for `single`
   --format <form>    `bundle` (the default) writes the manifest plus one JSON Lines file and a CSV
                      copy per table; `single` writes the manifest and every table into one JSON file
+  --price-max-age <days>
+                     flag a material's price older than this many days, judged against the export
   --no-timestamp     leave the export time out of the manifest, so a package can be compared
 ";
 
@@ -74,6 +77,8 @@ pub struct ExportArgs {
     pub format: Format,
     /// Whether the manifest carries the export time.
     pub timestamp: bool,
+    /// The age past which a price is flagged stale, in days; absent makes no verdict.
+    pub price_max_age_days: Option<u32>,
 }
 
 /// The two forms the writer produces.
@@ -176,6 +181,7 @@ fn export_args(args: &[String]) -> Result<Command, CliError> {
     let mut out: Option<PathBuf> = None;
     let mut format = Format::Bundle;
     let mut timestamp = true;
+    let mut price_max_age_days = None;
     let mut words = args.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
@@ -183,6 +189,7 @@ fn export_args(args: &[String]) -> Result<Command, CliError> {
             "--out" => out = Some(PathBuf::from(value(&mut words, "--out")?)),
             "--format" => format = Format::parse(value(&mut words, "--format")?)?,
             "--no-timestamp" => timestamp = false,
+            "--price-max-age" => price_max_age_days = Some(days(value(&mut words, "--price-max-age")?)?),
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not an export option; run `z3l export --help`")));
             }
@@ -195,7 +202,12 @@ fn export_args(args: &[String]) -> Result<Command, CliError> {
     let scene = scene
         .ok_or_else(|| CliError::Usage("export needs a scene: `z3l export <scene.z3l> --out <path>`".to_owned()))?;
     let out = out.ok_or_else(|| CliError::Usage("export needs `--out <path>` to know where to write".to_owned()))?;
-    Ok(Command::Export(ExportArgs { scene, out, format, timestamp }))
+    Ok(Command::Export(ExportArgs { scene, out, format, timestamp, price_max_age_days }))
+}
+
+/// A count of days a flag carries, refusing one that is not a number.
+fn days(text: &str) -> Result<u32, CliError> {
+    text.parse::<u32>().map_err(|_| CliError::Usage(format!("`{text}` is not a number of days")))
 }
 
 /// The value that follows a flag.
@@ -215,6 +227,7 @@ pub fn export(args: &ExportArgs) -> Result<Vec<String>, CliError> {
     let timestamp = if args.timestamp { Some(now_timestamp().map_err(CliError::Export)?) } else { None };
     let options = ExportOptions {
         timestamp,
+        price_max_age_days: args.price_max_age_days,
         document: DocumentMeta {
             file: args.scene.file_name().map(|name| name.to_string_lossy().into_owned()),
             revision: scene.document().revision().get(),
@@ -389,6 +402,21 @@ mod tests {
         let manifest = read_json(&directory.join("package/manifest.json"));
         let exported_at = manifest["exported_at"].as_str().expect("the default manifest carries its time");
         assert!(exported_at.ends_with('Z') && exported_at.contains('T'), "the time is RFC 3339: {exported_at}");
+    }
+
+    #[test]
+    fn a_price_age_flag_is_days_and_a_name_that_is_not_one_is_refused() {
+        // O8: the age past which a price is stale is data a caller supplies, never a number in the
+        // export itself; the package then judges every price against its own export time.
+        let command =
+            parse(&words(&["export", "scene.z3l", "--out", "out", "--price-max-age", "180"])).expect("the line parses");
+        let Command::Export(args) = command else {
+            panic!("the line names an export");
+        };
+        assert_eq!(args.price_max_age_days, Some(180));
+        let error =
+            parse(&words(&["export", "scene.z3l", "--out", "out", "--price-max-age", "half"])).expect_err("not days");
+        assert!(error.to_string().contains("not a number of days"), "{error}");
     }
 
     #[test]

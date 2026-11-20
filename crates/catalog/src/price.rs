@@ -184,6 +184,67 @@ impl Price {
     }
 }
 
+/// How old a price is, as a card or a report says it.
+///
+/// The directory has no clock: a caller supplies today's date and the workshop's limit, and the rule
+/// is arithmetic between two dates. A price a person typed carries no date, so it can be neither
+/// fresh nor stale and says exactly that — the alternative, treating an undated price as old, would
+/// warn about a number nobody has measured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Freshness {
+    /// Dated inside the limit.
+    Fresh {
+        /// How many days old the price is.
+        days: u64,
+    },
+    /// Dated further back than the limit.
+    Stale {
+        /// How many days old the price is.
+        days: u64,
+        /// The limit it passed.
+        limit_days: u64,
+    },
+    /// The price carries no date, because a person typed it.
+    Undated,
+}
+
+impl Freshness {
+    /// Whether the freshness is worth a word in a card.
+    pub const fn is_stale(self) -> bool {
+        matches!(self, Self::Stale { .. })
+    }
+}
+
+impl fmt::Display for Freshness {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fresh { days } => {
+                write!(formatter, "{days} days old")
+            }
+            Self::Stale { days, limit_days } => {
+                write!(formatter, "{days} days old, past the {limit_days}-day limit")
+            }
+            Self::Undated => formatter.write_str("no date"),
+        }
+    }
+}
+
+impl Price {
+    /// How old the price is on `today`, against a workshop's `limit_days`.
+    ///
+    /// A date later than today answers `Fresh` with zero days: a clock that disagrees with an import
+    /// by a few hours is not a reason to call a price stale.
+    pub fn freshness(&self, today: Date, limit_days: u32) -> Freshness {
+        let Some(date) = self.date else {
+            return Freshness::Undated;
+        };
+        let elapsed = today.days_since_epoch().saturating_sub(date.days_since_epoch()).max(0);
+        let days = u64::try_from(elapsed).unwrap_or(u64::MAX);
+        let limit_days = u64::from(limit_days);
+        if days > limit_days { Freshness::Stale { days, limit_days } } else { Freshness::Fresh { days } }
+    }
+}
+
 impl fmt::Display for Price {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{} {}", self.value.minor(), self.currency.code())
@@ -252,6 +313,26 @@ mod tests {
         assert_eq!(imported.source().system(), Some(&system));
         assert_eq!(imported.date(), Some(date));
         assert_eq!(imported.to_string(), "9990 EUR");
+    }
+
+    #[test]
+    fn a_price_is_as_old_as_the_dates_say() {
+        let date = Date::new(2026, 1, 1).expect("a date");
+        let today = Date::new(2026, 11, 20).expect("a date");
+        let euro = Currency::new("EUR", 100).expect("a currency");
+        let system = ExternalSystemId::new("erp").expect("a system");
+        let price = Price::imported(Money::from_minor(100), euro, system, date);
+        let freshness = price.freshness(today, 180);
+        assert!(freshness.is_stale(), "323 days is past a 180-day limit");
+        assert_eq!(freshness, Freshness::Stale { days: 323, limit_days: 180 });
+        assert_eq!(price.freshness(today, 365), Freshness::Fresh { days: 323 });
+        assert_eq!(price.freshness(today, 365).to_string(), "323 days old", "a fresh price still says how old it is");
+        // A clock behind the import is not a stale price.
+        assert_eq!(price.freshness(date, 0), Freshness::Fresh { days: 0 });
+        assert_eq!(
+            Price::typed(Money::ZERO, Currency::new("EUR", 100).expect("a currency")).freshness(today, 1),
+            Freshness::Undated
+        );
     }
 
     #[test]

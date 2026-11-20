@@ -17,6 +17,8 @@ use model::{
 };
 use serde_json::{Value, json};
 use text::Lang;
+
+use crate::write::PriceAging;
 use units::Length;
 
 use crate::error::ExportError;
@@ -24,8 +26,8 @@ use crate::manifest::{ROTATION_SCALE, RULES};
 use crate::table::{Cell, Tables};
 
 /// Builds every table of one package, ordered by its key.
-pub fn build(project: &Project, catalog: &Directory) -> Result<Tables, ExportError> {
-    let mut context = Context::default();
+pub fn build(project: &Project, catalog: &Directory, aging: PriceAging) -> Result<Tables, ExportError> {
+    let mut context = Context { aging, ..Context::default() };
     for product in project.products() {
         context.products.insert(product.get(), ProductAgg::default());
     }
@@ -68,6 +70,8 @@ struct Context {
     materials: BTreeMap<ItemId, MaterialFacts>,
     sheets: BTreeMap<ItemId, SheetAgg>,
     classes: BTreeSet<u32>,
+    /// How old a price may be before this package calls it stale.
+    aging: PriceAging,
 }
 
 /// What a product's parts add up to.
@@ -97,6 +101,10 @@ struct StockFacts {
     sheet_length_um: i64,
     sheet_width_um: i64,
     price_minor: i64,
+    /// The day the price was measured, `YYYY-MM-DD`, empty when the record names none.
+    price_date: String,
+    /// One when the price is older than the workshop's limit, zero otherwise.
+    price_stale: i64,
     sheet_area_mm2: i64,
 }
 
@@ -661,7 +669,7 @@ fn note_material(
             thickness: board.thickness,
             width: Length::ZERO,
             color: board.color.clone().unwrap_or_default(),
-            stock: stocked.as_ref().map(stock_facts),
+            stock: stocked.as_ref().map(|stock| stock_facts(stock, context.aging)),
         }
     } else if let Some(band) = catalog.banding(material) {
         MaterialFacts {
@@ -686,12 +694,26 @@ fn note_material(
 }
 
 /// The stock block of one material as the package repeats it, with the sheet area resolved once.
-fn stock_facts(stock: &StockView) -> StockFacts {
+fn stock_facts(stock: &StockView, aging: PriceAging) -> StockFacts {
     StockFacts {
         stock_group: stock.group.clone().unwrap_or_default(),
         sheet_length_um: stock.length.micrometres(),
         sheet_width_um: stock.width.micrometres(),
         price_minor: stock.price.as_ref().map_or(0, |price| i64::try_from(price.value().minor()).unwrap_or(i64::MAX)),
+        // The date travels even when the package makes no judgement: a reader that knows its own
+        // shelf life can still see how old the number is.
+        price_date: stock
+            .price
+            .as_ref()
+            .and_then(|price| price.price.date())
+            .map(catalog::Date::iso)
+            .unwrap_or_default(),
+        price_stale: stock
+            .price
+            .as_ref()
+            .and_then(|price| aging.freshness(&price.price))
+            .is_some_and(catalog::Freshness::is_stale)
+            .into(),
         sheet_area_mm2: sheet_area_mm2(stock.length, stock.width),
     }
 }
@@ -705,7 +727,7 @@ fn note_stock(context: &mut Context, material: Option<ItemId>, stock: Option<&St
     aggregate.part_count = aggregate.part_count.saturating_add(1);
     aggregate.part_area_mm2 = aggregate.part_area_mm2.saturating_add(i128::from(area_mm2));
     if aggregate.stock.is_none() {
-        aggregate.stock = Some(stock_facts(stock));
+        aggregate.stock = Some(stock_facts(stock, context.aging));
     }
 }
 
@@ -749,6 +771,8 @@ fn push_materials(tables: &mut Tables, materials: &BTreeMap<ItemId, MaterialFact
             Cell::Integer(stock.map_or(0, |stock| stock.sheet_width_um)),
             Cell::Text(stock.map(|stock| stock.stock_group.clone()).unwrap_or_default()),
             Cell::Integer(stock.map_or(0, |stock| stock.price_minor)),
+            Cell::Text(stock.map(|stock| stock.price_date.clone()).unwrap_or_default()),
+            Cell::Integer(stock.map_or(0, |stock| stock.price_stale)),
         ])?;
     }
     Ok(())
@@ -775,6 +799,8 @@ fn push_sheets(tables: &mut Tables, sheets: &BTreeMap<ItemId, SheetAgg>) -> Resu
             Cell::Integer(RULES.usable_length(stock.sheet_length_um)),
             Cell::Integer(RULES.usable_width(stock.sheet_width_um)),
             Cell::Integer(stock.price_minor),
+            Cell::Text(stock.price_date.clone()),
+            Cell::Integer(stock.price_stale),
             Cell::Integer(part_count),
             Cell::Integer(part_area),
             Cell::Integer(stock.sheet_area_mm2),

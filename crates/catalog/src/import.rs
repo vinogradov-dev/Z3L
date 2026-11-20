@@ -113,9 +113,9 @@ impl PriceBatch {
             Ok(currency) => currency,
             Err(error) => return Applied::Refused { line, reason: error.to_string() },
         };
-        let date = match parse_date(date) {
+        let date = match Date::parse(date) {
             Ok(date) => date,
-            Err(reason) => return Applied::Refused { line, reason },
+            Err(error) => return Applied::Refused { line, reason: error.to_string() },
         };
         let anchor = match ExternalKey::new(
             match crate::item::ExternalSystemId::new(*system) {
@@ -219,19 +219,6 @@ fn currency_scale(code: &str) -> u32 {
         // a card prints the amount as the file wrote it.
         _ => 1,
     }
-}
-
-/// Reads the `YYYY-MM-DD` a price list writes.
-fn parse_date(text: &str) -> Result<Date, String> {
-    let readable = |reason: &str| format!("`{text}` is not a date this calendar has {reason}");
-    let fields: Vec<&str> = text.split('-').collect();
-    let [year, month, day] = fields.as_slice() else {
-        return Err(readable("— write a year, a month and a day"));
-    };
-    let year = year.parse::<i32>().map_err(|_| readable("— the year is not a number"))?;
-    let month = month.parse::<u8>().map_err(|_| readable("— the month is not a number"))?;
-    let day = day.parse::<u8>().map_err(|_| readable("— the day is not a number"))?;
-    Date::new(year, month, day).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

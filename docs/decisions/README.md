@@ -187,6 +187,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
 | [0181](0181-a-drag-prepares-the-bodies-it-reaches.md) | A drag prepares the bodies it reaches, and the port can cast a ray | Accepted; the rule's build is a walk over boxes, and the probe keeps the box reading until X92 |
 | [0182](0182-the-file-manager-chooses-the-path.md) | The file manager chooses the path, and the window keeps drawing | Accepted |
+| [0183](0183-a-price-names-its-money-and-its-source.md) | A price names its money, its source and its age; stock is an overlay | Accepted |
 | [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
 
 ## Format
