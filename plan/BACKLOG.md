@@ -43,23 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X91** opening and saving ask the system file manager instead of a path typed into a field
-  Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
-   deletes two characters and the cursor moves by two, so a path can be edited only by retyping
-   it. A path is chosen in a file manager, not typed into a string (owner, 2026-11-19).
-  Shape: The open and save dialogs ask the operating system's own file manager instead of a
-   text field: the system picker through a permissive, pure-Rust binding to the platform's
-   dialog (the portal on Linux, the native sheet on macOS, the common item dialog on Windows),
-   narrowed to the scene extension and started in the folder of the open document. The text
-   field and the nearby-scenes list leave with it; the modal keeps the title, the
-   open-as-a-new-tab hint and the Cancel button. A dependency that compiles C is refused by the
-   rules, so the picker is either an OS binding loaded at run time or a small Rust dialog over
-   the platform API, and the choice is recorded in an ADR.
-  Done: Open and Save as show the system file manager, filtered to scene files and started
-   where the document lives; a cancelled picker writes and opens nothing; the path is never
-   typed; the double-delete defect cannot occur because there is no text field; the gate is
-   green.
-  `files: app/src/file_menu.rs, crates/text/src/messages.rs, crates/ui/src/inventory.rs`
 - `[ ]` **X92** the probe reads a body the boxes cannot describe, and no other
   Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against
    the port moved an ordinary cell's plane by rounding and broke the fill ghost: a cell is
@@ -188,6 +171,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
 
 ## Done
+
+- `[x]` **X91** opening and saving ask the system file manager instead of a path typed into a field
+  Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
+   deletes two characters and the cursor moves by two, so a path can be edited only by retyping
+   it. A path is chosen in a file manager, not typed into a string (owner, 2026-11-19).
+  Shape: The open and save dialogs ask the operating system's own file manager instead of a
+   text field: the system picker through a permissive, pure-Rust binding to the platform's
+   dialog (the portal on Linux, the native sheet on macOS, the common item dialog on Windows),
+   narrowed to the scene extension and started in the folder of the open document. The text
+   field and the nearby-scenes list leave with it; the modal keeps the title, the
+   open-as-a-new-tab hint and the Cancel button. A dependency that compiles C is refused by the
+   rules, so the picker is either an OS binding loaded at run time or a small Rust dialog over
+   the platform API, and the choice is recorded in an ADR.
+  Done: Open and Save as show the system file manager, filtered to scene files and started
+   where the document lives; a cancelled picker writes and opens nothing; the path is never
+   typed; the double-delete defect cannot occur because there is no text field; the gate is
+   green.
+  `files: app/src/file_menu.rs, crates/text/src/messages.rs, crates/ui/src/inventory.rs` — `99a5ef9`
 
 - `[x]` **X90** the probe and the frame budget, the two clauses X85 leaves
   Why: X85 delivered the port, the shapes, the measured drag and the guarded write; its probe

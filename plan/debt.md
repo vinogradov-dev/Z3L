@@ -86,10 +86,16 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   step.
 - `[assistant]` Faber is designed (ADRs 0028–0032) but not implemented; the scene store now gives a
   background job a file to open, but there is no headless binary or query surface yet.
-- `[scene]` Save and load exist in the shell. Gaps: there is no prompt when the window closes with
-  unsaved changes, Open warns inside the path dialog instead of asking for confirmation, there is no
-  recent-files list and no autosave. `app` still starts from `sample_session()`; a new
-  empty scene is one menu click away.
+- `[scene]` Save and load exist in the shell. Gaps: the window's own close button does not ask about
+  unsaved changes (only the menu's *Exit* does), and there is no autosave. `app` still starts from
+  `sample_session()`; a new empty scene is one menu click away.
+- `[scene]` *Open* and *Save as* ask the system file manager, and a pick that never comes back holds
+  the pair: `rfd` waits on the portal's D-Bus call with no timeout, so a crashed
+  `xdg-desktop-portal` leaves the picker busy until the window restarts, and the binding reports no
+  refusal of its own — a portal that is not there answers `None`, the same as a cancelled pick, so
+  the status bar cannot say why nothing happened. The dialog is also not owned by our window, because
+  no parent handle is passed: on Windows and Wayland the file manager is a window of its own rather
+  than a sheet of the editor's (ADR 0182, X91).
 - `[scene]` A scene written by an earlier build is not migrated to the current frame: there are no
   releases and no user files yet (`plan/rename.md`), so an old pre-release document may load with a
   different world shape instead of being converted. Owner's decision, 2026-11-10; revisit when a

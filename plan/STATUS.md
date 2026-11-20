@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X91 state=idle base=5c75c31 updated=2026-11-20
+STATE: milestone=M7 phase=T task=X92 state=idle base=99a5ef9 updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -27,7 +27,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-X91 asks the system file manager for a path; X92 measures the probe the way X90 measured the drag
+X92 measures the probe the way X90 measured the drag
 
 ## Index
 
