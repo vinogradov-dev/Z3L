@@ -13,6 +13,7 @@
 
 #![allow(clippy::expect_used)]
 
+use crate::file_picker::{Order, PickMode};
 use crate::gizmo_math::SnapTarget;
 use eframe::egui;
 use geom::DVec2;
@@ -415,7 +416,7 @@ fn the_scene_rectangle_and_its_camera_hold_in_every_panel_and_ribbon_state() {
     let mut scenes = Vec::new();
     for ribbon_open in [true, false] {
         if !ribbon_open {
-            harness.app.handle_header_action(HeaderAction::ToggleRibbon, Lang::En);
+            harness.app.handle_header_action(HeaderAction::ToggleRibbon, &harness.ctx.clone());
             harness.settle();
         }
         let chrome = harness.settle();
@@ -626,7 +627,7 @@ fn a_modal_owns_the_keys() {
     let orbited = harness.camera();
     assert_ne!(orbited, resting, "a middle drag orbits the view");
 
-    harness.app.handle_header_action(HeaderAction::Settings, Lang::En);
+    harness.app.handle_header_action(HeaderAction::Settings, &harness.ctx.clone());
     harness.settle();
     assert!(harness.drew(Message::SettingsTitle.text(Lang::En)), "the Settings window is up: {:?}", harness.drawn);
 
@@ -637,12 +638,11 @@ fn a_modal_owns_the_keys() {
     assert_eq!(harness.camera(), orbited, "F under a modal does not reframe");
     harness.press(egui::Key::R, egui::Modifiers::NONE);
     assert!(harness.app.tabs.active().editor.drawing().is_none(), "and no tool starts under it");
+    // The save is a pick now, so the assertion is the pick and not a drawn title: no dialog is
+    // asked for while a modal owns the keys (X91).
+    let picks = harness.app.picker.produced();
     harness.press(egui::Key::S, egui::Modifiers::CTRL);
-    assert!(
-        !harness.drew(Message::SaveSceneAsTitle.text(Lang::En)),
-        "Ctrl+S under a modal opens no save dialog: {:?}",
-        harness.drawn
-    );
+    assert_eq!(harness.app.picker.produced(), picks, "Ctrl+S under a modal starts no pick");
 
     // The gate is the modal and not a dead key: with it closed, the same press undoes the edit.
     harness.app.settings_open = false;
@@ -650,6 +650,82 @@ fn a_modal_owns_the_keys() {
     harness.press(egui::Key::Z, egui::Modifiers::CTRL);
     assert!(!harness.app.tabs.active().can_undo(), "the undo ran once the modal was gone");
     assert!(harness.app.tabs.active().can_redo(), "and one edit was one undo entry");
+}
+
+#[test]
+fn a_cancelled_pick_opens_and_writes_nothing() {
+    // X91: the file manager is another process, so its answer lands at the frame boundary. A cancel
+    // is an answer — the person closed the dialog — and it must leave every tab exactly as it was.
+    let mut harness = Harness::new("frame-pick-cancel");
+    harness.settle();
+    let tabs = harness.app.tabs.iter().count();
+    let revision = harness.revision();
+    let path = harness.app.tabs.active().path().map(|path| path.to_owned());
+
+    let ctx = harness.ctx.clone();
+    let order = Order { mode: PickMode::Open, folder: None, name: None, lang: Lang::En };
+    harness.app.handle_file_action(FileAction::Pick(order), &ctx);
+    assert_eq!(harness.app.picker.produced(), 1, "the frame asked the file manager");
+    assert!(harness.app.picker.answer(None), "and the person closed the dialog");
+    harness.settle();
+
+    assert_eq!(harness.app.tabs.iter().count(), tabs, "a cancelled pick opens no tab");
+    assert_eq!(harness.revision(), revision, "and writes no document");
+    assert_eq!(harness.app.tabs.active().path().map(|path| path.to_owned()), path, "the open file is unchanged");
+    assert!(harness.app.tabs.active().last_error.is_none(), "a cancel is not a failure to report");
+}
+
+#[test]
+fn a_picked_name_saves_a_scene_the_next_open_can_see() {
+    // The dialog filters by the scene extension but does not append it, so `cabinet` typed into the
+    // field is written as `cabinet.z3l`: a file the next Open lists (X91).
+    let mut harness = Harness::new("frame-pick-save");
+    harness.settle();
+    let directory = testkit::scratch_dir("frame-pick-save-scene");
+    let typed = directory.join("cabinet");
+    let ctx = harness.ctx.clone();
+    let order = Order {
+        mode: PickMode::Save,
+        folder: Some(directory.clone()),
+        name: Some("cabinet".to_owned()),
+        lang: Lang::En,
+    };
+    harness.app.handle_file_action(FileAction::Pick(order), &ctx);
+    assert!(harness.app.picker.answer(Some(typed.clone())), "the person confirmed the name");
+    harness.settle();
+
+    let written = directory.join("cabinet.z3l");
+    assert_eq!(harness.app.tabs.active().path().map(|path| path.to_owned()), Some(written.clone()));
+    assert!(written.is_file(), "the scene is on disk under the name the next Open filters for");
+    assert!(!harness.app.tabs.active().is_dirty(), "a save leaves the scene saved");
+}
+
+#[test]
+fn a_pick_belongs_to_the_tab_that_asked_for_it() {
+    // ADR 0081: the pick is the tab's, not the window's. The file manager draws its own window, so a
+    // person can activate another tab behind it; the picked path must still land in the tab whose
+    // gesture asked for it.
+    let mut harness = Harness::new("frame-pick-tab");
+    harness.settle();
+    let asking = harness.app.tabs.active_id();
+    let directory = testkit::scratch_dir("frame-pick-tab-scene");
+    let ctx = harness.ctx.clone();
+    let order = Order { mode: PickMode::Save, folder: Some(directory.clone()), name: None, lang: Lang::En };
+    harness.app.handle_file_action(FileAction::Pick(order), &ctx);
+    harness.app.handle_file_action(FileAction::New, &ctx);
+    let elsewhere = harness.app.tabs.active_id();
+    assert_ne!(elsewhere, asking, "the new scene took the front while the pick was up");
+
+    let path = directory.join("cabinet.z3l");
+    assert!(harness.app.picker.answer(Some(path.clone())));
+    harness.settle();
+
+    assert_eq!(harness.app.tabs.active_id(), asking, "the tab that asked is in front again");
+    let saved = harness.app.tabs.active();
+    assert_eq!(saved.path(), Some(path.as_path()), "and it is the tab that took the picked path");
+    assert!(path.is_file(), "the scene was written");
+    let other = harness.app.tabs.document(elsewhere).expect("the new tab is still open");
+    assert_eq!(other.path(), None, "the scene that was in front took nothing");
 }
 
 #[test]
@@ -829,7 +905,7 @@ fn no_chrome_gesture_writes_a_revision() {
     assert!(harness.app.shell.panels.all_collapsed(), "the fold shortcut folded both panels");
     harness.press(egui::Key::Num0, egui::Modifiers::CTRL);
     assert!(!harness.app.shell.panels.any_visible(), "the hide shortcut hid both panels");
-    harness.app.handle_header_action(HeaderAction::ToggleRibbon, Lang::En);
+    harness.app.handle_header_action(HeaderAction::ToggleRibbon, &harness.ctx.clone());
     harness.settle();
     assert!(!harness.app.tabs.active().ribbon_open(), "the ribbon folded");
     harness.drag(harness.scene().center(), egui::vec2(40.0, 0.0), egui::PointerButton::Middle);

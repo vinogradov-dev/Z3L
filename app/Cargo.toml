@@ -36,8 +36,10 @@ text = { workspace = true }
 units = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The system file manager: a pick runs on a worker thread so the window keeps drawing (X91).
+rfd = { workspace = true }
+pollster = { workspace = true }
 
 [dev-dependencies]
-testkit = { workspace = true }
 # A device without a window: the interface is rendered offscreen to PNG shots (U81).
-pollster = { workspace = true }
+testkit = { workspace = true }

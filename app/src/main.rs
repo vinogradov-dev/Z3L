@@ -30,6 +30,8 @@ mod document;
 mod draw_gizmo;
 mod extrude_gizmo;
 mod file_menu;
+/// The system file manager: *Open* and *Save as* ask the operating system for a path (X91).
+mod file_picker;
 mod fill_gizmo;
 /// The shell's frame, asserted without a window (U78).
 #[cfg(test)]
@@ -78,6 +80,7 @@ use ui::{Palette, TransformMode, icons, theme};
 
 use crate::document::{DeleteRequest, Document, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
+use crate::file_picker::{PickMode, Picker, Started, scene_file};
 use crate::header::{HeaderAction, HeaderState, TabView};
 use crate::scene_build::empty_session_with;
 
@@ -274,6 +277,11 @@ struct App {
     product_card: ProductCard,
     /// Why the defaults were used instead of the saved workspace, shown in the status bar.
     settings_notice: Option<crate::settings_store::Notice>,
+    /// The pick the system file manager is answering, if one is in flight (ADR 0182).
+    picker: Picker,
+    /// The tab that asked for the pick in flight, so its answer lands there and not in whichever tab
+    /// is in front when the file manager returns (ADR 0081).
+    pick_tab: Option<TabId>,
     /// The close or the deletion that is waiting for the user's answer.
     pending_question: Option<PendingQuestion>,
     /// Whether the frame should close the window: the context that sends the command is only at
@@ -393,6 +401,8 @@ impl App {
             palette: Palette::new(),
             product_card: ProductCard::new(),
             settings_notice: loaded.notice,
+            picker: Picker::new(),
+            pick_tab: None,
             pending_question: None,
             quit_requested: false,
         })
@@ -429,12 +439,43 @@ impl App {
         }
     }
 
+    /// Performs the gesture the file manager answered, or nothing when the pick was cancelled.
+    ///
+    /// A cancelled pick writes and opens nothing: the person closed the dialog, which is an answer
+    /// and not a failure, so the status bar stays quiet (ADR 0182).
+    fn take_pick(&mut self, ctx: &egui::Context) {
+        let Some((order, answer)) = self.picker.take() else {
+            return;
+        };
+        // The pick is the asking tab's (ADR 0081): its answer lands there even when another tab was
+        // activated behind the file manager's own window.
+        let Some(asking) = self.pick_tab.take() else {
+            return;
+        };
+        let Some(path) = answer else {
+            return;
+        };
+        if self.tabs.document(asking).is_none() {
+            // The tab closed under the dialog: there is nothing left to save or to open into.
+            return;
+        }
+        self.tabs.activate(asking);
+        let action = match order.mode {
+            PickMode::Open => FileAction::Open(path),
+            // The dialog filters by the scene extension but does not append it, so a name typed
+            // without one becomes a file the next *Open* can see.
+            PickMode::Save => FileAction::Save(scene_file(path)),
+        };
+        self.handle_file_action(action, ctx);
+    }
+
     /// Performs the header action the row returned.
     ///
     /// Undo, redo and save are the same operations the menu and the keyboard already take, and every
     /// one of them acts on the active tab only, so the header adds a place to click and never a
     /// second code path into a document.
-    fn handle_header_action(&mut self, action: HeaderAction, lang: text::Lang) {
+    fn handle_header_action(&mut self, action: HeaderAction, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
         match action {
             HeaderAction::Home => {
                 self.home_open = true;
@@ -443,9 +484,9 @@ impl App {
             HeaderAction::Undo => self.tabs.active_mut().undo(),
             HeaderAction::Redo => self.tabs.active_mut().redo(),
             HeaderAction::Save => {
-                let requested = self.tabs.active_mut().request_save();
+                let requested = self.tabs.active_mut().request_save(lang);
                 if let Some(action) = requested {
-                    self.handle_file_action(action, lang);
+                    self.handle_file_action(action, ctx);
                 }
             }
             HeaderAction::Settings => {
@@ -472,16 +513,27 @@ impl App {
     }
 
     /// Performs the operation the File menu returned and reports a failure in the status bar.
-    fn handle_file_action(&mut self, action: FileAction, lang: text::Lang) {
+    fn handle_file_action(&mut self, action: FileAction, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
         self.tabs.active_mut().last_error = None;
         let recorded = match &action {
             FileAction::Open(path) | FileAction::Save(path) => Some(path.clone()),
-            FileAction::New | FileAction::Close | FileAction::Quit => None,
+            FileAction::New | FileAction::Pick(_) | FileAction::Close | FileAction::Quit => None,
         };
         let result = match action {
             FileAction::New => self.new_tab(),
             FileAction::Open(path) => self.open_tab(&path),
             FileAction::Save(path) => self.tabs.active_mut().save(&path),
+            // The file manager is asked, not waited for: the window keeps drawing and the answer
+            // lands at the next frame boundary (ADR 0182).
+            FileAction::Pick(order) => match self.picker.start(ctx, order) {
+                Ok(Started::Asked) => {
+                    self.pick_tab = Some(self.tabs.active_id());
+                    Ok(())
+                }
+                Ok(Started::Busy) => Ok(()),
+                Err(_) => Err(text::Message::PickFailed.text(lang).to_owned()),
+            },
             FileAction::Close => {
                 let active = self.tabs.active_id();
                 self.close_tab(active, lang);
@@ -893,11 +945,16 @@ impl App {
         self.home_open = false;
         match action {
             ui::home::HomeAction::New | ui::home::HomeAction::EmptyTemplate => {
-                self.handle_file_action(FileAction::New, ui::language(ctx));
+                self.handle_file_action(FileAction::New, ctx);
             }
-            ui::home::HomeAction::Open => self.tabs.active_mut().request_open(),
+            ui::home::HomeAction::Open => {
+                let lang = ui::language(ctx);
+                if let Some(action) = self.tabs.active_mut().request_open(lang) {
+                    self.handle_file_action(action, ctx);
+                }
+            }
             ui::home::HomeAction::OpenRecent(path) => {
-                self.handle_file_action(FileAction::Open(path), ui::language(ctx));
+                self.handle_file_action(FileAction::Open(path), ctx);
             }
             ui::home::HomeAction::Close => {}
         }
@@ -919,6 +976,9 @@ impl App {
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
         self.take_directory();
+        // The file manager answers on its own schedule, so its path is taken at the same boundary
+        // and becomes the open or the save the gesture would have been (ADR 0182).
+        self.take_pick(ui.ctx());
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.
@@ -938,8 +998,8 @@ impl App {
             }
         }
         // A modal — the Settings window, the Home surface, the palette, a destructive question —
-        // owns the keys for the frame it is up, so typing a path or a name never saves, undoes,
-        // reframes or leaves a tool, and a question never answers itself with a second Delete.
+        // owns the keys for the frame it is up, so typing into a field never saves, undoes, reframes
+        // or leaves a tool, and a question never answers itself with a second Delete.
         let modals = self.settings_open
             || self.home_open
             || self.palette.is_open()
@@ -957,12 +1017,12 @@ impl App {
             if shortcuts.palette {
                 self.palette.open();
             }
-            let requested = self.tabs.active_mut().handle_shortcuts(shortcuts);
+            let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
-                self.handle_file_action(action, ui::language(ui.ctx()));
+                self.handle_file_action(action, ui.ctx());
             }
             if shortcuts.new_tab {
-                self.handle_file_action(FileAction::New, ui::language(ui.ctx()));
+                self.handle_file_action(FileAction::New, ui.ctx());
             }
             if shortcuts.close_tab {
                 let active = self.tabs.active_id();
@@ -1027,13 +1087,10 @@ impl App {
             });
         }
         if let Some(action) = file_action {
-            self.handle_file_action(action, ui::language(ui.ctx()));
-        }
-        if let Some(action) = self.tabs.active_mut().show_dialogs(ui.ctx()) {
-            self.handle_file_action(action, ui::language(ui.ctx()));
+            self.handle_file_action(action, ui.ctx());
         }
         if let Some(action) = header_action {
-            self.handle_header_action(action, ui::language(ui.ctx()));
+            self.handle_header_action(action, ui.ctx());
         }
         self.answer_question(ui.ctx());
 

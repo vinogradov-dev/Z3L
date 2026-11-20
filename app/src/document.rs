@@ -665,24 +665,19 @@ impl Document {
         locked_command_refusal(&self.editor, self.session.project(), id, lang)
     }
 
-    /// The save the header's button and `Ctrl+S` ask for: the current path, or the path dialog.
-    pub(crate) fn request_save(&mut self) -> Option<FileAction> {
-        self.file.save()
+    /// The save the header's button and `Ctrl+S` ask for: the current path, or a file-manager pick.
+    pub(crate) fn request_save(&mut self, lang: Lang) -> Option<FileAction> {
+        self.file.save(lang)
     }
 
-    /// Opens the Open dialog from the Home surface, which has no File menu of its own.
-    pub(crate) fn request_open(&mut self) {
-        self.file.request_open();
+    /// Asks for the pick the Home surface's *Open* entry wants; Home has no File menu of its own.
+    pub(crate) fn request_open(&mut self, lang: Lang) -> Option<FileAction> {
+        self.file.request_open(lang)
     }
 
-    /// Draws the File menu button and its dialogs.
+    /// Draws the File menu button.
     pub(crate) fn show_file_menu(&mut self, ui: &mut egui::Ui) -> Option<FileAction> {
         self.file.show(ui)
-    }
-
-    /// Draws the dialogs the File menu opened and returns the operation one of them asked for.
-    pub(crate) fn show_dialogs(&mut self, ctx: &egui::Context) -> Option<FileAction> {
-        self.file.show_dialogs(ctx)
     }
 
     /// Re-uploads the frame when the selection moved.
@@ -748,8 +743,8 @@ impl Document {
     /// everything they act on belongs to the active document: one tab's undo never touches another.
     /// The save is returned rather than performed: writing a file is the shell's job, because it
     /// also remembers the path in the workspace settings.
-    pub(crate) fn handle_shortcuts(&mut self, shortcuts: Shortcuts) -> Option<FileAction> {
-        let save = if shortcuts.save { self.file.save() } else { None };
+    pub(crate) fn handle_shortcuts(&mut self, shortcuts: Shortcuts, lang: Lang) -> Option<FileAction> {
+        let save = if shortcuts.save { self.file.save(lang) } else { None };
         if shortcuts.undo {
             self.undo();
         }

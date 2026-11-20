@@ -60,7 +60,7 @@ const HOST_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/toolbars.rs", owns: "the ribbon and the anchor of its variant list" },
     Owner { path: "crates/ui/src/toolbars/list.rs", owns: "the ribbon's variant list" },
     Owner { path: "app/src/contour_gizmo.rs", owns: "the numeric entry beside a contour grip" },
-    Owner { path: "app/src/file_menu.rs", owns: "the file dialogs and the destructive question" },
+    Owner { path: "app/src/file_menu.rs", owns: "the destructive question a close, a quit or a delete asks" },
     Owner { path: "app/src/main.rs", owns: "the window skeleton: the central workspace and the header band" },
     Owner { path: "app/src/side_panels.rs", owns: "the two floating side panels" },
     Owner { path: "app/src/status_bar.rs", owns: "the status row" },

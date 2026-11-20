@@ -1,10 +1,10 @@
-//! The File menu, the open/save path dialog and the destructive question a close or a delete asks.
+//! The File menu and the destructive question a close or a delete asks.
 //!
 //! The menu is a view over one piece of the document's shell state — the path the scene came from —
-//! plus its pending dialog. It never touches the document or the filesystem itself; it returns a
-//! [`FileAction`] and the application performs it through the scene store. A path dialog is a plain
-//! text field with a short list of nearby `.z3l` files, so the build needs no native file-dialog
-//! dependency.
+//! plus the pick it asks the shell for. It never touches the document or the filesystem itself; it
+//! returns a [`FileAction`] and the application performs it through the scene store. A path is never
+//! typed: *Open* and *Save as* return the [`Order`] the shell hands the system's own file manager
+//! (ADR 0182), and the header, the Home surface and `Ctrl+S` all reach it through the same command.
 //!
 //! Opening and *New* both mean "a new tab" (U45), so the menu never discards a scene and never has
 //! to ask: the questions left are a tab close with unsaved changes, a quit with them, and a Delete
@@ -12,13 +12,14 @@
 //! window and not to one document (ADR 0112).
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-use eframe::egui::{Color32, Id, Modal, TextEdit, Ui};
+use eframe::egui::{Id, Modal, Ui};
 use project::EXTENSION;
 use text::{Lang, Message};
+
+use crate::file_picker::{Order, PickMode, folder_of};
 
 /// One file operation the user asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,13 +30,15 @@ pub(crate) enum FileAction {
     Open(PathBuf),
     /// Write the current scene to this path.
     Save(PathBuf),
+    /// Ask the system file manager for a path (ADR 0182).
+    Pick(Order),
     /// Close the active tab, asking first when its scene has unsaved changes.
     Close,
     /// Quit the application, asking once when any open scene has unsaved changes.
     Quit,
 }
 
-/// What a File menu entry means before it becomes an action or a dialog.
+/// What a File menu entry means before it becomes an action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuCommand {
     New,
@@ -44,21 +47,6 @@ enum MenuCommand {
     SaveAs,
     Close,
     Quit,
-}
-
-/// Which operation the path dialog performs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PathMode {
-    Open,
-    SaveAs,
-}
-
-/// The open path dialog and what the user has typed into it.
-#[derive(Clone, Debug)]
-struct PathDialog {
-    mode: PathMode,
-    path: String,
-    error: Option<String>,
 }
 
 /// What a destructive question was answered.
@@ -156,11 +144,10 @@ impl Confirm {
     }
 }
 
-/// The File menu, its current path and its pending modal dialogs.
+/// The File menu and the file the scene came from.
 #[derive(Debug, Default)]
 pub(crate) struct FileMenu {
     current: Option<PathBuf>,
-    dialog: Option<PathDialog>,
 }
 
 impl FileMenu {
@@ -174,7 +161,7 @@ impl FileMenu {
         self.current = path;
     }
 
-    /// Draws the File menu button on an existing row and any open dialog.
+    /// Draws the File menu button on an existing row.
     ///
     /// The button is a plain menu: the header decides where it sits and draws its own dividers, so
     /// this function creates no panel of its own. *New* and *Open* open a tab, so neither of them
@@ -187,56 +174,47 @@ impl FileMenu {
         egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
             if ui.button(Message::MenuNew.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::New);
+                action = self.command(MenuCommand::New, lang);
             }
             if ui.button(Message::MenuOpen.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::Open);
+                action = self.command(MenuCommand::Open, lang);
             }
             ui.separator();
             if ui.button(Message::MenuSave.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::Save);
+                action = self.command(MenuCommand::Save, lang);
             }
             if ui.button(Message::MenuSaveAs.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::SaveAs);
+                action = self.command(MenuCommand::SaveAs, lang);
             }
             ui.separator();
             if ui.button(Message::MenuCloseTab.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::Close);
+                action = self.command(MenuCommand::Close, lang);
             }
             if ui.button(Message::MenuExit.text(lang)).clicked() {
                 ui.close();
-                action = self.command(MenuCommand::Quit);
+                action = self.command(MenuCommand::Quit, lang);
             }
         });
-        action.or_else(|| self.show_dialogs(ui.ctx()))
-    }
-
-    /// Draws any open modal dialog and returns the operation it asked for.
-    ///
-    /// A dialog is a window over the whole application, not a child of the header, so the shell
-    /// calls this once per frame however the header is laid out.
-    pub(crate) fn show_dialogs(&mut self, ctx: &egui::Context) -> Option<FileAction> {
-        self.path_dialog_ui(ctx)
+        action
     }
 
     /// The Save path of the header's save button.
     ///
     /// The header calls the same [`MenuCommand::Save`] the File menu does, so the two cannot drift
-    /// into one saving silently and the other opening a path dialog.
-    pub(crate) fn save(&mut self) -> Option<FileAction> {
-        self.command(MenuCommand::Save)
+    /// into one saving silently and the other opening a picker.
+    pub(crate) fn save(&mut self, lang: Lang) -> Option<FileAction> {
+        self.command(MenuCommand::Save, lang)
     }
 
-    /// Opens the path dialog from the Home surface.
+    /// Asks for the pick the Home surface's *Open* entry wants.
     ///
-    /// Home has no menu of its own, so it asks for the same dialog the File menu opens; the dialog
-    /// already warns when the current scene has unsaved changes.
-    pub(crate) fn request_open(&mut self) {
-        self.open_dialog();
+    /// Home has no menu of its own, so it asks for the same order the File menu builds.
+    pub(crate) fn request_open(&mut self, lang: Lang) -> Option<FileAction> {
+        self.command(MenuCommand::Open, lang)
     }
 
     /// The file the scene came from, if it has one.
@@ -254,25 +232,17 @@ impl FileMenu {
             .to_owned()
     }
 
-    /// Turns a menu entry into an action or a dialog.
-    fn command(&mut self, command: MenuCommand) -> Option<FileAction> {
+    /// Turns a menu entry into the action the shell performs.
+    fn command(&mut self, command: MenuCommand, lang: Lang) -> Option<FileAction> {
         match command {
             MenuCommand::New => Some(FileAction::New),
-            MenuCommand::Open => {
-                self.open_dialog();
-                None
-            }
+            MenuCommand::Open => Some(FileAction::Pick(self.order(PickMode::Open, lang))),
+            // Saving over the file the scene came from is not a pick: the person already chose it.
             MenuCommand::Save => match &self.current {
                 Some(path) => Some(FileAction::Save(path.clone())),
-                None => {
-                    self.save_dialog();
-                    None
-                }
+                None => Some(FileAction::Pick(self.order(PickMode::Save, lang))),
             },
-            MenuCommand::SaveAs => {
-                self.save_dialog();
-                None
-            }
+            MenuCommand::SaveAs => Some(FileAction::Pick(self.order(PickMode::Save, lang))),
             // Both are window operations, not file operations: the shell closes the tab or the
             // window, and the unsaved-changes question belongs there because it names a tab.
             MenuCommand::Close => Some(FileAction::Close),
@@ -280,128 +250,23 @@ impl FileMenu {
         }
     }
 
-    fn open_dialog(&mut self) {
-        self.dialog = Some(PathDialog { mode: PathMode::Open, path: self.default_path(), error: None });
-    }
-
-    fn save_dialog(&mut self) {
-        self.dialog = Some(PathDialog { mode: PathMode::SaveAs, path: self.default_path(), error: None });
-    }
-
-    /// The path a dialog starts with: the current file, or `scene` with the scene extension in the
-    /// working directory.
-    fn default_path(&self) -> String {
-        if let Some(current) = &self.current {
-            return current.display().to_string();
+    /// The order a pick gives the file manager: where it opens and what name it offers.
+    ///
+    /// A pick starts where the document lives, and a save offers the file's own name, so saving a
+    /// scene as another keeps its spelling; a scene that was never saved offers `scene.z3l`.
+    fn order(&self, mode: PickMode, lang: Lang) -> Order {
+        let current = self.current.as_deref();
+        let name = current.and_then(Path::file_name).map(|name| name.to_string_lossy().into_owned());
+        Order {
+            mode,
+            folder: folder_of(current),
+            name: match mode {
+                PickMode::Open => None,
+                PickMode::Save => Some(name.unwrap_or_else(|| format!("scene.{EXTENSION}"))),
+            },
+            lang,
         }
-        let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        directory.join(format!("scene.{EXTENSION}")).display().to_string()
     }
-
-    fn path_dialog_ui(&mut self, ctx: &egui::Context) -> Option<FileAction> {
-        let mut dialog = self.dialog.take()?;
-        let mut action = None;
-        let mut keep = true;
-        Modal::new(Id::unique("scene-file-path")).show(ctx, |ui| {
-            ui.set_width(460.0);
-            let lang = ui::language(ui.ctx());
-            let (title, primary) = match dialog.mode {
-                PathMode::Open => (Message::OpenSceneTitle, Message::OpenButton),
-                PathMode::SaveAs => (Message::SaveSceneAsTitle, Message::SaveButton),
-            };
-            ui.heading(title.text(lang));
-            if dialog.mode == PathMode::Open {
-                // Opening a file adds a tab, so the scene in front of the user stays exactly where
-                // it is: the dialog only says where the new one comes from.
-                ui.label(Message::OpenNewTabHint.text(lang));
-            }
-            ui.horizontal(|ui| {
-                ui.label(Message::PathLabel.text(lang));
-                ui.add(TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
-            });
-            if dialog.mode == PathMode::Open {
-                let files = scene_files_near(&dialog.path);
-                if !files.is_empty() {
-                    ui.label(Message::NearbyScenes.text(lang));
-                    egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-                        for file in files {
-                            let name = file.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-                            if ui.selectable_label(false, name).clicked() {
-                                dialog.path = file.display().to_string();
-                            }
-                        }
-                    });
-                }
-            }
-            if let Some(error) = &dialog.error {
-                ui.colored_label(Color32::LIGHT_RED, error);
-            }
-            ui.separator();
-            let mut submit = false;
-            ui.horizontal(|ui| {
-                submit = ui.button(primary.text(lang)).clicked();
-                if ui.button(Message::Cancel.text(lang)).clicked() {
-                    keep = false;
-                }
-            });
-            if submit {
-                match submit_dialog(&mut dialog, lang) {
-                    Some(chosen) => {
-                        action = Some(chosen);
-                        keep = false;
-                    }
-                    None => keep = true,
-                }
-            }
-        });
-        if keep {
-            self.dialog = Some(dialog);
-        }
-        action
-    }
-}
-
-/// Validates the typed path and turns it into an action, or records why it cannot.
-fn submit_dialog(dialog: &mut PathDialog, lang: Lang) -> Option<FileAction> {
-    let path = dialog.path.trim();
-    if path.is_empty() {
-        dialog.error = Some(Message::EnterFilePath.text(lang).to_owned());
-        return None;
-    }
-    let path = PathBuf::from(path);
-    dialog.error = None;
-    match dialog.mode {
-        PathMode::Open => Some(FileAction::Open(path)),
-        PathMode::SaveAs => Some(FileAction::Save(path)),
-    }
-}
-
-/// Up to fifty `.z3l` files beside the typed path, sorted, for the Open dialog.
-fn scene_files_near(path: &str) -> Vec<PathBuf> {
-    let path = Path::new(path);
-    let directory = if path.is_dir() {
-        path
-    } else {
-        path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."))
-    };
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .take(500)
-        .map(|entry| entry.path())
-        .filter(|candidate| {
-            candidate.is_file()
-                && candidate
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case(EXTENSION))
-        })
-        .collect();
-    files.sort();
-    files.truncate(50);
-    files
 }
 
 /// Top-level sections of a loaded scene that this build does not understand.
@@ -414,30 +279,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn save_without_a_path_opens_the_save_dialog() {
+    fn save_without_a_path_asks_the_file_manager_for_a_name() {
+        // The scene was never saved, so the picker offers `scene.z3l` and there is no folder to
+        // start in: the file manager's own last folder stands in (ADR 0182).
         let mut menu = FileMenu::new();
-        assert_eq!(menu.command(MenuCommand::Save), None);
-        assert!(matches!(menu.dialog, Some(PathDialog { mode: PathMode::SaveAs, .. })));
+        let expected = Order { mode: PickMode::Save, folder: None, name: Some("scene.z3l".to_owned()), lang: Lang::En };
+        assert_eq!(menu.command(MenuCommand::Save, Lang::En), Some(FileAction::Pick(expected)));
     }
 
     #[test]
     fn save_with_a_path_returns_it() {
+        // Saving over the file the scene came from is no pick at all: the person already chose it.
         let mut menu = FileMenu::new();
         let path = PathBuf::from("/tmp/scene.z3l");
         menu.set_path(Some(path.clone()));
-        assert_eq!(menu.command(MenuCommand::Save), Some(FileAction::Save(path)));
-        assert!(menu.dialog.is_none());
+        assert_eq!(menu.command(MenuCommand::Save, Lang::En), Some(FileAction::Save(path)));
+    }
+
+    #[test]
+    fn open_and_save_as_start_where_the_document_lives() {
+        let mut menu = FileMenu::new();
+        menu.set_path(Some(PathBuf::from("/tmp/scenes/cabinet.z3l")));
+        let opened = menu.command(MenuCommand::Open, Lang::En).expect("the open order");
+        assert_eq!(
+            opened,
+            FileAction::Pick(Order {
+                mode: PickMode::Open,
+                folder: Some(PathBuf::from("/tmp/scenes")),
+                name: None,
+                lang: Lang::En,
+            }),
+            "an open pick offers no name: the person picks an existing file"
+        );
+        let saved = menu.command(MenuCommand::SaveAs, Lang::En).expect("the save order");
+        assert_eq!(
+            saved,
+            FileAction::Pick(Order {
+                mode: PickMode::Save,
+                folder: Some(PathBuf::from("/tmp/scenes")),
+                name: Some("cabinet.z3l".to_owned()),
+                lang: Lang::En,
+            }),
+            "save as starts in the document's folder and keeps its name"
+        );
     }
 
     #[test]
     fn a_new_scene_opens_a_tab_without_asking() {
         // Opening a tab discards nothing, so neither New nor Open has a question to ask (U45); the
-        // one question left is a tab close, which the shell draws through `ConfirmClose`.
+        // one question left is a tab close, which the shell draws through `Confirm`.
         let mut menu = FileMenu::new();
         menu.set_path(Some(PathBuf::from("/tmp/cabinet.z3l")));
-        assert_eq!(menu.command(MenuCommand::New), Some(FileAction::New));
-        assert_eq!(menu.save(), Some(FileAction::Save(PathBuf::from("/tmp/cabinet.z3l"))));
-        assert!(menu.dialog.is_none(), "the menu keeps the scene's path: it is another tab, not another file");
+        assert_eq!(menu.command(MenuCommand::New, Lang::En), Some(FileAction::New));
+        assert_eq!(menu.save(Lang::En), Some(FileAction::Save(PathBuf::from("/tmp/cabinet.z3l"))));
     }
 
     #[test]
@@ -477,47 +371,8 @@ mod tests {
         // *Close tab* and *Exit* are window operations, so the menu reports them as actions the
         // shell performs rather than opening a dialog of its own (X32).
         let mut menu = FileMenu::new();
-        assert_eq!(menu.command(MenuCommand::Close), Some(FileAction::Close));
-        assert_eq!(menu.command(MenuCommand::Quit), Some(FileAction::Quit));
-        assert!(menu.dialog.is_none(), "neither of them asks for a path");
-    }
-
-    #[test]
-    fn open_opens_a_dialog_prefilled_with_a_scene_name() {
-        let mut menu = FileMenu::new();
-        assert_eq!(menu.command(MenuCommand::Open), None);
-        let dialog = menu.dialog.as_ref().expect("the open dialog");
-        assert_eq!(dialog.mode, PathMode::Open);
-        assert!(dialog.path.ends_with(&format!("scene.{EXTENSION}")), "path was {}", dialog.path);
-    }
-
-    #[test]
-    fn an_empty_path_is_rejected_by_the_dialog() {
-        let mut dialog = PathDialog { mode: PathMode::Open, path: "   ".to_owned(), error: None };
-        assert_eq!(submit_dialog(&mut dialog, Lang::En), None);
-        assert!(dialog.error.is_some());
-    }
-
-    #[test]
-    fn nearby_scenes_list_only_scene_files() {
-        let dir = std::env::temp_dir().join(format!("z3l-scene-list-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create the fixture directory");
-        for name in [
-            format!("b.{EXTENSION}"),
-            format!("a.{EXTENSION}"),
-            "notes.txt".to_owned(),
-            format!("save.{EXTENSION}.tmp"),
-        ] {
-            fs::write(dir.join(name), "{}").expect("write a fixture");
-        }
-
-        let files = scene_files_near(&dir.display().to_string());
-        let names: Vec<_> = files.iter().filter_map(|path| path.file_name()).filter_map(|name| name.to_str()).collect();
-        let expected = [format!("a.{EXTENSION}"), format!("b.{EXTENSION}")];
-        assert_eq!(names, expected, "only scene files are listed, sorted");
-
-        fs::remove_dir_all(&dir).expect("remove the fixture directory");
+        assert_eq!(menu.command(MenuCommand::Close, Lang::En), Some(FileAction::Close));
+        assert_eq!(menu.command(MenuCommand::Quit, Lang::En), Some(FileAction::Quit));
     }
 
     #[test]

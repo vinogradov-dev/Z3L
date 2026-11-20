@@ -69,16 +69,12 @@ messages! {
         "Всё выделение удаляется за один шаг. Отмена (Ctrl+Z) вернёт его."
     ],
     OpenSceneTitle = ["Open scene", "Открыть сцену"],
-    OpenButton = ["Open", "Открыть"],
     SaveSceneAsTitle = ["Save scene as", "Сохранить сцену как"],
-    SaveButton = ["Save", "Сохранить"],
-    OpenNewTabHint = [
-        "The scene opens in a new tab; the open scenes are left as they are.",
-        "Сцена откроется в новой вкладке; открытые сцены останутся как есть."
+    SceneFiles = ["Scene files", "Сцены"],
+    PickFailed = [
+        "The system file manager could not be opened.",
+        "Не удалось открыть системный файловый менеджер."
     ],
-    PathLabel = ["Path", "Путь"],
-    NearbyScenes = ["Nearby scenes", "Сцены рядом"],
-    EnterFilePath = ["Enter a file path.", "Введите путь к файлу."],
     NoticeNoSettingsLocation = [
         "No workspace settings location; using defaults.",
         "Нет расположения настроек рабочей области; используются значения по умолчанию."
