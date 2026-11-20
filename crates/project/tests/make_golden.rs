@@ -145,8 +145,13 @@ fn scene() -> SceneFile {
     // An object marked as a tool survives the boolean it took part in, and the flag travels in the
     // file: the golden carries one marked object so the field is exercised both ways.
     project.set_object_tool(id(10), true).expect("the union is a tool");
-    // A boolean step is a reference: the cutter stays in the tree and the body names it.
-    project.set_object_boolean(id(3), model::BooleanOp::Difference, id(11)).expect("the top is cut by the cutter");
+    // A boolean step freezes the cutter's shape and spends the source: the golden carries the step
+    // and the source removed, so a file written by this build is a file the next build loads.
+    let cutter = project.object(id(11)).expect("the cutter").geometry().as_constructive().expect("a body").clone();
+    let step = model::BooleanTool::new("Cutter", cutter, Placement::IDENTITY).expect("a tool");
+    project
+        .apply_boolean(id(3), model::Boolean::new(model::BooleanOp::Difference, step), Some(id(11)))
+        .expect("the top is cut by the cutter");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
     // (ADR 0159).

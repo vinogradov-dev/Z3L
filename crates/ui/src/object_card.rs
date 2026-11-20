@@ -31,11 +31,11 @@ use egui::{RichText, TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
 use engine::object_cmds::{
     OBJECT_BOOLEAN_REMOVE_ID, OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID,
-    OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID,
+    OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID, OBJECT_TOOL_SET_ID,
 };
 use engine::{
     EditScope, NodeRename, ObjectBooleanRemove, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet,
-    ObjectPathReplace, ObjectPrimitiveReplace, Session,
+    ObjectPathReplace, ObjectPrimitiveReplace, ObjectToolSet, Session,
 };
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
@@ -573,6 +573,7 @@ impl ObjectCard {
             action = ObjectAction::Element(element);
         }
         let (collapse, cancel) = (row.collapse, row.cancel);
+        let marked = self.tool_mark_row(ui, session, object_id);
         let removed = self.boolean_rows(ui, session, object_id);
 
         // A field that refused its typed text kept its number: the box is red, the card says why.
@@ -643,8 +644,24 @@ impl ObjectCard {
             ui.ctx().request_repaint();
             return action;
         }
+        if let Some(tool) = marked {
+            match mark_tool(session, object_id, tool) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
         if let Some(index) = removed {
             match remove_boolean(session, object_id, index) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
+        if let Some(tool) = marked {
+            match mark_tool(session, object_id, tool) {
                 Ok(()) => self.error = None,
                 Err(error) => self.error = Some(error),
             }
@@ -807,6 +824,21 @@ impl ObjectCard {
     /// A step is a reference, not a copy: the row names the operation and the tool body, and
     /// removing the step leaves the tool in the tree where it still serves whatever names it next
     /// (W1). A body with no step draws nothing here, so the card of an extrusion is unchanged.
+    /// Draws the mark that says this body is a tool, and the new mark when the box changed.
+    ///
+    /// A tool passes through parts — the placement guard and the drags let it — survives the boolean
+    /// that spends an unmarked cutter, and may be applied again, which is what makes a cutter a
+    /// shape a workshop owns (ADR 0197). The row is offered for every object, because a contour
+    /// boolean reads the same mark to decide what it keeps.
+    fn tool_mark_row(&mut self, ui: &mut Ui, session: &Session, object: Id) -> Option<bool> {
+        let lang = crate::language(ui.ctx());
+        let marked = session.project().object(object)?.is_tool();
+        let mut next = marked;
+        ui.separator();
+        ui.checkbox(&mut next, Message::FieldTool.text(lang));
+        (next != marked).then_some(next)
+    }
+
     /// Draws the boolean steps of a body, one row each, and names the one the minus pressed.
     ///
     /// A step is a reference, not a copy: the row names the operation and the tool body, and
@@ -824,10 +856,9 @@ impl ObjectCard {
             let model::Feature::Boolean(step) = feature else {
                 continue;
             };
-            let tool = session
-                .project()
-                .object(step.tool())
-                .map_or_else(|| format!("#{}", step.tool().get()), |object| object.name().to_owned());
+            // The step carries the cutter's name, so a body keeps saying what cut it after the
+            // source was spent (ADR 0197).
+            let tool = step.tool().name().to_owned();
             let operation = match step.op() {
                 model::BooleanOp::Union => Message::ToolUnion,
                 model::BooleanOp::Difference => Message::ToolSubtract,
@@ -1332,6 +1363,12 @@ fn replace_primitive(
 fn remove_boolean(session: &mut Session, object: Id, index: usize) -> Result<(), String> {
     let params = json(&ObjectBooleanRemove { object, index })?;
     dispatch(session, OBJECT_BOOLEAN_REMOVE_ID, &params).map(|_| ())
+}
+
+/// Marks or unmarks an object as a tool.
+fn mark_tool(session: &mut Session, object: Id, tool: bool) -> Result<(), String> {
+    let params = json(&ObjectToolSet { object, tool })?;
+    dispatch(session, OBJECT_TOOL_SET_ID, &params).map(|_| ())
 }
 
 fn collapse_object(session: &mut Session, object: Id) -> Result<(), String> {

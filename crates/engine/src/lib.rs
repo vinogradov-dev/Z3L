@@ -50,9 +50,9 @@ pub use node_cmds::{
     NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
 };
 pub use object_cmds::{
-    OBJECT_BOOLEAN_REMOVE_ID, OBJECT_BOOLEAN_SET_ID, ObjectBooleanRemove, ObjectBooleanSet, ObjectCollapse,
-    ObjectContourReplace, ObjectExtrudeCreate, ObjectExtrudeHeightSet, ObjectPathCreate, ObjectPathExtrude,
-    ObjectPathReplace, ObjectPrimitiveCreate, ObjectPrimitiveReplace, PrimitiveKind,
+    OBJECT_BOOLEAN_REMOVE_ID, OBJECT_BOOLEAN_SET_ID, OBJECT_TOOL_SET_ID, ObjectBooleanRemove, ObjectBooleanSet,
+    ObjectCollapse, ObjectContourReplace, ObjectExtrudeCreate, ObjectExtrudeHeightSet, ObjectPathCreate,
+    ObjectPathExtrude, ObjectPathReplace, ObjectPrimitiveCreate, ObjectPrimitiveReplace, ObjectToolSet, PrimitiveKind,
 };
 pub use panel_cmds::{
     PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet, PanelCornerBandingClear, PanelCornerBandingSet,

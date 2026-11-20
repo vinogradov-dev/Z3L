@@ -28,9 +28,9 @@ use std::sync::Arc;
 use geom::{Aabb, DVec3, MeshData, triangulate_face};
 use kernel::{BodyId, KernelError, SolidKernel, TessOptions};
 use model::{
-    BandingSpec, BooleanTool, Constructive, CornerBanding, DerivedHoles, Drilling, EdgeBanding, EdgeBevel, HoleError,
-    Id, Machining, Mesh, Object, Panel, PanelGeometry, PanelNominalSize, PanelOutline, Path, Placement, Primitive,
-    Revision, RingBanding, SegmentSource, derive_holes,
+    BandingSpec, Constructive, CornerBanding, DerivedHoles, Drilling, EdgeBanding, EdgeBevel, HoleError, Id, Machining,
+    Mesh, Object, Panel, PanelGeometry, PanelNominalSize, PanelOutline, Path, Placement, Primitive, Revision,
+    RingBanding, SegmentSource, derive_holes,
 };
 use param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
 use thiserror::Error;
@@ -458,45 +458,10 @@ impl PanelInputs {
 enum Payload {
     Panel(PanelInputs),
     Mesh(Mesh),
-    Constructive(ConstructiveInputs),
+    Constructive(Constructive),
     Primitive(Primitive),
     Path(Path),
     Contours(model::Contours),
-}
-
-/// The inputs a constructive body's mesh was derived from: its own history and every tool body it
-/// names, transitively, with the placement each stands in.
-///
-/// A tool is a node reference, so a body's mesh depends on nodes that are not itself. Keeping the
-/// resolved closure beside the mesh is what makes the cache honest: a tool that moves or changes
-/// re-derives every body that names it, and a node the body does not name changes nothing.
-#[derive(Clone, Debug)]
-struct ConstructiveInputs {
-    body: Constructive,
-    tools: Vec<BooleanTool>,
-}
-
-impl ConstructiveInputs {
-    /// Captures what one body's mesh depends on.
-    fn capture(body: &Constructive, tools: &[BooleanTool]) -> Self {
-        Self { body: body.clone(), tools: tools.to_vec() }
-    }
-
-    /// Whether the body and its whole tool closure still derive the same mesh as this capture.
-    fn matches(&self, body: &Constructive, tools: &[BooleanTool]) -> bool {
-        self.body == *body && self.tools == tools
-    }
-
-    /// The body's own feature history.
-    const fn body(&self) -> &Constructive {
-        &self.body
-    }
-}
-
-impl param::ToolBodies for ConstructiveInputs {
-    fn tool(&self, id: Id) -> Option<(&Constructive, Placement)> {
-        self.tools.iter().find(|tool| tool.id() == id).map(|tool| (tool.body(), tool.placement()))
-    }
 }
 
 /// Evaluates a constructive body into flat-shaded render triangles.
@@ -505,15 +470,14 @@ impl param::ToolBodies for ConstructiveInputs {
 /// a history with a boolean step is compiled to a plan and built by the kernel, then tessellated by
 /// the same call the panel path uses.
 fn constructive_mesh_with(
-    inputs: &ConstructiveInputs,
+    body: &Constructive,
     kernel: &mut dyn SolidKernel,
     options: &TessOptions,
 ) -> Result<MeshData, MeshError> {
-    let body = inputs.body();
     if body.features().len() == 1 {
         return object_mesh(&build_constructive_mesh(body)?);
     }
-    let handle = param::evaluate_constructive_body(kernel, body, inputs)?;
+    let handle = param::evaluate_constructive_body(kernel, body)?;
     // The body is released even when tessellation refuses it: a node that cannot be built must not
     // leave a solid behind in the kernel for the rest of the session (W1).
     let data = tessellate_panel(&*kernel, handle, options);
@@ -777,11 +741,10 @@ impl EvaluationCache {
         &mut self,
         revision: Revision,
         object: &Object,
-        tools: &[BooleanTool],
         kernel: &mut dyn SolidKernel,
         options: &TessOptions,
     ) -> Result<NodeGeometry, MeshError> {
-        self.object_with(revision, object.id(), object.geometry(), tools, kernel, options)
+        self.object_with(revision, object.id(), object.geometry(), kernel, options)
     }
 
     /// Evaluates one object's geometry, which the caller may have substituted.
@@ -792,16 +755,13 @@ impl EvaluationCache {
     /// so a preview and the document cannot both be cached under one id: whichever is evaluated
     /// next re-derives the node once.
     ///
-    /// `tools` is the whole closure of tool bodies the payload names, each with its placement in
-    /// the body's own frame ([`model::Project::boolean_tools`]). It is part of the key, not a hint:
-    /// a tool that moves or is edited re-derives every body that names it, and a node the body does
-    /// not name never does.
+    /// A boolean step carries the shape it cuts with, so an object's payload is everything its mesh
+    /// depends on: no second node can change the result (ADR 0197).
     pub fn object_with(
         &mut self,
         revision: Revision,
         id: Id,
         geometry: &model::Geometry,
-        tools: &[BooleanTool],
         kernel: &mut dyn SolidKernel,
         options: &TessOptions,
     ) -> Result<NodeGeometry, MeshError> {
@@ -809,9 +769,7 @@ impl EvaluationCache {
         if let Some(entry) = self.nodes.get_mut(&id) {
             let unchanged = match (&entry.payload, geometry) {
                 (Payload::Mesh(cached), model::Geometry::Mesh(current)) => cached == current,
-                (Payload::Constructive(cached), model::Geometry::Constructive(current)) => {
-                    cached.matches(current, tools)
-                }
+                (Payload::Constructive(cached), model::Geometry::Constructive(current)) => cached == current,
                 (Payload::Primitive(cached), model::Geometry::Primitive(current)) => cached == current,
                 (Payload::Path(cached), model::Geometry::Path(current)) => cached == current,
                 (Payload::Contours(cached), model::Geometry::Contours(current)) => cached == current,
@@ -829,9 +787,8 @@ impl EvaluationCache {
                 (Payload::Mesh(mesh.clone()), solid_geometry(data))
             }
             model::Geometry::Constructive(constructive) => {
-                let inputs = ConstructiveInputs::capture(constructive, tools);
-                let data = constructive_mesh_with(&inputs, kernel, options)?;
-                (Payload::Constructive(inputs), solid_geometry(data))
+                let data = constructive_mesh_with(constructive, kernel, options)?;
+                (Payload::Constructive(constructive.clone()), solid_geometry(data))
             }
             model::Geometry::Primitive(primitive) => {
                 let data = primitive_mesh(primitive)?;
@@ -962,12 +919,10 @@ fn validate_mesh(mesh: &MeshData) -> Result<(), MeshError> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    /// Evaluates one object with no tool bodies, which is what a mesh, a primitive and a single
-    /// extrusion need. A boolean body is evaluated through `cache.object_with` by the tests that
-    /// build one.
+    /// Evaluates one object through the cache, with a kernel of its own.
     fn evaluated(cache: &mut EvaluationCache, revision: Revision, object: &Object) -> Result<NodeGeometry, MeshError> {
         let mut kernel = TruckKernel::new();
-        cache.object(revision, object, &[], &mut kernel, &TessOptions::default())
+        cache.object(revision, object, &mut kernel, &TessOptions::default())
     }
 
     use kernel::{BooleanOp, Measure, Profile};
@@ -1681,7 +1636,7 @@ mod tests {
     /// and stands strictly inside its outline, so the difference has no coincident faces to resolve
     /// and leaves one body with a square hole.
     fn project_with_a_cutter() -> model::Project {
-        use model::{BooleanOp, Constructive, Container, Path, Project};
+        use model::{Boolean, BooleanOp, BooleanTool, Constructive, Container, Path, Project};
 
         let slab = Constructive::extrude(
             Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
@@ -1695,6 +1650,7 @@ mod tests {
         .expect("a cutter");
         let cutter_at =
             Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+        let step = BooleanTool::new("Cutter", cutter.clone(), cutter_at).expect("a tool");
         let root = Container::new(
             Id::new(1).expect("id"),
             "Root",
@@ -1702,11 +1658,13 @@ mod tests {
             vec![
                 Object::new(Id::new(3).expect("id"), "Slab", Placement::IDENTITY, model::Geometry::Constructive(slab))
                     .into(),
+                // The cutter the maker kept: its shape is already frozen in the step, so what happens
+                // to this node afterwards changes nothing.
                 Object::new(Id::new(4).expect("id"), "Cutter", cutter_at, model::Geometry::Constructive(cutter)).into(),
             ],
         );
         let mut project = Project::new(root).expect("a project");
-        project.set_object_boolean(id(3), BooleanOp::Difference, id(4)).expect("the slab is cut by the cutter");
+        project.apply_boolean(id(3), Boolean::new(BooleanOp::Difference, step), None).expect("the slab is cut");
         project
     }
 
@@ -1728,13 +1686,12 @@ mod tests {
         total
     }
 
-    /// Evaluates one node of a project through the cache, resolving its tools from the document.
+    /// Evaluates one node of a project through the cache.
     fn evaluate_bodies(cache: &mut EvaluationCache, project: &model::Project, node: Id) -> NodeGeometry {
         let object = project.object(node).expect("the node is an object");
-        let tools = project.boolean_tools(node).expect("the tool closure");
         let mut kernel = TruckKernel::new();
         cache
-            .object_with(project.revision(), node, object.geometry(), &tools, &mut kernel, &TessOptions::default())
+            .object_with(project.revision(), node, object.geometry(), &mut kernel, &TessOptions::default())
             .expect("the body draws")
     }
 
@@ -1752,7 +1709,7 @@ mod tests {
     }
 
     #[test]
-    fn a_boolean_body_is_reused_until_its_tool_or_its_own_history_changes() {
+    fn a_boolean_body_is_reused_until_its_own_history_changes_and_ignores_the_source() {
         let mut project = project_with_a_cutter();
         let mut cache = EvaluationCache::new();
         cache.start();
@@ -1766,86 +1723,102 @@ mod tests {
         cache.finish();
         assert!(Arc::ptr_eq(first.body().expect("body"), again.body().expect("body")));
 
-        // The cutter moves, which changes no payload but every frame the body depends on.
+        // The cutter node moves and is even reshaped: the step froze the shape it cut with, so the
+        // body it cut is untouched (ADR 0197).
         let moved = Placement::new(geom::DVec3::new(35.0, 35.0, -10.0), geom::DQuat::IDENTITY).expect("a placement");
         project.set_node_placement(id(4), moved).expect("move the cutter");
+        project.set_object_extrusion_height(id(4), millimetres(300)).expect("a taller cutter");
         cache.start();
-        let after_move = evaluate_bodies(&mut cache, &project, id(3));
-        cache.finish();
-        let moved_volume = mesh_volume(after_move.body().expect("a body"));
-        assert!((moved_volume - 135_000.0).abs() < 1.0, "the cut is the same size, moved: {moved_volume}");
-        assert!(
-            !Arc::ptr_eq(first.body().expect("body"), after_move.body().expect("body")),
-            "a moved tool re-meshes the body that names it"
-        );
-
-        // The cutter's own history changes, which is a second revision of the same key.
-        project.set_object_extrusion_height(id(4), millimetres(40)).expect("a taller cutter");
-        cache.start();
-        let after_edit = evaluate_bodies(&mut cache, &project, id(3));
-        cache.finish();
-        assert!(!Arc::ptr_eq(after_move.body().expect("body"), after_edit.body().expect("body")));
-
-        // A node the body does not name never re-derives it.
-        let unrelated = project
-            .add_object(
-                id(1),
-                "Witness",
-                Placement::IDENTITY,
-                model::Geometry::Mesh(testkit::cube_mesh(millimetres(10))),
-            )
-            .expect("an unrelated object");
-        assert_ne!(unrelated, id(3));
-        cache.start();
-        let after_unrelated = evaluate_bodies(&mut cache, &project, id(3));
+        let after_source = evaluate_bodies(&mut cache, &project, id(3));
         cache.finish();
         assert!(
-            Arc::ptr_eq(after_edit.body().expect("body"), after_unrelated.body().expect("body")),
-            "an edit the body does not name re-uses its mesh"
+            Arc::ptr_eq(first.body().expect("body"), after_source.body().expect("body")),
+            "the frozen step does not follow the source"
         );
+        let volume = mesh_volume(after_source.body().expect("a body"));
+        assert!((volume - 135_000.0).abs() < 1.0, "the cut is unchanged: {volume}");
+
+        // The body's own history is the key: dropping the step re-derives it into a solid slab.
+        project.remove_object_boolean(id(3), 1).expect("the step goes");
+        cache.start();
+        let after_history = evaluate_bodies(&mut cache, &project, id(3));
+        cache.finish();
+        assert!(!Arc::ptr_eq(first.body().expect("body"), after_history.body().expect("body")));
+        let solid = mesh_volume(after_history.body().expect("a body"));
+        assert!((solid - 180_000.0).abs() < 1.0, "the slab is whole again: {solid}");
     }
 
     #[test]
-    fn one_cutter_cuts_two_bodies_and_each_follows_it() {
-        use model::Geometry;
+    fn one_cutter_shape_cuts_two_bodies_and_the_source_edits_neither() {
+        use model::{Boolean, BooleanOp, BooleanTool, Constructive, Geometry, Path};
 
         let mut project = project_with_a_cutter();
-        // A second slab beside the first, cut by the same cutter.
         let slab = project.object(id(3)).expect("the slab").geometry().clone();
-        let Geometry::Constructive(slab) = slab else {
+        let Geometry::Constructive(body) = slab else {
             panic!("the slab is constructive");
         };
-        // The second slab sits above the first; the one cutter passes through both.
-        let second = Placement::new(geom::DVec3::new(0.0, 0.0, 100.0), geom::DQuat::IDENTITY).expect("a placement");
-        // The copy carries the same step, so the one cutter serves it without a second command.
-        let other =
-            project.add_object(id(1), "Second slab", second, Geometry::Constructive(slab)).expect("a second slab");
-        assert!(
-            project
-                .object(other)
-                .expect("the copy")
-                .geometry()
-                .as_constructive()
-                .is_some_and(|body| { body.booleans().any(|step| step.tool() == id(4)) })
+        let second = project
+            .add_object(
+                id(1),
+                "Second slab",
+                Placement::new(geom::DVec3::new(0.0, 0.0, 100.0), geom::DQuat::IDENTITY).expect("a placement"),
+                Geometry::Constructive(body),
+            )
+            .expect("a second slab");
+        assert_eq!(
+            project.object(second).expect("the copy").geometry(),
+            project.object(id(3)).expect("the slab").geometry(),
+            "a copied body carries the same frozen step"
         );
 
         let mut cache = EvaluationCache::new();
         cache.start();
         let first_slab = evaluate_bodies(&mut cache, &project, id(3));
-        let second_slab = evaluate_bodies(&mut cache, &project, other);
+        let second_slab = evaluate_bodies(&mut cache, &project, second);
         cache.finish();
-        assert_eq!(project.boolean_tools(other).expect("tools").len(), 1, "both name the one cutter");
+        for body in [&first_slab, &second_slab] {
+            let volume = mesh_volume(body.body().expect("a body"));
+            assert!((volume - 135_000.0).abs() < 1.0, "both are cut once: {volume}");
+        }
 
-        // The cutter is edited once and both bodies follow: the tool is a node, not a copy. It stays
-        // long enough to pass through the second slab as well.
+        // Editing the source of the frozen step changes neither body; a fresh step would.
         project.set_object_extrusion_height(id(4), millimetres(300)).expect("a taller cutter");
         cache.start();
-        let first_again = evaluate_bodies(&mut cache, &project, id(3));
-        let second_again = evaluate_bodies(&mut cache, &project, other);
+        let again = evaluate_bodies(&mut cache, &project, id(3));
         cache.finish();
-        assert!(first_slab.body().is_some() && second_slab.body().is_some(), "both bodies draw");
-        assert!(!Arc::ptr_eq(first_slab.body().expect("body"), first_again.body().expect("body")));
-        assert!(!Arc::ptr_eq(second_slab.body().expect("body"), second_again.body().expect("body")));
+        assert!(Arc::ptr_eq(first_slab.body().expect("body"), again.body().expect("body")));
+
+        // A body made now from the taller source carries the taller shape, so the two results are
+        // one decision apart: the step is a snapshot, taken when it was applied.
+        let mut fresh = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a ring"),
+            millimetres(18),
+        )
+        .expect("a slab");
+        let source = project.object(id(4)).expect("the source").geometry().as_constructive().expect("a body");
+        let taller = BooleanTool::new(
+            "Taller",
+            source.clone(),
+            Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a placement"),
+        )
+        .expect("a tool");
+        fresh.push_boolean(Boolean::new(BooleanOp::Difference, taller)).expect("a step");
+        let third = project
+            .add_object(
+                id(1),
+                "Third slab",
+                Placement::new(geom::DVec3::new(0.0, 0.0, 200.0), geom::DQuat::IDENTITY).expect("a placement"),
+                Geometry::Constructive(fresh),
+            )
+            .expect("a third slab");
+        cache.start();
+        let taller_cut = evaluate_bodies(&mut cache, &project, third);
+        cache.finish();
+        let volume = mesh_volume(taller_cut.body().expect("a body"));
+        assert!(
+            (volume - 135_000.0).abs() < 1.0,
+            "a 300 mm cutter through an 18 mm slab cuts the same square: {volume}"
+        );
     }
 
     /// The box a scene walk reads: measured once with the mesh, kept beside it, and copied on every

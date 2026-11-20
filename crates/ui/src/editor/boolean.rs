@@ -306,8 +306,9 @@ fn body_of(project: &Project, id: Id) -> Option<&Constructive> {
 
 /// The geometry the target would have with one step appended, or why it would draw nothing.
 ///
-/// The step is checked with the same rule the command applies, so the arm, the preview and the ✓
-/// answer one question. The candidate is a copy: the document keeps its own history until the ✓.
+/// The step freezes the cutter's shape exactly as the command will freeze it, so the picture on
+/// screen is the body the ✓ stores and the source may be spent afterwards without changing it
+/// (ADR 0197). The candidate is a copy: the document keeps its own history until the ✓.
 fn boolean_preview(
     project: &Project,
     body: &Constructive,
@@ -315,10 +316,14 @@ fn boolean_preview(
     tool: Id,
     op: ContourOp,
 ) -> Result<Geometry, String> {
-    project.validate_boolean_tool(target, tool).map_err(|error| error.to_string())?;
+    let source = project.object(tool).ok_or_else(|| format!("node {} is gone", tool.get()))?;
+    let shape =
+        source.geometry().as_constructive().ok_or_else(|| format!("{} is not a constructive body", source.name()))?;
+    let world = project.world_placement(tool).ok_or_else(|| format!("{} has no world frame", source.name()))?;
+    let placement = project.placement_in_parent(target, world).map_err(|error| error.to_string())?;
+    let tool = model::BooleanTool::new(source.name(), shape.clone(), placement).map_err(|error| error.to_string())?;
     let mut candidate = body.clone();
     candidate.push_boolean(model::Boolean::new(boolean_op(op), tool)).map_err(|error| error.to_string())?;
-    project.boolean_tools_of(target, &candidate).map_err(|error| error.to_string())?;
     Ok(Geometry::Constructive(candidate))
 }
 

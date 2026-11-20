@@ -2619,7 +2619,7 @@ fn a_body_boolean_arms_on_one_body_and_previews_without_a_revision() {
 }
 
 #[test]
-fn a_body_boolean_commit_is_one_undo_entry_and_leaves_the_cutter() {
+fn a_body_boolean_commit_is_one_undo_entry_and_spends_the_cutter() {
     let (project, slab, cutter) = body_pair();
     let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
@@ -2636,13 +2636,15 @@ fn a_body_boolean_commit_is_one_undo_entry_and_leaves_the_cutter() {
     assert_eq!(project.revision().get(), 1, "one command, one revision");
     let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
     assert_eq!(body.booleans().count(), 1);
-    assert_eq!(body.booleans().next().expect("a step").tool(), cutter);
-    assert!(project.object(cutter).is_some(), "the cutter is not spent by the operation");
+    let step = body.booleans().next().expect("a step");
+    assert_eq!(step.tool().name(), "Cutter", "the step froze the cutter's shape and name");
+    assert!(project.object(cutter).is_none(), "the cutter is spent, so one body is left");
 
     session.undo().expect("one undo entry");
     assert!(!session.can_undo(), "the whole operation was one entry");
     let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
     assert_eq!(body.booleans().count(), 0, "undo takes the step back");
+    assert!(session.project().object(cutter).is_some(), "and brings the cutter back");
 }
 
 #[test]

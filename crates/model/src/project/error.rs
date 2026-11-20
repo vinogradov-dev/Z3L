@@ -195,33 +195,17 @@ pub enum ProjectError {
         /// The node that was asked.
         id: Id,
     },
-    /// A boolean step names a node that is not a constructive body in this document.
-    #[error("object {object} combines with {tool}, which is not a constructive body in this document")]
+    /// A boolean was asked to consume the very body it was applied to.
+    #[error("object {id} cannot be cut with itself")]
+    BooleanToolIsTheTarget {
+        /// The body that was both target and cutter.
+        id: Id,
+    },
+    /// The cutter a boolean step was built from is not a constructive body.
+    #[error("node {id} is not a constructive body, so it cannot cut anything")]
     BooleanToolNotABody {
-        /// The body that carries the boolean step.
-        object: Id,
-        /// The node the step named as its tool.
-        tool: Id,
-    },
-    /// A boolean step names the body it belongs to.
-    #[error("object {id} cannot combine with itself")]
-    BooleanToolIsSelf {
-        /// The body that names itself.
+        /// The node the command was handed as a cutter.
         id: Id,
-    },
-    /// The boolean steps of one body reach back to that body through its tools.
-    #[error("the boolean tools of object {id} form a cycle")]
-    BooleanToolCycle {
-        /// The body whose tool graph closes on itself.
-        id: Id,
-    },
-    /// A node that a boolean step names as its tool is about to be deleted.
-    #[error("object {id} is the tool of a boolean step on {body}; remove that step first")]
-    BooleanToolInUse {
-        /// The tool that would be deleted.
-        id: Id,
-        /// The body whose step names it.
-        body: Id,
     },
     /// The feature index is outside the history, or names the extrusion a body cannot lose.
     #[error("object {id} has no boolean step {index}")]

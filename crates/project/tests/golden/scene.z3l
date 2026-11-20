@@ -2,7 +2,7 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 30,
+    "schema_version": 31,
     "revision": 8,
     "next_id": 14,
     "root": {
@@ -205,97 +205,85 @@
                 {
                   "kind": "boolean",
                   "op": "difference",
-                  "tool": 11
-                }
-              ]
-            }
-          }
-        },
-        {
-          "object": {
-            "id": 11,
-            "name": "Cutter",
-            "placement": {
-              "translation": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "rotation": [
-                0.0,
-                0.0,
-                0.0,
-                1.0
-              ]
-            },
-            "pivot_local": [
-              0,
-              0,
-              0
-            ],
-            "properties": {},
-            "tool": false,
-            "geometry": {
-              "kind": "constructive",
-              "path": {
-                "segments": [
-                  {
-                    "kind": "line",
-                    "id": 1,
-                    "start": [
-                      80000,
-                      80000
-                    ],
-                    "end": [
-                      200000,
-                      80000
-                    ]
-                  },
-                  {
-                    "kind": "line",
-                    "id": 2,
-                    "start": [
-                      200000,
-                      80000
-                    ],
-                    "end": [
-                      200000,
-                      100000
-                    ]
-                  },
-                  {
-                    "kind": "line",
-                    "id": 3,
-                    "start": [
-                      200000,
-                      100000
-                    ],
-                    "end": [
-                      80000,
-                      100000
-                    ]
-                  },
-                  {
-                    "kind": "line",
-                    "id": 4,
-                    "start": [
-                      80000,
-                      100000
-                    ],
-                    "end": [
-                      80000,
-                      80000
-                    ]
+                  "tool": {
+                    "name": "Cutter",
+                    "body": {
+                      "path": {
+                        "segments": [
+                          {
+                            "kind": "line",
+                            "id": 1,
+                            "start": [
+                              80000,
+                              80000
+                            ],
+                            "end": [
+                              200000,
+                              80000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 2,
+                            "start": [
+                              200000,
+                              80000
+                            ],
+                            "end": [
+                              200000,
+                              100000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 3,
+                            "start": [
+                              200000,
+                              100000
+                            ],
+                            "end": [
+                              80000,
+                              100000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 4,
+                            "start": [
+                              80000,
+                              100000
+                            ],
+                            "end": [
+                              80000,
+                              80000
+                            ]
+                          }
+                        ],
+                        "next_segment_id": 5,
+                        "closed": true,
+                        "shape": "rectangle"
+                      },
+                      "features": [
+                        {
+                          "kind": "extrude",
+                          "height": 40000
+                        }
+                      ]
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
                   }
-                ],
-                "next_segment_id": 5,
-                "closed": true,
-                "shape": "rectangle"
-              },
-              "features": [
-                {
-                  "kind": "extrude",
-                  "height": 40000
                 }
               ]
             }

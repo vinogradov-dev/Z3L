@@ -253,6 +253,7 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_PATH_CREATE,
     object_cmds::OBJECT_PATH_EXTRUDE,
     object_cmds::OBJECT_PATH_REPLACE,
+    object_cmds::OBJECT_TOOL_SET,
     object_cmds::OBJECT_BOOLEAN_SET,
     object_cmds::OBJECT_BOOLEAN_REMOVE,
     object_cmds::OBJECT_COLLAPSE,
@@ -543,7 +544,9 @@ mod tests {
         assert_eq!(set.label().text(Lang::En), "Set boolean");
         let remove = registry.get("object.boolean.remove").expect("object.boolean.remove is registered");
         assert_eq!(remove.label().text(Lang::En), "Remove boolean");
-        assert_eq!(registry.specs().len(), 62);
+        let mark = registry.get("object.tool.set").expect("object.tool.set is registered");
+        assert_eq!(mark.label().text(Lang::En), "Set tool mark");
+        assert_eq!(registry.specs().len(), 63);
     }
 
     #[test]

@@ -761,6 +761,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Selection),
         icon: None,
     },
+    // The mark says a body is a tool: the card offers it, and it is what lets a cutter enter the
+    // body it cuts and survive the operation that spends an unmarked one (W2, ADR 0197).
+    Row {
+        id: "object.tool.set",
+        label: Message::CmdSetToolMark,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
     // The object card lists the steps a body carries and removes one from its row.
     Row {
         id: "object.boolean.remove",

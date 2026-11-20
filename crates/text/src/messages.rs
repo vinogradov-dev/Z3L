@@ -1271,6 +1271,8 @@ messages! {
     CmdReplacePath = ["Replace path", "Заменить путь"],
     CmdCollapseToMesh = ["Collapse to mesh", "Свернуть в сетку"],
     CmdSetBoolean = ["Set boolean", "Задать булеву операцию"],
+    CmdSetToolMark = ["Set tool mark", "Пометить как инструмент"],
+    FieldTool = ["Tool", "Инструмент"],
     CmdRemoveBoolean = ["Remove boolean", "Удалить булеву операцию"],
     CmdSetEdgeBanding = ["Set edge banding", "Задать кромку"],
     CmdClearEdgeBanding = ["Clear edge banding", "Убрать кромку"],

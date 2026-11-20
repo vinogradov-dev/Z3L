@@ -11,7 +11,7 @@
 
 use geom::{DQuat, DVec3, Frame};
 use kernel::{BooleanOp, KernelError, SolidKernel};
-use model::{Boolean, Constructive, Id, Mesh, Placement};
+use model::{Boolean, Constructive, Mesh, Placement};
 use units::Length;
 
 use crate::solid::{self, Extrude, MAX_PLAN_DEPTH, PlanBackend, PlanBuilder, SolidPlan};
@@ -19,25 +19,6 @@ use crate::{ParamError, profile};
 
 /// Micrometres in one millimetre, the boundary factor of the geometry layer.
 const MICROMETRES_PER_MILLIMETRE: f64 = 1_000.0;
-
-/// The tool bodies a feature history names, as the caller resolves them from the document.
-///
-/// A tool is a node reference, never a copy: the document keeps it, several bodies may name it, and
-/// it may name tools of its own. The placement is the tool's in the frame of the body being
-/// compiled, so the compiler never composes a world transform of its own.
-pub trait ToolBodies {
-    /// The tool body and its placement, or `None` when `id` is not one of them.
-    fn tool(&self, id: Id) -> Option<(&Constructive, Placement)>;
-}
-
-/// The answer for a history whose steps need no tool body.
-pub struct NoTools;
-
-impl ToolBodies for NoTools {
-    fn tool(&self, _id: Id) -> Option<(&Constructive, Placement)> {
-        None
-    }
-}
 
 /// Builds the polygon mesh of a constructive object with one extrusion.
 ///
@@ -48,7 +29,7 @@ pub fn build_constructive_mesh(constructive: &Constructive) -> Result<Mesh, Para
     if constructive.features().len() != 1 {
         return Err(ParamError::UnsupportedConstructive);
     }
-    let plan = constructive_plan(constructive, &NoTools)?;
+    let plan = constructive_plan(constructive)?;
     solid::evaluate_with(&plan, &mut MeshBackend).map_err(ParamError::from)
 }
 
@@ -60,30 +41,24 @@ pub fn build_constructive_mesh(constructive: &Constructive) -> Result<Mesh, Para
 pub fn evaluate_constructive_body(
     kernel: &mut dyn SolidKernel,
     constructive: &Constructive,
-    tools: &dyn ToolBodies,
 ) -> Result<kernel::BodyId, ParamError> {
-    let plan = constructive_plan(constructive, tools)?;
+    let plan = constructive_plan(constructive)?;
     Ok(solid::evaluate(&plan, kernel)?)
 }
 
 /// Compiles one feature history into the plan a backend evaluates.
 ///
 /// The base extrusion sweeps the body's own path; every boolean step appends a step whose tool is
-/// the plan of the body it names. Each frame is the tool's placement in the frame of the body being
-/// compiled, so a tool body and its own tools all land in one coordinate space.
+/// the plan of the shape the step froze. Each frame is that shape's placement in the frame of the
+/// body being compiled, so a tool and its own tools all land in one coordinate space.
 ///
-/// Nesting is bounded by [`MAX_PLAN_DEPTH`]: the document refuses a cycle when it loads, and this
-/// guard keeps a hostile graph an error instead of an unbounded recursion.
-pub fn constructive_plan(constructive: &Constructive, tools: &dyn ToolBodies) -> Result<SolidPlan, ParamError> {
-    compile(constructive, tools, Frame::WORLD, 0)
+/// Nesting is bounded by [`MAX_PLAN_DEPTH`], and the document bounds it again when it stores a step
+/// (`model::MAX_BOOLEAN_DEPTH`), so a hostile file is an error instead of an unbounded recursion.
+pub fn constructive_plan(constructive: &Constructive) -> Result<SolidPlan, ParamError> {
+    compile(constructive, Frame::WORLD, 0)
 }
 
-fn compile(
-    constructive: &Constructive,
-    tools: &dyn ToolBodies,
-    frame: Frame,
-    depth: usize,
-) -> Result<SolidPlan, ParamError> {
+fn compile(constructive: &Constructive, frame: Frame, depth: usize) -> Result<SolidPlan, ParamError> {
     if depth >= MAX_PLAN_DEPTH {
         return Err(ParamError::Kernel(KernelError::InvalidInput(format!(
             "a feature history nests deeper than {MAX_PLAN_DEPTH} steps"
@@ -96,9 +71,8 @@ fn compile(
     let profile = profile::profile_of_document_contour(&contour)?;
     let mut builder = PlanBuilder::new().extrude(profile, frame, extrude.height().millimetres_f64())?;
     for boolean in constructive.booleans() {
-        let (body, placement) =
-            tools.tool(boolean.tool()).ok_or(ParamError::MissingBooleanTool { tool: boolean.tool() })?;
-        let tool_plan = compile(body, tools, frame_of(placement), depth.saturating_add(1))?;
+        let tool = boolean.tool();
+        let tool_plan = compile(tool.body(), frame_of(tool.placement()), depth.saturating_add(1))?;
         builder = builder.boolean(operation(boolean), tool_plan);
     }
     Ok(builder.build()?)
@@ -192,7 +166,7 @@ mod tests {
 
     use kernel::{Profile, SolidKernel};
     use kernel_truck::TruckKernel;
-    use model::{BooleanOp as ModelOp, Contour, Feature, Id, Panel, PanelNominalSize, Placement};
+    use model::{BooleanOp as ModelOp, BooleanTool, Contour, Feature, Id, Panel, PanelNominalSize, Placement};
     use testkit::millimetres;
     use units::Length;
 
@@ -227,33 +201,14 @@ mod tests {
         total
     }
 
-    fn id(value: u64) -> Id {
-        Id::new(value).expect("id")
-    }
-
-    /// Resolved tool bodies, so a compiled plan can be measured without a document.
-    struct Tools(Vec<(Id, Constructive, Placement)>);
-
-    impl Tools {
-        fn one(id: Id, body: Constructive, placement: Placement) -> Self {
-            Self(vec![(id, body, placement)])
-        }
-    }
-
-    impl ToolBodies for Tools {
-        fn tool(&self, id: Id) -> Option<(&Constructive, Placement)> {
-            self.0.iter().find(|(tool, _, _)| *tool == id).map(|(_, body, placement)| (body, *placement))
-        }
-    }
-
     fn placed(x: f64, y: f64, z: f64) -> Placement {
         Placement::new(DVec3::new(x, y, z), DQuat::IDENTITY).expect("a placement")
     }
 
     /// The volume of one body a plan builds, in cubic millimetres.
-    fn volume_of(body: &Constructive, tools: &dyn ToolBodies) -> f64 {
+    fn volume_of(body: &Constructive) -> f64 {
         let mut kernel = TruckKernel::new();
-        let handle = evaluate_constructive_body(&mut kernel, body, tools).expect("an evaluated body");
+        let handle = evaluate_constructive_body(&mut kernel, body).expect("an evaluated body");
         let volume = kernel.measure(handle).expect("a measurable body").volume;
         kernel.clear();
         volume
@@ -364,44 +319,36 @@ mod tests {
         assert!(matches!(error, KernelError::Unsupported(_)), "{error}");
     }
 
-    #[test]
-    fn a_boolean_step_appends_the_tools_plan_and_keeps_its_frame() {
-        let mut base = Constructive::extrude(rectangle(100, 50).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Difference, id(7))).expect("a step");
-        let tool = Constructive::extrude(rectangle(20, 20).into(), millimetres(20)).expect("tool");
-        let placement = Placement::new(DVec3::new(10.0, 10.0, -1.0), DQuat::IDENTITY).expect("placement");
+    /// The shape a step cuts with: a 50 x 50 ring swept 30 mm, standing where the caller puts it.
+    ///
+    /// The tool passes through the base and sticks out of both faces, with every side strictly
+    /// inside the base's outline, so the booleans have no coincident faces to resolve.
+    fn through_tool() -> BooleanTool {
+        let body = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("tool");
+        BooleanTool::new("Cutter", body, placed(25.0, 25.0, -5.0)).expect("a tool")
+    }
 
-        let plan = constructive_plan(&base, &Tools::one(id(7), tool, placement)).expect("a plan");
+    #[test]
+    fn a_boolean_step_appends_the_tools_plan_where_the_step_puts_it() {
+        let mut base = Constructive::extrude(rectangle(100, 50).into(), millimetres(18)).expect("base");
+        base.push_boolean(Boolean::new(ModelOp::Difference, through_tool())).expect("a step");
+
+        let plan = constructive_plan(&base).expect("a plan");
 
         assert_eq!(plan.steps().len(), 1);
         let step = plan.steps().first().expect("one step");
         assert_eq!(step.op(), BooleanOp::Difference);
         let frame = step.tool().base().frame();
-        assert!((frame.origin.z + 1.0).abs() < 1.0e-9, "the tool overshoots below the base");
-        assert!((frame.origin.x - 10.0).abs() < 1.0e-9, "the tool stands where it was placed");
-    }
-
-    #[test]
-    fn a_step_without_its_tool_is_a_readable_error() {
-        let mut base = Constructive::extrude(rectangle(100, 50).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Union, id(9))).expect("a step");
-        let error = constructive_plan(&base, &NoTools).expect_err("no tool answers");
-        assert!(matches!(error, ParamError::MissingBooleanTool { tool } if tool == id(9)), "{error}");
-    }
-
-    /// A tool that passes through the base and sticks out of both faces, with every side strictly
-    /// inside the base's outline: the booleans then have no coincident faces to resolve.
-    fn through_tool() -> (Constructive, Placement) {
-        (Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("tool"), placed(25.0, 25.0, -5.0))
+        assert!((frame.origin.z + 5.0).abs() < 1.0e-9, "the tool stands where the step froze it");
+        assert!((frame.origin.x - 25.0).abs() < 1.0e-9, "the tool stands where the step froze it");
     }
 
     #[test]
     fn a_union_of_two_boxes_holds_the_volume_both_cover_once() {
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Union, id(7))).expect("a step");
-        let (tool, placement) = through_tool();
+        base.push_boolean(Boolean::new(ModelOp::Union, through_tool())).expect("a step");
 
-        let volume = volume_of(&base, &Tools::one(id(7), tool, placement));
+        let volume = volume_of(&base);
 
         // The base and the part of the tool above and below it, with the shared 50 x 50 x 18 counted
         // once: 100 x 100 x 18 + 50 x 50 x 30 - 50 x 50 x 18.
@@ -412,10 +359,9 @@ mod tests {
     #[test]
     fn a_difference_cuts_the_tools_overlap_out() {
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Difference, id(7))).expect("a step");
-        let (tool, placement) = through_tool();
+        base.push_boolean(Boolean::new(ModelOp::Difference, through_tool())).expect("a step");
 
-        let volume = volume_of(&base, &Tools::one(id(7), tool, placement));
+        let volume = volume_of(&base);
 
         assert!((volume - 135_000.0).abs() < 1.0, "volume was {volume}, expected 135000");
     }
@@ -423,28 +369,33 @@ mod tests {
     #[test]
     fn an_intersection_keeps_only_what_both_bodies_share() {
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Intersection, id(7))).expect("a step");
-        let (tool, placement) = through_tool();
+        base.push_boolean(Boolean::new(ModelOp::Intersection, through_tool())).expect("a step");
 
-        let volume = volume_of(&base, &Tools::one(id(7), tool, placement));
+        let volume = volume_of(&base);
 
         assert!((volume - 45_000.0).abs() < 1.0, "volume was {volume}, expected 45000");
     }
 
     #[test]
     fn a_tool_with_steps_of_its_own_is_compiled_where_it_stands() {
-        // Body 5 cuts with body 6, and body 6 is itself cut by body 7: the plan nests, and every
-        // frame is expressed in the frame of the body that names it.
+        // The body cuts with a cutter, and the cutter is itself joined with a chimney: the plan
+        // nests, and every frame is expressed in the frame of the body the step froze.
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
-        base.push_boolean(Boolean::new(ModelOp::Difference, id(6))).expect("a step");
-        let (mut middle, middle_placement) = through_tool();
-        middle.push_boolean(Boolean::new(ModelOp::Union, id(7))).expect("its own step");
+        let mut middle = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("middle");
         // The chimney stands inside the middle's outline and sticks out of both of its faces, so the
         // step has no coincident faces and its own frame is the only thing under test.
         let chimney = Constructive::extrude(rectangle(20, 20).into(), millimetres(40)).expect("chimney");
-        let tools = Tools(vec![(id(6), middle, middle_placement), (id(7), chimney, placed(40.0, 40.0, -10.0))]);
+        middle
+            .push_boolean(Boolean::new(
+                ModelOp::Union,
+                BooleanTool::new("Chimney", chimney, placed(40.0, 40.0, -10.0)).expect("a tool"),
+            ))
+            .expect("its own step");
+        let cutter =
+            BooleanTool::new("Cutter", middle, placed(25.0, 25.0, -5.0)).expect("the cutter stands where it cuts");
+        base.push_boolean(Boolean::new(ModelOp::Difference, cutter)).expect("a step");
 
-        let volume = volume_of(&base, &tools);
+        let volume = volume_of(&base);
 
         // The middle body removes 50 x 50 x 18 from the base; its chimney stands inside the base's
         // outline, so the union adds nothing the base does not already cover.

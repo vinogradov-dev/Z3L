@@ -5,7 +5,7 @@
 //! errors in `error` and the read-only lookups in `query`. Commands are grouped by the value family
 //! they mutate.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,6 @@ pub use move_query::{
     SnapSettings, SnapSurface, Stop,
 };
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
-pub use object_cmds::BooleanTool;
 pub use sight::Sight;
 pub use surface::SurfaceKind;
 pub(crate) use wire::ProjectWire;
@@ -64,7 +63,7 @@ impl Project {
     /// A file with any other number is refused with one readable sentence, older and newer alike:
     /// before the first release the format has no past, so there is no migration and no alias for a
     /// field an earlier layout used (ADR 0096). Bumping this number is the whole procedure.
-    pub const CURRENT_SCHEMA_VERSION: u32 = 30;
+    pub const CURRENT_SCHEMA_VERSION: u32 = 31;
 
     /// Maximum nesting depth of containers, including the root at depth one.
     pub const MAX_ASSEMBLY_DEPTH: u32 = 64;
@@ -191,11 +190,6 @@ impl Project {
 fn scan_tree(root: &Container) -> Result<u64, ProjectError> {
     let mut seen = HashSet::new();
     let mut max_id = 0u64;
-    // Every boolean step found on the way, as `(body, tool)`, and the bodies that could serve as
-    // one. A reference is checked once the walk is over, because a tool may stand anywhere in the
-    // tree — before its user or after it, in another container or in the root.
-    let mut boolean_steps: Vec<(Id, Id)> = Vec::new();
-    let mut bodies: HashSet<u64> = HashSet::new();
     let mut stack = vec![(root, 1u32, false)];
     while let Some((container, depth, inside_product)) = stack.pop() {
         if depth > Project::MAX_ASSEMBLY_DEPTH {
@@ -243,12 +237,6 @@ fn scan_tree(root: &Container) -> Result<u64, ProjectError> {
                         return Err(ProjectError::DuplicateId(object.id()));
                     }
                     max_id = max_id.max(object.id().get());
-                    if let Some(constructive) = object.geometry().as_constructive() {
-                        bodies.insert(object.id().get());
-                        for boolean in constructive.booleans() {
-                            boolean_steps.push((object.id(), boolean.tool()));
-                        }
-                    }
                 }
                 Node::Camera(camera) => {
                     if !seen.insert(camera.id().get()) {
@@ -265,73 +253,7 @@ fn scan_tree(root: &Container) -> Result<u64, ProjectError> {
             }
         }
     }
-    validate_boolean_tools(&bodies, &boolean_steps)?;
     Ok(max_id)
-}
-
-/// Checks every boolean step's tool reference: it must name a constructive body in this document,
-/// it must not name its own body, and the references must not form a cycle.
-///
-/// A tool is a node reference, not a copy, so a reference that reaches nothing would leave a body
-/// that cannot be built; the document refuses it when it loads rather than at evaluation time.
-fn validate_boolean_tools(bodies: &HashSet<u64>, steps: &[(Id, Id)]) -> Result<(), ProjectError> {
-    let mut graph: HashMap<u64, Vec<Id>> = HashMap::new();
-    for (object, tool) in steps {
-        if *object == *tool {
-            return Err(ProjectError::BooleanToolIsSelf { id: *object });
-        }
-        if !bodies.contains(&tool.get()) {
-            return Err(ProjectError::BooleanToolNotABody { object: *object, tool: *tool });
-        }
-        graph.entry(object.get()).or_default().push(*tool);
-    }
-    if let Some(id) = cycle_in_tool_graph(&graph) {
-        return Err(ProjectError::BooleanToolCycle { id });
-    }
-    Ok(())
-}
-
-/// The body whose tool references close a cycle, found with an explicit stack so a deep history
-/// cannot overflow the call stack.
-fn cycle_in_tool_graph(graph: &HashMap<u64, Vec<Id>>) -> Option<Id> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Mark {
-        /// The walk is inside this node's own tools.
-        Open,
-        /// Every tool reachable from this node was visited.
-        Done,
-    }
-
-    let mut marks: HashMap<u64, Mark> = HashMap::new();
-    // The walk starts at the smallest id so the reported node does not depend on the map's order:
-    // a message that names a different body on every run is not a message a person can act on.
-    let mut starts: Vec<u64> = graph.keys().copied().collect();
-    starts.sort_unstable();
-    for start in starts {
-        if marks.contains_key(&start) {
-            continue;
-        }
-        marks.insert(start, Mark::Open);
-        let mut stack: Vec<(u64, usize)> = vec![(start, 0)];
-        while let Some((node, index)) = stack.last_mut() {
-            let children = graph.get(node).map(Vec::as_slice).unwrap_or(&[]);
-            let Some(child) = children.get(*index).copied() else {
-                marks.insert(*node, Mark::Done);
-                stack.pop();
-                continue;
-            };
-            *index = index.saturating_add(1);
-            match marks.get(&child.get()).copied() {
-                Some(Mark::Open) => return Some(child),
-                Some(Mark::Done) => {}
-                None => {
-                    marks.insert(child.get(), Mark::Open);
-                    stack.push((child.get(), 0));
-                }
-            }
-        }
-    }
-    None
 }
 
 /// The id immediately after the largest used id.

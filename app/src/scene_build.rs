@@ -601,8 +601,8 @@ impl<'a> Evaluation<'a> {
     ///
     /// A mesh payload is drawn as stored. A constructive or primitive payload is evaluated through
     /// the cache's one evaluator — the same function `object.collapse` bakes — so the collapsed
-    /// object keeps the shape the viewport showed. A body with a boolean step is built by the
-    /// kernel from the tool bodies the history names, resolved in the body's own frame.
+    /// object keeps the shape the viewport showed. A body with a boolean step is built by the kernel
+    /// from the shapes the steps froze, so the derivation reads nothing outside the body.
     fn collect_object(&mut self, object: &model::Object, parent: Placement) -> Result<Bounds, String> {
         let world = Placement::compose(parent, object.placement()).map_err(describe)?;
         let revision = self.session.project().revision();
@@ -610,17 +610,9 @@ impl<'a> Evaluation<'a> {
         // draws the result the command bar is about to commit instead of the stored one.
         let geometry =
             self.session.drawn_geometry(object.id()).ok_or_else(|| format!("{}: no geometry", object.name()))?;
-        // The tools come from the history that is about to be drawn, not from the stored payload: a
-        // preview that adds a step names a tool the document does not hold yet.
-        let tools = match geometry {
-            model::Geometry::Constructive(body) => {
-                self.session.project().boolean_tools_of(object.id(), body).map_err(describe)?
-            }
-            _ => Vec::new(),
-        };
         let evaluated = self
             .cache
-            .object_with(revision, object.id(), geometry, &tools, self.kernel, &self.options)
+            .object_with(revision, object.id(), geometry, self.kernel, &self.options)
             .map_err(|error| format!("{}: {error}", object.name()))?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
         let mut bounds = Bounds::empty();

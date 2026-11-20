@@ -102,14 +102,15 @@ primitive is described in section 5.
 - The same ring may be the stored outline of a contour panel: the panel copies it, anchors its
   minimum corner at the panel zero and derives its nominal size from the bounds (see
   [Panels and edge banding](panels.md)).
-- A **boolean step** combines the body built so far with the body of another constructive object
-  ([0197](../decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md)). The step stores the
-  operation and the tool's id, never a copy of its geometry: the tool stays in the tree, may serve
-  several bodies and may carry steps of its own, so an edit to it reaches every body that names it.
-  A tool that is missing, is not a constructive body, names its own body or closes a cycle is a
-  readable load error, and a node a step names cannot be deleted until the step is gone. The pair is
-  one shape to the placement guard and to the drag, so a cutter may be carried into the body it
-  cuts.
+- A **boolean step** combines the body built so far with the shape a cutter had when the step was
+  applied ([0197](../decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md)). The step
+  stores the operation and a `BooleanTool` — the cutter's name, its own feature history and its
+  placement in the target's frame — so it is self-contained: a later edit to the source changes
+  nothing, no file can name a deleted node, and nesting is bounded by `MAX_BOOLEAN_DEPTH`.
+- The command spends the cutter's node in the same revision and undo entry, so the result is one
+  body; a cutter **marked as a tool** survives and may be applied again. The mark also lets a tool
+  pass through parts, which is how it reaches the body it cuts: the placement guard and both drags
+  read it and leave a marked body to interpenetrate whatever it stands in.
 - Later features — a chamfer, a fillet — are added to the same list. None of them may reference a
   face or an edge of the evaluated result
   ([0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md)).
@@ -322,7 +323,8 @@ in one viewport mode. Its state is view state, not document data
 | `object.contour.replace` | object, path | replaces the body's path and rebuilds |
 | `object.path.create` | parent, name, path, placement | creates a path object, returns its id |
 | `object.path.replace` | object, path | replaces the drawing and keeps the node |
-| `object.boolean.set` | object, operation, tool | appends a boolean step naming the tool body; the tool is not consumed |
+| `object.boolean.set` | object, operation, tool | appends a boolean step that freezes the tool's shape, then spends the tool's node unless it is marked a tool |
+| `object.tool.set` | object, tool | marks or unmarks a body as a tool: it survives a boolean and may pass through parts |
 | `object.boolean.remove` | object, index | removes one step from the history and keeps the extrusion |
 | `object.collapse` | object | replaces the payload with the evaluated mesh (an analytic extrusion only) |
 | `mesh.vertices.move` | object, list of (index, local position) | moves vertices as one change |
@@ -333,9 +335,10 @@ Every command bumps the revision once and becomes one undo entry.
 The Model tab's three boolean cells are one mode, not three buttons: the target is the body
 selected when the cell is pressed, the next picked body is the tool, and the body's own geometry
 fills the session overlay while the person decides (ADR 0093). Enter dispatches
-`object.boolean.set` once and Escape writes nothing, so one cut is one undo entry however long it
-was looked at. The object card lists each step with its operation and the tool's name, and its −
-dispatches `object.boolean.remove`.
+`object.boolean.set` once and Escape writes nothing, so one cut — the step and the spent cutter
+together — is one undo entry however long it was looked at. The object card lists each step with its
+operation and the cutter's name, its − dispatches `object.boolean.remove`, and the tool mark has its
+box there.
 
 ## 12. Tests
 

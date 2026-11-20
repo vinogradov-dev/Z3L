@@ -64,8 +64,8 @@ pub use light::{LightError, LightKind, LightNode};
 pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshError};
 pub use node::Node;
 pub use object::{
-    Boolean, BooleanOp, Constructive, ConstructiveError, Contours, ContoursError, Extrude, Feature, Geometry,
-    MAX_CONTOURS, MAX_OBJECT_FEATURES, Object,
+    Boolean, BooleanError, BooleanOp, BooleanTool, Constructive, ConstructiveError, Contours, ContoursError, Extrude,
+    Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object,
 };
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,
@@ -82,9 +82,9 @@ pub use primitive::{
     MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, Sphere,
 };
 pub use project::{
-    BooleanTool, Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule,
-    MoveSettings, Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError,
-    Resting, RotateLimit, RotateRule, Sight, SnapEnd, SnapSettings, SnapSurface, Stop, SurfaceKind, free_axis,
+    Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,
+    Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError, Resting,
+    RotateLimit, RotateRule, Sight, SnapEnd, SnapSettings, SnapSurface, Stop, SurfaceKind, free_axis,
 };
 pub use properties::{
     Properties, PropertyChange, PropertyError, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID,

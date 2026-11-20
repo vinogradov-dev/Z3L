@@ -12,8 +12,8 @@
 use geom::Contact;
 use mesh::{evaluate_constructive, evaluate_primitive};
 use model::{
-    BooleanOp, Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
-    rebase_origin_at,
+    Boolean, BooleanOp, BooleanTool, Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive,
+    Project, ProjectError, rebase_origin_at,
 };
 use param::validate_extrusion_contour;
 use schemars::JsonSchema;
@@ -387,8 +387,12 @@ pub const OBJECT_BOOLEAN_SET_LABEL: Message = Message::CmdSetBoolean;
 /// Parameters for `object.boolean.set`.
 ///
 /// The step is appended to the target's history, so it applies to the body the previous features
-/// built. The tool is another constructive object, which stays in the tree: one cutter serves any
-/// number of bodies, and a second body that takes it is a second command and a second undo entry.
+/// built, and it freezes the cutter's shape at this moment: the result is a body of its own that a
+/// later edit to the source never changes (ADR 0197).
+///
+/// The cutter is spent by the operation — it leaves the tree in the same revision and the same undo
+/// entry, which is what leaves one body behind — unless the maker marked it as a tool, because a
+/// tool is what a workshop owns and applies again ([`model::Object::is_tool`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectBooleanSet {
@@ -396,7 +400,8 @@ pub struct ObjectBooleanSet {
     pub object: Id,
     /// The operation the step applies.
     pub op: BooleanOp,
-    /// The constructive object whose solid is the second operand.
+    /// The constructive object whose solid is the second operand and, unless it is marked a tool,
+    /// the object this command spends.
     pub tool: Id,
 }
 
@@ -412,7 +417,41 @@ fn object_boolean_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID) else {
         return false;
     };
-    session.project().validate_boolean_tool(params.object, params.tool).is_ok()
+    let project = session.project();
+    params.object != params.tool
+        && is_constructive_body(project, params.object)
+        && cutter_shape(project, params).is_ok_and(|_| is_constructive_body(project, params.tool))
+}
+
+/// Whether a node is a constructive body: the one payload a boolean can cut or be cut by.
+fn is_constructive_body(project: &Project, id: Id) -> bool {
+    project.object(id).is_some_and(|object| object.geometry().as_constructive().is_some())
+}
+
+/// The cutter's shape as the step freezes it, in the target's own frame, named as the source is.
+///
+/// The tool is resolved here and nowhere else: the step stores a value, so nothing downstream can
+/// depend on a node that may be spent, moved or renamed a moment later (ADR 0197).
+fn cutter_shape(project: &Project, params: ObjectBooleanSet) -> Result<BooleanTool, CommandError> {
+    let invalid = |message: String| CommandError::InvalidParams { command: OBJECT_BOOLEAN_SET_ID, message };
+    if params.object == params.tool {
+        return Err(CommandError::Model(ProjectError::BooleanToolIsTheTarget { id: params.object }));
+    }
+    let body =
+        project.object(params.object).ok_or(CommandError::Model(ProjectError::NodeNotFound { id: params.object }))?;
+    if body.geometry().as_constructive().is_none() {
+        return Err(CommandError::Model(ProjectError::NotConstructiveObject { id: params.object }));
+    }
+    let tool = project
+        .object(params.tool)
+        .ok_or(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }))?;
+    let Some(shape) = tool.geometry().as_constructive() else {
+        return Err(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }));
+    };
+    let world =
+        project.world_placement(params.tool).ok_or_else(|| invalid("the cutter has no world frame".to_owned()))?;
+    let placement = project.placement_in_parent(params.object, world).map_err(CommandError::Model)?;
+    BooleanTool::new(tool.name(), shape.clone(), placement).map_err(|error| invalid(error.to_string()))
 }
 
 fn object_boolean_set_run(
@@ -422,7 +461,57 @@ fn object_boolean_set_run(
     _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID)?;
-    project.set_object_boolean(params.object, params.op, params.tool)?;
+    let tool = cutter_shape(project, params)?;
+    // A cutter the maker did not mark as a tool is spent by the operation, so the result is one
+    // body rather than a body and the shape that cut it.
+    let keep = project.object(params.tool).is_some_and(|object| object.is_tool());
+    let consume = if keep { None } else { Some(params.tool) };
+    project.apply_boolean(params.object, Boolean::new(params.op, tool), consume)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the tool-mark command.
+pub const OBJECT_TOOL_SET_ID: &str = "object.tool.set";
+
+/// User-facing label of the tool-mark command.
+pub const OBJECT_TOOL_SET_LABEL: Message = Message::CmdSetToolMark;
+
+/// Parameters for `object.tool.set`.
+///
+/// The mark says what a body is for: a **tool** passes through parts, survives the boolean it takes
+/// part in and may be applied again (ADR 0197). It is a property of the object and nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectToolSet {
+    /// The geometry object whose mark changes.
+    pub object: Id,
+    /// Whether the body is a tool.
+    pub tool: bool,
+}
+
+/// The `object.tool.set` command.
+pub(crate) const OBJECT_TOOL_SET: CommandSpec = CommandSpec::new::<ObjectToolSet>(
+    OBJECT_TOOL_SET_ID,
+    OBJECT_TOOL_SET_LABEL,
+    object_tool_set_enabled,
+    object_tool_set_run,
+);
+
+fn object_tool_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectToolSet>(params, OBJECT_TOOL_SET_ID) else {
+        return false;
+    };
+    session.project().object(params.object).is_some()
+}
+
+fn object_tool_set_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectToolSet>(params, OBJECT_TOOL_SET_ID)?;
+    project.set_object_tool(params.object, params.tool)?;
     Ok(CommandOutcome::changed())
 }
 
@@ -705,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn a_boolean_step_is_one_revision_and_one_undo_entry() {
+    fn a_boolean_step_spends_its_cutter_in_one_revision_and_one_undo_entry() {
         let (mut session, slab, _other, cutter) = boolean_scene();
 
         let outcome = session
@@ -715,31 +804,41 @@ mod tests {
         assert_eq!(outcome, CommandOutcome::changed());
         assert_eq!(session.project().revision().get(), 1, "one command, one revision");
         let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
-        assert_eq!(body.booleans().count(), 1);
-        assert_eq!(body.booleans().next().expect("a step").tool(), cutter);
-        assert!(session.project().object(cutter).is_some(), "the tool is not consumed");
+        let step = body.booleans().next().expect("one step");
+        assert_eq!(step.tool().name(), "Cutter", "the step froze the cutter's shape and its name");
+        assert_eq!(step.tool().placement().translation(), geom::DVec3::new(25.0, 25.0, -10.0));
+        assert!(session.project().object(cutter).is_none(), "the cutter is spent by the operation");
         assert!(session.can_undo());
 
         session.undo().expect("undo");
         assert_eq!(session.project().revision().get(), 2, "undo advances the revision to invalidate caches");
         let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
         assert_eq!(body.booleans().count(), 0);
+        assert!(session.project().object(cutter).is_some(), "undo brings the cutter back");
     }
 
     #[test]
-    fn a_second_body_takes_the_same_tool_as_a_second_undo_entry() {
+    fn a_marked_cutter_is_kept_and_cuts_a_second_body() {
         let (mut session, slab, other, cutter) = boolean_scene();
+        session
+            .dispatch(OBJECT_TOOL_SET_ID, &serde_json::json!({ "object": cutter.get(), "tool": true }))
+            .expect("mark the cutter as a tool");
 
         session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("the first step");
         let after_first = session.project().revision();
+        assert!(session.project().object(cutter).is_some(), "a marked tool survives the operation");
         session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(other, "difference", cutter)).expect("the second step");
 
         assert_eq!(session.project().revision().get(), after_first.get() + 1, "one step, one revision");
         for body in [slab, other] {
             let constructive = session.project().object(body).expect("a body").geometry().as_constructive();
-            assert!(constructive.is_some_and(|body| body.booleans().count() == 1), "both bodies name the cutter");
+            assert!(
+                constructive
+                    .is_some_and(|body| body.booleans().next().is_some_and(|step| step.tool().name() == "Cutter")),
+                "both bodies carry the shape they cut with"
+            );
         }
-        assert!(session.project().object(cutter).is_some());
+        assert!(session.project().object(cutter).is_some(), "one tool, two bodies");
         session.undo().expect("undo the second step");
         let first = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
         assert_eq!(first.booleans().count(), 1, "the first step survives");
@@ -751,33 +850,23 @@ mod tests {
     #[test]
     fn a_refused_boolean_names_the_reason_and_writes_nothing() {
         let (mut session, slab, _other, cutter) = boolean_scene();
-        let other = Id::new(4).expect("id");
+        let root = Id::new(1).expect("id");
 
-        // A body cannot combine with itself.
+        // A body cannot be cut with itself.
         assert_eq!(
             session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", slab)),
-            Err(CommandError::Model(ProjectError::BooleanToolIsSelf { id: slab }))
+            Err(CommandError::Model(ProjectError::BooleanToolIsTheTarget { id: slab }))
         );
-        // The tool must be a constructive body: id 1 is the root container.
-        let root = Id::new(1).expect("id");
+        // The cutter must be a constructive body: id 1 is the root container.
         assert_eq!(
             session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", root)),
-            Err(CommandError::Model(ProjectError::BooleanToolNotABody { object: slab, tool: root }))
+            Err(CommandError::Model(ProjectError::BooleanToolNotABody { id: root }))
         );
-        // A step the tool already depends on would close a loop.
-        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+        // A baked mesh is a body but not a constructive one: it has no ring to sweep.
         let revision = session.project().revision();
-        assert_eq!(
-            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(other, "union", slab)),
-            Err(CommandError::Model(ProjectError::BooleanToolCycle { id: other }))
-        );
-        assert_eq!(session.project().revision(), revision, "a refusal writes nothing");
-        assert!(
-            !CommandRegistry::new()
-                .get(OBJECT_BOOLEAN_SET_ID)
-                .expect("the spec")
-                .enabled(&session, &boolean_params(other, "union", slab))
-        );
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+        assert_eq!(session.project().revision().get(), revision.get() + 1, "the accepted step wrote once");
+        assert_eq!(session.project().object(cutter), None, "and spent its cutter");
     }
 
     #[test]
@@ -790,6 +879,7 @@ mod tests {
         assert_eq!(outcome, CommandOutcome::changed());
         let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
         assert_eq!(body.features().len(), 1, "the extrusion stays");
+        assert!(session.project().object(cutter).is_none(), "the spent cutter does not return");
 
         let extrusion = serde_json::json!({ "object": slab.get(), "index": 0 });
         assert_eq!(
