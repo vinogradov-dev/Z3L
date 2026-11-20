@@ -720,27 +720,28 @@ pub const ROWS: &[Row] = &[
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
     // The contour booleans take a base ring and one or more rings beside it, so they act on a
-    // selection rather than on the node under the pointer; the ribbon's three cells arm them (G3).
+    // selection rather than on the node under the pointer; the ribbon's three cells arm them and
+    // the registered command behind each cell stores the result (G3, ADR 0194).
     Row {
         id: "contour.boolean.union",
         label: Message::ToolUnion,
-        places: &[Place::Api],
+        places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Selection),
-        icon: None,
+        icon: Some(crate::icons::contour::BOOLEAN_UNION),
     },
     Row {
         id: "contour.boolean.subtract",
         label: Message::ToolSubtract,
-        places: &[Place::Api],
+        places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Selection),
-        icon: None,
+        icon: Some(crate::icons::contour::BOOLEAN_SUBTRACT),
     },
     Row {
         id: "contour.boolean.intersect",
         label: Message::ToolIntersect,
-        places: &[Place::Api],
+        places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Selection),
-        icon: None,
+        icon: Some(crate::icons::contour::BOOLEAN_INTERSECT),
     },
     Row {
         id: "object.path.replace",

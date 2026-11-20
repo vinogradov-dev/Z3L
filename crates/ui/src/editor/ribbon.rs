@@ -50,6 +50,7 @@ impl Editor {
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
             self.void_armed(),
+            self.boolean_arm().map(|arm| arm.op()),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
         let context = toolbars::RibbonContext {
@@ -118,6 +119,16 @@ impl Editor {
                         self.cancel_measure();
                     } else {
                         self.arm_measure();
+                    }
+                }
+                ToolAction::ContourBoolean(op) => {
+                    // The three cells arm one mode over the selection: the base ring is the one
+                    // selected now, and every ring picked afterwards is an operand. A second press
+                    // on the same operation drops the mode, like the ruler and the niche (G3).
+                    if self.boolean_arm().is_some_and(|arm| arm.op() == op) {
+                        self.cancel_boolean(session);
+                    } else if !self.arm_boolean(op, session.project()) {
+                        return Err(Message::BooleanNeedsRing.text(lang).to_owned());
                     }
                 }
                 ToolAction::Void => {

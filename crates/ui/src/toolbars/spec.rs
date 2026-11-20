@@ -16,7 +16,7 @@
 //!
 //! Every row is a constant, so the ribbon allocates nothing to read the map.
 
-use engine::PrimitiveKind;
+use engine::{ContourOp, PrimitiveKind};
 use model::{ClassCode, FillMode};
 use text::Message;
 
@@ -87,6 +87,9 @@ pub enum ToolKind {
     GridSnap,
     /// Turns the ground shadow of the active view on or off (U107).
     Shadows,
+    /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
+    /// the base ring and every further picked ring as its operands (G3, ADR 0194).
+    ContourBoolean(ContourOp),
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
     /// Arms the niche tool: the pointer names the empty space inside the open product and writes
@@ -645,9 +648,30 @@ const SKETCH: [GroupSpec; 7] = [
         id: "sketch.booleans",
         label: Message::GroupBooleans,
         tools: &[
-            planned("sketch.booleans.union", Message::ToolUnion),
-            planned("sketch.booleans.subtract", Message::ToolSubtract),
-            planned("sketch.booleans.intersect", Message::ToolIntersect),
+            ToolSpec {
+                id: "sketch.booleans.union",
+                label: Message::ToolUnion,
+                icon: Some(icons::contour::BOOLEAN_UNION),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Union)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "sketch.booleans.subtract",
+                label: Message::ToolSubtract,
+                icon: Some(icons::contour::BOOLEAN_SUBTRACT),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Subtract)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "sketch.booleans.intersect",
+                label: Message::ToolIntersect,
+                icon: Some(icons::contour::BOOLEAN_INTERSECT),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Intersect)),
+                method: None,
+                variants: &[],
+            },
         ],
     },
     GroupSpec {
@@ -1180,6 +1204,9 @@ mod tests {
         assert_eq!(
             live("sketch"),
             [
+                "sketch.booleans.intersect",
+                "sketch.booleans.subtract",
+                "sketch.booleans.union",
                 "sketch.create.arc",
                 "sketch.create.circle",
                 "sketch.create.line",
@@ -1417,6 +1444,9 @@ mod tests {
             ToolKind::GridSnap,
             ToolKind::Shadows,
             ToolKind::Measure,
+            ToolKind::ContourBoolean(engine::ContourOp::Union),
+            ToolKind::ContourBoolean(engine::ContourOp::Subtract),
+            ToolKind::ContourBoolean(engine::ContourOp::Intersect),
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
@@ -1470,15 +1500,15 @@ mod tests {
     #[test]
     fn the_row_is_counted_from_the_spec() {
         let sketch = tab("sketch").expect("sketch");
-        // Six creation tools, the ruler and the draft pair.
-        assert_eq!(sketch.columns(), 9);
+        // Six creation tools, the ruler, the draft pair and the three contour booleans.
+        assert_eq!(sketch.columns(), 12);
         // The planned groups draw nothing, so the Model tab is the four primitives and the extrusion.
         assert_eq!(tab("model").expect("model").columns(), 5);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         assert_eq!(tab("view").expect("view").columns(), 4);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 9, "the sketch tab is the widest row of the map");
+        assert_eq!(widest, 12, "the sketch tab is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }

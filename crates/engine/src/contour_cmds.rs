@@ -5,7 +5,7 @@
 //! **new object** beside the base, in the base's frame: one ring is a path, several rings are a
 //! contour set ([`model::Contours`]). The sources are consumed in the same command and the same
 //! undo entry, except an object marked as a tool, which stays in the tree and never reaches the
-//! result (ADR 0186).
+//! result (ADR 0194).
 //!
 //! An operation that leaves nothing to draw changes nothing and says why: rings that never cross
 //! leave what they were, an intersection of two separate figures is empty, and a hole is an area

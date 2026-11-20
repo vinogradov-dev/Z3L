@@ -951,6 +951,11 @@ messages! {
     ToolUnion = ["Union", "Объединить"],
     ToolSubtract = ["Subtract", "Вычесть"],
     ToolIntersect = ["Intersect", "Пересечение"],
+    BooleanNeedsRing = [
+        "Select a closed contour first: the boolean is born in its frame",
+        "Сначала выделите замкнутый контур: в его системе координат родится результат"
+    ],
+    BooleanPick = ["Contours picked: {0}", "Выбрано контуров: {0}"],
     ToolFillet = ["Fillet", "Скругление"],
     ToolChamfer = ["Chamfer", "Фаска"],
     ToolShell = ["Shell", "Оболочка"],

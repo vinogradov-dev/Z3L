@@ -2454,3 +2454,91 @@ fn a_band_adds_and_removes_a_whole_set_rather_than_toggling_members() {
     editor.select_band(&session, view, away, Pick::Replace);
     assert!(editor.selected_nodes().is_empty(), "a band over nothing clears the selection");
 }
+
+/// A project whose root holds one closed rectangle ring per tuple, as path objects.
+fn ring_project(rects: &[(i64, i64, i64, i64)]) -> (Project, Vec<Id>) {
+    let mut project = sample_project();
+    let root = project.root().id();
+    let mut ids = Vec::with_capacity(rects.len());
+    for (index, (x0, y0, x1, y1)) in rects.iter().enumerate() {
+        let path = Path::rectangle([millimetres(*x0), millimetres(*y0)], [millimetres(*x1), millimetres(*y1)])
+            .expect("a rectangle ring");
+        let id = project
+            .add_object(root, format!("Ring {index}"), Placement::IDENTITY, Geometry::Path(path))
+            .expect("a path object");
+        ids.push(id);
+    }
+    (project, ids)
+}
+
+#[test]
+fn a_contour_boolean_arms_on_a_ring_and_previews_the_picks() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(ids[0]));
+
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()), "a selected ring arms the mode");
+    assert_eq!(editor.boolean_arm().map(BooleanArm::op), Some(engine::ContourOp::Union));
+    assert!(!editor.boolean_arm().is_some_and(BooleanArm::is_ready), "one ring is not a boolean yet");
+
+    // The picks are the selection, so a Shift-click adds an operand and the result appears in place
+    // of the base ring without touching the document.
+    let revision = session.project().revision();
+    editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(editor.update_boolean(&mut session), "the picks changed, so the preview rebuilds");
+    assert!(editor.boolean_arm().is_some_and(BooleanArm::is_ready));
+    assert_eq!(editor.boolean_arm().map(|arm| arm.operands().len()), Some(1));
+    assert_eq!(session.project().revision(), revision, "a preview is not an edit");
+    assert!(session.preview().geometry(ids[0]).is_some(), "the base ring draws the result instead");
+    assert!(!editor.update_boolean(&mut session), "the same picks at the same revision rebuild nothing");
+}
+
+#[test]
+fn a_contour_boolean_commits_one_object_and_one_undo_entry() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()));
+    assert!(editor.update_boolean(&mut session));
+
+    let created = editor.commit_boolean(&mut session, crate::Lang::En).expect("the result is stored");
+
+    assert!(editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert!(session.preview().is_empty(), "the overlay goes with the mode");
+    let project = session.project();
+    assert_eq!(project.object(created).map(|object| object.name()), Some("Union 1"));
+    assert!(project.object(ids[0]).is_none() && project.object(ids[1]).is_none(), "the sources are consumed");
+    assert_eq!(editor.selected_nodes(), &[created], "the result is selected");
+    session.undo().expect("one undo entry");
+    assert!(session.project().object(created).is_none());
+    assert!(session.project().object(ids[0]).is_some(), "undo puts both sources back");
+    assert!(!session.can_undo(), "the whole operation was one entry");
+}
+
+#[test]
+fn a_boolean_cell_without_a_ring_arms_nothing_and_a_second_press_drops_it() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    // A panel is a node but not a drawn ring, so the cell refuses before a mode starts.
+    let panel = session.project().root().children().first().map(|node| node.id()).expect("the shelf");
+    editor.select_node(Some(panel));
+    assert!(!editor.arm_boolean(engine::ContourOp::Union, session.project()));
+    assert!(editor.boolean_arm().is_none());
+
+    editor.select_node(Some(ids[0]));
+    assert!(editor.arm_boolean(engine::ContourOp::Subtract, session.project()));
+    let revision = session.project().revision();
+    let actions = editor
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::ContourBoolean(engine::ContourOp::Subtract)],
+            crate::Lang::En,
+        )
+        .expect("a cell click runs");
+    assert!(editor.boolean_arm().is_none(), "a second press on the same operation drops the mode");
+    assert_eq!(session.project().revision(), revision, "the cell wrote nothing");
+    assert!(!actions.started_drawing, "arming a boolean starts no draft");
+}

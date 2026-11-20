@@ -209,6 +209,19 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: Some(ToolAction::Measure),
         },
+        // A contour boolean is a mode over the selection: the base ring is the one selected when
+        // the cell was pressed, and every further ring picked while it is armed is an operand. The
+        // cell is off until a closed ring is selected, so the hint says what to do instead of
+        // arming a tool with nothing to combine (G3, ADR 0194).
+        ToolKind::ContourBoolean(op) => {
+            let enabled = selected_path == Some(true);
+            Ready {
+                enabled,
+                armed: is_armed(active, kind),
+                hint: tool_hint(tool.label.text(lang), tool.key()),
+                action: enabled.then_some(ToolAction::ContourBoolean(op)),
+            }
+        }
         ToolKind::Void => Ready {
             // A niche belongs to the open product (ADR 0098), and naming it needs nothing else: no
             // material, no selection and no document write (ADR 0118).

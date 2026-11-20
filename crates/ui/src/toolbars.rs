@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use egui::Ui;
-use engine::PrimitiveKind;
+use engine::{ContourOp, PrimitiveKind};
 use model::{ClassCode, FillMode, Id};
 use text::{Lang, Message};
 use units::Length;
@@ -141,6 +141,8 @@ pub enum ToolAction {
     /// Arms the niche tool, or disarms it when it already is: the pointer names the empty space
     /// inside the open product and the document is never touched (ADR 0118).
     Void,
+    /// Arms one contour boolean over the selection, or drops it when it is already armed (G3).
+    ContourBoolean(ContourOp),
 }
 
 /// Every drawing tool a key starts, in shortcut order: the draw group then the shapes.
@@ -205,6 +207,8 @@ pub enum ToolActivity {
     Measure,
     /// The niche tool is armed and names the empty space under the pointer.
     Void,
+    /// A contour boolean is armed and collects the picked rings.
+    ContourBoolean(ContourOp),
 }
 
 /// The activity whose button is pressed, from what the editor holds.
@@ -218,8 +222,9 @@ pub fn tool_activity(
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
+    boolean: Option<ContourOp>,
 ) -> Option<ToolActivity> {
-    match (drawing, frame, fill, measure, niche) {
+    let drawing = match (drawing, frame, fill, measure, niche) {
         (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
         (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
@@ -232,7 +237,10 @@ pub fn tool_activity(
         (None, false, None, true, _) => Some(ToolActivity::Measure),
         (None, false, None, false, true) => Some(ToolActivity::Void),
         (None, false, None, false, false) => None,
-    }
+    };
+    // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
+    // a running draft or a fill (G3).
+    drawing.or(boolean.map(ToolActivity::ContourBoolean))
 }
 
 /// Whether the button for one tool is the armed one.
@@ -255,6 +263,7 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         }
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         (Some(ToolActivity::Void), ToolKind::Void) => true,
+        (Some(ToolActivity::ContourBoolean(armed)), ToolKind::ContourBoolean(op)) => armed == op,
         _ => false,
     }
 }
@@ -936,11 +945,16 @@ mod tests {
                     "By radius  (N)",
                     "Centre and radius  (C)",
                     "From corner  (R)",
+                    // The three boolean cells arm a mode over the selection; their hints are their
+                    // own names, so the row reads which operation the next pick serves (G3).
+                    "Intersect",
                     "Measure  (M)",
                     "No draft is running  (Esc)",
                     "Polyline · RMB line/arc · Alt ignores snaps  (P)",
+                    "Subtract",
                     "Through 3 points  (A)",
                     "Two points  (L)",
+                    "Union",
                 ],
             ),
             (
@@ -989,9 +1003,11 @@ mod tests {
             let caption = if caption == "СОЗДАТЬ" { "CREATE" } else { "DRAFT" };
             assert!(texts.iter().any(|text| text == caption), "{caption} names a live group: {texts:?}");
         }
-        for caption in ["MODIFY", "CONSTRUCTION", "DIMENSIONS", "BOOLEANS"] {
+        for caption in ["MODIFY", "CONSTRUCTION", "DIMENSIONS"] {
             assert!(!texts.iter().any(|text| text == caption), "{caption} holds no live tool: {texts:?}");
         }
+        // The booleans became live cells with G3, so their group is captioned like the other two.
+        assert!(texts.iter().any(|text| text == "BOOLEANS"), "BOOLEANS holds three live tools: {texts:?}");
     }
 
     #[test]
@@ -1216,12 +1232,21 @@ mod tests {
             (None, false, None, true, false, Some(ToolActivity::Measure)),
             (None, false, None, false, true, Some(ToolActivity::Void)),
             (Some((DrawTool::Arc, path)), false, None, false, true, Some(ToolActivity::Draw(DrawTool::Arc))),
+            (None, false, None, false, false, Some(ToolActivity::ContourBoolean(ContourOp::Union))),
+            // A boolean owns the picks, so a running draft outranks it: two pressed cells for one
+            // pointer would lie about which tool the next click serves.
+            (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
         ];
         for (drawing, frame, fill, measure, niche, expected) in cases {
+            // A case whose expected activity is a boolean arms one; every other case leaves it off.
+            let boolean = match expected {
+                Some(ToolActivity::ContourBoolean(op)) => Some(op),
+                _ => None,
+            };
             assert_eq!(
-                tool_activity(drawing, frame, fill, measure, niche),
+                tool_activity(drawing, frame, fill, measure, niche, boolean),
                 expected,
-                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche}"
+                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche} boolean={boolean:?}"
             );
         }
     }

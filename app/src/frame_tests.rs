@@ -5624,3 +5624,55 @@ fn a_carried_frames_old_grip_is_no_target() {
     assert!(harness.app.tabs.active().holding_piece(), "and the piece is still in the hand");
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
 }
+
+#[test]
+fn an_armed_contour_boolean_previews_and_its_enter_stores_one_object() {
+    // G3, ADR 0194: the operation is a mode over the selection. The result draws in place of the
+    // base ring before anything is written, Enter is the one command, and the frame it drew is the
+    // object the document then holds.
+    let mut session = crate::scene_build::empty_session().expect("an empty scene builds");
+    let root = session.project().root().id();
+    let ring = |x0: i64, x1: i64| {
+        let path = model::Path::rectangle(
+            [units::Length::from_millimetres(x0).expect("x"), units::Length::ZERO],
+            [units::Length::from_millimetres(x1).expect("x"), units::Length::from_millimetres(50).expect("y")],
+        )
+        .expect("a rectangle ring");
+        model::Geometry::Path(path)
+    };
+    let mut project = session.project().clone();
+    let base = project.add_object(root, "Left", model::Placement::IDENTITY, ring(0, 100)).expect("a ring");
+    let other = project.add_object(root, "Right", model::Placement::IDENTITY, ring(50, 150)).expect("a ring");
+    session = engine::Session::with_directory(project, session.directory().clone());
+    let mut harness = Harness::with_session("frame-boolean", session);
+    harness.settle();
+    let revision = harness.revision();
+
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base, other]);
+        assert!(
+            document.editor.arm_boolean(engine::ContourOp::Union, document.session.project()),
+            "two selected rings arm the union"
+        );
+    }
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_some_and(ui::BooleanArm::is_ready), "the result is on screen");
+    assert_eq!(harness.revision(), revision, "a preview is not an edit");
+    assert!(!harness.app.tabs.active().can_undo(), "a preview is not an undo entry");
+
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert!(document.session.preview().is_empty(), "the overlay goes with the mode");
+    let project = document.session.project();
+    let stored = project
+        .query(&model::NodeQuery::any().with_kind(model::StructuralKind::Object))
+        .into_iter()
+        .any(|id| project.object(id).is_some_and(|object| object.name() == "Union 1"));
+    assert!(stored, "the one command stored the result");
+    assert!(document.session.project().object(base).is_none(), "the base is consumed");
+    assert!(document.session.project().object(other).is_none(), "the cutter is consumed");
+}

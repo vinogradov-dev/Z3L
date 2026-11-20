@@ -205,6 +205,7 @@ impl Editor {
         self.void_armed = false;
         self.void.clear();
         self.box_draft = None;
+        self.boolean = None;
     }
 
     /// The base being pulled, once the sketch has drawn it.
@@ -342,7 +343,7 @@ impl Editor {
     }
 
     /// Selects the node a create command returned and marks the editor as initialised.
-    fn select_created(&mut self, id: Option<Id>) {
+    pub(super) fn select_created(&mut self, id: Option<Id>) {
         let Some(id) = id else {
             return;
         };

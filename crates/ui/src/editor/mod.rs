@@ -33,9 +33,11 @@ use crate::scene_tree::Selection;
 use crate::toolbars;
 use crate::view_flags::ViewFlags;
 
+pub use self::boolean::BooleanArm;
 pub use self::fill::FillArm;
 pub use self::selection::{BandRule, BandView, SelectionBand};
 
+mod boolean;
 mod cards;
 mod contour;
 mod creation;
@@ -86,6 +88,8 @@ pub struct Editor {
     /// Switching a part off changes the void without moving the pointer, so a hand that holds still
     /// still needs a new cell (X73).
     void_revision: u64,
+    /// The armed contour boolean: its operation, its base ring and the picks it previewed.
+    boolean: Option<BooleanArm>,
     /// The container the next created nodes land in, or `None` for the scene root.
     creation_parent: Option<Id>,
     /// The transform mode a menu entry asked for, until the window takes it.

@@ -371,6 +371,11 @@ pub(crate) struct Document {
     pub(crate) measure_gizmo: MeasureGizmo,
     /// The niche tool's overlay; the cell itself lives in the editor (ADR 0118).
     pub(crate) void_gizmo: VoidGizmo,
+    /// The base node whose overlay holds a contour boolean's preview, while one is armed.
+    ///
+    /// The overlay is the session's and belongs to one node at a time, so the shell remembers whose
+    /// it is and drops it when the mode leaves (G3, ADR 0093).
+    boolean_preview: Option<model::Id>,
     /// The grips of the selected box: four base corners and six faces, one drag each.
     pub(crate) box_grips: BoxGrips,
     /// The rubber band a primary drag on empty space draws, between its press and its release (U103).
@@ -477,6 +482,7 @@ impl Document {
             fill_gizmo: FillGizmo::default(),
             measure_gizmo: MeasureGizmo::default(),
             void_gizmo: VoidGizmo,
+            boolean_preview: None,
             box_grips: BoxGrips::default(),
             band: None,
             distance_fields: DistanceFields::default(),
@@ -1797,6 +1803,40 @@ impl Document {
         self.void_gizmo.reset();
     }
 
+    /// Leaves an armed contour boolean and drops the preview it drew; nothing was written.
+    pub(crate) fn cancel_boolean(&mut self) {
+        self.editor.cancel_boolean(&mut self.session);
+        self.boolean_preview = None;
+    }
+
+    /// Rebuilds the boolean's preview from the selection, and drops it when the mode leaves.
+    ///
+    /// The result is the session overlay drawn in place of the base ring, so the person judges the
+    /// picture the ✓ will store and the document never sees it (ADR 0093). It is rebuilt only when
+    /// the picks or the document move, and a refusal keeps the last honest picture off the screen
+    /// and leaves its sentence in the status bar.
+    fn sync_boolean(&mut self, ctx: &egui::Context) {
+        if self.editor.boolean_arm().is_none() {
+            if self.boolean_preview.take().is_some() {
+                self.session.clear_preview();
+            }
+            return;
+        }
+        if self.editor.update_boolean(&mut self.session) {
+            let arm = self.editor.boolean_arm();
+            self.boolean_preview = arm.and_then(|arm| arm.is_ready().then_some(arm.base()));
+            self.last_error = arm.and_then(|arm| arm.refusal().map(str::to_owned));
+            ctx.request_repaint();
+        }
+    }
+
+    /// Stores the previewed contour boolean as one command (G3).
+    pub(crate) fn commit_boolean(&mut self, lang: ui::Lang) -> Result<(), String> {
+        self.editor.commit_boolean(&mut self.session, lang).map(|_| ())?;
+        self.boolean_preview = None;
+        Ok(())
+    }
+
     /// Feeds the pointer to the armed niche and keeps the reading in the editor's one atom.
     ///
     /// A pointer outside the open product, or a pointer on a widget, leaves the value as it stands:
@@ -2080,6 +2120,18 @@ impl Document {
                 ui::ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc },
             ));
         }
+        if let Some(arm) = self.editor.boolean_arm() {
+            // A boolean asks for no number: its card is the operation's name and the ✓/✕ pair, and
+            // it draws only once a result is on screen, because a check that answers with a refusal
+            // is worse than no check (ADR 0077).
+            if !arm.is_ready() {
+                return None;
+            }
+            return Some(ToolView::actions(
+                Some(arm.label()),
+                ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            ));
+        }
         self.editor.contour_edit()?;
         // The corner's motion is the one method of the contour edit: free, or along the segment the
         // corner starts, and the switch names the state the next drag takes (ADR 0075, U115).
@@ -2187,7 +2239,13 @@ impl Document {
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.drawing().is_some() {
+                if self.editor.boolean_arm().is_some() {
+                    // A boolean's check is its one command: the result the frame shows becomes an
+                    // object and its sources are consumed, all in one undo entry (G3).
+                    if let Err(error) = self.commit_boolean(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.drawing().is_some() {
                     // A draft's check is its finish: the same path the ribbon's *Close* and a click on
                     // the first point end in, so one commit has one home (ADR 0052).
                     if let Err(error) = self.commit_drawing(ui::language(ctx)) {
@@ -2671,6 +2729,10 @@ impl Document {
         if voiding {
             self.update_void(ui, &response, rect, pointer_over_widget);
         }
+
+        // An armed contour boolean shows its result in place of the base ring; the picks are the
+        // selection, so an ordinary click and a Shift-click pick operands (G3).
+        self.sync_boolean(ui.ctx());
 
         if pulling {
             // The pull reads the pointer itself: a press on the arrow starts a drag, the release
@@ -3652,6 +3714,7 @@ impl Document {
         // or dropped one also resets the shell's own gizmos (ADR 0118).
         let was_measuring = self.editor.measure().is_some();
         let was_void = self.editor.void_armed();
+        let was_boolean = self.editor.boolean_arm().is_some();
         // The ribbon is its own chrome surface — one step above the window's surface and distinct
         // from the panel fill the side panels use behind their content. The Appearance slider scales
         // that fill's alpha, letting the scene it covers show through without changing any other
@@ -3703,6 +3766,19 @@ impl Document {
             } else if was_void && !self.editor.void_armed() {
                 // Another cell replaced it; the cell it named goes with the tool.
                 self.cancel_void();
+            }
+            if self.editor.boolean_arm().is_some() && !was_boolean {
+                // A boolean cell armed the mode: leave the shell state of the tool it replaced and
+                // the navigation mode that would take the next press for an orbit (G3).
+                self.draw_gizmo.reset();
+                self.cancel_extrude();
+                self.reset_fill(ui.ctx());
+                self.measure_gizmo.reset();
+                self.void_gizmo.reset();
+                shell.cluster.navigation = None;
+            } else if was_boolean && self.editor.boolean_arm().is_none() {
+                // Another cell replaced it; the preview it drew goes with the mode.
+                self.cancel_boolean();
             }
             if let Some((object, height)) = outcome.extruded {
                 // The body exists at the height the field named; the arrow lets the user pull it
@@ -3820,6 +3896,17 @@ impl Document {
                 && let (Some(object), Some(height), top) =
                     (self.extrude_gizmo.object(), self.extrude_gizmo.height(), self.extrude_gizmo.top())
                 && let Err(error) = self.finish_extrude(object, height, top, ui::language(ui.ctx()))
+            {
+                self.last_error = Some(error);
+            }
+        } else if self.editor.boolean_arm().is_some() {
+            // Escape leaves the boolean and drops its preview; Enter stores the result it shows.
+            // Nothing reached the document before the ✓, so leaving costs no undo entry (G3).
+            if escape {
+                self.cancel_boolean();
+            } else if enter
+                && !ui.ctx().text_edit_focused()
+                && let Err(error) = self.commit_boolean(ui::language(ui.ctx()))
             {
                 self.last_error = Some(error);
             }
