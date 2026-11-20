@@ -5680,7 +5680,7 @@ fn an_armed_contour_boolean_previews_and_its_enter_stores_one_object() {
 
 #[test]
 fn the_cross_on_a_booleans_card_leaves_it_and_writes_nothing() {
-    // X98: the card's pair must be symmetric. Escape dropped the mode and the ✕ fell through to the
+    // The card's pair must be symmetric: Escape dropped the mode and the ✕ fell through to the
     // extrusion's cancel, so an armed boolean kept its preview and its arm after the cross.
     let session = crate::scene_build::empty_session().expect("an empty scene builds");
     let mut harness = Harness::with_session("frame-boolean-cancel", session);

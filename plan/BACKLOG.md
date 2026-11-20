@@ -263,6 +263,83 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    a dark material shows the base reading as behind the working copy; `cargo xtask ui-rules` is
    green with the contour module no longer an exception, and `cargo xtask ci` is green.
   `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,plan/debt.md`
+- `[ ]` **X98** a body's profile is a contour a boolean can take
+  Why: The extrude cell rewrites a drawn ring into a body in place (`extrude_object_path` keeps
+   the node and swaps its payload), and a boolean then refuses that node: `ring_in_base` asks
+   `Project::object_path`, which answers `NotAPathObject` for a constructive payload. The
+   maker's whole habit — draw a square, extrude it, draw a circle, cut one out of the other —
+   ends in 'node 2 is not a drawn contour'. `/home/alx/scene.z3l` holds exactly that: two
+   extruded bodies and a cone, and both bodies are refused as operands.
+  Shape: A body owns its profile: `Constructive::path` is the same closed chain a path object
+   stores, and `ContourBooleanPlan` only needs a ring in the base's frame. The operand reader
+   takes a path object or a constructive body and reads `Constructive::path` for the second, so
+   the operation works on the profile wherever the ring lives. The result stays a drawing — one
+   ring or a contour set — because a boolean over profiles is 2D; a boolean over the solids is
+   W1's feature list. The cells' readiness check reads the same helper, so the three cells
+   enable on a body exactly as on a drawing.
+  Done: Tests: a union and an intersection of two extruded bodies store a drawing whose rings
+   match the profiles, and both bodies are consumed or kept by the tool mark; a constructive
+   body and a drawn ring combine in one operation; the cells enable on a selected body and stay
+   off on a primitive, a mesh and a panel; the refusal for a node with no ring names that node.
+   `cargo xtask ci` is green.
+  `files: crates/engine/src/contour_cmds.rs,crates/model/src/object.rs,crates/ui/src/toolbars/ready.rs`
+- `[ ]` **X99** an armed boolean shows which ring is the base
+  Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
+   screen says which ring that is: a plain click on the second ring replaces the selection, so
+   the first loses its highlight while it is still an operand, and a Shift-click makes the
+   last-picked ring the primary and the brightest. The maker sees two rings that look like one
+   selection and cannot tell which one the subtraction cuts into.
+  Shape: While a boolean is armed the base ring draws in an ink of its own — a second accent
+   that means 'this is the frame' rather than 'this is selected' — and every operand keeps the
+   ordinary selection ink. The scene frame carries the two inks per shape (the shell knows the
+   arm and the base), the theme owns both colours and their contrast values (the icon role inks
+   are the second owner, ADR 0090), and the status bar or the card names the base by its object
+   name so the words and the picture agree. The base keeps its ink while the pointer hovers it,
+   and the pair reads the same in the tree row.
+  Done: Tests: an armed boolean draws the base ring in the base ink and its operands in the
+   selection ink, and the ink is asserted headlessly on the frame's own shape list; dropping
+   the mode returns every ring to the selection ink; the base ink has a measured contrast
+   against the viewport's background in every theme; the base's name is on the card. `cargo
+   xtask ci` is green.
+  `files: crates/ui/src/theme.rs,crates/ui/src/editor/boolean.rs,app/src/document.rs,app/src/scene_build.rs`
+- `[ ]` **X100** a contour set is extruded one body per ring
+  Why: An intersection of three rings can leave two separate pieces, which the operation stores
+   as a contour set, and nothing extrudes one: `object.path.extrude` takes a `Path`, so the
+   Extrude cell goes off for a contour set and a maker who has just built a shape out of three
+   drawings cannot turn it into a body. The same wall stops a union that leaves two pieces and
+   any set a file carries.
+  Shape: A set is extruded one ring at a time, into one body per ring, all in one command and
+   one undo entry: the profile each body owns is that ring, its height is the typed height, and
+   the created bodies land beside the set in its frame. The set itself is consumed like any
+   other source; a set is never a single body with two profiles, because the kernel's extrusion
+   takes one ring and a solid of two disconnected pieces is not a part a shop cuts. The cell
+   enables on a set as it does on a ring, and the extrude's height stays the session's typed
+   default. The alternative — refusing forever and waiting for G4's areas — leaves a result
+   nobody can use.
+  Done: Tests: an extrusion of a two-ring set creates two constructive bodies, each owning its
+   ring and the typed height, in one revision and one undo entry; the set is consumed; a ring
+   and a set behave the same in the ribbon's readiness; a set whose ring is too detailed for a
+   mesh cap is refused with the ring's own sentence; the panel path is untouched. `cargo xtask
+   ci` is green.
+  `files: crates/engine/src/object_cmds.rs,crates/param/src/solid.rs,crates/model/src/contour.rs`
+- `[ ]` **X101** an older scene file answers the schema sentence, not a field error
+  Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
+   missing field `tool` at line 117', not the schema sentence: the schema check lives in
+   `ProjectWire::try_from`, but the tree is deserialized before it runs, so a file from an
+   older layout fails on a field that did not exist yet and the one readable sentence ADR 0096
+   promises never appears. Every schema bump makes this worse: 29 added a required field, so
+   every older scene dies with a parse error.
+  Shape: The schema number is read before the body is parsed: the document is deserialized into
+   a value, `schema_version` is checked against the current one, and only then is the tree read
+   into the typed document. A file with any other number answers 'unsupported schema version N;
+   this build supports M' whatever its layout, and the same check guards the top-level
+   envelope's `format` and `format_version`. The reader keeps one parse pass over the value, so
+   the cost is one JSON tree, not two parses.
+  Done: Tests: a document body with no fields at all but an older `schema_version` is refused
+   with the schema sentence and not with a field error; the same file with the current number
+   is refused with the field error, because the layout is genuinely broken; every existing
+   scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
+  `files: crates/model/src/project/wire.rs,crates/project/tests/scene_file.rs,crates/model/src/project/mod.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
