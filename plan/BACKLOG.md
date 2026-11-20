@@ -43,21 +43,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X92** the probe reads a body the boxes cannot describe, and no other
-  Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against
-   the port moved an ordinary cell's plane by rounding and broke the fill ghost: a cell is
-   where a board is cut, so the reading needs a test of its own before it ships (found in X90,
-   ADR 0181).
-  Shape: The probe asks the port only for a body the boxes cannot describe — one whose own
-   surface leaves a hole or reaches outside its box — and keeps the box reading everywhere
-   else, decided once per surface when its shape is built. The cell then meets a plate's hole,
-   a notched panel and a ball's own side; 's scene proves a ray crosses the hole and stops at
-   the floor behind it, and the fill ghost's board test stays green.
-  Done: A probe crosses a hole in a plate and stops at the face behind it; an ordinary cell's
-   planes are the boxes it always had; the fill ghost keeps following the hand across a board;
-   the gate is green.
-  `files: crates/model/src/project/niche.rs, crates/model/src/project/contact_shape.rs, crates/project/tests/through_a_hole.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
@@ -171,6 +156,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
 
 ## Done
+
+- `[x]` **X92** the probe reads a body the boxes cannot describe, and no other
+  Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against
+   the port moved an ordinary cell's plane by rounding and broke the fill ghost: a cell is
+   where a board is cut, so the reading needs a test of its own before it ships (found in X90,
+   ADR 0181).
+  Shape: The probe asks the port only for a body the boxes cannot describe — one whose own
+   surface leaves a hole or reaches outside its box — and keeps the box reading everywhere
+   else, decided once per surface when its shape is built. The cell then meets a plate's hole,
+   a notched panel and a ball's own side; 's scene proves a ray crosses the hole and stops at
+   the floor behind it, and the fill ghost's board test stays green.
+  Done: A probe crosses a hole in a plate and stops at the face behind it; an ordinary cell's
+   planes are the boxes it always had; the fill ghost keeps following the hand across a board;
+   the gate is green.
+  `files: crates/model/src/project/niche.rs, crates/model/src/project/contact_shape.rs, crates/project/tests/through_a_hole.rs` — `ba23570`
 
 - `[x]` **X91** opening and saving ask the system file manager instead of a path typed into a field
   Why: The owner reports the open and save path as a text field that misbehaves: one Backspace
