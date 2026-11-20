@@ -264,6 +264,33 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    typed negative length shortens and a positive one lengthens the same corner; the shortening
    drag and its collapse still behave; `cargo xtask ci` is green.
   `files: crates/geom/src/segment.rs,crates/model/src/contour_edit.rs,crates/ui/src/contour_grips.rs,crates/ui/src/contour_edit.rs,app/src/contour_gizmo.rs`
+- `[ ]` **X97** the contour edit's old shape and its working copy are almost one colour
+  Why: The owner, in contour edit mode: the shape the edit started from and the working copy
+   are almost one colour, so a change cannot be read at a glance. Measured: `BASE_COLOR` is
+   `from_rgba_premultiplied(150, 150, 150, 160)`, which is a near-white grey (about 239 on 255)
+   at 63 % — brighter than the draft it should sit behind — and `DRAFT_COLOR` is `from_rgb(120,
+   200, 255)`, a bright blue. Two high-value inks whose hue differs and whose value does not,
+   beside a grip ink of 240 grey and the renderer's own selection cyan `SELECTION_LINE_COLOR` =
+   (0.15, 0.85, 1.0): four inks in the same family on one shape. On the light workspace both
+   are pale over paper, which the `[gizmo]` entry in `plan/debt.md` already records for the
+   whole screen-space overlay.
+  Shape: Give the two roles a name and a value rule instead of two hand-picked numbers: the
+   shape the edit started from is the quiet one — dim, thin, behind — and the working copy is
+   the loud one, the action accent; both come from `crates/ui/src/theme.rs` so the light
+   variant is a palette decision and not a second guess, which also pays the contour part of
+   the `[gizmo]` debt entry and leaves the draft line and the size label in it. Colour alone
+   should not carry the whole difference: a stroke weight and a dash are the second signal, and
+   the pair must separate from each other, from the grip ink, from the renderer's selection
+   cyan and from the plate's own material — a bright beech board and a dark one. Decide the two
+   ends of the rule before the first line is drawn: the quietest a base may be and still read
+   on paper, and the loudest a working copy may be and still let the material show through.
+  Done: The two inks are two functions of `crates/ui/src/theme.rs` — no colour literal is left
+   in `app/src/contour_gizmo.rs` for them — and a headless test over both palettes asserts
+   their luminance separation from each other, from the grip ink and from
+   `SELECTION_LINE_COLOR`; an offscreen render in the dark and the light theme over a light and
+   a dark material shows the base reading as behind the working copy; `cargo xtask ui-rules` is
+   green with the contour module no longer an exception, and `cargo xtask ci` is green.
+  `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,plan/debt.md`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
