@@ -487,6 +487,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    calls and that `undo` restores the document the scenario started from; the scripted model
    needs no network and no key; `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
+- `[ ]` **P20** the tool files a task where work is collected, and an interjection still takes the order
+  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
+   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
+   worktree that was working through it. The plan has one writer precisely so that one session
+   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
+   it serves.
+  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
+   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
+   owner-directed interjection, which now implies `## Now` because a task at the top of `##
+   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
+   `state-contract/README.md` say the same thing.
+  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
+   asserts a section named beside `--at end` receives the task; the interjection test passes
+   with no `--section`; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md`
 
 ## Done
 
