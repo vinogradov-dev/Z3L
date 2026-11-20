@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=W1 state=idle base=7e0b0ce updated=2026-11-20
+STATE: milestone=M7 phase=T task=W1 state=idle base=f8411d9 updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -50,6 +50,9 @@ reports and never acts: the five gestures are one band in the header beside the 
 draft's and a contour edit's accept and drop are the one row of the armed tool's card, the snap's
 switch is the View tab's Snaps group and the arm that receives the next creation is the container
 card's own (U115).
+
+A contour boolean reads any node that draws one closed chain — a path object's chain or the profile
+a body was extruded from — so a drawn figure and the body extruded from it combine alike (X98).
 
 ## Next
 
