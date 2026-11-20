@@ -114,6 +114,18 @@ impl CommandSpec {
         self.label
     }
 
+    /// The class level of the node the command creates, or `None` when it creates none.
+    ///
+    /// A discovery surface reads it — the command line's `commands --json` and, later, the
+    /// assistant — so a caller knows whether an id builds something before it dispatches it. The
+    /// level is the class trait ADR 0098 gates; it says nothing about the parameters.
+    pub const fn creation_level(self) -> Option<Level> {
+        match self.creation {
+            Some(creation) => Some(creation.level()),
+            None => None,
+        }
+    }
+
     /// Whether the command applies to this session and these parameters.
     ///
     /// This is a pure check for menus, toolbars and enabled state. It never mutates the document.

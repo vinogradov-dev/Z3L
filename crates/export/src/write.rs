@@ -139,12 +139,7 @@ pub fn record_json(table: &TableData, row: &[Cell]) -> Result<String, ExportErro
 
 /// The JSON text of one cell.
 fn cell_json(cell: &Cell) -> Result<String, ExportError> {
-    Ok(match cell {
-        Cell::Integer(value) => value.to_string(),
-        Cell::Text(value) => serde_json::to_string(value)?,
-        Cell::Boolean(value) => value.to_string(),
-        Cell::Json(value) => serde_json::to_string(value)?,
-    })
+    Ok(serde_json::to_string(&cell.json())?)
 }
 
 /// The CSV copy of one table, with one header line and one line per record.
