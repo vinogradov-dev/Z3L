@@ -35,6 +35,7 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:
 `T` — the semantic classes: the registry table, its traits and the editors it gates
 `U` — the UI: toolbars, drawing tools, view controls and icon resources
 `V` — primitive parameters
+`W` — solid booleans between bodies
 `X` — a defect in behaviour that already shipped
 
 A defect is filed under `## Bugs` with an `X` id next to the feature that owns it. Its entry states
@@ -43,6 +44,229 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **U114** the six standard views and the projection are one group in the bottom bar
+  Why: The owner: the view-switching buttons in the bottom toolbar must be grouped. The six
+  presets live inside the split-layout popover under a caption, the projection toggle lives
+  in the display-settings popover, and the navigation modes sit beside framing and shading,
+  so three view decisions are spread over three places a maker has to open. Expectation: the
+  bottom bar shows the view switches as one visible group.
+  Shape: The cluster gains a preset band: six cells of `preset_icon` (AXON, FRONT, LEFT, TOP,
+  RIGHT, BOTTOM) with the active preset pressed, drawn after the navigation group and before
+  framing; `SetPreset` stays the action. The projection toggle
+  (`view.projection.toggle`, key O) joins the band, because it decides the same thing — which
+  view this is — and it is already an inventory id with a key. Dividers separate navigation,
+  views, framing, shading, layout and settings; the layout popover keeps only
+  `LayoutKind::ALL`, and the settings popover keeps the angle and widget switches and loses
+  its projection row. Hover text names the view and its key, and the band folds with the rest
+  of the wrapped row in a narrow window. No ADR: a reversible placement.
+  Done: A headless test drives the cluster at 1024 px and reads the seven cells in order with the
+  active one pressed; the layout popover draws no preset row and the settings popover draws
+  no projection; a click on each cell returns `SetPreset` or `Projection` and the shell
+  applies it; no key changes; `cargo xtask ci` is green.
+  `files: app/src/view_cluster.rs,crates/text/src/messages.rs,app/src/document.rs,crates/ui/src/icons.rs`
+- `[ ]` **X94** the status bar's three zones draw over one another
+  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
+  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
+  its own rectangle — the command on the left at its natural width, the centre elided, the
+  right readouts at their reserve — and no shape is painted under another.
+  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
+  left zone draws the five-cell transform band and up to three buttons at their natural width
+  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
+  so an armed contour or draft can paint past the split; the right zone is a separate
+  allocation starting at the same edge. The 1024 px test asserts that each zone drew
+  something and never that a shape stayed inside its rect. The cause is confirmed by a test
+  before the fix.
+  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
+  contour edit and a long selection armed, and asserts that no drawn shape crosses the
+  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
+  green.
+  `files: app/src/status_bar.rs,crates/ui/src/theme.rs`
+- `[ ]` **U115** the status bar reports and no longer carries a control
+  Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
+  where it stays within reach; the bar reports, it does not act. Today it holds the five-cell
+  transform band, the contour's along/free switch with Apply and Cancel, the draft's Close,
+  Finish and Cancel, the cross that clears the creation parent, the niche and navigation
+  Done, and the snap toggle — nine controls in one thin row, each competing with the readout
+  beside it (and with X94's overlap).
+  Shape: The place of each control is decided by the `.pi/skills/place-capability` rows and places,
+  not by hand: the five transform modes become one band in the header's right cluster beside
+  the ribbon and panel switches, always visible and five keys unchanged; the snap toggle
+  keeps its `view.snaps.grid` row and moves to the View tab's Snaps group, which already
+  draws it, and the bar keeps a readout only; the draft and contour actions move to the armed
+  tool's card and to the command bar M71 built, so the row that names the tool holds its two
+  buttons; the cross of the creation parent moves to the container card; the niche and
+  navigation Done disappear, because Escape already ends both and the hint says so. The bar
+  keeps three zones of text — the armed tool and step, the selection or measured value, the
+  window's readouts — and every moved capability keeps its id, key, label and icon through
+  its row. No new `Place`; no ADR for a reversible move.
+  Done: The bar draws no button, toggle or band in any state; each moved control is reachable from
+  its new place and answers the same key and command; the inventory rows name the places that
+  draw them and `cargo xtask ui-rules` is green; a headless test drives the bar in an armed
+  draft, an armed contour and an idle frame and finds labels only; the status bar's `//!`
+  says what it owns; `cargo xtask ci` is green.
+  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs`
+- `[ ]` **G3** the three contour booleans run on two closed rings and store one
+  Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
+  `geom::boolean` and the panel core already unions its cutouts through them, but no tool
+  reaches them, so a maker cannot union two drawn figures, cut one ring with another or keep
+  their intersection; the artwork has been in the contour theme since U69, and M71's command
+  bar was built for exactly this previewing operation.
+  Shape: Three commands in `engine` — `contour.boolean.union`, `.subtract`, `.intersect` as the
+  proposal — each take two selected closed rings and write the result through the existing
+  doors (`object.contour.replace` for a path, `panel.outline.set` for a panel outline). The
+  owner answered with a mode, and it is the tool card's choice kept in the session:
+  - **one-shot**: the result replaces the target's ring as one undo entry and the source ring
+    is consumed; a panel outline takes the result through `panel.outline.set`.
+  - **tool**: the source stays in the tree as a named cutter, and the result stores a boolean
+    step that names it, so one cutter serves several rings and an edit to the cutter re-derives
+    every result. Storing that step is the first decision of the task — a feature list on a
+    path object or a new payload — and it is a schema change with an ADR; a live step's
+    operands are path objects in one frame, so a panel outline can only take a baked result.
+  The result draws before the click through the session overlay (ADR 0093); an open ring, a
+  self-crossing ring and an empty result are readable refusals. The three cells stop being
+  `planned` and the tool card names the operation and its mode.
+  Done: Tests: one-shot — a union of two overlapping rectangles, a subtract that opens a notch and a
+  hole, and an intersect that keeps the shared area, each one undo entry, into a path and into a
+  panel; tool — one cutter trims two different targets and moving or editing the cutter
+  re-derives both, while deleting a target leaves the cutter; an open ring, a self-crossing ring
+  and an empty result are readable refusals; the preview writes no revision; the three cells
+  draw their icons and run the commands; the ADR and the schema are in the change;
+  `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/engine/src/object_cmds.rs,crates/engine/src/panel_cmds/panel.rs,crates/model/src/object.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs`
+- `[ ]` **W1** a boolean between two bodies is a feature of the constructive object
+  Why: The owner asks for the standard boolean set over bodies. The kernel port has
+  `SolidKernel::boolean`, `SolidPlan` already carries boolean steps (ADR 0041), and
+  `docs/domain/geometry.md` names a boolean with another object as the next feature, but the
+  document's `Feature` holds one `Extrude`, so no body can be cut, joined or intersected from
+  the UI and `model.booleans` stays planned. The owner also asks that the source object work
+  as a reusable tool: the cutter is not spent by the operation and may cut several bodies.
+  Shape: `Feature::Boolean { op, tool }` appended after the extrusion, where `tool` names another
+  constructive object node; the pilot validates a missing tool, a self-reference and a cycle on
+  load with a readable error. The tool node is never consumed: it stays in the tree and may
+  serve several bodies, the result re-derives when the tool moves or changes, and the hidden
+  state keeps an invisible cutter out of the picture, so one cutter cuts many bodies and a
+  second body takes the same tool as a second undo entry; `object.collapse` bakes one body when
+  a maker wants a one-shot result. `param` compiles the list into `SolidPlan` steps against the
+  tool's own plan, and the mesh cache keys on both revisions, so a changed tool re-meshes the
+  result and an unrelated move does not. The schema version moves with the new feature; a file
+  that names an unknown operation is an error, never a silent skip. The three tool cells become
+  live: click the target, click the tool, preview through ADR 0093, Enter applies, Escape
+  cancels, one undo entry; `object.boolean.set` and `object.boolean.remove` are the commands and
+  the object card lists the feature with the tool's name and a remove button.
+  Done: Tests: a union of two overlapping boxes has the union's volume within tolerance, a subtract
+  cuts the tool's volume out and an intersect keeps the overlap; one cutter serves two bodies and
+  moving or editing the cutter re-meshes both, while deleting a target leaves the cutter and a
+  hidden cutter stays in the file; a re-mesh follows a change of either body and not an unrelated
+  move; a missing tool, a self-reference and a three-node cycle are readable errors; the three
+  cells arm the tool and the preview writes no revision; one commit is one undo entry;
+  `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/solid.rs,crates/engine/src/object_cmds.rs,crates/mesh/src/lib.rs,crates/ui/src/toolbars/spec.rs,docs/decisions/README.md`
+- `[ ]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
+  Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
+  the object snaps are what the group waits for; today the drawing and fill tools carry their
+  own 2D snap (draft ends, axis lock, grid) and the move tool carries `SnapSettings` for
+  surfaces, so the same mechanism exists twice and the owner asks for one set of scene snaps
+  every tool reads. Two mechanisms are two copies (ADR 0118).
+  Shape: One atom answers the snapped point and the kind of snap from the pointer's ray: vertex,
+  midpoint, arc or circle centre, a point on an edge or a face, the intersection of two edges,
+  a perpendicular foot and a tangent point in a sketch plane, the grid and the world axes. It
+  reads candidate geometry from `Project` through the existing queries — panel corners, path
+  vertices and segment midpoints, primitive and bounds centres, the probe's face, the frame's
+  corners — and falls back to the ray's own point. Every snapping tool consumes it: the draw
+  gizmo, the fill and niche ghost, the ruler, the move and the box tool. Each kind has a
+  toggle in the View tab's Snaps group (`view.snaps.vertex`, …, beside `view.snaps.grid`) and
+  a row in the Settings page's Snaps section with the N21 tolerance; the marker is one glyph
+  per kind drawn at the snapped point in the theme's ink, and a typed number still outranks
+  the snap. The bar's readout names the kind, and stays after U115.
+  Done: Tests: a click near a panel corner snaps to it and reports the vertex kind; the midpoint,
+  the centre, an edge point, an intersection and a perpendicular foot come from the same
+  resolver; a disabled kind never captures and the tolerance decides; typing a number keeps it
+  and zero returns to the pointer; each kind draws its marker and the toggles survive a restart
+  in the workspace; `cargo xtask ci` is green.
+  `files: app/src/gizmo_math.rs,app/src/draw_gizmo.rs,crates/model/src/project/move_query.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs`
+- `[ ]` **X95** the post's icon reads as a leg, not as a vertical panel
+  Why: Observation, from the owner: the icon of the tool that creates a post must read as a
+  rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
+  dominates, so it reads as a leg or a column beside the shelf and the panel. Expectation: a
+  tall rectangular board — the panel face plus its thickness, no top face that turns it into a
+  column — clearly the vertical sibling of the shelf and distinct from `panel.svg` and
+  `product.svg`.
+  Shape: Suspected cause: the drawing was made from the word rather than from the class (`10.10`, a
+  vertical panel with a height+depth fill): its footprint is about 5 mm wide on the 24 grid,
+  and the style guide's tone rule then makes the small top face the loudest shape. The redraw
+  follows the `draw-icon` skill — one ink, the large face in the active tone, the thickness in
+  the passive tone, the 24 grid, a 1.5 stroke — and the reference is the vertical panel the
+  fill tool creates, not a leg. The file, its name and its constant stay, so no code changes.
+  Done: The file redraws as a vertical rectangular panel; it renders at 16 and 20 pt in both themes
+  from the one ink; the theme's file-loading test still passes; the owner confirms the glyph
+  reads as a post beside the shelf.
+  `files: assets/icons/scene/post.svg,assets/README.md,assets/icons/STYLE_GUIDE.md`
+- `[ ]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
+  Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post
+  and the shelf, and answered that overlay or inset («накладная»/«вкладная») is not the tool's
+  question: the tool creates the frontal panel and the mounting is a property chosen later.
+  The fill trait has exactly two pairs today (`10.10`, h+d for a post, `10.11`, w+d for a
+  shelf) and the table's frontal sheet part, `10.12` back panel, carries `fill —` with the
+  editor rule «no void fill», so the board in the frontal plane can only be drawn or typed,
+  never created from the space it closes. The class table is the one statement of that rule,
+  so the request changes the table, not only the toolbar.
+  Shape: A third `Fill::WidthAndHeight`; the `10.12` row gains `w+h` and its editor row becomes «no
+  banding command, offered by the void tool for a width+height fill», with «стенка» among its
+  aliases. A tool `furniture.panels.wall` (label «Стенка» / Wall) sits in the Panels group
+  beside the post and the shelf with the same two methods, Fit and Shape, the same ghost and
+  the same `panel.create` click; its thickness is the material's (the default catalogue's
+  4 mm sheet, O1) and the section is the niche's frontal cut. The creation asks nothing about
+  overlay or inset: the panel is born as the frontal fill and the mounting is a property
+  edited afterwards. One new record amends the trait list of ADR 0097 and the fill rule of
+  ADR 0099, and `docs/domain/classes.md` §7 and §10 change with it.
+  Done: Tests: a bare frame's void gives a frontal panel of the niche's width and height at the
+  material's thickness; Fit and Shape take the same two modes and a splayed case gives the
+  shaped board; the class row's fill is `WidthAndHeight` and its alias answers «стенка»; the
+  tool is one click, one undo entry, the ghost matches the created panel, and no field asks
+  overlay or inset; `cargo xtask ci` is green.
+  `files: crates/model/src/class.rs,crates/model/src/project/fill.rs,crates/ui/src/toolbars/spec.rs,crates/engine/src/panel_cmds/panel.rs,docs/domain/classes.md`
+- `[ ]` **U117** the contour panel and the niche-fit panel have artwork of their own
+  Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
+  fits the niche's shape is a board with a bevel and a rounding. Today
+  `furniture.panels.contour` draws `scene::panel.svg`, the same isometric board as the fill
+  cells, and both Shape methods draw the generic `contour::POLYGON`, so a maker cannot tell the
+  free outline from the niche-fit build and the two method rows share a glyph that says neither
+  fit nor shape.
+  Shape: `panel.svg` is redrawn as the wavy shelf — isometric, one long side a wave, the other three
+  straight, one ink and the two tone steps — and a new `panel-shape.svg` draws the bevelled
+  board: one corner cut at an angle, the opposite corner rounded, so both read at 16 pt. The
+  contour cell keeps `scene::PANEL`; `FILL_POST_SHAPE` and `FILL_SHELF_SHAPE` point at the new
+  constant and `contour::POLYGON` leaves the furniture table. Both files follow
+  `assets/README.md`, gain their row in the `scene` theme table, and the icon test that every
+  theme file loads and is non-empty covers them.
+  Done: The contour cell draws the wavy shelf and both Shape rows draw the bevelled board;
+  `POLYGON` no longer names a furniture build; the theme table lists both files; the icon test
+  passes and `cargo xtask ci` is green.
+  `files: assets/icons/scene/panel.svg,crates/ui/src/toolbars/spec.rs,crates/ui/src/icons.rs,assets/README.md`
+- `[ ]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
+  Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
+  must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
+  a footprint (ADR 0159: a rectangle, cut corners, or a drawn ring), but `Project::niche` seeds
+  its cell from the envelope's six planes
+  (`Cell::envelope(envelope.local_max - envelope.local_min)`), so the cut-away corner or the
+  drawn ring is not a wall: a fill in such a case grows its board into space the frame does not
+  reserve, and `FillMode::Fit` answers a rectangle that is not inside the case. N10's Done
+  never covered a non-box frame.
+  Shape: The cell starts from the frame's own section, not its box: the footprint's ring
+  (`Footprint::outline`) becomes the seed polygon, its edges are planes, and every probe keeps
+  clipping. `Niche::section()` then answers the footprint's section intersected with the walls,
+  so `FillMode::Shape` gives the case's own outline — a cut corner, a rounded corner, a drawn
+  ring — and `Fit` the largest rectangle inside it; `classify_outline` already turns a chamfer
+  or a radius into a standard panel, so a corner cabinet keeps `Rect` with one corner feature.
+  A footprint whose ring is not convex is refused for a fill with a sentence, because the niche
+  is one convex cell (ADR 0106); `NicheShape` gains a case only if a cut whose section varies
+  with height needs one, measured first and recorded in `plan/notes/N29.md`.
+  Done: Tests: a case with one 45-degree cut gives a niche whose section is the cut ring and a Fit
+  rectangle inside it; a drawn-ring case gives the ring; the created panel's world points lie
+  inside the footprint; a non-convex footprint is a readable refusal and never a board outside
+  the case; the box case keeps today's answers; `cargo xtask ci` is green.
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
+
 ## Bugs
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's

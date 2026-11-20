@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=495b17ddd9c51024bf561b9509812c783b13a2e4 updated=2026-11-20
+STATE: milestone=M7 phase=T task=U114 state=idle base=495b17ddd9c51024bf561b9509812c783b13a2e4 updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -44,8 +44,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-Nothing is scheduled: the contact port answers a real depth for a crossed pair, so the carry and the
-turn stop at a neighbour however far the pointer jumped
+U114 is next: the six standard views and the projection are one group in the bottom bar
 
 ## Index
 
