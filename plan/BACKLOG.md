@@ -617,6 +617,16 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T13** T13 a scene from another build names its schema before its fields
+  Why: A scene from another build reported the first field that moved — 'invalid type: integer
+   6, expected struct BooleanToolWire' — instead of the schema it was written by, so a person
+   upgrading reads a broken field where the answer is a version.
+  Shape: The envelope reads the document as a value, checks its schema_version, and only then
+   parses the tree; the error names the version found, or says it is missing.
+  Done: Tests: a document from another schema whose payload is from the older layout reports
+   the unsupported schema, not a field
+  `files: crates/project/src/lib.rs,crates/project/tests/scene_file.rs` — `d8d296c`
+
 - `[x]` **T12** W3 a body boolean freezes the shape it cuts with and spends its cutter
   Why: The owner's scene showed why a live tool reference reads wrong: the cutter stayed drawn,
    so the scene was two overlapping bodies instead of one cut body, and dragging the cutter
