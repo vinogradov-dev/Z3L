@@ -40,6 +40,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         selected_path,
         selected_ring,
         selected_body,
+        selected_primitive,
         active,
         owns_view,
         grid,
@@ -232,10 +233,17 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         // nothing to combine (W1).
         ToolKind::BodyBoolean(op) => {
             let enabled = selected_body;
+            // A primitive is a solid but not a body this boolean can cut with yet: the cell says
+            // what it waits for instead of sitting there dead (W1, ADR 0197).
+            let hint = if enabled || !selected_primitive {
+                tool_hint(tool.label.text(lang), tool.key())
+            } else {
+                Message::BooleanNeedsBody.text(lang).to_owned()
+            };
             Ready {
                 enabled,
                 armed: is_armed(active, kind),
-                hint: tool_hint(tool.label.text(lang), tool.key()),
+                hint,
                 action: enabled.then_some(ToolAction::BodyBoolean(op)),
             }
         }

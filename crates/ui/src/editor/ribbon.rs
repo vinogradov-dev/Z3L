@@ -50,6 +50,9 @@ impl Editor {
         let selected_body = selected.is_some_and(|id| {
             session.project().object(id).is_some_and(|object| object.geometry().as_constructive().is_some())
         });
+        let selected_primitive = selected.is_some_and(|id| {
+            session.project().object(id).is_some_and(|object| object.geometry().as_primitive().is_some())
+        });
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
             self.box_draft().is_some(),
@@ -66,6 +69,7 @@ impl Editor {
             selected_path,
             selected_ring,
             selected_body,
+            selected_primitive,
             active,
             perspective: view.perspective,
             owns_view: view.owns_view,

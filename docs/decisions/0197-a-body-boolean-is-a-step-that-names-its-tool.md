@@ -43,6 +43,13 @@ keeps the rule that a part may not come to rest inside another.
 **A boolean pair is one shape, not a collision.** Because the mark says "this is a tool", the
 document needs no stored relationship between two nodes to know that they may overlap.
 
+**A cutter is swept one micrometre past its own ends.** The commonest cut of a workshop is a hole
+drawn from the board's own surface, so the cutter's face and the body's face are one plane, and the
+kernel answers a boolean between bodies that share a face with nothing at all. The cutter's sweep
+therefore starts one micrometre below and stops one micrometre above its own ends — below the
+document's own resolution, and the same trade the panel cutouts and the end bevel already make. The
+body being cut is never extended.
+
 **Nesting is bounded where the shape is stored.** A tool may itself be a body with steps, so the
 step recurses; `Constructive::new` and `push_boolean` refuse a history that nests deeper than
 `MAX_BOOLEAN_DEPTH`, which keeps every walk over a document finite.
@@ -68,5 +75,8 @@ tool mark.
 - The schema moves to 31 and the golden file carries a step with its frozen shape.
 - The tool mark now has a control (the object card) and a command (`object.tool.set`); it was a
   document field with no surface before.
+- A boolean operand is a constructed body: a pedestrian's sphere, cone or cylinder is a solid but
+  not yet an operand, because the plan compiler can only sweep a ring. Filed as its own task; until
+  then the three cells say what they wait for instead of sitting dead.
 - Revisit if a maker wants a *live* cut: that is a second kind of step (a reference) and a different
   picture, not a switch on this one.

@@ -396,6 +396,9 @@ pub struct RibbonContext {
     pub selected_ring: bool,
     /// Whether the selection is a constructive body, which is what a body boolean edits (W1).
     pub selected_body: bool,
+    /// Whether the selection is a parametric primitive: a solid, but not one a boolean cuts with
+    /// yet, so the cells say what they wait for instead of sitting dead.
+    pub selected_primitive: bool,
     /// The tool that owns the next click.
     pub active: Option<ToolActivity>,
     /// The view is perspective rather than orthographic.
@@ -840,6 +843,7 @@ mod tests {
             selected_path: None,
             selected_ring: false,
             selected_body: false,
+            selected_primitive: false,
             active: None,
             perspective: true,
             owns_view: true,

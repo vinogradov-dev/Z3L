@@ -20,6 +20,13 @@ use crate::{ParamError, profile};
 /// Micrometres in one millimetre, the boundary factor of the geometry layer.
 const MICROMETRES_PER_MILLIMETRE: f64 = 1_000.0;
 
+/// How far a cutter's sweep reaches past each of its own ends, in millimetres.
+///
+/// One micrometre, the document's own resolution: a cutter whose face lies on the body's face —
+/// a hole cut from the board's surface — would otherwise share a face with it, and a boolean
+/// between bodies that share a face answers with nothing.
+const CUTTER_OVERSHOOT_MM: f64 = 0.001;
+
 /// Builds the polygon mesh of a constructive object with one extrusion.
 ///
 /// The work is routed through the same [`SolidPlan`] the kernel backend consumes; only the backend
@@ -59,6 +66,24 @@ pub fn constructive_plan(constructive: &Constructive) -> Result<SolidPlan, Param
 }
 
 fn compile(constructive: &Constructive, frame: Frame, depth: usize) -> Result<SolidPlan, ParamError> {
+    compile_cutter(constructive, frame, depth, false)
+}
+
+/// Compiles one history, optionally as a **cutter**.
+///
+/// A cutter's sweep is extended by one micrometre past each of its ends. The commonest cut of a
+/// workshop is a hole through a board, drawn with the cutter's own face on the board's face: the two
+/// bodies then share a face, and the kernel answers a boolean between bodies that share one with
+/// nothing at all. One micrometre past each end is below the document's own resolution, so the cut
+/// keeps the face it was asked for and the boolean has something to resolve (the same trade the
+/// panel cutouts and the end bevel already make). The body being cut is never extended: it is the
+/// result.
+fn compile_cutter(
+    constructive: &Constructive,
+    frame: Frame,
+    depth: usize,
+    cutter: bool,
+) -> Result<SolidPlan, ParamError> {
     if depth >= MAX_PLAN_DEPTH {
         return Err(ParamError::Kernel(KernelError::InvalidInput(format!(
             "a feature history nests deeper than {MAX_PLAN_DEPTH} steps"
@@ -69,10 +94,18 @@ fn compile(constructive: &Constructive, frame: Frame, depth: usize) -> Result<So
     };
     let contour = constructive.contour()?;
     let profile = profile::profile_of_document_contour(&contour)?;
-    let mut builder = PlanBuilder::new().extrude(profile, frame, extrude.height().millimetres_f64())?;
+    let (frame, height) = if cutter {
+        (
+            Frame { origin: frame.origin - frame.z * CUTTER_OVERSHOOT_MM, ..frame },
+            extrude.height().millimetres_f64() + 2.0 * CUTTER_OVERSHOOT_MM,
+        )
+    } else {
+        (frame, extrude.height().millimetres_f64())
+    };
+    let mut builder = PlanBuilder::new().extrude(profile, frame, height)?;
     for boolean in constructive.booleans() {
         let tool = boolean.tool();
-        let tool_plan = compile(tool.body(), frame_of(tool.placement()), depth.saturating_add(1))?;
+        let tool_plan = compile_cutter(tool.body(), frame_of(tool.placement()), depth.saturating_add(1), true)?;
         builder = builder.boolean(operation(boolean), tool_plan);
     }
     Ok(builder.build()?)
@@ -339,8 +372,27 @@ mod tests {
         let step = plan.steps().first().expect("one step");
         assert_eq!(step.op(), BooleanOp::Difference);
         let frame = step.tool().base().frame();
-        assert!((frame.origin.z + 5.0).abs() < 1.0e-9, "the tool stands where the step froze it");
-        assert!((frame.origin.x - 25.0).abs() < 1.0e-9, "the tool stands where the step froze it");
+        assert!((frame.origin.z + 5.0 + CUTTER_OVERSHOOT_MM).abs() < 1.0e-9, "the cutter reaches past its own end");
+        assert!((frame.origin.x - 25.0).abs() < 1.0e-9, "and stands where the step froze it");
+        let height = step.tool().base().height();
+        assert!((height - (30.0 + 2.0 * CUTTER_OVERSHOOT_MM)).abs() < 1.0e-9, "the sweep covers both ends");
+    }
+
+    #[test]
+    fn a_cutter_whose_face_lies_on_the_bodys_face_still_cuts() {
+        // The owner's part, and the commonest cut of a workshop: a hole drawn from the board's own
+        // surface, so the cutter's bottom face and the body's bottom face are one plane. Two bodies
+        // that share a face make the kernel answer a boolean with nothing at all, and the cutter's
+        // own micrometre past each end is what keeps the cut resolvable.
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        let cutter = Constructive::extrude(rectangle(50, 50).into(), millimetres(10)).expect("cutter");
+        let tool = BooleanTool::new("Flush", cutter, placed(25.0, 25.0, 0.0)).expect("a tool");
+        base.push_boolean(Boolean::new(ModelOp::Difference, tool)).expect("a step");
+
+        let volume = volume_of(&base);
+
+        let expected = 180_000.0 - 50.0 * 50.0 * 10.0;
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
     }
 
     #[test]
@@ -351,9 +403,10 @@ mod tests {
         let volume = volume_of(&base);
 
         // The base and the part of the tool above and below it, with the shared 50 x 50 x 18 counted
-        // once: 100 x 100 x 18 + 50 x 50 x 30 - 50 x 50 x 18.
+        // once: 100 x 100 x 18 + 50 x 50 x 30 - 50 x 50 x 18. The cutter's micrometre at each end is
+        // the trade the compile makes so a face lying on another face is not a shared face.
         let expected = 180_000.0 + 75_000.0 - 45_000.0;
-        assert!((volume - expected).abs() < 1.0, "volume was {volume}, expected {expected}");
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
     }
 
     #[test]
@@ -363,7 +416,7 @@ mod tests {
 
         let volume = volume_of(&base);
 
-        assert!((volume - 135_000.0).abs() < 1.0, "volume was {volume}, expected 135000");
+        assert!((volume - 135_000.0).abs() < 10.0, "volume was {volume}, expected about 135000");
     }
 
     #[test]
@@ -373,7 +426,7 @@ mod tests {
 
         let volume = volume_of(&base);
 
-        assert!((volume - 45_000.0).abs() < 1.0, "volume was {volume}, expected 45000");
+        assert!((volume - 45_000.0).abs() < 10.0, "volume was {volume}, expected about 45000");
     }
 
     #[test]
@@ -400,6 +453,6 @@ mod tests {
         // The middle body removes 50 x 50 x 18 from the base; its chimney stands inside the base's
         // outline, so the union adds nothing the base does not already cover.
         let expected = 180_000.0 - 50.0 * 50.0 * 18.0;
-        assert!((volume - expected).abs() < 1.0, "volume was {volume}, expected {expected}");
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
     }
 }
