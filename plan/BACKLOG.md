@@ -177,6 +177,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   inside the footprint; a non-convex footprint is a readable refusal and never a board outside
   the case; the box case keeps today's answers; `cargo xtask ci` is green.
   `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
+- `[~]` **J4** a batch is one edit scope, and a dry run is a plan a person reads
+  Why: ADR 0183 gave a recipe one edit scope, all or nothing and a `dry_run` that writes
+   nothing, and ADR 0190 makes the plan a report a person approves; both live in the command
+   line today, keyed to a file on disk, so the assistant cannot use them on the document a
+   person has open. Nor can they describe what a failed batch left behind.
+  Shape: The recipe run becomes a session operation with `atomic` and `dry_run` as parameters,
+   reporting what would be or was created, changed and removed plus the refusals; the CLI and
+   the MCP tool call the one function, so the two answers cannot disagree. A failed step
+   reports what applied and what rolled back, and never claims an atomicity it does not have.
+  Done: A test dispatches a three-step batch and asserts one undo entry restores the document;
+   a batch whose second step fails leaves the document untouched and names the step; `dry_run`
+   reports the three creations while neither the revision nor the history moves.
+  `files: crates/engine/src/session.rs,app/src/cli/recipe.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -382,19 +396,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J4** a batch is one edit scope, and a dry run is a plan a person reads
-  Why: ADR 0183 gave a recipe one edit scope, all or nothing and a `dry_run` that writes
-   nothing, and ADR 0190 makes the plan a report a person approves; both live in the command
-   line today, keyed to a file on disk, so the assistant cannot use them on the document a
-   person has open. Nor can they describe what a failed batch left behind.
-  Shape: The recipe run becomes a session operation with `atomic` and `dry_run` as parameters,
-   reporting what would be or was created, changed and removed plus the refusals; the CLI and
-   the MCP tool call the one function, so the two answers cannot disagree. A failed step
-   reports what applied and what rolled back, and never claims an atomicity it does not have.
-  Done: A test dispatches a three-step batch and asserts one undo entry restores the document;
-   a batch whose second step fails leaves the document untouched and names the step; `dry_run`
-   reports the three creations while neither the revision nor the history moves.
-  `files: crates/engine/src/session.rs,app/src/cli/recipe.rs`
 - `[ ]` **J5** a client we did not write drives the editor, headless
   Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
    own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
