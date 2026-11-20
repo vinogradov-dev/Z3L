@@ -261,10 +261,19 @@ over the registries:
 6. **nothing found** — a diagnostic naming the anchor, the slot kind and the last step that failed
    (`for corpus "Дуб Сонома" no confirmat plug in family "oak"`), never a silent `None`.
 
-A selection result is cached by `(anchor node, slot kind, revision)`. The rule that names the slot
-(`plug.confirmat`, `plug.minifix`, `runner.colour`) lives in the directory beside the kinds; the
-engine executes it. A person's choice is stored on the document node as an ordinary property, so a
-later directory update cannot take it away.
+A selection result is cached by the anchor node and the slot, and the cache is dropped when **either**
+revision moves — the document's or the directory's — because the answer depends on both (`engine::
+SelectionCache`, `Stamp`). The rule that names the slot (`plug.confirmat`, `plug.minifix`,
+`runner.colour`) lives in the directory beside the kinds; the engine executes it. A slot id is
+lower-case letters, digits and `.`, `-`, `_` between them: a vocabulary of its own, never a record
+slug and never a path.
+
+A person's choice is stored on the document node as an ordinary property keyed by the slot id, of the
+value kind `Item` — a catalogue record and not a document id, so the record survives the scene and a
+later directory update cannot take the choice away. The anchor of a slot is the catalogue record the
+node already names: a panel's material is the corpus its plugs belong to. Step 5 reads the anchor's
+own `default` property, which is an ordinary `Ref` row. A node that names no record has no corpus and
+answers a miss on the compatibility step rather than a guess.
 
 ## 11. Prices, stock and overlays
 
