@@ -691,7 +691,7 @@ fn stock_facts(stock: &StockView) -> StockFacts {
         stock_group: stock.group.clone().unwrap_or_default(),
         sheet_length_um: stock.length.micrometres(),
         sheet_width_um: stock.width.micrometres(),
-        price_minor: stock.price.map_or(0, |price| i64::try_from(price.minor()).unwrap_or(i64::MAX)),
+        price_minor: stock.price.as_ref().map_or(0, |price| i64::try_from(price.value().minor()).unwrap_or(i64::MAX)),
         sheet_area_mm2: sheet_area_mm2(stock.length, stock.width),
     }
 }
@@ -715,14 +715,14 @@ fn note_stock(context: &mut Context, material: Option<ItemId>, stock: Option<&St
 /// nesting efficiency is applied: how many parts a sheet really holds is the reader's layout, and a
 /// guessed efficiency would be a rule the package never declared.
 fn part_cost(stock: Option<&StockView>, part_area_mm2: i64) -> i64 {
-    let (Some(stock), Some(price)) = (stock, stock.and_then(|stock| stock.price)) else {
+    let (Some(stock), Some(price)) = (stock, stock.and_then(|stock| stock.price.as_ref())) else {
         return 0;
     };
     let sheet_area_mm2 = sheet_area_mm2(stock.length, stock.width);
     if part_area_mm2 <= 0 || sheet_area_mm2 <= 0 {
         return 0;
     }
-    let numerator = i128::from(price.minor()) * i128::from(part_area_mm2);
+    let numerator = i128::from(price.value().minor()) * i128::from(part_area_mm2);
     let denominator = i128::from(sheet_area_mm2);
     i64::try_from((numerator + denominator / 2) / denominator).unwrap_or(i64::MAX)
 }

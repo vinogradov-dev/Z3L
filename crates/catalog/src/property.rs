@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use units::Length;
 
 use crate::error::CatalogError;
-use crate::money::Money;
+use crate::price::Price;
 use crate::slug::Slug;
 
 /// A property's code, allocated by the package that declares the row.
@@ -291,8 +291,8 @@ pub enum PropertyValue {
     Length(Length),
     /// An unsigned count.
     Count(u64),
-    /// Whole minor units of the catalogue's currency.
-    Money(Money),
+    /// A price: an amount with its currency and its provenance (`§11`).
+    Money(Price),
     /// A text.
     Text(String),
     /// One slug of a closed list.

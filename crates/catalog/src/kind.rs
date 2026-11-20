@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CatalogError;
+use crate::price::PriceUnit;
 use crate::property::PropertyCode;
 use crate::slug::Slug;
 
@@ -143,7 +144,13 @@ impl Kind {
         if let Some(property) = required.difference(&accepts).next().copied() {
             return Err(CatalogError::RequiredNotAccepted { kind: code, property });
         }
-        Ok(Self { code, slug, label, accepts, required, traits: traits.into_iter().collect() })
+        let row = Self { code, slug, label, accepts, required, traits: traits.into_iter().collect() };
+        // One kind buys in one unit: a second price trait would leave a price's unit to the order the
+        // traits were written in, which is a coin toss in a file a person edits.
+        if PriceUnit::count_of(&row) > 1 {
+            return Err(CatalogError::PriceUnits { kind: code });
+        }
+        Ok(row)
     }
 
     /// The row's code.
@@ -179,6 +186,11 @@ impl Kind {
     /// Whether the kind carries `wanted`.
     pub fn has(&self, wanted: Trait) -> bool {
         self.traits.contains(&wanted)
+    }
+
+    /// What one price of this kind buys, when its traits name a unit.
+    pub fn price_unit(&self) -> Option<PriceUnit> {
+        PriceUnit::of(self)
     }
 }
 

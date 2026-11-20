@@ -57,6 +57,42 @@ pub enum CatalogError {
         /// The property row.
         property: PropertyCode,
     },
+    /// A kind names more than one price unit, so one price has two readings.
+    #[error("kind `{kind}` names more than one price unit; a kind buys in one unit")]
+    PriceUnits {
+        /// The kind row.
+        kind: KindCode,
+    },
+    /// A record carries a price and its kind buys in no unit.
+    #[error(
+        "item `{item}` carries a price, and kind `{kind}` names no price unit: a price buys a sheet, a metre, a piece or a set"
+    )]
+    PriceWithoutUnit {
+        /// The item.
+        item: ItemId,
+        /// The kind whose traits name no unit.
+        kind: KindCode,
+    },
+    /// A record carries a price and the record names no currency for it.
+    #[error("item `{item}` carries a price, and its package names no currency to write it in")]
+    PriceWithoutCurrency {
+        /// The item.
+        item: ItemId,
+    },
+    /// Two records of one directory are priced in different currencies, and one directory is one money.
+    #[error(
+        "item `{item}` is priced in {currency}, and item `{other}` in {other_currency}; a directory names one currency"
+    )]
+    MixedCurrency {
+        /// The item that disagrees.
+        item: ItemId,
+        /// The currency it names.
+        currency: String,
+        /// The item that set the directory's currency.
+        other: ItemId,
+        /// The currency that item names.
+        other_currency: String,
+    },
     /// A closed list with no value, or with one value twice.
     #[error("the closed list of `{slug}` is empty or repeats a value")]
     EnumList {

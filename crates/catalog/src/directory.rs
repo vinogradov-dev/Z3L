@@ -55,6 +55,9 @@ impl Directory {
         for item in directory.items.values() {
             item.check(&directory)?;
         }
+        // Prices outlive the rows that wrote them: the currency is the one every record agrees on, and
+        // a second one is a package mistake rather than a reader's guess (`§11`).
+        directory.currency = directory.declared_currency()?;
         Ok(directory)
     }
 
@@ -93,6 +96,36 @@ impl Directory {
         &self.families
     }
 
+    /// The currency the directory's prices are written in, when any record is priced.
+    pub const fn currency(&self) -> Option<&crate::money::Currency> {
+        self.currency.as_ref()
+    }
+
+    /// Reads the one currency the priced records agree on, refusing a directory priced in two.
+    fn declared_currency(&self) -> Result<Option<crate::money::Currency>, CatalogError> {
+        let mut found: Option<(ItemId, &crate::money::Currency)> = None;
+        for item in self.items.values() {
+            for value in item.props().values() {
+                let crate::property::PropertyValue::Money(price) = value else {
+                    continue;
+                };
+                match found {
+                    Some((other, other_currency)) if other_currency != price.currency() => {
+                        return Err(CatalogError::MixedCurrency {
+                            item: item.id(),
+                            currency: price.currency().code().to_owned(),
+                            other,
+                            other_currency: other_currency.code().to_owned(),
+                        });
+                    }
+                    Some(_) => {}
+                    None => found = Some((item.id(), price.currency())),
+                }
+            }
+        }
+        Ok(found.map(|(_, currency)| currency.clone()))
+    }
+
     /// How many records the directory carries.
     pub fn len(&self) -> usize {
         self.items.len()
@@ -115,6 +148,8 @@ mod tests {
     use super::*;
     use crate::family::{Family, FamilyCode};
     use crate::kind::{Kind, Trait};
+    use crate::money::{Currency, Money};
+    use crate::price::Price;
     use crate::property::{Property, PropertyCode, PropertyType, PropertyValue};
     use crate::slug::Slug;
 
@@ -247,6 +282,83 @@ mod tests {
         .expect("an item");
         let refusal = directory([item]).expect_err("no package declares kind 9");
         assert!(refusal.to_string().contains("kind `9`"), "{refusal}");
+    }
+
+    /// A kind priced by the sheet, with one price row.
+    fn priced_kind(traits: impl IntoIterator<Item = Trait>) -> Kind {
+        Kind::new(
+            KindCode::new(2).expect("a kind code"),
+            Slug::new("sheet-material-priced").expect("a slug"),
+            "Sheet material",
+            [PropertyCode::new(2).expect("a property code")],
+            [],
+            traits,
+        )
+        .expect("a kind")
+    }
+
+    fn price_row() -> Property {
+        Property::new(
+            PropertyCode::new(2).expect("a property code"),
+            Slug::new("price").expect("a slug"),
+            "Price",
+            PropertyType::Money,
+        )
+        .expect("a property")
+    }
+
+    fn priced(serial: u32, currency: &str) -> NomenclatureItem {
+        let currency = Currency::new(currency, 100).expect("a currency");
+        let props = BTreeMap::from([(
+            PropertyCode::new(2).expect("a property code"),
+            PropertyValue::Money(Price::typed(Money::from_minor(320_000), currency)),
+        )]);
+        NomenclatureItem::new(
+            id(712, serial),
+            KindCode::new(2).expect("a kind code"),
+            "Oak veneered chipboard",
+            Slug::new(format!("priced-{serial}")).expect("a slug"),
+            props,
+        )
+        .expect("an item")
+    }
+
+    fn priced_directory(
+        items: impl IntoIterator<Item = NomenclatureItem>,
+        kind: Kind,
+    ) -> Result<Directory, CatalogError> {
+        Directory::new(
+            items,
+            KindRegistry::new([kind]).expect("one kind"),
+            PropertyRegistry::new([price_row()]).expect("one property"),
+            FamilyRegistry::default(),
+        )
+    }
+
+    #[test]
+    fn a_priced_record_needs_a_kind_that_says_what_one_price_buys() {
+        // The unit is a trait, so a price on a kind with none can never be read: the load refuses it
+        // instead of leaving a consumer to guess.
+        let refusal = priced_directory([priced(34, "EUR")], priced_kind([Trait::Sheet]))
+            .expect_err("the kind names no price unit");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("712-34") && sentence.contains("no price unit"), "{sentence}");
+    }
+
+    #[test]
+    fn a_directory_is_priced_in_one_currency_and_a_second_one_names_both_records() {
+        let directory = priced_directory([priced(34, "EUR")], priced_kind([Trait::PriceSheet])).expect("one currency");
+        assert_eq!(
+            directory.currency().map(Currency::code),
+            Some("EUR"),
+            "the directory reads the money its records carry"
+        );
+
+        let refusal = priced_directory([priced(34, "EUR"), priced(35, "RUB")], priced_kind([Trait::PriceSheet]))
+            .expect_err("one directory, one money");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("712-35") && sentence.contains("712-34"), "both records are named: {sentence}");
+        assert!(sentence.contains("EUR") && sentence.contains("RUB"), "and both currencies: {sentence}");
     }
 
     #[test]

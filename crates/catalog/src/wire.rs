@@ -360,6 +360,8 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
+    use crate::money::Money;
+    use crate::property::Date;
 
     #[test]
     fn a_property_row_writes_its_range_in_micrometres() {
@@ -420,6 +422,56 @@ mod tests {
         let item = wire.to_item(&kinds, &properties).expect("a record");
         assert_eq!(item.kind(), KindCode::new(1).expect("a code"));
         assert!(item.prop(PropertyCode::new(1).expect("a code")).is_some(), "the slug became its code");
+    }
+
+    #[test]
+    fn a_price_travels_through_a_file_with_its_currency_and_its_source() {
+        let properties = crate::property::PropertyRegistry::new([Property::new(
+            PropertyCode::new(1).expect("a code"),
+            Slug::new("price").expect("a slug"),
+            "Price",
+            PropertyType::Money,
+        )
+        .expect("a row")])
+        .expect("one row");
+        let kinds = crate::kind::KindRegistry::new([Kind::new(
+            KindCode::new(1).expect("a code"),
+            Slug::new("sheet-material").expect("a slug"),
+            "Sheet material",
+            [PropertyCode::new(1).expect("a code")],
+            [],
+            [Trait::PriceSheet],
+        )
+        .expect("a kind")])
+        .expect("one kind");
+        let currency = crate::money::Currency::new("RUB", 100).expect("a currency");
+        let system = crate::item::ExternalSystemId::new("supplier-egger").expect("a system");
+        let date = Date::new(2026, 11, 20).expect("a date");
+        let price = crate::price::Price::imported(Money::from_minor(320_000), currency, system.clone(), date);
+        let wire = ItemWire {
+            id: ItemId::new(712, 34).expect("an id"),
+            kind: "sheet-material".to_owned(),
+            name: "Oak veneered chipboard".to_owned(),
+            slug: "oak".to_owned(),
+            archived: false,
+            props: BTreeMap::from([("price".to_owned(), PropertyValue::Money(price.clone()))]),
+            external: Vec::new(),
+        };
+        let json = serde_json::to_string(&wire).expect("serialize");
+        assert!(json.contains("\"minor\":320000") && json.contains("supplier-egger"), "{json}");
+        let back: ItemWire = serde_json::from_str(&json).expect("read back");
+        let item = back.to_item(&kinds, &properties).expect("a record");
+        let read = item.prop(PropertyCode::new(1).expect("a code")).expect("the price");
+        assert_eq!(read, &PropertyValue::Money(price));
+    }
+
+    #[test]
+    fn a_file_price_with_a_currency_we_cannot_print_is_refused_with_the_iso_sentence() {
+        let record = r#"{"id":"712-34","kind":"sheet-material","name":"Oak","slug":"oak",
+            "props":{"price":{"type":"money","value":{"minor":100,
+            "currency":{"code":"eur","minor_scale":100},"source":"typed"}}}}"#;
+        let refusal = serde_json::from_str::<ItemWire>(record).expect_err("a lower-case code is not a currency");
+        assert!(refusal.to_string().contains("ISO 4217"), "{refusal}");
     }
 
     #[test]

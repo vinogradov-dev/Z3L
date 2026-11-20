@@ -201,6 +201,11 @@ impl NomenclatureItem {
                     reason: format!("`{target}` is not an item of the connected packages"),
                 });
             }
+            // A price is read through the kind that carries it: the traits say what one price buys,
+            // so a priced record whose kind names no unit cannot be answered and is refused here.
+            if matches!(value, crate::property::PropertyValue::Money(_)) && kind.price_unit().is_none() {
+                return Err(CatalogError::PriceWithoutUnit { item: self.id, kind: self.kind });
+            }
         }
         for required in kind.required() {
             if !self.props.contains_key(required) {

@@ -24,8 +24,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use catalog::{
-    Directory, DirectorySource, FolderSource, FolderWriter, KindCode, Money, NomenclatureItem, Property, PropertyCode,
-    PropertyType, PropertyValue, Slug,
+    Currency, Directory, DirectorySource, FolderSource, FolderWriter, KindCode, Money, NomenclatureItem, Price,
+    Property, PropertyCode, PropertyType, PropertyValue, Slug,
 };
 use egui::{Align, Layout, TextEdit, Ui, vec2};
 use model::ItemId;
@@ -65,8 +65,19 @@ struct PackageInfo {
 /// conversion to micrometres happens once, when the draft becomes a record (`AGENTS.md` §4.3).
 #[derive(Clone, Debug)]
 enum ValueDraft {
-    /// A length in millimetres, a count or a price in its minor unit.
+    /// A length in millimetres or a count.
     Number(f64),
+    /// A price: the amount in minor units, and the record's price it was read from.
+    ///
+    /// The price keeps its currency and its provenance, so a card that rewrites the amount of an
+    /// imported price keeps the currency the import wrote it in; the source turns into `Typed` only
+    /// when the amount itself changes (`§11`).
+    Money {
+        /// The amount in whole minor units of the price's currency.
+        minor: f64,
+        /// The record's price, or `None` while the package names no currency to write one in.
+        price: Option<Price>,
+    },
     /// A text.
     Text(String),
     /// One slug of a closed list.
@@ -488,7 +499,7 @@ impl Draft {
         if let Some(row) = directory.kinds().get(kind) {
             for code in row.accepts() {
                 if let Some(property) = directory.properties().get(*code) {
-                    values.insert(*code, ValueDraft::default_for(property.ty()));
+                    values.insert(*code, ValueDraft::default_for(property.ty(), directory.currency()));
                 }
             }
         }
@@ -513,7 +524,7 @@ impl Draft {
                 let Some(property) = directory.properties().get(*code) else { continue };
                 let value = match item.prop(*code) {
                     Some(value) => ValueDraft::of(property.ty(), value),
-                    None => ValueDraft::default_for(property.ty()),
+                    None => ValueDraft::default_for(property.ty(), directory.currency()),
                 };
                 values.insert(*code, value);
             }
@@ -549,10 +560,13 @@ impl Draft {
 
 impl ValueDraft {
     /// The value the card starts a row with when the record does not carry it.
-    fn default_for(ty: &PropertyType) -> Self {
+    fn default_for(ty: &PropertyType, currency: Option<&Currency>) -> Self {
         match ty {
             PropertyType::Length { min, .. } => Self::Number(min.millimetres_f64()),
-            PropertyType::Count { .. } | PropertyType::Money => Self::Number(0.0),
+            PropertyType::Count { .. } => Self::Number(0.0),
+            PropertyType::Money => {
+                Self::Money { minor: 0.0, price: currency.map(|currency| Price::typed(Money::ZERO, currency.clone())) }
+            }
             PropertyType::Text { .. } => Self::Text(String::new()),
             PropertyType::Enum(options) => Self::Choice(options.iter().next().cloned().unwrap_or_default()),
             PropertyType::Ref | PropertyType::Date | PropertyType::Color => {
@@ -566,7 +580,9 @@ impl ValueDraft {
         match (ty, value) {
             (PropertyType::Length { .. }, PropertyValue::Length(length)) => Self::Number(length.millimetres_f64()),
             (PropertyType::Count { .. }, PropertyValue::Count(count)) => Self::Number(*count as f64),
-            (PropertyType::Money, PropertyValue::Money(money)) => Self::Number(money.minor() as f64),
+            (PropertyType::Money, PropertyValue::Money(price)) => {
+                Self::Money { minor: price.value().minor() as f64, price: Some(price.clone()) }
+            }
             (PropertyType::Text { .. }, PropertyValue::Text(text)) => Self::Text(text.clone()),
             (PropertyType::Enum(_), PropertyValue::Enum(slug)) => Self::Choice(slug.clone()),
             _ => Self::Kept(value.clone()),
@@ -590,12 +606,19 @@ impl ValueDraft {
                 }
                 Ok(PropertyValue::Count(count as u64))
             }
-            (PropertyType::Money, Self::Number(minor)) => {
+            (PropertyType::Money, Self::Money { minor, price }) => {
                 let minor = minor.max(0.0).round();
                 if !minor.is_finite() || minor > u64::MAX as f64 {
                     return Err("a price that is not a number of minor units".to_owned());
                 }
-                Ok(PropertyValue::Money(Money::from_minor(minor as u64)))
+                let amount = Money::from_minor(minor as u64);
+                match price {
+                    // An untouched row keeps the price it was read from, provenance and all, so a
+                    // card that only renames a record never restamps a supplier's number.
+                    Some(price) if price.value() == amount => Ok(PropertyValue::Money(price.clone())),
+                    Some(price) => Ok(PropertyValue::Money(Price::typed(amount, price.currency().clone()))),
+                    None => Err("the package names no currency to write a price in".to_owned()),
+                }
             }
             (PropertyType::Text { .. }, Self::Text(text)) => Ok(PropertyValue::Text(text.clone())),
             (PropertyType::Enum(_), Self::Choice(slug)) => Ok(PropertyValue::Enum(slug.clone())),
@@ -625,11 +648,24 @@ fn field(ui: &mut Ui, ty: &PropertyType, value: Option<ValueDraft>) -> Option<Va
                 written = Some(ValueDraft::Number(count));
             }
         }
-        (PropertyType::Money, Some(ValueDraft::Number(mut minor))) => {
-            let outcome = Scrub::new(&mut minor).decimals(0).policy(CommitPolicy::Live).show(ui);
-            if outcome.commit {
-                written = Some(ValueDraft::Number(minor));
-            }
+        (PropertyType::Money, Some(ValueDraft::Money { mut minor, price })) => {
+            ui.horizontal(|ui| {
+                let outcome = Scrub::new(&mut minor).decimals(0).policy(CommitPolicy::Live).show(ui);
+                match &price {
+                    Some(price) => {
+                        ui.small(format!("{} · {}", price.currency().code(), price.source()));
+                        if let Some(date) = price.date() {
+                            ui.small(format!("{}-{:02}-{:02}", date.year(), date.month(), date.day()));
+                        }
+                    }
+                    None => {
+                        ui.small("no currency in this package");
+                    }
+                }
+                if outcome.commit {
+                    written = Some(ValueDraft::Money { minor, price });
+                }
+            });
         }
         (PropertyType::Text { .. }, Some(ValueDraft::Text(mut text))) => {
             if ui.add(TextEdit::singleline(&mut text)).changed() {
@@ -665,7 +701,7 @@ fn describe(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Length(length) => format!("{} mm", length.millimetres_f64()),
         PropertyValue::Count(count) => format!("{count}"),
-        PropertyValue::Money(money) => format!("{}", money.minor()),
+        PropertyValue::Money(price) => format!("{price}"),
         PropertyValue::Text(text) => text.clone(),
         PropertyValue::Enum(slug) => slug.clone(),
         PropertyValue::Ref(id) => format!("{id}"),

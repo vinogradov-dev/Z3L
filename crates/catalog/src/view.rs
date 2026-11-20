@@ -11,7 +11,7 @@ use units::Length;
 use crate::directory::Directory;
 use crate::item::NomenclatureItem;
 use crate::kind::Trait;
-use crate::money::Money;
+use crate::price::PriceView;
 use crate::property::{PropertyType, PropertyValue};
 use crate::slug::Slug;
 
@@ -81,8 +81,8 @@ pub struct StockView {
     pub width: Length,
     /// The workshop's own stock group, when it has one.
     pub group: Option<String>,
-    /// The price of one sheet, when the record carries one.
-    pub price: Option<Money>,
+    /// The price of one sheet, with the unit the kind buys in, when the record carries one.
+    pub price: Option<PriceView>,
 }
 
 impl Directory {
@@ -158,11 +158,22 @@ impl Directory {
         let length = self.length(item, SHEET_LENGTH_SLUG)?;
         let width = self.length(item, SHEET_WIDTH_SLUG)?;
         let group = self.text(item, GROUP_SLUG).map(str::to_owned);
-        let price = match self.prop_by_slug(item, PRICE_SLUG)?.1 {
-            PropertyValue::Money(price) => Some(*price),
-            _ => None,
+        Some(StockView { length, width, group, price: self.price(item) })
+    }
+
+    /// The price `item` carries, with the unit its kind buys in.
+    ///
+    /// The stored value is an amount with its currency and its provenance; the unit is answered from
+    /// the kind's traits, so a record cannot disagree with its own kind about what a price is for
+    /// (`§11`). A record with no price, or whose kind names no unit, answers `None` and the caller
+    /// keeps its own fallback.
+    pub fn price(&self, item: &NomenclatureItem) -> Option<PriceView> {
+        let (_, value) = self.prop_by_slug(item, PRICE_SLUG)?;
+        let PropertyValue::Money(price) = value else {
+            return None;
         };
-        Some(StockView { length, width, group, price })
+        let unit = self.kinds().get(item.kind())?.price_unit()?;
+        Some(PriceView { price: price.clone(), unit })
     }
 
     /// The record's value of the property whose row is named `slug`, with its declared type.
@@ -192,7 +203,9 @@ mod tests {
     use super::*;
     use crate::family::FamilyRegistry;
     use crate::kind::{Kind, KindCode};
-    use crate::property::{Property, PropertyCode, PropertyRegistry};
+    use crate::money::{Currency, Money};
+    use crate::price::{Price, PriceSource, PriceUnit};
+    use crate::property::{Date, Property, PropertyCode, PropertyRegistry};
     use crate::slug::Slug;
 
     fn code(value: u16) -> PropertyCode {
@@ -213,13 +226,14 @@ mod tests {
             Property::new(code(3), slug(COLOR_SLUG), "Decor", PropertyType::Text { max_chars: 48 }).expect("a row"),
             Property::new(code(4), slug(SHEET_LENGTH_SLUG), "Sheet length", range(1, 6_000)).expect("a row"),
             Property::new(code(5), slug(SHEET_WIDTH_SLUG), "Sheet width", range(1, 6_000)).expect("a row"),
+            Property::new(code(6), slug(PRICE_SLUG), "Price", PropertyType::Money).expect("a row"),
         ])
         .expect("five rows");
         let kind = Kind::new(
             KindCode::new(1).expect("a kind code"),
             slug("sheet-material"),
             "Sheet material",
-            [code(1), code(2), code(3), code(4), code(5)],
+            [code(1), code(2), code(3), code(4), code(5), code(6)],
             [code(1)],
             [Trait::Sheet, Trait::Nestable, Trait::PriceSheet],
         )
@@ -263,6 +277,32 @@ mod tests {
     }
 
     #[test]
+    fn a_stocked_board_answers_its_price_with_the_unit_the_kind_buys() {
+        let millimetres = |value: i64| Length::from_micrometres(value * 1_000);
+        let currency = Currency::new("RUB", 100).expect("a currency");
+        let date = Date::new(2026, 11, 20).expect("a date");
+        let system = crate::item::ExternalSystemId::new("erp").expect("a system");
+        let price = Price::imported(Money::from_minor(320_000), currency, system.clone(), date);
+        let props = BTreeMap::from([
+            (code(1), PropertyValue::Length(millimetres(18))),
+            (code(4), PropertyValue::Length(millimetres(2_800))),
+            (code(5), PropertyValue::Length(millimetres(2_070))),
+            (code(6), PropertyValue::Money(price.clone())),
+        ]);
+        let (_, kind) = registry();
+        let id = ItemId::new(712, 34).expect("an item id");
+        let directory = directory(item(id, 1, props), [kind]);
+        let stock = directory.stock(directory.item(id).expect("the record")).expect("a stock block");
+        let priced = stock.price.expect("the price the record carries");
+        assert_eq!(priced.unit, PriceUnit::Sheet, "a sheet-material kind is priced by the sheet");
+        assert_eq!(priced.value().minor(), 320_000);
+        assert_eq!(priced.currency().code(), "RUB");
+        assert_eq!(priced.price.source(), &PriceSource::imported(system));
+        assert_eq!(priced.price.date(), Some(date));
+        assert_eq!(directory.currency().map(Currency::code), Some("RUB"));
+    }
+
+    #[test]
     fn a_record_of_a_kind_that_is_not_a_sheet_is_not_a_board() {
         let props = BTreeMap::from([(code(1), PropertyValue::Length(Length::from_micrometres(2_000)))]);
         let fastener = Kind::new(
@@ -289,7 +329,7 @@ mod tests {
             declared.code(),
             declared.slug().clone(),
             "Sheet material",
-            [code(1), code(2), code(3), code(4), code(5)],
+            [code(1), code(2), code(3), code(4), code(5), code(6)],
             [],
             [Trait::Sheet],
         )
