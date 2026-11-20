@@ -34,6 +34,11 @@ and `## Next` — and the answer opens with the stream it is about. Another stre
 to say that it is not ours. Do not merge the four streams into one list, and do not ask which stream
 was meant when the checkout already answers it.
 
+**The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a
+stream back, because git will not move a branch another worktree has checked out and only this
+checkout writes `plan/`. The integration session merges every finished stream before it takes the next
+task, and closes the entry with the merged hash.
+
 A request for the next step is answered from the plan files alone, in this order. Stop at the first
 case that applies.
 
