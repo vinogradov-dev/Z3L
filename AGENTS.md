@@ -440,6 +440,13 @@ checkout — which is how a plan line and a source file were lost once.
 
 ## 8. Working with the owner
 
+- **An unclear task is a question, not a guess.** When a task is ambiguous, when a fact it needs is
+  missing, or when a sentence of it does not match what the tree does today, do not pick a reading
+  and build it: say what is unclear, say what the code measures now, and offer the two or three
+  plausible shapes with what each one changes and costs. Ask once, with the options and the default
+  you would take, and leave the work untouched until the answer arrives — a session that guesses
+  spends the owner's time twice. A task whose answer needs a decision outside the tree (a place, a
+  gesture, a document field) is the same case, not an invitation to improvise.
 - **Plan before build.** Any task larger than one file starts with a plan; the owner is the technical director and approves it.
 - **Explain non-obvious decisions in one sentence** (why this crate, this representation, this boundary). Do not re-explain variables and functions.
 - **Expertise leads; the owner can overrule.** When a brief contradicts what the domain, UI/UX or these

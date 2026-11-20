@@ -237,6 +237,33 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: No plan file or skill tells a reader to take R1 or to run its four commits; `cargo
    xtask skills`, `cargo xtask plan` and `cargo xtask ci` are green with the file gone.
   `files: plan/rename.md,plan/debt.md,AGENTS.md`
+- `[ ]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
+  Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
+   only slide toward the far end of its segment, so a ring can be shortened but never
+   lengthened — the drag stops at the opposite node and the typed length has one direction. The
+   expectation is that an along move travels both ways: the corner passes its segment's end,
+   the segment grows, and the neighbour that shares the corner follows. The clamp is measured:
+   `ContourEdit::move_corner_with(Along)` calls `clamp_to_extent`, and `geom`'s
+   `Line::clamp_to_extent` pins the parameter to `[margin/length, 1 - margin/length]` while the
+   arc variant pins the sweep to the sweep it already has, so a corner can never leave its
+   segment; `app/src/contour_gizmo.rs` treats reaching the far end as a collapse, which is what
+   a shortening drag was built for.
+  Shape: Separate the two rules the one clamp carries: the corner slides on the segment's
+   supporting line or circle with no bound, the segment takes the new end, and the joint
+   reconciles the neighbour it shares the corner with — a line keeps a non-zero length and an
+   arc keeps a representable sweep, and a corner that would put either past what the document
+   can hold is refused the way `join_corner` already refuses a mismatch. The collapse of a
+   segment to nothing stays what a typed `0` and a drag to the far end mean. The typed length
+   needs a direction: either a sign (`-40` shortens, `40` lengthens) or the field's own two
+   sides, decided by the design-operation procedure rather than by hand, and the card's switch
+   stays the only control. Decide the two end points of the number before the drag is touched:
+   the shortest legal segment and the longest sweep of an arc.
+  Done: A model test moves a corner past its segment's far end on a ring and on an open chain,
+   on a line and on an arc, and the segment grows while the ring stays valid; a headless frame
+   test drags a corner outward with the along switch on and the ring grows across frames; a
+   typed negative length shortens and a positive one lengthens the same corner; the shortening
+   drag and its collapse still behave; `cargo xtask ci` is green.
+  `files: crates/geom/src/segment.rs,crates/model/src/contour_edit.rs,crates/ui/src/contour_grips.rs,crates/ui/src/contour_edit.rs,app/src/contour_gizmo.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
