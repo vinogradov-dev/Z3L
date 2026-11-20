@@ -638,6 +638,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T15** T15 a contour boolean took a body and left a drawing
+  Why: The owner subtracted a cylinder from a block and got a contour instead of a body: he
+   pressed the Sketch tab's cells, which since X98 accepted a body's own profile as an operand
+   — so the operation combined the two profiles, created a drawing ('Вычесть 1') and consumed
+   both bodies. Two groups with one caption ('Booleans') on two tabs made the wrong one look
+   right.
+  Shape: A contour boolean's operand is a drawing: a path object's chain and nothing else, so a
+   body is refused with a sentence that says its kind. The body case is the Model tab's
+   booleans, on solids (ADR 0197). The sketch group is captioned 'Contours', and a body
+   selection makes its cells say where bodies are cut instead of sitting dead.
+  Done: Tests: a body operand is refused and nothing is written; the armed ring mode arms on a
+   drawn ring and not on a body, while the body mode arms on the same selection; the sketch tab
+   captions its group Contours and never the word Booleans
+  `files: crates/engine/src/contour_cmds.rs,crates/text/src/messages.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,docs/decisions/0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md` — `5722e72`
+
 - `[x]` **T14** T14 a cutter whose face lies on the body's face does not cut
   Why: The owner's second scene did not subtract at all: the block and the cylinder shared
    their bottom face — the cylinder was drawn on the block's own surface — and the kernel
