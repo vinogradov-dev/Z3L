@@ -617,6 +617,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T12** W3 a body boolean freezes the shape it cuts with and spends its cutter
+  Why: The owner's scene showed why a live tool reference reads wrong: the cutter stayed drawn,
+   so the scene was two overlapping bodies instead of one cut body, and dragging the cutter
+   moved the hole. Both are one decision — a live operand is a second body in everything but
+   name — and the owner ruled for a baked result.
+  Shape: Feature::Boolean carries BooleanTool { name, body, placement } frozen at apply time,
+   so a step is self-contained. The command spends the cutter's node in the same revision and
+   undo entry unless the body is marked a tool (Object::is_tool, now reachable from the object
+   card and object.tool.set); the mark also lets a tool pass through parts, which is how a
+   cutter reaches the body it cuts. Schema 31.
+  Done: Tests: a step keeps the cutter's shape and name through the file; applying spends the
+   cutter in one revision and undo brings it back; a marked cutter survives and cuts a second
+   body; removing a step never returns a spent cutter; a nested shape deeper than
+   MAX_BOOLEAN_DEPTH is refused; a marked tool sinks into a body while an unmarked one may not;
+   a body whose cut leaves no solid is a diagnostic and the scene keeps drawing
+  `files: crates/model/src/object.rs,crates/engine/src/object_cmds.rs,crates/ui/src/editor/boolean.rs,crates/ui/src/object_card.rs,app/src/scene_build.rs,docs/decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md` — `ae81fdd`
+
 - `[x]` **T11** W2 a boolean whose tool misses the body freezes the scene, and a cutter cannot enter the body it cuts
   Why: The owner's scene froze after a boolean whose tool no longer met the body: one node the
    kernel refused failed the whole evaluation, so the picture stayed at the last frame that
