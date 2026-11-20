@@ -328,7 +328,7 @@ impl DirectoryEditor {
             .map_err(|error| Message::PriceListUnread.text(lang).replace("{}", &error.to_string()))?;
         let directory = self.directory.as_ref().ok_or_else(|| Message::DirectoryEmpty.text(lang))?;
         let batch = catalog::PriceBatch::read(&text, directory);
-        let mut refused: Vec<String> =
+        let refused: Vec<String> =
             batch.refused().take(REFUSALS_SHOWN).map(|(line, reason)| format!("{line}: {reason}")).collect();
         let records = batch.records(directory);
         if records.is_empty() {
@@ -361,7 +361,6 @@ impl DirectoryEditor {
         self.reload();
         let mut sentence = batch.sentence();
         if !refused.is_empty() {
-            refused.truncate(REFUSALS_SHOWN);
             sentence.push_str(&format!(" — {}", refused.join("; ")));
         }
         self.status = Some(sentence.clone());

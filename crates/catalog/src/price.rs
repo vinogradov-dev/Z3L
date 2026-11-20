@@ -151,18 +151,6 @@ impl Price {
         Self { value, currency, source: PriceSource::imported(system), date: Some(date) }
     }
 
-    /// The same price dated by its source, as an import does.
-    pub fn dated(mut self, date: Date) -> Self {
-        self.date = Some(date);
-        self
-    }
-
-    /// The same price written by an import out of `system`.
-    pub fn imported_from(mut self, system: ExternalSystemId) -> Self {
-        self.source = PriceSource::imported(system);
-        self
-    }
-
     /// The amount in whole minor units.
     pub const fn value(&self) -> Money {
         self.value
