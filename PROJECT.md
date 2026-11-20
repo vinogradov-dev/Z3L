@@ -322,6 +322,7 @@ A crate may depend only on crates in lower layers. `kernel-truck` is the only cr
 | M8 | Hardware and joinery | Hardware catalogue, anchor points, generated holes, collision warnings |
 | M9 | Output | Cutting lists per material and sheet, panel drawings, CNC export |
 | M10 | Assistant | The chat panel holds a conversation in the window and a client outside it calls the same tools over MCP; Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per turn, five named scenarios passing through a real MCP client without a network, and a headless job over a saved project |
+| M11 | Final render | One command renders the view the viewport shows into an image at print size through our own GPU tracer: the frame's triangles from the kernel, the catalogue's decor at its real texel scale with the grain answer, its banding and hardware, diffuse, GGX metal and rough dielectric under next-event estimation with a low-discrepancy sampler, and a denoiser measured against a converged reference, with progress and a cancel (Y1–Y4) |
 
 ## Open model questions (M1)
 

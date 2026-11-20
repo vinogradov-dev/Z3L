@@ -579,12 +579,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    table; `cargo xtask ci` is green.
   `files: crates/render/src,crates/geom/src/lib.rs`
 - `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
-  Why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
    (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
    decor at its real texel scale, the grain along the direction the piece is cut, the banding
    in the colour of its own band, the handle as metal. A shader-node material format would put
    a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
-   §4.9).
+   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
+   whatever the document stores when that question is answered, and this task does not decide
+   the storage.
   Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
    texture, a roughness and a metallic pair. The decor map is rotated per face so the grain
    follows the item's direction on the panel's A and B faces, and an item that names no grain
