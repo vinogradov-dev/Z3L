@@ -37,6 +37,7 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:
 `V` — primitive parameters
 `W` — solid booleans between bodies
 `X` — a defect in behaviour that already shipped
+`Y` — the final render: the tracer, the materials it reads and the image it writes
 
 A defect is filed under `## Bugs` with an `X` id next to the feature that owns it. Its entry states
 the observation, the expectation and the suspected cause, and never a guess at a fix that has not
@@ -528,6 +529,89 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
    green.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
+- `[ ]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
+  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
+   from the camera the viewport already shows. The reference project was measured before the
+   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
+   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
+   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
+   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
+   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
+   which must bump together (§5), and it would hand the quality tuning to a project with one
+   maintainer. The reason for our own is ownership, not the licence.
+  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
+   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
+   final-render code lives; it borrows the `wgpu` device the shell already made instead of
+   opening one. Input: the frame's triangles from `mesh` at the current revision, the
+   document's light objects in watts with inverse-square falloff (ADR 0039), the session
+   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
+   a compute pass that traces one primary ray per sample and estimates light from the
+   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
+   through the `image` crate. One command `render.final` carries progress and cancel. Whatever
+   is adapted from the reference project keeps its Apache-2.0 header and gets a row in
+   `ATTRIBUTION.md` (§4.6). The ADR records the decision and its deliberate limits: no spectral
+   renderer, no volumes, no hair, no displacement, no requirement for hardware ray tracing.
+  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
+   the viewport's to within a pixel at a known point; a second run on an unchanged revision
+   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
+   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
+   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
+   `cargo xtask ci` is green.
+  `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
+- `[ ]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
+  Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
+   the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
+   project carries the three pieces that close it — next-event estimation with multiple
+   importance sampling, an Owen-scrambled Sobol sampler whose own measurements put it 25 to 40%
+   ahead of white noise, and Russian roulette — and its shader is 2.5k lines of published
+   technique rather than research.
+  Shape: BSDF evaluation and sampling for diffuse, GGX metal and rough dielectric, the last
+   with the energy-compensation tables a rough conductor needs so it does not darken as
+   roughness rises. Lights sampled by emitted power through an alias table, MIS weights between
+   the light sample and the BSDF sample, Owen-scrambled Sobol in 2D pairs, and Russian roulette
+   past a fixed depth. The sampler and the BSDF maths live in pure Rust beside the shader and
+   are unit-tested, and the shader is their transcription, so a wrong weight fails a test
+   without a GPU.
+  Done: Tests: the white-furnace case renders a diffuse sphere under a uniform environment to
+   that environment's radiance within 1%; a 4096 spp reference and a 200 spp render of the
+   fixture agree within 2% linear RMSE; the first 8192 sampler points are unique and the
+   distribution test passes; the metal's directional albedo at roughness 1 is within 1% of its
+   table; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/geom/src/lib.rs`
+- `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
+  Why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
+   decor at its real texel scale, the grain along the direction the piece is cut, the banding
+   in the colour of its own band, the handle as metal. A shader-node material format would put
+   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
+   §4.9).
+  Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
+   texture, a roughness and a metallic pair. The decor map is rotated per face so the grain
+   follows the item's direction on the panel's A and B faces, and an item that names no grain
+   renders the same in both. Banding takes its material's colour on its segments; hardware
+   carries a finish. Exposure and the filmic tone map are settings of the command, never view
+   state, and the viewport keeps its own colours.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
+   banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
+   field darkens the image monotonically; an item that names no decor renders a flat colour
+   rather than black; `cargo xtask ci` is green.
+  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
+- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/mesh/src/lib.rs`
 
 ## Done
 
