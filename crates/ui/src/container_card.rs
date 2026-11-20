@@ -4,6 +4,10 @@
 //! separate node kind: a component carries a non-zero `class`, a `prototype.id` or
 //! `component = true`. Both own children and are renamed through `node.rename`. Grouping and
 //! ungrouping live in the scene tree so the same action covers several selected nodes.
+//!
+//! The card is also where the arm that receives the next creation lives: a container is armed from
+//! here and disarmed from here, so the chip that named it in the status bar is gone and the state
+//! belongs to the card of the node it acts on (U115, ADR 0056).
 
 use egui::{RichText, TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
@@ -36,6 +40,8 @@ pub(crate) enum ContainerAction {
     None,
     /// Arm this container so the next created node lands inside it.
     AddChild,
+    /// Disarm this container, so the next created node lands at the scene root again.
+    ClearChild,
 }
 
 /// A container's role for display.
@@ -72,7 +78,16 @@ impl ContainerCard {
     ///
     /// Returns the creation request separately: arming a container is editor view state, so the
     /// card asks the editor to hold it instead of touching the document.
-    pub(crate) fn show(&mut self, ui: &mut Ui, session: &mut Session, container_id: Id) -> ContainerAction {
+    ///
+    /// `armed` is the editor's view state: this container is the one the next creation lands in, so
+    /// the card offers to disarm it instead of arming it again (U115).
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut Ui,
+        session: &mut Session,
+        container_id: Id,
+        armed: bool,
+    ) -> ContainerAction {
         let Some((kind, name, children)) = container_summary(session.project(), container_id) else {
             self.draft = None;
             self.error = None;
@@ -127,7 +142,22 @@ impl ContainerCard {
             ui.separator();
             let lang = crate::language(ui.ctx());
             section(ui, "container.creation", Message::SectionCreateInside.text(lang), true, |ui| {
-                if ui.button(Message::TreeAddChild.text(lang)).on_hover_text(Message::AddChildHint.text(lang)).clicked()
+                if armed {
+                    // The arm is sticky across creations, so the card says where the next node lands
+                    // and offers the one way out of it: a container armed much earlier must never
+                    // keep receiving parts without a place that says so (ADR 0056, U115).
+                    ui.label(Message::AddingTo.with(lang, [&name]));
+                    if ui
+                        .button(Message::CreateAtRoot.text(lang))
+                        .on_hover_text(Message::CreateAtRootHint.text(lang))
+                        .clicked()
+                    {
+                        action = ContainerAction::ClearChild;
+                    }
+                } else if ui
+                    .button(Message::TreeAddChild.text(lang))
+                    .on_hover_text(Message::AddChildHint.text(lang))
+                    .clicked()
                 {
                     action = ContainerAction::AddChild;
                 }
@@ -168,6 +198,97 @@ mod tests {
     use testkit::{sample_catalog, sample_project};
 
     use super::*;
+
+    /// The middle of the accessibility node labelled `label`, so a test can aim at a button.
+    fn node_center(output: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
+        let update = output.platform_output.accesskit_update.as_ref()?;
+        update.nodes.iter().find_map(|(_, node)| {
+            if node.label() != Some(label) {
+                return None;
+            }
+            let bounds = node.bounds()?;
+            Some(egui::pos2(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32))
+        })
+    }
+
+    #[test]
+    fn the_container_card_arms_and_disarms_the_next_creation() {
+        // U115: the chip and the cross that cleared it left the status bar, so the card of the node
+        // the arm acts on holds both halves — *Add child* arms it, and an armed container names
+        // itself and offers the way back to the scene root (ADR 0056).
+        for (armed, button, expected) in [
+            (false, Message::TreeAddChild, ContainerAction::AddChild),
+            (true, Message::CreateAtRoot, ContainerAction::ClearChild),
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            ctx.enable_accesskit();
+            crate::set_language(&ctx, crate::Lang::En);
+            let mut session = Session::with_directory(sample_project(), sample_catalog());
+            let container = Id::new(3).expect("container id");
+            let mut card = ContainerCard::default();
+            let mut action = ContainerAction::None;
+            let mut asked = None;
+            let mut at = None;
+            let mut texts = Vec::new();
+            for frame in 0..5 {
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: at.unwrap_or_default(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let events = match (frame, at) {
+                    (0, _) | (_, None) => Vec::new(),
+                    (1, Some(at)) => vec![egui::Event::PointerMoved(at)],
+                    (2, Some(_)) => vec![press(true)],
+                    (3, Some(_)) => vec![press(false)],
+                    _ => Vec::new(),
+                };
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| action = card.show(ui, &mut session, container, armed),
+                );
+                if action != ContainerAction::None {
+                    asked = Some(action);
+                }
+                if frame == 0 {
+                    at = node_center(&output, button.text(crate::Lang::En));
+                    assert!(at.is_some(), "the card draws `{}`", button.text(crate::Lang::En));
+                }
+                texts = Vec::new();
+                collect_shape_text(&output.shapes, &mut texts);
+                output.drop_without_applying_deltas();
+            }
+            if armed {
+                let named = Message::AddingTo.with(crate::Lang::En, ["Drawer"]);
+                assert!(texts.contains(&named), "the armed container names itself: {texts:?}");
+            }
+            assert_eq!(asked, Some(expected), "`{}` asks for its arm", button.text(crate::Lang::En));
+        }
+    }
+
+    /// Every text the frame painted.
+    fn collect_shape_text(shapes: &[egui::epaint::ClippedShape], out: &mut Vec<String>) {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for clipped in shapes {
+            walk(&clipped.shape, out);
+        }
+    }
 
     #[test]
     fn renaming_a_component_dispatches_through_the_engine() {

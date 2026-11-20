@@ -425,8 +425,8 @@ impl DrawDraft {
     ///
     /// Two segments are enough: a straight close adds the third, and a pending arc *is* the closing
     /// segment, so a chain of two lines with an arc waiting can finish the ring. This is the same
-    /// predicate the ribbon's *Close*, the status bar's *Close* and the first-node highlight read,
-    /// so a closure the document accepts is never greyed out by the chrome.
+    /// predicate the ribbon's *Close* cell and the first-node highlight read, so a closure the
+    /// document accepts is never greyed out by the chrome (U115).
     pub fn can_close(&self) -> bool {
         self.tool.closes() && !self.closed && self.segments.len() >= 2
     }

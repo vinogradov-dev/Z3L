@@ -16,11 +16,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
   of `app/src/directory_app.rs` then (ADR 0158).
 
-- `[ui]` At the narrowest window (640 pt) in Russian an armed contour or draft loses its last
-  button — the command zone clips at `COMMAND_ZONE_MIN` instead of painting under the readouts (X94).
-  U115 moves those buttons to the armed tool's card and the command bar, which closes the gap; the
-  band, the selection and the readouts fit there.
-
 - `[gizmo]` A turn is bounded by the bodies around the selection and not by the workspace's floor, so a
   ring swung far enough carries a piece below Z = 0 where a carry would have been held: the rotate rule
   reads no `MoveSettings` and no floor (X88, ADR 0177). Give the turn the same bound when a maker turns
@@ -176,6 +171,19 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[panel]` Nothing in the editor shows or edits a material's stock block or price: the catalogue is a
   file the shell loads, and until a catalogue editor exists the workshop edits the JSON by hand.
 - `[vendor]` `vendor/truck-shapeops` is updated by hand when `truck` moves; see `vendor/AGENTS.md`.
+- `[ui]` The header is one fixed row: at the narrowest window (640 pt) in Russian the band, the four
+  view switches and the gear leave `Файл` as the last left-hand control that fits, so *Save*, *Undo*
+  and *Redo* and the whole tab row are clipped away (they keep their keys and the File menu). The
+  band is always visible by the owner's decision (U115). A responsive header — hide the wordmark,
+  then the tab row, then the dividers by measured width, and never a control that is the only way to
+  an action — is its own task and needs the owner's shape.
+
+- `[ui]` A widget inside an `egui::Area` is missing from the accessibility tree: the frame's
+  `accesskit_update` carries the root ui's widgets only, so the tool card's ✓ and ✕ — and every other
+  floating surface built as an area — carry no name a screen reader can read (found while aiming a
+  test at the card's buttons, U115). Give those surfaces an accessible parent when `egui` exposes
+  one, or draw the card in a layer the tree walks.
+
 - `[ui]` The panel card is the last inspector surface that still stacks a header per group: thirteen
   of them on one panel node (name, dimensions, nominal size, resolved, material, shape, outline,
   bowed edges, bevels, banding, machining, diagnostics), every one open by default, so a 700 x 500

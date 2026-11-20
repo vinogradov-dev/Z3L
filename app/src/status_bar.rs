@@ -1,23 +1,29 @@
-//! The status bar: the armed tool, the selection's context and the window's display state.
+//! The status bar: what the armed tool waits for, what is selected and how the window is set.
 //!
-//! One thin row at the bottom of the window, in three zones: the command and step on the left, the
-//! resolved selection in the middle — kind, name, size, material, banding and the first warning, or
-//! the ruler's live length while it runs — and the snap, projection, scale and idle/busy state on
-//! the right. It reads a [`StatusInfo`]
-//! snapshot of the session, the editor and the view camera, draws one row and returns what the row
-//! asked for in a [`StatusOut`]; the shell applies that after the row has drawn, so the bar never
-//! changes the document while it draws. It offers no view control: those float over the viewport in
-//! `crate::view_cluster`, so the scene starts at the model instead of at a wall of labels.
+//! One thin row at the bottom of the window, in three zones of text: the armed tool and the step it
+//! waits for on the left, the resolved selection in the middle — kind, name, size, material, banding
+//! and the first warning, or the ruler's live length and the niche's cell while they run — and the
+//! window's readouts on the right: the snap step, the projection, the scale and the idle/busy state.
 //!
-//! Changes when: what the bar reports or the buttons it offers change — not when a tool gains a
-//! gesture, which belongs to the tool's own module.
+//! **It reports; it never acts.** Every instrument left this row for a toolbar or a card (U115): the
+//! five transform modes are one band in the header's right cluster, the snap's switch is the View
+//! tab's Snaps group under its own `view.snaps.grid` row, a draft's and a contour edit's accept and
+//! drop are the one row of the armed tool's card, and the container that receives the next creation
+//! is armed and disarmed in its own inspector card. A control here would compete with the readout
+//! beside it on a row 28 points tall, and the row is what a glance reads while the hand works.
+//!
+//! It reads a [`StatusInfo`] snapshot of the session, the editor and the view camera, draws one row
+//! and writes nothing: no document, no view state, no window state. The zones are owned rectangles
+//! that clip to their own edges, so no zone paints under another (X94).
+//!
+//! Changes when: what the bar reports changes — not when a tool gains a gesture or a control, which
+//! belongs to the tool's own module or to the surface that now owns it.
 
 use catalog::Directory;
 use eframe::egui;
 use model::{Geometry, Id, Node, Project};
 use scene::Projection;
 use text::{Lang, Message};
-use ui::TransformMode;
 use ui::{DrawTool, MeasureStage, MeshElement, VoidRefusal, theme};
 use units::Length;
 
@@ -33,9 +39,11 @@ struct StatusInfo {
     error: Option<String>,
     /// Why the workspace defaults were used instead of the saved settings, if they were.
     notice: Option<crate::settings_store::Notice>,
-    mode: TransformMode,
+    /// The live contour edit: its segment count, whether it differs from the document and whether
+    /// a corner drag follows the contour.
     contour: Option<(usize, bool, bool)>,
-    drawing: Option<(DrawTool, usize, bool, bool)>,
+    /// The live draft: its tool, its point count and whether the next segment is an arc.
+    drawing: Option<(DrawTool, usize, bool)>,
     /// Why the pointer cannot extend the live draft, if it cannot.
     preview_error: Option<String>,
     /// The armed ruler: the step it waits for and the length it shows, if it has one.
@@ -48,8 +56,6 @@ struct StatusInfo {
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
     navigation: Option<NavigationMode>,
-    /// The container armed to receive the next creation, if any.
-    creation_parent: Option<String>,
     /// The selection context of the centre zone.
     summary: StatusSummary,
     /// The projection the active view is drawing with.
@@ -203,27 +209,6 @@ fn warning_of(directory: &Directory, node: &Node, locked: Option<Id>, lang: Lang
     }
 }
 
-/// What the bar asked for, after the row has drawn.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct StatusOut {
-    state: Option<StatusAction>,
-    mode: Option<TransformMode>,
-}
-
-/// What the status text asked the shell to run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StatusAction {
-    ApplyContour,
-    CancelContour,
-    ToggleContourAlong,
-    ToggleGrid,
-    CloseDraft,
-    FinishDraft,
-    CancelDraft,
-    ClearCreationParent,
-    EndNavigation,
-}
-
 /// A quiet hint that truncates instead of running under the right-hand view controls.
 ///
 /// `reserve` is the width the row still has to draw after this line — the centre's own context — so
@@ -248,9 +233,11 @@ fn line(ui: &mut egui::Ui, text: egui::RichText, reserve: f32) {
 
 /// The armed tool, the gesture it expects and the counts it would affect.
 ///
-/// `center` is the room the centre zone needs: a line the command zone draws elides to what is left
-/// of that room, so the two never paint under one another (X94).
-fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option<StatusAction>, Option<TransformMode>) {
+/// Text only: every control this zone used to draw is now on the surface that owns it (U115), and
+/// the row is what a glance reads while the hand works. `center` is the room the centre zone needs:
+/// a line the command zone draws elides to what is left of that room, so the two never paint under
+/// one another (X94).
+fn status_command_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) {
     let lang = ui::language(ui.ctx());
     if let Some(error) = &info.error {
         line(ui, egui::RichText::new(error).color(theme::danger(ui)), center);
@@ -261,18 +248,9 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option
         hint(ui, &notice.text(lang), center);
         theme::divider(ui);
     }
-    // A locked selection refuses the gizmo and the destructive commands; the centre zone carries
-    // the chip that names it (ADR 0065).
-    // The arm is sticky across creations, so the bar names the container the next node lands in;
-    // without the chip a pressed tool would create in a container armed much earlier (ADR 0056).
-    if let Some(name) = &info.creation_parent {
-        ui.label(Message::AddingTo.with(lang, [name]));
-        if ui.button("✕").on_hover_text(Message::CreateAtRoot.text(lang)).clicked() {
-            return (Some(StatusAction::ClearCreationParent), None);
-        }
-        theme::divider(ui);
-    }
     if let Some((segments, dirty, along)) = info.contour {
+        // The working copy is the viewport's while it runs: the row says how much of the ring it
+        // holds and whether it moved, and the accept and the drop are the card's one row (U115).
         let mut summary = Message::counted(
             segments,
             Message::ContourEditStatusOne,
@@ -284,24 +262,12 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option
             summary.push_str(Message::ContourModifiedSuffix.text(lang));
         }
         ui.label(summary);
-        let motion = ui
-            .selectable_label(along, if along { Message::AlongContour } else { Message::FreeMove }.text(lang))
-            .clicked();
-        let apply = ui.button(Message::Apply.text(lang)).clicked();
-        let cancel = ui.button(Message::Cancel.text(lang)).clicked();
+        // The hint is the one the card's switch names, so the row and the card never tell the hand
+        // two different things about the drag it is in the middle of (U115).
         hint(ui, if along { Message::ContourAlongHint } else { Message::ContourFreeHint }.text(lang), center);
-        let action = if motion {
-            Some(StatusAction::ToggleContourAlong)
-        } else if apply {
-            Some(StatusAction::ApplyContour)
-        } else if cancel {
-            Some(StatusAction::CancelContour)
-        } else {
-            None
-        };
-        return (action, None);
+        return;
     }
-    if let Some((tool, points, closed, arc_mode)) = info.drawing {
+    if let Some((tool, points, arc_mode)) = info.drawing {
         let points_suffix = if points == 0 {
             String::new()
         } else {
@@ -314,31 +280,13 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option
             ""
         };
         ui.label(Message::DrawStatus.with(lang, [tool.label().text(lang), &points_suffix, kind_suffix]));
-        // The ribbon's *Close* and this one read the same rule, so a closure one offers is never
-        // greyed out by the other (ADR 0077).
-        let close = ui
-            .add_enabled(
-                ui::toolbars::draft_can_close(tool, points, closed),
-                egui::Button::new(Message::Close.text(lang)),
-            )
-            .clicked();
-        // Enter belongs to the plates now, so the button names the action and not a key (ADR 0126).
-        let finish = ui.add_enabled(points >= 2, egui::Button::new(Message::DraftFinish.text(lang))).clicked();
-        let cancel = ui.button(Message::CancelEsc.text(lang)).clicked();
+        // The draft's own *Close*, *Finish* and *Cancel* are the ribbon's Draft group and the card's
+        // one row: a second set of buttons here competed with the count beside them (U115).
         hint(ui, Message::DrawHint.text(lang), center);
         if let Some(reason) = &info.preview_error {
             hint(ui, reason, center);
         }
-        let action = if close {
-            Some(StatusAction::CloseDraft)
-        } else if finish {
-            Some(StatusAction::FinishDraft)
-        } else if cancel {
-            Some(StatusAction::CancelDraft)
-        } else {
-            None
-        };
-        return (action, None);
+        return;
     }
     if let Some((stage, _)) = info.measure {
         // The left zone says the step and the centre zone the number: the person reads one line
@@ -349,24 +297,23 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option
             MeasureStage::Measured => Message::MeasureAgain,
         };
         hint(ui, words.text(lang), center);
-        return (None, None);
+        return;
     }
     if info.void.is_some() {
         // The niche is a read with no step and no button: the left zone says what to point at and
         // the centre zone names the space, so the two never compete for the row (ADR 0118).
         hint(ui, Message::VoidHint.text(lang), center);
-        return (None, None);
+        return;
     }
     if let Some(mode) = info.navigation {
+        // Escape ends the gesture, so the row names it and the sentence beside it says so: a *Done*
+        // button would be the third way out of a mode the key already leaves (U115).
         ui.label(Message::NavigationStatus.with(lang, [mode.name().text(lang)]));
-        let done = ui.button(Message::DoneEsc.text(lang)).clicked();
         hint(ui, mode.gesture().text(lang), center);
-        return (done.then_some(StatusAction::EndNavigation), None);
+        return;
     }
-    // The band names itself: five cells of words and keys say what they are, and the hint beside
-    // them says what the armed one does, so the dim "Gizmo" caption is the row's to spend elsewhere.
-    // Five gestures with their keys need the room in the longer language (X88).
-    let moved = transform_mode_ui(ui, info.mode);
+    // The transform band is the header's, beside the ribbon and panel switches, where it never
+    // competes with this row (U115).
     theme::divider(ui);
     if let Some((element, count)) = info.mesh {
         let counted = match element {
@@ -392,108 +339,36 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option
     } else {
         hint(ui, Message::ViewportHint.text(lang), center);
     }
-    (None, moved)
-}
-
-/// The window's transform mode as one control: *Select*, *Move*, *Furniture*, *Rotate*, side by
-/// side in one band.
-///
-/// States of one value are one control, not separate switches: the filled cell is the mode the
-/// viewport is in, and the band behind them says the four belong together (ADR 0113). The two moves
-/// sit next to each other because they are one decision made two ways — the free move keeps the
-/// pointer's distance and the object move obeys the document's rules (ADR 0147) — and each cell
-/// says in a hover line which of the two it is, because "Move" alone no longer names the choice.
-/// The mode is the window's view state, so the control reads it and returns the chosen one; the
-/// caller writes it, and no command and no undo entry is involved.
-/// The size a mode's glyph takes in the band, in points.
-///
-/// It is the inline size: the band is chrome on the narrowest window the shell opens, and a toolbar
-/// glyph would push the last cell under the readouts on the right (U113).
-const MODE_ICON_POINT_SIZE: f32 = 14.0;
-
-fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<TransformMode> {
-    let lang = ui::language(ui.ctx());
-    let band = egui::Frame::new()
-        .fill(theme::control(ui))
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::symmetric(1, 0));
-    let mut chosen = mode;
-    let changed = band
-        .show(ui, |ui| {
-            // Touching cells are what makes one band out of four states; the row's own gap stays.
-            ui.spacing_mut().item_spacing.x = 0.0;
-            // A cell is a word and a key, not a word and two paddings: the five keys are what U113
-            // and X88 add to the band, and the narrowest window in the longer language still has to
-            // hold the whole band beside the readouts. One point a side is what five cells leave.
-            ui.spacing_mut().button_padding.x = 1.0;
-            let mut clicked = false;
-            for entry in TransformMode::ALL {
-                let text = entry.cell(ui, lang);
-                let image = entry.icon().and_then(|icon| ui::icons::icon_image(ui, icon, MODE_ICON_POINT_SIZE));
-                let response = match image {
-                    Some(image) => {
-                        let response = ui.add(egui::Button::image_and_text(image, text).selected(chosen == entry));
-                        if response.clicked() {
-                            chosen = entry;
-                        }
-                        response
-                    }
-                    None => ui.selectable_value(&mut chosen, entry, text),
-                };
-                clicked |= response.on_hover_text(entry.hint(lang)).clicked();
-            }
-            clicked
-        })
-        .inner;
-    changed.then_some(chosen)
 }
 
 impl App {
-    /// The thin bar at the bottom of the window: the armed tool, the gesture it expects, the counts
-    /// it would affect and the last error.
+    /// The thin bar at the bottom of the window: what the armed tool waits for, what is selected and
+    /// how the window is set.
     ///
-    /// View controls no longer live here: they float over the viewport in
-    /// [`crate::view_cluster::ViewCluster`], so the scene starts at the model instead of at a wall of
-    /// labels. The bar is chrome and carries no document state; everything it shows is read from the
-    /// active tab, and the two things that belong to the window — the transform mode and the armed
-    /// navigation gesture — are applied here rather than in the document.
+    /// It writes nothing. The transform mode, the snap and the armed navigation gesture are the
+    /// window's and each is drawn by the surface that owns it — the header's band, the View tab's
+    /// Snaps group and the floating cluster — so the row reads them and never changes them (U115).
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui) {
         let notice = self.settings_notice.clone();
         let lang = ui::language(ui.ctx());
-        let info = self.tabs.active().status_info(
-            notice.as_ref(),
-            self.shell.mode,
-            self.shell.cluster.navigation,
-            self.shell.rebuilding,
-            lang,
-        );
-        let mut out = StatusOut::default();
+        let info =
+            self.tabs.active().status_info(notice.as_ref(), self.shell.cluster.navigation, self.shell.rebuilding, lang);
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             ui.set_height(theme::STATUS_HEIGHT);
-            status_row_ui(ui, &info, &mut out);
+            status_row_ui(ui, &info);
         });
-        if let Some(mode) = out.mode {
-            self.shell.mode = mode;
-        }
-        match out.state {
-            // The window's two: the rest belong to the scene the bar reports on.
-            Some(StatusAction::EndNavigation) => self.shell.cluster.navigation = None,
-            Some(action) => self.tabs.active_mut().apply_status(action, lang),
-            None => {}
-        }
     }
 }
 
 /// The narrowest room the row keeps for the command beside the readouts, in points.
 ///
-/// The five-cell mode band is 431 points wide in the longer language and a divider and a hint live
-/// beside it. X88 measured the band against the narrowest window the shell opens (640 points, U113),
-/// and that window leaves this much of the row once the readouts have their share: below it the
-/// command would lose a control, which is the one thing a mode band may not do.
-const COMMAND_ZONE_MIN: f32 = 448.0;
+/// The command zone is text alone now that every control has left the row (U115): what it keeps is
+/// enough for the armed tool's own sentence, and the readouts take the rest of the row's width up to
+/// this floor. X94 measured the three zones against the narrowest window the shell opens.
+const COMMAND_ZONE_MIN: f32 = 240.0;
 
 /// The width of the row's two outer zones: the readouts take the room they measure, and the command
-/// keeps the rest, never less than [`COMMAND_ZONE_MIN`].
+/// keeps the rest, never less than [`COMMAND_ZONE_MIN`] while the row has it.
 ///
 /// The centre has no width of its own: it elides into what the command leaves inside its zone, so a
 /// long node name never pushes the readouts off the row.
@@ -570,9 +445,9 @@ fn status_center_zone_ui(ui: &mut egui::Ui, info: &StatusInfo, lang: Lang) {
 /// Each zone owns one rectangle and paints inside it only: a widget that does not fit is cut at the
 /// boundary instead of running under the zone beside it, and the right zone is measured from its own
 /// readouts, so the row cannot be pushed off the window's edge by the zone before it (X94). The
-/// centre elides into what the command leaves, so an active tool never loses a button to a long node
-/// name.
-fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
+/// centre elides into what the command leaves, so an active tool never loses its sentence to a long
+/// node name.
+fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo) {
     let lang = ui::language(ui.ctx());
     let height = theme::STATUS_HEIGHT;
     let row = ui.available_rect_before_wrap();
@@ -588,7 +463,7 @@ fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
         egui::UiBuilder::new().max_rect(command_zone).layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(command_zone));
-            (out.state, out.mode) = status_state_ui(ui, info, center_room);
+            status_command_ui(ui, info, center_room);
             status_center_zone_ui(ui, info, lang);
         },
     );
@@ -596,9 +471,7 @@ fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
         egui::UiBuilder::new().max_rect(readouts_zone).layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(readouts_zone));
-            if let Some(action) = status_right_ui(ui, info) {
-                out.state = Some(action);
-            }
+            status_right_ui(ui, info);
         },
     );
 }
@@ -636,6 +509,9 @@ fn status_void_ui(ui: &mut egui::Ui, void: &Result<[Length; 3], VoidRefusal>, la
 /// One label rather than a row of chips, so the whole line truncates with one ellipsis and one
 /// tooltip: a `Label::truncate` keeps the full line in its hover text, which is where the parts that
 /// did not fit stay readable.
+///
+/// A locked selection refuses the gizmo and the destructive commands, so the chip that names it is
+/// drawn first, before the context that reads as its own line (ADR 0065).
 fn status_center_ui(ui: &mut egui::Ui, summary: &StatusSummary, lang: Lang) {
     if let Some(warning) = &summary.warning {
         warning_chip(ui, warning);
@@ -649,13 +525,16 @@ fn status_center_ui(ui: &mut egui::Ui, summary: &StatusSummary, lang: Lang) {
 
 /// The right zone: the snap, the projection, the scale and whether the scene is rebuilding.
 ///
-/// It is drawn left to right in the rectangle its own content measured, so the state ends at the
-/// window's edge and the snap — the one control — begins the zone beside the selection context. Only
-/// the snap is a control; the rest are readouts of the window's view state.
-fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) -> Option<StatusAction> {
+/// Four readouts of the window's view state, drawn left to right in the rectangle their own content
+/// measured, so the state ends at the window's edge. The snap is a readout and no longer a switch:
+/// its one switch is the View tab's Snaps group, filed under its own `view.snaps.grid` row, and the
+/// key `G` reaches it from anywhere (U115). The line still names the step and the key, because a
+/// readout that says which snap is on should say where it is turned off; the ink is the readout's
+/// one state — the step is written in the primary colour while it holds and dim while it does not.
+fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) {
     let lang = ui::language(ui.ctx());
-    let snap = ui
-        .selectable_label(info.grid, Message::SnapTenMillimetres.text(lang))
+    let snap_ink = if info.grid { theme::text(ui) } else { theme::text_dim(ui) };
+    ui.label(egui::RichText::new(Message::SnapTenMillimetres.text(lang)).color(snap_ink))
         .on_hover_text(Message::ShortcutGrid.text(lang));
     theme::divider(ui);
     let projection = match info.projection {
@@ -675,7 +554,6 @@ fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) -> Option<StatusAction>
         (Message::StatusReady, theme::text_dim(ui))
     };
     ui.label(egui::RichText::new(state.text(lang)).color(colour));
-    snap.clicked().then_some(StatusAction::ToggleGrid)
 }
 
 /// A warning as a tinted pill, so a refusal reads as a state and not as another hint.
@@ -695,12 +573,11 @@ fn warning_chip(ui: &mut egui::Ui, warning: &StatusWarning) -> egui::Response {
 impl Document {
     /// Everything the bar reads from this document.
     ///
-    /// The mode, the armed navigation gesture and the busy state are the window's, so they are
-    /// handed in instead of read here; everything else belongs to the scene the tab holds.
+    /// The armed navigation gesture and the busy state are the window's, so they are handed in
+    /// instead of read here; everything else belongs to the scene the tab holds.
     fn status_info(
         &self,
         notice: Option<&crate::settings_store::Notice>,
-        mode: TransformMode,
         navigation: Option<NavigationMode>,
         rebuilding: bool,
         lang: Lang,
@@ -711,15 +588,11 @@ impl Document {
         StatusInfo {
             error: self.last_error.clone(),
             notice: notice.cloned(),
-            mode,
             contour: self
                 .editor
                 .contour_edit()
                 .map(|edit| (edit.draft().segment_count(), edit.is_dirty(), self.contour_gizmo.along())),
-            drawing: self
-                .editor
-                .drawing()
-                .map(|draft| (draft.tool(), draft.len(), draft.is_closed(), draft.arc_mode())),
+            drawing: self.editor.drawing().map(|draft| (draft.tool(), draft.len(), draft.arc_mode())),
             preview_error: self.draw_gizmo.preview_error().map(str::to_owned),
             measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
             // The report row reads the same atom the fill ghost and the part are built from, never a
@@ -737,40 +610,9 @@ impl Document {
                 (edit.element(), count)
             }),
             navigation,
-            creation_parent: self.editor.creation_parent_name(project).map(str::to_owned),
             summary: StatusSummary::of(project, self.session.directory(), selection, locked, lang),
             projection: self.projection(),
             rebuilding,
-        }
-    }
-
-    /// Runs the one document-side action the bar asked for.
-    ///
-    /// The armed navigation gesture is the window's, so the shell clears that one itself; every arm
-    /// here acts on the scene this tab holds.
-    fn apply_status(&mut self, action: StatusAction, lang: text::Lang) {
-        match action {
-            StatusAction::ApplyContour => {
-                if let Err(error) = self.apply_contour_edit() {
-                    self.last_error = Some(error);
-                }
-            }
-            StatusAction::CancelContour => self.cancel_contour_edit(),
-            StatusAction::ToggleContourAlong => self.contour_gizmo.toggle_along(),
-            StatusAction::ToggleGrid => self.draw_gizmo.toggle_grid(),
-            StatusAction::CloseDraft => {
-                if let Err(error) = self.close_draft(lang) {
-                    self.last_error = Some(error);
-                }
-            }
-            StatusAction::FinishDraft => {
-                if let Err(error) = self.commit_drawing(lang) {
-                    self.last_error = Some(error);
-                }
-            }
-            StatusAction::CancelDraft => self.cancel_drawing(),
-            StatusAction::ClearCreationParent => self.editor.clear_creation_parent(),
-            StatusAction::EndNavigation => {}
         }
     }
 }
@@ -780,7 +622,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::test_support::{drawn_text, drawn_text_rects};
+    use crate::test_support::drawn_text;
     use engine::panel_cmds::EDGE_BANDING_SET_ID;
     use engine::{PanelEdgeBandingSet, Session};
     use model::{Container, PanelNominalSize, Placement, RectEdge};
@@ -790,7 +632,6 @@ mod tests {
         StatusInfo {
             error: None,
             notice: None,
-            mode: TransformMode::Move,
             contour: None,
             drawing: None,
             preview_error: None,
@@ -800,168 +641,116 @@ mod tests {
             grid: true,
             mesh: None,
             navigation: None,
-            creation_parent: None,
             summary: StatusSummary::default(),
             projection: Projection::Perspective { fov_y: 0.9 },
             rebuilding: false,
         }
     }
 
+    /// A headless context with the theme, the language and accessibility on.
+    fn context(lang: Lang) -> egui::Context {
+        let ctx = egui::Context::default();
+        ui::theme::install(&ctx);
+        ctx.enable_accesskit();
+        ui::set_language(&ctx, lang);
+        ctx
+    }
+
+    /// One frame of the row at `width`, with the boundary the command and the readouts split at.
+    fn row_frame(ctx: &egui::Context, info: &StatusInfo, width: f32) -> (egui::FullOutput, f32) {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 200.0));
+        let mut boundary = 0.0;
+        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            ui.set_width(width);
+            ui.set_height(theme::STATUS_HEIGHT);
+            boundary = zone_widths(width, readouts_width(ui, info)).0;
+            status_row_ui(ui, info);
+        });
+        (output, boundary)
+    }
+
+    /// Every node of the frame that is a control — a button, a toggle, a field — with its words.
+    ///
+    /// The bar's own tree is a window, containers and labels; anything else is an instrument, which
+    /// after U115 the row draws none of.
+    fn controls(output: &egui::FullOutput) -> Vec<(egui::accesskit::Role, Option<String>)> {
+        use egui::accesskit::Role;
+        let nodes =
+            output.platform_output.accesskit_update.as_ref().map(|update| update.nodes.as_slice()).unwrap_or_default();
+        nodes
+            .iter()
+            .map(|(_, node)| (node.role(), node.label().map(str::to_owned)))
+            .filter(|(role, _)| !matches!(role, Role::Window | Role::GenericContainer | Role::Label | Role::TextRun))
+            .collect()
+    }
+
+    /// Everything one status draws, as the words a person reads.
+    fn drawn(ctx: &egui::Context, info: &StatusInfo) -> Vec<String> {
+        let (output, _) = row_frame(ctx, info, 1024.0);
+        let texts = drawn_text(&output.shapes);
+        output.drop_without_applying_deltas();
+        texts
+    }
+
     #[test]
     fn the_status_bar_draws_one_thin_row() {
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let info = idle_status();
-        let mut out = StatusOut::default();
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0))),
-            ..Default::default()
-        };
-        let output = ctx.run_ui(input, |ui| {
-            ui.set_height(theme::STATUS_HEIGHT);
-            ui.horizontal_centered(|ui| {
-                (out.state, out.mode) = status_state_ui(ui, &info, 0.0);
-            });
-        });
+        // U115: the bar is one row of text. It asks for nothing because it has nothing to ask with.
+        let ctx = context(Lang::En);
+        let (output, boundary) = row_frame(&ctx, &idle_status(), 1000.0);
+        let texts = drawn_text(&output.shapes);
+        let controls = controls(&output);
         output.drop_without_applying_deltas();
-        assert_eq!(out.state, None, "drawing the idle bar asks for nothing");
-        assert_eq!(out.mode, None);
+        assert!(texts.iter().any(|text| text.contains("LMB select")), "an idle bar says how to navigate: {texts:?}");
+        assert!(boundary > 0.0 && boundary < 1000.0, "the row splits into a command and a readout: {boundary}");
+        assert!(controls.is_empty(), "the bar publishes labels and no control: {controls:?}");
     }
 
     #[test]
-    fn the_transform_mode_is_one_control_of_four_states() {
-        // U87, N22: Select, both moves and Rotate are one control rather than four switches, so the
-        // four captions sit side by side and one press returns the state it names. The mode is the
-        // window's view state: the control returns a value, it runs no command and no undo entry.
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let info = StatusInfo { mode: TransformMode::Select, ..idle_status() };
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, theme::STATUS_HEIGHT));
-        let row = |events: Vec<egui::Event>| {
-            let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
-            let mut chosen = None;
-            let output = ctx.run_ui(input, |ui| {
-                ui.set_height(theme::STATUS_HEIGHT);
-                ui.horizontal_centered(|ui| chosen = status_state_ui(ui, &info, 0.0).1);
-            });
-            (output, chosen)
+    fn the_bar_holds_labels_only_while_a_tool_arms_it() {
+        // The Done clause of U115: an armed draft, an armed contour edit and an idle frame all draw
+        // text. Every instrument left the row, so a press anywhere on it would run nothing — and the
+        // accessibility tree is where that is read.
+        let long = StatusSummary {
+            count: 1,
+            name: Some("Front".to_owned()),
+            kind: Some("Panel".to_owned()),
+            size: Some("600 mm × 720 mm × 18 mm".to_owned()),
+            material: Some("Chipboard".to_owned()),
+            ..StatusSummary::default()
         };
-        let (idle, chosen) = row(Vec::new());
-        let texts = drawn_text(&idle.shapes);
-        assert_eq!(chosen, None, "drawing the control changes nothing");
-        for mode in TransformMode::ALL {
-            let caption = mode.caption(Lang::En);
-            assert!(texts.contains(&caption), "the control names {caption}: {texts:?}");
-        }
-        let furniture = TransformMode::Object.caption(Lang::En);
-        let at = drawn_text_rects(&idle.shapes)
-            .into_iter()
-            .find(|(_, text)| *text == furniture)
-            .map(|(rect, _)| rect.center())
-            .expect("the control drew Furniture");
-        idle.drop_without_applying_deltas();
-
-        let button = |pressed: bool| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        let (moved, _) = row(vec![egui::Event::PointerMoved(at)]);
-        moved.drop_without_applying_deltas();
-        let (pressed, chosen) = row(vec![button(true)]);
-        pressed.drop_without_applying_deltas();
-        assert_eq!(chosen, None, "the press alone is not a click");
-        let (released, chosen) = row(vec![button(false)]);
-        released.drop_without_applying_deltas();
-        assert_eq!(chosen, Some(TransformMode::Object), "a click on Furniture returns Furniture");
-    }
-
-    #[test]
-    fn the_five_mode_cells_fit_the_narrowest_window_with_their_keys() {
-        // The band is window chrome, so it must fit the narrowest window the shell opens (640 pt) with
-        // the hint and the right-hand readouts beside it: a mode nobody can see is a mode nobody has
-        // (ADR 0113, ADR 0147). U113 adds a key to every cell, so the floor is measured again: the
-        // last cell's right edge has to stay inside the left zone, where the readouts begin. X88's
-        // fifth gesture is what spends the room the dim caption used to take, and the cells keep
-        // their words and their keys: 431 pt in the longer language, against 448 available.
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
-        // Russian is the longer language, so the narrower window is asked about both: a sheet of text
-        // that fits one and not the other is a band a third of the users cannot read.
-        for lang in [Lang::En, Lang::Ru] {
-            ui::set_language(&ctx, lang);
-            let mut out = StatusOut::default();
-            let mut readouts = 0.0;
-            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
-            let output = ctx.run_ui(input, |ui| {
-                ui.set_width(screen.width());
-                ui.set_height(theme::STATUS_HEIGHT);
-                // The split the row draws by: nothing left of the readouts may grow into them.
-                let (command, _) = zone_widths(screen.width(), readouts_width(ui, &idle_status()));
-                readouts = screen.left() + command;
-                status_row_ui(ui, &idle_status(), &mut out);
-            });
+        let cases: [(&str, StatusInfo, &[&str]); 5] = [
+            ("idle", StatusInfo { summary: long.clone(), ..idle_status() }, &["Front · Panel"]),
+            (
+                "a draft",
+                StatusInfo { drawing: Some((DrawTool::Polyline, 3, false)), ..idle_status() },
+                &["Draw · Polyline", "3 points", "LMB add point"],
+            ),
+            (
+                "a contour edit",
+                StatusInfo { contour: Some((4, true, false)), ..idle_status() },
+                &["Contour edit · 4 segments", "modified"],
+            ),
+            ("the ruler", StatusInfo { measure: Some((MeasureStage::First, None)), ..idle_status() }, &["Measure"]),
+            (
+                "the niche",
+                StatusInfo { void: Some(Ok([millimetres(300), millimetres(400), millimetres(500)])), ..idle_status() },
+                &["Niche"],
+            ),
+        ];
+        for (name, info, words) in &cases {
+            let ctx = context(Lang::En);
+            let (output, _) = row_frame(&ctx, info, 1024.0);
             let texts = drawn_text(&output.shapes);
-            let cells = drawn_text_rects(&output.shapes);
-            for mode in TransformMode::ALL {
-                let caption = mode.caption(lang);
-                assert!(texts.contains(&caption), "the narrowest window still names {caption} in {lang:?}: {texts:?}");
-                let (rect, _) =
-                    cells.iter().find(|(_, text)| *text == caption).expect("a drawn caption has a rectangle");
-                assert!(
-                    rect.right() <= readouts,
-                    "{caption} in {lang:?} ends at {} and the readouts start at {readouts}",
-                    rect.right()
-                );
-            }
-
+            let controls = controls(&output);
             output.drop_without_applying_deltas();
+            for word in *words {
+                assert!(texts.iter().any(|text| text.contains(word)), "{name} reports `{word}`: {texts:?}");
+            }
+            assert!(controls.is_empty(), "`{name}` draws no button, no toggle and no band: {controls:?}");
+            assert!(!texts.iter().any(|text| text.contains('✕')), "`{name}` offers no cross: {texts:?}");
+            assert!(!texts.iter().any(|text| text.contains("Close")), "`{name}` offers no Close: {texts:?}");
+            assert!(!texts.iter().any(|text| text.contains("Done")), "`{name}` offers no Done: {texts:?}");
         }
-    }
-
-    #[test]
-    fn the_status_bar_names_the_armed_drawing_tool() {
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let info = StatusInfo { drawing: Some((DrawTool::Rectangle, 3, false, false)), ..idle_status() };
-        let mut out = StatusOut::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info, 0.0).0;
-        });
-        let texts = drawn_text(&output.shapes);
-        output.drop_without_applying_deltas();
-        assert!(texts.iter().any(|text| text.contains("Draw")), "the armed tool is named: {texts:?}");
-        assert!(texts.iter().any(|text| text.contains('3')), "the draft's point count is shown: {texts:?}");
-        assert_eq!(out.state, None, "drawing alone runs no tool");
-    }
-
-    #[test]
-    fn the_status_bar_offers_close_from_two_segments_and_through_a_pending_arc() {
-        // The status bar is the second *Close* button. It enables from two segments — the closing
-        // one makes three — and a pending arc is drawn as a segment the draft already has, so the
-        // count it reports is the one the command needs (ADR 0077). The rule is the ribbon's, so a
-        // closure one surface offers is never greyed out by the other.
-        assert!(ui::toolbars::draft_can_close(DrawTool::Polyline, 2, false));
-        assert!(ui::toolbars::draft_can_close(DrawTool::Polyline, 3, false));
-        assert!(!ui::toolbars::draft_can_close(DrawTool::Polyline, 1, false));
-        assert!(!ui::toolbars::draft_can_close(DrawTool::Polyline, 2, true));
-
-        // The bar still draws the button, so the pair never vanishes between clicks.
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let info = StatusInfo { drawing: Some((DrawTool::Polyline, 2, false, true)), ..idle_status() };
-        let output = ctx.run_ui(Default::default(), |ui| {
-            status_state_ui(ui, &info, 0.0);
-        });
-        let texts = drawn_text(&output.shapes);
-        output.drop_without_applying_deltas();
-        assert!(texts.iter().any(|text| text.contains("Close")), "the bar names its own Close: {texts:?}");
-        assert!(
-            texts.iter().any(|text| text.contains("arc")),
-            "the bar names the pending arc's segment kind: {texts:?}"
-        );
     }
 
     #[test]
@@ -988,40 +777,19 @@ mod tests {
     }
 
     #[test]
-    fn the_status_bar_names_the_armed_container_and_offers_to_clear_it() {
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        let info = StatusInfo { creation_parent: Some("Carcass".to_owned()), ..idle_status() };
-        let mut out = StatusOut::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info, 0.0).0;
-        });
-        let texts = drawn_text(&output.shapes);
-        output.drop_without_applying_deltas();
-        assert!(
-            texts.iter().any(|text| text.contains("Adding to: Carcass")),
-            "the armed container names itself: {texts:?}"
-        );
-        assert!(texts.iter().any(|text| text.contains('✕')), "the bar offers to clear the arm: {texts:?}");
-    }
-
-    #[test]
     fn the_status_bar_names_the_armed_navigation_gesture() {
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
+        let ctx = context(Lang::En);
         let info = StatusInfo { navigation: Some(NavigationMode::Orbit), ..idle_status() };
-        let mut out = StatusOut::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info, 0.0).0;
-        });
-        let texts = drawn_text(&output.shapes);
-        output.drop_without_applying_deltas();
+        let texts = drawn(&ctx, &info);
         assert!(texts.iter().any(|text| text.contains("Navigation · Orbit")), "the armed mode is named: {texts:?}");
         assert!(
             texts.iter().any(|text| text.contains("Drag in the viewport to orbit")),
             "the bar names the gesture the mode expects: {texts:?}"
         );
-        assert_eq!(out.state, None, "an idle armed mode runs nothing until its button is clicked");
+        assert!(
+            texts.iter().any(|text| text.contains("Esc done")),
+            "and says that Escape is the way out, which is why no button is needed: {texts:?}"
+        );
     }
 
     /// One *Front* panel with a material and an edge band next to a plain *Shelf*.
@@ -1173,38 +941,73 @@ mod tests {
 
     #[test]
     fn the_right_zone_names_the_snap_step_and_the_busy_state() {
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
-        ui::set_language(&ctx, Lang::Ru);
+        // U115: the snap is a readout. It names its step and the key that turns it off, and the
+        // press that used to flip it belongs to the View tab's Snaps group.
+        let ctx = context(Lang::Ru);
         let busy = StatusInfo { rebuilding: true, ..idle_status() };
-        let output = ctx.run_ui(Default::default(), |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                status_right_ui(ui, &busy);
-            });
-        });
+        let (output, _) = row_frame(&ctx, &busy, 1024.0);
         let texts = drawn_text(&output.shapes);
+        let controls = controls(&output);
         output.drop_without_applying_deltas();
         assert!(texts.iter().any(|text| text.contains("Привязка 10 мм")), "the snap names its step: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Перестроение…")), "a rebuilding frame says so: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Перспективная")), "the projection is named: {texts:?}");
+        assert!(controls.is_empty(), "the snap is a readout, not a switch: {controls:?}");
 
         let idle = StatusInfo { rebuilding: false, ..idle_status() };
-        let output = ctx.run_ui(Default::default(), |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                status_right_ui(ui, &idle);
-            });
-        });
-        let texts = drawn_text(&output.shapes);
-        output.drop_without_applying_deltas();
-        assert!(texts.iter().any(|text| text.contains("Готово")), "an idle frame reports ready: {texts:?}");
+        let public = drawn(&ctx, &idle);
+        assert!(public.iter().any(|text| text.contains("Готово")), "an idle frame reports ready: {public:?}");
+    }
+
+    #[test]
+    fn the_snap_readout_is_quiet_while_the_snap_is_off() {
+        // The ink is the readout's one state: the step is written in the primary colour while it
+        // holds and in the dim one while it does not, so the line says which state the window is in
+        // without becoming a control again.
+        let ctx = context(Lang::En);
+        let ink = |grid: bool| {
+            let info = StatusInfo { grid, ..idle_status() };
+            let (output, _) = row_frame(&ctx, &info, 1024.0);
+            let colour = drawn_text_colours(&output.shapes)
+                .into_iter()
+                .find(|(text, _)| text == Message::SnapTenMillimetres.text(Lang::En))
+                .map(|(_, colour)| colour);
+            output.drop_without_applying_deltas();
+            colour.expect("the snap readout is drawn")
+        };
+        let (on, off) = (ink(true), ink(false));
+        assert_ne!(on, off, "the two states are told apart");
+    }
+
+    /// The colour of every drawn galley with its text, in paint order.
+    fn drawn_text_colours(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Color32)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Color32)>) {
+            match shape {
+                egui::Shape::Text(text) => {
+                    let colour =
+                        text.galley.job.sections.first().map_or(egui::Color32::WHITE, |section| section.format.color);
+                    out.push((text.galley.text().to_owned(), colour));
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut out);
+        }
+        out
     }
 
     #[test]
     fn the_bar_draws_its_three_zones_in_a_narrow_window() {
         // The 1024 px window the owner checks by eye: the command, the selection and the display
         // state all draw, with no zone clipped away by another.
-        let ctx = egui::Context::default();
-        ui::theme::install(&ctx);
+        let ctx = context(Lang::En);
         let summary = StatusSummary {
             count: 1,
             name: Some("Front".to_owned()),
@@ -1212,24 +1015,13 @@ mod tests {
             ..StatusSummary::default()
         };
         let info = StatusInfo { summary, ..idle_status() };
-        let width = 1024.0;
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 200.0))),
-            ..Default::default()
-        };
-        let mut out = StatusOut::default();
-        let mut boundary = 0.0;
-        let output = ctx.run_ui(input, |ui| {
-            ui.set_height(theme::STATUS_HEIGHT);
-            boundary = width - zone_widths(width, readouts_width(ui, &info)).1;
-            status_row_ui(ui, &info, &mut out);
-        });
+        let (output, boundary) = row_frame(&ctx, &info, 1024.0);
         let texts = drawn_text(&output.shapes);
         let crossing = crossings(&output.shapes, boundary);
         output.drop_without_applying_deltas();
         assert!(texts.iter().any(|text| text.contains("Front · Panel")), "the centre draws: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Snap 10 mm")), "the right draws: {texts:?}");
-        assert!(texts.iter().any(|text| text.contains("Select")), "the left draws the gesture band: {texts:?}");
+        assert!(texts.iter().any(|text| text.contains("LMB select")), "the left draws its hint: {texts:?}");
         assert!(crossing.is_empty(), "no zone paints under another at the default window: {crossing:?}");
     }
 
@@ -1273,31 +1065,16 @@ mod tests {
         };
         let cases: [(&str, StatusInfo); 3] = [
             ("a long selection", StatusInfo { summary: long.clone(), ..idle_status() }),
-            (
-                "an armed contour",
-                StatusInfo { contour: Some((4, true, false)), summary: long.clone(), ..idle_status() },
-            ),
+            ("a contour edit", StatusInfo { contour: Some((4, true, false)), summary: long.clone(), ..idle_status() }),
             (
                 "an armed draft",
-                StatusInfo {
-                    drawing: Some((DrawTool::Polyline, 3, false, false)),
-                    summary: long.clone(),
-                    ..idle_status()
-                },
+                StatusInfo { drawing: Some((DrawTool::Polyline, 3, false)), summary: long.clone(), ..idle_status() },
             ),
         ];
         for lang in [Lang::En, Lang::Ru] {
             for (name, info) in &cases {
-                let ctx = egui::Context::default();
-                ui::theme::install(&ctx);
-                ui::set_language(&ctx, lang);
-                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 200.0));
-                let mut boundary = 0.0;
-                let output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
-                    ui.set_height(theme::STATUS_HEIGHT);
-                    boundary = screen.left() + zone_widths(screen.width(), readouts_width(ui, info)).0;
-                    status_row_ui(ui, info, &mut StatusOut::default());
-                });
+                let ctx = context(lang);
+                let (output, boundary) = row_frame(&ctx, info, 640.0);
                 let crossing = crossings(&output.shapes, boundary);
                 output.drop_without_applying_deltas();
                 assert!(

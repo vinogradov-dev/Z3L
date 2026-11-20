@@ -1146,8 +1146,8 @@ impl Document {
 
     /// Closes the running ring and commits it in one step.
     ///
-    /// The only close path: a click on the first draft point, the ribbon's *Close* and the status
-    /// bar's *Close* all end here, so no surface can close a ring and forget to commit it (ADR 0052).
+    /// The only close path: a click on the first draft point and the ribbon's *Close* both end here,
+    /// so no surface can close a ring and forget to commit it (ADR 0052, U115).
     /// The ring is closed before the commit and reopened if the document refuses it, so a refusal
     /// leaves the shape the user drew editable instead of a finished draft that cannot be changed.
     pub(crate) fn close_draft(&mut self, lang: Lang) -> Result<(), String> {
@@ -2007,7 +2007,7 @@ impl Document {
         card_before: Option<egui::Rect>,
         opacity: u32,
     ) {
-        let Some(mut view) = self.height_view() else {
+        let Some(mut view) = self.card_view() else {
             // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
             // — and the rectangle is not this path's to clear.
             return;
@@ -2067,6 +2067,44 @@ impl Document {
         Some(ToolView::pull(height.millimetres_f64(), top.map(Length::millimetres_f64), range, 3))
     }
 
+    /// The view the card at the pointer draws: a tool's numbers, or a draft's or a contour edit's own
+    /// commit row (U115).
+    ///
+    /// A running draft and a live contour edit ask for no number, so their card is one row that
+    /// names the tool and holds its accept and its drop: the bar reported those two as buttons, and
+    /// the hand that is drawing should not travel to the window's bottom edge to finish. The
+    /// inspector keeps the numbers it already mirrors — `tool_view` — and gains no button row.
+    pub(crate) fn card_view(&self) -> Option<ToolView> {
+        if let Some(view) = self.height_view() {
+            return Some(view);
+        }
+        if let Some(draft) = self.editor.drawing() {
+            // A draft the commit would refuse draws no card: a check that answers with a refusal is
+            // worse than no check, and the bar still says what the tool waits for. The draft's own
+            // reading is the rule, so the card and the commit cannot disagree (ADR 0077).
+            if !draft.is_complete() {
+                return None;
+            }
+            return Some(ToolView::actions(
+                Some(draft.tool().label()),
+                ui::ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc },
+            ));
+        }
+        self.editor.contour_edit()?;
+        // The corner's motion is the one method of the contour edit: free, or along the segment the
+        // corner starts, and the switch names the state the next drag takes (ADR 0075, U115).
+        let along = self.contour_gizmo.along();
+        Some(ToolView {
+            title: Some(Message::ContourEdit),
+            rows: Vec::new(),
+            toggle: Some(ui::ToolToggle {
+                words: if along { Message::AlongContour } else { Message::FreeMove },
+                on: along,
+            }),
+            commit: ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+        })
+    }
+
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
@@ -2097,8 +2135,14 @@ impl Document {
     /// or re-previews the body, and a gap goes through the distance card's own `apply`, so one number
     /// has one refusal whichever surface the maker typed it into. The ✓ and the ✕ are the shell's
     /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
-    fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
+    pub(crate) fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
         let mut repull = false;
+        // The contour edit's one method is a switch, not a number: its press flips the motion the
+        // next drag takes and writes nothing (U115).
+        if reported.toggle && self.editor.contour_edit().is_some() {
+            self.contour_gizmo.toggle_along();
+            ctx.request_repaint();
+        }
         for edit in &reported.edits {
             let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
                 continue;
@@ -2153,7 +2197,19 @@ impl Document {
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.drawing().is_some() {
+                    // A draft's check is its finish: the same path the ribbon's *Close* and a click on
+                    // the first point end in, so one commit has one home (ADR 0052).
+                    if let Err(error) = self.commit_drawing(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.contour_edit().is_some() {
+                    // A contour edit's check is its one command: the working copy becomes the panel's
+                    // outline, the object's contour or the machining record, as one undo entry.
+                    if let Err(error) = self.apply_contour_edit() {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.box_draft().is_some() {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
@@ -2165,7 +2221,12 @@ impl Document {
                 }
             }
             Some(ToolAction::Cancel) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.drawing().is_some() {
+                    // The cross drops the draft and ends the tool; the document never changed.
+                    self.cancel_drawing();
+                } else if self.editor.contour_edit().is_some() {
+                    self.cancel_contour_edit();
+                } else if self.editor.box_draft().is_some() {
                     self.cancel_box();
                 } else {
                     self.cancel_extrude();
@@ -3292,7 +3353,7 @@ impl Document {
     ///
     /// A polyline keeps its chain, so the right button cannot finish it the way it finishes a fixed
     /// figure: the menu chooses whether the next segment is straight or an arc — the switch that
-    /// used to sit on Tab — and offers the finish the status bar's *Finish* runs (ADR 0126, 0128).
+    /// used to sit on Tab — and offers the finish the tool card's check runs (ADR 0126, 0128, U115).
     fn show_draft_menu(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
         let Some((arc, can_finish)) = self
             .editor
@@ -3314,8 +3375,8 @@ impl Document {
             ui::DraftMenuChoice::Arc => {
                 self.editor.set_drawing_arc_mode(true);
             }
-            // Finish is the status bar's own finish: the same commit path, so a chain committed
-            // from the menu and from the bar cannot differ.
+            // Finish is the card's own finish: the same commit path, so a chain committed from
+            // the menu, from the card and by Enter cannot differ.
             ui::DraftMenuChoice::Finish => {
                 if let Err(error) = self.commit_drawing(ui::language(ui.ctx())) {
                     self.last_error = Some(error);

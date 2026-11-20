@@ -1753,7 +1753,7 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
 #[test]
 fn the_ribbon_returns_the_view_action_it_was_asked_for() {
     // The ribbon draws the view buttons but never moves the camera: the action comes back and
-    // the shell performs it with the same method the status bar calls.
+    // the shell performs it with the same method the view cluster calls.
     let mut editor = Editor::new();
     let view = spec::tab("view").expect("the map declares the view tab");
     editor.set_ribbon_tab(view);

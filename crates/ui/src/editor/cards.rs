@@ -123,8 +123,15 @@ impl Editor {
         } else if session.project().light(primary).is_some() {
             self.light_card.show(ui, session, primary);
         } else if session.project().is_container(primary) {
-            if self.container_card.show(ui, session, primary) == ContainerAction::AddChild {
-                self.arm_creation(session.project(), primary);
+            // The arm that receives the next creation is this container's own view state, so the
+            // card is where it is read and where it is cleared: no second surface names it (U115).
+            let armed = self.creation_parent == Some(primary);
+            match self.container_card.show(ui, session, primary, armed) {
+                ContainerAction::AddChild => {
+                    self.arm_creation(session.project(), primary);
+                }
+                ContainerAction::ClearChild => self.clear_creation_parent(),
+                ContainerAction::None => {}
             }
         } else {
             ui.label(Message::SelectNodeInTree.text(crate::language(ui.ctx())));

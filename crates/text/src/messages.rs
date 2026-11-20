@@ -110,6 +110,10 @@ messages! {
     ],
     AddingTo = ["Adding to: {}", "Добавление в: {}"],
     CreateAtRoot = ["Create at the scene root again", "Снова создавать в корне сцены"],
+    CreateAtRootHint = [
+        "The next created node lands at the scene root",
+        "Следующий созданный узел попадёт в корень сцены"
+    ],
     ContourEdit = ["Contour edit", "Редактирование контура"],
     ContourEditStatusOne = ["Contour edit · {} segment", "Редактирование контура · {} сегмент"],
     ContourEditStatusFew = ["Contour edit · {} segments", "Редактирование контура · {} сегмента"],
@@ -172,7 +176,6 @@ messages! {
     NavOrbitLabel = ["Orbit  ·  drag in the viewport", "Облёт  ·  перетаскивание в области просмотра"],
     NavPanLabel = ["Pan  ·  drag in the viewport", "Панорама  ·  перетаскивание в области просмотра"],
     NavZoomLabel = ["Zoom  ·  drag vertically", "Масштаб  ·  перетаскивание по вертикали"],
-    DoneEsc = ["Done  (Esc)", "Готово  (Esc)"],
     Gizmo = ["Gizmo", "Гизмо"],
     RollToDegree = ["Roll to {}°", "Крен до {}°"],
     HomeHint = ["Home  ·  back to the axonometric view", "Домой  ·  вернуться к аксонометрии"],
@@ -1199,7 +1202,7 @@ messages! {
         "Возвращает палитру, акцент, прозрачность и цвет значков по умолчанию."
     ],
     ShortcutsHint = [
-        "The same keys the ribbon, the header and the status bar name.",
+        "The same keys the ribbon, the header and the settings page name.",
         "Те же клавиши, что названы на ленте, в заголовке и в строке состояния."
     ],
     ShortcutNewScene = ["Open an empty scene in a new tab", "Открыть пустую сцену в новой вкладке"],

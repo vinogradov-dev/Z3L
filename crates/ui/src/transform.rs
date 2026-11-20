@@ -2,7 +2,7 @@
 //!
 //! The transform mode is view state: it belongs to the window rather than to a document, it is never
 //! serialized and a change of mode writes no undo entry (ADR 0113). It is named here rather than in
-//! the shell because three surfaces read it — the status bar's band, the node menu the tree and the
+//! the shell because three surfaces read it — the header's band, the node menu the tree and the
 //! viewport draw, and the Settings pages — and a value offered by two hand-written lists drifts apart
 //! the moment either moves.
 //!
@@ -118,38 +118,26 @@ impl TransformMode {
         inventory::key_label(self.id())
     }
 
-    /// The cell the status bar draws: the name and, beside it in the small face, its key.
+    /// The cell the header's band draws: the mode's own word.
     ///
-    /// The key is small and quiet because it is a reminder and not a second label: the band is
-    /// chrome on the narrowest window the shell opens, and a key printed at the size of the name
-    /// would push the last cell under the readouts on the right (U113).
+    /// The word alone, because the band shares the header with the mark, the file actions, the tab
+    /// row and four view switches: five cells that printed their keys as well needed 431 points in
+    /// the longer language, and the narrowest window the shell opens has 640 for all of it. The key
+    /// is not lost — the hover names it and so do the node menu and the Settings page — and the
+    /// binding itself is unchanged (U113, U115).
     pub fn cell(self, ui: &egui::Ui, lang: Lang) -> egui::WidgetText {
-        let (name, key) = match self.key() {
-            Some(key) => (self.label(lang), format!(" ({key})")),
-            None => (self.label(lang), String::new()),
-        };
         let style = ui.style();
         let body = style.text_styles.get(&egui::TextStyle::Body).cloned().unwrap_or_default();
-        let small = style.text_styles.get(&egui::TextStyle::Small).cloned().unwrap_or_default();
         let mut job = egui::text::LayoutJob::default();
         let plain = egui::TextFormat { font_id: body, color: egui::Color32::PLACEHOLDER, ..Default::default() };
-        job.append(name, 0.0, plain);
-        if !key.is_empty() {
-            let quiet = egui::TextFormat { font_id: small, color: crate::theme::text_dim(ui), ..Default::default() };
-            job.append(&key, 0.0, quiet);
-        }
+        job.append(self.label(lang), 0.0, plain);
         job.into()
     }
 
-    /// The letters the cell draws, as one string.
-    ///
-    /// The cell splits them into two faces and this does not, so a test and a hint can name the
-    /// cell by the words a person reads without building an `egui` layout to do it.
+    /// The letters the cell draws, as one string, so a test and a hint can name the cell by the
+    /// words a person reads without building an `egui` layout to do it.
     pub fn caption(self, lang: Lang) -> String {
-        match self.key() {
-            Some(key) => format!("{} ({key})", self.label(lang)),
-            None => self.label(lang).to_owned(),
-        }
+        self.label(lang).to_owned()
     }
 }
 
