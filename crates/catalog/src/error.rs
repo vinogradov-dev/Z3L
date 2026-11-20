@@ -251,6 +251,12 @@ pub enum CatalogError {
         /// The record it names as its sample.
         sample: ItemId,
     },
+    /// A slot id is not the shape a rule writes.
+    #[error("`{text}` is not a slot id: use lower-case letters, digits and `.`, `-` or `_` between them")]
+    SlotId {
+        /// The text that was refused.
+        text: String,
+    },
     /// A record names a family by a slug no connected package declares.
     #[error("`{slug}` is not a family any connected package declares")]
     UnknownFamilySlug {

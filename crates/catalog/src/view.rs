@@ -193,7 +193,11 @@ impl Directory {
     ///
     /// A property the kind does not accept is not the record's: a package may declare a row the kind
     /// never uses, and a reader must not answer from it.
-    fn prop_by_slug<'a>(&'a self, item: &'a NomenclatureItem, slug: &str) -> Option<(PropertyType, &'a PropertyValue)> {
+    pub(crate) fn prop_by_slug<'a>(
+        &'a self,
+        item: &'a NomenclatureItem,
+        slug: &str,
+    ) -> Option<(PropertyType, &'a PropertyValue)> {
         let kind = self.kinds().get(item.kind())?;
         let wanted = Slug::new(slug).ok()?;
         let code = kind
