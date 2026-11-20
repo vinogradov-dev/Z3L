@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=W1 state=idle base=12ceab1 updated=2026-11-20
+STATE: milestone=M7 phase=T task=W1 state=idle base=7c7406a updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -10,11 +10,12 @@ Read this file first; the two commands print the state and one task, `AGENTS.md`
 The carry keeps a hand of its own: the drawn square is what carries a piece, so a camera gesture can
 hide it and put it back on the piece without touching the window's pointer (ADR 0156, X69).
 
-The command line is the one headless door into the document: `z3l commands` lists every id, `z3l
-run` dispatches a JSON Lines recipe through the session's one edit scope and writes once, all or
-nothing, and `z3l query` prints a JSON report that reuses the derivation which already owns the
-answer — the node walk, the published order tables, the panel diagnostics and the measured niche
-(J1, ADR 0183).
+The command line is the one headless door into the document: `z3l commands` lists every id with
+the schema of the parameters it takes, `z3l run` dispatches a JSON Lines recipe through the
+session's one edit scope and writes once, all or nothing, and `z3l query` prints a JSON report
+that reuses the derivation which already owns the answer — the node walk, the published order
+tables, the panel diagnostics and the measured niche (J1, ADR 0183); the schema is derived from
+the struct the command's own parser reads, so the two cannot drift (J2, ADR 0195).
 
 The nomenclature directory is edited by a window of its own: `z3l directory [<folder>]` opens the
 item tree, the record's card and the registry view, and a save is one record plus the package's
