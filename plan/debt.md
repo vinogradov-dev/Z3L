@@ -266,6 +266,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `Operation::Holes`, `Grooves`, `CupBore` and `MountPattern` have no command to refuse. The hardware
   commands must read `NodeRules::admits` when they land, as T4 did for contour, edge banding and
   cutouts.
+- `[mesh]` A panel's derived holes are computed and cached but never drawn: the viewport paints the
+  undrilled body, so a cup bore is invisible until a task decides how a bore is painted — a decal, a
+  marker, or a real boolean per hole, which costs one kernel step for each of a door's dozen holes.
+  The record says what is wrong and never guesses the fix.
+- `[panel]` The material a drilled hole is clipped against is the core minus its through cutouts,
+  across the full thickness. A blind cutout that thins the board where the bore lands and an end
+  bevel that shortens the material beside it are not read yet, so both answer a hole that the shop
+  would have to correct; the crossing needs a material that varies with the point, or two
+  diagnostics that name the cutout and the bevel (O10).
 - `[ui]` The panel card's size fields, banding menu, shape section and machining add menu name the
   class's reason when it forbids them, but the class picker still offers every row: a person can
   choose a class whose host the assignment then refuses and reads the engine's English sentence in

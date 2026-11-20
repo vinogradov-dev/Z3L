@@ -74,27 +74,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
    and a missing prototype library changes nothing in the load.
   `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-- `[ ]` **O8** prices carry provenance and stock is an overlay
-  Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
-  Shape: Price with provenance and unit from the kind, a batched import as one history entry,
-   an on-hand overlay package, external keys with a system registry, a freshness notice.
-  Done: A CSV batch writes one history entry, and a price without a usable currency is refused.
-  `files: crates/catalog/src/view.rs,crates/export/src/rows.rs,app/src/settings_store.rs`
-- `[ ]` **O9** selection walks six steps and says why
-  Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
-   RGB.
-  Shape: Six ordered steps ending in a named diagnostic, family equality then rank, the
-   person's explicit choice stored on the node, results cached by revision.
-  Done: An oak corpus picks an oak plug, a white corpus re-picks it, and a miss names the step
-   that failed.
-  `files: crates/catalog/src/view.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs`
-- `[ ]` **O10** holes are derived from the hardware that causes them
-  Why: A hole belongs to the hardware that causes it, and a panel must not store one.
-  Shape: Drilling objects resolved through instances, intersected with the panel body, ordered
-   in panel-local coordinates, cached by panel, placements and revision.
-  Done: A known hinge on a known door yields an exact hole set at exact coordinates, and an
-   untouched panel is not recomputed.
-  `files: crates/model/src/panel/machining.rs,crates/param/src/lib.rs,crates/mesh/src/lib.rs`
 - `[ ]` **O11** placement rules are typed tables
   Why: System 32 and a supplier's hinge table are data a workshop owns, not code we write.
   Shape: RuleTable with typed axes and cells, completeness and overlap checked on load,
@@ -127,6 +106,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **O9** selection walks six steps and says why
+  Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
+   RGB.
+  Shape: Six ordered steps ending in a named diagnostic, family equality then rank, the
+   person's explicit choice stored on the node, results cached by revision.
+  Done: An oak corpus picks an oak plug, a white corpus re-picks it, and a miss names the step
+   that failed.
+  `files: crates/catalog/src/view.rs,crates/engine/src/resolve.rs,crates/ui/src/panel_card.rs` — `495b17d`
+
+- `[x]` **O8** prices carry provenance and stock is an overlay
+  Why: Prices go stale and arrive from outside; stock on hand is not a property of an item.
+  Shape: Price with provenance and unit from the kind, a batched import as one history entry,
+   an on-hand overlay package, external keys with a system registry, a freshness notice.
+  Done: A CSV batch writes one history entry, and a price without a usable currency is refused.
+  `files: crates/catalog/src/view.rs,crates/export/src/rows.rs,app/src/settings_store.rs` — `495b17d`
+
+- `[x]` **O10** holes are derived from the hardware that causes them
+  Why: A hole belongs to the hardware that causes it, and a panel must not store one.
+  Shape: Drilling objects resolved through instances, intersected with the panel body, ordered
+   in panel-local coordinates, cached by panel, placements and revision.
+  Done: A known hinge on a known door yields an exact hole set at exact coordinates, and an
+   untouched panel is not recomputed.
+  `files: crates/model/src/panel/hole.rs,crates/mesh/src/lib.rs,crates/geom/src/ring.rs` — `495b17d`
 
 - `[x]` **X93** a deep crossing of two boards is invisible to the contact port, so the carry and the turn pass through it
   Why: In the owner's own scene two boards cross by 60 × 60 × 100 mm and the object carry

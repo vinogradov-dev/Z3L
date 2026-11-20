@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=0b63f56 updated=2026-11-20
+STATE: milestone=M7 phase=T task=- state=idle base=495b17ddd9c51024bf561b9509812c783b13a2e4 updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -26,6 +26,17 @@ lands the copy, checks it with the loader's own rows beside what is already conn
 the connected list last, so a window sees one change once the whole package is in place. Two folders
 that claim one number, or a manifest `requires` the set cannot meet, are refused with both packages
 named (O7).
+
+The catalogue carries money and stock apart: a price names its currency, its source and its date, an
+imported batch is one history entry and a freshness notice, and stock on hand is an overlay package
+rather than a property of an item (O8). A plug follows the corpus it decorates through six ordered
+steps and a miss names the one that failed, so a workshop reads a sentence instead of a guess (O9).
+
+A drilled hole is derived and never stored: the crossing of a drilling object with the panel's own
+material — its core minus the through cutouts, not the nominal rectangle — is clipped in the panel's
+frame, ordered by entry point and cached by the panel, its placement and the objects, while a moved
+hinge leaves the body's mesh alone. Nothing carries a drilling object into a scene yet, so the body
+is drawn undrilled (O10, ADR 0150).
 
 The plan shows a stream: `plan/STATUS.md` declares the three checkouts beside the plan's own, each
 working one `[~]` entry of its phases and keeping its own session note while `STATE:` stays the
