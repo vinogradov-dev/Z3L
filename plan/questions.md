@@ -6,7 +6,6 @@ this file only when a task touches the question.
 - Folder naming, version statuses and the draft-to-production transition in the order registry.
 - What API the material and order programs expose locally (CLI, socket, HTTP), and whether they ship
   with Z3L or stay external.
-- Where the workshop profile lives: project, application settings or the resource system.
 - Whether reference retrieval (catalogues, norms, past jobs) is needed, and in what form.
 - Voice input and output: which platform or service, if any.
 - The orientation widget has no keyboard or menu equivalent; decide whether the six views deserve

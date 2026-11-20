@@ -205,8 +205,39 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   inside the footprint; a non-convex footprint is a readable refusal and never a board outside
   the case; the box case keeps today's answers; `cargo xtask ci` is green.
   `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
-
 ## Bugs
+- `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
+  Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
+   `0104-supply-names-four-sources.md`, and `docs/decisions/README.md` lists both rows under
+   one number, so "ADR 0104" in `app/src/box_gizmo.rs`, `crates/model/src/class.rs`,
+   `plan/questions.md`, `PROJECT.md` and four notes names two different decisions. `cargo xtask
+   docs` cannot see it: `state-contract/src/cli/docs.rs` compares numbers only and dedups the
+   index list, so two files that share one number both match and the row count still agrees.
+  Shape: Renumber the supply record to the next free number across its file name, its index row
+   and every reference that means it (the supply one: `crates/model/src/class.rs`,
+   `plan/notes/T1.md`, `plan/questions.md`, `PROJECT.md`), and make the check reject two files
+   with one number and one number listed twice — a scratch directory and a test per case, the
+   way the index check tests its own mismatches today.
+  Done: `cargo xtask docs` fails on a scratch directory holding two files numbered 0180 and on
+   an index that lists 0180 twice; the tree has one record per number and every "ADR 0104"
+   reference names one of them; `cargo xtask ci` is green.
+  `files: docs/decisions/README.md,state-contract/src/cli/docs.rs`
+- `[ ]` **P19** the plan still sends a session to take the rename that already landed
+  Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is
+   `furniture.scene` and the crates are bare. But `plan/rename.md` still opens with "R1 waits
+   for the release … Take it back with `cargo xtask task take R1`", the `[release]` entry in
+   `plan/debt.md` still says to run the four commits first, and `AGENTS.md` §1 and §9 still
+   send a reader to the file. A session that believes either does work already in the tree, and
+   the plan gate cannot see it because every path still exists.
+  Shape: Decide what the file is now — history, which `git log` already keeps, or a record of
+   what the four commits measured — and with the first choice delete it and every reference to
+   it: `AGENTS.md` §1 and §9, the `[release]` entry in `plan/debt.md`, the row in `plan/map.md`
+   if there is one, and the skills that name it, which `cargo xtask skills` checks as
+   backticked paths.
+  Done: No plan file or skill tells a reader to take R1 or to run its four commits; `cargo
+   xtask skills`, `cargo xtask plan` and `cargo xtask ci` are green with the file gone.
+  `files: plan/rename.md,plan/debt.md,AGENTS.md`
+
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
@@ -268,6 +299,168 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+- `[ ]` **J2** a command says what it takes, so a model can call it
+  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
+   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
+   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
+   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
+   refuses: nothing would check it against the struct it describes.
+  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
+   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
+   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
+   prints it, and the test asserts that every command whose parameters are not the unit type
+   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
+   same surface, because a disabled command with no sentence is a mystery.
+  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
+   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
+   closes; `cargo xtask ci` is green.
+  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,app/src/cli/commands.rs`
+- `[ ]` **J3** a question about the scene is one tool, and its answers are resources
+  Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that
+   shells out for state cannot see what its own last call did. MCP carries both a call and a
+   read, and the read is the half that makes a turn cheap: the tree, the parts table, the
+   diagnostics and the envelope change only when the document does.
+  Shape: The five reports become one `query` tool with a typed selector, and the stable ones
+   also become resources read by URI. Each reuses the derivation that already owns the answer,
+   and the report envelope keeps the query, the file and the revision it read, so a stored
+   answer can say what it is about. Nothing on this surface writes.
+  Done: A test lists the resources and asserts the tree resource equals the same derivation
+   read through `z3l query tree`; an unknown selector is a readable refusal; a query leaves the
+   revision and the history untouched.
+  `files: app/src/cli/query.rs,crates/engine/src/session.rs`
+- `[ ]` **J4** a batch is one edit scope, and a dry run is a plan a person reads
+  Why: ADR 0183 gave a recipe one edit scope, all or nothing and a `dry_run` that writes
+   nothing, and ADR 0190 makes the plan a report a person approves; both live in the command
+   line today, keyed to a file on disk, so the assistant cannot use them on the document a
+   person has open. Nor can they describe what a failed batch left behind.
+  Shape: The recipe run becomes a session operation with `atomic` and `dry_run` as parameters,
+   reporting what would be or was created, changed and removed plus the refusals; the CLI and
+   the MCP tool call the one function, so the two answers cannot disagree. A failed step
+   reports what applied and what rolled back, and never claims an atomicity it does not have.
+  Done: A test dispatches a three-step batch and asserts one undo entry restores the document;
+   a batch whose second step fails leaves the document untouched and names the step; `dry_run`
+   reports the three creations while neither the revision nor the history moves.
+  `files: crates/engine/src/session.rs,app/src/cli/recipe.rs`
+- `[ ]` **J5** a client we did not write drives the editor, headless
+  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
+   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
+   process can call a command except the command line. A client we did not write cannot reach
+   the editor at all.
+  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
+   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
+   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
+   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
+   and ADR 0186 require.
+  Done: A test drives a served session over stdio through `command_list` and a two-line
+   `command_batch`, and asserts one undo entry and one write; `cargo xtask layers` accepts the
+   crate and rejects `egui` in it; `z3l mcp serve` on a scene writes the file the way `z3l run`
+   does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs`
+- `[ ]` **J6** the local channel attaches an agent to the window a person is looking at
+  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
+   measured: a stdio child edits a saved file, not the document a person is looking at, so
+   without the channel the agent cannot work in the window the product is about.
+  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
+   writes the port and the token into an owner-only file in the settings directory and removes
+   it on exit; the setting is on by default and switches it off; the tools are the headless set
+   plus `ui_inspect`; a request without the token is refused before it is read as a command,
+   and a turn still dispatches at a frame boundary.
+  Done: A test with the token reaches `command_list` and one without is refused; the token file
+   is owner-only and gone after a clean exit; a second instance's file does not take the first
+   one's channel; an unauthenticated request never reaches the dispatcher.
+  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs`
+- `[ ]` **J7** the window has a chat, and a scripted backend runs a turn without a network
+  Why: This is the goal in the owner's words: a person talks to the agent in the application's
+   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
+   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
+  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
+   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
+   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
+   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
+   never from `settings.json`.
+  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
+   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
+   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
+   green.
+  `files: app/src/main.rs,crates/ui/src/theme.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs`
+- `[ ]` **J8** a recipe builds a carcass in one command and one undo step
+  Why: ADR 0192 makes the arithmetic ours and gives the model the choice; nothing of
+   `product.build`, `carcass.box` or `wardrobe.hinged` exists, so today "build a wardrobe 600 x
+   2200 x 500" is a prompt with nobody to compute it.
+  Shape: Typed recipe functions with parameters in `Length` and `Degrees`, `product.build` as
+   one command inside one edit scope, and the recipe list with its parameter ranges generated
+   from the functions themselves so a query, a tool schema and a card cannot disagree. The
+   document keeps the prototype reference, so changing a recipe never rewrites work that was
+   built from it.
+  Done: A recipe test asserts the panel count, the sizes and the placements of `carcass.box`;
+   `product.build` restores the whole carcass with one undo; a parameter outside its range is a
+   typed refusal that names the parameter; an unknown recipe name is refused like an unknown
+   command id.
+  `files: crates/param/src,crates/engine/src/commands.rs,crates/model/src/project`
+- `[ ]` **J9** the inspector finds the seven mistakes, and the model explains them
+  Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
+   that does not fit, a rail through a door and a part longer than the sheet — and a model
+   cannot be trusted to see them. A rule can, and a rule can be tested with a fixture that
+   fails before it passes.
+  Shape: One pass returning `Finding { code, severity, nodes, text, suggested_commands }` for
+   `envelope_out`, `body_overlap`, `shelf_fit`, `rail_place`, `edge_band`, `door_gap` and
+   `sheet_fit`, every number read from the workshop profile and each rule reusing the
+   derivation that owns its answer. It is exposed as `inspect` on the tool surface and as a
+   list the panel shows; the model explains it and never computes it.
+  Done: Seven fixture pairs — one scene that finds each code and one that does not — pass;
+   every finding names document ids and carries a command list; changing one profile value
+   changes that rule's verdict and no other.
+  `files: crates/model/src/project,crates/engine/src/session.rs,crates/param/src`
+- `[ ]` **J10** a preview shows what the agent built, without a device on the client
+  Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
+   of the assistant unless a person asks for one; nothing renders without a device today, so a
+   headless test and a remote client have no way to see what they built.
+  Shape: An offscreen render of the session's scene to an image the tool returns and the panel
+   shows, sized by a parameter and capped in bytes and in size; the renderer stays `render`'s
+   and the device stays the shell's, so `mcp` asks for a frame it is handed rather than owning
+   a `wgpu` context.
+  Done: A test renders the golden scene at two sizes and asserts both dimensions and a
+   non-empty body; a request with no session is a refusal; the byte cap and the size cap are
+   enforced, and no request can start a download of a scene larger than its cap.
+  `files: crates/render/src/lib.rs,crates/scene/src/lib.rs,app/src/main.rs`
+- `[ ]` **J11** an agent process owns the model loop and reaches the window over the same channel
+  Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an
+   agent they already run: the process owns the model loop, the editor owns the document and
+   the tools.
+  Shape: A backend that starts a configured command, speaks ACP over its stdio and hands it the
+   channel endpoint and token; the conversation is rendered from the protocol's own messages;
+   the tools stay the server's, so a process cannot do more than the panel that started it.
+  Done: A test with a scripted ACP process runs one turn and asserts one undo entry and the
+   panel's rendering of a tool call and its refusal; a process that dies mid-turn leaves the
+   document as the last completed batch left it.
+  `files: app/src/main.rs,crates/text/src/messages.rs`
+- `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
+  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
+   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
+   and there is no card, no record and no path from one to the other, so every build starts
+   from the same defaults.
+  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
+   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
+   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
+   card that names a material the catalogue does not hold is a readable refusal.
+  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
+   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
+   refused with the material named; the document carries the card reference, not the card.
+  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
+- `[ ]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
+  Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
+   done, and a tool surface can pass every unit test and stay unusable — wrong units, a refusal
+   nobody can act on, an answer of nine hundred lines.
+  Shape: One integration test that starts the server the way a client does, plays the model
+   with a scripted fixture and runs the five scenarios: build a cabinet 800 x 2200 x 560, check
+   it, make it 900 wide, copy it and change the doors, put it in a niche 820 x 2140 x 580.
+   Every assertion goes through `inspect`, the file or `render_preview`, never into the
+   document directly.
+  Done: The five scenarios pass, each asserting one undo entry per turn, the count of mutating
+   calls and that `undo` restores the document the scenario started from; the scripted model
+   needs no network and no key; `cargo xtask ci` is green.
+  `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
+
 ## Done
 
 - `[x]` **U115** the status bar reports and no longer carries a control
