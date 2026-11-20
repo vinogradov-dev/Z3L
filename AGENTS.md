@@ -60,7 +60,9 @@ over, and a broken plan is repaired with the tool (`--repair` on a write) rather
 or edited by hand. The plan declares the streams beside the state line (`STREAMS: agent=J catalog=O
 prototypes=Q`): `state=` and `task=` are the `app` stream's — this checkout's — and each declared
 stream is read from its own `[~]` entry, its own `plan/SESSION.<key>.md` and its row in
-`cargo xtask status` (ADR 0176).
+`cargo xtask status` (ADR 0176). A question about the current or next tasks is answered for the stream
+this checkout serves — the branch names it — and opens with that stream's name; never as four lists
+merged into one, and never for another stream's entries.
 
 ### 1.2 Reading code with the language server
 

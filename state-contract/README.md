@@ -18,7 +18,8 @@ A project that works in several checkouts adds one optional line under the state
 `STREAMS: agent=J catalog=O` — and then each declared stream keeps its own note
 (`plan/SESSION.agent.md`) and its own entry in progress; the primary stream is `app`, it owns every
 phase no other stream names, and `STATE: task=` and `state=` speak about it alone. Without the line
-there is one stream and the contract is the one above.
+there is one stream and the contract is the one above. A question about the current tasks is answered
+for the stream the checkout serves — its branch names it — and never for the four lists merged.
 
 `plan/notes/<ID>.md` is an optional fourth thing: the research note of one task. It carries what a
 session measured and ruled out — file and line pointers, dead ends, choices — never status, a
