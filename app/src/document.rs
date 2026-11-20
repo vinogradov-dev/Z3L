@@ -49,7 +49,7 @@ use crate::file_menu::{FileAction, FileMenu, PreservedSections};
 use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
-use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, WorkPlane};
+use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
 use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
@@ -2682,6 +2682,7 @@ impl Document {
             selection: self.editor.selected_nodes(),
             moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),
+            rotate_kind: RotateKind::of(shell.mode),
         };
         // A locked node keeps its transform: the guard is checked before the gizmo is updated, so a
         // drag never starts and no command is ever dispatched (ADR 0065). The status bar names the
@@ -2724,7 +2725,7 @@ impl Document {
                     let pinned = self.move_pinned();
                     self.translate_gizmo.update(ui, &response, rect, target, pointer_over_widget, pinned, handle_length)
                 }
-                Some(Transform::Rotate) => {
+                Some(Transform::Rotate | Transform::ObjectRotate) => {
                     self.rotate_gizmo.update(ui, &response, rect, target, pointer_over_widget, ring_factor)
                 }
             }
@@ -2788,7 +2789,7 @@ impl Document {
                 // The mode offers no handle, so nothing consumed the press: the click picks.
                 None => false,
                 Some(Transform::Move | Transform::Object) => self.translate_gizmo.consumed_click(),
-                Some(Transform::Rotate) => self.rotate_gizmo.consumed_click(),
+                Some(Transform::Rotate | Transform::ObjectRotate) => self.rotate_gizmo.consumed_click(),
             }
         };
 
@@ -3142,6 +3143,7 @@ impl Document {
             selection: self.editor.selected_nodes(),
             moves: settings.snaps.move_settings(),
             move_kind: MoveKind::of(shell.mode),
+            rotate_kind: RotateKind::of(shell.mode),
         };
         // The object gizmo is hidden in mesh mode: it acts on the whole selection, not on vertices.
         if let Some(edit) = self.editor.contour_edit() {
@@ -3207,7 +3209,9 @@ impl Document {
                 Some(Transform::Move | Transform::Object) => {
                     self.translate_gizmo.paint(ui, rect, paint_target, handle_length);
                 }
-                Some(Transform::Rotate) => self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor),
+                Some(Transform::Rotate | Transform::ObjectRotate) => {
+                    self.rotate_gizmo.paint(ui, rect, paint_target, ring_factor)
+                }
             }
         }
         // The rubber band is work-area paint: it lies over the image and the gizmos and under the

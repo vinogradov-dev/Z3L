@@ -102,15 +102,16 @@ use crate::view_cluster::ViewCluster;
 
 /// The transform gesture a [`TransformMode`] offers.
 ///
-/// The three gestures read the same pivot and commit through the same command, and `Select` offers
-/// none, so a caller asks the mode for one of these instead of matching four states twice. The four
+/// The four gestures read the same pivot and commit through the same command, and `Select` offers
+/// none, so a caller asks the mode for one of these instead of matching five states twice. The five
 /// modes themselves are named in `ui::transform`, beside the key that arms each one and the words
 /// the band, the node menu and the Settings page print, because three surfaces read them (U113);
 /// this file adds the gesture a mode hands the viewport, which is the shell's own business.
 ///
-/// The two moves are two tools and not one tool that guesses (N22, ADR 0147): `Move` keeps the
-/// pointer's own distance and applies no rule, and `Object` moves a body by the document's own
-/// rules — the axes it allows, the neighbours that stop it and the workspace's snapping (ADR 0165).
+/// A gesture comes in two kinds, and the difference is the rule, not the tool (N22, ADR 0147, X88):
+/// `Move` keeps the pointer's own distance and applies no rule, `Object` moves a body by the
+/// document's own rules, `Rotate` turns the selection through whatever stands beside it, and
+/// `ObjectRotate` turns it until another body stops it (ADR 0165, ADR 0180).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
     /// Three world-axis arrows move the selection without a rule.
@@ -119,6 +120,8 @@ pub(crate) enum Transform {
     Object,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
+    /// The rings turn the selection until the document's bodies stop it.
+    ObjectRotate,
 }
 
 impl Transform {
@@ -132,6 +135,7 @@ impl Transform {
             TransformMode::Move => Some(Self::Move),
             TransformMode::Object => Some(Self::Object),
             TransformMode::Rotate => Some(Self::Rotate),
+            TransformMode::ObjectRotate => Some(Self::ObjectRotate),
         }
     }
 }

@@ -30,7 +30,8 @@ mod wire;
 pub use error::ProjectError;
 pub use fill::{FillMode, FillPlan, FillRefusal, FillRequest, free_axis};
 pub use move_query::{
-    Capture, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings, Resting, SnapEnd, SnapSettings, SnapSurface, Stop,
+    Capture, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings, Resting, RotateLimit, RotateRule, SnapEnd,
+    SnapSettings, SnapSurface, Stop,
 };
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
 pub use sight::Sight;

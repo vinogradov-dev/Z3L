@@ -343,7 +343,9 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         hint(ui, mode.gesture().text(lang));
         return (done.then_some(StatusAction::EndNavigation), None);
     }
-    ui.label(egui::RichText::new(Message::Gizmo.text(lang)).color(theme::text_dim(ui)));
+    // The band names itself: five cells of words and keys say what they are, and the hint beside
+    // them says what the armed one does, so the dim "Gizmo" caption is the row's to spend elsewhere.
+    // Five gestures with their keys need the room in the longer language (X88).
     let moved = transform_mode_ui(ui, info.mode);
     theme::divider(ui);
     if let Some((element, count)) = info.mesh {
@@ -400,10 +402,10 @@ fn transform_mode_ui(ui: &mut egui::Ui, mode: TransformMode) -> Option<Transform
         .show(ui, |ui| {
             // Touching cells are what makes one band out of four states; the row's own gap stays.
             ui.spacing_mut().item_spacing.x = 0.0;
-            // A cell is a word and a key, not a word and two paddings: the four keys are what U113
-            // adds to the band, and the narrowest window in the longer language still has to hold
-            // the whole band beside the readouts.
-            ui.spacing_mut().button_padding.x = theme::STEP;
+            // A cell is a word and a key, not a word and two paddings: the five keys are what U113
+            // and X88 add to the band, and the narrowest window in the longer language still has to
+            // hold the whole band beside the readouts. One point a side is what five cells leave.
+            ui.spacing_mut().button_padding.x = 1.0;
             let mut clicked = false;
             for entry in TransformMode::ALL {
                 let text = entry.cell(ui, lang);
@@ -775,11 +777,13 @@ mod tests {
     }
 
     #[test]
-    fn the_four_mode_cells_fit_the_narrowest_window_with_their_keys() {
+    fn the_five_mode_cells_fit_the_narrowest_window_with_their_keys() {
         // The band is window chrome, so it must fit the narrowest window the shell opens (640 pt) with
         // the hint and the right-hand readouts beside it: a mode nobody can see is a mode nobody has
         // (ADR 0113, ADR 0147). U113 adds a key to every cell, so the floor is measured again: the
-        // last cell's right edge has to stay inside the left zone, where the readouts begin.
+        // last cell's right edge has to stay inside the left zone, where the readouts begin. X88's
+        // fifth gesture is what spends the room the dim caption used to take, and the cells keep
+        // their words and their keys: 431 pt in the longer language, against 448 available.
         let ctx = egui::Context::default();
         ui::theme::install(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
@@ -1118,6 +1122,6 @@ mod tests {
         output.drop_without_applying_deltas();
         assert!(texts.iter().any(|text| text.contains("Front · Panel")), "the centre draws: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Snap 10 mm")), "the right draws: {texts:?}");
-        assert!(texts.iter().any(|text| text.contains("Gizmo")), "the left draws: {texts:?}");
+        assert!(texts.iter().any(|text| text.contains("Select")), "the left draws the gesture band: {texts:?}");
     }
 }

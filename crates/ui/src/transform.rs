@@ -1,4 +1,4 @@
-//! The viewport's four gestures, and the key each one answers.
+//! The viewport's five gestures, and the key each one answers.
 //!
 //! The transform mode is view state: it belongs to the window rather than to a document, it is never
 //! serialized and a change of mode writes no undo entry (ADR 0113). It is named here rather than in
@@ -6,9 +6,10 @@
 //! viewport draw, and the Settings pages — and a value offered by two hand-written lists drifts apart
 //! the moment either moves.
 //!
-//! The four are one band and four keys (U113): the mode answers its own row of the inventory's key
+//! The five are one band and five keys (U113): the mode answers its own row of the inventory's key
 //! table, so the cell, the menu entry and the Settings row print one spelling and the shell consumes
-//! the pair the table holds.
+//! the pair the table holds. Each free gesture has its measured pair on the shifted letter, because
+//! the difference is the rule and not the tool (ADR 0147, X88).
 //!
 //! Changes when: a gesture is added to or removed from the viewport, or a mode's words move.
 
@@ -38,11 +39,17 @@ pub enum TransformMode {
     Object,
     /// Three local-axis rings turn the selection about its origin.
     Rotate,
+    /// The same rings, measured by the document: a turn stops where another body stops it, and the
+    /// release is refused where it would put a body inside one (X88, ADR 0180).
+    ObjectRotate,
 }
 
 impl TransformMode {
     /// Every mode, in the order the band and the menu list them.
-    pub const ALL: [Self; 4] = [Self::Select, Self::Move, Self::Object, Self::Rotate];
+    ///
+    /// Each pair sits together: the free gesture first and its measured twin beside it, so a person
+    /// who reaches for the shifted key of a mode finds it where the band drew it (U113, X88).
+    pub const ALL: [Self; 5] = [Self::Select, Self::Move, Self::Object, Self::Rotate, Self::ObjectRotate];
 
     /// The inventory id the mode is filed under, and the id its key runs.
     pub const fn id(self) -> &'static str {
@@ -51,6 +58,7 @@ impl TransformMode {
             Self::Move => inventory::TRANSFORM_MOVE,
             Self::Object => inventory::TRANSFORM_OBJECT,
             Self::Rotate => inventory::TRANSFORM_ROTATE,
+            Self::ObjectRotate => inventory::TRANSFORM_OBJECT_ROTATE,
         }
     }
 
@@ -61,6 +69,7 @@ impl TransformMode {
             Self::Move => Message::Move,
             Self::Object => Message::Object,
             Self::Rotate => Message::Rotate,
+            Self::ObjectRotate => Message::ObjectRotate,
         }
     }
 
@@ -71,7 +80,7 @@ impl TransformMode {
 
     /// The words of the sentence that says which gesture the mode offers.
     ///
-    /// Each of the four carries one, because two moves side by side read as the same word: the
+    /// Each of the five carries one, because two gestures side by side read as the same word: the
     /// difference between them is the rule, not the tool.
     pub const fn hint_words(self) -> Message {
         match self {
@@ -79,6 +88,7 @@ impl TransformMode {
             Self::Move => Message::MoveHint,
             Self::Object => Message::ObjectHint,
             Self::Rotate => Message::RotateHint,
+            Self::ObjectRotate => Message::ObjectRotateHint,
         }
     }
 
@@ -89,12 +99,12 @@ impl TransformMode {
 
     /// The icon the mode draws beside its word, when its artwork exists.
     ///
-    /// The object move is the one mode with a drawing so far; the other three answer `None`, and a
+    /// The object move is the one mode with a drawing so far; the other four answer `None`, and a
     /// cell without an image is the cell it always was (`assets/README.md`).
     pub fn icon(self) -> Option<crate::icons::Icon> {
         match self {
             Self::Object => Some(crate::icons::transform::OBJECT),
-            Self::Select | Self::Move | Self::Rotate => None,
+            Self::Select | Self::Move | Self::Rotate | Self::ObjectRotate => None,
         }
     }
 
@@ -115,7 +125,7 @@ impl TransformMode {
     /// would push the last cell under the readouts on the right (U113).
     pub fn cell(self, ui: &egui::Ui, lang: Lang) -> egui::WidgetText {
         let (name, key) = match self.key() {
-            Some(key) => (self.label(lang), format!("  ({key})")),
+            Some(key) => (self.label(lang), format!(" ({key})")),
             None => (self.label(lang), String::new()),
         };
         let style = ui.style();
@@ -137,13 +147,13 @@ impl TransformMode {
     /// cell by the words a person reads without building an `egui` layout to do it.
     pub fn caption(self, lang: Lang) -> String {
         match self.key() {
-            Some(key) => format!("{}  ({key})", self.label(lang)),
+            Some(key) => format!("{} ({key})", self.label(lang)),
             None => self.label(lang).to_owned(),
         }
     }
 }
 
-/// The mode a key press or a menu entry names, if `id` is one of the four.
+/// The mode a key press or a menu entry names, if `id` is one of the five.
 ///
 /// A menu entry knows its mode, so this exists for the one direction a surface without the value
 /// needs: the shell reads a key by id, and a test asks the table whether an id is a mode at all.
@@ -159,7 +169,7 @@ mod tests {
 
     #[test]
     fn every_mode_carries_a_id_a_key_and_words_in_both_languages() {
-        // The four are one band and four keys, so a mode with no id would be a cell that cannot be
+        // The five are one band and five keys, so a mode with no id would be a cell that cannot be
         // bound and a mode with no key a cell that teaches nothing (U113).
         for mode in TransformMode::ALL {
             assert!(from_id(mode.id()) == Some(mode), "`{}` reads back as its mode", mode.id());
