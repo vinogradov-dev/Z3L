@@ -220,10 +220,17 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // The ring, not the path: a body's profile is the ring it grew from, so the three cells
             // enable on a body exactly as on the drawing it was extruded from (X98).
             let enabled = selected_ring;
+            // A body is a solid: the cell says where bodies are cut instead of sitting dead, because
+            // a body's profile is not a drawing to combine (W2, ADR 0194 revised).
+            let hint = if enabled || !selected_body {
+                tool_hint(tool.label.text(lang), tool.key())
+            } else {
+                Message::ContourBooleanBodiesOnModel.text(lang).to_owned()
+            };
             Ready {
                 enabled,
                 armed: is_armed(active, kind),
-                hint: tool_hint(tool.label.text(lang), tool.key()),
+                hint,
                 action: enabled.then_some(ToolAction::ContourBoolean(op)),
             }
         }

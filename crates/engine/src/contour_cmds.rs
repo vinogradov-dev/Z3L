@@ -348,17 +348,20 @@ fn operands_ready(session: &Session, params: &Value, command: &'static str) -> b
 
 /// The closed chain a node draws, when it draws one.
 ///
-/// A path object and a constructive body both answer with their profile; a contour set, a mesh, a
-/// primitive and a node that is not an object answer with nothing.
+/// The **drawn** ring a contour boolean reads: a path object's chain and nothing else.
+///
+/// A constructive body deliberately does not answer. Combining bodies is what the Model tab's
+/// booleans do, on solids; combining their profiles here silently turned a body into a drawing and
+/// consumed the body on the way (ADR 0194, revised by W2). A contour set, a mesh, a primitive and a
+/// node that is not an object answer with nothing either.
 fn operand_profile(project: &Project, id: Id) -> Option<&Path> {
-    project.object(id).and_then(|object| object.geometry().profile())
+    project.object(id).and_then(|object| object.geometry().as_path())
 }
 
 /// Whether a node draws one closed ring a contour boolean can take, at any placement.
 ///
-/// The three boolean cells and the armed mode both read this, so a body enables them exactly as the
-/// drawing it was extruded from does, and a node that draws no ring is off and named by the command
-/// that refuses it.
+/// The three Sketch cells and the armed mode both read this. A body is not one: it is cut on the
+/// Model tab, where the operands are solids (ADR 0194, revised by W2).
 pub fn is_contour_operand(project: &Project, id: Id) -> bool {
     operand_profile(project, id).is_some_and(|path| path.is_closed() && path.to_contour().is_ok())
 }
@@ -721,88 +724,30 @@ mod tests {
     }
 
     #[test]
-    fn two_bodies_combine_by_the_profiles_they_grew_from() {
-        // The owner's habit on 2026-11-20: draw a square, extrude it, draw a second, extrude it, and
-        // cut one out of the other. A body's profile is the ring it was extruded from, so both
-        // operations read it where it stands (X98).
-        let (project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
-        let mut union_session = Session::with_directory(project, sample_catalog());
-        let outcome = union_session
-            .dispatch(CONTOUR_UNION_ID, &params("Union", ids[0], &[ids[1]]))
-            .expect("two bodies unite by their profiles");
-        {
-            let project = union_session.project();
-            let path = project
-                .object(outcome.created_id().expect("the command returns the new object"))
-                .expect("the new object")
-                .geometry()
-                .as_path()
-                .expect("the union of two crossing profiles is one ring")
-                .clone();
-            assert_eq!(path.bounds_micrometres(), ([0, 0], [150_000, 75_000]), "the union keeps both extents");
-            assert!((ring_area(&path) - 8_750.0).abs() < 0.01, "the shared corner is counted once");
-            assert!(project.object(ids[0]).is_none(), "the base body is consumed");
-            assert!(project.object(ids[1]).is_none(), "the operand body is consumed");
-        }
-
-        let (project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
-        let mut shared_session = Session::with_directory(project, sample_catalog());
-        let outcome = shared_session
-            .dispatch(CONTOUR_INTERSECT_ID, &params("Shared", ids[0], &[ids[1]]))
-            .expect("two bodies intersect by their profiles");
-        let project = shared_session.project();
-        let path = project
-            .object(outcome.created_id().expect("the new object"))
-            .expect("the new object")
-            .geometry()
-            .as_path()
-            .expect("the shared corner is one ring")
-            .clone();
-        assert_eq!(path.bounds_micrometres(), ([50_000, 25_000], [100_000, 50_000]), "only the shared profile");
-        assert!((ring_area(&path) - 50.0 * 25.0).abs() < 0.01, "only the shared corner is material");
-    }
-
-    #[test]
-    fn a_body_and_a_drawn_ring_combine_in_one_operation() {
-        let (mut project, ids) = body_project(&[(0, 0, 100, 50)]);
-        let root = project.root().id();
-        let body = ids[0];
-        let drawn = ring(&mut project, root, "Drawn", 50, 25, 150, 75);
-        let mut session = Session::with_directory(project, sample_catalog());
-
-        let outcome =
-            session.dispatch(CONTOUR_UNION_ID, &params("Union", body, &[drawn])).expect("a body meets a drawing");
-
-        let project = session.project();
-        let path = project
-            .object(outcome.created_id().expect("the new object"))
-            .expect("the new object")
-            .geometry()
-            .as_path()
-            .expect("two crossing rings leave one")
-            .clone();
-        assert_eq!(path.bounds_micrometres(), ([0, 0], [150_000, 75_000]));
-        assert!(project.object(body).is_none(), "the body is consumed");
-        assert!(project.object(drawn).is_none(), "the drawing is consumed");
-    }
-
-    #[test]
-    fn a_tool_marked_body_survives_and_keeps_its_profile() {
+    fn a_body_is_refused_and_named_as_one_the_model_tab_cuts() {
+        // W2, ADR 0194 revised: a contour boolean combines **drawings**. A body is a solid, and
+        // combining its profile here turned the body into a drawing and consumed it on the way —
+        // which is what the owner met when a subtraction left a contour instead of a body.
         let (mut project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
-        project.set_object_tool(ids[1], true).expect("mark the operand body");
+        let root = project.root().id();
+        let drawn = ring(&mut project, root, "Drawn", 50, 25, 150, 75);
+        let [first, second] = [ids[0], ids[1]];
         let mut session = Session::with_directory(project, sample_catalog());
+        let before = session.project().revision();
+        let before_count = session.project().root().children().len();
 
-        let outcome = session.dispatch(CONTOUR_UNION_ID, &params("Union", ids[0], &[ids[1]])).expect("the tool joins");
-
-        let project = session.project();
-        assert!(project.object(outcome.created_id().expect("the new object")).is_some());
-        assert!(project.object(ids[0]).is_none(), "an unmarked body is consumed");
-        let kept = project.object(ids[1]).expect("a tool body stays where it is");
-        assert_eq!(
-            kept.geometry().profile().map(Path::bounds_micrometres),
-            Some(([50_000, 25_000], [150_000, 75_000])),
-            "the kept body still owns the profile it was combined by"
-        );
+        for (base, operands) in [(first, vec![drawn]), (first, vec![second])] {
+            let error = session
+                .dispatch(CONTOUR_UNION_ID, &params("Union", base, &operands))
+                .expect_err("a body is not a drawing");
+            let sentence = error.to_string();
+            assert!(sentence.contains("drawn contour"), "the refusal says what it needs: {sentence}");
+        }
+        assert_eq!(session.project().revision(), before, "a refused boolean writes nothing");
+        assert_eq!(session.project().root().children().len(), before_count, "and creates nothing");
+        for body in [first, second] {
+            assert!(session.project().object(body).is_some(), "the body stays where it is");
+        }
     }
 
     #[test]
@@ -824,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ready_ring_is_a_path_or_a_body_and_nothing_else() {
+    fn the_ready_ring_is_a_drawn_contour_and_nothing_else() {
         let mut project = sample_project();
         let root = project.root().id();
         let drawn = ring(&mut project, root, "Drawn", 0, 0, 100, 50);
@@ -847,7 +792,7 @@ mod tests {
         let panel = project.panel(Id::new(2).expect("the sample panel id")).expect("the sample shelf").id();
 
         assert!(is_contour_operand(&project, drawn), "a drawn ring is an operand");
-        assert!(is_contour_operand(&project, body), "a body is an operand through the profile it grew from");
+        assert!(!is_contour_operand(&project, body), "a body is cut on the Model tab, not turned into a drawing here");
         assert!(!is_contour_operand(&project, chain), "an open chain is not");
         assert!(!is_contour_operand(&project, sphere), "a primitive is not");
         assert!(!is_contour_operand(&project, mesh), "a mesh is not");

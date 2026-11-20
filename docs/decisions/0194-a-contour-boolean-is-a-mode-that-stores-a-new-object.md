@@ -39,10 +39,13 @@ a figure with a hole, and a hole needs the region vocabulary of G4. Such an oper
 nothing and says so, exactly as an empty intersection or a result equal to one operand does: a
 refusal writes nothing, and the sources stay.
 
-**An operand's ring is the one chain its node draws.** A path object answers with the chain the
-user drew and a constructive body with the profile it was extruded from (ADR 0074), so a body that
-was drawn, extruded and kept combines exactly as the drawing it was made of, while a contour set
-draws several rings and a primitive and a mesh draw none (X98).
+**An operand is a drawing.** A path object answers with the chain the user drew. A constructive
+**body** deliberately does not: combining bodies' profiles is what the Model tab's booleans do, on
+solids (ADR 0197), and doing it here turned a body into a drawing and consumed the body on the way —
+the owner met exactly that when a subtraction left a contour instead of a body. This revises X98,
+which had let a body answer with the profile it was extruded from; the sketch tab's three cells now
+read a drawn chain only, and a body selection makes them say where bodies are cut. A contour set
+draws several rings, a primitive and a mesh draw none.
 
 **A panel outline is never an operand.** A panel's cutouts are its parameters, and a cutout that
 would split the board into two is that command's refusal, not a boolean over a panel's contour.

@@ -653,7 +653,7 @@ const SKETCH: [GroupSpec; 7] = [
     },
     GroupSpec {
         id: "sketch.booleans",
-        label: Message::GroupBooleans,
+        label: Message::GroupContourBooleans,
         tools: &[
             ToolSpec {
                 id: "sketch.booleans.union",

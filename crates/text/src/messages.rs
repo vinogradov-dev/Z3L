@@ -874,6 +874,11 @@ messages! {
     GroupDimensions = ["Dimensions", "Размеры"],
     GroupMeasure = ["Measure", "Измерение"],
     GroupBooleans = ["Booleans", "Булевы"],
+    GroupContourBooleans = ["Contours", "Контуры"],
+    ContourBooleanBodiesOnModel = [
+        "A body is cut by the Model tab's booleans",
+        "Тело режется булевыми операциями вкладки «Модель»"
+    ],
     GroupDraft = ["Draft", "Черновик"],
     GroupPrimitives = ["Primitives", "Примитивы"],
     GroupFaces = ["Faces", "Грани"],

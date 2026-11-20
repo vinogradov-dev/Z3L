@@ -1031,8 +1031,10 @@ mod tests {
         for caption in ["MODIFY", "CONSTRUCTION", "DIMENSIONS"] {
             assert!(!texts.iter().any(|text| text == caption), "{caption} holds no live tool: {texts:?}");
         }
-        // The booleans became live cells with G3, so their group is captioned like the other two.
-        assert!(texts.iter().any(|text| text == "BOOLEANS"), "BOOLEANS holds three live tools: {texts:?}");
+        // The sketch tab's three cells combine **drawings** (G3), and since W2 their caption says so:
+        // a body is cut on the Model tab, whose own group keeps the word "Booleans".
+        assert!(texts.iter().any(|text| text == "CONTOURS"), "CONTOURS holds three live tools: {texts:?}");
+        assert!(!texts.iter().any(|text| text == "BOOLEANS"), "the sketch tab cuts no body: {texts:?}");
     }
 
     #[test]
