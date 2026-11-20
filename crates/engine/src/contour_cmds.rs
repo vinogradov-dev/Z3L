@@ -413,6 +413,7 @@ mod tests {
 
     use model::{Geometry, Id, Path, Placement, Project};
     use testkit::{millimetres, sample_catalog, sample_project};
+    use units::Length;
 
     use crate::CommandRegistry;
 
@@ -615,6 +616,39 @@ mod tests {
         assert!(session.project().object(outcome.created_id().expect("a new object")).is_some());
         assert!(session.project().object(base).is_none(), "an unmarked ring is consumed");
         assert!(session.project().object(cutter).is_some(), "a tool stays where it is");
+    }
+
+    #[test]
+    fn a_circle_cut_by_a_rectangle_stores_the_arc_bounded_piece() {
+        // The owner's own case on 2026-11-20: a 650.308 mm circle at (90, -40) and a 730 x 810 board
+        // at (155, 645). The intersection is one ring of arcs and lines, and it was refused because
+        // the stored arc's endpoint comes from the sum of two rounded angles, twice the slack the
+        // document allowed (ADR 0072); the ring now stores and draws.
+        let mut project = sample_project();
+        let root = project.root().id();
+        let circle =
+            Path::circle([millimetres(90), millimetres(-40)], Length::from_micrometres(650_308)).expect("a circle");
+        let board = Path::rectangle([millimetres(-210), millimetres(240)], [millimetres(520), millimetres(1_050)])
+            .expect("a board");
+        let base = project.add_object(root, "Board", Placement::IDENTITY, Geometry::Path(board)).expect("an object");
+        let cutter =
+            project.add_object(root, "Circle", Placement::IDENTITY, Geometry::Path(circle)).expect("an object");
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let outcome =
+            session.dispatch(CONTOUR_INTERSECT_ID, &params("Corner", base, &[cutter])).expect("the ring stores");
+
+        let id = outcome.created_id().expect("a new object");
+        let path = session.project().object(id).expect("the new object").geometry().as_path().expect("one ring");
+        assert!(path.is_closed(), "the result is a ring");
+        // The three straight edges are the board's and exact; the arc's own endpoint is derived from
+        // whole millidegrees, so it lands within the document's joint tolerance of the edge it meets
+        // — 11 µm of radius plus the rounding of its centre (ADR 0072). The piece is the board's
+        // corner up to the circle's top.
+        let (min, max) = path.bounds_micrometres();
+        assert_eq!((min[1], max[0]), (240_000, 520_000), "the bottom and the right edge are the board's");
+        assert!((-210_000 - 13..=-210_000).contains(&min[0]), "the left edge is the board's within the slack: {min:?}");
+        assert!((610_308 - 13..=610_308).contains(&max[1]), "the top is the circle's within the slack: {max:?}");
     }
 
     #[test]

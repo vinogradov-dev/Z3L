@@ -418,6 +418,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_arc_joint_covers_both_of_its_rounded_angles() {
+        // A boolean cuts a circle with a straight edge and leaves a joint between the arc and the
+        // line. The arc's endpoint comes from the start angle *and* the sweep, each stored as whole
+        // millidegrees, so the point can move by a whole millidegree of the radius: 11 µm on a
+        // 650 mm arc. The half-step bound this rule began with refused exactly that ring (G3).
+        let radius = i128::from(650_308_i64);
+        let slack = arc_slack_micrometres(radius);
+        assert_eq!(slack, 13, "a whole millidegree of 650 mm is 11 µm plus the rounded centre and radius");
+        let half_step = radius * 873 / 100_000_000;
+        assert!(slack > i64::try_from(half_step).expect("fits"), "the half-step bound was the defect");
+
+        // A small arc stays tight: a 10 mm radius moves its endpoint by a fiftieth of a micrometre,
+        // so only the rounding of its centre and radius is left.
+        assert_eq!(arc_slack_micrometres(10_000), 2, "the units carry the rounding of the centre and radius");
+
+        // Two stored points rounded independently miss each other by at most 1.42 µm, which the
+        // base bound covers; the joint of two lines needs no more.
+        let line =
+            ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)]).expect("a line");
+        let next = ContourSegment::line([millimetres(100), millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("a line");
+        assert_eq!(joint_tolerance_micrometres(line, next), 2);
+    }
+
+    #[test]
     fn a_line_round_trips_through_serde() {
         let segment = ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(40)])
             .expect("a valid line");
@@ -597,8 +622,8 @@ mod tests {
                 ContourSegment::line(point(0, 50_000), last).expect("the closing line"),
             ]
         };
-        assert!(Contour::new(square(point(1, 0))).is_ok(), "one micrometre is still a joint");
-        assert_eq!(Contour::new(square(point(2, 0))), Err(ContourError::NotClosed { index: 3 }));
+        assert!(Contour::new(square(point(2, 0))).is_ok(), "two micrometres are the rounding of two points");
+        assert_eq!(Contour::new(square(point(3, 0))), Err(ContourError::NotClosed { index: 3 }));
     }
 
     /// An arc stores its centre, radius and angles, so its start point is derived: after rounding it
@@ -619,8 +644,8 @@ mod tests {
         ring.to_geometry().expect("the geometry layer uses the same tolerance");
     }
 
-    /// A 600 mm arc can miss the drawn joint by about `radius × 8.73e-6` ≈ 5 µm after its centre,
-    /// radius and angle are rounded; a fixed one-micrometre bound refused the ring (ADR 0072).
+    /// A 600 mm arc can miss the drawn joint by `radius × 1.746e-5` ≈ 10 µm after its centre, radius
+    /// and two angles are rounded; a fixed one-micrometre bound refused the ring (ADR 0072).
     #[test]
     fn a_ring_takes_the_rounding_slack_of_a_large_arc() {
         let arc = ContourSegment::arc(
@@ -639,9 +664,9 @@ mod tests {
                 ContourSegment::line([Length::ZERO, Length::ZERO], [millimetres(600), Length::ZERO]).expect("the base"),
             ])
         };
-        let rounded = ring(5).expect("five micrometres are inside the slack of a 600 mm arc");
+        let rounded = ring(10).expect("ten micrometres are inside the slack of a 600 mm arc");
         rounded.to_geometry().expect("the geometry boundary accepts the same joint");
-        assert_eq!(ring(7), Err(ContourError::NotClosed { index: 0 }), "past the slack it is a gap");
+        assert_eq!(ring(15), Err(ContourError::NotClosed { index: 0 }), "past the slack it is a gap");
     }
 
     /// A small arc gets a small slack: 100 mm rounds to less than one micrometre, so the one-unit
@@ -1523,17 +1548,19 @@ mod tests {
     }
 
     #[test]
-    fn a_joint_may_miss_by_one_micrometre_and_no_more() {
+    fn a_joint_may_miss_by_the_drawing_tolerance_and_no_more() {
+        // Two stored points rounded to whole micrometres independently miss each other by up to
+        // 1.42 µm, so the base bound is two units and a third one is a gap (ADR 0072).
         let first =
             ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)]).expect("line");
-        let one_micrometre = Length::from_micrometres(100_001);
-        let touching =
-            ContourSegment::line([one_micrometre, millimetres(0)], [millimetres(100), millimetres(50)]).expect("line");
-        assert!(Path::new(vec![first, touching], false).is_ok(), "a one-micrometre gap is accepted");
-
         let two_micrometres = Length::from_micrometres(100_002);
-        let broken =
+        let touching =
             ContourSegment::line([two_micrometres, millimetres(0)], [millimetres(100), millimetres(50)]).expect("line");
+        assert!(Path::new(vec![first, touching], false).is_ok(), "a two-micrometre gap is accepted");
+
+        let three_micrometres = Length::from_micrometres(100_003);
+        let broken = ContourSegment::line([three_micrometres, millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("line");
         assert_eq!(Path::new(vec![first, broken], false), Err(PathError::NotJoined { index: 0 }));
     }
 
@@ -1556,9 +1583,9 @@ mod tests {
         assert_eq!(path.entries().len(), 4);
 
         let mut open = square();
-        open[3] = ContourSegment::line([millimetres(0), millimetres(50)], [Length::from_micrometres(2), Length::ZERO])
+        open[3] = ContourSegment::line([millimetres(0), millimetres(50)], [Length::from_micrometres(3), Length::ZERO])
             .expect("line");
-        assert_eq!(Path::new(open, true), Err(PathError::NotClosed), "two micrometres do not close");
+        assert_eq!(Path::new(open, true), Err(PathError::NotClosed), "three micrometres do not close");
     }
 
     #[test]
@@ -2238,11 +2265,12 @@ pub const MAX_POLYGON_SIDES: u32 = 128;
 
 /// Base joint tolerance between two consecutive path segments, in micrometres.
 ///
-/// A drawn arc endpoint is exact only in floating point, so after rounding to whole micrometres it
-/// can differ from the next stored endpoint by one unit; an arc adds the radius-dependent rounding
-/// slack of [`arc_slack_micrometres`] on top. This is the same rule the document ring uses when it
-/// assembles and when it converts to geometry (ADR 0072).
-const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 1;
+/// Two stored endpoints rounded to whole micrometres independently can miss each other by
+/// `sqrt(2)/2 + sqrt(2)/2` micrometres — each coordinate moves by at most half a unit, so the
+/// diagonal bound is 1.42 — and this bound is that rounding rounded up; an arc adds the
+/// radius-dependent slack of [`arc_slack_micrometres`] on top. This is the same rule the document
+/// ring uses when it assembles and when it converts to geometry (ADR 0072).
+const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 2;
 
 /// An ordered chain of directed lines and arcs in a local XY plane.
 ///
@@ -3031,9 +3059,9 @@ fn joints_meet(current: ContourSegment, next: ContourSegment) -> Result<bool, Co
 
 /// The joint tolerance between two consecutive stored segments, in micrometres.
 ///
-/// The one document unit of [`PATH_JOINT_TOLERANCE_MICROMETRES`] covers the rounding of the two
-/// stored points; an arc adds [`arc_slack_micrometres`] because its endpoint is derived from a
-/// rounded centre, radius and angle (ADR 0072).
+/// [`PATH_JOINT_TOLERANCE_MICROMETRES`] covers the rounding of the two stored points; an arc adds
+/// [`arc_slack_micrometres`] because its endpoint is derived from a rounded centre, radius and a
+/// rounded pair of angles (ADR 0072).
 fn joint_tolerance_micrometres(first: ContourSegment, next: ContourSegment) -> i64 {
     let base = PATH_JOINT_TOLERANCE_MICROMETRES;
     let slack = |segment: ContourSegment| match segment {
@@ -3045,15 +3073,18 @@ fn joint_tolerance_micrometres(first: ContourSegment, next: ContourSegment) -> i
 
 /// The rounding slack of an arc endpoint of this radius, in micrometres.
 ///
-/// An arc stores whole millidegrees, so its derived endpoint can move by
-/// `radius × 8.73e-6` — half a millidegree in radians — plus the radius and centre rounding the
-/// base bound already covers. `873 / 100_000_000` is that factor as an exact decimal. The result
-/// is rounded down, and the one-unit base then covers the remainder, so the document never accepts
-/// a joint the geometry boundary would refuse.
+/// An arc stores whole millidegrees, and its endpoint is derived from the *sum* of two of them — the
+/// start angle and the sweep — so each rounding moves the point by up to half a millidegree and the
+/// two together by a whole one: `radius × 1.746e-5` radians. The centre and the radius are rounded
+/// too, which adds at most `sqrt(2)/2 + 1/2` micrometres, carried here as one more unit.
+/// `1_746 / 100_000_000` is a whole millidegree as an exact-ish decimal; the product is rounded down
+/// and two units cover the remainder, so the document never accepts a joint the geometry boundary
+/// would refuse. The half-millidegree bound this rule started with refused the arc a boolean leaves
+/// at a circle's crossing with a straight edge (G3, ADR 0072).
 fn arc_slack_micrometres(radius_micrometres: i128) -> i64 {
-    let product = radius_micrometres.saturating_mul(873);
+    let product = radius_micrometres.saturating_mul(1_746);
     let slack = product / 100_000_000;
-    i64::try_from(slack).unwrap_or(i64::MAX)
+    i64::try_from(slack).unwrap_or(i64::MAX).saturating_add(2)
 }
 
 /// The joint tolerance between two geometry segments converted from stored ones, in millimetres.
@@ -3074,7 +3105,7 @@ pub fn joint_tolerance_mm(first: Segment, second: Segment) -> f64 {
             }
         }
     };
-    let micrometres = 1_i64.saturating_add(slack(first)).saturating_add(slack(second));
+    let micrometres = PATH_JOINT_TOLERANCE_MICROMETRES.saturating_add(slack(first)).saturating_add(slack(second));
     micrometres as f64 * 1.0e-3
 }
 
