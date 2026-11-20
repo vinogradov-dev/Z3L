@@ -139,7 +139,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
+## Done
+
+- `[x]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
   Why: The owner asked for a rotation tool that honours the bodies: turning a door into its
    carcass must stop at the frame, and the simulation of an opening front needs the same rule
    (owner, 2026-11-19).
@@ -153,9 +155,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A turn of a board into a neighbour stops on its face and the log names it; a turn away
    from it is granted whole; a free rotation still passes through (ADR 0180); the gate is
    green.
-  `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs`
-
-## Done
+  `files: crates/model/src/project/move_query.rs, crates/model/src/project/mod.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, app/src/rotate_gizmo.rs, app/src/gizmo_math.rs, app/src/document.rs, crates/text/src/messages.rs` — `0d28e62`
 
 - `[x]` **X92** the probe reads a body the boxes cannot describe, and no other
   Why: X90 delivered the port's ray () and the rule's lazy bodies, but measuring a cell against

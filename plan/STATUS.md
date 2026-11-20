@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=ba23570 updated=2026-11-20
+STATE: milestone=M7 phase=T task=- state=idle base=0d28e62 updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -27,7 +27,7 @@ plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176)
 
 ## Next
 
-Nothing is scheduled: 12 open tasks wait in `## Next`.
+Nothing is scheduled: 11 open tasks wait in `## Next`.
 
 ## Index
 
