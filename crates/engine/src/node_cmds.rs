@@ -16,6 +16,7 @@ use model::{
     ClassCode, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange, PropertyValue,
     SYSTEM_CLASS,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::Length;
@@ -34,7 +35,7 @@ pub const ASSEMBLY_CREATE_LABEL: Message = Message::CmdCreateAssembly;
 /// Parameters for `assembly.create`.
 ///
 /// The command creates a container marked as a furniture component.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssemblyCreate {
     /// Id of the container that receives the new component.
@@ -46,8 +47,12 @@ pub struct AssemblyCreate {
 }
 
 /// The `assembly.create` command.
-pub(crate) const ASSEMBLY_CREATE: CommandSpec =
-    CommandSpec::new(ASSEMBLY_CREATE_ID, ASSEMBLY_CREATE_LABEL, assembly_create_enabled, assembly_create_run);
+pub(crate) const ASSEMBLY_CREATE: CommandSpec = CommandSpec::new::<AssemblyCreate>(
+    ASSEMBLY_CREATE_ID,
+    ASSEMBLY_CREATE_LABEL,
+    assembly_create_enabled,
+    assembly_create_run,
+);
 
 fn assembly_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<AssemblyCreate>(params, ASSEMBLY_CREATE_ID) else {
@@ -75,7 +80,7 @@ pub const NODE_RENAME_ID: &str = "node.rename";
 pub const NODE_RENAME_LABEL: Message = Message::CmdRename;
 
 /// Parameters for `node.rename`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeRename {
     /// Panel or container to rename.
@@ -86,7 +91,7 @@ pub struct NodeRename {
 
 /// The `node.rename` command.
 pub(crate) const NODE_RENAME: CommandSpec =
-    CommandSpec::new(NODE_RENAME_ID, NODE_RENAME_LABEL, node_rename_enabled, node_rename_run);
+    CommandSpec::new::<NodeRename>(NODE_RENAME_ID, NODE_RENAME_LABEL, node_rename_enabled, node_rename_run);
 
 fn node_rename_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeRename>(params, NODE_RENAME_ID) else {
@@ -117,7 +122,7 @@ pub const NODE_DELETE_ID: &str = "node.delete";
 pub const NODE_DELETE_LABEL: Message = Message::CmdDelete;
 
 /// Parameters for `node.delete`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDelete {
     /// Panel or container to remove with all of its children.
@@ -126,7 +131,7 @@ pub struct NodeDelete {
 
 /// The `node.delete` command.
 pub(crate) const NODE_DELETE: CommandSpec =
-    CommandSpec::new(NODE_DELETE_ID, NODE_DELETE_LABEL, node_delete_enabled, node_delete_run);
+    CommandSpec::new::<NodeDelete>(NODE_DELETE_ID, NODE_DELETE_LABEL, node_delete_enabled, node_delete_run);
 
 fn node_delete_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeDelete>(params, NODE_DELETE_ID) else {
@@ -153,7 +158,7 @@ pub const NODE_DELETE_MANY_ID: &str = "node.delete.many";
 pub const NODE_DELETE_MANY_LABEL: Message = Message::CmdDeleteSelection;
 
 /// Parameters for `node.delete.many`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDeleteMany {
     /// Panels and containers to remove; a node whose ancestor is listed too goes with that
@@ -166,8 +171,12 @@ pub struct NodeDeleteMany {
 /// The whole batch is one document change: one revision bump and one undo entry, so a selection
 /// removed with one gesture comes back with one undo. The shell dispatches it for the Delete key
 /// (ADR 0112).
-pub(crate) const NODE_DELETE_MANY: CommandSpec =
-    CommandSpec::new(NODE_DELETE_MANY_ID, NODE_DELETE_MANY_LABEL, node_delete_many_enabled, node_delete_many_run);
+pub(crate) const NODE_DELETE_MANY: CommandSpec = CommandSpec::new::<NodeDeleteMany>(
+    NODE_DELETE_MANY_ID,
+    NODE_DELETE_MANY_LABEL,
+    node_delete_many_enabled,
+    node_delete_many_run,
+);
 
 fn node_delete_many_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeDeleteMany>(params, NODE_DELETE_MANY_ID) else {
@@ -211,7 +220,7 @@ pub const NODE_DUPLICATE_ID: &str = "node.duplicate";
 pub const NODE_DUPLICATE_LABEL: Message = Message::CmdDuplicate;
 
 /// Parameters for `node.duplicate`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDuplicate {
     /// Panel or container to copy deeply.
@@ -219,8 +228,12 @@ pub struct NodeDuplicate {
 }
 
 /// The `node.duplicate` command.
-pub(crate) const NODE_DUPLICATE: CommandSpec =
-    CommandSpec::new(NODE_DUPLICATE_ID, NODE_DUPLICATE_LABEL, node_duplicate_enabled, node_duplicate_run);
+pub(crate) const NODE_DUPLICATE: CommandSpec = CommandSpec::new::<NodeDuplicate>(
+    NODE_DUPLICATE_ID,
+    NODE_DUPLICATE_LABEL,
+    node_duplicate_enabled,
+    node_duplicate_run,
+);
 
 fn node_duplicate_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeDuplicate>(params, NODE_DUPLICATE_ID) else {
@@ -247,7 +260,7 @@ pub const NODE_GROUP_ID: &str = "node.group";
 pub const NODE_GROUP_LABEL: Message = Message::CmdGroup;
 
 /// Parameters for `node.group`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeGroup {
     /// Sibling nodes to wrap in a new group.
@@ -258,7 +271,7 @@ pub struct NodeGroup {
 
 /// The `node.group` command.
 pub(crate) const NODE_GROUP: CommandSpec =
-    CommandSpec::new(NODE_GROUP_ID, NODE_GROUP_LABEL, node_group_enabled, node_group_run);
+    CommandSpec::new::<NodeGroup>(NODE_GROUP_ID, NODE_GROUP_LABEL, node_group_enabled, node_group_run);
 
 fn node_group_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeGroup>(params, NODE_GROUP_ID) else {
@@ -286,7 +299,7 @@ pub const NODE_UNGROUP_ID: &str = "node.ungroup";
 pub const NODE_UNGROUP_LABEL: Message = Message::CmdUngroup;
 
 /// Parameters for `node.ungroup`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeUngroup {
     /// Ordinary container to flatten into its parent; a component is refused.
@@ -295,7 +308,7 @@ pub struct NodeUngroup {
 
 /// The `node.ungroup` command.
 pub(crate) const NODE_UNGROUP: CommandSpec =
-    CommandSpec::new(NODE_UNGROUP_ID, NODE_UNGROUP_LABEL, node_ungroup_enabled, node_ungroup_run);
+    CommandSpec::new::<NodeUngroup>(NODE_UNGROUP_ID, NODE_UNGROUP_LABEL, node_ungroup_enabled, node_ungroup_run);
 
 fn node_ungroup_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodeUngroup>(params, NODE_UNGROUP_ID) else {
@@ -323,7 +336,7 @@ pub const NODE_PLACEMENT_SET_ID: &str = "node.placement.set";
 pub const NODE_PLACEMENT_SET_LABEL: Message = Message::CmdPlace;
 
 /// Parameters for `node.placement.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePlacementSet {
     /// Panel or container to place relative to its parent.
@@ -341,7 +354,7 @@ pub struct NodePlacementSet {
 }
 
 /// The `node.placement.set` command.
-pub(crate) const NODE_PLACEMENT_SET: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_PLACEMENT_SET: CommandSpec = CommandSpec::new::<NodePlacementSet>(
     NODE_PLACEMENT_SET_ID,
     NODE_PLACEMENT_SET_LABEL,
     node_placement_set_enabled,
@@ -395,7 +408,7 @@ pub const NODE_PLACEMENT_WORLD_ZERO_ID: &str = "node.placement.world_zero";
 pub const NODE_PLACEMENT_WORLD_ZERO_LABEL: Message = Message::CmdPlaceAtWorldZero;
 
 /// Parameters for `node.placement.world_zero`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePlacementWorldZero {
     /// Panel or container whose parent-relative translation becomes zero.
@@ -406,7 +419,7 @@ pub struct NodePlacementWorldZero {
 ///
 /// The translation is cleared in the parent frame and the rotation is kept bit-for-bit, so a node
 /// inside a turned container lands on that container's origin without turning.
-pub(crate) const NODE_PLACEMENT_WORLD_ZERO: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_PLACEMENT_WORLD_ZERO: CommandSpec = CommandSpec::new::<NodePlacementWorldZero>(
     NODE_PLACEMENT_WORLD_ZERO_ID,
     NODE_PLACEMENT_WORLD_ZERO_LABEL,
     node_placement_world_zero_enabled,
@@ -447,7 +460,7 @@ pub const NODE_PLACEMENT_SET_MANY_ID: &str = "node.placement.set_many";
 pub const NODE_PLACEMENT_SET_MANY_LABEL: Message = Message::CmdPlaceSelection;
 
 /// One node and the placement it receives.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePlacement {
     /// Panel or container to place relative to its parent.
@@ -457,7 +470,7 @@ pub struct NodePlacement {
 }
 
 /// Parameters for `node.placement.set_many`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePlacementSetMany {
     /// The nodes to place; at least one, each listed once, none the root.
@@ -474,7 +487,7 @@ pub struct NodePlacementSetMany {
 ///
 /// The whole batch is one document change: one revision bump and one undo entry, so a gizmo drag
 /// that moves a selection is undone in one step.
-pub(crate) const NODE_PLACEMENT_SET_MANY: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_PLACEMENT_SET_MANY: CommandSpec = CommandSpec::new::<NodePlacementSetMany>(
     NODE_PLACEMENT_SET_MANY_ID,
     NODE_PLACEMENT_SET_MANY_LABEL,
     node_placement_set_many_enabled,
@@ -520,7 +533,7 @@ pub const NODE_PIVOT_SET_ID: &str = "node.pivot.set";
 pub const NODE_PIVOT_SET_LABEL: Message = Message::CmdSetPivot;
 
 /// Parameters for `node.pivot.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePivotSet {
     /// Node whose pivot moves; a panel's pivot is derived and is refused.
@@ -530,8 +543,12 @@ pub struct NodePivotSet {
 }
 
 /// The `node.pivot.set` command.
-pub(crate) const NODE_PIVOT_SET: CommandSpec =
-    CommandSpec::new(NODE_PIVOT_SET_ID, NODE_PIVOT_SET_LABEL, node_pivot_set_enabled, node_pivot_set_run);
+pub(crate) const NODE_PIVOT_SET: CommandSpec = CommandSpec::new::<NodePivotSet>(
+    NODE_PIVOT_SET_ID,
+    NODE_PIVOT_SET_LABEL,
+    node_pivot_set_enabled,
+    node_pivot_set_run,
+);
 
 fn node_pivot_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodePivotSet>(params, NODE_PIVOT_SET_ID) else {
@@ -559,7 +576,7 @@ pub const NODE_PIVOT_CENTER_ID: &str = "node.pivot.center";
 pub const NODE_PIVOT_CENTER_LABEL: Message = Message::CmdCenterPivot;
 
 /// Parameters for `node.pivot.center`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePivotCenter {
     /// Node whose pivot moves to its local bounds centre; a panel's pivot is derived and is refused.
@@ -567,8 +584,12 @@ pub struct NodePivotCenter {
 }
 
 /// The `node.pivot.center` command.
-pub(crate) const NODE_PIVOT_CENTER: CommandSpec =
-    CommandSpec::new(NODE_PIVOT_CENTER_ID, NODE_PIVOT_CENTER_LABEL, node_pivot_center_enabled, node_pivot_center_run);
+pub(crate) const NODE_PIVOT_CENTER: CommandSpec = CommandSpec::new::<NodePivotCenter>(
+    NODE_PIVOT_CENTER_ID,
+    NODE_PIVOT_CENTER_LABEL,
+    node_pivot_center_enabled,
+    node_pivot_center_run,
+);
 
 fn node_pivot_center_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodePivotCenter>(params, NODE_PIVOT_CENTER_ID) else {
@@ -596,7 +617,7 @@ pub const NODE_ORIGIN_REBASE_ID: &str = "node.origin.rebase";
 pub const NODE_ORIGIN_REBASE_LABEL: Message = Message::CmdRebaseOrigin;
 
 /// Parameters for `node.origin.rebase`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeOriginRebase {
     /// Node whose local zero moves; the panel, primitive, camera and light frames are fixed.
@@ -606,7 +627,7 @@ pub struct NodeOriginRebase {
 }
 
 /// The `node.origin.rebase` command.
-pub(crate) const NODE_ORIGIN_REBASE: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_ORIGIN_REBASE: CommandSpec = CommandSpec::new::<NodeOriginRebase>(
     NODE_ORIGIN_REBASE_ID,
     NODE_ORIGIN_REBASE_LABEL,
     node_origin_rebase_enabled,
@@ -657,7 +678,7 @@ pub const NODE_COMPONENT_CONVERT_TO_GROUP_ID: &str = "node.component.convert_to_
 pub const NODE_COMPONENT_CONVERT_TO_GROUP_LABEL: Message = Message::CmdConvertToGroup;
 
 /// Parameters for `node.property.set`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePropertySet {
     /// Panel or container that receives the property.
@@ -669,8 +690,12 @@ pub struct NodePropertySet {
 }
 
 /// The `node.property.set` command.
-pub(crate) const NODE_PROPERTY_SET: CommandSpec =
-    CommandSpec::new(NODE_PROPERTY_SET_ID, NODE_PROPERTY_SET_LABEL, property_set_enabled, property_set_run);
+pub(crate) const NODE_PROPERTY_SET: CommandSpec = CommandSpec::new::<NodePropertySet>(
+    NODE_PROPERTY_SET_ID,
+    NODE_PROPERTY_SET_LABEL,
+    property_set_enabled,
+    property_set_run,
+);
 
 fn property_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodePropertySet>(params, NODE_PROPERTY_SET_ID) else {
@@ -695,7 +720,7 @@ fn property_set_run(
 }
 
 /// One property change in a batch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeProperty {
     /// Panel or container that receives the value.
@@ -707,7 +732,7 @@ pub struct NodeProperty {
 }
 
 /// Parameters for `node.property.set_many`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePropertySetMany {
     /// The changes; at least one, each node and key listed once, none the root.
@@ -718,7 +743,7 @@ pub struct NodePropertySetMany {
 ///
 /// The whole batch is one document change: one revision bump and one undo entry, so editing a
 /// selection's properties is undone in one step.
-pub(crate) const NODE_PROPERTY_SET_MANY: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_PROPERTY_SET_MANY: CommandSpec = CommandSpec::new::<NodePropertySetMany>(
     NODE_PROPERTY_SET_MANY_ID,
     NODE_PROPERTY_SET_MANY_LABEL,
     property_set_many_enabled,
@@ -761,7 +786,7 @@ fn property_set_many_run(
 }
 
 /// Parameters for `node.property.clear`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodePropertyClear {
     /// Panel or container whose property is removed.
@@ -771,8 +796,12 @@ pub struct NodePropertyClear {
 }
 
 /// The `node.property.clear` command.
-pub(crate) const NODE_PROPERTY_CLEAR: CommandSpec =
-    CommandSpec::new(NODE_PROPERTY_CLEAR_ID, NODE_PROPERTY_CLEAR_LABEL, property_clear_enabled, property_clear_run);
+pub(crate) const NODE_PROPERTY_CLEAR: CommandSpec = CommandSpec::new::<NodePropertyClear>(
+    NODE_PROPERTY_CLEAR_ID,
+    NODE_PROPERTY_CLEAR_LABEL,
+    property_clear_enabled,
+    property_clear_run,
+);
 
 fn property_clear_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<NodePropertyClear>(params, NODE_PROPERTY_CLEAR_ID) else {
@@ -795,7 +824,7 @@ fn property_clear_run(
 }
 
 /// Parameters for `node.component.convert_to_group`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeComponentConvertToGroup {
     /// Component container to demote and flatten.
@@ -803,7 +832,7 @@ pub struct NodeComponentConvertToGroup {
 }
 
 /// The `node.component.convert_to_group` command.
-pub(crate) const NODE_COMPONENT_CONVERT_TO_GROUP: CommandSpec = CommandSpec::new(
+pub(crate) const NODE_COMPONENT_CONVERT_TO_GROUP: CommandSpec = CommandSpec::new::<NodeComponentConvertToGroup>(
     NODE_COMPONENT_CONVERT_TO_GROUP_ID,
     NODE_COMPONENT_CONVERT_TO_GROUP_LABEL,
     component_convert_to_group_enabled,

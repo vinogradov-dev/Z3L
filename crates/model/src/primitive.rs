@@ -14,6 +14,7 @@
 //! [ADR 0139]: ../docs/decisions/0139-a-sphere-is-drawn-around-its-centre.md
 //! [ADR 0141]: ../docs/decisions/0141-a-cone-is-drawn-by-its-base-circle.md
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -162,7 +163,7 @@ fn validate_bands(bands: u32) -> Result<(), PrimitiveError> {
 }
 
 /// Serialized form of [`Sphere`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SphereWire {
     radius: Length,
@@ -171,7 +172,7 @@ struct SphereWire {
 }
 
 /// A sphere centred on the local origin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "SphereWire")]
 pub struct Sphere {
     radius: Length,
@@ -213,7 +214,7 @@ impl TryFrom<SphereWire> for Sphere {
 }
 
 /// Serialized form of [`Cone`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConeWire {
     base_radius: Length,
@@ -230,7 +231,7 @@ struct ConeWire {
 /// leg needs.
 ///
 /// [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "ConeWire")]
 pub struct Cone {
     base_radius: Length,
@@ -287,7 +288,7 @@ impl TryFrom<ConeWire> for Cone {
 ///
 /// The inner tag is `shape`, because the outer [`Geometry`](crate::Geometry) payload already uses
 /// `kind`. Parameters are the source of truth; the mesh is never stored beside them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Primitive {
     /// A sphere built from latitude bands.

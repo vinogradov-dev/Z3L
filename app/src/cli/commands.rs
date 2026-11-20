@@ -2,10 +2,10 @@
 //!
 //! The registry is the only list, so a surface that discovers commands cannot drift from the
 //! dispatcher: an id printed here is an id [`engine::Session::dispatch`] accepts. A row says the id,
-//! the English label and what the command creates — the level the class rules gate (ADR 0098) — and
-//! nothing about the parameters, because a command's parameters are a typed struct with no schema
-//! yet (`plan/debt.md`, the command-spec entry): a caller writes them from the command's own source
-//! and the report tells it whether the document accepted them.
+//! the English label, what the command creates — the level the class rules gate (ADR 0098) — and the
+//! JSON Schema of its parameters, derived from the typed struct the command parses (ADR 0185). The
+//! schema is the parser's own description, so a caller builds a request from the report instead of
+//! from our source, and a wrong one still comes back as the command's own sentence.
 //!
 //! Changes when: a command gains a field the discovery report must carry.
 
@@ -28,11 +28,12 @@ const fn level_word(level: Level) -> &'static str {
     }
 }
 
-/// One command as a report row: its id, its label and the level it creates.
+/// One command as a report row: its id, its label, the level it creates and its parameter schema.
 fn row(spec: CommandSpec) -> Value {
     let mut row = json!({
         "id": spec.id(),
         "label": spec.label().text(Lang::En),
+        "params": spec.params_schema(),
     });
     if let (Some(level), Some(object)) = (spec.creation_level(), row.as_object_mut()) {
         object.insert("creates".to_owned(), Value::from(level_word(level)));
@@ -43,7 +44,8 @@ fn row(spec: CommandSpec) -> Value {
 /// The discovery report: every command id, as one JSON array or as one aligned line each.
 ///
 /// The text form is for a person scanning ids in a terminal; the JSON form is what a recipe author
-/// or an assistant reads. Both carry the same three fields, so neither is a second truth.
+/// or an assistant reads, because only the JSON form can carry a schema. Both name the same
+/// commands and the same levels, so neither is a second truth.
 pub fn report(as_json: bool) -> String {
     let specs = CommandRegistry::new().specs();
     if as_json {
@@ -91,6 +93,36 @@ mod tests {
         assert_eq!(create["creates"], "part", "a panel is a part");
         let rename = rows.iter().find(|row| row["id"] == "node.rename").expect("node.rename is registered");
         assert!(rename.get("creates").is_none(), "a rename creates nothing");
+    }
+
+    #[test]
+    fn every_command_carries_the_schema_of_its_parameters() {
+        let rows: Vec<Value> = serde_json::from_str(&report(true)).expect("an array");
+        for row in &rows {
+            let schema = &row["params"];
+            assert_eq!(schema["type"], "object", "{} takes one parameter object", row["id"]);
+            assert_eq!(schema["additionalProperties"], false, "{} denies unknown fields", row["id"]);
+            assert!(
+                schema["properties"].as_object().is_some_and(|properties| !properties.is_empty()),
+                "{} describes no field",
+                row["id"]
+            );
+        }
+    }
+
+    #[test]
+    fn the_schema_a_caller_reads_is_the_one_the_parser_enforces() {
+        // A caller builds a request from this row: the five fields a `panel.create` request must
+        // name, and the three it may leave out, are the derive's reading of the same `serde`
+        // attributes the command's parser reads.
+        let rows: Vec<Value> = serde_json::from_str(&report(true)).expect("an array");
+        let create = rows.iter().find(|row| row["id"] == "panel.create").expect("panel.create is registered");
+        assert_eq!(create["params"]["required"], json!(["parent", "name", "nominal_size", "material", "placement"]));
+        let required = create["params"]["required"].as_array().expect("required is a list");
+        for optional in ["class", "outline", "bevels"] {
+            assert!(create["params"]["properties"][optional].is_object(), "{optional} is described");
+            assert!(!required.iter().any(|name| name == optional), "{optional} may be left out");
+        }
     }
 
     #[test]

@@ -9,6 +9,7 @@
 use catalog::Directory;
 use geom::Contact;
 use model::{CameraProjection, Id, LightKind, LightNode, Placement, Project};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -24,7 +25,7 @@ pub const CAMERA_CREATE_ID: &str = "camera.create";
 pub const CAMERA_CREATE_LABEL: Message = Message::CmdCreateCamera;
 
 /// Parameters for `camera.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CameraCreate {
     /// Id of the container that receives the new camera.
@@ -39,7 +40,7 @@ pub struct CameraCreate {
 
 /// The `camera.create` command.
 pub(crate) const CAMERA_CREATE: CommandSpec =
-    CommandSpec::new(CAMERA_CREATE_ID, CAMERA_CREATE_LABEL, camera_create_enabled, camera_create_run);
+    CommandSpec::new::<CameraCreate>(CAMERA_CREATE_ID, CAMERA_CREATE_LABEL, camera_create_enabled, camera_create_run);
 
 fn camera_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<CameraCreate>(params, CAMERA_CREATE_ID) else {
@@ -67,7 +68,7 @@ pub const LIGHT_CREATE_ID: &str = "light.create";
 pub const LIGHT_CREATE_LABEL: Message = Message::CmdCreateLight;
 
 /// Parameters for `light.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LightCreate {
     /// Id of the container that receives the new light.
@@ -86,7 +87,7 @@ pub struct LightCreate {
 
 /// The `light.create` command.
 pub(crate) const LIGHT_CREATE: CommandSpec =
-    CommandSpec::new(LIGHT_CREATE_ID, LIGHT_CREATE_LABEL, light_create_enabled, light_create_run);
+    CommandSpec::new::<LightCreate>(LIGHT_CREATE_ID, LIGHT_CREATE_LABEL, light_create_enabled, light_create_run);
 
 fn light_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<LightCreate>(params, LIGHT_CREATE_ID) else {
@@ -130,7 +131,7 @@ pub const SCENE_ACTIVE_CAMERA_SET_ID: &str = "scene.active_camera.set";
 pub const SCENE_ACTIVE_CAMERA_SET_LABEL: Message = Message::CmdSetActiveCamera;
 
 /// Parameters for `scene.active_camera.set`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SceneActiveCameraSet {
     /// The camera to render from, or `None` for the built-in camera.
@@ -138,7 +139,7 @@ pub struct SceneActiveCameraSet {
 }
 
 /// The `scene.active_camera.set` command.
-pub(crate) const SCENE_ACTIVE_CAMERA_SET: CommandSpec = CommandSpec::new(
+pub(crate) const SCENE_ACTIVE_CAMERA_SET: CommandSpec = CommandSpec::new::<SceneActiveCameraSet>(
     SCENE_ACTIVE_CAMERA_SET_ID,
     SCENE_ACTIVE_CAMERA_SET_LABEL,
     scene_active_camera_set_enabled,
@@ -173,7 +174,7 @@ pub const CAMERA_PROJECTION_SET_ID: &str = "camera.projection.set";
 pub const CAMERA_PROJECTION_SET_LABEL: Message = Message::CmdSetCameraProjection;
 
 /// Parameters for `camera.projection.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CameraProjectionSet {
     /// The camera whose projection changes.
@@ -183,7 +184,7 @@ pub struct CameraProjectionSet {
 }
 
 /// The `camera.projection.set` command.
-pub(crate) const CAMERA_PROJECTION_SET: CommandSpec = CommandSpec::new(
+pub(crate) const CAMERA_PROJECTION_SET: CommandSpec = CommandSpec::new::<CameraProjectionSet>(
     CAMERA_PROJECTION_SET_ID,
     CAMERA_PROJECTION_SET_LABEL,
     camera_projection_set_enabled,
@@ -215,7 +216,7 @@ pub const LIGHT_PARAMS_SET_ID: &str = "light.params.set";
 pub const LIGHT_PARAMS_SET_LABEL: Message = Message::CmdSetLightParameters;
 
 /// Parameters for `light.params.set`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LightParamsSet {
     /// The light whose parameters change.
@@ -229,8 +230,12 @@ pub struct LightParamsSet {
 }
 
 /// The `light.params.set` command.
-pub(crate) const LIGHT_PARAMS_SET: CommandSpec =
-    CommandSpec::new(LIGHT_PARAMS_SET_ID, LIGHT_PARAMS_SET_LABEL, light_params_set_enabled, light_params_set_run);
+pub(crate) const LIGHT_PARAMS_SET: CommandSpec = CommandSpec::new::<LightParamsSet>(
+    LIGHT_PARAMS_SET_ID,
+    LIGHT_PARAMS_SET_LABEL,
+    light_params_set_enabled,
+    light_params_set_run,
+);
 
 fn light_params_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<LightParamsSet>(params, LIGHT_PARAMS_SET_ID) else {

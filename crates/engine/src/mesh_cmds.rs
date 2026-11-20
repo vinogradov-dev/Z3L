@@ -9,6 +9,7 @@
 
 use geom::Contact;
 use model::{Id, Project};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::Length;
@@ -25,7 +26,7 @@ pub const MESH_VERTICES_MOVE_ID: &str = "mesh.vertices.move";
 pub const MESH_VERTICES_MOVE_LABEL: Message = Message::CmdMoveVertices;
 
 /// Parameters for `mesh.vertices.move`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeshVerticesMove {
     /// The mesh object whose vertices move.
@@ -35,7 +36,7 @@ pub struct MeshVerticesMove {
 }
 
 /// One vertex and the absolute local position it moves to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeshVertexMove {
     /// Index into the object's vertex array for the revision the caller read.
@@ -45,7 +46,7 @@ pub struct MeshVertexMove {
 }
 
 /// The `mesh.vertices.move` command.
-pub(crate) const MESH_VERTICES_MOVE: CommandSpec = CommandSpec::new(
+pub(crate) const MESH_VERTICES_MOVE: CommandSpec = CommandSpec::new::<MeshVerticesMove>(
     MESH_VERTICES_MOVE_ID,
     MESH_VERTICES_MOVE_LABEL,
     mesh_vertices_move_enabled,

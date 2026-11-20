@@ -93,8 +93,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   transform as well as the mesh). One buffer per unique mesh plus a per-drawable transform in a
   storage buffer or an instance attribute would turn a move into a small write; a uniform slot per
   drawable cannot hold a scene, because a uniform binding is capped at 64 KiB.
-- `[engine]` Command specs expose only an id and a label; there is no parameter schema for a model, a
-  CLI or generated documentation.
 - `[engine]` History records one entry per command. A drag of a whole selection is one command, but a
   task made of several commands (a future assistant task, for example) cannot yet be grouped into one
   step.

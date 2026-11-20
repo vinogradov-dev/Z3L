@@ -6,6 +6,7 @@
 //! only floating-point edge.
 
 use geom::{DVec2, Rect, Region, RegionError};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -17,7 +18,7 @@ use crate::{EdgeId, Panel, VertexId};
 /// `x` and `y` are the minimum corner relative to the nominal panel zero; `width` and `height`
 /// are positive. Cutout validation checks that the rectangle stays within the core outline, which
 /// may start at a positive `(core_x, core_y)` when an included band trims the low edges.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "PanelRectWire")]
 pub struct PanelRect {
     x: Length,
@@ -85,7 +86,7 @@ pub enum PanelRectError {
 }
 
 /// Serialized form of [`PanelRect`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PanelRectWire {
     x: Length,
@@ -107,7 +108,7 @@ impl TryFrom<PanelRectWire> for PanelRect {
 /// `A` is the face at `z = thickness`; `B` is the face at `z = 0`. `+Z` points from `B` to `A`.
 /// The labels are local to the panel: they travel with it through a placement and never mean
 /// "world up" or "world front".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum FaceSide {
     /// The face at `z = thickness` (+Z).
     A,
@@ -145,7 +146,7 @@ impl FaceSide {
 ///
 /// Thickness is not part of the nominal size: it comes from the material, or from the panel's
 /// fallback when the material is missing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "PanelNominalSizeWire")]
 pub struct PanelNominalSize {
     length: Length,
@@ -398,7 +399,7 @@ pub enum PanelGeometryError {
 /// Corner 1 is the nominal minimum corner at `(0, 0)`. The core may start at a positive
 /// `(core_x, core_y)` when the bottom or left banding is included in the size. The enum is a
 /// convenience for rectangular panels; contour panels use [`VertexId`] directly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum RectCorner {
@@ -580,7 +581,7 @@ fn require_non_negative(field: &'static str, value: Length) -> Result<(), PanelG
 }
 
 /// Serialized form of [`PanelNominalSize`]; validation happens in its `TryFrom` implementation.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PanelNominalSizeWire {
     length: Length,

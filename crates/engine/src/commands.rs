@@ -3,6 +3,7 @@
 use catalog::Directory;
 use geom::Contact;
 use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
+use schemars::JsonSchema;
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
@@ -75,14 +76,23 @@ impl Creation {
     }
 }
 
+/// The JSON Schema of one command's parameters, derived from the struct its `run` parses.
+///
+/// A function rather than a value, so the schema is built when a discovery surface asks for it and
+/// costs nothing to a command dispatch or a frame (ADR 0185).
+type ParamsSchema = fn() -> Value;
+
 /// Metadata and implementation of one document command.
 ///
 /// The id is lowercase `<area>.<verb>` and stable forever. The label is a [`Message`], so the
-/// palette, a CLI and the assistant print the same words in the user's language.
+/// palette, a CLI and the assistant print the same words in the user's language. The parameter
+/// schema is derived from the typed struct the command parses, so what a model is told it may send
+/// and what the parser accepts cannot drift apart.
 #[derive(Clone, Copy, Debug)]
 pub struct CommandSpec {
     id: &'static str,
     label: Message,
+    schema: ParamsSchema,
     enabled_fn: fn(&Session, &Value) -> bool,
     run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     creation: Option<Creation>,
@@ -90,13 +100,26 @@ pub struct CommandSpec {
 
 impl CommandSpec {
     /// Defines a command from its metadata and implementation.
-    pub const fn new(
+    ///
+    /// `P` is the typed parameter struct the command's `run` parses. Naming it here is what makes
+    /// the published schema a description of the parser instead of a second, hand-written table:
+    /// one accessor serves the CLI, the documentation and the assistant (ADR 0185).
+    pub const fn new<P: JsonSchema>(
         id: &'static str,
         label: Message,
         enabled_fn: fn(&Session, &Value) -> bool,
         run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     ) -> Self {
-        Self { id, label, enabled_fn, run_fn, creation: None }
+        Self { id, label, schema: params_schema::<P>, enabled_fn, run_fn, creation: None }
+    }
+
+    /// The JSON Schema of the parameters this command takes.
+    ///
+    /// It is the schema of the struct the command parses, so a caller can build a request without
+    /// reading our source: every required field, every optional one and the closed set of names
+    /// (`additionalProperties: false`, because every parameter struct denies unknown fields).
+    pub fn params_schema(self) -> Value {
+        (self.schema)()
     }
 
     /// Declares what the command creates, so the session can apply ADR 0098's guard.
@@ -168,6 +191,14 @@ impl CommandSpec {
     ) -> Result<CommandOutcome, CommandError> {
         (self.run_fn)(project, catalog, params, contact)
     }
+}
+
+/// The schema of `P`, in the JSON Schema dialect [`schemars`] emits.
+///
+/// A pure function of the type: no session, no document and no failure path, because the value is
+/// built from a derive over a `serde` type rather than serialized from a running document.
+fn params_schema<P: JsonSchema>() -> Value {
+    schemars::schema_for!(P).to_value()
 }
 
 /// The commands compiled into this build.
@@ -505,6 +536,69 @@ mod tests {
             assert_eq!(spec.label().text(Lang::En), label);
         }
         assert_eq!(registry.specs().len(), 60);
+    }
+
+    #[test]
+    fn every_command_publishes_a_schema_of_its_parameters() {
+        let registry = CommandRegistry::new();
+        for spec in registry.specs() {
+            let schema = spec.params_schema();
+            assert_eq!(schema["type"], "object", "{} takes one parameter object", spec.id());
+            assert_eq!(
+                schema["additionalProperties"],
+                false,
+                "{} denies unknown fields, so the schema must say so",
+                spec.id()
+            );
+            let properties = schema["properties"].as_object().expect("a parameter struct has named fields");
+            assert!(!properties.is_empty(), "{} describes no field", spec.id());
+            for name in schema["required"].as_array().into_iter().flatten() {
+                let name = name.as_str().expect("a required entry is a field name");
+                assert!(
+                    properties.contains_key(name),
+                    "{} requires `{name}`, which is not one of its properties",
+                    spec.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_schema_marks_an_optional_field_optional() {
+        // `panel.create` carries three fields a tool may leave out — the class, the outline and the
+        // bevels — and five that a request must name. The schema is the derive's reading of the same
+        // `serde` attributes the parser reads, so a field that becomes required changes this list:
+        // a hand-written schema would silently keep describing the old shape.
+        let registry = CommandRegistry::new();
+        let schema = registry.get("panel.create").expect("panel.create is registered").params_schema();
+        let mut required: Vec<&str> = schema["required"]
+            .as_array()
+            .expect("required is a list")
+            .iter()
+            .filter_map(|name| name.as_str())
+            .collect();
+        required.sort_unstable();
+        assert_eq!(required, ["material", "name", "nominal_size", "parent", "placement"]);
+        for optional in ["class", "outline", "bevels"] {
+            assert!(schema["properties"][optional].is_object(), "{optional} is described");
+            assert!(!required.contains(&optional), "{optional} is optional, so a caller may omit it");
+        }
+    }
+
+    #[test]
+    fn a_schema_refuses_the_type_a_placements_frame_needs() {
+        // A nested model type is described through its own wire form, not as an opaque value: a
+        // placement is a translation and a quaternion, and a caller that sends millimetres as a
+        // float is told the field's type instead of guessing (`Placement`, ADR 0024).
+        let registry = CommandRegistry::new();
+        let schema = registry.get("node.placement.set").expect("node.placement.set is registered").params_schema();
+        assert!(
+            schema["properties"]["placement"].is_object(),
+            "the placement is described as an object, got {}",
+            schema["properties"]["placement"]
+        );
+        let defs = schema["$defs"].as_object().expect("a nested struct is defined once");
+        assert!(defs.contains_key("Placement"), "the placement's own definition is in the report");
     }
 
     #[test]

@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::{Degrees, Length};
@@ -13,7 +14,7 @@ use units::{Degrees, Length};
 use crate::{EdgeId, EdgeRef, Panel, PanelDimensionError, PanelError, VertexId};
 
 /// A corner treatment applied to a nominal rectangle corner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CornerFeatureKind {
     /// A circular arc tangent to the two edges that meet at the corner.
@@ -47,7 +48,7 @@ impl CornerFeatureKind {
 }
 
 /// One corner treatment addressed by a stable outline vertex id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "CornerFeatureWire")]
 pub struct CornerFeature {
     corner: VertexId,
@@ -72,7 +73,7 @@ impl CornerFeature {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct CornerFeatureWire {
     corner: VertexId,
@@ -92,7 +93,7 @@ impl TryFrom<CornerFeatureWire> for CornerFeature {
 /// A positive sagitta bows outward from the panel, a negative sagitta bows inward. The magnitude is
 /// limited to half the clear edge length by the contour builder; the schema only rejects zero and
 /// absurdly large values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "EdgeBowWire")]
 pub struct EdgeBow {
     edge: EdgeId,
@@ -130,7 +131,7 @@ impl EdgeBow {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EdgeBowWire {
     edge: EdgeId,
@@ -181,7 +182,7 @@ pub enum BevelError {
 ///
 /// The value is a topology reference plus an angle, never a plane: one angle through the edge line
 /// determines the plane exactly, and the edge line supplies the rest of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "EdgeBevelWire")]
 pub struct EdgeBevel {
     source: EdgeRef,
@@ -233,7 +234,7 @@ impl EdgeBevel {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EdgeBevelWire {
     source: EdgeRef,

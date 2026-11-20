@@ -325,22 +325,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J2** a command says what it takes, so a model can call it
-  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
-   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
-   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
-   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
-   refuses: nothing would check it against the struct it describes.
-  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
-   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
-   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
-   prints it, and the test asserts that every command whose parameters are not the unit type
-   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
-   same surface, because a disabled command with no sentence is a mystery.
-  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
-   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
-   closes; `cargo xtask ci` is green.
-  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,app/src/cli/commands.rs`
 - `[ ]` **J3** a question about the scene is one tool, and its answers are resources
   Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that
    shells out for state cannot see what its own last call did. MCP carries both a call and a
@@ -376,12 +360,16 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
    it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
    crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
-   and ADR 0186 require.
+   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
+   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
+   reason beside its predicate: the clause J2 measured and left to the first door that needs
+   both halves.
   Done: A test drives a served session over stdio through `command_list` and a two-line
-   `command_batch`, and asserts one undo entry and one write; `cargo xtask layers` accepts the
-   crate and rejects `egui` in it; `z3l mcp serve` on a scene writes the file the way `z3l run`
-   does.
-  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs`
+   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
+   sentence that says why a disabled command is disabled, in the command's own words; `cargo
+   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
+   the file the way `z3l run` does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
 - `[ ]` **J6** the local channel attaches an agent to the window a person is looking at
   Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
    measured: a stdio child edits a saved file, not the document a person is looking at, so
@@ -572,6 +560,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    (`crates/ui/src/editor/tests.rs`, `app/src/frame_tests.rs`). ADR 0194 and the schema are in
    the change (schema 29: `Contours` and the object's `tool` flag); `cargo xtask ci` is green.
   `files: crates/geom/src/boolean.rs,crates/engine/src/object_cmds.rs,crates/engine/src/panel_cmds/panel.rs,crates/model/src/object.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs` — `658ed5a`
+
+- `[x]` **J2** a command says what it takes, so a model can call it
+  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
+   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
+   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
+   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
+   refuses: nothing would check it against the struct it describes.
+  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
+   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
+   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
+   prints it, and the test asserts that every command whose parameters are not the unit type
+   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
+   same surface, because a disabled command with no sentence is a mystery.
+  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
+   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
+   closes; `cargo xtask ci` is green.
+  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,crates/units/src/lib.rs,crates/model/src/contour.rs,app/src/cli/commands.rs,docs/decisions/0195-the-parameter-schema-derives-where-its-type-lives.md` — `3acda02`
 
 - `[x]` **U115** the status bar reports and no longer carries a control
   Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,

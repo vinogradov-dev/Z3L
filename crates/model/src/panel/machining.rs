@@ -7,6 +7,7 @@
 //! region, so a rectangle and a contour ring take the same part in it.
 
 use geom::{DVec2, Rect, Region, RegionError, subtract_regions};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
@@ -68,7 +69,7 @@ impl Machining {
 /// A face anchor names the large face the operation enters from; an edge anchor names one edge of
 /// the outline. Every operation declares which anchors it accepts, so a loaded file cannot pair a
 /// cutout with an edge or an edge groove with a face.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MachiningAnchor {
     /// The operation acts through one large face.
@@ -116,7 +117,7 @@ impl MachiningAnchor {
 /// A rectangular or shaped outline names a straight edge by its stable [`EdgeId`]; a contour panel
 /// names one ring segment by its stable [`ContourSegmentId`]. The reference is a topology reference:
 /// it travels with the outline edit and never carries coordinates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EdgeRef {
     /// A straight edge of the nominal rectangle, ids 1..4.
@@ -144,7 +145,7 @@ impl std::fmt::Display for EdgeRef {
 ///
 /// The variant is the operation kind; it is tagged in the file, so a newer file with an operation
 /// this build does not know is a readable load error rather than a reinterpretation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MachiningParams {
     /// A volume removed from the panel.
@@ -364,7 +365,7 @@ fn default_cutout() -> MachiningParams {
 /// never move the panel frame. The entry face comes from the record's [`MachiningAnchor`]: a blind
 /// cutout removes material from that face up to its depth, while a through cutout removes the full
 /// thickness.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Cutout {
     shape: CutoutShape,
@@ -394,7 +395,7 @@ impl Cutout {
 }
 
 /// The outline of a cutout.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CutoutShape {
     /// A rectangle whose minimum corner is at `rect.x`, `rect.y` from the nominal panel zero.
@@ -425,7 +426,7 @@ impl CutoutShape {
 }
 
 /// How much material a cutout removes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CutoutDepth {
     /// Removes the full panel thickness.

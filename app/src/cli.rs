@@ -63,7 +63,8 @@ export writes an order package from a saved scene without opening a window:
   --no-timestamp     leave the export time out of the manifest, so a package can be compared
 
 commands lists what this build can dispatch: one id, its label and what it creates.
-  --json             print one JSON array instead of one line per command
+  --json             print one JSON array instead of one line per command; each row carries the
+                     JSON Schema of the parameters the command takes
 
 run dispatches a recipe -- one JSON object per line, `{\"command\": <id>, \"params\": {...}}` --
 into one session. The whole file is one undo entry's worth of work: the scene is read once, the

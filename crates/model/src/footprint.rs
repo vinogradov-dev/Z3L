@@ -17,6 +17,7 @@
 //! Changes when: the shape a footprint may take, the corner rule, or the ring's anchor changes.
 
 use geom::Contour as OutlineRing;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -33,7 +34,7 @@ use crate::{
 ///
 /// Validation belongs to [`crate::Envelope`], which is the only value that knows the bounds the shape
 /// has to agree with; [`Footprint::outline`] is the one function that both checks and draws it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Footprint {
     /// The whole rectangle: no corner is cut, which is what a product starts as.

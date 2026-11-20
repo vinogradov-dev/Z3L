@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 
 use geom::{Contact, Contour as GeometryContour, DVec2, DVec3, Region, RegionError};
 use model::{ContourSegment, Contours, Geometry, Id, Path, Placement, PlacementError, Project, ProjectError};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use text::Message;
@@ -60,7 +61,7 @@ pub const MAX_BOOLEAN_OPERANDS: usize = 32;
 const PLANE_TOLERANCE: f64 = 1.0e-6;
 
 /// Parameters of a contour boolean.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContourBoolean {
     /// The base ring: what the others are united with or intersected with, and what is cut in a
@@ -74,15 +75,15 @@ pub struct ContourBoolean {
 
 /// The `contour.boolean.union` command.
 pub(crate) const CONTOUR_UNION: CommandSpec =
-    CommandSpec::new(CONTOUR_UNION_ID, CONTOUR_UNION_LABEL, union_enabled, union_run);
+    CommandSpec::new::<ContourBoolean>(CONTOUR_UNION_ID, CONTOUR_UNION_LABEL, union_enabled, union_run);
 
 /// The `contour.boolean.subtract` command.
 pub(crate) const CONTOUR_SUBTRACT: CommandSpec =
-    CommandSpec::new(CONTOUR_SUBTRACT_ID, CONTOUR_SUBTRACT_LABEL, subtract_enabled, subtract_run);
+    CommandSpec::new::<ContourBoolean>(CONTOUR_SUBTRACT_ID, CONTOUR_SUBTRACT_LABEL, subtract_enabled, subtract_run);
 
 /// The `contour.boolean.intersect` command.
 pub(crate) const CONTOUR_INTERSECT: CommandSpec =
-    CommandSpec::new(CONTOUR_INTERSECT_ID, CONTOUR_INTERSECT_LABEL, intersect_enabled, intersect_run);
+    CommandSpec::new::<ContourBoolean>(CONTOUR_INTERSECT_ID, CONTOUR_INTERSECT_LABEL, intersect_enabled, intersect_run);
 
 /// Which overlay a contour boolean runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

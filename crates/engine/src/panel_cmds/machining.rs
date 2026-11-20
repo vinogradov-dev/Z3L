@@ -16,6 +16,7 @@
 use catalog::Directory;
 use geom::Contact;
 use model::{Id, MachiningAnchor, MachiningId, MachiningKind, MachiningParams, Project};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -31,7 +32,7 @@ pub const MACHINING_ADD_ID: &str = "panel.machining.add";
 pub const MACHINING_ADD_LABEL: Message = Message::CmdAddMachining;
 
 /// Parameters for `panel.machining.add`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelMachiningAdd {
     /// Id of the panel that receives the operation.
@@ -50,8 +51,12 @@ impl PanelMachiningAdd {
 }
 
 /// The `panel.machining.add` command.
-pub(crate) const MACHINING_ADD: CommandSpec =
-    CommandSpec::new(MACHINING_ADD_ID, MACHINING_ADD_LABEL, machining_add_enabled, machining_add_run);
+pub(crate) const MACHINING_ADD: CommandSpec = CommandSpec::new::<PanelMachiningAdd>(
+    MACHINING_ADD_ID,
+    MACHINING_ADD_LABEL,
+    machining_add_enabled,
+    machining_add_run,
+);
 
 fn machining_add_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMachiningAdd::parse(params) else {
@@ -83,7 +88,7 @@ pub const MACHINING_UPDATE_LABEL: Message = Message::CmdUpdateMachining;
 ///
 /// The record keeps its id and its position in the list; the anchor and parameters are replaced as
 /// one validated unit.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelMachiningUpdate {
     /// Id of the panel that owns the operation.
@@ -104,8 +109,12 @@ impl PanelMachiningUpdate {
 }
 
 /// The `panel.machining.update` command.
-pub(crate) const MACHINING_UPDATE: CommandSpec =
-    CommandSpec::new(MACHINING_UPDATE_ID, MACHINING_UPDATE_LABEL, machining_update_enabled, machining_update_run);
+pub(crate) const MACHINING_UPDATE: CommandSpec = CommandSpec::new::<PanelMachiningUpdate>(
+    MACHINING_UPDATE_ID,
+    MACHINING_UPDATE_LABEL,
+    machining_update_enabled,
+    machining_update_run,
+);
 
 fn machining_update_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMachiningUpdate::parse(params) else {
@@ -137,7 +146,7 @@ pub const MACHINING_REMOVE_ID: &str = "panel.machining.remove";
 pub const MACHINING_REMOVE_LABEL: Message = Message::CmdRemoveMachining;
 
 /// Parameters for `panel.machining.remove`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelMachiningRemove {
     /// Id of the panel that owns the operation.
@@ -154,8 +163,12 @@ impl PanelMachiningRemove {
 }
 
 /// The `panel.machining.remove` command.
-pub(crate) const MACHINING_REMOVE: CommandSpec =
-    CommandSpec::new(MACHINING_REMOVE_ID, MACHINING_REMOVE_LABEL, machining_remove_enabled, machining_remove_run);
+pub(crate) const MACHINING_REMOVE: CommandSpec = CommandSpec::new::<PanelMachiningRemove>(
+    MACHINING_REMOVE_ID,
+    MACHINING_REMOVE_LABEL,
+    machining_remove_enabled,
+    machining_remove_run,
+);
 
 fn machining_remove_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMachiningRemove::parse(params) else {
@@ -184,7 +197,7 @@ pub const MACHINING_MOVE_LABEL: Message = Message::CmdMoveMachining;
 /// Parameters for `panel.machining.move`.
 ///
 /// `index` is the position after the move, in `0..len`. The record keeps its id.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelMachiningMove {
     /// Id of the panel that owns the operation.
@@ -203,8 +216,12 @@ impl PanelMachiningMove {
 }
 
 /// The `panel.machining.move` command.
-pub(crate) const MACHINING_MOVE: CommandSpec =
-    CommandSpec::new(MACHINING_MOVE_ID, MACHINING_MOVE_LABEL, machining_move_enabled, machining_move_run);
+pub(crate) const MACHINING_MOVE: CommandSpec = CommandSpec::new::<PanelMachiningMove>(
+    MACHINING_MOVE_ID,
+    MACHINING_MOVE_LABEL,
+    machining_move_enabled,
+    machining_move_run,
+);
 
 fn machining_move_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMachiningMove::parse(params) else {

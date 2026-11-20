@@ -6,6 +6,7 @@
 //! [`Degrees`] in millidegrees.
 
 use geom::{DQuat, DVec3, EulerRot};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::{Degrees, Length};
@@ -47,7 +48,7 @@ fn wrap_degrees(degrees: Degrees) -> Degrees {
 /// Placement is translation plus rotation, never scale or shear. Rotations are stored as a unit
 /// quaternion; construction and deserialization reject a zero or non-unit quaternion instead of
 /// silently normalising it. The serialized rotation is `[x, y, z, w]`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "PlacementWire", into = "PlacementWire")]
 pub struct Placement {
     translation: DVec3,
@@ -193,7 +194,7 @@ pub(crate) fn lengths_from_millimetres(point: DVec3) -> Option<[Length; 3]> {
 /// `center_pivot` moves it, so a geometry edit never changes it. Coordinates are integer
 /// micrometres like every other persisted length; [`PivotLocal::to_local`] is the geometry-boundary
 /// view.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct PivotLocal([Length; 3]);
 
@@ -247,7 +248,7 @@ pub enum PlacementError {
 const ROTATION_TOLERANCE: f64 = 1e-9;
 
 /// Serialized form of [`Placement`]; validation happens in its `TryFrom` implementation.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PlacementWire {
     translation: [f64; 3],

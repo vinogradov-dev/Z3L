@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -20,7 +21,7 @@ use thiserror::Error;
 ///
 /// The value is signed because placements and offsets may be negative; dimensions such as a
 /// panel thickness are validated separately where they are used.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Length(i64);
 
@@ -93,7 +94,7 @@ impl Length {
 ///
 /// Degrees are the human-facing unit for placements and the inspector; the document stores
 /// rotations as unit quaternions. The value is signed because Euler angles may be negative.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Degrees(i64);
 

@@ -52,6 +52,9 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # sheet on macOS, the common item dialog on Windows. No GTK, so it is not a second GUI toolkit, and
 # nothing C is compiled: the portal's D-Bus client is loaded at run time (ADR 0182).
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal", "wayland"] }
+# The parameter schema a command publishes to a model or a CLI: a derive over the `serde` struct
+# that already validates the parameters, so the description cannot drift from the parser (ADR 0185).
+schemars = { version = "1.2", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 syn = { version = "2.0", features = ["full", "visit"] }
