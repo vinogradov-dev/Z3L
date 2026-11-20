@@ -44,34 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **W1** a boolean between two bodies is a feature of the constructive object
-  Why: The owner asks for the standard boolean set over bodies. The kernel port has
-  `SolidKernel::boolean`, `SolidPlan` already carries boolean steps (ADR 0041), and
-  `docs/domain/geometry.md` names a boolean with another object as the next feature, but the
-  document's `Feature` holds one `Extrude`, so no body can be cut, joined or intersected from
-  the UI and `model.booleans` stays planned. The owner also asks that the source object work
-  as a reusable tool: the cutter is not spent by the operation and may cut several bodies.
-  Shape: `Feature::Boolean { op, tool }` appended after the extrusion, where `tool` names another
-  constructive object node; the pilot validates a missing tool, a self-reference and a cycle on
-  load with a readable error. The tool node is never consumed: it stays in the tree and may
-  serve several bodies, the result re-derives when the tool moves or changes, and the hidden
-  state keeps an invisible cutter out of the picture, so one cutter cuts many bodies and a
-  second body takes the same tool as a second undo entry; `object.collapse` bakes one body when
-  a maker wants a one-shot result. `param` compiles the list into `SolidPlan` steps against the
-  tool's own plan, and the mesh cache keys on both revisions, so a changed tool re-meshes the
-  result and an unrelated move does not. The schema version moves with the new feature; a file
-  that names an unknown operation is an error, never a silent skip. The three tool cells become
-  live: click the target, click the tool, preview through ADR 0093, Enter applies, Escape
-  cancels, one undo entry; `object.boolean.set` and `object.boolean.remove` are the commands and
-  the object card lists the feature with the tool's name and a remove button.
-  Done: Tests: a union of two overlapping boxes has the union's volume within tolerance, a subtract
-  cuts the tool's volume out and an intersect keeps the overlap; one cutter serves two bodies and
-  moving or editing the cutter re-meshes both, while deleting a target leaves the cutter and a
-  hidden cutter stays in the file; a re-mesh follows a change of either body and not an unrelated
-  move; a missing tool, a self-reference and a three-node cycle are readable errors; the three
-  cells arm the tool and the preview writes no revision; one commit is one undo entry;
-  `cargo xtask ci` is green.
-  `files: crates/model/src/object.rs,crates/param/src/solid.rs,crates/engine/src/object_cmds.rs,crates/mesh/src/lib.rs,crates/ui/src/toolbars/spec.rs,docs/decisions/README.md`
 - `[ ]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
   Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
   the object snaps are what the group waits for; today the drawing and fill tools carry their
@@ -572,6 +544,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 
 ## Done
+
+- `[x]` **W1** a boolean between two bodies is a feature of the constructive object
+  Why: The owner asks for the standard boolean set over bodies. The kernel port has
+  `SolidKernel::boolean`, `SolidPlan` already carries boolean steps (ADR 0041), and
+  `docs/domain/geometry.md` names a boolean with another object as the next feature, but the
+  document's `Feature` holds one `Extrude`, so no body can be cut, joined or intersected from
+  the UI and `model.booleans` stays planned. The owner also asks that the source object work
+  as a reusable tool: the cutter is not spent by the operation and may cut several bodies.
+  Shape: `Feature::Boolean { op, tool }` appended after the extrusion, where `tool` names another
+  constructive object node; the pilot validates a missing tool, a self-reference and a cycle on
+  load with a readable error. The tool node is never consumed: it stays in the tree and may
+  serve several bodies, the result re-derives when the tool moves or changes, and the hidden
+  state keeps an invisible cutter out of the picture, so one cutter cuts many bodies and a
+  second body takes the same tool as a second undo entry; `object.collapse` bakes one body when
+  a maker wants a one-shot result. `param` compiles the list into `SolidPlan` steps against the
+  tool's own plan, and the mesh cache keys on both revisions, so a changed tool re-meshes the
+  result and an unrelated move does not. The schema version moves with the new feature; a file
+  that names an unknown operation is an error, never a silent skip. The three tool cells become
+  live: click the target, click the tool, preview through ADR 0093, Enter applies, Escape
+  cancels, one undo entry; `object.boolean.set` and `object.boolean.remove` are the commands and
+  the object card lists the feature with the tool's name and a remove button.
+  Done: Tests: a union of two overlapping boxes has the union's volume within tolerance, a subtract
+  cuts the tool's volume out and an intersect keeps the overlap; one cutter serves two bodies and
+  moving or editing the cutter re-meshes both, while deleting a target leaves the cutter and a
+  hidden cutter stays in the file; a re-mesh follows a change of either body and not an unrelated
+  move; a missing tool, a self-reference and a three-node cycle are readable errors; the three
+  cells arm the tool and the preview writes no revision; one commit is one undo entry;
+  `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/solid.rs,crates/engine/src/object_cmds.rs,crates/mesh/src/lib.rs,crates/ui/src/toolbars/spec.rs,docs/decisions/README.md` — `4ee1b09`
 
 - `[x]` **J3** a question about the scene is one tool, and its answers are resources
   Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that

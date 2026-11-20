@@ -374,3 +374,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   and `plan/BACKLOG.md` is refused outright, so the verb that owns the reference files has no append
   form at all. An `--add` that appends one entry through the same gate, or a guard that refuses a body
   far shorter than the file it replaces, closes it.
+- `[object]` `object.collapse` builds a body through the analytic backend, which answers exactly one
+  extrusion; a body with a boolean step is refused with `UnsupportedConstructive`, so a maker who
+  wants the cut baked as a mesh cannot have it until the command path can reach the geometry kernel.
+  The command signature carries the project, the directory, the params and the contact adapter, and
+  an evaluation service beside the contact one is the seam that closes it: one factory installed by
+  the shell, one ADR, and the same seam serves the CLI, which has no kernel today either (W1,
+  ADR 0197).
