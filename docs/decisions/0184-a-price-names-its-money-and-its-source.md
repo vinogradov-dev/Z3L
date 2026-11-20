@@ -1,4 +1,4 @@
-# 0183. A price names its money, its source and its age; stock is an overlay
+# 0184. A price names its money, its source and its age; stock is an overlay
 
 - Status: Accepted
 - Date: 2026-11-20
