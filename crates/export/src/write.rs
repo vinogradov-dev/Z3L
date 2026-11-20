@@ -29,6 +29,38 @@ pub struct ExportOptions {
     pub document: DocumentMeta,
     /// The order, when the caller knows one.
     pub order: Option<OrderMeta>,
+    /// The age past which the workshop calls a price stale, in days.
+    ///
+    /// Absent means "write the date and no verdict": the package has no clock of its own, so the
+    /// verdict is taken against `timestamp` and only when the caller names the shelf life. A price
+    /// older than this is flagged in the `materials` and `sheets` rows a reader prices from.
+    pub price_max_age_days: Option<u32>,
+}
+
+/// How the package judges the age of a price: the day it was exported, and the workshop's limit.
+///
+/// The day comes from the export timestamp because a package is a frozen copy: judged against a clock
+/// read later, one file would say two things about the same price.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PriceAging {
+    /// The day the package was built, when the caller supplied a timestamp.
+    pub today: Option<catalog::Date>,
+    /// The workshop's shelf life for a price, in days; `None` writes the date and no verdict.
+    pub limit_days: Option<u32>,
+}
+
+impl PriceAging {
+    /// How old a price is by this package's judgement, when it makes one.
+    pub fn freshness(self, price: &catalog::Price) -> Option<catalog::Freshness> {
+        let today = self.today?;
+        let limit = self.limit_days?;
+        Some(price.freshness(today, limit))
+    }
+}
+
+/// The `YYYY-MM-DD` day of an RFC 3339 timestamp, so a package judges ages by its own export time.
+pub fn exported_on(timestamp: &str) -> Option<catalog::Date> {
+    catalog::Date::parse(timestamp.get(..10)?).ok()
 }
 
 /// One built order package: its manifest and its records, ready to write.
@@ -44,7 +76,11 @@ impl OrderPackage {
     /// Nothing is written here: a package that fails to build leaves the filesystem untouched. The
     /// records are ordered by their key, so two builds of one revision are identical.
     pub fn build(project: &Project, catalog: &Directory, options: ExportOptions) -> Result<Self, ExportError> {
-        let tables = rows::build(project, catalog)?;
+        let aging = PriceAging {
+            today: options.timestamp.as_deref().and_then(exported_on),
+            limit_days: options.price_max_age_days,
+        };
+        let tables = rows::build(project, catalog, aging)?;
         let counts: BTreeMap<&'static str, usize> =
             tables.iter().map(|table| (table.spec().name, table.rows().len())).collect();
         let money = catalog

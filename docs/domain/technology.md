@@ -4,7 +4,12 @@ Status: domain specification, target state. This document describes how a panel 
 the trades and tools come from, how drilling is derived from the hardware that causes it, and how the
 placement rules a workshop works by are stored and applied (ADR 0150). Today a panel carries one
 ordered list of anchored machining records and the list has one kind, a cutout
-(`crates/model/src/panel/machining.rs`, ADR 0045, 0046); drilling is not in the program at all.
+(`crates/model/src/panel/machining.rs`, ADR 0045, 0046). The crossing that turns a drilling object
+into a hole is computed: `model::derive_holes` clips one resolved drilling object against the panel's
+own material and the evaluation cache keys the result by the panel, its placement and the objects
+(`crates/model/src/panel/hole.rs`, `crates/mesh/src/lib.rs`). What carries those objects — a part
+document and the instance that places it — is not in the program yet, so no scene drills a panel, and
+the body is drawn undrilled.
 
 Related documents:
 
@@ -149,9 +154,11 @@ operation used, and it does not move after it is written (ADR 0120).
 - an authored groove and a contour milling survive a save and a load, and one with a width outside any
   tool's range is a refusal, not a narrowed cut;
 - a hinge instance on a door yields an exact hole set at exact coordinates, including a hole near a
-  corner where the panel body differs from its nominal outline;
-- the same hinge on two doors shares one resolved part and one mesh;
-- a hole list is stable and ordered across two builds;
+  corner where the panel body differs from its nominal outline — the crossing is tested today with a
+  resolved drilling object (`crates/model/src/panel/hole.rs`); the instance that resolves it lands
+  with the instance node;
+- the same hinge on two doors shares one resolved part and one mesh — waits for the instance node;
+- a hole list is stable and ordered across two builds, and an untouched panel is not derived again;
 - a fastener pattern on a side panel produces the expected positions for system 32, and a panel
   thickness outside the table's axes is a refusal naming the axis;
 - a hinge table answers with the plate the supplier's table names, and an uncovered overlay is a

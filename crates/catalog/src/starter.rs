@@ -15,10 +15,12 @@ use units::Length;
 
 use crate::directory::Directory;
 use crate::error::CatalogError;
+use crate::external::ExternalSystemRegistry;
 use crate::family::FamilyRegistry;
 use crate::item::NomenclatureItem;
 use crate::kind::{Kind, KindCode, KindRegistry, Trait};
 use crate::money::{Currency, Money};
+use crate::price::Price;
 use crate::property::{Property, PropertyCode, PropertyRegistry, PropertyType, PropertyValue};
 use crate::slug::Slug;
 use crate::view::{COLOR_SLUG, SHEET_LENGTH_SLUG, SHEET_WIDTH_SLUG, THICKNESS_SLUG, WIDTH_SLUG};
@@ -172,11 +174,14 @@ impl Starter {
             if let Some(group) = &board.group {
                 props.insert(code(GROUP), PropertyValue::Text(group.clone()));
             }
-            if let Some(price) = board.price {
-                props.insert(code(PRICE), PropertyValue::Money(price));
-            }
             let id =
                 ItemId::new(STARTER_PACKAGE, board.serial).ok_or(CatalogError::Empty { row: "a board's serial" })?;
+            if let Some(price) = board.price {
+                // A price is written in the currency its package names: an amount without one cannot
+                // be built at all (`§11`, ADR 0120), so the package refuses instead of guessing.
+                let currency = self.currency.clone().ok_or(CatalogError::PriceWithoutCurrency { item: id })?;
+                props.insert(code(PRICE), PropertyValue::Money(Price::typed(price, currency)));
+            }
             let slug = Slug::new(format!("board-{}", board.serial))?;
             items.push(NomenclatureItem::new(id, kind_code(SHEET_KIND_CODE), board.name.clone(), slug, props)?);
         }
@@ -190,8 +195,7 @@ impl Starter {
             let slug = Slug::new(format!("band-{}", band.serial))?;
             items.push(NomenclatureItem::new(id, kind_code(BANDING_KIND_CODE), band.name.clone(), slug, props)?);
         }
-        let directory = Directory::new(items, kinds, properties, FamilyRegistry::default())?;
-        Ok(directory.with_currency(self.currency))
+        Directory::new(items, kinds, properties, FamilyRegistry::default(), ExternalSystemRegistry::default())
     }
 }
 
@@ -253,19 +257,6 @@ fn banding_kind() -> Result<Kind, CatalogError> {
     )
 }
 
-impl Directory {
-    /// The currency the directory's prices are written in, when its packages name one.
-    pub const fn currency(&self) -> Option<&Currency> {
-        self.currency.as_ref()
-    }
-
-    /// The same directory with the currency its prices are written in.
-    pub fn with_currency(mut self, currency: Option<Currency>) -> Self {
-        self.currency = currency;
-        self
-    }
-}
-
 /// The directory a workspace opens with: an oak and a white carcass board, the thin sheet a back is
 /// cut from, and the two edges.
 ///
@@ -293,6 +284,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
+    use crate::price::{PriceSource, PriceUnit};
 
     #[test]
     fn the_default_directory_answers_a_board_and_a_band() {
@@ -339,6 +331,29 @@ mod tests {
             directory.bandings().all(|band| band.thickness != thin.thickness),
             "a back sheet is not banded: the sheet kind carries no banded trait"
         );
+    }
+
+    #[test]
+    fn a_board_is_priced_by_the_sheet_in_the_currency_its_package_names() {
+        let directory = default_directory().expect("the starter package");
+        let oak = ItemId::new(STARTER_PACKAGE, 1).expect("an item id");
+        let price = directory.price(directory.item(oak).expect("the board")).expect("the price the board carries");
+        assert_eq!(price.unit, PriceUnit::Sheet);
+        assert_eq!(price.value().minor(), 320_000);
+        assert_eq!(price.currency().code(), "RUB");
+        assert_eq!(price.price.source(), &PriceSource::Typed, "a package written in code types its own prices");
+    }
+
+    #[test]
+    fn a_priced_board_in_a_package_with_no_currency_is_refused() {
+        // A price is an amount in a currency; an amount without one is not a price a reader can print.
+        let refusal = Starter::new()
+            .board(7, "Oak board", "chipboard", Length::from_micrometres(18_000), "oak", None)
+            .stocked("oak-18", Money::from_minor(320_000))
+            .directory()
+            .expect_err("no currency, no price");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("1-7") && sentence.contains("no currency"), "{sentence}");
     }
 
     #[test]

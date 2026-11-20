@@ -261,7 +261,7 @@ impl FileMenu {
             mode,
             folder: folder_of(current),
             name: match mode {
-                PickMode::Open => None,
+                PickMode::Open | PickMode::Prices => None,
                 PickMode::Save => Some(name.unwrap_or_else(|| format!("scene.{EXTENSION}"))),
             },
             lang,

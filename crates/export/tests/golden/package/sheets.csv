@@ -1,2 +1,2 @@
-material_id,stock_group,sheet_length_um,sheet_width_um,usable_length_um,usable_width_um,price_minor,part_count,part_area_mm2,sheet_area_mm2
-1-1,chipboard-18,2800000,2070000,2780000,2050000,320000,5,3367755,5796000
+material_id,stock_group,sheet_length_um,sheet_width_um,usable_length_um,usable_width_um,price_minor,price_date,price_stale,part_count,part_area_mm2,sheet_area_mm2
+1-1,chipboard-18,2800000,2070000,2780000,2050000,320000,,0,5,3367755,5796000

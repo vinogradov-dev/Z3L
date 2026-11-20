@@ -20,7 +20,7 @@ use crate::error::CatalogError;
 use crate::family::{Family, FamilyCode};
 use crate::item::{ExternalKey, ExternalSystemId, NomenclatureItem};
 use crate::kind::{Kind, KindCode, Trait};
-use crate::property::{Property, PropertyCode, PropertyType, PropertyValue};
+use crate::property::{Date, Property, PropertyCode, PropertyType, PropertyValue};
 use crate::slug::Slug;
 
 /// The registry schema this build writes and reads.
@@ -80,6 +80,9 @@ pub struct RegistryWire {
     /// The families the package declares.
     #[serde(default)]
     pub families: Vec<FamilyWire>,
+    /// The foreign systems the package's records name their keys in.
+    #[serde(default)]
+    pub systems: Vec<SystemWire>,
 }
 
 /// One kind row, in written form.
@@ -157,6 +160,64 @@ pub enum PropertyTypeWire {
     Color,
 }
 
+/// The schema of an overlay file: one version per layout, refused when it is not this build's.
+pub const OVERLAY_VERSION: u32 = 1;
+
+/// One overlay file, in written form: stock on hand, measured by a system on a day.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayWire {
+    /// The schema of this file.
+    pub version: u32,
+    /// The system that measured the counts; a registry row in the package's own registry.
+    pub source: String,
+    /// The day it measured them.
+    pub date: Date,
+    /// One row per record the overlay counts.
+    pub rows: Vec<StockRowWire>,
+}
+
+/// One overlay row, in written form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StockRowWire {
+    /// The record the count belongs to.
+    pub id: ItemId,
+    /// How many are on hand.
+    pub on_hand: u64,
+}
+
+impl OverlayWire {
+    /// The overlay, with its source resolved through the registry the packages declare.
+    ///
+    /// A source nobody declared is refused naming the overlay and the system: stock a card cannot
+    /// attribute is worse than no stock, because a person cannot tell whose count it is.
+    pub fn to_overlay(
+        &self,
+        name: &str,
+        systems: &crate::external::ExternalSystemRegistry,
+    ) -> Result<crate::overlay::StockOverlay, CatalogError> {
+        let source = crate::item::ExternalSystemId::new(self.source.clone())?;
+        if !systems.has(&source) {
+            return Err(CatalogError::UnknownStockSource {
+                overlay: name.to_owned(),
+                system: source.as_str().to_owned(),
+            });
+        }
+        crate::overlay::StockOverlay::new(name, source, self.date, self.rows.iter().map(|row| (row.id, row.on_hand)))
+    }
+}
+
+/// One foreign system, in written form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemWire {
+    /// The id a key is written with.
+    pub id: String,
+    /// The name a person reads.
+    pub label: String,
+}
+
 /// One family row, in written form.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -167,6 +228,9 @@ pub struct FamilyWire {
     pub slug: String,
     /// The family's name.
     pub label: String,
+    /// The record the family is read against, when a package names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<model::ItemId>,
 }
 
 /// One record, in written form.
@@ -190,6 +254,12 @@ pub struct ItemWire {
     /// The keys other systems know the record by.
     #[serde(default)]
     pub external: Vec<ExternalKey>,
+    /// The record's family, by slug, when it belongs to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Where the record sits inside its family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u16>,
 }
 
 impl ManifestWire {
@@ -244,14 +314,28 @@ impl RegistryWire {
             .families
             .iter()
             .map(|family| {
-                Family::new(
+                let row = Family::new(
                     FamilyCode::new(family.code).ok_or(CatalogError::Empty { row: "a family code" })?,
                     Slug::new(family.slug.clone())?,
                     family.label.clone(),
+                )?;
+                Ok(match family.sample {
+                    Some(sample) => row.sampled(sample),
+                    None => row,
+                })
+            })
+            .collect::<Result<Vec<_>, CatalogError>>()?;
+        let systems = self
+            .systems
+            .iter()
+            .map(|system| {
+                crate::external::ExternalSystem::new(
+                    crate::item::ExternalSystemId::new(system.id.clone())?,
+                    system.label.clone(),
                 )
             })
             .collect::<Result<Vec<_>, CatalogError>>()?;
-        Ok((kinds, properties, families))
+        Ok(RegistryRows { kinds, properties, families, systems })
     }
 }
 
@@ -285,6 +369,7 @@ impl ItemWire {
         item: &NomenclatureItem,
         kinds: &crate::kind::KindRegistry,
         properties: &crate::property::PropertyRegistry,
+        families: &crate::family::FamilyRegistry,
     ) -> Result<Self, CatalogError> {
         let kind = kinds.get(item.kind()).ok_or(CatalogError::UnknownKind { item: item.id(), kind: item.kind() })?;
         let mut props = BTreeMap::new();
@@ -293,6 +378,13 @@ impl ItemWire {
                 properties.get(*code).ok_or(CatalogError::UnknownProperty { item: item.id(), property: *code })?;
             props.insert(row.slug().as_str().to_owned(), value.clone());
         }
+        let family = match item.family() {
+            Some(code) => {
+                let row = families.get(code).ok_or(CatalogError::UnknownFamily { code })?;
+                Some(row.slug().as_str().to_owned())
+            }
+            None => None,
+        };
         Ok(Self {
             id: item.id(),
             kind: kind.slug().as_str().to_owned(),
@@ -301,6 +393,8 @@ impl ItemWire {
             archived: item.is_archived(),
             props,
             external: item.external().to_vec(),
+            family,
+            rank: item.rank(),
         })
     }
 
@@ -313,6 +407,7 @@ impl ItemWire {
         &self,
         kinds: &crate::kind::KindRegistry,
         properties: &crate::property::PropertyRegistry,
+        families: &crate::family::FamilyRegistry,
     ) -> Result<NomenclatureItem, CatalogError> {
         let kind = kinds.by_slug(&self.kind).ok_or(CatalogError::UnknownKindSlug { slug: self.kind.clone() })?;
         let mut props = BTreeMap::new();
@@ -336,6 +431,12 @@ impl ItemWire {
         for key in &self.external {
             item = item.with_external(key.clone())?;
         }
+        if let Some(slug) = &self.family {
+            let family = families.by_slug(slug).ok_or(CatalogError::UnknownFamilySlug { slug: slug.clone() })?;
+            item = item.in_family(family.code(), self.rank);
+        } else if self.rank.is_some() {
+            return Err(CatalogError::RankWithoutFamily { item: self.id });
+        }
         Ok(item)
     }
 }
@@ -352,14 +453,26 @@ impl ExternalKey {
     }
 }
 
-/// The three registries a package's rows build, before any other package is merged in.
-pub type RegistryRows = (Vec<Kind>, Vec<Property>, Vec<Family>);
+/// The registries a package's rows build, before any other package is merged in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RegistryRows {
+    /// The kinds the package declares.
+    pub kinds: Vec<Kind>,
+    /// The properties it declares.
+    pub properties: Vec<Property>,
+    /// The families it declares.
+    pub families: Vec<Family>,
+    /// The foreign systems its records' keys name.
+    pub systems: Vec<crate::external::ExternalSystem>,
+}
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
+    use crate::money::Money;
+    use crate::property::Date;
 
     #[test]
     fn a_property_row_writes_its_range_in_micrometres() {
@@ -374,6 +487,20 @@ mod tests {
         assert!(json.contains("\"max_um\":1000000"), "{json}");
         let back: PropertyWire = serde_json::from_str(&json).expect("read back");
         assert_eq!(back, row);
+    }
+
+    #[test]
+    fn a_registry_carries_the_foreign_systems_its_records_name() {
+        let bare = r#"{"version":1,"kinds":[],"properties":[],"families":[]}"#;
+        let rows = serde_json::from_str::<RegistryWire>(bare).expect("a registry with no systems still reads").rows();
+        assert!(rows.expect("rows").systems.is_empty(), "the field is optional, so an older file loads");
+
+        let declared = r#"{"version":1,"kinds":[],"properties":[],"families":[],
+            "systems":[{"id":"erp","label":"ERP"}]}"#;
+        let rows = serde_json::from_str::<RegistryWire>(declared).expect("a registry").rows().expect("rows");
+        let registry = crate::external::ExternalSystemRegistry::new(rows.systems).expect("one system");
+        let id = crate::item::ExternalSystemId::new("erp").expect("a system");
+        assert_eq!(registry.get(&id).map(|row| row.label()), Some("ERP"));
     }
 
     #[test]
@@ -416,10 +543,110 @@ mod tests {
                 PropertyValue::Length(units::Length::from_micrometres(18_000)),
             )]),
             external: Vec::new(),
+            family: None,
+            rank: None,
         };
-        let item = wire.to_item(&kinds, &properties).expect("a record");
+        let item = wire.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect("a record");
         assert_eq!(item.kind(), KindCode::new(1).expect("a code"));
         assert!(item.prop(PropertyCode::new(1).expect("a code")).is_some(), "the slug became its code");
+    }
+
+    #[test]
+    fn a_price_travels_through_a_file_with_its_currency_and_its_source() {
+        let properties = crate::property::PropertyRegistry::new([Property::new(
+            PropertyCode::new(1).expect("a code"),
+            Slug::new("price").expect("a slug"),
+            "Price",
+            PropertyType::Money,
+        )
+        .expect("a row")])
+        .expect("one row");
+        let kinds = crate::kind::KindRegistry::new([Kind::new(
+            KindCode::new(1).expect("a code"),
+            Slug::new("sheet-material").expect("a slug"),
+            "Sheet material",
+            [PropertyCode::new(1).expect("a code")],
+            [],
+            [Trait::PriceSheet],
+        )
+        .expect("a kind")])
+        .expect("one kind");
+        let currency = crate::money::Currency::new("RUB", 100).expect("a currency");
+        let system = crate::item::ExternalSystemId::new("supplier-egger").expect("a system");
+        let date = Date::new(2026, 11, 20).expect("a date");
+        let price = crate::price::Price::imported(Money::from_minor(320_000), currency, system.clone(), date);
+        let wire = ItemWire {
+            id: ItemId::new(712, 34).expect("an id"),
+            kind: "sheet-material".to_owned(),
+            name: "Oak veneered chipboard".to_owned(),
+            slug: "oak".to_owned(),
+            archived: false,
+            props: BTreeMap::from([("price".to_owned(), PropertyValue::Money(price.clone()))]),
+            external: Vec::new(),
+            family: None,
+            rank: None,
+        };
+        let json = serde_json::to_string(&wire).expect("serialize");
+        assert!(json.contains("\"minor\":320000") && json.contains("supplier-egger"), "{json}");
+        let back: ItemWire = serde_json::from_str(&json).expect("read back");
+        let item = back.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect("a record");
+        let read = item.prop(PropertyCode::new(1).expect("a code")).expect("the price");
+        assert_eq!(read, &PropertyValue::Money(price));
+    }
+
+    #[test]
+    fn a_record_names_its_family_by_slug_and_keeps_its_rank() {
+        let families = crate::family::FamilyRegistry::new([crate::family::Family::new(
+            crate::family::FamilyCode::new(1).expect("a code"),
+            Slug::new("oak").expect("a slug"),
+            "Oak",
+        )
+        .expect("a family")])
+        .expect("one family");
+        let kinds = crate::kind::KindRegistry::new([Kind::new(
+            KindCode::new(1).expect("a code"),
+            Slug::new("sheet-material").expect("a slug"),
+            "Sheet material",
+            [],
+            [],
+            [Trait::Sheet],
+        )
+        .expect("a kind")])
+        .expect("one kind");
+        let properties = crate::property::PropertyRegistry::default();
+        let record = |family: Option<&str>, rank: Option<u16>| ItemWire {
+            id: ItemId::new(712, 34).expect("an id"),
+            kind: "sheet-material".to_owned(),
+            name: "Oak board".to_owned(),
+            slug: "oak".to_owned(),
+            archived: false,
+            props: BTreeMap::new(),
+            external: Vec::new(),
+            family: family.map(str::to_owned),
+            rank,
+        };
+
+        let item = record(Some("oak"), Some(2)).to_item(&kinds, &properties, &families).expect("a record");
+        assert_eq!(item.family().map(|code| code.get()), Some(1));
+        assert_eq!(item.rank(), Some(2));
+        let written = ItemWire::from_item(&item, &kinds, &properties, &families).expect("a record in writing");
+        assert_eq!(written.family.as_deref(), Some("oak"), "a file names the family by its slug");
+        assert_eq!(written.rank, Some(2));
+
+        let refusal = record(Some("walnut"), Some(1)).to_item(&kinds, &properties, &families).expect_err("no family");
+        assert!(refusal.to_string().contains("walnut"), "{refusal}");
+
+        let refusal = record(None, Some(1)).to_item(&kinds, &properties, &families).expect_err("a rank with none");
+        assert!(refusal.to_string().contains("names no family"), "{refusal}");
+    }
+
+    #[test]
+    fn a_file_price_with_a_currency_we_cannot_print_is_refused_with_the_iso_sentence() {
+        let record = r#"{"id":"712-34","kind":"sheet-material","name":"Oak","slug":"oak",
+            "props":{"price":{"type":"money","value":{"minor":100,
+            "currency":{"code":"eur","minor_scale":100},"source":"typed"}}}}"#;
+        let refusal = serde_json::from_str::<ItemWire>(record).expect_err("a lower-case code is not a currency");
+        assert!(refusal.to_string().contains("ISO 4217"), "{refusal}");
     }
 
     #[test]
@@ -434,8 +661,11 @@ mod tests {
             archived: false,
             props: BTreeMap::from([("colour".to_owned(), PropertyValue::Text("white".to_owned()))]),
             external: Vec::new(),
+            family: None,
+            rank: None,
         };
-        let refusal = wire.to_item(&kinds, &properties).expect_err("no such kind");
+        let refusal =
+            wire.to_item(&kinds, &properties, &crate::family::FamilyRegistry::default()).expect_err("no such kind");
         assert!(refusal.to_string().contains("sheet-material"), "{refusal}");
     }
 }

@@ -168,8 +168,9 @@ fn box_report(project: &Project, id: Option<Id>) -> Result<Value, CliError> {
 fn parts(project: &Project) -> Result<Value, CliError> {
     let catalog = crate::scene_build::default_catalog().map_err(CliError::Catalog)?;
     let document = DocumentMeta { file: None, revision: project.revision().get(), hash: None };
-    let package = OrderPackage::build(project, &catalog, ExportOptions { timestamp: None, document, order: None })
-        .map_err(CliError::Export)?;
+    // `query parts` asks for the cut list, not for a price verdict: the age flag belongs to `export`.
+    let options = ExportOptions { timestamp: None, document, order: None, price_max_age_days: None };
+    let package = OrderPackage::build(project, &catalog, options).map_err(CliError::Export)?;
     let table = package
         .table("parts")
         .ok_or_else(|| CliError::Query("the order package publishes no `parts` table".to_owned()))?;

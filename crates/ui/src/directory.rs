@@ -24,8 +24,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use catalog::{
-    Directory, DirectorySource, FolderSource, FolderWriter, KindCode, Money, NomenclatureItem, Property, PropertyCode,
-    PropertyType, PropertyValue, Slug,
+    Currency, Directory, DirectorySource, FolderSource, FolderWriter, KindCode, Money, NomenclatureItem, Price,
+    Property, PropertyCode, PropertyType, PropertyValue, Slug,
 };
 use egui::{Align, Layout, TextEdit, Ui, vec2};
 use model::ItemId;
@@ -40,6 +40,8 @@ const TREE_WIDTH: f32 = 260.0;
 const STATUS_HEIGHT: f32 = 26.0;
 /// The narrowest the card may get before the tree gives way.
 const MIN_BODY: f32 = 240.0;
+/// How many refused rows the status line quotes: a list of forty lines is a report, not a sentence.
+const REFUSALS_SHOWN: usize = 3;
 
 /// Which half of the tree column is showing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,8 +67,19 @@ struct PackageInfo {
 /// conversion to micrometres happens once, when the draft becomes a record (`AGENTS.md` §4.3).
 #[derive(Clone, Debug)]
 enum ValueDraft {
-    /// A length in millimetres, a count or a price in its minor unit.
+    /// A length in millimetres or a count.
     Number(f64),
+    /// A price: the amount in minor units, and the record's price it was read from.
+    ///
+    /// The price keeps its currency and its provenance, so a card that rewrites the amount of an
+    /// imported price keeps the currency the import wrote it in; the source turns into `Typed` only
+    /// when the amount itself changes (`§11`).
+    Money {
+        /// The amount in whole minor units of the price's currency.
+        minor: f64,
+        /// The record's price, or `None` while the package names no currency to write one in.
+        price: Option<Price>,
+    },
     /// A text.
     Text(String),
     /// One slug of a closed list.
@@ -110,6 +123,27 @@ pub struct DirectoryEditor {
     view: View,
     /// The last thing the application said, and whether it is good news.
     status: Option<String>,
+    /// Whether the person asked for a price list this frame; the shell takes it and asks for a file.
+    import_requested: bool,
+    /// Today, and the age past which a price is called stale, as the shell supplies them.
+    ///
+    /// The directory has no clock: the day a card judges a price against is the shell's, and the limit
+    /// is the workshop's, so this window keeps neither rule of its own.
+    price_aging: PriceAging,
+}
+
+/// How the card judges the age of a price: the day it is, and the workshop's limit in days.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PriceAging {
+    today: Option<catalog::Date>,
+    max_age_days: Option<u32>,
+}
+
+impl PriceAging {
+    /// How old a price is by this judgement, when both halves are known.
+    fn freshness(&self, price: &Price) -> Option<catalog::Freshness> {
+        Some(price.freshness(self.today?, self.max_age_days?))
+    }
 }
 
 impl DirectoryEditor {
@@ -132,6 +166,8 @@ impl DirectoryEditor {
             filter: String::new(),
             view: View::Items,
             status: None,
+            import_requested: false,
+            price_aging: PriceAging::default(),
         };
         editor.reload();
         editor
@@ -264,6 +300,73 @@ impl DirectoryEditor {
         Ok(id)
     }
 
+    /// Sets the day a card judges a price against and the workshop's limit, in days.
+    ///
+    /// `None` in either half means "no verdict": a price is shown with its date and nothing is said
+    /// about its age, because a rule the shell did not supply is not the card's to invent.
+    pub fn set_price_aging(&mut self, today: Option<catalog::Date>, max_age_days: Option<u32>) {
+        self.price_aging = PriceAging { today, max_age_days };
+    }
+
+    /// Whether the person pressed *Import prices*, as a request the shell performs.
+    ///
+    /// The editor creates no dialog and asks no operating system for a path (ADR 0182): the shell owns
+    /// the system file manager, hands the chosen file back to [`DirectoryEditor::import_prices`], and
+    /// this flag is the one word between them.
+    pub fn take_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.import_requested)
+    }
+
+    /// Reads a supplier's price list and writes every row it applies as one revision per package.
+    ///
+    /// The batch plans in `catalog` and writes nothing: a row whose currency we cannot print, whose
+    /// key names no record or whose price is not a number is refused with its line, and the rows that
+    /// do resolve land in one write — one manifest bump per package, so a reader sees one change. The
+    /// answer is the sentence the status line shows, and it is the error when nothing was written.
+    pub fn import_prices(&mut self, path: &Path, lang: Lang) -> Result<String, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| Message::PriceListUnread.text(lang).replace("{}", &error.to_string()))?;
+        let directory = self.directory.as_ref().ok_or_else(|| Message::DirectoryEmpty.text(lang))?;
+        let batch = catalog::PriceBatch::read(&text, directory);
+        let refused: Vec<String> =
+            batch.refused().take(REFUSALS_SHOWN).map(|(line, reason)| format!("{line}: {reason}")).collect();
+        let records = batch.records(directory);
+        if records.is_empty() {
+            let sentence = batch.sentence();
+            let shown = if refused.is_empty() { String::new() } else { format!(" — {}", refused.join("; ")) };
+            self.status = Some(format!("{sentence}{shown}"));
+            return Err(sentence);
+        }
+        // One package, one revision: the batch is grouped because a package's manifest is its own
+        // history, and a list may price records of several packages.
+        let mut by_package: BTreeMap<u32, Vec<NomenclatureItem>> = BTreeMap::new();
+        for record in records {
+            by_package.entry(record.id().package()).or_default().push(record);
+        }
+        let mut writer = FolderWriter::open(&self.root).map_err(|error| error.to_string())?;
+        for (package, records) in &by_package {
+            let folder = self
+                .packages
+                .iter()
+                .find(|info| info.id == *package)
+                .map(|info| info.folder.clone())
+                .ok_or_else(|| format!("no connected package carries the id prefix {package}"))?;
+            if let Err(error) = writer.save_items(&folder, records) {
+                let sentence = error.to_string();
+                self.status = Some(sentence.clone());
+                return Err(sentence);
+            }
+        }
+        writer.close();
+        self.reload();
+        let mut sentence = batch.sentence();
+        if !refused.is_empty() {
+            sentence.push_str(&format!(" — {}", refused.join("; ")));
+        }
+        self.status = Some(sentence.clone());
+        Ok(sentence)
+    }
+
     /// Draws the window's body into `ui`.
     ///
     /// The shell gives one `Ui` and the editor creates no host of its own: a panel, a window or an
@@ -319,6 +422,10 @@ impl DirectoryEditor {
             if ui.button(Message::DirectorySave.text(lang)).clicked() {
                 // The refusal is already the status line: `save` writes its own sentence.
                 let _ = self.save(lang);
+            }
+            if ui.button(Message::DirectoryImportPrices.text(lang)).clicked() {
+                // The shell owns the system file manager, so the press becomes a request it takes.
+                self.import_requested = true;
             }
         });
     }
@@ -449,7 +556,8 @@ impl DirectoryEditor {
                     // The number box draws its unit as a caption beside itself, which a grid cell
                     // cannot hold: a row of its own gives the field the layout it expects.
                     let mut written = None;
-                    ui.horizontal(|ui| written = field(ui, row.ty(), value));
+                    let aging = self.price_aging;
+                    ui.horizontal(|ui| written = field(ui, row.ty(), value, aging, lang));
                     if let Some(value) = written {
                         draft.values.insert(row.code(), value);
                     }
@@ -488,7 +596,7 @@ impl Draft {
         if let Some(row) = directory.kinds().get(kind) {
             for code in row.accepts() {
                 if let Some(property) = directory.properties().get(*code) {
-                    values.insert(*code, ValueDraft::default_for(property.ty()));
+                    values.insert(*code, ValueDraft::default_for(property.ty(), directory.currency()));
                 }
             }
         }
@@ -513,7 +621,7 @@ impl Draft {
                 let Some(property) = directory.properties().get(*code) else { continue };
                 let value = match item.prop(*code) {
                     Some(value) => ValueDraft::of(property.ty(), value),
-                    None => ValueDraft::default_for(property.ty()),
+                    None => ValueDraft::default_for(property.ty(), directory.currency()),
                 };
                 values.insert(*code, value);
             }
@@ -549,10 +657,13 @@ impl Draft {
 
 impl ValueDraft {
     /// The value the card starts a row with when the record does not carry it.
-    fn default_for(ty: &PropertyType) -> Self {
+    fn default_for(ty: &PropertyType, currency: Option<&Currency>) -> Self {
         match ty {
             PropertyType::Length { min, .. } => Self::Number(min.millimetres_f64()),
-            PropertyType::Count { .. } | PropertyType::Money => Self::Number(0.0),
+            PropertyType::Count { .. } => Self::Number(0.0),
+            PropertyType::Money => {
+                Self::Money { minor: 0.0, price: currency.map(|currency| Price::typed(Money::ZERO, currency.clone())) }
+            }
             PropertyType::Text { .. } => Self::Text(String::new()),
             PropertyType::Enum(options) => Self::Choice(options.iter().next().cloned().unwrap_or_default()),
             PropertyType::Ref | PropertyType::Date | PropertyType::Color => {
@@ -566,7 +677,9 @@ impl ValueDraft {
         match (ty, value) {
             (PropertyType::Length { .. }, PropertyValue::Length(length)) => Self::Number(length.millimetres_f64()),
             (PropertyType::Count { .. }, PropertyValue::Count(count)) => Self::Number(*count as f64),
-            (PropertyType::Money, PropertyValue::Money(money)) => Self::Number(money.minor() as f64),
+            (PropertyType::Money, PropertyValue::Money(price)) => {
+                Self::Money { minor: price.value().minor() as f64, price: Some(price.clone()) }
+            }
             (PropertyType::Text { .. }, PropertyValue::Text(text)) => Self::Text(text.clone()),
             (PropertyType::Enum(_), PropertyValue::Enum(slug)) => Self::Choice(slug.clone()),
             _ => Self::Kept(value.clone()),
@@ -590,12 +703,19 @@ impl ValueDraft {
                 }
                 Ok(PropertyValue::Count(count as u64))
             }
-            (PropertyType::Money, Self::Number(minor)) => {
+            (PropertyType::Money, Self::Money { minor, price }) => {
                 let minor = minor.max(0.0).round();
                 if !minor.is_finite() || minor > u64::MAX as f64 {
                     return Err("a price that is not a number of minor units".to_owned());
                 }
-                Ok(PropertyValue::Money(Money::from_minor(minor as u64)))
+                let amount = Money::from_minor(minor as u64);
+                match price {
+                    // An untouched row keeps the price it was read from, provenance and all, so a
+                    // card that only renames a record never restamps a supplier's number.
+                    Some(price) if price.value() == amount => Ok(PropertyValue::Money(price.clone())),
+                    Some(price) => Ok(PropertyValue::Money(Price::typed(amount, price.currency().clone()))),
+                    None => Err("the package names no currency to write a price in".to_owned()),
+                }
             }
             (PropertyType::Text { .. }, Self::Text(text)) => Ok(PropertyValue::Text(text.clone())),
             (PropertyType::Enum(_), Self::Choice(slug)) => Ok(PropertyValue::Enum(slug.clone())),
@@ -607,7 +727,13 @@ impl ValueDraft {
 
 /// One property's field: the one number box for a number, a line of text for a text, a list for a
 /// closed set, and a read-only value for the rows this build has no field for yet.
-fn field(ui: &mut Ui, ty: &PropertyType, value: Option<ValueDraft>) -> Option<ValueDraft> {
+fn field(
+    ui: &mut Ui,
+    ty: &PropertyType,
+    value: Option<ValueDraft>,
+    aging: PriceAging,
+    lang: Lang,
+) -> Option<ValueDraft> {
     let mut written = None;
     match (ty, value) {
         (PropertyType::Length { min, max }, Some(ValueDraft::Number(mut millimetres))) => {
@@ -625,11 +751,38 @@ fn field(ui: &mut Ui, ty: &PropertyType, value: Option<ValueDraft>) -> Option<Va
                 written = Some(ValueDraft::Number(count));
             }
         }
-        (PropertyType::Money, Some(ValueDraft::Number(mut minor))) => {
-            let outcome = Scrub::new(&mut minor).decimals(0).policy(CommitPolicy::Live).show(ui);
-            if outcome.commit {
-                written = Some(ValueDraft::Number(minor));
-            }
+        (PropertyType::Money, Some(ValueDraft::Money { mut minor, price })) => {
+            ui.horizontal(|ui| {
+                let outcome = Scrub::new(&mut minor).decimals(0).policy(CommitPolicy::Live).show(ui);
+                match &price {
+                    Some(price) => {
+                        ui.small(format!("{} · {}", price.currency().code(), price.source()));
+                        if let Some(date) = price.date() {
+                            ui.small(date.iso());
+                        }
+                        // The age is said in the card's own words and only when the shell supplied
+                        // both halves of the rule, so a card never invents a shelf life.
+                        match aging.freshness(price) {
+                            Some(catalog::Freshness::Stale { days, limit_days }) => {
+                                ui.small(Message::PriceStale.with(lang, [days, limit_days]));
+                            }
+                            Some(catalog::Freshness::Fresh { days }) => {
+                                ui.small(Message::PriceFresh.with(lang, [days]));
+                            }
+                            Some(catalog::Freshness::Undated) => {
+                                ui.small(Message::PriceUndated.text(lang));
+                            }
+                            None => {}
+                        }
+                    }
+                    None => {
+                        ui.small(Message::PriceNoCurrency.text(lang));
+                    }
+                }
+                if outcome.commit {
+                    written = Some(ValueDraft::Money { minor, price });
+                }
+            });
         }
         (PropertyType::Text { .. }, Some(ValueDraft::Text(mut text))) => {
             if ui.add(TextEdit::singleline(&mut text)).changed() {
@@ -665,7 +818,7 @@ fn describe(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Length(length) => format!("{} mm", length.millimetres_f64()),
         PropertyValue::Count(count) => format!("{count}"),
-        PropertyValue::Money(money) => format!("{}", money.minor()),
+        PropertyValue::Money(price) => format!("{price}"),
         PropertyValue::Text(text) => text.clone(),
         PropertyValue::Enum(slug) => slug.clone(),
         PropertyValue::Ref(id) => format!("{id}"),
@@ -747,6 +900,7 @@ mod tests {
                 },
             ],
             families: Vec::new(),
+            systems: Vec::new(),
         };
         std::fs::write(package.join("registry.json"), serde_json::to_string(&registry).expect("a registry"))
             .expect("the registry");
@@ -784,6 +938,120 @@ mod tests {
         );
         assert_eq!(editor.status(), Some(Message::DirectorySaved.text(Lang::En)));
         assert_eq!(editor.open_item(), Some(id), "the card keeps the record it saved");
+    }
+
+    /// A package whose sheet kind is priced by the sheet, with one record an `erp` list knows.
+    fn priced_folder(name: &str) -> PathBuf {
+        let root = testkit::scratch_dir(name);
+        let package = root.join("packages").join("starter");
+        std::fs::create_dir_all(package.join("items")).expect("the package folder");
+        std::fs::write(root.join("directory.json"), json!({ "version": 1, "packages": ["starter"] }).to_string())
+            .expect("the connected list");
+        let manifest = ManifestWire::new(1, "Starter");
+        std::fs::write(package.join("manifest.json"), serde_json::to_string(&manifest).expect("a manifest"))
+            .expect("the manifest");
+        std::fs::write(
+            package.join("registry.json"),
+            json!({
+                "version": 1,
+                "kinds": [{
+                    "code": 1, "slug": "sheet-material", "label": "Sheet material",
+                    "accepts": [1, 2], "required": [1], "traits": ["sheet", "price-sheet"]
+                }],
+                "properties": [
+                    { "code": 1, "slug": "thickness", "label": "Thickness", "type": "length", "min_um": 1000, "max_um": 40000 },
+                    { "code": 2, "slug": "price", "label": "Price", "type": "money" }
+                ],
+                "systems": [{ "id": "erp", "label": "ERP" }]
+            })
+            .to_string(),
+        )
+        .expect("the registry");
+        std::fs::write(
+            package.join("items").join("sheet-material-1.json"),
+            json!({
+                "id": "1-1", "kind": "sheet-material", "name": "Oak board", "slug": "oak-board",
+                "props": { "thickness": { "type": "length", "value": 18000 } },
+                "external": [{ "system": "erp", "key": "A-1" }]
+            })
+            .to_string(),
+        )
+        .expect("the record");
+        root
+    }
+
+    #[test]
+    fn the_card_judges_a_price_by_the_day_and_the_limit_the_shell_gives_it() {
+        // O8: a card warns about a price older than the workshop's limit, and says nothing at all
+        // about the age when the shell supplied no rule.
+        let system = catalog::ExternalSystemId::new("erp").expect("a system");
+        let currency = catalog::Currency::new("RUB", 100).expect("a currency");
+        let price = Price::imported(
+            Money::from_minor(320_000),
+            currency,
+            system,
+            catalog::Date::new(2026, 1, 1).expect("a date"),
+        );
+        let today = catalog::Date::new(2026, 11, 20).expect("a date");
+        let aging = PriceAging { today: Some(today), max_age_days: Some(180) };
+        assert_eq!(aging.freshness(&price), Some(catalog::Freshness::Stale { days: 323, limit_days: 180 }));
+        let patient = PriceAging { max_age_days: Some(365), ..aging };
+        assert_eq!(patient.freshness(&price), Some(catalog::Freshness::Fresh { days: 323 }));
+        assert_eq!(PriceAging { max_age_days: None, ..aging }.freshness(&price), None, "no limit, no verdict");
+        assert_eq!(PriceAging::default().freshness(&price), None, "and no day either");
+
+        let mut editor = DirectoryEditor::open(folder("directory-aging"));
+        editor.set_price_aging(Some(today), Some(180));
+        assert_eq!(editor.price_aging, aging, "the window keeps the rule it was given and no other");
+    }
+
+    #[test]
+    fn a_price_list_is_one_write_and_the_status_line_names_the_rows_it_refused() {
+        // O8's Done, through the screen: the person picks a supplier's CSV, the batch prices what its
+        // keys name, and the revision moves once — not once per row.
+        let root = priced_folder("directory-prices");
+        let list = root.join("prices.csv");
+        std::fs::write(
+            &list,
+            "system,key,price_minor,currency,date\n\
+             erp,A-1,320000,RUB,2026-11-20\n\
+             erp,A-9,240000,RUB,2026-11-20\n\
+             erp,A-1,1,eur,2026-11-20\n",
+        )
+        .expect("the price list");
+        let before = FolderSource::at(&root).revision().expect("a stamp");
+        let mut editor = DirectoryEditor::open(&root);
+        assert!(editor.directory().is_some(), "the folder reads: {:?}", editor.refusal());
+        let sentence = editor.import_prices(&list, Lang::En).expect("one row is a price");
+        assert!(sentence.contains("1 prices written, 2 rows refused"), "{sentence}");
+        assert_eq!(editor.status(), Some(sentence.as_str()), "the status line is the batch's own sentence");
+        assert!(
+            sentence.contains("A-9") || sentence.contains("ISO 4217"),
+            "the refused rows are quoted by line: {sentence}"
+        );
+
+        let after = FolderSource::at(&root).revision().expect("a stamp");
+        assert_ne!(before, after, "the batch moved the revision");
+        let directory = editor.directory().expect("read back");
+        let id = ItemId::new(1, 1).expect("an id");
+        let price = directory.price(directory.item(id).expect("the record")).expect("the price the batch wrote");
+        assert_eq!(price.value().minor(), 320_000);
+        assert_eq!(price.currency().code(), "RUB");
+        assert_eq!(price.price.source().system().map(|system| system.as_str()), Some("erp"));
+    }
+
+    #[test]
+    fn a_price_list_that_writes_nothing_is_a_sentence_and_leaves_the_folder_alone() {
+        let root = priced_folder("directory-prices-refused");
+        let list = root.join("prices.csv");
+        std::fs::write(&list, "system,key,price_minor,currency,date\nerp,A-9,240000,RUB,2026-11-20\n")
+            .expect("the price list");
+        let before = FolderSource::at(&root).revision().expect("a stamp");
+        let mut editor = DirectoryEditor::open(&root);
+        let refusal = editor.import_prices(&list, Lang::En).expect_err("no record is named A-9");
+        assert!(refusal.contains("no price was written"), "{refusal}");
+        assert_eq!(FolderSource::at(&root).revision().expect("a stamp"), before, "nothing was written");
+        assert!(editor.status().is_some_and(|status| status.contains("A-9")), "{:?} is the status", editor.status());
     }
 
     #[test]

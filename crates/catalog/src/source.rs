@@ -29,7 +29,9 @@ use crate::directory::Directory;
 use crate::family::FamilyRegistry;
 use crate::kind::KindRegistry;
 use crate::property::PropertyRegistry;
-use crate::wire::{DIRECTORY_VERSION, MANIFEST_VERSION, ManifestWire, REGISTRY_VERSION, RegistryWire};
+use crate::wire::{
+    DIRECTORY_VERSION, MANIFEST_VERSION, ManifestWire, OVERLAY_VERSION, OverlayWire, REGISTRY_VERSION, RegistryWire,
+};
 
 /// The name of the file that lists the connected packages.
 const DIRECTORY_FILE: &str = "directory.json";
@@ -41,6 +43,8 @@ const MANIFEST_FILE: &str = "manifest.json";
 const REGISTRY_FILE: &str = "registry.json";
 /// The folder one package's records live in.
 const ITEMS_DIR: &str = "items";
+/// The folder a package's overlays live in: stock on hand, and later other volatile rows (`§14`).
+const OVERLAYS_DIR: &str = "overlays";
 
 /// Why a directory could not be read.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -264,6 +268,16 @@ impl FolderSource {
             for name in names.unwrap_or_default() {
                 files.push(items.join(name));
             }
+            // An overlay is one of the files a snapshot reads, so a supplier's new count moves the
+            // stamp like a record does and a window that polls the folder reloads once (§13).
+            let overlays = folder.join(OVERLAYS_DIR);
+            let names = json_names(&overlays).map_err(|error| LoadError::Read {
+                path: overlays.clone(),
+                reason: format!("package `{package}`: {error}"),
+            })?;
+            for name in names.unwrap_or_default() {
+                files.push(overlays.join(name));
+            }
         }
         Ok(files)
     }
@@ -295,7 +309,9 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
     let mut kinds = Vec::new();
     let mut properties = Vec::new();
     let mut families = Vec::new();
+    let mut systems = Vec::new();
     let mut items = Vec::new();
+    let mut overlays: Vec<Loaded<(String, OverlayWire)>> = Vec::new();
     let mut connected: Vec<Connected> = Vec::new();
     for name in packages {
         let package = name.clone();
@@ -333,9 +349,15 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
                 expected: REGISTRY_VERSION,
             });
         }
-        let (package_kinds, package_properties, package_families) = registry.rows().map_err(|error| {
-            LoadError::File { package: package.clone(), path: registry_path.clone(), reason: error.to_string() }
+        let rows = registry.rows().map_err(|error| LoadError::File {
+            package: package.clone(),
+            path: registry_path.clone(),
+            reason: error.to_string(),
         })?;
+        let (package_kinds, package_properties, package_families) = (rows.kinds, rows.properties, rows.families);
+        for row in rows.systems {
+            systems.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
+        }
         for row in package_kinds {
             kinds.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
         }
@@ -359,6 +381,23 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
                 });
             }
             items.push(Loaded { package: package.clone(), path, value: wire });
+        }
+
+        // A package without an overlay folder is complete: stock is volatile and most packages never
+        // carry any (`§11`).
+        let overlays_dir = folder.join(OVERLAYS_DIR);
+        let names = json_names(&overlays_dir).map_err(|error| LoadError::Read {
+            path: overlays_dir.clone(),
+            reason: format!("package `{package}`: {error}"),
+        })?;
+        for entry in names.unwrap_or_default() {
+            let path = overlays_dir.join(&entry);
+            let wire: OverlayWire = read_json(&path, &package)?;
+            if wire.version != OVERLAY_VERSION {
+                return Err(LoadError::Version { package, path, found: wire.version, expected: OVERLAY_VERSION });
+            }
+            let name = entry.strip_suffix(".json").unwrap_or(&entry).to_owned();
+            overlays.push(Loaded { package: package.clone(), path, value: (name, wire) });
         }
     }
 
@@ -403,19 +442,37 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
     let families = FamilyRegistry::new(families.iter().map(|row| row.value.clone())).map_err(|error| {
         LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
     })?;
+    let systems =
+        crate::external::ExternalSystemRegistry::new(systems.iter().map(|row| row.value.clone())).map_err(|error| {
+            LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
+        })?;
 
     let mut records = Vec::with_capacity(items.len());
     for item in &items {
-        let record = item.value.to_item(&kinds, &properties).map_err(|error| LoadError::File {
+        let record = item.value.to_item(&kinds, &properties, &families).map_err(|error| LoadError::File {
             package: item.package.clone(),
             path: item.path.clone(),
             reason: error.to_string(),
         })?;
         records.push(record);
     }
-    Directory::new(records, kinds, properties, families).map_err(|error| {
+    let directory = Directory::new(records, kinds, properties, families, systems).map_err(|error| {
         let (package, path) = attributes(&items, &error);
         LoadError::File { package, path, reason: error.to_string() }
+    })?;
+    let mut stock = Vec::with_capacity(overlays.len());
+    for overlay in &overlays {
+        let (name, wire) = &overlay.value;
+        stock.push(wire.to_overlay(name, directory.systems()).map_err(|error| LoadError::File {
+            package: overlay.package.clone(),
+            path: overlay.path.clone(),
+            reason: error.to_string(),
+        })?);
+    }
+    directory.with_overlays(stock).map_err(|error| LoadError::File {
+        package: String::new(),
+        path: PathBuf::from(OVERLAYS_DIR),
+        reason: error.to_string(),
     })
 }
 
@@ -629,6 +686,95 @@ mod tests {
         assert_eq!(
             (band.thickness, band.width),
             (units::Length::from_micrometres(2_000), units::Length::from_micrometres(22_000))
+        );
+    }
+
+    /// Adds the `erp` system to the starter package's registry and writes one overlay beside it.
+    fn with_overlay(package: &Path, file: &str, source: &str, rows: serde_json::Value) {
+        let path = package.join(REGISTRY_FILE);
+        let mut registry: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("the registry")).expect("a registry");
+        registry["systems"] = serde_json::json!([{ "id": "erp", "label": "ERP" }]);
+        fs::write(&path, registry.to_string()).expect("write the registry");
+        let overlays = package.join(OVERLAYS_DIR);
+        fs::create_dir_all(&overlays).expect("create the overlay folder");
+        let overlay = serde_json::json!({
+            "version": 1,
+            "source": source,
+            "date": { "year": 2026, "month": 11, "day": 20 },
+            "rows": rows
+        });
+        fs::write(overlays.join(file), overlay.to_string()).expect("write the overlay");
+    }
+
+    #[test]
+    fn an_overlay_answers_the_stock_of_a_record_and_writes_nothing_on_the_record() {
+        let temp = TempDir::new("overlay");
+        let package = starter_folder(&temp.0);
+        with_overlay(&package, "erp-stock.json", "erp", serde_json::json!([{ "id": "1-1", "on_hand": 12 }]));
+        let source = FolderSource::at(&temp.0);
+        let directory = source.snapshot().expect("the package loads with its overlay");
+        let id = ItemId::new(1, 1).expect("an item id");
+        let on_hand = directory.on_hand(id).expect("the overlay counts the board");
+        assert_eq!(on_hand.count(), 12);
+        assert_eq!(on_hand.overlay(), "erp-stock");
+        assert_eq!(on_hand.source().as_str(), "erp");
+        assert_eq!((on_hand.date().year(), on_hand.date().month(), on_hand.date().day()), (2026, 11, 20));
+        assert_eq!(directory.overlays().len(), 1);
+        assert!(
+            directory.on_hand(ItemId::new(1, 101).expect("an item id")).is_none(),
+            "a record the overlay does not name has no count, not a zero"
+        );
+        // Stock is an overlay and not a property: the record carries the two values its file wrote and
+        // nothing the overlay mentions.
+        assert_eq!(directory.item(id).map(|item| item.props().len()), Some(2), "thickness and decor");
+    }
+
+    #[test]
+    fn a_new_overlay_moves_the_stamp_a_window_polls() {
+        let temp = TempDir::new("overlay-stamp");
+        let package = starter_folder(&temp.0);
+        with_overlay(&package, "erp-stock.json", "erp", serde_json::json!([{ "id": "1-1", "on_hand": 12 }]));
+        let source = FolderSource::at(&temp.0);
+        let before = source.revision().expect("a stamp");
+        with_overlay(&package, "erp-stock.json", "erp", serde_json::json!([{ "id": "1-1", "on_hand": 7 }]));
+        assert_ne!(source.revision().expect("a stamp"), before, "a supplier's new count is one reload");
+        assert_eq!(
+            source
+                .snapshot()
+                .expect("the snapshot")
+                .on_hand(ItemId::new(1, 1).expect("an item id"))
+                .map(|on| on.count()),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn an_overlay_written_by_an_undeclared_system_is_refused_with_its_name() {
+        let temp = TempDir::new("overlay-system");
+        let package = starter_folder(&temp.0);
+        with_overlay(&package, "handbook.json", "1c", serde_json::json!([{ "id": "1-1", "on_hand": 3 }]));
+        let refusal = FolderSource::at(&temp.0).snapshot().expect_err("no package declares `1c`");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("handbook") && sentence.contains("`1c`"), "{sentence}");
+    }
+
+    #[test]
+    fn two_overlays_that_count_one_record_are_refused_with_both_named() {
+        let temp = TempDir::new("overlay-twice");
+        let package = starter_folder(&temp.0);
+        with_overlay(&package, "erp-stock.json", "erp", serde_json::json!([{ "id": "1-1", "on_hand": 12 }]));
+        let overlays = package.join(OVERLAYS_DIR);
+        let second = serde_json::json!({
+            "version": 1, "source": "erp", "date": { "year": 2026, "month": 11, "day": 20 },
+            "rows": [{ "id": "1-1", "on_hand": 4 }]
+        });
+        fs::write(overlays.join("counting.json"), second.to_string()).expect("write the second overlay");
+        let refusal = FolderSource::at(&temp.0).snapshot().expect_err("one record, one stock");
+        let sentence = refusal.to_string();
+        assert!(
+            sentence.contains("1-1") && sentence.contains("erp-stock") && sentence.contains("counting"),
+            "{sentence}"
         );
     }
 

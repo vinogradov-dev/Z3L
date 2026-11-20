@@ -16,6 +16,7 @@ mod banding;
 mod classify;
 mod contour;
 mod geometry;
+mod hole;
 mod machining;
 
 pub use banding::{BandingSpec, CornerBanding, EdgeBanding, RingBanding};
@@ -25,6 +26,7 @@ pub use geometry::{
     EntryFace, FaceSide, PanelDimensionError, PanelGeometry, PanelGeometryError, PanelNominalSize, PanelRect,
     PanelRectError, RectCorner, RectEdge,
 };
+pub use hole::{DerivedHoles, Drilling, Hole, HoleDiagnostic, HoleError, derive_holes};
 pub use machining::{
     CoreViolation, Cutout, CutoutDepth, CutoutShape, EdgeRef, MACHINING_DESCRIPTORS, Machining, MachiningAnchor,
     MachiningCapabilities, MachiningCategory, MachiningDescriptor, MachiningKind, MachiningParams, MachiningStage,

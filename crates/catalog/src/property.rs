@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use units::Length;
 
 use crate::error::CatalogError;
-use crate::money::Money;
+use crate::price::Price;
 use crate::slug::Slug;
 
 /// A property's code, allocated by the package that declares the row.
@@ -123,6 +123,38 @@ impl Date {
     /// The day of the month.
     pub const fn day(self) -> u8 {
         self.day
+    }
+
+    /// How many days after 1970-01-01 this date falls, by the civil-date arithmetic.
+    ///
+    /// The directory has no clock, so an age is measured between two dates a caller supplies: an
+    /// import writes one, and the shell reads today's date once.
+    pub const fn days_since_epoch(self) -> i64 {
+        let year = self.year as i64 - if self.month <= 2 { 1 } else { 0 };
+        let era = if year >= 0 { year } else { year - 399 } / 400;
+        let year_of_era = year - era * 400;
+        let month = (self.month as i64 + 9) % 12;
+        let day_of_year = (153 * month + 2) / 5 + self.day as i64 - 1;
+        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        era * 146_097 + day_of_era - 719_468
+    }
+
+    /// Reads the `YYYY-MM-DD` a file writes, with the calendar's own refusal.
+    pub fn parse(text: &str) -> Result<Self, CatalogError> {
+        let unreadable = || CatalogError::Date { text: text.to_owned() };
+        let fields: Vec<&str> = text.split('-').collect();
+        let [year, month, day] = fields.as_slice() else {
+            return Err(unreadable());
+        };
+        let year = year.parse::<i32>().map_err(|_| unreadable())?;
+        let month = month.parse::<u8>().map_err(|_| unreadable())?;
+        let day = day.parse::<u8>().map_err(|_| unreadable())?;
+        Self::new(year, month, day)
+    }
+
+    /// The date as `YYYY-MM-DD`, the form a package and a report write.
+    pub fn iso(self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
 }
 
@@ -291,8 +323,8 @@ pub enum PropertyValue {
     Length(Length),
     /// An unsigned count.
     Count(u64),
-    /// Whole minor units of the catalogue's currency.
-    Money(Money),
+    /// A price: an amount with its currency and its provenance (`§11`).
+    Money(Price),
     /// A text.
     Text(String),
     /// One slug of a closed list.
@@ -418,6 +450,23 @@ mod tests {
         assert_eq!(ty.check(&PropertyValue::Enum("veneer".to_owned())), Ok(()));
         let reason = ty.check(&PropertyValue::Enum("paint".to_owned())).expect_err("not listed");
         assert!(reason.contains("paint") && reason.contains("veneer"), "the refusal lists what is accepted: {reason}");
+    }
+
+    #[test]
+    fn a_date_counts_its_days_and_reads_and_writes_its_own_form() {
+        let epoch = Date::new(1970, 1, 1).expect("a date");
+        assert_eq!(epoch.days_since_epoch(), 0);
+        let later = Date::new(2026, 11, 20).expect("a date");
+        assert_eq!(
+            later.days_since_epoch() - epoch.days_since_epoch(),
+            20_777,
+            "1970 to 2026 is 56 years and 323 days, one of them a leap day"
+        );
+        assert_eq!(later.iso(), "2026-11-20");
+        assert_eq!(Date::parse("2026-11-20").expect("a date"), later);
+        assert!(Date::parse("2026-13-01").is_err(), "the calendar refuses the month");
+        assert!(Date::parse("20.11.2026").is_err(), "the one written form is ISO");
+        assert_eq!(Date::new(2024, 3, 1).expect("a date").days_since_epoch(), 19783);
     }
 
     #[test]

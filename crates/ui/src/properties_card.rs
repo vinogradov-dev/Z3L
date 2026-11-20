@@ -405,6 +405,10 @@ fn edit_row(
             PropertyValue::Reference { id } => {
                 ui.label(format!("#{}", id.get()));
             }
+            // A catalogue record reads as the id a person can find in the directory: `712-34`.
+            PropertyValue::Item { id } => {
+                ui.label(id.to_string());
+            }
             PropertyValue::Structured { value } => {
                 ui.label(RichText::new(value.to_string()).weak());
             }

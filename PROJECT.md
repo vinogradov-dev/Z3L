@@ -259,7 +259,7 @@ only when the crates exist.
 | L2 | `param` | Compiles document features into kernel operations: panel features, placements, panel machining | model, kernel, geom, units |
 | L2 | `project` | Scene file envelope: format identity and version, read, atomic write, preserved unknown sections | model, serde, serde_json, thiserror |
 | L3 | `export` | Order package writer: one manifest and twelve flat JSON Lines tables, with CSV copies and a single-file form, for programs we do not control | model, text, units, geom, serde, serde_json, thiserror |
-| L3 | `mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh; tessellation policy | model, param, kernel, geom, units |
+| L3 | `mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh, and a panel to the holes its drilling objects cause; tessellation policy | model, param, kernel, geom, units |
 | L4 | `scene` | Renderer-agnostic frame description: drawables, world transforms, materials, selection highlight, camera, lights, grid | model, mesh, geom |
 | L5 | `render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
 | L6 | `engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |

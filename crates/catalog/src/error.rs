@@ -57,6 +57,42 @@ pub enum CatalogError {
         /// The property row.
         property: PropertyCode,
     },
+    /// A kind names more than one price unit, so one price has two readings.
+    #[error("kind `{kind}` names more than one price unit; a kind buys in one unit")]
+    PriceUnits {
+        /// The kind row.
+        kind: KindCode,
+    },
+    /// A record carries a price and its kind buys in no unit.
+    #[error(
+        "item `{item}` carries a price, and kind `{kind}` names no price unit: a price buys a sheet, a metre, a piece or a set"
+    )]
+    PriceWithoutUnit {
+        /// The item.
+        item: ItemId,
+        /// The kind whose traits name no unit.
+        kind: KindCode,
+    },
+    /// A record carries a price and the record names no currency for it.
+    #[error("item `{item}` carries a price, and its package names no currency to write it in")]
+    PriceWithoutCurrency {
+        /// The item.
+        item: ItemId,
+    },
+    /// Two records of one directory are priced in different currencies, and one directory is one money.
+    #[error(
+        "item `{item}` is priced in {currency}, and item `{other}` in {other_currency}; a directory names one currency"
+    )]
+    MixedCurrency {
+        /// The item that disagrees.
+        item: ItemId,
+        /// The currency it names.
+        currency: String,
+        /// The item that set the directory's currency.
+        other: ItemId,
+        /// The currency that item names.
+        other_currency: String,
+    },
     /// A closed list with no value, or with one value twice.
     #[error("the closed list of `{slug}` is empty or repeats a value")]
     EnumList {
@@ -127,6 +163,58 @@ pub enum CatalogError {
         /// The id that repeated.
         id: ItemId,
     },
+    /// A foreign system is declared twice.
+    #[error("`{system}` is declared twice; one id names one system")]
+    DuplicateSystem {
+        /// The system id that repeated.
+        system: String,
+    },
+    /// One overlay file names one item twice.
+    #[error("overlay `{overlay}` names item `{item}` twice; one file holds one count per record")]
+    DuplicateStock {
+        /// The overlay's name.
+        overlay: String,
+        /// The item it names twice.
+        item: ItemId,
+    },
+    /// Two overlays of the directory name one item, so its count has two answers.
+    #[error("item `{item}` is counted by overlay `{overlay}` and by `{other}`; one record has one stock")]
+    StockClaimed {
+        /// The item.
+        item: ItemId,
+        /// The overlay that claims it.
+        overlay: String,
+        /// The overlay that already holds it.
+        other: String,
+    },
+    /// An overlay names a source no connected package declares.
+    #[error("overlay `{overlay}` is written by `{system}`, which no connected package declares")]
+    UnknownStockSource {
+        /// The overlay's name.
+        overlay: String,
+        /// The system it names.
+        system: String,
+    },
+    /// An item names a foreign system no connected package declares.
+    #[error("item `{item}` names foreign system `{system}`, which no connected package declares")]
+    UnknownSystem {
+        /// The item.
+        item: ItemId,
+        /// The system it names.
+        system: String,
+    },
+    /// Two records claim one foreign key, so an import would resolve it to two items.
+    #[error("item `{item}` claims `{system}` key `{key}`, which item `{other}` already holds")]
+    ExternalKeyClaimed {
+        /// The item.
+        item: ItemId,
+        /// The item that already holds the key.
+        other: ItemId,
+        /// The system both keys belong to.
+        system: String,
+        /// The key both claim.
+        key: String,
+    },
     /// An item names its external key twice.
     #[error("item `{item}` names `{system}` twice; an item has one key per system")]
     DuplicateExternalKey {
@@ -140,6 +228,46 @@ pub enum CatalogError {
     UnknownFamily {
         /// The family that was asked for.
         code: FamilyCode,
+    },
+    /// Two members of one family hold one rank.
+    #[error(
+        "item `{item}` and item `{other}` both hold rank {rank} in family `{family}`; a family ranks each member once"
+    )]
+    DuplicateRank {
+        /// The family both belong to.
+        family: crate::family::FamilyCode,
+        /// The rank both claim.
+        rank: u16,
+        /// The record that claims it.
+        item: ItemId,
+        /// The record that already holds it.
+        other: ItemId,
+    },
+    /// A family's reference sample is not one of its members.
+    #[error("family `{family}` is read against item `{sample}`, which is not one of its members")]
+    SampleNotMember {
+        /// The family.
+        family: crate::family::FamilyCode,
+        /// The record it names as its sample.
+        sample: ItemId,
+    },
+    /// A slot id is not the shape a rule writes.
+    #[error("`{text}` is not a slot id: use lower-case letters, digits and `.`, `-` or `_` between them")]
+    SlotId {
+        /// The text that was refused.
+        text: String,
+    },
+    /// A record names a family by a slug no connected package declares.
+    #[error("`{slug}` is not a family any connected package declares")]
+    UnknownFamilySlug {
+        /// The slug the file used.
+        slug: String,
+    },
+    /// A record carries a rank and names no family to hold it.
+    #[error("item `{item}` carries a rank and names no family; a rank orders the members of a family")]
+    RankWithoutFamily {
+        /// The record.
+        item: ItemId,
     },
     /// A record names a kind by a slug no connected package declares.
     #[error("`{slug}` is not a kind any connected package declares")]

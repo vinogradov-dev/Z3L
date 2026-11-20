@@ -124,6 +124,11 @@ fn scene() -> SceneFile {
                 .expect("a 45 degree end bevel"),
         )
         .expect("bevel on the shelf");
+    // A person's catalogue choice is a property of its own kind and not a document reference: the
+    // record lives in the directory and outlives the scene (ADR 0148, 0184).
+    project
+        .set_property(id(2), "plug.confirmat", model::PropertyValue::item(ItemId::new(712, 34).expect("a record")))
+        .expect("the shelf names the plug a person chose");
     project.set_active_camera(Some(id(6))).expect("an active camera");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle

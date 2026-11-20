@@ -114,6 +114,9 @@ pub enum WriteError {
     /// The written records would not read back, so nothing was written.
     #[error("{0}")]
     Refused(#[from] CatalogError),
+    /// A batch with no record in it: a write that changes nothing is not a save.
+    #[error("there is nothing to write: a batch needs at least one record")]
+    NothingToWrite,
 }
 
 /// The one writer of a directory folder.
@@ -178,57 +181,86 @@ impl FolderWriter {
     /// The name is stable across a rename of the item's slug, because it is the kind and the id that
     /// name the file: a record a person edited twice keeps one path, and `git diff` shows one line.
     pub fn save_item(&mut self, package: &str, item: &NomenclatureItem) -> Result<PathBuf, WriteError> {
+        let written = self.save_items(package, std::slice::from_ref(item))?;
+        written.into_iter().next().ok_or(WriteError::NothingToWrite)
+    }
+
+    /// Writes several records into `package` as **one** committed change, and moves the revision once.
+    ///
+    /// A price list is one act and not one act per row: the batch is validated once, the records are
+    /// written, and the package's manifest — the file the reader's stamp watches — is bumped exactly
+    /// once afterwards, so a window polling the folder reloads once and the directory's history holds
+    /// one entry for the whole batch (`§11`, `§13`).
+    ///
+    /// Everything [`FolderWriter::save_item`] promises holds for the batch: the candidate directory is
+    /// validated before a file is touched, each record is written to a temporary sibling and renamed,
+    /// and a record the reader would refuse leaves the folder exactly as it was.
+    pub fn save_items(&mut self, package: &str, items: &[NomenclatureItem]) -> Result<Vec<PathBuf>, WriteError> {
+        if items.is_empty() {
+            return Err(WriteError::NothingToWrite);
+        }
         let folder = self.package_folder(package)?;
         let manifest_path = folder.join(MANIFEST_FILE);
         let mut manifest: ManifestWire = read_json(&manifest_path)?;
-        if manifest.id != item.id().package() {
-            return Err(WriteError::ForeignItem {
-                package: package.to_owned(),
-                item: item.id(),
-                owner: item.id().package(),
-            });
+        for item in items {
+            if manifest.id != item.id().package() {
+                return Err(WriteError::ForeignItem {
+                    package: package.to_owned(),
+                    item: item.id(),
+                    owner: item.id().package(),
+                });
+            }
         }
 
         let registry_path = folder.join(REGISTRY_FILE);
         let registry: RegistryWire = read_json(&registry_path)?;
-        let (kind_rows, property_rows, family_rows) = registry.rows()?;
-        let kinds = crate::kind::KindRegistry::new(kind_rows)?;
-        let properties = crate::property::PropertyRegistry::new(property_rows)?;
-        let families = crate::family::FamilyRegistry::new(family_rows)?;
-        let saved = ItemWire::from_item(item, &kinds, &properties)?;
+        let rows = registry.rows()?;
+        let kinds = crate::kind::KindRegistry::new(rows.kinds)?;
+        let properties = crate::property::PropertyRegistry::new(rows.properties)?;
+        let families = crate::family::FamilyRegistry::new(rows.families)?;
+        let systems = crate::external::ExternalSystemRegistry::new(rows.systems)?;
+        let saved = items
+            .iter()
+            .map(|item| Ok((item, ItemWire::from_item(item, &kinds, &properties, &families)?)))
+            .collect::<Result<Vec<(&NomenclatureItem, ItemWire)>, CatalogError>>()?;
 
-        // The candidate: every record this folder carries, the saved one in place of its old self.
+        // The candidate: every record this folder carries, the batch in place of its old selves.
         let items_dir = folder.join(ITEMS_DIR);
         let mut records: Vec<NomenclatureItem> = Vec::new();
         let mut replaced: Vec<PathBuf> = Vec::new();
         for path in json_files(&items_dir)? {
             let wire: ItemWire = read_json(&path)?;
-            if wire.id == item.id() {
+            if items.iter().any(|item| item.id() == wire.id) {
                 replaced.push(path.clone());
                 continue;
             }
-            records.push(wire.to_item(&kinds, &properties)?);
+            records.push(wire.to_item(&kinds, &properties, &families)?);
         }
-        records.push(item.clone());
+        records.extend(items.iter().cloned());
         // The cheapest gate there is: the directory the reader would build decides, so a save and a
-        // reload cannot disagree about what a valid record is.
-        Directory::new(records, kinds, properties, families)?;
+        // reload cannot disagree about what a valid record is — for the whole batch, not per record.
+        Directory::new(records, kinds, properties, families, systems)?;
 
-        let path = items_dir.join(item_name(item, &saved.kind));
-        write_json(&path, &saved)?;
+        let mut paths = Vec::with_capacity(items.len());
+        for (item, wire) in &saved {
+            let path = items_dir.join(item_name(item, &wire.kind));
+            write_json(&path, wire)?;
+            paths.push(path);
+        }
         // A record whose file name carried another kind is the one case a write leaves two files: the
         // new one is in place, so the old one goes.
         for stale in replaced {
-            if stale != path {
+            if !paths.contains(&stale) {
                 fs::remove_file(&stale).map_err(|error| refused(&stale, &error))?;
             }
         }
 
-        // The revision moves last: the manifest is one of the files the reader's stamp watches.
+        // The revision moves last, once for the whole batch: the manifest is one of the files the
+        // reader's stamp watches, so a window sees one change after every record is in place.
         manifest.version = MANIFEST_VERSION;
         manifest.package_version = manifest.package_version.saturating_add(1);
         write_json(&manifest_path, &manifest)?;
-        Ok(path)
+        Ok(paths)
     }
 
     /// The stamp of the folder after a write, read through the reader's own port.
@@ -589,6 +621,7 @@ mod tests {
                 },
             ],
             families: Vec::new(),
+            systems: Vec::new(),
         };
         write_json(&package.join(REGISTRY_FILE), &registry).expect("write the registry");
         package
@@ -632,6 +665,84 @@ mod tests {
             write_json(&root.join(DIRECTORY_FILE), &listing).expect("write the list");
         }
         package
+    }
+
+    /// A package whose sheet kind is priced by the sheet, with two records an `erp` import knows.
+    fn priced_package(root: &Path) -> PathBuf {
+        let package = root.join(PACKAGES_DIR).join("starter");
+        fs::create_dir_all(package.join(ITEMS_DIR)).expect("create the package");
+        write_json(
+            &root.join("directory.json"),
+            &DirectoryWire { version: DIRECTORY_VERSION, packages: vec!["starter".to_owned()] },
+        )
+        .expect("write the connected list");
+        write_json(&package.join(MANIFEST_FILE), &ManifestWire::new(1, "Starter")).expect("write the manifest");
+        let registry = serde_json::json!({
+            "version": 1,
+            "kinds": [{
+                "code": 1, "slug": "sheet-material", "label": "Sheet material",
+                "accepts": [1, 2], "required": [1], "traits": ["sheet", "price-sheet"]
+            }],
+            "properties": [
+                { "code": 1, "slug": "thickness", "label": "Thickness", "type": "length", "min_um": 1000, "max_um": 100000 },
+                { "code": 2, "slug": "price", "label": "Price", "type": "money" }
+            ],
+            "systems": [{ "id": "erp", "label": "ERP" }]
+        });
+        write_json(
+            &package.join(REGISTRY_FILE),
+            &serde_json::from_value::<RegistryWire>(registry).expect("a registry"),
+        )
+        .expect("write the registry");
+        for (serial, key) in [(1, "A-1"), (2, "A-2")] {
+            let record = serde_json::json!({
+                "id": format!("1-{serial}"), "kind": "sheet-material", "name": format!("Board {serial}"),
+                "slug": format!("board-{serial}"),
+                "props": { "thickness": { "type": "length", "value": 18000 } },
+                "external": [{ "system": "erp", "key": key }]
+            });
+            write_json(
+                &package.join(ITEMS_DIR).join(format!("sheet-material-{serial}.json")),
+                &serde_json::from_value::<ItemWire>(record).expect("a record"),
+            )
+            .expect("write the record");
+        }
+        package
+    }
+
+    #[test]
+    fn a_price_list_writes_every_record_it_prices_as_one_revision() {
+        // O8's Done: a CSV batch writes one history entry. The directory's history is its revision, one
+        // bump per committed write, so a batch of two prices must bump the manifest exactly once.
+        let temp = TempDir::new("price-batch");
+        let package = priced_package(temp.path());
+        let listed = FolderSource::at(temp.path()).snapshot().expect("the package reads");
+        let list = "system,key,price_minor,currency,date\n\
+                    erp,A-1,320000,RUB,2026-11-20\n\
+                    erp,A-2,240000,RUB,2026-11-20\n";
+        let batch = crate::import::PriceBatch::read(list, &listed);
+        assert_eq!(batch.applied_count(), 2);
+        let records = batch.records(&listed);
+        assert_eq!(records.len(), 2);
+
+        let before: ManifestWire = read_json(&package.join(MANIFEST_FILE)).expect("the manifest");
+        let mut writer = FolderWriter::open(temp.path()).expect("the lock");
+        let written = writer.save_items("starter", &records).expect("one write");
+        drop(writer);
+        assert_eq!(written.len(), 2);
+        let after: ManifestWire = read_json(&package.join(MANIFEST_FILE)).expect("the manifest");
+        assert_eq!(
+            after.package_version,
+            before.package_version.saturating_add(1),
+            "one batch is one entry in the history a reader watches, not one per row"
+        );
+
+        let reread = FolderSource::at(temp.path()).snapshot().expect("the folder reads back");
+        assert_eq!(reread.currency().map(|currency| currency.code()), Some("RUB"));
+        let priced = reread.item(ItemId::new(1, 1).expect("an id")).expect("the record");
+        let price = reread.price(priced).expect("the price the batch wrote");
+        assert_eq!(price.value().minor(), 320_000);
+        assert_eq!(price.price.source().system().map(|system| system.as_str()), Some("erp"));
     }
 
     #[test]

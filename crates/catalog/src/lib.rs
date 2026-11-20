@@ -29,11 +29,16 @@
 
 mod directory;
 mod error;
+mod external;
 mod family;
+mod import;
 mod item;
 mod kind;
 mod money;
+mod overlay;
+mod price;
 mod property;
+mod select;
 mod slug;
 mod source;
 mod starter;
@@ -43,11 +48,16 @@ mod write;
 
 pub use directory::Directory;
 pub use error::CatalogError;
+pub use external::{ExternalSystem, ExternalSystemRegistry};
 pub use family::{Family, FamilyCode, FamilyRegistry};
+pub use import::{Applied, PRICE_LIST_HEADER, PriceBatch};
 pub use item::{ExternalKey, ExternalSystemId, MAX_EXTERNAL_KEYS, MAX_ITEM_NAME_CHARS, NomenclatureItem};
 pub use kind::{Kind, KindCode, KindRegistry, Trait};
 pub use money::{Currency, CurrencyError, Money};
-pub use property::{Date, Property, PropertyCode, PropertyType, PropertyValue, Rgb};
+pub use overlay::{OnHand, StockOverlay};
+pub use price::{Freshness, Price, PriceSource, PriceUnit, PriceView};
+pub use property::{Date, Property, PropertyCode, PropertyRegistry, PropertyType, PropertyValue, Rgb};
+pub use select::{DEFAULT_SLUG, Selection, Slot, SlotId, Step};
 pub use slug::{MAX_SLUG_CHARS, Slug};
 pub use source::{DirectorySource, FolderSource, LoadError, Revision};
 pub use starter::{GROUP_SLUG, MATERIAL_SLUG, PRICE_SLUG, Starter, default_directory};

@@ -89,6 +89,12 @@ pub struct NomenclatureItem {
     props: PropertySet,
     #[serde(default)]
     external: Vec<ExternalKey>,
+    /// The family the record stands in for its kin in, when it belongs to one (`§6`).
+    #[serde(default)]
+    family: Option<crate::family::FamilyCode>,
+    /// Where the record sits inside its family, from the reference sample outwards.
+    #[serde(default)]
+    rank: Option<u16>,
 }
 
 impl NomenclatureItem {
@@ -108,13 +114,33 @@ impl NomenclatureItem {
         if length > MAX_ITEM_NAME_CHARS {
             return Err(CatalogError::TooLong { text: name, length, limit: MAX_ITEM_NAME_CHARS });
         }
-        Ok(Self { id, kind, name, slug, archived: false, props, external: Vec::new() })
+        Ok(Self { id, kind, name, slug, archived: false, props, external: Vec::new(), family: None, rank: None })
     }
 
     /// The same item marked out of production: it still resolves, and every card says so.
     pub fn archived(mut self) -> Self {
         self.archived = true;
         self
+    }
+
+    /// The same record placed in `family` at `rank`, which is where a substitution reads it (`§10`).
+    ///
+    /// The registry decides whether the family exists and whether the rank is free; this value only
+    /// carries what the package wrote.
+    pub fn in_family(mut self, family: crate::family::FamilyCode, rank: Option<u16>) -> Self {
+        self.family = Some(family);
+        self.rank = rank;
+        self
+    }
+
+    /// The family the record belongs to, when it belongs to one.
+    pub const fn family(&self) -> Option<crate::family::FamilyCode> {
+        self.family
+    }
+
+    /// Where the record sits inside its family, from the reference sample outwards.
+    pub const fn rank(&self) -> Option<u16> {
+        self.rank
     }
 
     /// The same item with one more foreign key.
@@ -170,6 +196,16 @@ impl NomenclatureItem {
         &self.external
     }
 
+    /// The same record with one property written over.
+    ///
+    /// An importer rewrites one row of one record at a time and cannot rebuild the envelope, so it
+    /// edits the property set in place; the row rules are enforced where every write meets them, in
+    /// the directory the writer validates before it touches the folder ([`crate::FolderWriter`]).
+    pub fn with_prop(mut self, code: PropertyCode, value: crate::property::PropertyValue) -> Self {
+        self.props.insert(code, value);
+        self
+    }
+
     /// Checks the record against the registries it names, and nothing else.
     ///
     /// A package's reader hands every row through this: an unknown kind, an unknown property, a
@@ -201,11 +237,21 @@ impl NomenclatureItem {
                     reason: format!("`{target}` is not an item of the connected packages"),
                 });
             }
+            // A price is read through the kind that carries it: the traits say what one price buys,
+            // so a priced record whose kind names no unit cannot be answered and is refused here.
+            if matches!(value, crate::property::PropertyValue::Money(_)) && kind.price_unit().is_none() {
+                return Err(CatalogError::PriceWithoutUnit { item: self.id, kind: self.kind });
+            }
         }
         for required in kind.required() {
             if !self.props.contains_key(required) {
                 return Err(CatalogError::MissingProperty { item: self.id, kind: self.kind, property: *required });
             }
+        }
+        if let Some(family) = self.family
+            && directory.families().get(family).is_none()
+        {
+            return Err(CatalogError::UnknownFamily { code: family });
         }
         let mut systems: BTreeSet<&str> = BTreeSet::new();
         for key in &self.external {
@@ -214,6 +260,11 @@ impl NomenclatureItem {
                     item: self.id,
                     system: key.system.as_str().to_owned(),
                 });
+            }
+            // A system is a registry row, so a key written with a word nobody declared is refused
+            // here rather than becoming a second world for one supplier (`§5.3`).
+            if !directory.systems().has(&key.system) {
+                return Err(CatalogError::UnknownSystem { item: self.id, system: key.system.as_str().to_owned() });
             }
         }
         Ok(())

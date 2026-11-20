@@ -469,6 +469,11 @@ impl App {
             // The dialog filters by the scene extension but does not append it, so a name typed
             // without one becomes a file the next *Open* can see.
             PickMode::Save => FileAction::Save(scene_file(path)),
+            // The editor never asks for a price list: that pick belongs to the directory application.
+            PickMode::Prices => {
+                log::warn!("a price list was picked for a scene: nothing to read");
+                return;
+            }
         };
         self.handle_file_action(action, ctx);
     }

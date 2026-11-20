@@ -11,6 +11,7 @@ use testkit::{millimetres, sample_edge_material_id, sample_material_id};
 
 use crate::fixtures::fixture;
 use crate::table::Cell;
+use crate::write::{PriceAging, exported_on};
 use crate::*;
 
 /// The options a golden package is built with: no clock, so two runs and the checked-in file agree.
@@ -19,6 +20,7 @@ fn golden_options(project: &Project) -> ExportOptions {
         timestamp: None,
         document: DocumentMeta { file: Some("cabinet.z3l".to_owned()), revision: project.revision().get(), hash: None },
         order: Some(OrderMeta { number: Some("2026-114".to_owned()), version: Some(1) }),
+        price_max_age_days: None,
     }
 }
 
@@ -63,7 +65,7 @@ fn a_record_is_checked_against_the_column_table() {
     let mut data = TableData::new(spec);
     assert!(matches!(
         data.push(vec![Cell::Integer(1)]),
-        Err(ExportError::ColumnCount { table: "materials", expected: 10, .. })
+        Err(ExportError::ColumnCount { table: "materials", expected: 12, .. })
     ));
     assert!(matches!(
         data.push(materials_row(Cell::Integer(18))),
@@ -84,6 +86,8 @@ fn materials_row(kind: Cell) -> Vec<Cell> {
         Cell::Integer(2_070_000),
         Cell::Text("chipboard-18".to_owned()),
         Cell::Integer(320_000),
+        Cell::Text("2026-01-01".to_owned()),
+        Cell::Integer(0),
     ]
 }
 
@@ -318,7 +322,9 @@ fn a_stocked_material_the_order_cuts_gets_one_sheet_row() {
     assert_eq!(row[4], Cell::Integer(RULES.usable_length(2_800_000)), "the trim is taken per side");
     assert_eq!(row[5], Cell::Integer(RULES.usable_width(2_070_000)));
     assert_eq!(row[6], Cell::Integer(320_000));
-    assert_eq!(row[9], Cell::Integer(5_796_000), "2.8 x 2.07 m in square millimetres");
+    assert_eq!(row[7], Cell::Text(String::new()), "a typed price carries no date");
+    assert_eq!(row[8], Cell::Integer(0), "and is judged neither fresh nor stale");
+    assert_eq!(row[11], Cell::Integer(5_796_000), "2.8 x 2.07 m in square millimetres");
 
     let parts = package.table("parts").expect("the parts table");
     let of_material: Vec<&Vec<Cell>> = parts
@@ -326,7 +332,7 @@ fn a_stocked_material_the_order_cuts_gets_one_sheet_row() {
         .iter()
         .filter(|part| matches!(part.get(3), Some(Cell::Text(id)) if *id == sample_material_id().to_string()))
         .collect();
-    assert_eq!(row[7], Cell::Integer(i64::try_from(of_material.len()).expect("a count")));
+    assert_eq!(row[9], Cell::Integer(i64::try_from(of_material.len()).expect("a count")));
     let area: i64 = of_material
         .iter()
         .filter_map(|part| match part.get(9) {
@@ -334,7 +340,7 @@ fn a_stocked_material_the_order_cuts_gets_one_sheet_row() {
             _ => None,
         })
         .sum();
-    assert_eq!(row[8], Cell::Integer(area), "the row sums the areas of its parts");
+    assert_eq!(row[10], Cell::Integer(area), "the row sums the areas of its parts");
 }
 
 #[test]
@@ -372,6 +378,32 @@ fn a_rule_takes_the_trim_from_both_sides() {
     assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_length(2_800_000), 2_780_000);
     assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_width(2_070_000), 2_050_000);
     assert_eq!(Rules { kerf_um: 0, trim_um: 2_000 }.usable_length(1_000), 0, "a sheet narrower than its trim has none");
+}
+
+#[test]
+fn a_price_older_than_the_workshop_limit_is_flagged_by_the_export_time() {
+    // The package is a frozen copy, so the age is judged against the day it was built and not against
+    // a clock read later: one file must not say two things about the same price.
+    let system = catalog::ExternalSystemId::new("erp").expect("a system");
+    let price = catalog::Price::imported(
+        catalog::Money::from_minor(320_000),
+        catalog::Currency::new("RUB", 100).expect("a currency"),
+        system,
+        catalog::Date::new(2026, 1, 1).expect("a date"),
+    );
+    let aging = PriceAging { today: exported_on("2026-11-20T09:15:00Z"), limit_days: Some(180) };
+    assert_eq!(aging.freshness(&price).map(|fresh| fresh.is_stale()), Some(true), "323 days is past 180");
+    let patient = PriceAging { limit_days: Some(365), ..aging };
+    assert_eq!(patient.freshness(&price).map(|fresh| fresh.is_stale()), Some(false));
+    assert_eq!(PriceAging { limit_days: None, ..aging }.freshness(&price), None, "no limit, no verdict");
+    assert_eq!(
+        aging.freshness(&catalog::Price::typed(
+            catalog::Money::ZERO,
+            catalog::Currency::new("RUB", 100).expect("a currency")
+        )),
+        Some(catalog::Freshness::Undated)
+    );
+    assert_eq!(exported_on("not a timestamp"), None, "a package with no clock makes no judgement");
 }
 
 #[test]

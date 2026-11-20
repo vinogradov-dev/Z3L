@@ -261,23 +261,45 @@ over the registries:
 6. **nothing found** — a diagnostic naming the anchor, the slot kind and the last step that failed
    (`for corpus "Дуб Сонома" no confirmat plug in family "oak"`), never a silent `None`.
 
-A selection result is cached by `(anchor node, slot kind, revision)`. The rule that names the slot
-(`plug.confirmat`, `plug.minifix`, `runner.colour`) lives in the directory beside the kinds; the
-engine executes it. A person's choice is stored on the document node as an ordinary property, so a
-later directory update cannot take it away.
+A selection result is cached by the anchor node and the slot, and the cache is dropped when **either**
+revision moves — the document's or the directory's — because the answer depends on both (`engine::
+SelectionCache`, `Stamp`). The rule that names the slot (`plug.confirmat`, `plug.minifix`,
+`runner.colour`) lives in the directory beside the kinds; the engine executes it. A slot id is
+lower-case letters, digits and `.`, `-`, `_` between them: a vocabulary of its own, never a record
+slug and never a path.
+
+A person's choice is stored on the document node as an ordinary property keyed by the slot id, of the
+value kind `Item` — a catalogue record and not a document id, so the record survives the scene and a
+later directory update cannot take the choice away. The anchor of a slot is the catalogue record the
+node already names: a panel's material is the corpus its plugs belong to. Step 5 reads the anchor's
+own `default` property, which is an ordinary `Ref` row. A node that names no record has no corpus and
+answers a miss on the compatibility step rather than a guess.
 
 ## 11. Prices, stock and overlays
 
-A price is an item property with provenance: `value` in whole minor units, `unit` from the kind's
-`PriceUnit`, `currency`, `source` and `date`.
+A price is an item property with provenance: `value` in whole minor units, `currency`, `source` and
+`date`. The **unit** is not stored: it is the kind's `PriceUnit` trait, read as `PriceUnit::of(kind)`,
+and a kind that names two units is refused when it loads.
 
-- the directory application edits one price at a time, one row, one history entry;
-- an importer writes a batch and the batch is one history entry;
-- a price with no currency, or a currency that is not a usable ISO 4217 code with a minor scale, is
-  refused;
-- a card and a report show the date and warn when a price is older than the workshop's limit;
-- **stock on hand is not a property**: it is volatile, it belongs to an overlay package with its own
-  source and date, and it names items by `ItemId`.
+- the stored value is `catalog::Price { minor, currency, source, date }`, so a price without a usable
+  currency cannot be built; a file whose currency is not an ISO 4217 code with a minor scale is
+  refused by the reader with that sentence;
+- `source` says who wrote it: `typed` (a person at the card) or `imported` from a named system. A
+  price a person typed carries no date — a card that rewrites the amount turns `imported` into
+  `typed` and drops the date, and a card that only renames a record leaves the price untouched;
+- the directory application edits one price at a time: one record, one revision;
+- an importer reads a price list (`system,key,price_minor,currency,date`), matches every row through
+  the item's foreign key and never by name, refuses a row on its own line, and writes the rows it
+  applies as **one revision per package** — the directory's history is its revision (`§13`), so a
+  batch is one entry rather than one per price;
+- a card and a report show the date and warn when a price is older than the workshop's limit, judged
+  against a day the shell supplies (the directory has no clock) and against the package's own export
+  time for an order package;
+- **stock on hand is not a property**: it is volatile, and it lives in an overlay file
+  `packages/<package>/overlays/<name>.json` — `version`, `source` (a registry system), `date` and one
+  `{ id, on_hand }` row per record. `Directory::on_hand(id)` answers the count with the overlay it
+  came from; two overlays that count one record are refused naming both; an overlay for an absent
+  record leaves the directory complete.
 
 ## 12. Packages
 
