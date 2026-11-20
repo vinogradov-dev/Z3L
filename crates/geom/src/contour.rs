@@ -11,8 +11,9 @@
 //!
 //! The module does not model a filled region, a boolean operation or self-intersection; callers
 //! build a simple contour and offset paths that are known to be tangent continuous, and a closed
-//! contour must not cross itself. The geometry of one segment — parameterisation, projection, split
-//! — lives in `segment.rs`.
+//! contour must not cross itself. It can place a contour by a rigid 2-D transform, which is what one
+//! drawing frame costs against another. The geometry of one segment — parameterisation, projection,
+//! split — lives in `segment.rs`.
 //!
 //! Changes when: what a ring is, or how a chain is validated, reversed, offset or sampled
 //! changes.
@@ -21,7 +22,7 @@ use std::f64::consts::PI;
 use std::fmt;
 
 use crate::DVec2;
-use crate::segment::{Arc, EPSILON, Segment};
+use crate::segment::{Arc, EPSILON, Line, Segment};
 
 /// Maximum gap between the end of one segment and the start of the next, in millimetres.
 const JOIN_TOLERANCE: f64 = 1.0e-6;
@@ -299,6 +300,37 @@ impl Contour {
         Self::new(segments, self.closed)
     }
 
+    /// The same ring placed by a rigid flat transform: a turn about the origin, an optional mirror
+    /// in `x`, and a move.
+    ///
+    /// The map is `point → turn(turn_angle) · (x, ±y) + offset`, which is the in-plane part of a
+    /// placement between two drawings: a rotation has no scale and no shear, and a drawing that
+    /// faces down gives the mirror. Lines stay lines and arcs stay arcs — a mirrored arc sweeps the
+    /// other way and starts at the mirrored angle — so the result is exact and needs no sampling.
+    pub fn placed(&self, turn_angle: f64, mirrored: bool, offset: DVec2) -> Result<Self, ContourError> {
+        if !turn_angle.is_finite() || !offset.is_finite() {
+            return Err(ContourError::InvalidInput("a placement needs a finite turn and offset"));
+        }
+        let (sin, cos) = turn_angle.sin_cos();
+        let map = |point: DVec2| {
+            let y = if mirrored { -point.y } else { point.y };
+            DVec2::new(cos * point.x - sin * y + offset.x, sin * point.x + cos * y + offset.y)
+        };
+        let mut segments = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            segments.push(match *segment {
+                Segment::Line(line) => Segment::Line(Line::new(map(line.start()), map(line.end()))?),
+                Segment::Arc(arc) => Segment::Arc(Arc::new(
+                    map(arc.center()),
+                    arc.radius(),
+                    if mirrored { turn_angle - arc.start_angle() } else { arc.start_angle() + turn_angle },
+                    if mirrored { -arc.sweep_angle() } else { arc.sweep_angle() },
+                )?),
+            });
+        }
+        Self::new(segments, self.closed)
+    }
+
     /// The same path with the opposite direction of travel.
     ///
     /// Every segment is reversed and the order is flipped, so the path keeps its geometry and its
@@ -400,6 +432,48 @@ mod tests {
             Segment::Arc(Arc::new(point(radius, radius), radius, PI, PI * 0.5).expect("bottom-left")),
         ];
         Contour::new(segments, true).expect("rounded rectangle")
+    }
+
+    #[test]
+    fn a_placed_ring_turns_mirrors_and_stays_exact() {
+        let ring = rounded_rectangle(100.0, 50.0, 10.0);
+
+        // A quarter turn about the origin and a move: every point follows the same map, so a point
+        // of the placed ring is the placed point of the original.
+        let placed = ring.placed(FRAC_PI_2, false, point(20.0, 30.0)).expect("a placed ring");
+        let (min, max) = placed.bounds().expect("bounds");
+        assert!((min.x - (20.0 - 50.0)).abs() < 1e-9, "the width becomes the height: {min:?}");
+        assert!((min.y - 30.0).abs() < 1e-9 && (max.y - 130.0).abs() < 1e-9);
+        assert!(placed.closed, "the placed ring is still a ring");
+
+        // A mirror reverses the travel direction, so the same transform applied twice is the ring
+        // back again — with its points where they started.
+        let mirrored = ring.placed(0.0, true, point(0.0, 0.0)).expect("a mirrored ring");
+        let back = mirrored.placed(0.0, true, point(0.0, 0.0)).expect("mirrored twice");
+        assert!((back.signed_area().expect("area") - ring.signed_area().expect("area")).abs() < 1e-9);
+        for (original, rebuilt) in ring.segments().iter().zip(back.segments()) {
+            assert!((original.start() - rebuilt.start()).length() < 1e-9, "a point returns to itself");
+        }
+        assert!(mirrored.signed_area().expect("area") < 0.0, "one mirror turns a counter-clockwise ring clockwise");
+
+        // An arc keeps its radius and reverses its sweep, so its endpoints are the mirrored ones.
+        let arcs = |contour: &Contour| -> Vec<Arc> {
+            contour
+                .segments()
+                .iter()
+                .filter_map(|segment| match segment {
+                    Segment::Arc(arc) => Some(*arc),
+                    Segment::Line(_) => None,
+                })
+                .collect()
+        };
+        let original_arcs = arcs(&ring);
+        let mirrored_arcs = arcs(&mirrored);
+        let (Some(arc), Some(mirrored_arc)) = (original_arcs.first(), mirrored_arcs.first()) else {
+            panic!("the fixture has arcs and a mirrored ring keeps them");
+        };
+        assert!((mirrored_arc.radius() - arc.radius()).abs() < 1e-12);
+        assert!((mirrored_arc.sweep_angle() + arc.sweep_angle()).abs() < 1e-12);
     }
 
     #[test]

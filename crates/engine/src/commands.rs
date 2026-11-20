@@ -8,6 +8,7 @@ use text::Message;
 use thiserror::Error;
 
 use crate::class_rules::{self, ClassRefusal, CreationRefusal};
+use crate::contour_cmds;
 use crate::mesh_cmds;
 use crate::node_cmds;
 use crate::object_cmds;
@@ -222,6 +223,9 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_PATH_EXTRUDE,
     object_cmds::OBJECT_PATH_REPLACE,
     object_cmds::OBJECT_COLLAPSE,
+    contour_cmds::CONTOUR_UNION,
+    contour_cmds::CONTOUR_SUBTRACT,
+    contour_cmds::CONTOUR_INTERSECT,
     mesh_cmds::MESH_VERTICES_MOVE,
     scene_cmds::CAMERA_CREATE,
     scene_cmds::LIGHT_CREATE,
@@ -490,7 +494,17 @@ mod tests {
         assert_eq!(move_vertices.id(), "mesh.vertices.move");
         assert_eq!(move_vertices.label().text(Lang::En), "Move vertices");
         assert!(registry.get("missing.command").is_none());
-        assert_eq!(registry.specs().len(), 57);
+        // The three contour booleans are one family: one command per membership rule, one label
+        // each, so the toolbar, the palette and a CLI name the same operations (G3).
+        for (id, label) in [
+            ("contour.boolean.union", "Union"),
+            ("contour.boolean.subtract", "Subtract"),
+            ("contour.boolean.intersect", "Intersect"),
+        ] {
+            let spec = registry.get(id).expect("a contour boolean is registered");
+            assert_eq!(spec.label().text(Lang::En), label);
+        }
+        assert_eq!(registry.specs().len(), 60);
     }
 
     #[test]

@@ -719,6 +719,29 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Object),
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
+    // The contour booleans take a base ring and one or more rings beside it, so they act on a
+    // selection rather than on the node under the pointer; the ribbon's three cells arm them (G3).
+    Row {
+        id: "contour.boolean.union",
+        label: Message::ToolUnion,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: None,
+    },
+    Row {
+        id: "contour.boolean.subtract",
+        label: Message::ToolSubtract,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: None,
+    },
+    Row {
+        id: "contour.boolean.intersect",
+        label: Message::ToolIntersect,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: None,
+    },
     Row {
         id: "object.path.replace",
         label: Message::CmdReplacePath,
