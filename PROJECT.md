@@ -224,10 +224,17 @@ desktop assistant, a script, an agent process — reaches the same tools over MC
   says why (ADR 0185).
 - It runs with a window, where the user watches it work, and headless, where it processes jobs
   without a viewport. The core is deterministic and model-agnostic; the language model is an injected
-  adapter that may be local or remote. The application never listens for connections: a client
-  outside the window starts `z3l mcp serve` and speaks over that process's stdio (ADR 0185).
+  adapter that may be local or remote, reached through one OpenAI-compatible client whose endpoint and
+  model are settings, never types (ADR 0189). There is no network service: `z3l mcp serve` speaks over
+  stdio and binds nothing, and a local control channel — loopback, a token minted per run, a switch in
+  the settings — is how an agent attaches to a running window (ADR 0188).
 - A chat turn is one undo entry named after the message, the first enable is read-only, and a plan is
-  the `dry_run` result shown as a checklist — so what a person approves is what ran (ADR 0187).
+  the `dry_run` result shown as a checklist — so what a person approves is what ran (ADR 0187). The
+  agent works in `plan` or `build`, and only a person switches between them (ADR 0190).
+- The code finds a workshop's mistakes and the model explains them: an envelope breach, two bodies
+  through each other, a shelf that does not fit its opening, a rail in the wrong place, an unbanded
+  visible edge, a front with the wrong gap and a part longer than the sheet, each read from the
+  profile's own numbers (ADR 0191).
 - The core does not receive pixels. It reads the scene as data: the node tree, panels, materials,
   placements, machining, diagnostics and derived measures. A vision channel is a separate, optional
   decision.
@@ -236,8 +243,8 @@ desktop assistant, a script, an agent process — reaches the same tools over MC
 - "Build a hinged wardrobe 600 × 2200 × 500" is one user prototype script with named parameters,
   not a prompt. The script builds panels and placements through commands, and the document keeps the
   materialized geometry, the furniture type, the prototype reference and its parameter record; the
-  model only chooses the prototype and fills the parameters. The catalogue available to the model is
-  generated from the prototype registry (ADR 0034).
+  model only chooses the prototype and fills the parameters, and never does the arithmetic (ADR 0192).
+  The catalogue available to the model is generated from the prototype registry (ADR 0034).
 - The nomenclature directory and the order registry are separate programs with their own storage and
   APIs (ADR 0148). Faber uses the same API as their interfaces, never the database. An order is the project
   file, its records and the files produced for it; every version is a numbered folder holding the
@@ -314,7 +321,7 @@ A crate may depend only on crates in lower layers. `kernel-truck` is the only cr
 | M7 | Objects and the scene file | Geometry objects with a baked mesh and with a feature history, mesh editing gated to the mesh payload, `object.collapse`, camera and light objects, and a versioned `.z3l` scene file with a migration and a golden file per schema |
 | M8 | Hardware and joinery | Hardware catalogue, anchor points, generated holes, collision warnings |
 | M9 | Output | Cutting lists per material and sheet, panel drawings, CNC export |
-| M10 | Assistant | The chat panel holds a conversation in the window and a client outside it calls the same tools over MCP; Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per turn, a whole task runnable by a scripted model without a network, and a headless job over a saved project |
+| M10 | Assistant | The chat panel holds a conversation in the window and a client outside it calls the same tools over MCP; Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per turn, five named scenarios passing through a real MCP client without a network, and a headless job over a saved project |
 
 ## Open model questions (M1)
 
