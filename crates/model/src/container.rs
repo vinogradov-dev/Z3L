@@ -237,6 +237,21 @@ impl Container {
         &self.children
     }
 
+    /// Whether the two containers are the same node, ignoring the children they hold.
+    ///
+    /// A container's value carries its children, so comparing two of them says *changed* for every
+    /// ancestor of a node that was created or removed. A caller that asks what a command changed
+    /// wants the node itself — its name, its placement and pivot, its properties and its envelope —
+    /// because a child that changed is reported as itself, by its own id.
+    pub fn same_node(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.placement == other.placement
+            && self.pivot_local == other.pivot_local
+            && self.properties == other.properties
+            && self.envelope == other.envelope
+    }
+
     /// The typed properties of this container.
     pub const fn properties(&self) -> &Properties {
         &self.properties

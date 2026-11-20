@@ -203,6 +203,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0194](0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md) | A contour boolean is a mode that stores a new object | Accepted; implements 0043, the tool mark follows the file schema |
 | [0196](0196-the-read-model-is-one-typed-question.md) | The read model is one typed question, and its stable answers are resources | Accepted; implements 0183's report set and 0185's "session read-only queries" |
 | [0197](0197-a-body-boolean-is-a-step-that-names-its-tool.md) | A body boolean is a step that names its tool | Accepted; implements 0041's boolean steps as a document feature |
+| [0198](0198-a-batch-is-planned-on-a-copy-and-lands-in-one-piece.md) | A batch is planned on a copy and lands in one piece | Accepted; implements the session operation 0190 asked for |
 
 ## Format
 
