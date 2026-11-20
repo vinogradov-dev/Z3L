@@ -231,6 +231,11 @@ messages! {
     Expand = ["Expand", "Развернуть"],
     DisplaySettings = ["Display settings", "Настройки отображения"],
     ViewPreset = ["View preset", "Предустановка вида"],
+    ShadingGroup = ["Shading", "Заливка"],
+    ShadingGroupHint = [
+        "How this view draws the model: one of the five shading styles, and the filled cell is the one it uses",
+        "Как этот вид рисует модель: один из пяти стилей заливки, заполненная ячейка — используемый"
+    ],
     DisplayHeading = ["Display", "Отображение"],
     ShowOnScreenDisplay = ["Show the on-screen display", "Показывать экранную информацию"],
     OnScreenDisplayOn = [

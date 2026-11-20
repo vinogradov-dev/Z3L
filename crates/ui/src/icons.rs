@@ -410,7 +410,10 @@ icons!(View, "view", View, view {
     ORBIT => "orbit",
     PAN => "pan",
     ZOOM => "zoom",
-    LAYOUT => "layout",
+    LAYOUT_SINGLE => "layout-single",
+    LAYOUT_COLUMNS => "layout-columns",
+    LAYOUT_ROWS => "layout-rows",
+    LAYOUT_QUAD => "layout-quad",
     SHADED => "shaded",
     SHADED_EDGES => "shaded-edges",
     WIREFRAME => "wireframe",
@@ -1249,7 +1252,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 117);
+        assert_eq!(seen.len(), 120);
     }
 
     #[test]

@@ -228,7 +228,7 @@ pub(crate) fn show(
                     let open = state.layout_open;
                     if icons::tool_button(
                         ui,
-                        icons::view::LAYOUT,
+                        view.layout.icon(),
                         text::Message::Layout.text(ui::language(ui.ctx())),
                         None,
                         true,
@@ -323,24 +323,40 @@ const fn navigation_caption(mode: NavigationMode) -> text::Message {
     }
 }
 
-/// The five display styles; the view's own style draws pressed and a click asks for a change.
+/// The five display styles as one band: states of one value are one control, not five switches.
+///
+/// The cells touch with no gap inside one tinted frame, and the view's own style draws pressed,
+/// exactly as the transform band draws the window's mode (ADR 0113). The band names itself once,
+/// because five glyphs alone read as five unrelated switches: the group's accessible name and its
+/// hover line say it is this view's shading (U118).
 fn style_buttons(ui: &mut egui::Ui, current: ShadingStyle, lang: text::Lang) -> Option<ShadingStyle> {
+    let band = egui::Frame::new()
+        .fill(theme::control(ui))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
+        .inner_margin(egui::Margin::symmetric(1, 0));
     let mut asked = None;
-    for style in ShadingStyle::ALL {
-        let on = current == style;
-        if icons::tool_button_labelled(
-            ui,
-            shading_icon(style),
-            shading_caption(style, lang),
-            shading_label(style, lang),
-            true,
-            on,
-        )
-        .clicked()
-        {
-            asked = Some(style);
+    let response = band.show(ui, |ui| {
+        // Touching cells are what makes one band out of five states; the row's own gap stays.
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for style in ShadingStyle::ALL {
+            let on = current == style;
+            if icons::tool_button_labelled(
+                ui,
+                shading_icon(style),
+                shading_caption(style, lang),
+                shading_label(style, lang),
+                true,
+                on,
+            )
+            .clicked()
+            {
+                asked = Some(style);
+            }
         }
-    }
+    });
+    let name = text::Message::ShadingGroup.text(lang);
+    response.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, ui.is_enabled(), name));
+    response.response.on_hover_text(text::Message::ShadingGroupHint.text(lang));
     asked
 }
 
@@ -374,7 +390,8 @@ fn layout_popover(
                 ui.label(egui::RichText::new(text::Message::Layout.text(ui::language(ui.ctx()))).strong());
                 for kind in LayoutKind::ALL {
                     let on = view.layout == kind;
-                    if ui.add(egui::Button::new(kind.label().text(ui::language(ui.ctx()))).selected(on)).clicked() {
+                    let label = kind.label().text(ui::language(ui.ctx()));
+                    if glyph_row(ui, kind.icon(), label, on) {
                         action = Some(ClusterAction::SetLayout(kind));
                     }
                 }
@@ -410,11 +427,11 @@ pub(crate) fn preset_icon(view: OpeningView) -> icons::Icon {
     }
 }
 
-/// One row of the preset list: the view's glyph, its name and the selected face.
+/// One row of a popover list: the glyph, its name and the selected face.
 ///
-/// A popover row is not a text button: the preset list is the one place where a named view is a
-/// glyph the user learns, so the row draws the icon and keeps the name beside it as the label.
-fn preset_row(ui: &mut egui::Ui, view: OpeningView, on: bool, lang: text::Lang) -> bool {
+/// A popover row is not a text button: the preset and split lists are where a named view is a glyph
+/// the user learns, so the row draws the icon and keeps the name beside it as the label (U118).
+fn glyph_row(ui: &mut egui::Ui, icon: icons::Icon, label: &str, on: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact_selectable(&response, on);
@@ -427,17 +444,22 @@ fn preset_row(ui: &mut egui::Ui, view: OpeningView, on: bool, lang: text::Lang) 
         );
         let glyph =
             egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0, rect.center().y), egui::Vec2::splat(16.0));
-        icons::draw_icon(ui, preset_icon(view), glyph, 16.0, visuals.fg_stroke.color);
+        icons::draw_icon(ui, icon, glyph, 16.0, visuals.fg_stroke.color);
         ui.painter().text(
             egui::pos2(rect.left() + 28.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            view.label(lang),
+            label,
             egui::FontId::proportional(13.0),
             visuals.fg_stroke.color,
         );
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, view.label(lang)));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
     }
     response.clicked()
+}
+
+/// One row of the preset list: the view's glyph, its name and the selected face.
+fn preset_row(ui: &mut egui::Ui, view: OpeningView, on: bool, lang: text::Lang) -> bool {
+    glyph_row(ui, preset_icon(view), view.label(lang), on)
 }
 
 /// The display-settings popover above the cluster: the angle and widget switches, the projection,
@@ -537,7 +559,250 @@ pub(crate) fn projection_button(projection: Projection) -> (icons::Icon, text::M
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::drawn_text;
+    use crate::test_support::{drawn_text, drawn_text_rects};
+
+    /// The rectangle the cluster floats over in these tests.
+    fn viewport() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0))
+    }
+
+    /// The view a test puts in front of the cluster.
+    fn cluster_view(layout: LayoutKind) -> ClusterView {
+        ClusterView {
+            owns_view: true,
+            projection: Projection::Perspective { fov_y: 0.9 },
+            work_plane: "XY",
+            layout,
+            maximized: false,
+            preset: None,
+            style: ShadingStyle::default(),
+        }
+    }
+
+    /// One frame of the cluster: the action it asked for and what it drew.
+    fn frame(
+        ctx: &egui::Context,
+        state: &mut ViewCluster,
+        view: ClusterView,
+        events: Vec<egui::Event>,
+    ) -> (Option<ClusterAction>, egui::FullOutput) {
+        let mut action = None;
+        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), events, ..Default::default() }, |ui| {
+            action = show(ui, viewport(), state, view, 92, 0.0);
+        });
+        (action, output)
+    }
+
+    /// Draws idle frames until the floating area has laid itself out where it lands.
+    fn settle(ctx: &egui::Context, state: &mut ViewCluster, view: ClusterView) {
+        for _ in 0..3 {
+            let (_, output) = frame(ctx, state, view, Vec::new());
+            output.drop_without_applying_deltas();
+        }
+    }
+
+    /// A primary-button event at `pos`.
+    fn pointer(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Every labelled button the frame reported to the accessibility stack, with its rectangle.
+    ///
+    /// The tree is what a screen reader sees, so it is also the honest way to read a band of glyphs
+    /// without a pointer: the names and their left-to-right order are the surface's own.
+    fn buttons(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        let update = output.platform_output.accesskit_update.as_ref().expect("the frame reported its tree");
+        update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == egui::Role::Button)
+            .filter_map(|(_, node)| {
+                let bounds = node.bounds()?;
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                    egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                );
+                Some((node.label()?.to_owned(), rect))
+            })
+            .collect()
+    }
+
+    /// The labels of the groups the frame reported to the accessibility stack.
+    fn groups(output: &egui::FullOutput) -> Vec<String> {
+        let update = output.platform_output.accesskit_update.as_ref().expect("the frame reported its tree");
+        update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == egui::Role::Group)
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect()
+    }
+
+    /// The rectangles a frame painted with `fill`.
+    fn filled(output: &egui::FullOutput, fill: egui::Color32) -> Vec<egui::Rect> {
+        fn walk(shape: &egui::Shape, fill: egui::Color32, out: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Rect(rect) if rect.fill == fill => out.push(rect.rect),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, fill, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, fill, &mut out);
+        }
+        out
+    }
+
+    /// The textures a frame stamped inside `rect`, one per painted glyph.
+    fn images_in(output: &egui::FullOutput, rect: egui::Rect) -> Vec<egui::TextureId> {
+        fn walk(shape: &egui::Shape, rect: egui::Rect, out: &mut Vec<egui::TextureId>) {
+            match shape {
+                egui::Shape::Mesh(mesh) if rect.contains(mesh.calc_bounds().center()) => {
+                    out.push(mesh.texture_id);
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, rect, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, rect, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn the_five_styles_are_one_named_band_and_the_view_draws_pressed() {
+        // U118: five glyphs in a run between two dividers read as five switches. One tinted frame,
+        // touching cells and one accessible name make them one value, answered in the style table's
+        // order with the view's own style filled (ADR 0113).
+        let ctx = egui::Context::default();
+        ui::theme::install(&ctx);
+        // A test has no clock: the floating area fades in over a fraction of a second, so the fade
+        // is turned off and every frame paints the cluster's own colours.
+        ctx.global_style_mut(|style| style.animation_time = 0.0);
+        ctx.enable_accesskit();
+        let style = ShadingStyle::Wireframe;
+        let view = ClusterView { style, ..cluster_view(LayoutKind::Single) };
+        let mut state = ViewCluster::default();
+        settle(&ctx, &mut state, view);
+
+        let (action, output) = frame(&ctx, &mut state, view, Vec::new());
+        assert!(action.is_none(), "a frame with no pointer asks for nothing");
+        let named = groups(&output);
+        assert_eq!(
+            named,
+            [text::Message::ShadingGroup.text(text::Lang::En)],
+            "the band carries one name, and it says what it is"
+        );
+
+        let names: Vec<String> =
+            ShadingStyle::ALL.iter().map(|style| shading_label(*style, text::Lang::En).to_owned()).collect();
+        let reported = buttons(&output);
+        let mut cells: Vec<(&str, egui::Rect)> = reported
+            .iter()
+            .filter(|(label, _)| names.contains(label))
+            .map(|(label, rect)| (label.as_str(), *rect))
+            .collect();
+        assert_eq!(cells.len(), ShadingStyle::ALL.len(), "the band draws five cells");
+        cells.sort_by(|left, right| left.1.left().total_cmp(&right.1.left()));
+        let order: Vec<&str> = cells.iter().map(|(label, _)| *label).collect();
+        assert_eq!(
+            order,
+            names.iter().map(String::as_str).collect::<Vec<_>>(),
+            "the band runs in the style table's order"
+        );
+        for pair in cells.windows(2) {
+            assert!((pair[1].1.left() - pair[0].1.right()).abs() < 0.01, "the cells touch with no gap between them");
+        }
+        let control = ctx.global_style().visuals.widgets.inactive.bg_fill;
+        let frames: Vec<egui::Rect> = filled(&output, control)
+            .into_iter()
+            .filter(|rect| cells.iter().all(|(_, cell)| rect.contains(cell.center())))
+            .collect();
+        assert_eq!(frames.len(), 1, "the five cells sit inside one tinted frame");
+
+        let pressed = filled(&output, ctx.global_style().visuals.selection.bg_fill);
+        assert_eq!(pressed.len(), 1, "one cell of the band draws pressed");
+        let current = ShadingStyle::ALL.iter().position(|entry| *entry == style).expect("the view's style is a style");
+        assert!(
+            (pressed[0].center() - cells[current].1.center()).length() < 1.0,
+            "the pressed cell is the style the view draws with"
+        );
+
+        // The band answers with its own style, and only when a cell is clicked: the cells are one
+        // value, so the action carries the choice the cell names and never an index.
+        let target = cells[ShadingStyle::ALL.len() - 1].1.center();
+        let (_, moved) = frame(&ctx, &mut state, view, vec![egui::Event::PointerMoved(target)]);
+        moved.drop_without_applying_deltas();
+        let (_, down) = frame(&ctx, &mut state, view, vec![pointer(target, true)]);
+        down.drop_without_applying_deltas();
+        let (action, up) = frame(&ctx, &mut state, view, vec![pointer(target, false)]);
+        up.drop_without_applying_deltas();
+        assert_eq!(
+            action,
+            Some(ClusterAction::SetStyle(ShadingStyle::Translucent)),
+            "a cell asks for the style it names"
+        );
+    }
+
+    #[test]
+    fn every_split_choice_draws_its_glyph_in_the_popover_and_in_the_cell() {
+        // U118: the four splits shared one generic `layout` frame, so neither the popover nor the
+        // cluster's cell said which split was in force. Each choice owns its drawing, the popover
+        // pairs it with the name, and the cell shows the layout the workspace is in.
+        let ctx = egui::Context::default();
+        ui::theme::install(&ctx);
+        ctx.global_style_mut(|style| style.animation_time = 0.0);
+        ctx.enable_accesskit();
+        let mut cell_glyphs = std::collections::HashSet::new();
+        let mut state = ViewCluster::default();
+        for kind in LayoutKind::ALL {
+            let view = cluster_view(kind);
+            settle(&ctx, &mut state, view);
+            let (_, output) = frame(&ctx, &mut state, view, Vec::new());
+            let cell = buttons(&output)
+                .into_iter()
+                .find(|(label, _)| label == text::Message::Layout.text(text::Lang::En))
+                .map(|(_, rect)| rect)
+                .expect("the cluster draws its layout cell");
+            let glyphs = images_in(&output, cell);
+            assert_eq!(glyphs.len(), 1, "{kind:?} draws one glyph in the layout cell");
+            assert!(cell_glyphs.insert(glyphs[0]), "{kind:?} draws the glyph of an earlier split");
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(cell_glyphs.len(), LayoutKind::ALL.len(), "the four splits own four glyphs");
+
+        // The popover pairs each name with its glyph, the way the preset list does.
+        let mut state = ViewCluster { layout_open: true, ..ViewCluster::default() };
+        let view = cluster_view(LayoutKind::Single);
+        settle(&ctx, &mut state, view);
+        let (_, output) = frame(&ctx, &mut state, view, Vec::new());
+        let rects = drawn_text_rects(&output.shapes);
+        for kind in LayoutKind::ALL {
+            let label = kind.label().text(text::Lang::En);
+            let (row, _) = rects.iter().find(|(_, text)| text == label).expect("the popover names every split");
+            // The row paints the glyph 14 points left of its name, centred on the row.
+            let glyph =
+                egui::Rect::from_center_size(egui::pos2(row.left() - 14.0, row.center().y), egui::Vec2::splat(2.0));
+            assert_eq!(images_in(&output, glyph).len(), 1, "{kind:?} draws its glyph beside its name");
+        }
+        output.drop_without_applying_deltas();
+    }
 
     #[test]
     fn every_view_preset_has_its_own_drawn_glyph() {
