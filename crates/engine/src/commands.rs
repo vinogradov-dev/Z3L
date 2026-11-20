@@ -287,7 +287,7 @@ impl CommandRegistry {
 }
 
 /// Why a command could not be dispatched or a history operation failed.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CommandError {
     /// No command with this id is registered.
     #[error("unknown command `{id}`")]

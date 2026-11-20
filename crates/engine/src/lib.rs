@@ -14,6 +14,7 @@
     clippy::unreachable
 )]
 
+mod batch;
 mod class_rules;
 mod commands;
 mod contour_cmds;
@@ -30,6 +31,7 @@ mod resolve;
 pub mod scene_cmds;
 mod session;
 
+pub use batch::{BatchEffect, BatchOptions, BatchReport, BatchStep, StepOutcome, StepReport};
 pub use class_rules::{
     ClassRefusal, CreationRefusal, Dimension, NodeRules, allow_creation, is_furniture, operation_of,
 };

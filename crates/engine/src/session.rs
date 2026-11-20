@@ -8,6 +8,7 @@ use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, Proj
 use param::EdgeBandProfile;
 use serde_json::Value;
 
+use crate::batch::{self, BatchEffect, BatchOptions, BatchReport, BatchStep};
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
 use crate::no_contact::NoContact;
@@ -355,6 +356,78 @@ impl Session {
         Ok(outcome)
     }
 
+    /// Runs a batch of commands as one operation and reports what it created, changed and removed.
+    ///
+    /// The steps run in order inside one edit scope, so a batch that lands is one undo entry
+    /// (ADR 0183). They run on a copy of the document, and the copy is installed only when the batch
+    /// may land, which is what keeps the promises of ADR 0197 honest: an all-or-nothing batch that
+    /// refuses leaves the document — revision, history, saved marker — exactly as it was, and a
+    /// `dry_run` answers with the same report while writing nothing at all.
+    ///
+    /// A batch that is not atomic installs the steps that ran before a refusal and reports
+    /// [`BatchEffect::PartlyLanded`], instead of claiming the whole list applied. A `dry_run` wins
+    /// over both: nothing is installed, so [`BatchReport::effect`] says `Planned` and the report is
+    /// what would have landed.
+    pub fn batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        let mut trial = self.trial();
+        let reports = batch::run(&mut trial, steps);
+        let refused = reports.iter().any(|step| step.refusal().is_some());
+        let applied_any = reports.iter().any(|step| step.refusal().is_none());
+        let effect = if options.is_dry_run() {
+            BatchEffect::Planned
+        } else if !refused {
+            BatchEffect::Landed
+        } else if applied_any && !options.is_atomic() {
+            BatchEffect::PartlyLanded
+        } else {
+            BatchEffect::RolledBack
+        };
+        // The document the batch started from is still this session's: the trial is the only one
+        // that ran, so the diff needs no copy of the state before the batch.
+        let report = BatchReport::new(effect, reports, &self.project, trial.project());
+        if report.landed() && report.content_changed() {
+            self.land(trial.project);
+        }
+        report
+    }
+
+    /// A copy of this session for a batch to run in before anything lands.
+    ///
+    /// It shares the directory and the contact adapter (both are `Arc`s) and starts from the same
+    /// document, saved marker and open product, with an empty history: a batch measures exactly what
+    /// the window measures, and its own history is thrown away with the copy. The copy costs the
+    /// document twice — once as content and once as the saved marker the session keeps beside it —
+    /// which a turn of many commands pays once.
+    fn trial(&self) -> Self {
+        Self {
+            project: self.project.clone(),
+            saved_project: self.saved_project.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            dirty: self.dirty,
+            directory: Arc::clone(&self.directory),
+            directory_version: self.directory_version,
+            edit: None,
+            next_scope: self.next_scope,
+            preview: Preview::new(),
+            contact: Arc::clone(&self.contact),
+            active_product: self.active_product,
+        }
+    }
+
+    /// Installs a batch's document as one undo entry.
+    ///
+    /// Installing is the batch's only write: the state the batch started from becomes the entry
+    /// `undo` restores, the redo branch the batch invalidates is dropped, the saved marker decides
+    /// whether the document is dirty, and a product the batch deleted stops being the open one.
+    fn land(&mut self, project: Project) {
+        let previous = std::mem::replace(&mut self.project, project);
+        self.undo.push(previous);
+        self.redo.clear();
+        self.dirty = !self.project.same_content(&self.saved_project);
+        self.retain_active_product();
+    }
+
     /// Runs one command on a copy of the document and installs the result.
     ///
     /// Returns the command's outcome and the document as it was before it, which is what the history
@@ -412,6 +485,7 @@ impl Session {
 mod tests {
     use super::*;
 
+    use crate::batch::{BatchEffect, BatchOptions, BatchStep};
     use model::{
         ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
         EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor, MachiningParams, PanelContourError,
@@ -1276,6 +1350,171 @@ mod tests {
         session.undo().expect("undo the edit");
         assert_eq!(session.project().panel(panel_id).expect("panel").nominal_size(), before);
         assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn a_three_step_batch_is_one_undo_entry() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let first = json_params(&panel_create(&session, "Side"));
+        let second = json_params(&panel_create(&session, "Shelf"));
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let steps = [
+            BatchStep::new("panel.create", first),
+            BatchStep::new("panel.create", second),
+            BatchStep::new("node.rename", rename),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.landed(), "the document holds the batch");
+        assert!(report.refusal().is_none());
+        assert_eq!(report.steps().len(), 3);
+        assert_eq!(report.created().len(), 2, "two panels were created");
+        assert_eq!(report.changed(), [product], "the rename changed the product itself, not its parent");
+        assert!(report.removed().is_empty());
+        assert!(report.content_changed());
+        let container = session.project().container(product).expect("the product is still there");
+        assert_eq!(container.children().len(), 2, "both panels are in the document");
+        assert_eq!(container.name(), "Frame");
+        assert!(session.can_undo() && !session.can_redo());
+
+        session.undo().expect("one undo restores the document");
+        let container = session.project().container(product).expect("the product is still there");
+        assert_eq!(container.children().len(), 0, "one undo removes both panels");
+        assert_eq!(container.name(), "Cabinet", "and takes the rename back");
+        assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_refused_step_takes_the_whole_batch_back_and_names_itself() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Shelf"))),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::RolledBack);
+        assert!(!report.landed());
+        assert_eq!(report.steps().len(), 2, "the third step never ran");
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        let sentence = error.to_string();
+        assert!(sentence.contains("9999"), "the command's own sentence names the node: {sentence}");
+        assert_eq!(report.created().len(), 1, "the report says what the batch would have created");
+        assert!(session.project().same_content(&before), "the document is exactly as it was");
+        assert_eq!(session.project().revision(), before.revision(), "a refused batch moves no revision");
+        assert!(!session.can_undo(), "a refused batch leaves no history");
+        assert!(!session.is_dirty(), "and leaves the saved marker alone");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_dry_run_reports_the_batch_and_writes_nothing() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let steps: Vec<_> = ["Side", "Shelf", "Divider"]
+            .into_iter()
+            .map(|name| BatchStep::new("panel.create", json_params(&panel_create(&session, name))))
+            .collect();
+
+        let report = session.batch(&steps, BatchOptions::ALL_OR_NOTHING.dry_run(true));
+
+        assert_eq!(report.effect(), BatchEffect::Planned);
+        assert!(!report.landed());
+        assert!(report.refusal().is_none());
+        assert_eq!(report.created().len(), 3, "the report names the three creations");
+        assert!(report.content_changed(), "a plan says what would move");
+        assert_eq!(session.project().revision(), before.revision(), "a dry run moves no revision");
+        assert!(!session.can_undo(), "a dry run records no history");
+        assert!(!session.is_dirty());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_batch_that_keeps_what_it_applies_reports_the_part_it_kept() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default().atomic(false));
+
+        assert_eq!(report.effect(), BatchEffect::PartlyLanded);
+        assert!(report.landed(), "the step before the refusal stayed");
+        assert_eq!(report.refusal().map(|(number, _)| number), Some(2));
+        assert_eq!(report.created().len(), 1);
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
+        session.undo().expect("what the batch kept is one undo entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn a_batch_that_removes_a_node_reports_it_removed() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let panel = session.dispatch("panel.create", &create).expect("a panel").created_id().expect("an id");
+        let steps = [BatchStep::new("node.delete", json_params(&NodeDelete { node: panel }))];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert_eq!(report.removed(), [panel], "the panel is gone by its own id");
+        assert!(report.created().is_empty());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_dry_run_that_would_refuse_names_the_step_and_moves_nothing() {
+        let mut session = product_session();
+        let before = session.project().clone();
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::ALL_OR_NOTHING.dry_run(true));
+
+        assert_eq!(report.effect(), BatchEffect::Planned);
+        assert_eq!(report.refusal().map(|(number, _)| number), Some(2));
+        assert!(session.project().same_content(&before));
+        assert_eq!(session.project().revision(), before.revision());
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn an_empty_batch_leaves_no_entry() {
+        let mut session = product_session();
+
+        let report = session.batch(&[], BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.steps().is_empty());
+        assert!(!report.content_changed());
+        assert!(!session.can_undo(), "a batch that changed nothing is not a step in the history");
     }
 
     #[test]
