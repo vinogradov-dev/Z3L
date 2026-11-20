@@ -44,7 +44,7 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **G3** the three contour booleans run on two closed rings and store one
+- `[~]` **G3** the three contour booleans run on two closed rings and store one
   Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
   `geom::boolean` and the panel core already unions its cutouts through them, but no tool
   reaches them, so a maker cannot union two drawn figures, cut one ring with another or keep
