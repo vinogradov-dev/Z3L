@@ -308,6 +308,20 @@ impl Cell {
     pub const fn type_name(&self) -> &'static str {
         self.kind().as_str()
     }
+
+    /// The value a JSON reader sees: an integer, a string, a flag or the stored JSON.
+    ///
+    /// The JSON Lines writer, the single-file form and the command line's `query` all read a cell
+    /// through this one function, so a published record and a printed report cannot disagree about
+    /// what a cell is.
+    pub fn json(&self) -> serde_json::Value {
+        match self {
+            Self::Integer(value) => serde_json::Value::from(*value),
+            Self::Text(value) => serde_json::Value::from(value.clone()),
+            Self::Boolean(value) => serde_json::Value::from(*value),
+            Self::Json(value) => value.clone(),
+        }
+    }
 }
 
 /// One table with its rows, in the order the writer emits them.

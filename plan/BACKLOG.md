@@ -64,19 +64,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test loads a standards file, a command takes its default from it, and a stale file is
    a notice.
   `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
-  Why: The assistant and the prototype expander both need the document without a window, and
-   only export reaches the engine from the command line today. A generator that writes the
-   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
-   command gate.
-  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
-   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
-   groups them as one undo entry and writes once; query <scene>
-   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
-   Session::dispatch and SceneFile: no second mutation path.
-  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
-   leaves the file untouched, and query tree prints the ids the fixture created.
-  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/`
 - `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
   Why: The prototype work needs three facts the document cannot store today: which container is
    a section, which prototype and card produced a node, so a command works while the library is
@@ -140,6 +127,43 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **X93** a deep crossing of two boards is invisible to the contact port, so the carry and the turn pass through it
+  Why: In the owner's own scene two boards cross by 60 × 60 × 100 mm and the object carry
+   answers `blocked=none`: parry's `contact` reads the pair as touching (`dist = 0.0`) while
+   its `intersection_test` reads a real intersection, and `contact-parry::penetration` treats
+   `dist >= 0` as "no penetration", so `MoveRule::blocked_at` skips the pair. The rule asks
+   only the destination of a frame, so at 60 fps some frame lands in a shallow overlap, where
+   parry answers the true depth and the piece stops, while a hand that jumps 30–50 mm between
+   frames lands every time in the crossed place and the body goes through — which is what the
+   owner saw under Wine and read as "no solid bodies". The object turn asks the same port for
+   the same reason (X88).
+  Shape: The port stops reading a non-negative distance as proof that nothing is inside:
+   `penetration` asks `intersection_test` as well, and a pair that intersects answers a depth
+   from a manifold query instead of `None`, so `overlap`, `sunk` and the write guard keep one
+   reading. The tests are the ones this defect lacked: a port test with two perpendicular
+   boards crossing 60 × 60 × 100 mm, a model test that `blocked_at` stops the carry at that
+   place, a model test that a destination 50 mm past the near face — the quick hand of ADR 0172
+   — is refused, and the same pair asked through the rotate rule and `resting_conflict`, so the
+   turn is covered by the port fix and not by a second code path. No new dependency.
+  Done: A carry of one board into another stops at its face however far the pointer travelled
+   since the last frame; the port answers a real depth for a crossed pair; the object turn
+   stops where the carry does, proven by the same pair; the gate is green.
+  `files: crates/contact-parry/src/lib.rs,crates/model/src/project/move_query.rs,crates/geom/src/contact.rs` — `7af290a`
+
+- `[x]` **J1** the editor can be driven from the command line: list its commands, run a recipe, ask the scene a question
+  Why: The assistant and the prototype expander both need the document without a window, and
+   only export reaches the engine from the command line today. A generator that writes the
+   scene file directly bypasses Session::dispatch, so it escapes undo, validation and the
+   command gate.
+  Shape: commands --json prints an id, a label and the shape of its parameters; run <scene>
+   --commands <jsonl> [--out <scene>] [--dry-run] opens one session, dispatches each line,
+   groups them as one undo entry and writes once; query <scene>
+   tree|box|niche|parts|diagnostics [--id <id>] prints the report as JSON. Reuse
+   Session::dispatch and SceneFile: no second mutation path.
+  Done: A CLI test builds a fixture scene from a three-line recipe in one undo entry, --dry-run
+   leaves the file untouched, and query tree prints the ids the fixture created.
+  `files: app/src/cli.rs,app/src/main.rs,crates/engine/src/` — `31c8e0c`
 
 - `[x]` **X88** the object rotate tool turns a body about its pivot and stops where the bodies stop
   Why: The owner asked for a rotation tool that honours the bodies: turning a door into its

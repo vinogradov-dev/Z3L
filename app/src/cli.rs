@@ -1,4 +1,5 @@
-//! The command line: `z3l export` writes an order package without a window, `z3l <scene>` opens one.
+//! The command line: `z3l export` writes an order package without a window, `z3l run` dispatches a
+//! recipe, `z3l query` answers a question about the scene, `z3l <scene>` opens one.
 //!
 //! A package is useless if producing it needs a window and a person, so the subcommand is read and
 //! performed in [`main`](crate::main) before eframe creates a surface: a headless job over saved
@@ -6,16 +7,30 @@
 //! named on the line is the editor's own Open, so a double click in a file manager and a script that
 //! hands the program a saved file need no click through Home.
 //!
+//! The three headless surfaces all reach the document through the one door: [`recipe`] dispatches
+//! `engine` commands into one session and one undo entry, [`query`] reads the document and the
+//! catalogue without mutating either, and [`commands`] lists what this build can dispatch. Nothing
+//! here writes a scene except through [`project::SceneFile`], so a script cannot bypass the
+//! validation a command performs (ADR 0028, `docs/domain/prototypes.md` §8).
+//!
 //! The parsing, the export and the error are one value each, so the test drives the whole job and
 //! no window is ever constructed: [`parse`] turns the argument list into one [`Command`], [`export`]
 //! writes the package and returns what to print, and [`CliError`] carries a sentence the user can
 //! read. [`run`] writes the report and returns the exit code. Nothing here panics: a closed pipe is
 //! a failed write like any other, and the only exit is the caller's `std::process::exit`.
 
+mod commands;
+mod query;
+mod recipe;
+
+pub use query::QueryKind;
+
 use std::io::Write as _;
 use std::path::PathBuf;
 
+use engine::CommandError;
 use export::{DocumentMeta, ExportError, ExportOptions, OrderPackage, now_timestamp};
+use model::Id;
 use project::{SceneFile, SceneFileError};
 
 /// The exit code of a command that did its job.
@@ -35,6 +50,9 @@ usage: z3l                 open the editor
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
+       z3l commands [--json]
+       z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
+       z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
 
 export writes an order package from a saved scene without opening a window:
   --out <path>       the package directory for `bundle`, the package file for `single`
@@ -43,10 +61,34 @@ export writes an order package from a saved scene without opening a window:
   --price-max-age <days>
                      flag a material's price older than this many days, judged against the export
   --no-timestamp     leave the export time out of the manifest, so a package can be compared
+
+commands lists what this build can dispatch: one id, its label and what it creates.
+  --json             print one JSON array instead of one line per command
+
+run dispatches a recipe -- one JSON object per line, `{\"command\": <id>, \"params\": {...}}` --
+into one session. The whole file is one undo entry's worth of work: the scene is read once, the
+commands run in order, and the result is written once, at the end -- or not at all if a line fails.
+  --commands <path>  the recipe file, one command per line; a blank line is skipped
+  --out <scene>      write the result here instead of over the scene the line read
+  --product <node>   the product the recipe works in; a scene with exactly one product opens it
+                     by itself, and a part can only be created inside an open one
+  --dry-run          dispatch every command and write nothing, so the recipe can be checked first
+
+query reads the scene and prints one JSON report; it never writes:
+  tree         every node with its id, kind, name and children
+  box          the box a product reserves, in its own frame and in world millimetres
+  parts        the cut list -- the published `parts` table of the order package
+  diagnostics  every panel problem the catalogue resolves, with a stable code
+  niche        the empty space around a point: `--at <x,y,z>` in world millimetres, or `--id`
+               of a node for the space at its origin
+  --id <node>  the node a report is about, where the report takes one
+  --at <x,y,z> the point `niche` measures, in world millimetres
 ";
 
 /// What one run of the program does.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The comparison is partial, because a query may name a world point and a point is a float.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// Arguments name no command: open the editor, which is what a double click does.
     Window,
@@ -64,6 +106,43 @@ pub enum Command {
     Help(&'static str),
     /// Write an order package and exit.
     Export(ExportArgs),
+    /// List the commands this build can dispatch and exit.
+    Commands {
+        /// Print one JSON array instead of one line per command.
+        json: bool,
+    },
+    /// Dispatch a recipe into one session and save the result once.
+    Run(RunArgs),
+    /// Read the scene and print one JSON report.
+    Query(QueryArgs),
+}
+
+/// One `run` request, already checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// The recipe file: one command per line.
+    pub commands: PathBuf,
+    /// Where the result is written; the scene read when it is absent.
+    pub out: Option<PathBuf>,
+    /// The product the run works in; the document's only product when it is absent.
+    pub product: Option<Id>,
+    /// Whether the recipe runs without writing anything.
+    pub dry_run: bool,
+}
+
+/// One `query` request, already checked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// Which report to print.
+    pub kind: QueryKind,
+    /// The node the report is about, when the report takes one.
+    pub id: Option<Id>,
+    /// The point `niche` measures, in world millimetres.
+    pub at: Option<[f64; 3]>,
 }
 
 /// One `export` request, already checked.
@@ -106,12 +185,25 @@ impl Format {
 pub enum CliError {
     /// The argument list names no command or misses a value.
     Usage(String),
-    /// The scene file a headless command read cannot be parsed.
+    /// The scene file a headless command read or wrote cannot be parsed.
     Scene(SceneFileError),
     /// The default catalogue a new session starts from cannot be built.
     Catalog(String),
     /// The package cannot be built or written.
     Export(ExportError),
+    /// The recipe file cannot be read, or one of its lines is not a step.
+    Recipe(String),
+    /// One recipe line dispatched a command that failed, so nothing was written.
+    Dispatch {
+        /// The line of the recipe file, counting from one.
+        line: usize,
+        /// The command id the line named.
+        command: String,
+        /// Why the command refused.
+        error: CommandError,
+    },
+    /// A query cannot answer what it was asked.
+    Query(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -121,6 +213,9 @@ impl std::fmt::Display for CliError {
             Self::Scene(error) => error.fmt(formatter),
             Self::Catalog(message) => formatter.write_str(message),
             Self::Export(error) => error.fmt(formatter),
+            Self::Recipe(message) => formatter.write_str(message),
+            Self::Dispatch { line, command, error } => write!(formatter, "line {line} `{command}`: {error}"),
+            Self::Query(message) => formatter.write_str(message),
         }
     }
 }
@@ -136,6 +231,9 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         None => Ok(Command::Window),
         Some("-h" | "--help" | "help") => Ok(Command::Help(USAGE)),
         Some("export") => export_args(&args[1..]),
+        Some("commands") => commands_args(&args[1..]),
+        Some("run") => run_args(&args[1..]),
+        Some("query") => query_args(&args[1..]),
         Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
         // One scene path opens the editor on it; the extension is the claim, because a path that
@@ -215,6 +313,109 @@ fn value<'a>(words: &mut std::slice::Iter<'a, String>, flag: &str) -> Result<&'a
     words.next().map(String::as_str).ok_or_else(|| CliError::Usage(format!("`{flag}` needs a value")))
 }
 
+/// Reads the words after `commands`: nothing, or `--json`.
+fn commands_args(args: &[String]) -> Result<Command, CliError> {
+    let mut json = false;
+    for word in args {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--json" => json = true,
+            other => {
+                return Err(CliError::Usage(format!("`{other}` is not an option of `commands`; run `z3l --help`")));
+            }
+        }
+    }
+    Ok(Command::Commands { json })
+}
+
+/// Reads the words after `run`: one scene, one recipe, an optional output and the dry-run flag.
+fn run_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut commands: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut product: Option<Id> = None;
+    let mut dry_run = false;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--commands" => commands = Some(PathBuf::from(value(&mut words, "--commands")?)),
+            "--out" => out = Some(PathBuf::from(value(&mut words, "--out")?)),
+            "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            "--dry-run" => dry_run = true,
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not a run option; run `z3l --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("run reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    let scene = scene
+        .ok_or_else(|| CliError::Usage("run needs a scene: `z3l run <scene.z3l> --commands <recipe>`".to_owned()))?;
+    let commands =
+        commands.ok_or_else(|| CliError::Usage("run needs `--commands <path>` to know what to dispatch".to_owned()))?;
+    Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
+}
+
+/// Reads the words after `query`: one scene, one report kind, and the flag that report takes.
+fn query_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut kind: Option<QueryKind> = None;
+    let mut id: Option<Id> = None;
+    let mut at: Option<[f64; 3]> = None;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--id" => id = Some(node_id(value(&mut words, "--id")?)?),
+            "--at" => at = Some(point(value(&mut words, "--at")?)?),
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not a query option; run `z3l --help`")));
+            }
+            other if scene.is_none() => scene = Some(PathBuf::from(other)),
+            other if kind.is_none() => kind = Some(QueryKind::parse(other)?),
+            other => {
+                return Err(CliError::Usage(format!(
+                    "a query reads one scene and one report, so `{other}` has no place"
+                )));
+            }
+        }
+    }
+    let scene = scene.ok_or_else(|| CliError::Usage("query needs a scene: `z3l query <scene.z3l> tree`".to_owned()))?;
+    let kind = kind.ok_or_else(|| CliError::Usage(format!("query needs a report: {}", QueryKind::WORDS)))?;
+    Ok(Command::Query(QueryArgs { scene, kind, id, at }))
+}
+
+/// Reads a node id: a non-zero whole number, because zero is the document's "no entity".
+fn node_id(text: &str) -> Result<Id, CliError> {
+    text.parse::<u64>()
+        .ok()
+        .and_then(Id::new)
+        .ok_or_else(|| CliError::Usage(format!("`{text}` is not a node id; it is one whole number, and zero is no id")))
+}
+
+/// Reads a point: three world millimetres, comma separated.
+fn point(text: &str) -> Result<[f64; 3], CliError> {
+    let mut axes = [0.0; 3];
+    let mut count = 0_usize;
+    for word in text.split(',') {
+        let axis = word.trim().parse::<f64>().ok().filter(|value| value.is_finite()).ok_or_else(|| {
+            CliError::Usage(format!("`{word}` is not a coordinate; write `--at x,y,z` in millimetres"))
+        })?;
+        let Some(slot) = axes.get_mut(count) else {
+            return Err(CliError::Usage(format!("`{text}` has more than three coordinates")));
+        };
+        *slot = axis;
+        count = count.saturating_add(1);
+    }
+    if count != 3 {
+        return Err(CliError::Usage(format!("`{text}` needs three coordinates, not {count}")));
+    }
+    Ok(axes)
+}
+
 /// Reads the scene and writes the package, returning one line per written table.
 ///
 /// The catalogue is the one a new session starts from: the scene file does not carry it
@@ -268,6 +469,15 @@ pub fn run(command: &Command) -> Option<i32> {
         Command::Help(text) => Some(print_stdout(text)),
         Command::Export(args) => Some(match export(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Commands { json } => Some(print_stdout(&(commands::report(*json) + "\n"))),
+        Command::Run(args) => Some(match recipe::perform(args) {
+            Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Query(args) => Some(match query::report(args) {
+            Ok(report) => print_stdout(&(report + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
     }
@@ -477,10 +687,64 @@ mod tests {
         assert_eq!(parse(&words(&["-psn_0_12345"])).expect("a Finder launch asks for the window"), Command::Window);
         assert_eq!(parse(&words(&["--help"])).expect("help is a command"), Command::Help(USAGE));
         assert_eq!(parse(&words(&["export", "--help"])).expect("the subcommand has help"), Command::Help(USAGE));
-        for flag in ["--out", "--format", "--no-timestamp", "bundle|single"] {
+        for flag in [
+            "--out",
+            "--format",
+            "--no-timestamp",
+            "bundle|single",
+            "--json",
+            "--commands",
+            "--product",
+            "--dry-run",
+            "--id",
+            "--at",
+            "tree|box|parts|diagnostics|niche",
+        ] {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
         }
         assert_eq!(run(&Command::Window), None, "only the window command asks the caller to open one");
+    }
+
+    #[test]
+    fn the_headless_commands_read_their_own_flags() {
+        assert_eq!(parse(&words(&["commands"])).expect("no flag"), Command::Commands { json: false });
+        assert_eq!(parse(&words(&["commands", "--json"])).expect("`--json`"), Command::Commands { json: true });
+        let error = parse(&words(&["commands", "--yaml"])).expect_err("there is no such flag");
+        assert!(error.to_string().contains("--yaml"), "{error}");
+
+        let run = parse(&words(&[
+            "run",
+            "scene.z3l",
+            "--commands",
+            "recipe.jsonl",
+            "--out",
+            "built.z3l",
+            "--product",
+            "5",
+            "--dry-run",
+        ]))
+        .expect("every run flag at once");
+        assert_eq!(
+            run,
+            Command::Run(RunArgs {
+                scene: PathBuf::from("scene.z3l"),
+                commands: PathBuf::from("recipe.jsonl"),
+                out: Some(PathBuf::from("built.z3l")),
+                product: model::Id::new(5),
+                dry_run: true,
+            })
+        );
+
+        let query = parse(&words(&["query", "scene.z3l", "niche", "--at", "1.5,-2,3"])).expect("a niche");
+        assert_eq!(
+            query,
+            Command::Query(QueryArgs {
+                scene: PathBuf::from("scene.z3l"),
+                kind: QueryKind::Niche,
+                id: None,
+                at: Some([1.5, -2.0, 3.0]),
+            })
+        );
     }
 
     #[test]

@@ -2880,4 +2880,54 @@ mod tests {
         let apex = DQuat::from_axis_angle(DVec3::Y, measured.angle) * DVec3::new(0.0, 0.0, 720.0);
         assert!((apex.x - 400.0).abs() < 0.01, "the tip meets the wall at 400: {apex:?}");
     }
+
+    #[test]
+    fn a_crossed_pair_stops_the_carry_however_far_the_hand_jumped() {
+        // X93's own case: a 1010 mm board carried across a 1090 mm one, 60 mm into it in both
+        // directions. The carry asks only the place a frame lands, so a hand that jumps past a board
+        // never sees the face it went through: the port answers the depth of a crossing, and the piece
+        // stops where the box around the neighbour always said it would.
+        let mut project = empty_project();
+        let standing = block_object(&mut project, "Standing", place((-330.0, -115.0, 0.0)), (60.0, 1090.0, 100.0));
+        let carried = block_object(&mut project, "Carried", place((292.0, 275.0, 0.0)), (1010.0, 60.0, 100.0));
+        let rule = project
+            .move_rule(&[carried], MoveSettings::default(), Some(&contact_parry::Parry))
+            .expect("a measured rule");
+        // The crossing 60 mm deep, then the same crossing a frame later: the hand moved 40 mm between
+        // two frames of a slow window, which is where the piece used to go straight through.
+        for delta in [DVec3::new(-328.0, -26.0, 0.0), DVec3::new(-450.0, 0.0, 0.0)] {
+            let stop = rule.blocked_at(delta).expect("the standing board is in the way");
+            assert_eq!(stop.node(), Some(standing), "and it is the one named");
+        }
+        // A place the two boards do not share is still the hand's own.
+        assert_eq!(rule.blocked_at(DVec3::new(0.0, 385.0, 0.0)), None, "a clear place is granted");
+    }
+
+    #[test]
+    fn a_turn_whose_destination_crosses_a_board_is_measured() {
+        // The turn reads the same port as the carry (X93): a board standing beside a strip and turned
+        // by a quarter ends across it, which is the crossing the port used to answer as nothing. The
+        // deep destination is named, and the ring is cut where the board's far corner meets the strip
+        // — 505 sin θ + 30 cos θ = 270, the strip's near face.
+        let mut project = empty_project();
+        let strip = block_object(&mut project, "Strip", place((0.0, 300.0, 0.0)), (1010.0, 60.0, 18.0));
+        let upright = block_object(&mut project, "Upright", place((0.0, 0.0, 0.0)), (1010.0, 60.0, 100.0));
+        let rule = project.rotate_rule(&[upright], Some(&contact_parry::Parry)).expect("a measured rule");
+        let quarter = std::f64::consts::FRAC_PI_2;
+
+        let deep = rule.blocked_at(DVec3::Z, quarter).expect("the quarter turn crosses the strip");
+        assert_eq!(deep.node(), Some(strip), "and the strip is the one named");
+
+        let stop = rule.limit(DVec3::Z, quarter);
+        assert!(stop.angle > 0.0 && stop.angle < quarter, "the turn into the strip is cut: {stop:?}");
+        assert_eq!(stop.contact.and_then(Stop::node), Some(strip), "and the strip stops it");
+        let corner = DQuat::from_axis_angle(DVec3::Z, stop.angle) * DVec3::new(505.0, 30.0, 0.0);
+        assert!((corner.y - 270.0).abs() < 0.05, "the far corner meets the strip at 270: {corner:?}");
+
+        // A turn the strip is nowhere near is the hand's own and names nothing — the board is long in
+        // both directions, so a quarter either way sweeps a far corner into the strip.
+        let away = rule.limit(DVec3::Z, -0.1);
+        assert_eq!(away.angle, -0.1, "a turn clear of the strip is granted whole");
+        assert_eq!(away.contact, None);
+    }
 }

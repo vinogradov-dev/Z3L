@@ -28,7 +28,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use parry3d_f64::math::{Pose as ParryPose, Rot3, Vec3};
-use parry3d_f64::query::{Ray, ShapeCastOptions, cast_shapes, contact as parry_contact};
+use parry3d_f64::query::{Ray, ShapeCastOptions, cast_shapes, contact as parry_contact, intersection_test};
 use parry3d_f64::shape::SharedShape;
 
 /// The furthest a single ask may travel, in millimetres: ten metres past any workshop.
@@ -149,13 +149,55 @@ impl Solid for Body {
         let body_b = as_body(other)?;
         // A zero prediction asks for the touching pair as well, so a face that only touches answers a
         // distance of zero and is left to the caller's slack.
-        let found = parry_contact(&self.pose, &*self.shape, &body_b.pose, &*body_b.shape, 0.0).ok()??;
-        if found.dist >= 0.0 {
+        let found = parry_contact(&self.pose, &*self.shape, &body_b.pose, &*body_b.shape, 0.0).ok().flatten();
+        if let Some(found) = found.filter(|found| found.dist < 0.0) {
+            let depth_mm = -found.dist;
+            return depth_mm.is_finite().then_some(Penetration { depth_mm, normal: point(found.normal1) });
+        }
+        // A distance that is not negative is not proof that nothing is inside: for a pair the distance
+        // query cannot separate it answers a touching contact at zero, and two boards crossing is the
+        // case that measured it — 60 mm into one another and reported as nothing at all (X93). The
+        // boolean query is the truth, and a pair that does intersect is measured by the box reading the
+        // document has always kept for it, never by the absence of an answer.
+        let intersecting = intersection_test(&self.pose, &*self.shape, &body_b.pose, &*body_b.shape)
+            .map(|hit| hit.intersecting)
+            .unwrap_or(false);
+        if !intersecting {
             return None;
         }
-        let depth_mm = -found.dist;
-        depth_mm.is_finite().then_some(Penetration { depth_mm, normal: point(found.normal1) })
+        let (depth_mm, normal) = sunk_depth(self.bounds(), body_b.bounds())?;
+        Some(Penetration { depth_mm, normal })
     }
+}
+
+/// How deeply two bodies' own boxes sit in one another: the shallowest axis, and the way out of it.
+///
+/// It is the reading a pair of boxes has always had (X87, ADR 0166), kept as the answer for a pair the
+/// distance query cannot separate (X93). The bodies are inside the boxes that hold them, so a pair
+/// whose boxes share nothing cannot touch, and the shallowest shared axis is the depth the document
+/// would have measured before the port existed: never more generous than the truth, so a rule reading
+/// it stops a piece no later than the truth does, and a pair that only touches shares no depth at all.
+fn sunk_depth((low_a, high_a): (DVec3, DVec3), (low_b, high_b): (DVec3, DVec3)) -> Option<(f64, DVec3)> {
+    let mut least = f64::INFINITY;
+    let mut normal = DVec3::ZERO;
+    for axis in 0..3 {
+        let overlap = high_a[axis].min(high_b[axis]) - low_a[axis].max(low_b[axis]);
+        if !overlap.is_finite() || overlap <= 0.0 {
+            return None;
+        }
+        if overlap < least {
+            // The way out points from the first body into the second, so the two callers of a
+            // penetration read one convention whichever way the pair was asked.
+            let way = if low_b[axis] + high_b[axis] >= low_a[axis] + high_a[axis] { 1.0 } else { -1.0 };
+            least = overlap;
+            normal = match axis {
+                0 => DVec3::new(way, 0.0, 0.0),
+                1 => DVec3::new(0.0, way, 0.0),
+                _ => DVec3::new(0.0, 0.0, way),
+            };
+        }
+    }
+    (least.is_finite() && normal.is_finite()).then_some((least, normal))
 }
 
 /// This adapter's own body, when the other side of a pair was built by it.
@@ -236,6 +278,21 @@ mod tests {
         Parry.prepare(shape, pose).expect("parry measures a closed shape")
     }
 
+    /// A board `length` long, `width` wide and `thickness` thick, standing on its own base: the shape
+    /// the document builds for a panel or a box object, in the node's own frame (X93).
+    fn board(length: f64, width: f64, thickness: f64) -> Shape {
+        let (half_length, half_width) = (length / 2.0, width / 2.0);
+        let mut points = Vec::new();
+        for x in [-half_length, half_length] {
+            for y in [-half_width, half_width] {
+                for z in [0.0, thickness] {
+                    points.push(DVec3::new(x, y, z));
+                }
+            }
+        }
+        Shape::convex(points).expect("a board is a convex shape")
+    }
+
     fn at(x: f64, y: f64, z: f64) -> Pose {
         Pose::new(DVec3::new(x, y, z), DQuat::IDENTITY)
     }
@@ -252,6 +309,28 @@ mod tests {
         assert_eq!(a.penetration(&*prepared(&cube(100.0), at(100.0, 0.0, 0.0))), None, "a face is contact");
         assert_eq!(a.penetration(&*prepared(&cube(100.0), at(400.0, 0.0, 0.0))), None, "and this pair is apart");
         assert!(geom::overlap(&*a, &*b, 0.001), "50 mm is deeper than the document's rounding");
+    }
+
+    #[test]
+    fn two_boards_crossing_answer_a_depth_and_not_a_touch() {
+        // The owner's own pair (X93): a 1010 mm board carried across a 1090 mm one, sunk 60 mm in both
+        // directions. The distance query answers a touching contact at zero for a pair it cannot
+        // separate, and reading that as "nothing inside" let a whole carry pass through. The port asks
+        // the boolean query instead and measures the pair by its boxes — the 60 mm they share.
+        let carried = prepared(&board(1010.0, 60.0, 100.0), at(-36.0, 249.0, 0.0));
+        let standing = prepared(&board(60.0, 1090.0, 100.0), at(-330.0, -115.0, 0.0));
+        let sunk = carried.penetration(&*standing).expect("the boards are inside one another");
+        assert!((sunk.depth_mm - 60.0).abs() < 1.0e-6, "was {sunk:?}");
+        assert!(sunk.is_overlap(0.001), "60 mm is deeper than the document's rounding: {sunk:?}");
+        assert!(geom::overlap(&*carried, &*standing, 0.001), "and the two read as one overlap");
+        assert!(sunk.normal.x.abs() > 0.99, "the way out is across the crossing: {sunk:?}");
+
+        // A board that only stands on the carried one's face is contact, not a depth, and a board
+        // that stands clear of it shares nothing at all.
+        let touching = prepared(&board(60.0, 1090.0, 100.0), at(499.0, -115.0, 0.0));
+        assert_eq!(carried.penetration(&*touching), None, "a face is contact");
+        let apart = prepared(&board(60.0, 1090.0, 100.0), at(600.0, -115.0, 0.0));
+        assert_eq!(carried.penetration(&*apart), None, "and this pair is apart");
     }
 
     #[test]

@@ -125,7 +125,7 @@ fn scene() -> SceneFile {
         )
         .expect("bevel on the shelf");
     // A person's catalogue choice is a property of its own kind and not a document reference: the
-    // record lives in the directory and outlives the scene (ADR 0148, 0183).
+    // record lives in the directory and outlives the scene (ADR 0148, 0184).
     project
         .set_property(id(2), "plug.confirmat", model::PropertyValue::item(ItemId::new(712, 34).expect("a record")))
         .expect("the shelf names the plug a person chose");
