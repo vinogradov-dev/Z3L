@@ -225,20 +225,40 @@ enum StatusAction {
 }
 
 /// A quiet hint that truncates instead of running under the right-hand view controls.
-fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(text).color(theme::text_dim(ui))).truncate());
+///
+/// `reserve` is the width the row still has to draw after this line — the centre's own context — so
+/// the hint gives way to it: a help line is the first thing the row may elide, a node's name is not
+/// (X94).
+fn hint(ui: &mut egui::Ui, text: &str, reserve: f32) {
+    line(ui, egui::RichText::new(text).color(theme::text_dim(ui)), reserve);
+}
+
+/// One truncating line of the command zone in its own style, leaving `reserve` points to its right.
+///
+/// The line is drawn in a scope narrowed to the room it may take, because egui truncates a label to
+/// the width of the layout it sits in and not to the width the row wants left over.
+fn line(ui: &mut egui::Ui, text: egui::RichText, reserve: f32) {
+    let available = ui.available_rect_before_wrap();
+    let room = (available.width() - reserve).max(0.0);
+    let rect = egui::Rect::from_min_size(available.min, egui::vec2(room, available.height()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.add(egui::Label::new(text).truncate());
+    });
 }
 
 /// The armed tool, the gesture it expects and the counts it would affect.
-fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction>, Option<TransformMode>) {
+///
+/// `center` is the room the centre zone needs: a line the command zone draws elides to what is left
+/// of that room, so the two never paint under one another (X94).
+fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) -> (Option<StatusAction>, Option<TransformMode>) {
     let lang = ui::language(ui.ctx());
     if let Some(error) = &info.error {
-        ui.colored_label(theme::danger(ui), error);
+        line(ui, egui::RichText::new(error).color(theme::danger(ui)), center);
         theme::divider(ui);
     } else if let Some(notice) = &info.notice {
         // A workspace that fell back to its defaults is a fact, not a failure: it uses the quiet
         // text colour and keeps the rest of the bar usable.
-        hint(ui, &notice.text(lang));
+        hint(ui, &notice.text(lang), center);
         theme::divider(ui);
     }
     // A locked selection refuses the gizmo and the destructive commands; the centre zone carries
@@ -269,7 +289,7 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
             .clicked();
         let apply = ui.button(Message::Apply.text(lang)).clicked();
         let cancel = ui.button(Message::Cancel.text(lang)).clicked();
-        hint(ui, if along { Message::ContourAlongHint } else { Message::ContourFreeHint }.text(lang));
+        hint(ui, if along { Message::ContourAlongHint } else { Message::ContourFreeHint }.text(lang), center);
         let action = if motion {
             Some(StatusAction::ToggleContourAlong)
         } else if apply {
@@ -305,9 +325,9 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
         // Enter belongs to the plates now, so the button names the action and not a key (ADR 0126).
         let finish = ui.add_enabled(points >= 2, egui::Button::new(Message::DraftFinish.text(lang))).clicked();
         let cancel = ui.button(Message::CancelEsc.text(lang)).clicked();
-        hint(ui, Message::DrawHint.text(lang));
+        hint(ui, Message::DrawHint.text(lang), center);
         if let Some(reason) = &info.preview_error {
-            hint(ui, reason);
+            hint(ui, reason, center);
         }
         let action = if close {
             Some(StatusAction::CloseDraft)
@@ -328,19 +348,19 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
             MeasureStage::Second => Message::MeasureSecondPoint,
             MeasureStage::Measured => Message::MeasureAgain,
         };
-        hint(ui, words.text(lang));
+        hint(ui, words.text(lang), center);
         return (None, None);
     }
     if info.void.is_some() {
         // The niche is a read with no step and no button: the left zone says what to point at and
         // the centre zone names the space, so the two never compete for the row (ADR 0118).
-        hint(ui, Message::VoidHint.text(lang));
+        hint(ui, Message::VoidHint.text(lang), center);
         return (None, None);
     }
     if let Some(mode) = info.navigation {
         ui.label(Message::NavigationStatus.with(lang, [mode.name().text(lang)]));
         let done = ui.button(Message::DoneEsc.text(lang)).clicked();
-        hint(ui, mode.gesture().text(lang));
+        hint(ui, mode.gesture().text(lang), center);
         return (done.then_some(StatusAction::EndNavigation), None);
     }
     // The band names itself: five cells of words and keys say what they are, and the hint beside
@@ -364,13 +384,13 @@ fn status_state_ui(ui: &mut egui::Ui, info: &StatusInfo) -> (Option<StatusAction
             ),
         };
         ui.label(counted.text(lang));
-        ui.label(egui::RichText::new(Message::MeshEditHint.text(lang)).color(theme::text_dim(ui)));
+        hint(ui, Message::MeshEditHint.text(lang), center);
     } else if info.holding {
         // The piece follows the pointer rather than a button, so the left zone says what ends the
         // hold: a click puts it down and Escape puts it back (ADR 0151).
-        hint(ui, Message::ObjectHold.text(lang));
+        hint(ui, Message::ObjectHold.text(lang), center);
     } else {
-        hint(ui, Message::ViewportHint.text(lang));
+        hint(ui, Message::ViewportHint.text(lang), center);
     }
     (None, moved)
 }
@@ -464,43 +484,123 @@ impl App {
     }
 }
 
+/// The narrowest room the row keeps for the command beside the readouts, in points.
+///
+/// The five-cell mode band is 431 points wide in the longer language and a divider and a hint live
+/// beside it. X88 measured the band against the narrowest window the shell opens (640 points, U113),
+/// and that window leaves this much of the row once the readouts have their share: below it the
+/// command would lose a control, which is the one thing a mode band may not do.
+const COMMAND_ZONE_MIN: f32 = 448.0;
+
+/// The width of the row's two outer zones: the readouts take the room they measure, and the command
+/// keeps the rest, never less than [`COMMAND_ZONE_MIN`].
+///
+/// The centre has no width of its own: it elides into what the command leaves inside its zone, so a
+/// long node name never pushes the readouts off the row.
+fn zone_widths(row: f32, readouts: f32) -> (f32, f32) {
+    let right = readouts.max(0.0).min((row - COMMAND_ZONE_MIN).max(0.0));
+    ((row - right).max(0.0), right)
+}
+
+/// The width the right zone's readouts want, measured on a hidden pass of the same widgets.
+///
+/// The zone is sized by its own content rather than by a share of the row, so the snap, the
+/// projection and the scale are never cut on a window somebody works in. The probe is a hidden ui
+/// clipped to nothing: it paints nothing, takes no click and keeps its galley out of the frame, so
+/// the only cost is one more layout of four labels (X94).
+fn readouts_width(ui: &mut egui::Ui, info: &StatusInfo) -> f32 {
+    let probe =
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ui.available_width().max(0.0), theme::STATUS_HEIGHT));
+    let mut probe_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("status_readouts")
+            .max_rect(probe)
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .invisible(),
+    );
+    // A clip rect with no area is the one way to keep a measured widget out of the frame: a hidden
+    // ui still hands its shapes to the backend, and only an empty clip keeps them out of the list a
+    // test reads and the tessellator draws.
+    probe_ui.set_clip_rect(egui::Rect::NOTHING);
+    status_right_ui(&mut probe_ui, info);
+    probe_ui.min_rect().width()
+}
+
+/// The width the centre's context wants, measured the same hidden way and in the same order.
+///
+/// The command keeps the rest of its zone, so the hint beside the selection elides first: the row
+/// reports what is selected before it explains how to navigate (X94).
+fn center_width(ui: &mut egui::Ui, info: &StatusInfo, lang: Lang) -> f32 {
+    let probe =
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ui.available_width().max(0.0), theme::STATUS_HEIGHT));
+    let mut probe_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("status_center")
+            .max_rect(probe)
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .invisible(),
+    );
+    probe_ui.set_clip_rect(egui::Rect::NOTHING);
+    status_center_zone_ui(&mut probe_ui, info, lang);
+    probe_ui.min_rect().width()
+}
+
+/// The centre zone: the ruler's live length, the niche's cell or the selection's context.
+///
+/// The three are one zone rather than three: a frame reports one of them, and the divider that
+/// separates the zone from the command is drawn by whichever one reports.
+fn status_center_zone_ui(ui: &mut egui::Ui, info: &StatusInfo, lang: Lang) {
+    if let Some((stage, value)) = info.measure {
+        if let Some(length) = value {
+            theme::divider(ui);
+            status_measure_ui(ui, stage, length, lang);
+        }
+    } else if let Some(void) = &info.void {
+        theme::divider(ui);
+        status_void_ui(ui, void, lang);
+    } else if !info.summary.is_empty() {
+        theme::divider(ui);
+        status_center_ui(ui, &info.summary, lang);
+    }
+}
+
 /// The one row in three zones: the command on the left, the selection in the middle and the
 /// window's display state on the right.
 ///
-/// The command keeps its natural width and the centre elides into what the right zone leaves, so an
-/// active tool never loses a button to a long node name; the right zone keeps a fixed reserve for
-/// its readouts.
+/// Each zone owns one rectangle and paints inside it only: a widget that does not fit is cut at the
+/// boundary instead of running under the zone beside it, and the right zone is measured from its own
+/// readouts, so the row cannot be pushed off the window's edge by the zone before it (X94). The
+/// centre elides into what the command leaves, so an active tool never loses a button to a long node
+/// name.
 fn status_row_ui(ui: &mut egui::Ui, info: &StatusInfo, out: &mut StatusOut) {
     let lang = ui::language(ui.ctx());
-    ui.horizontal_centered(|ui| {
-        let row = ui.available_width();
-        let right = (row * 0.30).clamp(120.0, 260.0).min(row);
-        let height = theme::STATUS_HEIGHT;
-        ui.allocate_ui_with_layout(
-            egui::vec2((row - right).max(0.0), height),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                (out.state, out.mode) = status_state_ui(ui, info);
-                if let Some((stage, value)) = info.measure {
-                    if let Some(length) = value {
-                        theme::divider(ui);
-                        status_measure_ui(ui, stage, length, lang);
-                    }
-                } else if let Some(void) = &info.void {
-                    theme::divider(ui);
-                    status_void_ui(ui, void, lang);
-                } else if !info.summary.is_empty() {
-                    theme::divider(ui);
-                    status_center_ui(ui, &info.summary, lang);
-                }
-            },
-        );
-        ui.allocate_ui_with_layout(egui::vec2(right, height), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    let height = theme::STATUS_HEIGHT;
+    let row = ui.available_rect_before_wrap();
+    let row = egui::Rect::from_min_size(row.min, egui::vec2(row.width().max(0.0), height));
+    let (command_width, readouts_width) = zone_widths(row.width(), readouts_width(ui, info));
+    let center_room = center_width(ui, info, lang);
+    let command_zone = egui::Rect::from_min_size(row.min, egui::vec2(command_width, height));
+    let readouts_zone = egui::Rect::from_min_size(
+        egui::pos2(row.right() - readouts_width, row.top()),
+        egui::vec2(readouts_width, height),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(command_zone).layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(command_zone));
+            (out.state, out.mode) = status_state_ui(ui, info, center_room);
+            status_center_zone_ui(ui, info, lang);
+        },
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(readouts_zone).layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(readouts_zone));
             if let Some(action) = status_right_ui(ui, info) {
                 out.state = Some(action);
             }
-        });
-    });
+        },
+    );
 }
 
 /// The centre zone while the ruler runs: the live length the atom holds.
@@ -547,22 +647,16 @@ fn status_center_ui(ui: &mut egui::Ui, summary: &StatusSummary, lang: Lang) {
     ui.add(egui::Label::new(egui::RichText::new(&line)).truncate()).on_hover_text(&line);
 }
 
-/// The right zone: snap, projection, scale and whether the scene is rebuilding.
+/// The right zone: the snap, the projection, the scale and whether the scene is rebuilding.
 ///
-/// It is drawn right to left, so the state sits at the window edge and the snap toggle next to the
-/// selection context. Only the snap is a control; the rest are readouts of the window's view state.
+/// It is drawn left to right in the rectangle its own content measured, so the state ends at the
+/// window's edge and the snap — the one control — begins the zone beside the selection context. Only
+/// the snap is a control; the rest are readouts of the window's view state.
 fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) -> Option<StatusAction> {
     let lang = ui::language(ui.ctx());
-    let (state, colour) = if info.rebuilding {
-        (Message::StatusRebuilding, theme::warn(ui))
-    } else {
-        (Message::StatusReady, theme::text_dim(ui))
-    };
-    ui.label(egui::RichText::new(state.text(lang)).color(colour));
-    theme::divider(ui);
-    let scale = ui::ui_scale::percent(ui.ctx().zoom_factor());
-    ui.label(egui::RichText::new(Message::StatusScale.with(lang, [scale])).color(theme::text_dim(ui)))
-        .on_hover_text(Message::ScaleHint.text(lang));
+    let snap = ui
+        .selectable_label(info.grid, Message::SnapTenMillimetres.text(lang))
+        .on_hover_text(Message::ShortcutGrid.text(lang));
     theme::divider(ui);
     let projection = match info.projection {
         Projection::Perspective { .. } => Message::Perspective,
@@ -571,9 +665,16 @@ fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) -> Option<StatusAction>
     ui.label(egui::RichText::new(projection.text(lang)).color(theme::text_dim(ui)))
         .on_hover_text(Message::ShortcutProjection.text(lang));
     theme::divider(ui);
-    let snap = ui
-        .selectable_label(info.grid, Message::SnapTenMillimetres.text(lang))
-        .on_hover_text(Message::ShortcutGrid.text(lang));
+    let scale = ui::ui_scale::percent(ui.ctx().zoom_factor());
+    ui.label(egui::RichText::new(Message::StatusScale.with(lang, [scale])).color(theme::text_dim(ui)))
+        .on_hover_text(Message::ScaleHint.text(lang));
+    theme::divider(ui);
+    let (state, colour) = if info.rebuilding {
+        (Message::StatusRebuilding, theme::warn(ui))
+    } else {
+        (Message::StatusReady, theme::text_dim(ui))
+    };
+    ui.label(egui::RichText::new(state.text(lang)).color(colour));
     snap.clicked().then_some(StatusAction::ToggleGrid)
 }
 
@@ -719,7 +820,7 @@ mod tests {
         let output = ctx.run_ui(input, |ui| {
             ui.set_height(theme::STATUS_HEIGHT);
             ui.horizontal_centered(|ui| {
-                (out.state, out.mode) = status_state_ui(ui, &info);
+                (out.state, out.mode) = status_state_ui(ui, &info, 0.0);
             });
         });
         output.drop_without_applying_deltas();
@@ -741,7 +842,7 @@ mod tests {
             let mut chosen = None;
             let output = ctx.run_ui(input, |ui| {
                 ui.set_height(theme::STATUS_HEIGHT);
-                ui.horizontal_centered(|ui| chosen = status_state_ui(ui, &info).1);
+                ui.horizontal_centered(|ui| chosen = status_state_ui(ui, &info, 0.0).1);
             });
             (output, chosen)
         };
@@ -787,17 +888,19 @@ mod tests {
         let ctx = egui::Context::default();
         ui::theme::install(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, theme::STATUS_HEIGHT));
-        // The right zone takes 30 % of the row, and nothing left of it may grow into it.
-        let readouts = screen.right() - (screen.width() * 0.30).clamp(120.0, 260.0);
         // Russian is the longer language, so the narrower window is asked about both: a sheet of text
         // that fits one and not the other is a band a third of the users cannot read.
         for lang in [Lang::En, Lang::Ru] {
             ui::set_language(&ctx, lang);
             let mut out = StatusOut::default();
+            let mut readouts = 0.0;
             let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
             let output = ctx.run_ui(input, |ui| {
                 ui.set_width(screen.width());
                 ui.set_height(theme::STATUS_HEIGHT);
+                // The split the row draws by: nothing left of the readouts may grow into them.
+                let (command, _) = zone_widths(screen.width(), readouts_width(ui, &idle_status()));
+                readouts = screen.left() + command;
                 status_row_ui(ui, &idle_status(), &mut out);
             });
             let texts = drawn_text(&output.shapes);
@@ -825,7 +928,7 @@ mod tests {
         let info = StatusInfo { drawing: Some((DrawTool::Rectangle, 3, false, false)), ..idle_status() };
         let mut out = StatusOut::default();
         let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info).0;
+            out.state = status_state_ui(ui, &info, 0.0).0;
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();
@@ -850,7 +953,7 @@ mod tests {
         ui::theme::install(&ctx);
         let info = StatusInfo { drawing: Some((DrawTool::Polyline, 2, false, true)), ..idle_status() };
         let output = ctx.run_ui(Default::default(), |ui| {
-            status_state_ui(ui, &info);
+            status_state_ui(ui, &info, 0.0);
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();
@@ -891,7 +994,7 @@ mod tests {
         let info = StatusInfo { creation_parent: Some("Carcass".to_owned()), ..idle_status() };
         let mut out = StatusOut::default();
         let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info).0;
+            out.state = status_state_ui(ui, &info, 0.0).0;
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();
@@ -909,7 +1012,7 @@ mod tests {
         let info = StatusInfo { navigation: Some(NavigationMode::Orbit), ..idle_status() };
         let mut out = StatusOut::default();
         let output = ctx.run_ui(Default::default(), |ui| {
-            out.state = status_state_ui(ui, &info).0;
+            out.state = status_state_ui(ui, &info, 0.0).0;
         });
         let texts = drawn_text(&output.shapes);
         output.drop_without_applying_deltas();
@@ -1109,19 +1212,99 @@ mod tests {
             ..StatusSummary::default()
         };
         let info = StatusInfo { summary, ..idle_status() };
+        let width = 1024.0;
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 200.0))),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 200.0))),
             ..Default::default()
         };
         let mut out = StatusOut::default();
+        let mut boundary = 0.0;
         let output = ctx.run_ui(input, |ui| {
             ui.set_height(theme::STATUS_HEIGHT);
+            boundary = width - zone_widths(width, readouts_width(ui, &info)).1;
             status_row_ui(ui, &info, &mut out);
         });
         let texts = drawn_text(&output.shapes);
+        let crossing = crossings(&output.shapes, boundary);
         output.drop_without_applying_deltas();
         assert!(texts.iter().any(|text| text.contains("Front · Panel")), "the centre draws: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Snap 10 mm")), "the right draws: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("Select")), "the left draws the gesture band: {texts:?}");
+        assert!(crossing.is_empty(), "no zone paints under another at the default window: {crossing:?}");
+    }
+
+    /// The painted part of every shape that runs across `boundary`, with the zone it was clipped to.
+    ///
+    /// A shape's geometry may reach past a zone; what must not is the part that is painted, which is
+    /// the shape intersected with the clip rect its zone gave it.
+    fn crossings(shapes: &[egui::epaint::ClippedShape], boundary: f32) -> Vec<(egui::Rect, egui::Rect)> {
+        let mut crossing = Vec::new();
+        for clipped in shapes {
+            let painted = clipped.shape.visual_bounding_rect().intersect(clipped.clip_rect);
+            if !painted.is_positive() {
+                continue;
+            }
+            if painted.left() < boundary && painted.right() > boundary {
+                crossing.push((painted, clipped.clip_rect));
+            }
+        }
+        crossing
+    }
+
+    #[test]
+    fn no_zone_paints_under_another_in_the_narrowest_window() {
+        // X94: the row is three zones with three rectangles. The narrowest window with a tool armed
+        // is where they used to run into one another — the contour's buttons and the draft's painted
+        // past the split, and the readouts were pushed off the window's edge by the row's own
+        // cursor. Every shape's painted part has to stay on its own side of the boundary.
+        assert_eq!(
+            zone_widths(640.0, 5_000.0).0,
+            COMMAND_ZONE_MIN,
+            "the narrowest window leaves the command its floor and no more"
+        );
+        let long = StatusSummary {
+            count: 1,
+            name: Some("A very long cabinet name that cannot fit the middle zone at all".to_owned()),
+            kind: Some("Panel".to_owned()),
+            size: Some("600 mm × 720 mm × 18 mm".to_owned()),
+            material: Some("Chipboard".to_owned()),
+            banding: Some("edge 2 mm".to_owned()),
+            warning: None,
+        };
+        let cases: [(&str, StatusInfo); 3] = [
+            ("a long selection", StatusInfo { summary: long.clone(), ..idle_status() }),
+            (
+                "an armed contour",
+                StatusInfo { contour: Some((4, true, false)), summary: long.clone(), ..idle_status() },
+            ),
+            (
+                "an armed draft",
+                StatusInfo {
+                    drawing: Some((DrawTool::Polyline, 3, false, false)),
+                    summary: long.clone(),
+                    ..idle_status()
+                },
+            ),
+        ];
+        for lang in [Lang::En, Lang::Ru] {
+            for (name, info) in &cases {
+                let ctx = egui::Context::default();
+                ui::theme::install(&ctx);
+                ui::set_language(&ctx, lang);
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 200.0));
+                let mut boundary = 0.0;
+                let output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                    ui.set_height(theme::STATUS_HEIGHT);
+                    boundary = screen.left() + zone_widths(screen.width(), readouts_width(ui, info)).0;
+                    status_row_ui(ui, info, &mut StatusOut::default());
+                });
+                let crossing = crossings(&output.shapes, boundary);
+                output.drop_without_applying_deltas();
+                assert!(
+                    crossing.is_empty(),
+                    "{name} in {lang:?} paints across the zones' boundary at {boundary}: {crossing:?}"
+                );
+            }
+        }
     }
 }
