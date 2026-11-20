@@ -403,9 +403,33 @@ cutout removes a volume from the panel body:
 - Machining coordinates never change when an included band moves the core origin; the body is built
   in the nominal frame and the tool is placed there too.
 
+### 7.1. Derived holes
+
+A drilled hole is not a machining record: it belongs to the object that drills it and is derived on
+demand (ADR 0150). `model::derive_holes` takes one panel, its world placement and the resolved
+drilling objects that reach it and answers the holes the panel receives, in the panel's own frame:
+
+- the drilling object is brought into the panel's frame once, by the inverse of the panel's world
+  placement; its axis is clipped against the material — the core minus the through cutouts — and
+  across the thickness, so a bore near a rounded corner or beside a notch follows the body and not
+  the nominal rectangle;
+- the hole is the entry point in panel-local micrometres, the bore's direction, its diameter, its
+  depth and whether it crosses the whole material; the entry is where the material begins, so a
+  drill that starts outside the panel gives the depth it actually cuts;
+- the list is ordered by the entry point, then by diameter and source, so two builds agree;
+- a drilling object that misses the panel yields nothing (a hinge's screws reach the carcass), one
+  that touches it and removes nothing is `Grazing`, and a bore wider than the material it enters is
+  `TooWide` — a diagnostic and still a hole, never a silently skipped one (`HoleDiagnostic`);
+- the material is the core across the full thickness: a blind cutout and an end bevel do not shorten
+  a hole beside them yet (debt, `plan/debt.md`).
+
+The derived list is cached by the panel's features, its placement and the drilling objects
+(`EvaluationCache::holes`), so the panel card, a report, a drawing and a CNC program read one value
+and a frame derives nothing. The panel itself stores no hole.
+
 ## 8. Display and diagnostics
 
-### 7.1. Colours
+### 8.1. Colours
 
 - Colours are not stored in the scene document.
 - The base colour of a panel comes from the panel material. To distinguish panels that use the same material, a deterministic tint is applied from `panel.id()`, so the colour does not change when the scene is rebuilt.
@@ -413,7 +437,7 @@ cutout removes a volume from the panel body:
 - If the panel material is missing, the panel is drawn in a neutral colour.
 - Later, colour and texture will come from the material; textures are a separate rendering task.
 
-### 7.2. Panel diagnostics
+### 8.2. Panel diagnostics
 
 Panel issues are computed during loading/rebuild and are not stored as data:
 

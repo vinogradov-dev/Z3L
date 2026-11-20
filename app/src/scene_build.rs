@@ -10,7 +10,7 @@ use engine::Session;
 use geom::{Aabb, DMat4, DVec2, DVec3};
 use kernel::{SolidKernel, TessOptions};
 use kernel_truck::TruckKernel;
-use mesh::EvaluationCache;
+use mesh::{EvaluationCache, PanelEval};
 use model::{
     CameraProjection, Container, Envelope, Id, LightKind, Node, NodeQuery, Panel, Placement, Project, StructuralKind,
 };
@@ -551,10 +551,11 @@ impl<'a> Evaluation<'a> {
         let session = self.session;
         let geometry = session.panel_geometry(panel.id()).map_err(describe)?;
         let revision = session.project().revision();
-        let evaluated = self
-            .cache
-            .panel(revision, panel, &geometry, &|spec| session.band_spec_profile(spec), self.kernel, &self.options)
-            .map_err(describe)?;
+        // The drilling objects that reach a panel come from the hardware instances that drill it;
+        // until the instance node lands, a panel is drawn and reported undrilled (task O13).
+        let band_profile = |spec: &model::BandingSpec| session.band_spec_profile(spec);
+        let request = PanelEval::new(panel, &geometry, world, &[], &band_profile);
+        let evaluated = self.cache.panel(revision, &request, self.kernel, &self.options).map_err(describe)?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
         let color = PANEL_COLORS[self.palette_index % PANEL_COLORS.len()];
         self.palette_index = self.palette_index.saturating_add(1);

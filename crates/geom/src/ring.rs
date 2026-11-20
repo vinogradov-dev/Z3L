@@ -136,6 +136,64 @@ impl Region {
         true
     }
 
+    /// The spans of the line `origin + t * direction` that lie inside the material.
+    ///
+    /// The line is solved against every ring segment's own supporting line or circle, never
+    /// sampled: a straight edge is one crossing, an arc up to two, and a joint shared by two
+    /// segments counts once. Each span between two consecutive crossings is classified by its
+    /// midpoint with [`Region::contains`], so a hole ring removes its own span and a ring's
+    /// orientation never matters. The spans come back sorted and only of positive length: a line
+    /// that merely touches the boundary yields none.
+    ///
+    /// `direction` sets the parameter's scale — a point of the line is `origin + t * direction`, so
+    /// a unit direction makes `t` a distance in millimetres. A zero, non-finite or degenerate
+    /// direction is an empty result, and so is a line that misses the material.
+    pub fn line_intervals(&self, origin: DVec2, direction: DVec2) -> Vec<(f64, f64)> {
+        if !origin.is_finite() || !direction.is_finite() || direction.length() <= LINE_DIRECTION_EPSILON {
+            return Vec::new();
+        }
+        let mut crossings = Vec::new();
+        for ring in std::iter::once(&self.outer).chain(self.holes.iter()) {
+            for segment in ring.segments() {
+                crossings.extend(crossing_parameters(*segment, origin, direction));
+            }
+        }
+        crossings.sort_by(|first, second| first.partial_cmp(second).unwrap_or(std::cmp::Ordering::Equal));
+        crossings.dedup_by(|first, second| (*first - *second).abs() <= SPAN_TOLERANCE);
+        let mut spans = Vec::new();
+        for pair in crossings.windows(2) {
+            let (from, to) = (pair[0], pair[1]);
+            if to - from <= SPAN_TOLERANCE {
+                continue;
+            }
+            let middle = origin + direction * ((from + to) * 0.5);
+            if self.contains(middle) {
+                spans.push((from, to));
+            }
+        }
+        spans
+    }
+
+    /// The distance from `point` to the nearest ring, in millimetres.
+    ///
+    /// The answer is exact for every ring: a straight edge projects onto its own span, an arc onto
+    /// its own sweep and its two ends. A point inside a notch and a point outside the outer ring are
+    /// measured alike, so a caller that means "how much room is there around this point" gets the
+    /// same number on either side of a boundary. An empty or non-finite input is
+    /// [`f64::INFINITY`].
+    pub fn boundary_distance(&self, point: DVec2) -> f64 {
+        if !point.is_finite() {
+            return f64::INFINITY;
+        }
+        let mut nearest = f64::INFINITY;
+        for ring in std::iter::once(&self.outer).chain(self.holes.iter()) {
+            for segment in ring.segments() {
+                nearest = nearest.min(segment_distance(*segment, point));
+            }
+        }
+        nearest
+    }
+
     /// Samples every ring into a polyline at `tolerance` millimetres.
     ///
     /// This is the only lossy step in the module. A caller that reaches the polygon-only kernel
@@ -145,6 +203,83 @@ impl Region {
         let holes = self.holes.iter().map(|hole| hole.sample(tolerance)).collect::<Result<Vec<_>, _>>()?;
         Ok(RegionSamples { outer, holes })
     }
+}
+
+/// Tolerance for two crossings of one line to count as the same point, in millimetres.
+const SPAN_TOLERANCE: f64 = 1.0e-6;
+
+/// The shortest direction a line query accepts, in millimetres.
+///
+/// A direction shorter than this cannot place a crossing: two crossings a micrometre apart in a
+/// parameter that is already this small would be noise, not geometry.
+const LINE_DIRECTION_EPSILON: f64 = 1.0e-9;
+
+/// The parameters at which one ring segment meets the line `origin + t * direction`.
+fn crossing_parameters(segment: Segment, origin: DVec2, direction: DVec2) -> Vec<f64> {
+    match segment {
+        Segment::Line(line) => {
+            let edge = line.end() - line.start();
+            let denominator = cross(direction, edge);
+            if !denominator.is_finite() || denominator.abs() <= LINE_DIRECTION_EPSILON {
+                return Vec::new();
+            }
+            let parameter = cross(line.start() - origin, edge) / denominator;
+            if !parameter.is_finite() {
+                return Vec::new();
+            }
+            let point = origin + direction * parameter;
+            if line.contains_point(point, SPAN_TOLERANCE) { vec![parameter] } else { Vec::new() }
+        }
+        Segment::Arc(arc) => {
+            let offset = origin - arc.center();
+            let a = direction.length_squared();
+            let b = 2.0 * offset.dot(direction);
+            let c = offset.length_squared() - arc.radius() * arc.radius();
+            let discriminant = b * b - 4.0 * a * c;
+            if !discriminant.is_finite() || discriminant < 0.0 {
+                return Vec::new();
+            }
+            let root = discriminant.sqrt();
+            let mut parameters = Vec::with_capacity(2);
+            for parameter in [(-b - root) / (2.0 * a), (-b + root) / (2.0 * a)] {
+                if !parameter.is_finite() {
+                    continue;
+                }
+                let point = origin + direction * parameter;
+                if arc.contains_point(point, SPAN_TOLERANCE) {
+                    parameters.push(parameter);
+                }
+            }
+            parameters
+        }
+    }
+}
+
+/// The distance from `point` to one segment, measured on the segment's own extent.
+fn segment_distance(segment: Segment, point: DVec2) -> f64 {
+    match segment {
+        Segment::Line(line) => {
+            let edge = line.end() - line.start();
+            let length_squared = edge.length_squared();
+            if !length_squared.is_finite() || length_squared <= LINE_DIRECTION_EPSILON {
+                return (point - line.start()).length();
+            }
+            let parameter = ((point - line.start()).dot(edge) / length_squared).clamp(0.0, 1.0);
+            (point - (line.start() + edge * parameter)).length()
+        }
+        Segment::Arc(arc) => {
+            let support = arc.nearest_on_support(point);
+            match support {
+                Some(foot) if arc.contains_point(foot, SPAN_TOLERANCE) => (point - foot).length(),
+                _ => (point - arc.start()).length().min((point - arc.end()).length()),
+            }
+        }
+    }
+}
+
+/// The two-dimensional cross product of two vectors.
+fn cross(first: DVec2, second: DVec2) -> f64 {
+    first.x * second.y - first.y * second.x
 }
 
 /// A region sampled into polylines: the outer ring and then the hole rings in ring order.
@@ -579,5 +714,86 @@ mod tests {
             vec![DVec2::new(0.0, 0.0), DVec2::new(0.0, 10.0), DVec2::new(10.0, 10.0), DVec2::new(10.0, 0.0)];
         let region = Region::from_loops(clockwise_outer, vec![rect(2.0, 2.0, 6.0, 6.0)]).expect("valid region");
         assert!((region.area() - 64.0).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn a_line_through_a_rectangle_has_one_span_of_its_own_length() {
+        let region = Region::rectangle(100.0, 50.0).expect("rectangle");
+        let spans = region.line_intervals(DVec2::new(-10.0, 25.0), DVec2::X);
+        assert_eq!(spans.len(), 1);
+        assert!((spans[0].0 - 10.0).abs() < 1.0e-9, "enter at x = 0: {spans:?}");
+        assert!((spans[0].1 - 110.0).abs() < 1.0e-9, "leave at x = 100: {spans:?}");
+    }
+
+    #[test]
+    fn a_line_across_a_hole_has_two_spans() {
+        let region = rect_with_hole();
+        let spans = region.line_intervals(DVec2::new(-5.0, 15.0), DVec2::X);
+        assert_eq!(spans.len(), 2, "the hole splits the line: {spans:?}");
+        assert!((spans[0].0 - 5.0).abs() < 1.0e-9 && (spans[0].1 - 15.0).abs() < 1.0e-9);
+        assert!((spans[1].0 - 35.0).abs() < 1.0e-9 && (spans[1].1 - 105.0).abs() < 1.0e-9, "{spans:?}");
+    }
+
+    #[test]
+    fn a_line_that_misses_the_material_has_no_span() {
+        let region = Region::rectangle(100.0, 50.0).expect("rectangle");
+        assert!(region.line_intervals(DVec2::new(-10.0, 60.0), DVec2::X).is_empty());
+        assert!(region.line_intervals(DVec2::ZERO, DVec2::ZERO).is_empty(), "a zero direction is no line");
+    }
+
+    #[test]
+    fn a_line_that_only_touches_an_arc_has_no_span() {
+        let region = rounded_plate();
+        // The tangent to the corner arc at 45 degrees touches the region at exactly one point.
+        let centre = DVec2::new(80.0, 30.0);
+        let touch = centre + DVec2::new(1.0, 1.0).normalize() * 20.0;
+        let spans = region.line_intervals(touch - DVec2::new(10.0, -10.0), DVec2::new(1.0, -1.0));
+        assert!(spans.is_empty(), "a tangent line bounds no material: {spans:?}");
+    }
+
+    #[test]
+    fn a_line_through_a_rounded_corner_enters_on_the_arc() {
+        let region = rounded_plate();
+        // Across the plate at 45 mm the right end is the corner arc, not the nominal 100 mm edge.
+        let spans = region.line_intervals(DVec2::new(-10.0, 45.0), DVec2::X);
+        assert_eq!(spans.len(), 1);
+        let (start, end) = spans[0];
+        assert!((start - 10.0).abs() < 1.0e-9, "the clean edge enters at 0: {spans:?}");
+        // The arc is centred at (80, 30) with radius 20: y = 45 meets it at x = 80 + sqrt(400 - 225),
+        // and the parameter is measured from the origin at x = -10.
+        let expected = 90.0 + (400.0_f64 - 225.0).sqrt();
+        assert!((end - expected).abs() < 1.0e-6, "the rounded corner ends the span at {expected}: {spans:?}");
+    }
+
+    #[test]
+    fn the_parameter_measures_travel_in_the_supplied_direction() {
+        let region = Region::rectangle(100.0, 50.0).expect("rectangle");
+        let spans = region.line_intervals(DVec2::ZERO, DVec2::new(2.0, 0.0));
+        assert_eq!(spans.len(), 1);
+        assert!((spans[0].0 - 0.0).abs() < 1.0e-9);
+        assert!((spans[0].1 - 50.0).abs() < 1.0e-9, "100 mm is fifty steps of two: {spans:?}");
+    }
+
+    #[test]
+    fn boundary_distance_is_measured_on_the_rings_themselves() {
+        let region = rect_with_hole();
+        assert!((region.boundary_distance(DVec2::new(5.0, 25.0)) - 5.0).abs() < 1.0e-9, "to the left edge");
+        assert!((region.boundary_distance(DVec2::new(20.0, 25.0)) - 5.0).abs() < 1.0e-9, "to the hole");
+        assert!((region.boundary_distance(DVec2::new(-7.0, 25.0)) - 7.0).abs() < 1.0e-9, "from outside too");
+        let to_hole_corner = (20.0_f64 * 20.0 + 5.0 * 5.0).sqrt();
+        assert!(
+            (region.boundary_distance(DVec2::new(50.0, 25.0)) - to_hole_corner).abs() < 1.0e-9,
+            "the nearest is the hole's corner"
+        );
+    }
+
+    #[test]
+    fn boundary_distance_follows_an_arc_and_its_ends() {
+        let region = rounded_plate();
+        // The corner arc is centred at (80, 30) with radius 20.
+        assert!((region.boundary_distance(DVec2::new(80.0, 30.0)) - 20.0).abs() < 1.0e-9, "to the corner arc");
+        let from_corner = region.boundary_distance(DVec2::new(97.0, 47.0));
+        let expected = 20.0 - (17.0_f64 * 17.0 + 17.0 * 17.0).sqrt();
+        assert!((from_corner - expected.abs()).abs() < 1.0e-6, "measured on the support circle: {from_corner}");
     }
 }

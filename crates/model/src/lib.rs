@@ -66,11 +66,11 @@ pub use node::Node;
 pub use object::{Constructive, ConstructiveError, Extrude, Feature, Geometry, MAX_OBJECT_FEATURES, Object};
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,
-    EdgeBanding, EdgeRef, EntryFace, FaceSide, MACHINING_DESCRIPTORS, Machining, MachiningAnchor,
-    MachiningCapabilities, MachiningCategory, MachiningDescriptor, MachiningKind, MachiningParams, MachiningStage,
-    Panel, PanelContourError, PanelDimensionError, PanelError, PanelGeometry, PanelGeometryError, PanelNominalSize,
-    PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM, RectCorner, RectEdge, RingBanding, SegmentSource,
-    classify_outline,
+    DerivedHoles, Drilling, EdgeBanding, EdgeRef, EntryFace, FaceSide, Hole, HoleDiagnostic, HoleError,
+    MACHINING_DESCRIPTORS, Machining, MachiningAnchor, MachiningCapabilities, MachiningCategory, MachiningDescriptor,
+    MachiningKind, MachiningParams, MachiningStage, Panel, PanelContourError, PanelDimensionError, PanelError,
+    PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM,
+    RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes,
 };
 pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};

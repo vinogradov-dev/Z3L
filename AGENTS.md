@@ -139,7 +139,7 @@ crates/engine          L6  session, selection, view state, command registry, und
 crates/render          L5  wgpu renderer
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
 crates/export          L3  order package: one manifest and flat tables other programs read
-crates/mesh            L3  evaluation cache: revision -> solid and triangle mesh
+crates/mesh            L3  evaluation cache: revision -> solid, triangle mesh and a panel's derived holes
 crates/param           L2  document features -> kernel calls
 crates/project         L2  scene file envelope: read, write, atomic save, preserved sections
 crates/catalog         L2  nomenclature directory: item envelope, the registries a package carries, the validated snapshot
