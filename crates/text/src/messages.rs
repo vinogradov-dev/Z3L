@@ -110,6 +110,7 @@ messages! {
     ],
     AddingTo = ["Adding to: {}", "Добавление в: {}"],
     CreateAtRoot = ["Create at the scene root again", "Снова создавать в корне сцены"],
+    ContourEdit = ["Contour edit", "Редактирование контура"],
     ContourEditStatusOne = ["Contour edit · {} segment", "Редактирование контура · {} сегмент"],
     ContourEditStatusFew = ["Contour edit · {} segments", "Редактирование контура · {} сегмента"],
     ContourEditStatusMany = ["Contour edit · {} segments", "Редактирование контура · {} сегментов"],

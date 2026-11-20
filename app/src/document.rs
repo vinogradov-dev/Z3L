@@ -2083,11 +2083,12 @@ impl Document {
             return Some(ToolView {
                 title: arm.class.label(),
                 rows: distances.rows(),
+                toggle: None,
                 commit: ui::ToolCommit::Gesture,
             });
         }
         let measured = self.move_distances.as_ref()?;
-        Some(ToolView { title: None, rows: measured.distances.rows(), commit: ui::ToolCommit::Gesture })
+        Some(ToolView { title: None, rows: measured.distances.rows(), toggle: None, commit: ui::ToolCommit::Gesture })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
