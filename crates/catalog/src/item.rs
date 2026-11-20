@@ -170,6 +170,16 @@ impl NomenclatureItem {
         &self.external
     }
 
+    /// The same record with one property written over.
+    ///
+    /// An importer rewrites one row of one record at a time and cannot rebuild the envelope, so it
+    /// edits the property set in place; the row rules are enforced where every write meets them, in
+    /// the directory the writer validates before it touches the folder ([`crate::FolderWriter`]).
+    pub fn with_prop(mut self, code: PropertyCode, value: crate::property::PropertyValue) -> Self {
+        self.props.insert(code, value);
+        self
+    }
+
     /// Checks the record against the registries it names, and nothing else.
     ///
     /// A package's reader hands every row through this: an unknown kind, an unknown property, a

@@ -40,6 +40,8 @@ const TREE_WIDTH: f32 = 260.0;
 const STATUS_HEIGHT: f32 = 26.0;
 /// The narrowest the card may get before the tree gives way.
 const MIN_BODY: f32 = 240.0;
+/// How many refused rows the status line quotes: a list of forty lines is a report, not a sentence.
+const REFUSALS_SHOWN: usize = 3;
 
 /// Which half of the tree column is showing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -121,6 +123,8 @@ pub struct DirectoryEditor {
     view: View,
     /// The last thing the application said, and whether it is good news.
     status: Option<String>,
+    /// Whether the person asked for a price list this frame; the shell takes it and asks for a file.
+    import_requested: bool,
 }
 
 impl DirectoryEditor {
@@ -143,6 +147,7 @@ impl DirectoryEditor {
             filter: String::new(),
             view: View::Items,
             status: None,
+            import_requested: false,
         };
         editor.reload();
         editor
@@ -275,6 +280,66 @@ impl DirectoryEditor {
         Ok(id)
     }
 
+    /// Whether the person pressed *Import prices*, as a request the shell performs.
+    ///
+    /// The editor creates no dialog and asks no operating system for a path (ADR 0182): the shell owns
+    /// the system file manager, hands the chosen file back to [`DirectoryEditor::import_prices`], and
+    /// this flag is the one word between them.
+    pub fn take_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.import_requested)
+    }
+
+    /// Reads a supplier's price list and writes every row it applies as one revision per package.
+    ///
+    /// The batch plans in `catalog` and writes nothing: a row whose currency we cannot print, whose
+    /// key names no record or whose price is not a number is refused with its line, and the rows that
+    /// do resolve land in one write — one manifest bump per package, so a reader sees one change. The
+    /// answer is the sentence the status line shows, and it is the error when nothing was written.
+    pub fn import_prices(&mut self, path: &Path, lang: Lang) -> Result<String, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| Message::PriceListUnread.text(lang).replace("{}", &error.to_string()))?;
+        let directory = self.directory.as_ref().ok_or_else(|| Message::DirectoryEmpty.text(lang))?;
+        let batch = catalog::PriceBatch::read(&text, directory);
+        let mut refused: Vec<String> =
+            batch.refused().take(REFUSALS_SHOWN).map(|(line, reason)| format!("{line}: {reason}")).collect();
+        let records = batch.records(directory);
+        if records.is_empty() {
+            let sentence = batch.sentence();
+            let shown = if refused.is_empty() { String::new() } else { format!(" — {}", refused.join("; ")) };
+            self.status = Some(format!("{sentence}{shown}"));
+            return Err(sentence);
+        }
+        // One package, one revision: the batch is grouped because a package's manifest is its own
+        // history, and a list may price records of several packages.
+        let mut by_package: BTreeMap<u32, Vec<NomenclatureItem>> = BTreeMap::new();
+        for record in records {
+            by_package.entry(record.id().package()).or_default().push(record);
+        }
+        let mut writer = FolderWriter::open(&self.root).map_err(|error| error.to_string())?;
+        for (package, records) in &by_package {
+            let folder = self
+                .packages
+                .iter()
+                .find(|info| info.id == *package)
+                .map(|info| info.folder.clone())
+                .ok_or_else(|| format!("no connected package carries the id prefix {package}"))?;
+            if let Err(error) = writer.save_items(&folder, records) {
+                let sentence = error.to_string();
+                self.status = Some(sentence.clone());
+                return Err(sentence);
+            }
+        }
+        writer.close();
+        self.reload();
+        let mut sentence = batch.sentence();
+        if !refused.is_empty() {
+            refused.truncate(REFUSALS_SHOWN);
+            sentence.push_str(&format!(" — {}", refused.join("; ")));
+        }
+        self.status = Some(sentence.clone());
+        Ok(sentence)
+    }
+
     /// Draws the window's body into `ui`.
     ///
     /// The shell gives one `Ui` and the editor creates no host of its own: a panel, a window or an
@@ -330,6 +395,10 @@ impl DirectoryEditor {
             if ui.button(Message::DirectorySave.text(lang)).clicked() {
                 // The refusal is already the status line: `save` writes its own sentence.
                 let _ = self.save(lang);
+            }
+            if ui.button(Message::DirectoryImportPrices.text(lang)).clicked() {
+                // The shell owns the system file manager, so the press becomes a request it takes.
+                self.import_requested = true;
             }
         });
     }
@@ -821,6 +890,95 @@ mod tests {
         );
         assert_eq!(editor.status(), Some(Message::DirectorySaved.text(Lang::En)));
         assert_eq!(editor.open_item(), Some(id), "the card keeps the record it saved");
+    }
+
+    /// A package whose sheet kind is priced by the sheet, with one record an `erp` list knows.
+    fn priced_folder(name: &str) -> PathBuf {
+        let root = testkit::scratch_dir(name);
+        let package = root.join("packages").join("starter");
+        std::fs::create_dir_all(package.join("items")).expect("the package folder");
+        std::fs::write(root.join("directory.json"), json!({ "version": 1, "packages": ["starter"] }).to_string())
+            .expect("the connected list");
+        let manifest = ManifestWire::new(1, "Starter");
+        std::fs::write(package.join("manifest.json"), serde_json::to_string(&manifest).expect("a manifest"))
+            .expect("the manifest");
+        std::fs::write(
+            package.join("registry.json"),
+            json!({
+                "version": 1,
+                "kinds": [{
+                    "code": 1, "slug": "sheet-material", "label": "Sheet material",
+                    "accepts": [1, 2], "required": [1], "traits": ["sheet", "price-sheet"]
+                }],
+                "properties": [
+                    { "code": 1, "slug": "thickness", "label": "Thickness", "type": "length", "min_um": 1000, "max_um": 40000 },
+                    { "code": 2, "slug": "price", "label": "Price", "type": "money" }
+                ],
+                "systems": [{ "id": "erp", "label": "ERP" }]
+            })
+            .to_string(),
+        )
+        .expect("the registry");
+        std::fs::write(
+            package.join("items").join("sheet-material-1.json"),
+            json!({
+                "id": "1-1", "kind": "sheet-material", "name": "Oak board", "slug": "oak-board",
+                "props": { "thickness": { "type": "length", "value": 18000 } },
+                "external": [{ "system": "erp", "key": "A-1" }]
+            })
+            .to_string(),
+        )
+        .expect("the record");
+        root
+    }
+
+    #[test]
+    fn a_price_list_is_one_write_and_the_status_line_names_the_rows_it_refused() {
+        // O8's Done, through the screen: the person picks a supplier's CSV, the batch prices what its
+        // keys name, and the revision moves once — not once per row.
+        let root = priced_folder("directory-prices");
+        let list = root.join("prices.csv");
+        std::fs::write(
+            &list,
+            "system,key,price_minor,currency,date\n\
+             erp,A-1,320000,RUB,2026-11-20\n\
+             erp,A-9,240000,RUB,2026-11-20\n\
+             erp,A-1,1,eur,2026-11-20\n",
+        )
+        .expect("the price list");
+        let before = FolderSource::at(&root).revision().expect("a stamp");
+        let mut editor = DirectoryEditor::open(&root);
+        assert!(editor.directory().is_some(), "the folder reads: {:?}", editor.refusal());
+        let sentence = editor.import_prices(&list, Lang::En).expect("one row is a price");
+        assert!(sentence.contains("1 prices written, 2 rows refused"), "{sentence}");
+        assert_eq!(editor.status(), Some(sentence.as_str()), "the status line is the batch's own sentence");
+        assert!(
+            sentence.contains("A-9") || sentence.contains("ISO 4217"),
+            "the refused rows are quoted by line: {sentence}"
+        );
+
+        let after = FolderSource::at(&root).revision().expect("a stamp");
+        assert_ne!(before, after, "the batch moved the revision");
+        let directory = editor.directory().expect("read back");
+        let id = ItemId::new(1, 1).expect("an id");
+        let price = directory.price(directory.item(id).expect("the record")).expect("the price the batch wrote");
+        assert_eq!(price.value().minor(), 320_000);
+        assert_eq!(price.currency().code(), "RUB");
+        assert_eq!(price.price.source().system().map(|system| system.as_str()), Some("erp"));
+    }
+
+    #[test]
+    fn a_price_list_that_writes_nothing_is_a_sentence_and_leaves_the_folder_alone() {
+        let root = priced_folder("directory-prices-refused");
+        let list = root.join("prices.csv");
+        std::fs::write(&list, "system,key,price_minor,currency,date\nerp,A-9,240000,RUB,2026-11-20\n")
+            .expect("the price list");
+        let before = FolderSource::at(&root).revision().expect("a stamp");
+        let mut editor = DirectoryEditor::open(&root);
+        let refusal = editor.import_prices(&list, Lang::En).expect_err("no record is named A-9");
+        assert!(refusal.contains("no price was written"), "{refusal}");
+        assert_eq!(FolderSource::at(&root).revision().expect("a stamp"), before, "nothing was written");
+        assert!(editor.status().is_some_and(|status| status.contains("A-9")), "{:?} is the status", editor.status());
     }
 
     #[test]

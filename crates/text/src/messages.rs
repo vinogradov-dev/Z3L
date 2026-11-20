@@ -1038,6 +1038,11 @@ messages! {
     DirectoryRequired = ["required", "обязательное"],
     DirectoryReadOnly = ["read-only", "только чтение"],
     DirectoryEmpty = ["The directory carries no package", "В каталоге нет ни одного пакета"],
+    DirectoryImportPrices = ["Import prices", "Импорт цен"],
+    PriceListTitle = ["Import a price list", "Импорт прайс-листа"],
+    PriceListFiles = ["Price list (CSV)", "Прайс-лист (CSV)"],
+    PriceListUnread = ["Cannot read the price list: {}", "Не удалось прочитать прайс-лист: {}"],
+    PriceListRefused = ["No price was written: {}", "Ни одна цена не записана: {}"],
 
     // ── Display names ───────────────────────────────────────────────────────
     Axonometric = ["Axonometric", "Аксонометрия"],

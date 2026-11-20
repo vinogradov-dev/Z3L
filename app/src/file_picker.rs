@@ -18,6 +18,9 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use project::EXTENSION;
 use text::{Lang, Message};
 
+/// The extension a price list is written with: a supplier's export, saved as CSV.
+pub(crate) const PRICE_LIST_EXTENSION: &str = "csv";
+
 /// Which way the file manager is asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PickMode {
@@ -25,6 +28,8 @@ pub(crate) enum PickMode {
     Open,
     /// Write the scene to the file the person names.
     Save,
+    /// Read a price list for the directory application: a supplier's CSV, not a scene.
+    Prices,
 }
 
 /// The order one gesture gives the system file manager.
@@ -50,13 +55,26 @@ impl Order {
         match self.mode {
             PickMode::Open => Message::OpenSceneTitle,
             PickMode::Save => Message::SaveSceneAsTitle,
+            PickMode::Prices => Message::PriceListTitle,
         }
         .text(self.lang)
     }
 
-    /// The name the scene filter reads by, in the dialog's own filter list.
+    /// The name the filter reads by, in the dialog's own filter list.
     pub(crate) fn filter(&self) -> &'static str {
-        Message::SceneFiles.text(self.lang)
+        match self.mode {
+            PickMode::Prices => Message::PriceListFiles,
+            PickMode::Open | PickMode::Save => Message::SceneFiles,
+        }
+        .text(self.lang)
+    }
+
+    /// The one extension the dialog lists, so a picker never offers a scene where a price list goes.
+    pub(crate) fn extension(&self) -> &'static str {
+        match self.mode {
+            PickMode::Prices => PRICE_LIST_EXTENSION,
+            PickMode::Open | PickMode::Save => EXTENSION,
+        }
     }
 }
 
@@ -200,7 +218,8 @@ impl Picker {
 /// gap is filed in `plan/debt.md`.
 #[cfg(not(test))]
 fn ask(order: &Order) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new().set_title(order.title()).add_filter(order.filter(), &[EXTENSION]);
+    let mut dialog =
+        rfd::AsyncFileDialog::new().set_title(order.title()).add_filter(order.filter(), &[order.extension()]);
     if let Some(folder) = &order.folder {
         dialog = dialog.set_directory(folder);
     }
@@ -208,7 +227,7 @@ fn ask(order: &Order) -> Option<PathBuf> {
         dialog = dialog.set_file_name(name);
     }
     let picked = match order.mode {
-        PickMode::Open => pollster::block_on(dialog.pick_file()),
+        PickMode::Open | PickMode::Prices => pollster::block_on(dialog.pick_file()),
         PickMode::Save => pollster::block_on(dialog.save_file()),
     };
     picked.map(|handle| handle.path().to_owned())
@@ -227,6 +246,19 @@ mod tests {
 
     fn open_order() -> Order {
         Order { mode: PickMode::Open, folder: None, name: None, lang: Lang::En }
+    }
+
+    #[test]
+    fn a_price_list_is_asked_for_as_a_csv_and_a_scene_as_a_scene() {
+        // The dialog's filter is data on the order: a picker that offered a `.z3l` where a supplier's
+        // export belongs would hand the directory a scene to read as prices.
+        let prices = Order { mode: PickMode::Prices, ..open_order() };
+        assert_eq!(prices.filter(), Message::PriceListFiles.text(Lang::En));
+        assert_eq!(prices.extension(), PRICE_LIST_EXTENSION);
+        assert_eq!(prices.title(), Message::PriceListTitle.text(Lang::En));
+        let scene = open_order();
+        assert_eq!(scene.extension(), EXTENSION);
+        assert_ne!(scene.filter(), prices.filter(), "one dialog name per file kind");
     }
 
     #[test]

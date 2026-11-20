@@ -161,6 +161,19 @@ impl Directory {
         Some(StockView { length, width, group, price: self.price(item) })
     }
 
+    /// The code of the row `item`'s kind keeps its price in, when it accepts one.
+    ///
+    /// An importer writes a price by this code and never by a constant, because a workshop's kind may
+    /// name the row `price` and a supplier's kind may name it something else.
+    pub fn price_code(&self, item: &NomenclatureItem) -> Option<crate::property::PropertyCode> {
+        let kind = self.kinds().get(item.kind())?;
+        let wanted = Slug::new(PRICE_SLUG).ok()?;
+        kind.accepts()
+            .iter()
+            .copied()
+            .find(|code| self.properties().get(*code).is_some_and(|row| row.slug() == &wanted))
+    }
+
     /// The price `item` carries, with the unit its kind buys in.
     ///
     /// The stored value is an amount with its currency and its provenance; the unit is answered from
