@@ -44,23 +44,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X94** the status bar's three zones draw over one another
-  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
-  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
-  its own rectangle — the command on the left at its natural width, the centre elided, the
-  right readouts at their reserve — and no shape is painted under another.
-  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
-  left zone draws the five-cell transform band and up to three buttons at their natural width
-  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
-  so an armed contour or draft can paint past the split; the right zone is a separate
-  allocation starting at the same edge. The 1024 px test asserts that each zone drew
-  something and never that a shape stayed inside its rect. The cause is confirmed by a test
-  before the fix.
-  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
-  contour edit and a long selection armed, and asserts that no drawn shape crosses the
-  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
-  green.
-  `files: app/src/status_bar.rs,crates/ui/src/theme.rs`
 - `[ ]` **U115** the status bar reports and no longer carries a control
   Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
   where it stays within reach; the bar reports, it does not act. Today it holds the five-cell
@@ -310,6 +293,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
 ## Done
+
+- `[x]` **X94** the status bar's three zones draw over one another
+  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
+  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
+  its own rectangle — the command on the left at its natural width, the centre elided, the
+  right readouts at their reserve — and no shape is painted under another.
+  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
+  left zone draws the five-cell transform band and up to three buttons at their natural width
+  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
+  so an armed contour or draft can paint past the split; the right zone is a separate
+  allocation starting at the same edge. The 1024 px test asserts that each zone drew
+  something and never that a shape stayed inside its rect. The cause is confirmed by a test
+  before the fix.
+  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
+  contour edit and a long selection armed, and asserts that no drawn shape crosses the
+  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
+  green.
+  `files: app/src/status_bar.rs,crates/ui/src/theme.rs` — `342c9dd`
 
 - `[x]` **U118** the five scene shading styles are one band, and each split view has an icon
   Why: The owner: the view buttons in the bottom toolbar mean the scene's shading styles —

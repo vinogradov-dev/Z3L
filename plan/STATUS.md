@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X94 state=idle base=eb14b3b updated=2026-11-20
+STATE: milestone=M7 phase=T task=U115 state=idle base=342c9dd updated=2026-11-20
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -42,9 +42,13 @@ The plan shows a stream: `plan/STATUS.md` declares the three checkouts beside th
 working one `[~]` entry of its phases and keeping its own session note while `STATE:` stays the
 plan's own, so four worktrees no longer hide behind an idle line (P17, ADR 0176).
 
+The status bar is three rectangles: each zone draws inside its own and clips to it, the readouts
+take the width their own widgets measure, and the command keeps its floor on the narrowest window
+while the selection elides into what it leaves, so no zone paints under another (X94).
+
 ## Next
 
-X94 is next: the status bar's three zones draw over one another
+U115 is next: the status bar reports and no longer carries a control
 
 ## Index
 

@@ -16,6 +16,11 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `lib.rs` plus thin binaries when a second window needs the shell, and move the directory window out
   of `app/src/directory_app.rs` then (ADR 0158).
 
+- `[ui]` At the narrowest window (640 pt) in Russian an armed contour or draft loses its last
+  button — the command zone clips at `COMMAND_ZONE_MIN` instead of painting under the readouts (X94).
+  U115 moves those buttons to the armed tool's card and the command bar, which closes the gap; the
+  band, the selection and the readouts fit there.
+
 - `[gizmo]` A turn is bounded by the bodies around the selection and not by the workspace's floor, so a
   ring swung far enough carries a piece below Z = 0 where a carry would have been held: the rotate rule
   reads no `MoveSettings` and no floor (X88, ADR 0177). Give the turn the same bound when a maker turns
