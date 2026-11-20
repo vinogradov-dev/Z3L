@@ -187,7 +187,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
 | [0181](0181-a-drag-prepares-the-bodies-it-reaches.md) | A drag prepares the bodies it reaches, and the port can cast a ray | Accepted; the rule's build is a walk over boxes, and the probe keeps the box reading until X92 |
 | [0182](0182-the-file-manager-chooses-the-path.md) | The file manager chooses the path, and the window keeps drawing | Accepted |
-| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted; "one headless door" narrowed by 0185; parameter-schema gap closed by 0195 |
+| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted; "one headless door" narrowed by 0185; parameter-schema gap closed by 0195; the report set moved into the session by 0196 |
 | [0184](0184-a-price-names-its-money-and-its-source.md) | A price names its money, its source and its age; stock is an overlay | Accepted |
 | [0185](0185-the-tool-registry-is-one-table-and-every-door-reads-it.md) | The tool registry is one table, and the CLI and the MCP server are its doors | Accepted; narrows 0028 and 0183 |
 | [0186](0186-the-mcp-crate-sits-beside-the-ui.md) | The MCP crate sits beside the UI, and the chat panel lives in the shell | Accepted; narrows 0028 |
@@ -201,6 +201,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0195](0195-the-parameter-schema-derives-where-its-type-lives.md) | The parameter schema derives where its type lives | Accepted |
 | [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
 | [0194](0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md) | A contour boolean is a mode that stores a new object | Accepted; implements 0043, the tool mark follows the file schema |
+| [0196](0196-the-read-model-is-one-typed-question.md) | The read model is one typed question, and its stable answers are resources | Accepted; implements 0183's report set and 0185's "session read-only queries" |
 
 ## Format
 
