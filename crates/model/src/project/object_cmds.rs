@@ -1,7 +1,38 @@
 //! Commands that author scene objects and their constructed geometry.
 
+use std::collections::HashSet;
+
 use crate::tree::{find_container_mut, find_node_mut};
 use crate::*;
+
+/// One tool body a constructive object's boolean steps name, resolved for evaluation.
+///
+/// The tool is never consumed: the payload is a copy for the evaluator and the document keeps the
+/// node, so several bodies may name the same tool and every one of them follows it. The placement
+/// is expressed in the body's own frame, so a compiler never composes world transforms itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BooleanTool {
+    id: Id,
+    body: Constructive,
+    placement: Placement,
+}
+
+impl BooleanTool {
+    /// The node the step names.
+    pub const fn id(&self) -> Id {
+        self.id
+    }
+
+    /// The tool's own feature history, which may name tools of its own.
+    pub const fn body(&self) -> &Constructive {
+        &self.body
+    }
+
+    /// The tool's placement in the frame of the body that names it.
+    pub const fn placement(&self) -> Placement {
+        self.placement
+    }
+}
 
 impl Project {
     /// The contour of a constructive object that a new panel can inherit.
@@ -120,6 +151,111 @@ impl Project {
         constructive.set_height(height)?;
         self.revision = next_revision;
         Ok(next_revision)
+    }
+
+    /// Appends a boolean step to a constructive object and bumps the revision once.
+    ///
+    /// The tool is a reference to another constructive body, which stays in the tree and may serve
+    /// any number of bodies. Two references are refused before the document changes: one naming the
+    /// body itself and one whose tool already reaches this body through its own steps, because
+    /// either would close a loop the plan compiler cannot walk.
+    pub fn set_object_boolean(&mut self, id: Id, op: BooleanOp, tool: Id) -> Result<Revision, ProjectError> {
+        let next_revision = self.next_revision()?;
+        if tool == id {
+            return Err(ProjectError::BooleanToolIsSelf { id });
+        }
+        // The tool's own steps are walked first: the probe refuses a tool that is not a body, and a
+        // body this one already names is the edge that would close the loop.
+        let names_this_body = self
+            .boolean_tools(tool)
+            .map_err(|_| ProjectError::BooleanToolNotABody { object: id, tool })?
+            .iter()
+            .any(|named| named.id() == id);
+        if names_this_body {
+            return Err(ProjectError::BooleanToolCycle { id });
+        }
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        let Some(object) = node.as_object_mut() else {
+            return Err(ProjectError::NotConstructiveObject { id });
+        };
+        let Some(constructive) = object.geometry_mut().as_constructive_mut() else {
+            return Err(ProjectError::NotConstructiveObject { id });
+        };
+        constructive.push_boolean(Boolean::new(op, tool))?;
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
+    /// Removes one boolean step from a constructive object and bumps the revision once.
+    ///
+    /// The index names a position in the feature history; index zero is the body's own extrusion,
+    /// which cannot be removed, and an index outside the history is
+    /// [`ProjectError::NoSuchBoolean`].
+    pub fn remove_object_boolean(&mut self, id: Id, index: usize) -> Result<Revision, ProjectError> {
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        let Some(object) = node.as_object_mut() else {
+            return Err(ProjectError::NotConstructiveObject { id });
+        };
+        let Some(constructive) = object.geometry_mut().as_constructive_mut() else {
+            return Err(ProjectError::NotConstructiveObject { id });
+        };
+        if !matches!(constructive.features().get(index), Some(Feature::Boolean(_))) {
+            return Err(ProjectError::NoSuchBoolean { id, index });
+        }
+        constructive.remove_feature(index).map_err(|_| ProjectError::NoSuchBoolean { id, index })?;
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
+    /// The tool bodies one constructive object names, transitively, in the frame of that object.
+    ///
+    /// A tool may name tools of its own, so the answer is the whole closure: a compiler builds a
+    /// plan from it and the mesh cache keys on it, and both need every body a target depends on,
+    /// not only the ones it names directly. A missing tool, a node that is not a constructive body,
+    /// a self-reference and a reference that closes a loop are readable errors; the document
+    /// refuses all four when it loads, so this is the same answer for a file and for a live edit.
+    pub fn boolean_tools(&self, id: Id) -> Result<Vec<BooleanTool>, ProjectError> {
+        let object = self.object(id).ok_or(ProjectError::NodeNotFound { id })?;
+        let body = object.geometry().as_constructive().ok_or(ProjectError::NotConstructiveObject { id })?;
+        self.boolean_tools_of(id, body)
+    }
+
+    /// The tool bodies one feature history names, resolved in the frame of the node `id`.
+    ///
+    /// The history is handed in rather than read off the node, because a previewing operation
+    /// evaluates a body the document does not hold yet: the step the ✓ would store is compiled from
+    /// the same answer, so the preview cannot draw a body the command then refuses.
+    pub fn boolean_tools_of(&self, id: Id, body: &Constructive) -> Result<Vec<BooleanTool>, ProjectError> {
+        if self.object(id).is_none() {
+            return Err(ProjectError::NodeNotFound { id });
+        }
+        let mut tools = Vec::new();
+        let mut seen = HashSet::new();
+        let mut pending: Vec<Id> = body.booleans().map(Boolean::tool).collect();
+        while let Some(tool) = pending.pop() {
+            if tool == id {
+                return Err(ProjectError::BooleanToolIsSelf { id });
+            }
+            if !seen.insert(tool.get()) {
+                continue;
+            }
+            let node = self.object(tool).ok_or(ProjectError::BooleanToolNotABody { object: id, tool })?;
+            let tool_body =
+                node.geometry().as_constructive().ok_or(ProjectError::BooleanToolNotABody { object: id, tool })?;
+            let world = self.world_placement(tool).ok_or(ProjectError::BooleanToolNotABody { object: id, tool })?;
+            let placement = self.placement_in_parent(id, world)?;
+            tools.push(BooleanTool { id: tool, body: tool_body.clone(), placement });
+            pending.extend(tool_body.booleans().map(Boolean::tool));
+        }
+        // The closure is compared as a value, so its order must follow the document rather than the
+        // order the walk happened to pop its ids.
+        tools.sort_by_key(|tool| tool.id.get());
+        Ok(tools)
     }
 
     /// Turns a path object into the constructive body that owns that path, in place.

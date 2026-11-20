@@ -40,7 +40,7 @@ mod machining;
 mod profile;
 mod solid;
 
-pub use constructive::build_constructive_mesh;
+pub use constructive::{NoTools, ToolBodies, build_constructive_mesh, constructive_plan, evaluate_constructive_body};
 pub use machining::{CompileMachining, CompiledMachining, OpEffect, PanelPlan};
 
 use solid::{PlanBuilder, SolidPlan};
@@ -97,6 +97,12 @@ pub enum ParamError {
     /// The constructive history has a feature this build cannot evaluate.
     #[error("this build evaluates a constructive object with exactly one extrusion")]
     UnsupportedConstructive,
+    /// A boolean step names a tool body the caller did not resolve.
+    #[error("a boolean step names tool {tool}, which is not one of its bodies")]
+    MissingBooleanTool {
+        /// The node the step named.
+        tool: model::Id,
+    },
     /// A bevel names an outline segment that is not a straight line.
     #[error("the bevel on {on} has no straight segment to tilt an end face about")]
     BevelNotStraight {

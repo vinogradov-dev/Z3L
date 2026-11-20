@@ -7,8 +7,8 @@
 use units::Length;
 
 use crate::{
-    ClassCode, Contour, ContourSegmentId, Geometry, Id, ItemId, Mesh, Object, Panel, PanelNominalSize, PanelRect,
-    Placement,
+    ClassCode, Constructive, Contour, ContourSegmentId, Geometry, Id, ItemId, Mesh, Object, Panel, PanelNominalSize,
+    PanelRect, Placement,
 };
 
 pub(crate) use crate::testing::{millimetres, sample_project};
@@ -87,6 +87,18 @@ pub(crate) fn ring(x: i64, y: i64, width: i64, height: i64) -> Contour {
         [millimetres(x), millimetres(y + height)],
     ])
     .expect("rectangle ring")
+}
+
+/// A constructive body: a rectangle extruded by the sample thickness, so a step can be appended.
+pub(crate) fn sample_body(id: u64, width: i64, height: i64) -> Object {
+    Object::new(
+        Id::new(id).expect("id"),
+        format!("Body {id}"),
+        Placement::IDENTITY,
+        Geometry::Constructive(
+            Constructive::extrude(rectangle_contour(width, height).into(), sample_thickness()).expect("a body"),
+        ),
+    )
 }
 
 pub(crate) fn plate_contour() -> Contour {

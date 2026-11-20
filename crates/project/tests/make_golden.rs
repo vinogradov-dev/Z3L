@@ -64,6 +64,9 @@ fn scene() -> SceneFile {
     )
     .expect("a closed ring");
     let constructive = Constructive::extrude(closed.clone(), millimetres(18)).expect("an extrusion");
+    let cutter_ring = Path::rectangle([millimetres(200), millimetres(100)], [millimetres(80), millimetres(80)])
+        .expect("a cutting ring");
+    let cutter = Constructive::extrude(cutter_ring, millimetres(40)).expect("a cutting body");
     let drawn = Path::polyline(vec![[Length::ZERO, Length::ZERO], [millimetres(120), millimetres(40)]], false)
         .expect("an open path");
     // A contour boolean that leaves several pieces stores them as one drawing: the golden carries
@@ -80,7 +83,10 @@ fn scene() -> SceneFile {
         Placement::IDENTITY,
         vec![
             shelf.into(),
-            Object::new(id(3), "Top", Placement::IDENTITY, Geometry::Constructive(constructive)).into(),
+            Object::new(id(3), "Top", Placement::IDENTITY, Geometry::Constructive(constructive.clone())).into(),
+            // A body that is the tool of a boolean step: the step names it and the golden carries the
+            // reference, so a file written by this build is a file the next build loads.
+            Object::new(id(11), "Cutter", Placement::IDENTITY, Geometry::Constructive(cutter)).into(),
             Object::new(id(4), "Sketch", Placement::IDENTITY, Geometry::Path(drawn)).into(),
             Object::new(id(10), "Union", Placement::IDENTITY, Geometry::Contours(contours)).into(),
             Object::new(
@@ -139,6 +145,8 @@ fn scene() -> SceneFile {
     // An object marked as a tool survives the boolean it took part in, and the flag travels in the
     // file: the golden carries one marked object so the field is exercised both ways.
     project.set_object_tool(id(10), true).expect("the union is a tool");
+    // A boolean step is a reference: the cutter stays in the tree and the body names it.
+    project.set_object_boolean(id(3), model::BooleanOp::Difference, id(11)).expect("the top is cut by the cutter");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
     // (ADR 0159).

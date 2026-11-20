@@ -58,19 +58,90 @@ impl TryFrom<ExtrudeWire> for Extrude {
     }
 }
 
+/// The operation a boolean step applies to the body built so far.
+///
+/// The document keeps its own name for the three operations the kernel port also knows: `model`
+/// describes what the user asked for and never imports a geometry kernel (ADR 0001, ADR 0041).
+///
+/// [ADR 0001]: ../docs/decisions/0001-geometry-kernel.md
+/// [ADR 0041]: ../docs/decisions/0041-every-solid-compiles-to-one-solid-plan.md
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BooleanOp {
+    /// Keeps both bodies.
+    Union,
+    /// Cuts the tool out of the body built so far.
+    Difference,
+    /// Keeps only what both bodies share.
+    Intersection,
+}
+
+/// Serialized form of [`Boolean`]; validation happens in its `TryFrom` implementation.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BooleanWire {
+    op: BooleanOp,
+    tool: Id,
+}
+
+/// A boolean step: the body built so far combined with the body of another object.
+///
+/// The [tool](Boolean::tool) names a constructive object that stays in the tree. The tool is never
+/// consumed by the step and may serve several bodies, so it is a reference and not a copy of its
+/// geometry: moving, editing or re-tooling it changes every body that names it. The document
+/// validates the reference — a missing tool, a self-reference and a cycle are readable errors
+/// ([`Project::new`], [`Project::boolean_tools`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BooleanWire")]
+pub struct Boolean {
+    op: BooleanOp,
+    tool: Id,
+}
+
+impl Boolean {
+    /// Stores the operation and the object it combines the body with.
+    pub const fn new(op: BooleanOp, tool: Id) -> Self {
+        Self { op, tool }
+    }
+
+    /// The boolean operation.
+    pub const fn op(&self) -> BooleanOp {
+        self.op
+    }
+
+    /// The constructive object whose body is the second operand.
+    pub const fn tool(&self) -> Id {
+        self.tool
+    }
+}
+
+impl TryFrom<BooleanWire> for Boolean {
+    type Error = ConstructiveError;
+
+    fn try_from(wire: BooleanWire) -> Result<Self, Self::Error> {
+        Ok(Self::new(wire.op, wire.tool))
+    }
+}
+
 /// One step of a constructive object's feature history.
+///
+/// The first feature is always the extrusion of the object's own path; every later feature
+/// combines the body built so far with something else ([`Feature::Boolean`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Feature {
     /// Extrusion of the constructive path.
     Extrude(Extrude),
+    /// A boolean step against the body of another object.
+    Boolean(Boolean),
 }
 
-/// Serialized form of [`Feature`]: an extrusion of the constructive path.
+/// Serialized form of [`Feature`]: an extrusion of the constructive path or a boolean step.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum FeatureWire {
     Extrude { height: Length },
+    Boolean { op: BooleanOp, tool: Id },
 }
 
 /// Serialized form of [`Constructive`]; validation happens in its `TryFrom` implementation.
@@ -146,8 +217,42 @@ impl Constructive {
     pub fn extrude_feature(&self) -> Option<&Extrude> {
         match self.features.first() {
             Some(Feature::Extrude(extrude)) => Some(extrude),
-            None => None,
+            Some(Feature::Boolean(_)) | None => None,
         }
+    }
+
+    /// Every boolean step, in application order.
+    pub fn booleans(&self) -> impl Iterator<Item = &Boolean> {
+        self.features.iter().filter_map(|feature| match feature {
+            Feature::Boolean(boolean) => Some(boolean),
+            Feature::Extrude(_) => None,
+        })
+    }
+
+    /// Appends a boolean step after the body built so far.
+    ///
+    /// The tool reference is not resolved here: the document owns the tree and validates the
+    /// reference when it stores the step ([`Project::boolean_tools`]).
+    pub fn push_boolean(&mut self, boolean: Boolean) -> Result<(), ConstructiveError> {
+        if self.features.len() >= MAX_OBJECT_FEATURES {
+            return Err(ConstructiveError::FeatureCount { count: self.features.len(), max: MAX_OBJECT_FEATURES });
+        }
+        self.features.push(Feature::Boolean(boolean));
+        Ok(())
+    }
+
+    /// Removes the feature at `index` and returns it.
+    ///
+    /// The extrusion at index zero is the body's own sweep, so it is refused: removing it would
+    /// leave a history with nothing to build.
+    pub fn remove_feature(&mut self, index: usize) -> Result<Feature, ConstructiveError> {
+        if index == 0 {
+            return Err(ConstructiveError::MissingExtrude);
+        }
+        if index >= self.features.len() {
+            return Err(ConstructiveError::FeatureIndex { index, count: self.features.len() });
+        }
+        Ok(self.features.remove(index))
     }
 
     /// The ring the stored path encloses, derived on read.
@@ -179,8 +284,10 @@ impl TryFrom<ConstructiveWire> for Constructive {
     fn try_from(wire: ConstructiveWire) -> Result<Self, Self::Error> {
         let mut features = Vec::with_capacity(wire.features.len());
         for feature in wire.features {
-            let FeatureWire::Extrude { height } = feature;
-            features.push(Feature::Extrude(Extrude::new(height)?));
+            features.push(match feature {
+                FeatureWire::Extrude { height } => Feature::Extrude(Extrude::new(height)?),
+                FeatureWire::Boolean { op, tool } => Feature::Boolean(Boolean::new(op, tool)),
+            });
         }
         Self::new(wire.path, features)
     }
@@ -334,6 +441,14 @@ pub enum ConstructiveError {
     /// The path is an open chain, which encloses no ring to extrude.
     #[error("a constructive object needs a closed path, not an open chain")]
     OpenPath,
+    /// The feature index is outside the history, or names the extrusion at zero.
+    #[error("feature {index} is outside a history of {count} features")]
+    FeatureIndex {
+        /// The rejected index.
+        index: usize,
+        /// The length of the history.
+        count: usize,
+    },
 }
 
 /// The geometry payload of an object node.
@@ -681,6 +796,123 @@ mod tests {
             Err(ProjectError::NodeNotFound { id: Id::new(99).expect("id") })
         );
         assert_eq!(project.revision(), Revision::ZERO);
+    }
+
+    /// A body that carries one boolean step against `tool`, built without the command layer.
+    fn body_with_step(id: u64, op: BooleanOp, tool: u64) -> Object {
+        let mut body = sample_body(id, 100, 50);
+        let Some(constructive) = body.geometry_mut().as_constructive_mut() else {
+            panic!("the fixture is a constructive body");
+        };
+        constructive.push_boolean(Boolean::new(op, Id::new(tool).expect("id"))).expect("a step fits the history");
+        body
+    }
+
+    fn scene(children: Vec<Node>) -> Container {
+        Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, children)
+    }
+
+    #[test]
+    fn a_boolean_step_round_trips_and_its_tool_is_resolved() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let body = Id::new(5).expect("id");
+        let tool = Id::new(6).expect("id");
+        project.set_object_boolean(body, BooleanOp::Difference, tool).expect("a step");
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        assert!(text.contains("\"kind\":\"boolean\""), "the step is written by kind: {text}");
+        let decoded: Project = serde_json::from_str(&text).expect("load");
+        assert_eq!(decoded, project);
+
+        let tools = decoded.boolean_tools(body).expect("the tool closure");
+        assert_eq!(tools.len(), 1, "one tool is named directly");
+        let resolved = tools.first().expect("the tool");
+        assert_eq!(resolved.id(), tool);
+        assert_eq!(resolved.placement(), Placement::IDENTITY);
+        assert_eq!(resolved.body().height(), Some(millimetres(18)), "the tool keeps its own history");
+    }
+
+    #[test]
+    fn a_tools_placement_is_expressed_in_the_bodys_own_frame() {
+        let mut tool = sample_body(6, 20, 20);
+        tool.set_placement(Placement::new(DVec3::new(30.0, 40.0, 0.0), DQuat::IDENTITY).expect("placement"));
+        let body = sample_body(5, 100, 50);
+        let mut project = Project::new(scene(vec![body.into(), tool.into()])).expect("project");
+        project.set_object_boolean(Id::new(5).expect("id"), BooleanOp::Union, Id::new(6).expect("id")).expect("a step");
+
+        let resolved = project.boolean_tools(Id::new(5).expect("id")).expect("the tool closure");
+        let placement = resolved.first().expect("the tool").placement();
+        assert!((placement.translation() - DVec3::new(30.0, 40.0, 0.0)).length() < 1.0e-9);
+    }
+
+    #[test]
+    fn a_body_is_refused_as_its_own_tool_and_a_cycle_is_refused() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let five = Id::new(5).expect("id");
+        let six = Id::new(6).expect("id");
+        assert_eq!(
+            project.set_object_boolean(five, BooleanOp::Union, five),
+            Err(ProjectError::BooleanToolIsSelf { id: five })
+        );
+
+        project.set_object_boolean(five, BooleanOp::Difference, six).expect("5 cuts with 6");
+        assert_eq!(
+            project.set_object_boolean(six, BooleanOp::Union, five),
+            Err(ProjectError::BooleanToolCycle { id: six }),
+            "6 already depends on 5, so 5 cannot depend on 6"
+        );
+        assert_eq!(project.revision().get(), 1, "the refused step changed nothing");
+    }
+
+    #[test]
+    fn a_document_refuses_a_missing_tool_a_self_reference_and_a_cycle() {
+        let five = Id::new(5).expect("id");
+
+        assert_eq!(
+            Project::new(scene(vec![body_with_step(5, BooleanOp::Union, 99).into()])),
+            Err(ProjectError::BooleanToolNotABody { object: five, tool: Id::new(99).expect("id") }),
+            "a tool that is not in the tree names no body"
+        );
+        assert_eq!(
+            Project::new(scene(vec![sample_object(7).into(), body_with_step(5, BooleanOp::Union, 7).into()])),
+            Err(ProjectError::BooleanToolNotABody { object: five, tool: Id::new(7).expect("id") }),
+            "a mesh object is not a body a plan can build"
+        );
+        assert_eq!(
+            Project::new(scene(vec![body_with_step(5, BooleanOp::Union, 5).into()])),
+            Err(ProjectError::BooleanToolIsSelf { id: five })
+        );
+        assert_eq!(
+            Project::new(scene(vec![
+                body_with_step(5, BooleanOp::Union, 6).into(),
+                body_with_step(6, BooleanOp::Difference, 5).into(),
+            ])),
+            Err(ProjectError::BooleanToolCycle { id: five }),
+            "two bodies that name each other close a loop"
+        );
+    }
+
+    #[test]
+    fn a_removed_step_leaves_the_others_in_order() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let five = Id::new(5).expect("id");
+        let six = Id::new(6).expect("id");
+        project.set_object_boolean(five, BooleanOp::Difference, six).expect("one step");
+        project.set_object_boolean(five, BooleanOp::Union, six).expect("a second step");
+
+        project.remove_object_boolean(five, 1).expect("remove the first step");
+        let constructive = project.object(five).expect("body").geometry().as_constructive().expect("constructive");
+        assert_eq!(constructive.features().len(), 2, "the extrusion and the second step remain");
+        assert_eq!(
+            constructive.booleans().map(Boolean::op).collect::<Vec<_>>(),
+            vec![BooleanOp::Union],
+            "the step that stayed is the one that was second"
+        );
+        assert_eq!(project.remove_object_boolean(five, 0), Err(ProjectError::NoSuchBoolean { id: five, index: 0 }));
+        assert_eq!(project.remove_object_boolean(five, 7), Err(ProjectError::NoSuchBoolean { id: five, index: 7 }));
     }
 
     #[test]

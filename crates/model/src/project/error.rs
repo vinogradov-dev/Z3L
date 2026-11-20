@@ -195,6 +195,34 @@ pub enum ProjectError {
         /// The node that was asked.
         id: Id,
     },
+    /// A boolean step names a node that is not a constructive body in this document.
+    #[error("object {object} combines with {tool}, which is not a constructive body in this document")]
+    BooleanToolNotABody {
+        /// The body that carries the boolean step.
+        object: Id,
+        /// The node the step named as its tool.
+        tool: Id,
+    },
+    /// A boolean step names the body it belongs to.
+    #[error("object {id} cannot combine with itself")]
+    BooleanToolIsSelf {
+        /// The body that names itself.
+        id: Id,
+    },
+    /// The boolean steps of one body reach back to that body through its tools.
+    #[error("the boolean tools of object {id} form a cycle")]
+    BooleanToolCycle {
+        /// The body whose tool graph closes on itself.
+        id: Id,
+    },
+    /// The feature index is outside the history, or names the extrusion a body cannot lose.
+    #[error("object {id} has no boolean step {index}")]
+    NoSuchBoolean {
+        /// The body whose features were asked for.
+        id: Id,
+        /// The rejected feature index.
+        index: usize,
+    },
     /// The node is not a parametric primitive, so it has no primitive parameters.
     #[error("node {id} is not a primitive object")]
     NotAPrimitiveObject {
