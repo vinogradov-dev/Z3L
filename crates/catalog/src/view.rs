@@ -253,6 +253,7 @@ mod tests {
             crate::kind::KindRegistry::new(kinds).expect("kinds"),
             properties,
             FamilyRegistry::default(),
+            crate::external::ExternalSystemRegistry::default(),
         )
         .expect("a directory")
     }

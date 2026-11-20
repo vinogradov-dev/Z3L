@@ -15,6 +15,7 @@ use units::Length;
 
 use crate::directory::Directory;
 use crate::error::CatalogError;
+use crate::external::ExternalSystemRegistry;
 use crate::family::FamilyRegistry;
 use crate::item::NomenclatureItem;
 use crate::kind::{Kind, KindCode, KindRegistry, Trait};
@@ -194,7 +195,7 @@ impl Starter {
             let slug = Slug::new(format!("band-{}", band.serial))?;
             items.push(NomenclatureItem::new(id, kind_code(BANDING_KIND_CODE), band.name.clone(), slug, props)?);
         }
-        Directory::new(items, kinds, properties, FamilyRegistry::default())
+        Directory::new(items, kinds, properties, FamilyRegistry::default(), ExternalSystemRegistry::default())
     }
 }
 

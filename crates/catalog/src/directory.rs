@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use model::ItemId;
 
 use crate::error::CatalogError;
+use crate::external::ExternalSystemRegistry;
 use crate::family::FamilyRegistry;
 use crate::item::NomenclatureItem;
 use crate::kind::{KindCode, KindRegistry};
@@ -20,8 +21,10 @@ pub struct Directory {
     kinds: KindRegistry,
     properties: PropertyRegistry,
     families: FamilyRegistry,
+    systems: ExternalSystemRegistry,
     by_kind: BTreeMap<KindCode, Vec<ItemId>>,
     by_slug: BTreeMap<KindCode, BTreeMap<String, ItemId>>,
+    by_external: BTreeMap<(String, String), ItemId>,
     pub(crate) currency: Option<crate::money::Currency>,
 }
 
@@ -36,8 +39,9 @@ impl Directory {
         kinds: KindRegistry,
         properties: PropertyRegistry,
         families: FamilyRegistry,
+        systems: ExternalSystemRegistry,
     ) -> Result<Self, CatalogError> {
-        let mut directory = Self { kinds, properties, families, ..Self::default() };
+        let mut directory = Self { kinds, properties, families, systems, ..Self::default() };
         for item in items {
             let id = item.id();
             if directory.items.contains_key(&id) {
@@ -52,8 +56,13 @@ impl Directory {
             directory.by_kind.entry(kind).or_default().push(id);
             directory.items.insert(id, item);
         }
-        for item in directory.items.values() {
+        let ids: Vec<ItemId> = directory.items.keys().copied().collect();
+        for id in ids {
+            let Some(item) = directory.items.get(&id).cloned() else {
+                continue;
+            };
             item.check(&directory)?;
+            directory.index_external(&item)?;
         }
         // Prices outlive the rows that wrote them: the currency is the one every record agrees on, and
         // a second one is a package mistake rather than a reader's guess (`§11`).
@@ -94,6 +103,36 @@ impl Directory {
     /// The family registry.
     pub const fn families(&self) -> &FamilyRegistry {
         &self.families
+    }
+
+    /// The registry of the foreign systems an item's keys name.
+    pub const fn systems(&self) -> &ExternalSystemRegistry {
+        &self.systems
+    }
+
+    /// The record a foreign system knows by `key`, when one claims it.
+    ///
+    /// An import matches its columns through this and never by a record's name (`§5.3`).
+    pub fn by_external(&self, system: &str, key: &str) -> Option<&NomenclatureItem> {
+        let id = self.by_external.get(&(system.to_owned(), key.to_owned()))?;
+        self.items.get(id)
+    }
+
+    /// Files one record's foreign keys under the pair an import asks by, refusing a pair two claim.
+    fn index_external(&mut self, item: &NomenclatureItem) -> Result<(), CatalogError> {
+        for external in item.external() {
+            let pair = (external.system.as_str().to_owned(), external.key.clone());
+            if let Some(other) = self.by_external.get(&pair) {
+                return Err(CatalogError::ExternalKeyClaimed {
+                    item: item.id(),
+                    other: *other,
+                    system: pair.0,
+                    key: pair.1,
+                });
+            }
+            self.by_external.insert(pair, item.id());
+        }
+        Ok(())
     }
 
     /// The currency the directory's prices are written in, when any record is priced.
@@ -146,6 +185,7 @@ mod tests {
     use units::Length;
 
     use super::*;
+    use crate::external::ExternalSystemRegistry;
     use crate::family::{Family, FamilyCode};
     use crate::kind::{Kind, Trait};
     use crate::money::{Currency, Money};
@@ -195,6 +235,13 @@ mod tests {
     }
 
     fn directory(items: impl IntoIterator<Item = NomenclatureItem>) -> Result<Directory, CatalogError> {
+        directory_with(items, ExternalSystemRegistry::default())
+    }
+
+    fn directory_with(
+        items: impl IntoIterator<Item = NomenclatureItem>,
+        systems: ExternalSystemRegistry,
+    ) -> Result<Directory, CatalogError> {
         Directory::new(
             items,
             KindRegistry::new([kind()]).expect("one kind"),
@@ -206,7 +253,17 @@ mod tests {
             )
             .expect("a family")])
             .expect("one family"),
+            systems,
         )
+    }
+
+    fn system(text: &str) -> crate::item::ExternalSystemId {
+        crate::item::ExternalSystemId::new(text).expect("a system id")
+    }
+
+    fn declared_systems() -> ExternalSystemRegistry {
+        ExternalSystemRegistry::new([crate::external::ExternalSystem::new(system("erp"), "ERP").expect("a row")])
+            .expect("one system")
     }
 
     #[test]
@@ -332,6 +389,7 @@ mod tests {
             KindRegistry::new([kind]).expect("one kind"),
             PropertyRegistry::new([price_row()]).expect("one property"),
             FamilyRegistry::default(),
+            ExternalSystemRegistry::default(),
         )
     }
 
@@ -359,6 +417,36 @@ mod tests {
         let sentence = refusal.to_string();
         assert!(sentence.contains("712-35") && sentence.contains("712-34"), "both records are named: {sentence}");
         assert!(sentence.contains("EUR") && sentence.contains("RUB"), "and both currencies: {sentence}");
+    }
+
+    #[test]
+    fn a_foreign_key_reads_its_record_and_an_undeclared_system_is_refused() {
+        let key = crate::item::ExternalKey::new(system("erp"), "A-1200").expect("a key");
+        let anchored = board(34, "White melamine", "white").with_external(key).expect("a key");
+        let directory = directory_with([anchored], declared_systems()).expect("a directory");
+        assert_eq!(directory.by_external("erp", "A-1200").map(NomenclatureItem::id), Some(id(712, 34)));
+        assert!(directory.by_external("erp", "A-1201").is_none(), "nothing is matched by name");
+
+        // A system is a registry row: a key written with a word nobody declared is refused, so `1C`
+        // and `1с` cannot become two worlds for one supplier.
+        let stranger = crate::item::ExternalKey::new(system("1c"), "K-1").expect("a key");
+        let stray = board(35, "Oak", "oak").with_external(stranger).expect("a key");
+        let refusal = directory_with([stray], declared_systems()).expect_err("no package declares `1c`");
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("`1c`") && sentence.contains("712-35"), "{sentence}");
+    }
+
+    #[test]
+    fn two_records_claiming_one_foreign_key_are_refused() {
+        let key = || crate::item::ExternalKey::new(system("erp"), "A-1200").expect("a key");
+        let first = board(34, "White melamine", "white").with_external(key()).expect("a key");
+        let second = board(35, "Oak", "oak").with_external(key()).expect("a key");
+        let refusal = directory_with([first, second], declared_systems()).expect_err("one key, one record");
+        let sentence = refusal.to_string();
+        assert!(
+            sentence.contains("712-35") && sentence.contains("712-34") && sentence.contains("A-1200"),
+            "{sentence}"
+        );
     }
 
     #[test]
@@ -392,6 +480,7 @@ mod tests {
             KindRegistry::new([kind]).expect("one kind"),
             PropertyRegistry::new([property]).expect("one property"),
             FamilyRegistry::default(),
+            ExternalSystemRegistry::default(),
         )
         .expect_err("712-41 is absent");
         assert!(refusal.to_string().contains("712-41"), "{refusal}");

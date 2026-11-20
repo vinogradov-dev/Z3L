@@ -163,6 +163,32 @@ pub enum CatalogError {
         /// The id that repeated.
         id: ItemId,
     },
+    /// A foreign system is declared twice.
+    #[error("`{system}` is declared twice; one id names one system")]
+    DuplicateSystem {
+        /// The system id that repeated.
+        system: String,
+    },
+    /// An item names a foreign system no connected package declares.
+    #[error("item `{item}` names foreign system `{system}`, which no connected package declares")]
+    UnknownSystem {
+        /// The item.
+        item: ItemId,
+        /// The system it names.
+        system: String,
+    },
+    /// Two records claim one foreign key, so an import would resolve it to two items.
+    #[error("item `{item}` claims `{system}` key `{key}`, which item `{other}` already holds")]
+    ExternalKeyClaimed {
+        /// The item.
+        item: ItemId,
+        /// The item that already holds the key.
+        other: ItemId,
+        /// The system both keys belong to.
+        system: String,
+        /// The key both claim.
+        key: String,
+    },
     /// An item names its external key twice.
     #[error("item `{item}` names `{system}` twice; an item has one key per system")]
     DuplicateExternalKey {

@@ -29,6 +29,7 @@
 
 mod directory;
 mod error;
+mod external;
 mod family;
 mod item;
 mod kind;
@@ -44,6 +45,7 @@ mod write;
 
 pub use directory::Directory;
 pub use error::CatalogError;
+pub use external::{ExternalSystem, ExternalSystemRegistry};
 pub use family::{Family, FamilyCode, FamilyRegistry};
 pub use item::{ExternalKey, ExternalSystemId, MAX_EXTERNAL_KEYS, MAX_ITEM_NAME_CHARS, NomenclatureItem};
 pub use kind::{Kind, KindCode, KindRegistry, Trait};

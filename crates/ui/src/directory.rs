@@ -783,6 +783,7 @@ mod tests {
                 },
             ],
             families: Vec::new(),
+            systems: Vec::new(),
         };
         std::fs::write(package.join("registry.json"), serde_json::to_string(&registry).expect("a registry"))
             .expect("the registry");

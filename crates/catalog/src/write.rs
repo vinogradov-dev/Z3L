@@ -191,10 +191,11 @@ impl FolderWriter {
 
         let registry_path = folder.join(REGISTRY_FILE);
         let registry: RegistryWire = read_json(&registry_path)?;
-        let (kind_rows, property_rows, family_rows) = registry.rows()?;
-        let kinds = crate::kind::KindRegistry::new(kind_rows)?;
-        let properties = crate::property::PropertyRegistry::new(property_rows)?;
-        let families = crate::family::FamilyRegistry::new(family_rows)?;
+        let rows = registry.rows()?;
+        let kinds = crate::kind::KindRegistry::new(rows.kinds)?;
+        let properties = crate::property::PropertyRegistry::new(rows.properties)?;
+        let families = crate::family::FamilyRegistry::new(rows.families)?;
+        let systems = crate::external::ExternalSystemRegistry::new(rows.systems)?;
         let saved = ItemWire::from_item(item, &kinds, &properties)?;
 
         // The candidate: every record this folder carries, the saved one in place of its old self.
@@ -212,7 +213,7 @@ impl FolderWriter {
         records.push(item.clone());
         // The cheapest gate there is: the directory the reader would build decides, so a save and a
         // reload cannot disagree about what a valid record is.
-        Directory::new(records, kinds, properties, families)?;
+        Directory::new(records, kinds, properties, families, systems)?;
 
         let path = items_dir.join(item_name(item, &saved.kind));
         write_json(&path, &saved)?;
@@ -589,6 +590,7 @@ mod tests {
                 },
             ],
             families: Vec::new(),
+            systems: Vec::new(),
         };
         write_json(&package.join(REGISTRY_FILE), &registry).expect("write the registry");
         package

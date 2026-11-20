@@ -295,6 +295,7 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
     let mut kinds = Vec::new();
     let mut properties = Vec::new();
     let mut families = Vec::new();
+    let mut systems = Vec::new();
     let mut items = Vec::new();
     let mut connected: Vec<Connected> = Vec::new();
     for name in packages {
@@ -333,9 +334,15 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
                 expected: REGISTRY_VERSION,
             });
         }
-        let (package_kinds, package_properties, package_families) = registry.rows().map_err(|error| {
-            LoadError::File { package: package.clone(), path: registry_path.clone(), reason: error.to_string() }
+        let rows = registry.rows().map_err(|error| LoadError::File {
+            package: package.clone(),
+            path: registry_path.clone(),
+            reason: error.to_string(),
         })?;
+        let (package_kinds, package_properties, package_families) = (rows.kinds, rows.properties, rows.families);
+        for row in rows.systems {
+            systems.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
+        }
         for row in package_kinds {
             kinds.push(Loaded { package: package.clone(), path: registry_path.clone(), value: row });
         }
@@ -403,6 +410,10 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
     let families = FamilyRegistry::new(families.iter().map(|row| row.value.clone())).map_err(|error| {
         LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
     })?;
+    let systems =
+        crate::external::ExternalSystemRegistry::new(systems.iter().map(|row| row.value.clone())).map_err(|error| {
+            LoadError::File { package: String::new(), path: PathBuf::from(REGISTRY_FILE), reason: error.to_string() }
+        })?;
 
     let mut records = Vec::with_capacity(items.len());
     for item in &items {
@@ -413,7 +424,7 @@ pub(crate) fn load(root: &Path, packages: &[String]) -> Result<Directory, LoadEr
         })?;
         records.push(record);
     }
-    Directory::new(records, kinds, properties, families).map_err(|error| {
+    Directory::new(records, kinds, properties, families, systems).map_err(|error| {
         let (package, path) = attributes(&items, &error);
         LoadError::File { package, path, reason: error.to_string() }
     })

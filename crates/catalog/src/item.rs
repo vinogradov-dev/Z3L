@@ -220,6 +220,11 @@ impl NomenclatureItem {
                     system: key.system.as_str().to_owned(),
                 });
             }
+            // A system is a registry row, so a key written with a word nobody declared is refused
+            // here rather than becoming a second world for one supplier (`§5.3`).
+            if !directory.systems().has(&key.system) {
+                return Err(CatalogError::UnknownSystem { item: self.id, system: key.system.as_str().to_owned() });
+            }
         }
         Ok(())
     }

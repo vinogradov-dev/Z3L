@@ -80,6 +80,9 @@ pub struct RegistryWire {
     /// The families the package declares.
     #[serde(default)]
     pub families: Vec<FamilyWire>,
+    /// The foreign systems the package's records name their keys in.
+    #[serde(default)]
+    pub systems: Vec<SystemWire>,
 }
 
 /// One kind row, in written form.
@@ -155,6 +158,16 @@ pub enum PropertyTypeWire {
     Date,
     /// A colour, for display.
     Color,
+}
+
+/// One foreign system, in written form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemWire {
+    /// The id a key is written with.
+    pub id: String,
+    /// The name a person reads.
+    pub label: String,
 }
 
 /// One family row, in written form.
@@ -251,7 +264,17 @@ impl RegistryWire {
                 )
             })
             .collect::<Result<Vec<_>, CatalogError>>()?;
-        Ok((kinds, properties, families))
+        let systems = self
+            .systems
+            .iter()
+            .map(|system| {
+                crate::external::ExternalSystem::new(
+                    crate::item::ExternalSystemId::new(system.id.clone())?,
+                    system.label.clone(),
+                )
+            })
+            .collect::<Result<Vec<_>, CatalogError>>()?;
+        Ok(RegistryRows { kinds, properties, families, systems })
     }
 }
 
@@ -352,8 +375,18 @@ impl ExternalKey {
     }
 }
 
-/// The three registries a package's rows build, before any other package is merged in.
-pub type RegistryRows = (Vec<Kind>, Vec<Property>, Vec<Family>);
+/// The registries a package's rows build, before any other package is merged in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RegistryRows {
+    /// The kinds the package declares.
+    pub kinds: Vec<Kind>,
+    /// The properties it declares.
+    pub properties: Vec<Property>,
+    /// The families it declares.
+    pub families: Vec<Family>,
+    /// The foreign systems its records' keys name.
+    pub systems: Vec<crate::external::ExternalSystem>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -376,6 +409,20 @@ mod tests {
         assert!(json.contains("\"max_um\":1000000"), "{json}");
         let back: PropertyWire = serde_json::from_str(&json).expect("read back");
         assert_eq!(back, row);
+    }
+
+    #[test]
+    fn a_registry_carries_the_foreign_systems_its_records_name() {
+        let bare = r#"{"version":1,"kinds":[],"properties":[],"families":[]}"#;
+        let rows = serde_json::from_str::<RegistryWire>(bare).expect("a registry with no systems still reads").rows();
+        assert!(rows.expect("rows").systems.is_empty(), "the field is optional, so an older file loads");
+
+        let declared = r#"{"version":1,"kinds":[],"properties":[],"families":[],
+            "systems":[{"id":"erp","label":"ERP"}]}"#;
+        let rows = serde_json::from_str::<RegistryWire>(declared).expect("a registry").rows().expect("rows");
+        let registry = crate::external::ExternalSystemRegistry::new(rows.systems).expect("one system");
+        let id = crate::item::ExternalSystemId::new("erp").expect("a system");
+        assert_eq!(registry.get(&id).map(|row| row.label()), Some("ERP"));
     }
 
     #[test]
