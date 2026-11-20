@@ -124,12 +124,18 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
     }
 }
 
-/// `task add --phase <L> [--phase-name <text>] --files <paths> [--section Now] [--at top|end]
+/// `task add --phase <L> [--phase-name <text>] --files <paths> [--section Now|Next|Bugs] [--at top|end]
 /// [--why/--shape/--done <text>] <lead>`
 ///
-/// `--at top` puts the task at the head of the work order and points `STATE: task=` at it, because
-/// the tool cannot leave a plan in which the current task is not the first open one: an owner-directed
-/// interjection joins the order in one validated write instead of two that are each refused.
+/// A new entry lands at the end of `## Next`, the section where work is collected before a stream
+/// takes it, so filing a task never disturbs the order a session is working through. `--section`
+/// sends it elsewhere (`Bugs` for a defect, `Now` for work that is already next), and and `--at end`
+/// is what that section does by default.
+///
+/// `--at top` is the interjection: it puts the task at the head of `## Now` and points `STATE: task=`
+/// at it, because the tool cannot leave a plan in which the current task is not the first open one.
+/// `--at top` implies the `Now` section, since a task at the top of `## Next` is not an interjection;
+/// naming another section beside it is refused.
 ///
 /// `--phase` is one capital letter, and `--phase-name` declares it in the legend in the same write,
 /// so the first task of a new phase does not need a second command. Without a name the phase must
@@ -145,11 +151,15 @@ fn add(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     if lead.trim().is_empty() {
         return Err("a new task needs its opening sentence: `task add --phase S --files … \"what it is\"`".to_owned());
     }
-    let section = options.value("section").unwrap_or("Now");
     let at = match options.value("at") {
         None | Some("end") => edit::At::End,
         Some("top") => edit::At::Top,
         Some(other) => return Err(format!("`--at` takes `top` or `end`, not `{other}`")),
+    };
+    let section = match (options.value("section"), at) {
+        (Some(section), _) => section,
+        (None, edit::At::Top) => "Now",
+        (None, edit::At::End) => "Next",
     };
     if at == edit::At::Top && !section.eq_ignore_ascii_case("Now") {
         return Err(format!(
@@ -1335,7 +1345,7 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
     }
 
     #[test]
-    fn a_new_task_takes_the_next_id_and_joins_the_end_of_the_order() {
+    fn a_new_task_joins_next_and_leaves_the_order_alone() {
         let root = project("add", STATUS, BACKLOG, None);
         run(&root, &["add", "--phase", "S", "--files", "src/b.rs", "--why", "1446 lines", "the pipelines move"])
             .expect("a task is added");
@@ -1343,10 +1353,27 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         assert!(backlog.contains("- `[ ]` **S15** the pipelines move"), "{backlog}");
         assert!(backlog.contains("  Why: 1446 lines"), "{backlog}");
         let added = backlog.find("**S15**").expect("S15 is there");
-        let last = backlog.find("**S14**").expect("S14 is there");
-        assert!(added > last, "the new task joins the end: {backlog}");
+        let next = backlog.find("## Next").expect("Next is there");
+        assert!(added > next, "the new task joins `## Next`: {backlog}");
         let status = text(&root, "plan/STATUS.md");
         assert!(status.contains("task=P6"), "the current task does not change: {status}");
+        crate::check_with(&root, &FakeGit).expect("the plan is still valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_section_named_beside_the_end_puts_the_task_there() {
+        let root = project("add-now", STATUS, BACKLOG, None);
+        run(
+            &root,
+            &["add", "--section", "Now", "--at", "end", "--phase", "S", "--files", "src/b.rs", "the pipelines move"],
+        )
+        .expect("a task joins the order");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        let added = backlog.find("**S15**").expect("S15 is there");
+        let last = backlog.find("**S14**").expect("S14 is there");
+        let bugs = backlog.find("## Bugs").expect("Bugs is there");
+        assert!(added > last && added < bugs, "the new task joins the end of the order: {backlog}");
         crate::check_with(&root, &FakeGit).expect("the plan is still valid");
         let _ = std::fs::remove_dir_all(&root);
     }

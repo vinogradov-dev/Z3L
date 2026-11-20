@@ -48,7 +48,7 @@ table, so one help lists everything.
 | `task [<id>]` | one task in full: fields, files with line counts and last commits, map rows, notes, `RELATED`, debt, questions, ADRs, the closing commit |
 | `task list` | one line per task, filtered by `--section`, `--status`, `--phase` and `--grep` |
 | `task --md` / `--paths` | the same task for an agent, or one path per line for a shell loop |
-| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none |
+| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none. `add` lands an entry at the end of `## Next` unless `--section` says otherwise, and `--at top` is the interjection: it implies `## Now` and points `state` at the new task |
 | `task phase <L> --name <text>` / `task phase --declare L=text …` | the phase legend: one clause per id prefix, declared or updated in the same gated write; several letters travel in one call because a plan whose ids name an undeclared phase is refused |
 | `state set k=v` / `state streams` / `state next` / `state where` | one field of the `STATE:` line, the `STREAMS:` declaration (`state streams agent=J catalog=O`, no pairs puts the plan back on one stream), the `## Next` paragraph, or the `## Where we are` prose; `state next --task <id>` moves the paragraph and the current task in one write |
 | `file <plan/map.md\|…>` | one reference file (`map`, `debt`, `questions`, `refactor`, `rename`, the template) through the same gate and diff |
