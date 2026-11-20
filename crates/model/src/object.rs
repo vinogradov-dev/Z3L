@@ -18,6 +18,9 @@ use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue}
 /// Largest number of features in a constructive object.
 pub const MAX_OBJECT_FEATURES: usize = 32;
 
+/// Largest number of rings in one contour set.
+pub const MAX_CONTOURS: usize = 64;
+
 /// Serialized form of [`Extrude`]; validation happens in its `TryFrom` implementation.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -183,6 +186,123 @@ impl TryFrom<ConstructiveWire> for Constructive {
     }
 }
 
+/// Serialized form of [`Contours`]; validation happens in its `TryFrom` implementation.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContoursWire {
+    paths: Vec<Path>,
+}
+
+/// A flat drawing of several closed rings: one contour boolean's result.
+///
+/// A boolean of two drawn figures leaves one piece, several pieces, or nothing. Several pieces are
+/// this payload: a leaf that draws its rings and has no solid, so nothing extrudes it yet — the
+/// area between its rings is derived on read, not stored (G4). Each ring is closed and encloses
+/// material; a hole is not a ring of the set but an area, which this payload does not carry.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ContoursWire")]
+pub struct Contours {
+    paths: Vec<Path>,
+}
+
+impl Contours {
+    /// Validates the rings and stores them in the order they are given.
+    pub fn new(paths: Vec<Path>) -> Result<Self, ContoursError> {
+        if paths.is_empty() {
+            return Err(ContoursError::Empty);
+        }
+        if paths.len() > MAX_CONTOURS {
+            return Err(ContoursError::Count { count: paths.len(), max: MAX_CONTOURS });
+        }
+        for (index, path) in paths.iter().enumerate() {
+            if !path.is_closed() {
+                return Err(ContoursError::OpenRing { index });
+            }
+            path.to_contour().map_err(|error| ContoursError::Ring { index, error })?;
+        }
+        Ok(Self { paths })
+    }
+
+    /// The rings, in the order they were stored.
+    pub fn paths(&self) -> &[Path] {
+        &self.paths
+    }
+
+    /// How many rings the drawing holds.
+    pub fn len(&self) -> usize {
+        self.paths.len()
+    }
+
+    /// Whether the drawing holds no ring; always false, because a set needs at least one.
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    /// The box of every ring together, in micrometres.
+    ///
+    /// A set is never empty, so the box is always at least one ring's own box.
+    pub fn bounds_micrometres(&self) -> ([i64; 2], [i64; 2]) {
+        let mut bounds: Option<([i64; 2], [i64; 2])> = None;
+        for path in &self.paths {
+            let (min, max) = path.bounds_micrometres();
+            bounds = Some(match bounds {
+                None => (min, max),
+                Some((low, high)) => {
+                    ([low[0].min(min[0]), low[1].min(min[1])], [high[0].max(max[0]), high[1].max(max[1])])
+                }
+            });
+        }
+        bounds.unwrap_or(([0; 2], [0; 2]))
+    }
+
+    /// The same rings moved by a flat offset.
+    pub fn translated(&self, offset: [Length; 2]) -> Result<Self, ContoursError> {
+        let mut paths = Vec::with_capacity(self.paths.len());
+        for (index, path) in self.paths.iter().enumerate() {
+            paths.push(path.translated(offset).map_err(|error| ContoursError::Ring { index, error })?);
+        }
+        Self::new(paths)
+    }
+}
+
+impl TryFrom<ContoursWire> for Contours {
+    type Error = ContoursError;
+
+    fn try_from(wire: ContoursWire) -> Result<Self, Self::Error> {
+        Self::new(wire.paths)
+    }
+}
+
+/// A validation failure of a contour set.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ContoursError {
+    /// The set holds no ring.
+    #[error("a contour set needs at least one ring")]
+    Empty,
+    /// The set holds more rings than one drawing may carry.
+    #[error("a contour set holds at most {max} rings, got {count}")]
+    Count {
+        /// The supplied ring count.
+        count: usize,
+        /// The accepted maximum.
+        max: usize,
+    },
+    /// One ring is an open chain, which encloses no material.
+    #[error("ring {index} of a contour set is an open chain")]
+    OpenRing {
+        /// Position of the rejected ring in the set.
+        index: usize,
+    },
+    /// One ring is not a ring the document accepts.
+    #[error("ring {index} of a contour set is not a valid ring: {error}")]
+    Ring {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The ring rule the ring broke.
+        error: PathError,
+    },
+}
+
 /// A validation failure of a constructive object.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConstructiveError {
@@ -237,6 +357,8 @@ pub enum Geometry {
     Primitive(Primitive),
     /// A flat, open or closed chain of drawn segments.
     Path(Path),
+    /// A flat drawing of several closed rings, the result of a contour boolean.
+    Contours(Contours),
 }
 
 impl Geometry {
@@ -244,7 +366,7 @@ impl Geometry {
     pub const fn as_mesh(&self) -> Option<&Mesh> {
         match self {
             Self::Mesh(mesh) => Some(mesh),
-            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -252,7 +374,7 @@ impl Geometry {
     pub const fn as_mesh_mut(&mut self) -> Option<&mut Mesh> {
         match self {
             Self::Mesh(mesh) => Some(mesh),
-            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -260,7 +382,7 @@ impl Geometry {
     pub const fn as_constructive(&self) -> Option<&Constructive> {
         match self {
             Self::Constructive(constructive) => Some(constructive),
-            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -268,7 +390,7 @@ impl Geometry {
     pub const fn as_constructive_mut(&mut self) -> Option<&mut Constructive> {
         match self {
             Self::Constructive(constructive) => Some(constructive),
-            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -276,7 +398,7 @@ impl Geometry {
     pub const fn as_primitive(&self) -> Option<&Primitive> {
         match self {
             Self::Primitive(primitive) => Some(primitive),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -284,7 +406,7 @@ impl Geometry {
     pub const fn as_primitive_mut(&mut self) -> Option<&mut Primitive> {
         match self {
             Self::Primitive(primitive) => Some(primitive),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -292,7 +414,7 @@ impl Geometry {
     pub const fn as_path(&self) -> Option<&Path> {
         match self {
             Self::Path(path) => Some(path),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Contours(_) => None,
         }
     }
 
@@ -300,7 +422,15 @@ impl Geometry {
     pub const fn as_path_mut(&mut self) -> Option<&mut Path> {
         match self {
             Self::Path(path) => Some(path),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Contours(_) => None,
+        }
+    }
+
+    /// The ring set, when the payload is a contour set.
+    pub const fn as_contours(&self) -> Option<&Contours> {
+        match self {
+            Self::Contours(contours) => Some(contours),
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
         }
     }
 }
@@ -309,6 +439,10 @@ impl Geometry {
 ///
 /// A panel is not an object: panel rules are manufacturing rules. An object is a leaf in v1, so
 /// several parts are grouped by wrapping them in a container.
+///
+/// An object may be marked as a **tool**: it takes part in a contour boolean and survives it, where
+/// an unmarked operand is consumed. The mark is a property of the object and nothing else — a tool
+/// is not linked to what the boolean produced, so its later shape never reaches the result.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
@@ -319,11 +453,12 @@ pub struct Object {
     pivot_local: PivotLocal,
     #[serde(default)]
     properties: Properties,
+    tool: bool,
     geometry: Geometry,
 }
 
 impl Object {
-    /// Creates an object with a zero pivot.
+    /// Creates an object with a zero pivot; a new object is not a tool.
     pub fn new(id: Id, name: impl Into<String>, placement: Placement, geometry: Geometry) -> Self {
         Self {
             id,
@@ -331,6 +466,7 @@ impl Object {
             placement,
             pivot_local: PivotLocal::ZERO,
             properties: Properties::new(),
+            tool: false,
             geometry,
         }
     }
@@ -383,6 +519,16 @@ impl Object {
     /// Replaces the stable id when a subtree is copied.
     pub(crate) fn set_node_id(&mut self, id: Id) {
         self.id = id;
+    }
+
+    /// Whether the object is marked as a tool, so a contour boolean keeps it.
+    pub const fn is_tool(&self) -> bool {
+        self.tool
+    }
+
+    /// Marks or unmarks the object as a tool.
+    pub(crate) fn set_tool(&mut self, tool: bool) {
+        self.tool = tool;
     }
 
     /// The typed properties of this object.
@@ -635,6 +781,70 @@ mod tests {
         assert_eq!(object.geometry().as_mesh(), Some(&mesh));
         assert!(object.geometry().as_primitive().is_none(), "collapse drops the parameters");
         assert_eq!(project.set_object_primitive(id, replacement), Err(ProjectError::NotAPrimitiveObject { id }));
+    }
+
+    /// A closed rectangle ring, 100 x 50 mm at the given offset.
+    fn rectangle_ring(x: i64, y: i64) -> Path {
+        Path::rectangle([millimetres(x), millimetres(y)], [millimetres(x + 100), millimetres(y + 50)])
+            .expect("a rectangle ring")
+    }
+
+    #[test]
+    fn a_contour_set_holds_closed_rings_and_moves_as_one() {
+        let set = Contours::new(vec![rectangle_ring(0, 0), rectangle_ring(200, 0)]).expect("two rings");
+        assert_eq!(set.len(), 2, "both rings are kept");
+        assert!(!set.is_empty());
+        assert_eq!(set.bounds_micrometres(), ([0, 0], [300_000, 50_000]), "the box holds both rings");
+
+        let moved = set.translated([millimetres(10), millimetres(5)]).expect("a flat move");
+        assert_eq!(moved.bounds_micrometres(), ([10_000, 5_000], [310_000, 55_000]));
+
+        assert_eq!(Contours::new(Vec::new()), Err(ContoursError::Empty), "a set needs a ring");
+        let open = sample_path();
+        assert_eq!(Contours::new(vec![open]), Err(ContoursError::OpenRing { index: 0 }));
+        let many = vec![rectangle_ring(0, 0); MAX_CONTOURS + 1];
+        assert!(matches!(Contours::new(many), Err(ContoursError::Count { .. })));
+    }
+
+    #[test]
+    fn a_contour_set_round_trips_and_a_set_object_reports_its_rings() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let root = project.root().id();
+        let set = Contours::new(vec![rectangle_ring(0, 0), rectangle_ring(200, 0)]).expect("two rings");
+        let id = project
+            .add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set.clone()))
+            .expect("a set object is added like any other object");
+        assert_eq!(project.object_contours(id), Ok(&set));
+        assert_eq!(project.object_path(id), Err(ProjectError::NotAPathObject { id }));
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        let decoded: Project = serde_json::from_str(&text).expect("deserialize");
+        assert_eq!(decoded.object_contours(id), Ok(&set), "the set survives the file");
+    }
+
+    #[test]
+    fn the_tool_mark_is_an_object_attribute_and_travels_in_the_file() {
+        let mut project = crate::testing::sample_project();
+        let root = project.root().id();
+        let id = project
+            .add_object(root, "Cutter", Placement::IDENTITY, Geometry::Path(rectangle_ring(0, 0)))
+            .expect("a path object");
+        assert!(!project.object(id).expect("object").is_tool(), "a new object is not a tool");
+        project.set_object_tool(id, true).expect("mark the object");
+        assert!(project.object(id).expect("object").is_tool());
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        assert!(text.contains("\"tool\":true"), "the mark is a field of the object");
+        let decoded: Project = serde_json::from_str(&text).expect("deserialize");
+        assert!(decoded.object(id).expect("object").is_tool(), "the mark survives the file");
+
+        // A panel is a node but not a geometry object, so it carries no such mark.
+        let panel = project.root().children().first().expect("the shelf").id();
+        assert_eq!(project.set_object_tool(panel, true), Err(ProjectError::NotAnObject { id: panel }));
+        // A node nobody has is a missing node, not a wrong kind.
+        let missing = Id::new(900).expect("id");
+        assert_eq!(project.set_object_tool(missing, true), Err(ProjectError::NodeNotFound { id: missing }));
     }
 
     fn sample_path() -> Path {

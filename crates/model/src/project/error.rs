@@ -213,6 +213,18 @@ pub enum ProjectError {
         /// The node that was asked.
         id: Id,
     },
+    /// The node is not a contour-set object, so it has no set of rings.
+    #[error("node {id} is not a contour set")]
+    NotAContoursObject {
+        /// The node that was asked.
+        id: Id,
+    },
+    /// The node is not a free-form geometry object, so it carries no object attribute.
+    #[error("node {id} is not a geometry object")]
+    NotAnObject {
+        /// The node that was asked.
+        id: Id,
+    },
     /// The node is not a contour panel, so it has no outline ring to replace.
     #[error("panel {id} is not a contour panel")]
     PanelNotContour {

@@ -518,7 +518,7 @@ fn object_collapse_run(
         Geometry::Primitive(primitive) => {
             evaluate_primitive(primitive).map_err(|error| evaluation(error.to_string()))?
         }
-        Geometry::Mesh(_) | Geometry::Path(_) => {
+        Geometry::Mesh(_) | Geometry::Path(_) | Geometry::Contours(_) => {
             return Err(ProjectError::NotDerivedObject { id: params.object }.into());
         }
     };

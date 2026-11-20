@@ -133,7 +133,9 @@ impl Body {
             }
             Geometry::Path(path) => bounds_centre(&path.to_contour().ok()?)?,
             Geometry::Primitive(Primitive::Cone(_)) => DVec2::ZERO,
-            Geometry::Mesh(_) | Geometry::Primitive(Primitive::Sphere(_)) => return None,
+            // A contour set is several rings, so there is no one profile to pull yet: a set is
+            // extruded area by area, which is a later change (G4).
+            Geometry::Mesh(_) | Geometry::Primitive(Primitive::Sphere(_)) | Geometry::Contours(_) => return None,
         };
         let placement = project.world_placement(object)?;
         let axis_origin = placement.transform_point(DVec3::new(centre.x, centre.y, 0.0));

@@ -596,14 +596,16 @@ impl<'a> Evaluation<'a> {
             .map_err(|error| format!("{}: {error}", object.name()))?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
         let mut bounds = Bounds::empty();
-        // A path has no solid: it is drawn as an unlit chain of line segments, and its points are
-        // sampled from the same analytic segments a later extrusion uses. The chain leaves its
-        // colour to the frame, so a theme switch repaints it without a rebuild.
-        if let Some(points) = evaluated.polyline() {
-            for point in points.iter() {
-                bounds.include_point(transform.transform_point3(*point));
+        // A drawing has no solid: it is drawn as unlit chains of line segments, one chain per ring,
+        // and their points are sampled from the same analytic segments a later extrusion uses. A
+        // chain leaves its colour to the frame, so a theme switch repaints it without a rebuild.
+        if !evaluated.polylines().is_empty() {
+            for points in evaluated.polylines() {
+                for point in points.iter() {
+                    bounds.include_point(transform.transform_point3(*point));
+                }
+                self.frame.push_polyline(Polyline::in_ink(object.id(), Arc::clone(points), transform));
             }
-            self.frame.push_polyline(Polyline::in_ink(object.id(), Arc::clone(points), transform));
             return Ok(bounds);
         }
         if let Some(mesh) = evaluated.body() {

@@ -189,7 +189,7 @@ fn geometry_shape(geometry: &Geometry) -> Option<Shape> {
         Geometry::Primitive(primitive) => primitive_shape(primitive),
         // A constructive body's faces come from the kernel and a drawn path has no solid yet: neither
         // is this layer's to build, so the caller keeps the box reading.
-        Geometry::Constructive(_) | Geometry::Path(_) => None,
+        Geometry::Constructive(_) | Geometry::Path(_) | Geometry::Contours(_) => None,
     }
 }
 

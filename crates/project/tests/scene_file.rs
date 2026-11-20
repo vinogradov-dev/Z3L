@@ -89,6 +89,11 @@ fn the_golden_file_carries_every_node_kind() {
     assert_eq!(path.entries().len(), 1, "the chain keeps its segment");
     assert!(!path.is_closed(), "the drawn chain is open");
 
+    let union = document.object(id(10)).expect("the contour set loads");
+    let contours = union.geometry().as_contours().expect("a contour-set payload");
+    assert_eq!(contours.len(), 2, "the drawing keeps both rings");
+    assert!(union.is_tool(), "the flag of an object travels in the file");
+
     let ball = document.object(id(5)).expect("the primitive loads");
     assert!(ball.geometry().as_primitive().is_some(), "a primitive stores its parameters");
 

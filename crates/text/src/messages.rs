@@ -406,6 +406,7 @@ messages! {
     PrimitiveBadgePrimitive = ["Primitive", "Примитив"],
     PrimitiveBadgeConstructive = ["Constructive", "Конструктив"],
     PrimitiveBadgePath = ["Path", "Путь"],
+    PrimitiveBadgeContours = ["Contours", "Контуры"],
 
     // ── Panel card ──────────────────────────────────────────────────────────
     PanelEditingInViewport = [
@@ -699,6 +700,7 @@ messages! {
     TreeBadgeMesh = ["mesh", "сетка"],
     TreeBadgeContour = ["contour", "контур"],
     TreeBadgePath = ["path", "путь"],
+    TreeBadgeContours = ["contours", "контуры"],
     TreeBadgeSphere = ["sphere", "сфера"],
     TreeBadgeCone = ["cone", "конус"],
     TreeAddChild = ["Add child", "Добавить дочерний"],

@@ -413,6 +413,19 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
             height: None,
             primitive: None,
         }),
+        // A set has no single ring to reshape and no solid to measure: it is the drawing a contour
+        // boolean left, and the card names it rather than inventing a shape (G3).
+        Geometry::Contours(_) => Some(ObjectSummary {
+            name: object.name().to_owned(),
+            kind: Message::PrimitiveBadgeContours,
+            is_mesh: false,
+            vertices: 0,
+            faces: 0,
+            contour: None,
+            path: None,
+            height: None,
+            primitive: None,
+        }),
     }
 }
 

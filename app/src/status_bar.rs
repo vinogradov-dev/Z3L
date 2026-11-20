@@ -153,6 +153,7 @@ impl StatusSummary {
                         Geometry::Constructive(_) => Message::PrimitiveBadgeConstructive,
                         Geometry::Primitive(_) => Message::PrimitiveBadgePrimitive,
                         Geometry::Path(_) => Message::PrimitiveBadgePath,
+                        Geometry::Contours(_) => Message::PrimitiveBadgeContours,
                     }
                     .text(lang)
                     .to_owned(),

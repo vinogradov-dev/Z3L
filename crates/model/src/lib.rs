@@ -63,7 +63,10 @@ pub use ids::{ContourSegmentId, EdgeId, Id, ItemId, ItemIdError, MachiningId, Re
 pub use light::{LightError, LightKind, LightNode};
 pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshError};
 pub use node::Node;
-pub use object::{Constructive, ConstructiveError, Extrude, Feature, Geometry, MAX_OBJECT_FEATURES, Object};
+pub use object::{
+    Constructive, ConstructiveError, Contours, ContoursError, Extrude, Feature, Geometry, MAX_CONTOURS,
+    MAX_OBJECT_FEATURES, Object,
+};
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,
     DerivedHoles, Drilling, EdgeBanding, EdgeRef, EntryFace, FaceSide, Hole, HoleDiagnostic, HoleError,

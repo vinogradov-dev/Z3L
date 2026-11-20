@@ -13,7 +13,7 @@ use units::Length;
 
 use crate::placement::lengths_from_millimetres;
 use crate::tree::panel_bounds;
-use crate::{Contour, ContourError, Mesh, Node, Path, PathError, Placement, PlacementError, RectCorner};
+use crate::{Contour, ContourError, Contours, Mesh, Node, Path, PathError, Placement, PlacementError, RectCorner};
 
 /// The content point a newly created node puts at its local zero.
 ///
@@ -160,6 +160,24 @@ impl Anchored for Path {
             return Err(FrameError::OffPlane { micrometres: z.micrometres() });
         }
         Ok(self.translated([x, y])?)
+    }
+}
+
+impl Anchored for Contours {
+    fn anchor(&self, strategy: FrameAnchor) -> Result<[Length; 3], FrameError> {
+        let (min, max) = self.bounds_micrometres();
+        match strategy {
+            FrameAnchor::CreationOrigin | FrameAnchor::CenterOfBounds => Ok(flat_center(min, max)),
+            FrameAnchor::BBoxBaseCorner(corner) => Ok(flat_corner(corner, min, max)),
+        }
+    }
+
+    fn shifted(&self, offset: [Length; 3]) -> Result<Self, FrameError> {
+        let [x, y, z] = offset;
+        if !z.is_zero() {
+            return Err(FrameError::OffPlane { micrometres: z.micrometres() });
+        }
+        self.translated([x, y]).map_err(|_| FrameError::OutOfRange)
     }
 }
 

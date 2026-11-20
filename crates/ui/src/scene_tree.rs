@@ -323,6 +323,7 @@ fn show_object(
         },
         model::Geometry::Constructive(_) => Message::TreeBadgeContour,
         model::Geometry::Path(_) => Message::TreeBadgePath,
+        model::Geometry::Contours(_) => Message::TreeBadgeContours,
     };
     let label = RichText::new(format!("{}  [{}]", object.name(), kind.text(lang)));
     let response = row(ui, id, label, selection.contains(id), flags, true);

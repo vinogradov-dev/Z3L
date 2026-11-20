@@ -145,6 +145,31 @@ impl Project {
         Ok(next_revision)
     }
 
+    /// The contours of a contour-set object.
+    ///
+    /// A node with another payload is [`ProjectError::NotAContoursObject`].
+    pub fn object_contours(&self, id: Id) -> Result<&Contours, ProjectError> {
+        let object = self.object(id).ok_or(ProjectError::NodeNotFound { id })?;
+        object.geometry().as_contours().ok_or(ProjectError::NotAContoursObject { id })
+    }
+
+    /// Marks or unmarks an object as a tool, and bumps the revision once.
+    ///
+    /// The mark decides whether a contour boolean consumes the object or leaves it in the tree; it
+    /// changes nothing else about the object. A node that is not a geometry object is refused.
+    pub fn set_object_tool(&mut self, id: Id, tool: bool) -> Result<Revision, ProjectError> {
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        let Some(object) = node.as_object_mut() else {
+            return Err(ProjectError::NotAnObject { id });
+        };
+        object.set_tool(tool);
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// The parameters of a parametric primitive object.
     ///
     /// A missing node or an object with another payload is an error the user can read; no shape is

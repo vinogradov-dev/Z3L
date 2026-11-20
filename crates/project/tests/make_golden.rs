@@ -63,9 +63,14 @@ fn scene() -> SceneFile {
         true,
     )
     .expect("a closed ring");
-    let constructive = Constructive::extrude(closed, millimetres(18)).expect("an extrusion");
+    let constructive = Constructive::extrude(closed.clone(), millimetres(18)).expect("an extrusion");
     let drawn = Path::polyline(vec![[Length::ZERO, Length::ZERO], [millimetres(120), millimetres(40)]], false)
         .expect("an open path");
+    // A contour boolean that leaves several pieces stores them as one drawing: the golden carries
+    // the ring set, so a file written by this build is a file the next build loads.
+    let second_ring =
+        Path::rectangle([millimetres(200), Length::ZERO], [millimetres(320), millimetres(80)]).expect("a second ring");
+    let contours = model::Contours::new(vec![closed.clone(), second_ring]).expect("a drawing of two rings");
 
     let mut drawer = Container::new(id(8), "Drawer", Placement::IDENTITY, vec![front.into()]);
     drawer.set_component_marker(true).expect("the drawer is a component");
@@ -77,6 +82,7 @@ fn scene() -> SceneFile {
             shelf.into(),
             Object::new(id(3), "Top", Placement::IDENTITY, Geometry::Constructive(constructive)).into(),
             Object::new(id(4), "Sketch", Placement::IDENTITY, Geometry::Path(drawn)).into(),
+            Object::new(id(10), "Union", Placement::IDENTITY, Geometry::Contours(contours)).into(),
             Object::new(
                 id(5),
                 "Ball",
@@ -130,6 +136,9 @@ fn scene() -> SceneFile {
         .set_property(id(2), "plug.confirmat", model::PropertyValue::item(ItemId::new(712, 34).expect("a record")))
         .expect("the shelf names the plug a person chose");
     project.set_active_camera(Some(id(6))).expect("an active camera");
+    // An object marked as a tool survives the boolean it took part in, and the flag travels in the
+    // file: the golden carries one marked object so the field is exercised both ways.
+    project.set_object_tool(id(10), true).expect("the union is a tool");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
     // (ADR 0159).

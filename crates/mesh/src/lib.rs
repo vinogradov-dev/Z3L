@@ -325,7 +325,7 @@ pub struct NodeGeometry {
     band_bounds: Vec<Option<Aabb>>,
     band_edges: Vec<Arc<[u32]>>,
     band_all_edges: Vec<Arc<[u32]>>,
-    polyline: Option<Arc<[DVec3]>>,
+    polylines: Vec<Arc<[DVec3]>>,
 }
 
 impl NodeGeometry {
@@ -373,14 +373,17 @@ impl NodeGeometry {
         &self.band_all_edges
     }
 
-    /// The line chain of a path object, when the node has no solid.
-    pub fn polyline(&self) -> Option<&Arc<[DVec3]>> {
-        self.polyline.as_ref()
+    /// The line chains of a drawing object, when the node has no solid.
+    ///
+    /// A path is one chain and a contour set is one chain per ring, in the order the rings are
+    /// stored. A node with a solid has none.
+    pub fn polylines(&self) -> &[Arc<[DVec3]>] {
+        &self.polylines
     }
 
     /// Whether the node has nothing to draw.
     pub fn is_empty(&self) -> bool {
-        self.body.is_none() && self.bands.is_empty() && self.polyline.is_none()
+        self.body.is_none() && self.bands.is_empty() && self.polylines.is_empty()
     }
 }
 
@@ -458,6 +461,7 @@ enum Payload {
     Constructive(Constructive),
     Primitive(Primitive),
     Path(Path),
+    Contours(model::Contours),
 }
 
 /// One panel to evaluate: the node, its resolved geometry and the inputs its derivation reads.
@@ -700,7 +704,7 @@ impl EvaluationCache {
             band_bounds,
             band_edges,
             band_all_edges,
-            polyline: None,
+            polylines: Vec::new(),
         };
         self.store(id, revision, Payload::Panel(inputs), geometry.clone(), holes, Some(HoleInputs::capture(request)));
         Ok(geometry)
@@ -736,6 +740,7 @@ impl EvaluationCache {
                 (Payload::Constructive(cached), model::Geometry::Constructive(current)) => cached == current,
                 (Payload::Primitive(cached), model::Geometry::Primitive(current)) => cached == current,
                 (Payload::Path(cached), model::Geometry::Path(current)) => cached == current,
+                (Payload::Contours(cached), model::Geometry::Contours(current)) => cached == current,
                 _ => false,
             };
             if unchanged {
@@ -757,12 +762,16 @@ impl EvaluationCache {
                 let data = primitive_mesh(primitive)?;
                 (Payload::Primitive(primitive.clone()), solid_geometry(data))
             }
-            model::Geometry::Path(path) => {
-                let points = path_points(path)?;
-                (
-                    Payload::Path(path.clone()),
-                    NodeGeometry { polyline: Some(Arc::from(points)), ..NodeGeometry::default() },
-                )
+            model::Geometry::Path(path) => (
+                Payload::Path(path.clone()),
+                NodeGeometry { polylines: vec![Arc::from(path_points(path)?)], ..NodeGeometry::default() },
+            ),
+            model::Geometry::Contours(contours) => {
+                let mut polylines = Vec::with_capacity(contours.paths().len());
+                for path in contours.paths() {
+                    polylines.push(Arc::from(path_points(path)?));
+                }
+                (Payload::Contours(contours.clone()), NodeGeometry { polylines, ..NodeGeometry::default() })
             }
         };
         self.store(id, revision, payload, evaluated.clone(), DerivedHoles::default(), None);
@@ -1696,7 +1705,34 @@ mod tests {
         let geometry = cache.object(Revision::ZERO, &object).expect("path chain");
         cache.finish();
         assert!(geometry.body().is_none());
-        assert_eq!(geometry.polyline().expect("chain").len(), 3);
+        assert_eq!(geometry.polylines().first().expect("chain").len(), 3);
+    }
+
+    #[test]
+    fn a_contour_set_is_drawn_as_one_chain_per_ring() {
+        let ring = |x: i64| {
+            Path::rectangle([millimetres(x), millimetres(0)], [millimetres(x + 100), millimetres(60)]).expect("a ring")
+        };
+        let set = model::Contours::new(vec![ring(0), ring(200)]).expect("two rings");
+        let object = Object::new(Id::new(4).expect("id"), "Union", Placement::IDENTITY, model::Geometry::Contours(set));
+        let mut cache = EvaluationCache::new();
+        cache.start();
+        let geometry = cache.object(Revision::ZERO, &object).expect("the rings draw");
+        cache.finish();
+        assert!(geometry.body().is_none(), "a set has no solid");
+        assert_eq!(geometry.polylines().len(), 2, "one chain per ring");
+        assert_eq!(
+            geometry.polylines().first().expect("chain").len(),
+            5,
+            "a closed chain repeats its first point, so a rectangle samples five"
+        );
+
+        // The set is a payload like any other: an unchanged one is reused, a changed one re-derives.
+        let revision = Revision::ZERO.checked_next().expect("revision");
+        cache.start();
+        let again = cache.object(revision, &object).expect("the same set");
+        cache.finish();
+        assert!(Arc::ptr_eq(&geometry.polylines()[0], &again.polylines()[0]), "an unchanged set is reused");
     }
 
     /// A project whose root holds two panels with distinct ids, for the invalidation tests.

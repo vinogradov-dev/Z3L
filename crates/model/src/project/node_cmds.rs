@@ -455,6 +455,15 @@ fn rebase_node_origin(node: Node, strategy: FrameAnchor) -> Result<Node, Project
                     object.set_pivot(pivot);
                     Ok(Node::Object(object))
                 }
+                Geometry::Contours(contours) => {
+                    let rebased =
+                        rebase_origin_at(contours.clone(), object.placement(), strategy).map_err(rebase_error)?;
+                    let pivot = shift_pivot(pivot, rebased.anchor, id)?;
+                    *object.geometry_mut() = Geometry::Contours(rebased.content);
+                    object.set_placement(rebased.placement);
+                    object.set_pivot(pivot);
+                    Ok(Node::Object(object))
+                }
                 Geometry::Primitive(_) => Err(ProjectError::OriginRebase { id }),
             }
         }
