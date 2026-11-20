@@ -292,7 +292,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    is refused with the field error, because the layout is genuinely broken; every existing
    scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
   `files: crates/model/src/project/wire.rs,crates/project/tests/scene_file.rs,crates/model/src/project/mod.rs`
-
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
@@ -531,6 +530,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 
 ## Done
+
+- `[x]` **T11** W2 a boolean whose tool misses the body freezes the scene, and a cutter cannot enter the body it cuts
+  Why: The owner's scene froze after a boolean whose tool no longer met the body: one node the
+   kernel refused failed the whole evaluation, so the picture stayed at the last frame that
+   built and a move showed only its handles. The placement guard also refused the move that a
+   boolean needs, because a cutter could not enter the body it cuts.
+  Shape: A node the kernel refuses is a diagnostic on that node and the rest of the scene keeps
+   drawing; the armed boolean refuses a preview that is not a solid; a boolean pair is one
+   shape for the guard and the drag, so the cutter may be carried into the body it cuts.
+  Done: Tests: a body whose boolean leaves no solid is reported and the rest of the scene draws
+   and follows a move; the message goes when the scene builds again; an armed boolean whose
+   result is not a solid refuses Enter and writes nothing; a cutter sinks into the body it cuts
+   while every other part keeps the resting rule
+  `files: app/src/scene_build.rs,app/src/document.rs,crates/model/src/project/move_query.rs` — `5b3cef7`
 
 - `[x]` **J4** a batch is one edit scope, and a dry run is a plan a person reads
   Why: ADR 0183 gave a recipe one edit scope, all or nothing and a `dry_run` that writes
