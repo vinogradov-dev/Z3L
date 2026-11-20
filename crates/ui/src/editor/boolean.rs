@@ -8,13 +8,13 @@
 //! nothing and costs no undo entry.
 //!
 //! The rings come from the selection, so a plain click and a Shift-click pick operands with the
-//! habit every other selection already has. A ring that is not a closed path never joins: a panel is
-//! not an operand and neither is an open chain or a solid, and the preview's own refusal says which
-//! ring failed.
+//! habit every other selection already has. Only a node that draws one closed ring joins: an open
+//! chain, a primitive, a mesh and a panel draw none, while an extruded body joins through the
+//! profile it grew from (X98), and the preview's own refusal says which ring failed.
 //!
 //! Changes when: a contour boolean stops being a mode, or its picks stop being the selection.
 
-use engine::{ContourBoolean, ContourBooleanPlan, ContourOp, Session};
+use engine::{ContourBoolean, ContourBooleanPlan, ContourOp, Session, is_contour_operand};
 use model::{Id, Node, Project};
 use text::{Lang, Message};
 
@@ -86,7 +86,7 @@ impl Editor {
         let Some(base) = self.selection.primary() else {
             return false;
         };
-        if !is_ring(project, base) {
+        if !is_contour_operand(project, base) {
             return false;
         }
         self.leave_pointer_modes();
@@ -120,7 +120,7 @@ impl Editor {
         let (base, op, built_at) = (arm.base, arm.op, arm.revision);
         let project = session.project();
         let operands: Vec<Id> =
-            self.selection.ids().iter().copied().filter(|id| *id != base && is_ring(project, *id)).collect();
+            self.selection.ids().iter().copied().filter(|id| *id != base && is_contour_operand(project, *id)).collect();
         let revision = project.revision().get();
         if operands == arm.operands && revision == built_at {
             return false;
@@ -173,11 +173,6 @@ impl Editor {
         self.select_created(created);
         created.ok_or_else(|| Message::BooleanNeedsRing.text(lang).to_owned())
     }
-}
-
-/// Whether the node is a closed ring a boolean can read.
-fn is_ring(project: &Project, id: Id) -> bool {
-    project.object_path(id).is_ok_and(|path| path.is_closed() && path.to_contour().is_ok())
 }
 
 /// `word` with the first free number, so a second boolean of one drawing does not collide.

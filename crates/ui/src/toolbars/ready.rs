@@ -38,6 +38,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         product_open,
         selected,
         selected_path,
+        selected_ring,
         active,
         owns_view,
         grid,
@@ -214,7 +215,9 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         // cell is off until a closed ring is selected, so the hint says what to do instead of
         // arming a tool with nothing to combine (G3, ADR 0194).
         ToolKind::ContourBoolean(op) => {
-            let enabled = selected_path == Some(true);
+            // The ring, not the path: a body's profile is the ring it grew from, so the three cells
+            // enable on a body exactly as on the drawing it was extruded from (X98).
+            let enabled = selected_ring;
             Ready {
                 enabled,
                 armed: is_armed(active, kind),

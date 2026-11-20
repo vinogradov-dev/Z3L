@@ -277,26 +277,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    a dark material shows the base reading as behind the working copy; `cargo xtask ui-rules` is
    green with the contour module no longer an exception, and `cargo xtask ci` is green.
   `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,plan/debt.md`
-- `[ ]` **X98** a body's profile is a contour a boolean can take
-  Why: The extrude cell rewrites a drawn ring into a body in place (`extrude_object_path` keeps
-   the node and swaps its payload), and a boolean then refuses that node: `ring_in_base` asks
-   `Project::object_path`, which answers `NotAPathObject` for a constructive payload. The
-   maker's whole habit — draw a square, extrude it, draw a circle, cut one out of the other —
-   ends in 'node 2 is not a drawn contour'. `/home/alx/scene.z3l` holds exactly that: two
-   extruded bodies and a cone, and both bodies are refused as operands.
-  Shape: A body owns its profile: `Constructive::path` is the same closed chain a path object
-   stores, and `ContourBooleanPlan` only needs a ring in the base's frame. The operand reader
-   takes a path object or a constructive body and reads `Constructive::path` for the second, so
-   the operation works on the profile wherever the ring lives. The result stays a drawing — one
-   ring or a contour set — because a boolean over profiles is 2D; a boolean over the solids is
-   W1's feature list. The cells' readiness check reads the same helper, so the three cells
-   enable on a body exactly as on a drawing.
-  Done: Tests: a union and an intersection of two extruded bodies store a drawing whose rings
-   match the profiles, and both bodies are consumed or kept by the tool mark; a constructive
-   body and a drawn ring combine in one operation; the cells enable on a selected body and stay
-   off on a primitive, a mesh and a panel; the refusal for a node with no ring names that node.
-   `cargo xtask ci` is green.
-  `files: crates/engine/src/contour_cmds.rs,crates/model/src/object.rs,crates/ui/src/toolbars/ready.rs`
 - `[ ]` **X99** an armed boolean shows which ring is the base
   Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
    screen says which ring that is: a plain click on the second ring replaces the selection, so
@@ -606,6 +586,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 
 ## Done
+
+- `[x]` **X98** a body's profile is a contour a boolean can take
+  Why: The extrude cell rewrites a drawn ring into a body in place (`extrude_object_path` keeps
+   the node and swaps its payload), and a boolean then refuses that node: `ring_in_base` asks
+   `Project::object_path`, which answers `NotAPathObject` for a constructive payload. The
+   maker's whole habit — draw a square, extrude it, draw a circle, cut one out of the other —
+   ends in 'node 2 is not a drawn contour'. `/home/alx/scene.z3l` holds exactly that: two
+   extruded bodies and a cone, and both bodies are refused as operands.
+  Shape: A body owns its profile: `Constructive::path` is the same closed chain a path object
+   stores, and `ContourBooleanPlan` only needs a ring in the base's frame. The operand reader
+   takes a path object or a constructive body and reads `Constructive::path` for the second, so
+   the operation works on the profile wherever the ring lives. The result stays a drawing — one
+   ring or a contour set — because a boolean over profiles is 2D; a boolean over the solids is
+   W1's feature list. The cells' readiness check reads the same helper, so the three cells
+   enable on a body exactly as on a drawing.
+  Done: Tests: a union and an intersection of two extruded bodies store a drawing whose rings
+   match the profiles, and both bodies are consumed or kept by the tool mark; a constructive
+   body and a drawn ring combine in one operation; the cells enable on a selected body and stay
+   off on a primitive, a mesh and a panel; the refusal for a node with no ring names that node.
+   `cargo xtask ci` is green.
+  `files: crates/engine/src/contour_cmds.rs,crates/model/src/object.rs,crates/ui/src/toolbars/ready.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/ribbon.rs,crates/ui/src/editor/boolean.rs` — `f8411d9`
 
 - `[x]` **G3** the three contour booleans run on two closed rings and store one
   Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in

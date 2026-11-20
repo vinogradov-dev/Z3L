@@ -276,11 +276,14 @@ pub enum BooleanError {
 
 /// Reads one operand's ring into the base's flat frame.
 ///
-/// A drawing is a flat shape in its own `XY` plane, so the frame between two drawings is a turn
-/// about the origin, a move, and — for a drawing that faces down — a mirror. Any other relationship
-/// is refused: two rings that do not share a plane have no 2D overlay.
+/// An operand is a node that draws one closed chain — a path object or a constructive body, whose
+/// profile is the path it grew from ([`Geometry::profile`]) — so a body drawn and extruded is an
+/// operand exactly as the drawing it was made of (X98). A drawing is a flat shape in its own `XY`
+/// plane, so the frame between two drawings is a turn about the origin, a move, and — for a drawing
+/// that faces down — a mirror. Any other relationship is refused: two rings that do not share a
+/// plane have no 2D overlay.
 fn ring_in_base(project: &Project, base: Id, node: Id) -> Result<GeometryContour, BooleanError> {
-    let path = project.object_path(node).map_err(|_| BooleanError::NotAContour { id: node })?;
+    let path = operand_profile(project, node).ok_or(BooleanError::NotAContour { id: node })?;
     if !path.is_closed() {
         return Err(BooleanError::OpenRing { id: node });
     }
@@ -332,20 +335,32 @@ fn operands_ready(session: &Session, params: &Value, command: &'static str) -> b
     let project = session.project();
     let mut seen = BTreeSet::new();
     seen.insert(params.base);
-    if !ring_ready(project, params.base) {
+    if !is_contour_operand(project, params.base) {
         return false;
     }
     for id in &params.operands {
-        if !seen.insert(*id) || !ring_ready(project, *id) {
+        if !seen.insert(*id) || !is_contour_operand(project, *id) {
             return false;
         }
     }
     true
 }
 
-/// Whether one node is a closed ring the overlay can take.
-fn ring_ready(project: &Project, id: Id) -> bool {
-    project.object_path(id).is_ok_and(|path| path.is_closed() && path.to_contour().is_ok())
+/// The closed chain a node draws, when it draws one.
+///
+/// A path object and a constructive body both answer with their profile; a contour set, a mesh, a
+/// primitive and a node that is not an object answer with nothing.
+fn operand_profile(project: &Project, id: Id) -> Option<&Path> {
+    project.object(id).and_then(|object| object.geometry().profile())
+}
+
+/// Whether a node draws one closed ring a contour boolean can take, at any placement.
+///
+/// The three boolean cells and the armed mode both read this, so a body enables them exactly as the
+/// drawing it was extruded from does, and a node that draws no ring is off and named by the command
+/// that refuses it.
+pub fn is_contour_operand(project: &Project, id: Id) -> bool {
+    operand_profile(project, id).is_some_and(|path| path.is_closed() && path.to_contour().is_ok())
 }
 
 fn union_enabled(session: &Session, params: &Value) -> bool {
@@ -690,5 +705,153 @@ mod tests {
             .clone();
         assert_eq!(previewed, written, "the frame a preview draws is the object the ok stores");
         assert!(session.project().revision() > before, "the command itself does move the revision");
+    }
+
+    /// A project whose root holds one extruded rectangle per tuple, and those bodies' ids.
+    fn body_project(rects: &[(i64, i64, i64, i64)]) -> (Project, Vec<Id>) {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let mut ids = Vec::with_capacity(rects.len());
+        for (index, (x0, y0, x1, y1)) in rects.iter().enumerate() {
+            let id = ring(&mut project, root, &format!("Body {index}"), *x0, *y0, *x1, *y1);
+            project.extrude_object_path(id, millimetres(18)).expect("the ring becomes a body");
+            ids.push(id);
+        }
+        (project, ids)
+    }
+
+    #[test]
+    fn two_bodies_combine_by_the_profiles_they_grew_from() {
+        // The owner's habit on 2026-11-20: draw a square, extrude it, draw a second, extrude it, and
+        // cut one out of the other. A body's profile is the ring it was extruded from, so both
+        // operations read it where it stands (X98).
+        let (project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+        let mut union_session = Session::with_directory(project, sample_catalog());
+        let outcome = union_session
+            .dispatch(CONTOUR_UNION_ID, &params("Union", ids[0], &[ids[1]]))
+            .expect("two bodies unite by their profiles");
+        {
+            let project = union_session.project();
+            let path = project
+                .object(outcome.created_id().expect("the command returns the new object"))
+                .expect("the new object")
+                .geometry()
+                .as_path()
+                .expect("the union of two crossing profiles is one ring")
+                .clone();
+            assert_eq!(path.bounds_micrometres(), ([0, 0], [150_000, 75_000]), "the union keeps both extents");
+            assert!((ring_area(&path) - 8_750.0).abs() < 0.01, "the shared corner is counted once");
+            assert!(project.object(ids[0]).is_none(), "the base body is consumed");
+            assert!(project.object(ids[1]).is_none(), "the operand body is consumed");
+        }
+
+        let (project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+        let mut shared_session = Session::with_directory(project, sample_catalog());
+        let outcome = shared_session
+            .dispatch(CONTOUR_INTERSECT_ID, &params("Shared", ids[0], &[ids[1]]))
+            .expect("two bodies intersect by their profiles");
+        let project = shared_session.project();
+        let path = project
+            .object(outcome.created_id().expect("the new object"))
+            .expect("the new object")
+            .geometry()
+            .as_path()
+            .expect("the shared corner is one ring")
+            .clone();
+        assert_eq!(path.bounds_micrometres(), ([50_000, 25_000], [100_000, 50_000]), "only the shared profile");
+        assert!((ring_area(&path) - 50.0 * 25.0).abs() < 0.01, "only the shared corner is material");
+    }
+
+    #[test]
+    fn a_body_and_a_drawn_ring_combine_in_one_operation() {
+        let (mut project, ids) = body_project(&[(0, 0, 100, 50)]);
+        let root = project.root().id();
+        let body = ids[0];
+        let drawn = ring(&mut project, root, "Drawn", 50, 25, 150, 75);
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let outcome =
+            session.dispatch(CONTOUR_UNION_ID, &params("Union", body, &[drawn])).expect("a body meets a drawing");
+
+        let project = session.project();
+        let path = project
+            .object(outcome.created_id().expect("the new object"))
+            .expect("the new object")
+            .geometry()
+            .as_path()
+            .expect("two crossing rings leave one")
+            .clone();
+        assert_eq!(path.bounds_micrometres(), ([0, 0], [150_000, 75_000]));
+        assert!(project.object(body).is_none(), "the body is consumed");
+        assert!(project.object(drawn).is_none(), "the drawing is consumed");
+    }
+
+    #[test]
+    fn a_tool_marked_body_survives_and_keeps_its_profile() {
+        let (mut project, ids) = body_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+        project.set_object_tool(ids[1], true).expect("mark the operand body");
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let outcome = session.dispatch(CONTOUR_UNION_ID, &params("Union", ids[0], &[ids[1]])).expect("the tool joins");
+
+        let project = session.project();
+        assert!(project.object(outcome.created_id().expect("the new object")).is_some());
+        assert!(project.object(ids[0]).is_none(), "an unmarked body is consumed");
+        let kept = project.object(ids[1]).expect("a tool body stays where it is");
+        assert_eq!(
+            kept.geometry().profile().map(Path::bounds_micrometres),
+            Some(([50_000, 25_000], [150_000, 75_000])),
+            "the kept body still owns the profile it was combined by"
+        );
+    }
+
+    #[test]
+    fn a_node_that_draws_no_ring_is_named_by_the_refusal() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let base = ring(&mut project, root, "Board", 0, 0, 100, 50);
+        let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+        let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let error = session
+            .dispatch(CONTOUR_UNION_ID, &params("Union", base, &[sphere]))
+            .expect_err("a primitive draws no ring");
+
+        let sentence = error.to_string();
+        assert!(sentence.contains(&sphere.to_string()), "the refusal names the node: {sentence}");
+        assert!(sentence.contains("drawn contour"), "and says what it lacks: {sentence}");
+    }
+
+    #[test]
+    fn the_ready_ring_is_a_path_or_a_body_and_nothing_else() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let drawn = ring(&mut project, root, "Drawn", 0, 0, 100, 50);
+        let body = ring(&mut project, root, "Body", 0, 0, 100, 50);
+        project.extrude_object_path(body, millimetres(18)).expect("a body");
+        let open = testkit::open_path(vec![[millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)]]);
+        let chain = project.add_object(root, "Chain", Placement::IDENTITY, Geometry::Path(open)).expect("a chain");
+        let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+        let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+        let mesh = project
+            .add_object(root, "Baked", Placement::IDENTITY, Geometry::Mesh(testkit::cube_mesh(millimetres(10))))
+            .expect("a mesh object");
+        let set = Contours::new(vec![
+            Path::rectangle([millimetres(0), millimetres(0)], [millimetres(10), millimetres(10)]).expect("a ring"),
+            Path::rectangle([millimetres(20), millimetres(20)], [millimetres(30), millimetres(30)]).expect("a ring"),
+        ])
+        .expect("a set");
+        let split =
+            project.add_object(root, "Split", Placement::IDENTITY, Geometry::Contours(set)).expect("a set object");
+        let panel = project.panel(Id::new(2).expect("the sample panel id")).expect("the sample shelf").id();
+
+        assert!(is_contour_operand(&project, drawn), "a drawn ring is an operand");
+        assert!(is_contour_operand(&project, body), "a body is an operand through the profile it grew from");
+        assert!(!is_contour_operand(&project, chain), "an open chain is not");
+        assert!(!is_contour_operand(&project, sphere), "a primitive is not");
+        assert!(!is_contour_operand(&project, mesh), "a mesh is not");
+        assert!(!is_contour_operand(&project, split), "a contour set draws several rings, not one");
+        assert!(!is_contour_operand(&project, panel), "a panel is not an operand");
     }
 }

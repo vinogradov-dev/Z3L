@@ -44,6 +44,7 @@ impl Editor {
         let has_panel_material = !session.directory().boards().collect::<Vec<_>>().is_empty();
         let selected = self.selection.primary();
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
+        let selected_ring = selected.is_some_and(|id| engine::is_contour_operand(session.project(), id));
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
             self.box_draft().is_some(),
@@ -58,6 +59,7 @@ impl Editor {
             product_open: session.active_product().is_some(),
             selected,
             selected_path,
+            selected_ring,
             active,
             perspective: view.perspective,
             owns_view: view.owns_view,
