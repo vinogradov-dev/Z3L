@@ -5677,3 +5677,47 @@ fn an_armed_contour_boolean_previews_and_its_enter_stores_one_object() {
     assert!(document.session.project().object(base).is_none(), "the base is consumed");
     assert!(document.session.project().object(other).is_none(), "the cutter is consumed");
 }
+
+#[test]
+fn the_cross_on_a_booleans_card_leaves_it_and_writes_nothing() {
+    // X98: the card's pair must be symmetric. Escape dropped the mode and the ✕ fell through to the
+    // extrusion's cancel, so an armed boolean kept its preview and its arm after the cross.
+    let session = crate::scene_build::empty_session().expect("an empty scene builds");
+    let mut harness = Harness::with_session("frame-boolean-cancel", session);
+    harness.settle();
+    let mut project = harness.app.tabs.active().session.project().clone();
+    let root = project.root().id();
+    let ring = |x0: i64, x1: i64| {
+        let path = model::Path::rectangle(
+            [units::Length::from_millimetres(x0).expect("x"), units::Length::ZERO],
+            [units::Length::from_millimetres(x1).expect("x"), units::Length::from_millimetres(50).expect("y")],
+        )
+        .expect("a rectangle ring");
+        model::Geometry::Path(path)
+    };
+    let base = project.add_object(root, "Left", model::Placement::IDENTITY, ring(0, 100)).expect("a ring");
+    let other = project.add_object(root, "Right", model::Placement::IDENTITY, ring(50, 150)).expect("a ring");
+    let session = engine::Session::with_directory(project, harness.app.tabs.active().session.directory().clone());
+    harness = Harness::with_session("frame-boolean-cancel", session);
+    harness.settle();
+    let revision = harness.revision();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base, other]);
+        assert!(document.editor.arm_boolean(engine::ContourOp::Union, document.session.project()));
+    }
+    harness.settle();
+    assert!(harness.app.tabs.active().editor.boolean_arm().is_some(), "the union is armed");
+
+    harness.app.tabs.active_mut().apply_tool_outcome(
+        &egui::Context::default(),
+        ui::ToolOutcome { action: Some(ui::ToolAction::Cancel), ..ui::ToolOutcome::default() },
+    );
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_none(), "the cross leaves the mode");
+    assert!(document.session.preview().is_empty(), "and drops the preview");
+    assert_eq!(harness.revision(), revision, "a cancel writes nothing");
+    assert!(document.session.project().object(base).is_some(), "both sources stay");
+    assert!(document.session.project().object(other).is_some());
+}

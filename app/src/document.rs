@@ -2276,7 +2276,11 @@ impl Document {
                 }
             }
             Some(ToolAction::Cancel) => {
-                if self.editor.drawing().is_some() {
+                if self.editor.boolean_arm().is_some() {
+                    // The cross leaves the boolean and drops its preview, exactly as Escape does:
+                    // the pair on the card and the key are one way out, and neither writes.
+                    self.cancel_boolean();
+                } else if self.editor.drawing().is_some() {
                     // The cross drops the draft and ends the tool; the document never changed.
                     self.cancel_drawing();
                 } else if self.editor.contour_edit().is_some() {
