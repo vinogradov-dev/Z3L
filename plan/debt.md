@@ -367,12 +367,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   replaced — or the edge pass learns the plate as a second occluder, which wants the plate's depth in
   a buffer a line can test against.
 
-- `[plan]` `cargo xtask task take <ID> --at top` refuses while `## Now` already holds work: it leaves
-  `STATE:` alone, and the gate then reports that the state does not name the first unfinished task. An
-  owner-directed defect has to be filed with `task add --at top` instead, which files it in `## Now`
-  rather than in `## Bugs`. The far end of the order still takes `--at end`, which needs no state
-  change; the fix is to point `STATE:` at the new head in the same write, as `add` does.
-
 - `[plan]` `cargo xtask file <reference>` takes the *whole* body of the file, so a session that means
   to append one entry passes its own text and silently replaces every entry the file held: one session
   did exactly that to `plan/questions.md` and committed the single line it meant to add, and the file

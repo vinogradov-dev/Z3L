@@ -512,9 +512,10 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// The order of work is the order of `## Now`, and `## Bugs` and `## Next` are not part of it, so a
 /// session that wants to work on an entry filed there has to move the line first. Doing that by hand
 /// is forbidden (ADR 0085), and no verb could do it, so the work order could only advance while
-/// `## Now` already held the next task. Taking into an occupied `## Now` leaves `STATE:` alone; into
-/// an empty one it makes the taken task current and says so in `## Next`, because the gate requires
-/// the paragraph to name the task `STATE:` does.
+/// `## Now` already held the next task. Taking behind another open task leaves `STATE:` alone; at the
+/// top, and into an empty order, the taken task becomes current and `## Next` says so, because the
+/// gate requires the paragraph to name the task `STATE:` does. The top is how an owner-directed
+/// defect jumps the order, which is why it writes the state line rather than refusing.
 fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["at", "next"])?;
     let id = options.words.first().ok_or("task take needs a task id")?.clone();
@@ -551,13 +552,20 @@ fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let occupied = first_open_in(&streams, &tasks, &stream).is_some();
     let backlog = edit::move_entry(&backlog_text, &id, "Now", at)?;
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
-    if !occupied && stream.is_primary() {
+    // The head of `## Now` is the slot `STATE:` names, so an entry that lands in front of the order
+    // becomes the current task in the same write — as `task add --at top` does. Behind another open
+    // task the taken entry is not the head and the state line stays where it is.
+    if stream.is_primary() && (at == edit::At::Top || !occupied) {
         let status = read(root, "plan/STATUS.md")?;
         let status =
             edit::set_state(&status, &[("task".to_owned(), id.clone()), ("state".to_owned(), "idle".to_owned())])?;
-        let status = match options.value("next") {
-            Some(next) => edit::set_section(&status, "Next", next)?,
-            None => edit::set_section(&status, "Next", &format!("{id} is next: {}", task.lead))?,
+        let status = if !edit::has_section(&status, "Next") {
+            status
+        } else {
+            match options.value("next") {
+                Some(next) => edit::set_section(&status, "Next", next)?,
+                None => edit::set_section(&status, "Next", &format!("{id} is next: {}", task.lead))?,
+            }
         };
         changes = changes.with("plan/STATUS.md", status);
     }
@@ -1521,6 +1529,25 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         let status = text(&root, "plan/STATUS.md");
         assert!(status.contains("task=R1 state=idle"), "{status}");
         assert!(status.contains("R1 is next: the rename"), "the paragraph is rewritten: {status}");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn taking_a_bug_at_the_top_makes_it_current() {
+        // An owner-directed defect jumps the order: the top of `## Now` is the slot `STATE:` names,
+        // so the take has to move the line in the same write or the gate refuses the result.
+        let root = project("take-top-idle", &with_next(STATUS), FILED_BACKLOG, None);
+        run(&root, &["take", "X2", "--at", "top"]).expect("the bug takes the head of the order");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        let now = backlog.find("## Now").expect("Now is there");
+        let bugs = backlog.find("## Bugs").expect("Bugs is there");
+        let order = &backlog[now..bugs];
+        let (taken, current) = (order.find("**X2**").expect("X2 arrived"), order.find("**P6**").expect("P6 stays"));
+        assert!(taken < current, "the taken entry sits in front of the order: {order}");
+        let status = text(&root, "plan/STATUS.md");
+        assert!(status.contains("task=X2 state=idle"), "the taken bug is the current task: {status}");
+        assert!(status.contains("X2 is next: a defect"), "the paragraph names it: {status}");
         crate::check_with(&root, &FakeGit).expect("the plan is valid");
         let _ = std::fs::remove_dir_all(&root);
     }
