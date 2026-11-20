@@ -160,20 +160,8 @@ impl Project {
     /// body itself and one whose tool already reaches this body through its own steps, because
     /// either would close a loop the plan compiler cannot walk.
     pub fn set_object_boolean(&mut self, id: Id, op: BooleanOp, tool: Id) -> Result<Revision, ProjectError> {
+        self.validate_boolean_tool(id, tool)?;
         let next_revision = self.next_revision()?;
-        if tool == id {
-            return Err(ProjectError::BooleanToolIsSelf { id });
-        }
-        // The tool's own steps are walked first: the probe refuses a tool that is not a body, and a
-        // body this one already names is the edge that would close the loop.
-        let names_this_body = self
-            .boolean_tools(tool)
-            .map_err(|_| ProjectError::BooleanToolNotABody { object: id, tool })?
-            .iter()
-            .any(|named| named.id() == id);
-        if names_this_body {
-            return Err(ProjectError::BooleanToolCycle { id });
-        }
         let Some(node) = find_node_mut(&mut self.root, id) else {
             return Err(ProjectError::NodeNotFound { id });
         };
@@ -186,6 +174,31 @@ impl Project {
         constructive.push_boolean(Boolean::new(op, tool))?;
         self.revision = next_revision;
         Ok(next_revision)
+    }
+
+    /// Checks that `tool` may be the tool of a boolean step on `id`, writing nothing.
+    ///
+    /// A caller that previews before it commits asks this first: the same three refusals decide the
+    /// arm, the preview and the command, so a picture on screen is always a step the ✓ can store.
+    pub fn validate_boolean_tool(&self, id: Id, tool: Id) -> Result<(), ProjectError> {
+        let object = self.object(id).ok_or(ProjectError::NodeNotFound { id })?;
+        if object.geometry().as_constructive().is_none() {
+            return Err(ProjectError::NotConstructiveObject { id });
+        }
+        if tool == id {
+            return Err(ProjectError::BooleanToolIsSelf { id });
+        }
+        // The tool's own steps are walked: the probe refuses a tool that is not a body, and a body
+        // this one already names is the edge that would close the loop.
+        let names_this_body = self
+            .boolean_tools(tool)
+            .map_err(|_| ProjectError::BooleanToolNotABody { object: id, tool })?
+            .iter()
+            .any(|named| named.id() == id);
+        if names_this_body {
+            return Err(ProjectError::BooleanToolCycle { id });
+        }
+        Ok(())
     }
 
     /// Removes one boolean step from a constructive object and bumps the revision once.

@@ -33,7 +33,7 @@ use crate::scene_tree::Selection;
 use crate::toolbars;
 use crate::view_flags::ViewFlags;
 
-pub use self::boolean::BooleanArm;
+pub use self::boolean::{BooleanArm, BooleanOperand};
 pub use self::fill::FillArm;
 pub use self::selection::{BandRule, BandView, SelectionBand};
 

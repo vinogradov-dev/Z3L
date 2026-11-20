@@ -234,6 +234,7 @@ impl Project {
         if self.node(id).is_none() {
             return Err(ProjectError::NodeNotFound { id });
         }
+        self.refuse_broken_boolean_tools(&[id])?;
         let next_revision = self.next_revision()?;
         if !remove_child(&mut self.root, id) {
             return Err(ProjectError::NodeNotFound { id });
@@ -263,6 +264,7 @@ impl Project {
         if targets.is_empty() {
             return Err(ProjectError::NoNodes);
         }
+        self.refuse_broken_boolean_tools(&targets)?;
         let next_revision = self.next_revision()?;
         for id in &targets {
             if !remove_child(&mut self.root, *id) {
@@ -276,6 +278,53 @@ impl Project {
         }
         self.revision = next_revision;
         Ok(next_revision)
+    }
+
+    /// Refuses to delete a node a boolean step names as its tool.
+    ///
+    /// A step is a reference, so removing its tool would leave a body that cannot be built — and a
+    /// file that no longer loads. The refusal names the step to remove; the caller deletes the tool
+    /// only after that step is gone.
+    fn refuse_broken_boolean_tools(&self, removed: &[Id]) -> Result<(), ProjectError> {
+        if removed.is_empty() {
+            return Ok(());
+        }
+        // A container takes its whole subtree with it, so every id inside a removed subtree is gone.
+        let mut gone: HashSet<Id> = HashSet::new();
+        let mut pending: Vec<Id> = removed.to_vec();
+        while let Some(id) = pending.pop() {
+            let Some(node) = self.node(id) else {
+                continue;
+            };
+            if gone.insert(id)
+                && let Some(children) = node.children()
+            {
+                pending.extend(children.iter().map(Node::id));
+            }
+        }
+        let mut stack: Vec<&Container> = vec![self.root()];
+        while let Some(container) = stack.pop() {
+            for child in container.children() {
+                match child {
+                    Node::Container(inner) => stack.push(inner),
+                    Node::Object(object) => {
+                        if gone.contains(&object.id()) {
+                            continue;
+                        }
+                        let Some(body) = object.geometry().as_constructive() else {
+                            continue;
+                        };
+                        for step in body.booleans() {
+                            if gone.contains(&step.tool()) {
+                                return Err(ProjectError::BooleanToolInUse { id: step.tool(), body: object.id() });
+                            }
+                        }
+                    }
+                    Node::Panel(_) | Node::Camera(_) | Node::Light(_) => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Deep-copies a panel or a container under the same parent and returns the copy's id.

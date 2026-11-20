@@ -951,11 +951,16 @@ messages! {
     ToolUnion = ["Union", "Объединить"],
     ToolSubtract = ["Subtract", "Вычесть"],
     ToolIntersect = ["Intersect", "Пересечение"],
+    BooleanNeedsBody = [
+        "A body boolean needs two constructive bodies: pick the target, then its tool.",
+        "Булева операция над телами требует два конструктивных тела: укажите целевое, затем инструмент."
+    ],
     BooleanNeedsRing = [
         "Select a closed contour first: the boolean is born in its frame",
         "Сначала выделите замкнутый контур: в его системе координат родится результат"
     ],
     BooleanPick = ["Contours picked: {0}", "Выбрано контуров: {0}"],
+    BooleanPickBody = ["Bodies picked: {0}", "Выбрано тел: {0}"],
     ToolFillet = ["Fillet", "Скругление"],
     ToolChamfer = ["Chamfer", "Фаска"],
     ToolShell = ["Shell", "Оболочка"],
@@ -1265,6 +1270,8 @@ messages! {
     CmdCreatePath = ["Create path", "Создать путь"],
     CmdReplacePath = ["Replace path", "Заменить путь"],
     CmdCollapseToMesh = ["Collapse to mesh", "Свернуть в сетку"],
+    CmdSetBoolean = ["Set boolean", "Задать булеву операцию"],
+    CmdRemoveBoolean = ["Remove boolean", "Удалить булеву операцию"],
     CmdSetEdgeBanding = ["Set edge banding", "Задать кромку"],
     CmdClearEdgeBanding = ["Clear edge banding", "Убрать кромку"],
     CmdSetCornerBanding = ["Set corner banding", "Задать кромку угла"],

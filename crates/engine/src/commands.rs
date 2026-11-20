@@ -253,6 +253,8 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_PATH_CREATE,
     object_cmds::OBJECT_PATH_EXTRUDE,
     object_cmds::OBJECT_PATH_REPLACE,
+    object_cmds::OBJECT_BOOLEAN_SET,
+    object_cmds::OBJECT_BOOLEAN_REMOVE,
     object_cmds::OBJECT_COLLAPSE,
     contour_cmds::CONTOUR_UNION,
     contour_cmds::CONTOUR_SUBTRACT,
@@ -535,7 +537,13 @@ mod tests {
             let spec = registry.get(id).expect("a contour boolean is registered");
             assert_eq!(spec.label().text(Lang::En), label);
         }
-        assert_eq!(registry.specs().len(), 60);
+        // A body boolean appends a step and removes one; the tool is a node reference that the
+        // command checks, so the arm and the ✓ ask the same question.
+        let set = registry.get("object.boolean.set").expect("object.boolean.set is registered");
+        assert_eq!(set.label().text(Lang::En), "Set boolean");
+        let remove = registry.get("object.boolean.remove").expect("object.boolean.remove is registered");
+        assert_eq!(remove.label().text(Lang::En), "Remove boolean");
+        assert_eq!(registry.specs().len(), 62);
     }
 
     #[test]

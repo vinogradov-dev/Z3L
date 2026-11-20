@@ -39,6 +39,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         selected,
         selected_path,
         selected_ring,
+        selected_body,
         active,
         owns_view,
         grid,
@@ -223,6 +224,19 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 armed: is_armed(active, kind),
                 hint: tool_hint(tool.label.text(lang), tool.key()),
                 action: enabled.then_some(ToolAction::ContourBoolean(op)),
+            }
+        }
+        // A body boolean is a mode over one selected body: the target is the body selected when the
+        // cell was pressed and the tool is the next body picked. The cell is off until a
+        // constructive body is selected, so the hint says what to do instead of arming a tool with
+        // nothing to combine (W1).
+        ToolKind::BodyBoolean(op) => {
+            let enabled = selected_body;
+            Ready {
+                enabled,
+                armed: is_armed(active, kind),
+                hint: tool_hint(tool.label.text(lang), tool.key()),
+                action: enabled.then_some(ToolAction::BodyBoolean(op)),
             }
         }
         ToolKind::Void => Ready {

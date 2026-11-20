@@ -12,7 +12,7 @@
 use geom::Contact;
 use mesh::{evaluate_constructive, evaluate_primitive};
 use model::{
-    Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
+    BooleanOp, Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
     rebase_origin_at,
 };
 use param::validate_extrusion_contour;
@@ -378,6 +378,103 @@ fn object_extrude_height_set_run(
     Ok(CommandOutcome::changed())
 }
 
+/// Stable id of the boolean-step command.
+pub const OBJECT_BOOLEAN_SET_ID: &str = "object.boolean.set";
+
+/// User-facing label of the boolean-step command.
+pub const OBJECT_BOOLEAN_SET_LABEL: Message = Message::CmdSetBoolean;
+
+/// Parameters for `object.boolean.set`.
+///
+/// The step is appended to the target's history, so it applies to the body the previous features
+/// built. The tool is another constructive object, which stays in the tree: one cutter serves any
+/// number of bodies, and a second body that takes it is a second command and a second undo entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectBooleanSet {
+    /// The constructive body that gains the step.
+    pub object: Id,
+    /// The operation the step applies.
+    pub op: BooleanOp,
+    /// The constructive object whose solid is the second operand.
+    pub tool: Id,
+}
+
+/// The `object.boolean.set` command.
+pub(crate) const OBJECT_BOOLEAN_SET: CommandSpec = CommandSpec::new::<ObjectBooleanSet>(
+    OBJECT_BOOLEAN_SET_ID,
+    OBJECT_BOOLEAN_SET_LABEL,
+    object_boolean_set_enabled,
+    object_boolean_set_run,
+);
+
+fn object_boolean_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID) else {
+        return false;
+    };
+    session.project().validate_boolean_tool(params.object, params.tool).is_ok()
+}
+
+fn object_boolean_set_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID)?;
+    project.set_object_boolean(params.object, params.op, params.tool)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the boolean-step removal command.
+pub const OBJECT_BOOLEAN_REMOVE_ID: &str = "object.boolean.remove";
+
+/// User-facing label of the boolean-step removal command.
+pub const OBJECT_BOOLEAN_REMOVE_LABEL: Message = Message::CmdRemoveBoolean;
+
+/// Parameters for `object.boolean.remove`.
+///
+/// The index is a position in the feature history; index zero is the body's own extrusion and is
+/// refused, because removing it would leave a history with nothing to build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectBooleanRemove {
+    /// The constructive body whose history changes.
+    pub object: Id,
+    /// The position of the step in the history.
+    pub index: usize,
+}
+
+/// The `object.boolean.remove` command.
+pub(crate) const OBJECT_BOOLEAN_REMOVE: CommandSpec = CommandSpec::new::<ObjectBooleanRemove>(
+    OBJECT_BOOLEAN_REMOVE_ID,
+    OBJECT_BOOLEAN_REMOVE_LABEL,
+    object_boolean_remove_enabled,
+    object_boolean_remove_run,
+);
+
+fn object_boolean_remove_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectBooleanRemove>(params, OBJECT_BOOLEAN_REMOVE_ID) else {
+        return false;
+    };
+    session
+        .project()
+        .object(params.object)
+        .and_then(|object| object.geometry().as_constructive())
+        .is_some_and(|body| matches!(body.features().get(params.index), Some(model::Feature::Boolean(_))))
+}
+
+fn object_boolean_remove_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectBooleanRemove>(params, OBJECT_BOOLEAN_REMOVE_ID)?;
+    project.remove_object_boolean(params.object, params.index)?;
+    Ok(CommandOutcome::changed())
+}
+
 /// Stable id of the path creation command.
 pub const OBJECT_PATH_CREATE_ID: &str = "object.path.create";
 
@@ -554,6 +651,155 @@ mod tests {
             placement: Placement::IDENTITY,
         })
         .expect("params serialize")
+    }
+
+    /// Three constructive bodies at the scene root: two slabs 100 x 100 x 18, one above the other,
+    /// and a cutter 50 x 50 x 200 that passes through both, so a difference leaves a square hole.
+    fn boolean_scene() -> (Session, Id, Id, Id) {
+        let slab = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
+            millimetres(18),
+        )
+        .expect("a slab");
+        let second = slab.clone();
+        let cutter = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a cutter"),
+            millimetres(200),
+        )
+        .expect("a cutter");
+        let cutter_at =
+            Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+        let root = model::Container::new(
+            Id::new(1).expect("id"),
+            "Root",
+            Placement::IDENTITY,
+            vec![
+                model::Object::new(
+                    Id::new(3).expect("id"),
+                    "Slab",
+                    Placement::IDENTITY,
+                    Geometry::Constructive(slab.clone()),
+                )
+                .into(),
+                model::Object::new(Id::new(4).expect("id"), "Cutter", cutter_at, Geometry::Constructive(cutter)).into(),
+                model::Object::new(
+                    Id::new(5).expect("id"),
+                    "Second slab",
+                    Placement::new(geom::DVec3::new(0.0, 0.0, 100.0), geom::DQuat::IDENTITY).expect("a placement"),
+                    Geometry::Constructive(second.clone()),
+                )
+                .into(),
+            ],
+        );
+        let project = Project::new(root).expect("a valid project");
+        (
+            Session::with_directory(project, sample_catalog()),
+            Id::new(3).expect("id"),
+            Id::new(5).expect("id"),
+            Id::new(4).expect("id"),
+        )
+    }
+
+    fn boolean_params(object: Id, op: &str, tool: Id) -> Value {
+        serde_json::json!({ "object": object.get(), "op": op, "tool": tool.get() })
+    }
+
+    #[test]
+    fn a_boolean_step_is_one_revision_and_one_undo_entry() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+
+        let outcome = session
+            .dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter))
+            .expect("the step is stored");
+
+        assert_eq!(outcome, CommandOutcome::changed());
+        assert_eq!(session.project().revision().get(), 1, "one command, one revision");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(body.booleans().count(), 1);
+        assert_eq!(body.booleans().next().expect("a step").tool(), cutter);
+        assert!(session.project().object(cutter).is_some(), "the tool is not consumed");
+        assert!(session.can_undo());
+
+        session.undo().expect("undo");
+        assert_eq!(session.project().revision().get(), 2, "undo advances the revision to invalidate caches");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(body.booleans().count(), 0);
+    }
+
+    #[test]
+    fn a_second_body_takes_the_same_tool_as_a_second_undo_entry() {
+        let (mut session, slab, other, cutter) = boolean_scene();
+
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("the first step");
+        let after_first = session.project().revision();
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(other, "difference", cutter)).expect("the second step");
+
+        assert_eq!(session.project().revision().get(), after_first.get() + 1, "one step, one revision");
+        for body in [slab, other] {
+            let constructive = session.project().object(body).expect("a body").geometry().as_constructive();
+            assert!(constructive.is_some_and(|body| body.booleans().count() == 1), "both bodies name the cutter");
+        }
+        assert!(session.project().object(cutter).is_some());
+        session.undo().expect("undo the second step");
+        let first = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(first.booleans().count(), 1, "the first step survives");
+        let second =
+            session.project().object(other).expect("the second slab").geometry().as_constructive().expect("a body");
+        assert_eq!(second.booleans().count(), 0, "the second step is undone");
+    }
+
+    #[test]
+    fn a_refused_boolean_names_the_reason_and_writes_nothing() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+        let other = Id::new(4).expect("id");
+
+        // A body cannot combine with itself.
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", slab)),
+            Err(CommandError::Model(ProjectError::BooleanToolIsSelf { id: slab }))
+        );
+        // The tool must be a constructive body: id 1 is the root container.
+        let root = Id::new(1).expect("id");
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", root)),
+            Err(CommandError::Model(ProjectError::BooleanToolNotABody { object: slab, tool: root }))
+        );
+        // A step the tool already depends on would close a loop.
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+        let revision = session.project().revision();
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(other, "union", slab)),
+            Err(CommandError::Model(ProjectError::BooleanToolCycle { id: other }))
+        );
+        assert_eq!(session.project().revision(), revision, "a refusal writes nothing");
+        assert!(
+            !CommandRegistry::new()
+                .get(OBJECT_BOOLEAN_SET_ID)
+                .expect("the spec")
+                .enabled(&session, &boolean_params(other, "union", slab))
+        );
+    }
+
+    #[test]
+    fn a_boolean_step_is_removed_by_its_position() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+
+        let remove = serde_json::json!({ "object": slab.get(), "index": 1 });
+        let outcome = session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &remove).expect("the step is removed");
+        assert_eq!(outcome, CommandOutcome::changed());
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(body.features().len(), 1, "the extrusion stays");
+
+        let extrusion = serde_json::json!({ "object": slab.get(), "index": 0 });
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &extrusion),
+            Err(CommandError::Model(ProjectError::NoSuchBoolean { id: slab, index: 0 }))
+        );
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &serde_json::json!({ "object": slab.get(), "index": 4 })),
+            Err(CommandError::Model(ProjectError::NoSuchBoolean { id: slab, index: 4 }))
+        );
     }
 
     #[test]

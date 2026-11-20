@@ -102,8 +102,14 @@ primitive is described in section 5.
 - The same ring may be the stored outline of a contour panel: the panel copies it, anchors its
   minimum corner at the panel zero and derives its nominal size from the bounds (see
   [Panels and edge banding](panels.md)).
-- Later features — a boolean with another object, a chamfer, a fillet — are added to the same list.
-  None of them may reference a face or an edge of the evaluated result
+- A **boolean step** combines the body built so far with the body of another constructive object
+  ([0197](../decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md)). The step stores the
+  operation and the tool's id, never a copy of its geometry: the tool stays in the tree, may serve
+  several bodies and may carry steps of its own, so an edit to it reaches every body that names it.
+  A tool that is missing, is not a constructive body, names its own body or closes a cycle is a
+  readable load error, and a node a step names cannot be deleted until the step is gone.
+- Later features — a chamfer, a fillet — are added to the same list. None of them may reference a
+  face or an edge of the evaluated result
   ([0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md)).
 - The height is positive and capped by the document's size limit. An empty or negative feature list
   is invalid, and a body that stores no path, or names its path twice, is a readable load error.
@@ -255,7 +261,9 @@ in one viewport mode. Its state is view state, not document data
   reuses the mesh and only changes the world transform. The derived mesh is never written to the file.
 - A derivation input is anything the geometry depends on: a panel's outline, nominal size, machining,
   banding and band order, its resolved thickness and the catalogue-resolved band profiles; an
-  object's whole geometry payload, which for a primitive is its shape and parameter set. A catalogue
+  object's whole geometry payload, which for a primitive is its shape and parameter set, and for a
+  constructive body the whole closure of tool bodies its boolean steps name, each with its placement
+  in the body's own frame. A catalogue
   material change reaches the cache through the resolved thickness and profile, so a material swap
   rebuilds the panels that use it.
 - A primitive is evaluated analytically in `mesh` (`evaluate_primitive`): the parameters
@@ -311,11 +319,20 @@ in one viewport mode. Its state is view state, not document data
 | `object.contour.replace` | object, path | replaces the body's path and rebuilds |
 | `object.path.create` | parent, name, path, placement | creates a path object, returns its id |
 | `object.path.replace` | object, path | replaces the drawing and keeps the node |
-| `object.collapse` | object | replaces the payload with the evaluated mesh |
+| `object.boolean.set` | object, operation, tool | appends a boolean step naming the tool body; the tool is not consumed |
+| `object.boolean.remove` | object, index | removes one step from the history and keeps the extrusion |
+| `object.collapse` | object | replaces the payload with the evaluated mesh (an analytic extrusion only) |
 | `mesh.vertices.move` | object, list of (index, local position) | moves vertices as one change |
 
 A face move is a `mesh.vertices.move` over the face's vertices; it does not need its own command.
 Every command bumps the revision once and becomes one undo entry.
+
+The Model tab's three boolean cells are one mode, not three buttons: the target is the body
+selected when the cell is pressed, the next picked body is the tool, and the body's own geometry
+fills the session overlay while the person decides (ADR 0093). Enter dispatches
+`object.boolean.set` once and Escape writes nothing, so one cut is one undo entry however long it
+was looked at. The object card lists each step with its operation and the tool's name, and its −
+dispatches `object.boolean.remove`.
 
 ## 12. Tests
 
@@ -377,7 +394,8 @@ At minimum:
 
 - Arcs in a profile: the kernel profile is a polyline, so an arc is sampled; the document keeps the arc.
 - Holes in a profile.
-- Booleans between two objects, and what the operands look like in the tree.
+- What a boolean result looks like as a *tool*: a cutter may be a primitive or a mesh, not only a
+  constructive body, and today only a body can be one.
 - Fillet and chamfer: they need a face or an edge of the result, so they wait for a naming design.
 - Multi-body objects versus one object per solid.
 - Normals and shading: flat now; smooth shading and hard edges are undecided.

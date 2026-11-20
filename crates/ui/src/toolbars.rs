@@ -143,6 +143,8 @@ pub enum ToolAction {
     Void,
     /// Arms one contour boolean over the selection, or drops it when it is already armed (G3).
     ContourBoolean(ContourOp),
+    /// Arms one body boolean over the selected body, or drops it when it is already armed (W1).
+    BodyBoolean(ContourOp),
 }
 
 /// Every drawing tool a key starts, in shortcut order: the draw group then the shapes.
@@ -209,6 +211,8 @@ pub enum ToolActivity {
     Void,
     /// A contour boolean is armed and collects the picked rings.
     ContourBoolean(ContourOp),
+    /// A body boolean is armed and collects the target and its tool.
+    BodyBoolean(ContourOp),
 }
 
 /// The activity whose button is pressed, from what the editor holds.
@@ -222,7 +226,7 @@ pub fn tool_activity(
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
-    boolean: Option<ContourOp>,
+    boolean: Option<(crate::editor::BooleanOperand, ContourOp)>,
 ) -> Option<ToolActivity> {
     let drawing = match (drawing, frame, fill, measure, niche) {
         (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
@@ -239,8 +243,12 @@ pub fn tool_activity(
         (None, false, None, false, false) => None,
     };
     // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
-    // a running draft or a fill (G3).
-    drawing.or(boolean.map(ToolActivity::ContourBoolean))
+    // a running draft or a fill (G3). The two operand kinds are two cells on two tabs, and the kind
+    // decides which one draws pressed (W1).
+    drawing.or(boolean.map(|(kind, op)| match kind {
+        crate::editor::BooleanOperand::Rings => ToolActivity::ContourBoolean(op),
+        crate::editor::BooleanOperand::Bodies => ToolActivity::BodyBoolean(op),
+    }))
 }
 
 /// Whether the button for one tool is the armed one.
@@ -264,6 +272,7 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         (Some(ToolActivity::Void), ToolKind::Void) => true,
         (Some(ToolActivity::ContourBoolean(armed)), ToolKind::ContourBoolean(op)) => armed == op,
+        (Some(ToolActivity::BodyBoolean(armed)), ToolKind::BodyBoolean(op)) => armed == op,
         _ => false,
     }
 }
@@ -385,6 +394,8 @@ pub struct RibbonContext {
     /// Whether the selection draws one closed ring a boolean can take: a path object or a body's
     /// own profile (X98).
     pub selected_ring: bool,
+    /// Whether the selection is a constructive body, which is what a body boolean edits (W1).
+    pub selected_body: bool,
     /// The tool that owns the next click.
     pub active: Option<ToolActivity>,
     /// The view is perspective rather than orthographic.
@@ -828,6 +839,7 @@ mod tests {
             selected: None,
             selected_path: None,
             selected_ring: false,
+            selected_body: false,
             active: None,
             perspective: true,
             owns_view: true,
@@ -965,12 +977,17 @@ mod tests {
                 "model",
                 &[
                     "Box: draw its base on the work plane",
+                    // The three body boolean cells arm a mode over the selected body; like the
+                    // contour cells, their hint is their own name (W1).
+                    "Intersect",
                     // A primitive cell names its shape and its pinned method: a sphere and a cone
                     // share the sketch's circle methods, so the method alone would read twice.
                     "Cone: Centre and radius",
                     "Cylinder: draw its base on the work plane",
                     "Select a closed path first",
                     "Sphere: Centre and radius",
+                    "Subtract",
+                    "Union",
                 ],
             ),
             (
@@ -1237,6 +1254,7 @@ mod tests {
             (None, false, None, false, true, Some(ToolActivity::Void)),
             (Some((DrawTool::Arc, path)), false, None, false, true, Some(ToolActivity::Draw(DrawTool::Arc))),
             (None, false, None, false, false, Some(ToolActivity::ContourBoolean(ContourOp::Union))),
+            (None, false, None, false, false, Some(ToolActivity::BodyBoolean(ContourOp::Subtract))),
             // A boolean owns the picks, so a running draft outranks it: two pressed cells for one
             // pointer would lie about which tool the next click serves.
             (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
@@ -1244,7 +1262,8 @@ mod tests {
         for (drawing, frame, fill, measure, niche, expected) in cases {
             // A case whose expected activity is a boolean arms one; every other case leaves it off.
             let boolean = match expected {
-                Some(ToolActivity::ContourBoolean(op)) => Some(op),
+                Some(ToolActivity::ContourBoolean(op)) => Some((crate::editor::BooleanOperand::Rings, op)),
+                Some(ToolActivity::BodyBoolean(op)) => Some((crate::editor::BooleanOperand::Bodies, op)),
                 _ => None,
             };
             assert_eq!(

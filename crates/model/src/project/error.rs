@@ -215,6 +215,14 @@ pub enum ProjectError {
         /// The body whose tool graph closes on itself.
         id: Id,
     },
+    /// A node that a boolean step names as its tool is about to be deleted.
+    #[error("object {id} is the tool of a boolean step on {body}; remove that step first")]
+    BooleanToolInUse {
+        /// The tool that would be deleted.
+        id: Id,
+        /// The body whose step names it.
+        body: Id,
+    },
     /// The feature index is outside the history, or names the extrusion a body cannot lose.
     #[error("object {id} has no boolean step {index}")]
     NoSuchBoolean {

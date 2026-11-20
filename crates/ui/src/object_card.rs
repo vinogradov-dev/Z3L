@@ -30,12 +30,12 @@ use core::ops::RangeInclusive;
 use egui::{RichText, TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
 use engine::object_cmds::{
-    OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_REPLACE_ID,
-    OBJECT_PRIMITIVE_REPLACE_ID,
+    OBJECT_BOOLEAN_REMOVE_ID, OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID,
+    OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID,
 };
 use engine::{
-    EditScope, NodeRename, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet, ObjectPathReplace,
-    ObjectPrimitiveReplace, Session,
+    EditScope, NodeRename, ObjectBooleanRemove, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet,
+    ObjectPathReplace, ObjectPrimitiveReplace, Session,
 };
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
@@ -573,6 +573,7 @@ impl ObjectCard {
             action = ObjectAction::Element(element);
         }
         let (collapse, cancel) = (row.collapse, row.cancel);
+        let removed = self.boolean_rows(ui, session, object_id);
 
         // A field that refused its typed text kept its number: the box is red, the card says why.
         if let Some(message) = figure_report.refused.or(primitive_report.refused).or(height_report.refused) {
@@ -637,6 +638,22 @@ impl ObjectCard {
                     self.error = None;
                     self.contour_draft = None;
                 }
+                Err(error) => self.error = Some(error),
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
+        if let Some(index) = removed {
+            match remove_boolean(session, object_id, index) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
+            }
+            ui.ctx().request_repaint();
+            return action;
+        }
+        if let Some(index) = removed {
+            match remove_boolean(session, object_id, index) {
+                Ok(()) => self.error = None,
                 Err(error) => self.error = Some(error),
             }
             ui.ctx().request_repaint();
@@ -783,6 +800,47 @@ impl ObjectCard {
             return (None, report);
         }
         (Some(draft.parse(lang)), report)
+    }
+
+    /// Draws the boolean steps of a body, one row each, and names the one the − pressed.
+    ///
+    /// A step is a reference, not a copy: the row names the operation and the tool body, and
+    /// removing the step leaves the tool in the tree where it still serves whatever names it next
+    /// (W1). A body with no step draws nothing here, so the card of an extrusion is unchanged.
+    /// Draws the boolean steps of a body, one row each, and names the one the minus pressed.
+    ///
+    /// A step is a reference, not a copy: the row names the operation and the tool body, and
+    /// removing the step leaves the tool in the tree where it still serves whatever names it next
+    /// (W1). A body with no step draws nothing here, so the card of an extrusion is unchanged.
+    fn boolean_rows(&mut self, ui: &mut Ui, session: &Session, object: Id) -> Option<usize> {
+        let lang = crate::language(ui.ctx());
+        let features = session.project().object(object)?.geometry().as_constructive()?.features();
+        if features.len() <= 1 {
+            return None;
+        }
+        let mut removed = None;
+        ui.separator();
+        for (index, feature) in features.iter().enumerate() {
+            let model::Feature::Boolean(step) = feature else {
+                continue;
+            };
+            let tool = session
+                .project()
+                .object(step.tool())
+                .map_or_else(|| format!("#{}", step.tool().get()), |object| object.name().to_owned());
+            let operation = match step.op() {
+                model::BooleanOp::Union => Message::ToolUnion,
+                model::BooleanOp::Difference => Message::ToolSubtract,
+                model::BooleanOp::Intersection => Message::ToolIntersect,
+            };
+            ui.horizontal(|ui| {
+                ui.label(format!("{} \u{00b7} {tool}", operation.text(lang)));
+                if ui.small_button("\u{2212}").on_hover_text(Message::CmdRemoveBoolean.text(lang)).clicked() {
+                    removed = Some(index);
+                }
+            });
+        }
+        removed
     }
 
     /// Keeps the height draft in step with the extrusion the document holds.
@@ -1268,6 +1326,12 @@ fn replace_primitive(
 ) -> Result<(), String> {
     let params = json(&ObjectPrimitiveReplace { object, primitive })?;
     dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())
+}
+
+/// Removes one boolean step from a body.
+fn remove_boolean(session: &mut Session, object: Id, index: usize) -> Result<(), String> {
+    let params = json(&ObjectBooleanRemove { object, index })?;
+    dispatch(session, OBJECT_BOOLEAN_REMOVE_ID, &params).map(|_| ())
 }
 
 fn collapse_object(session: &mut Session, object: Id) -> Result<(), String> {

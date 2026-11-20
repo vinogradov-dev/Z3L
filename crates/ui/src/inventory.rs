@@ -750,6 +750,25 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Object),
         icon: None,
     },
+    // A body boolean is a mode: the Model tab's three cells arm it, the target is the selected
+    // body and the tool is the next body picked, so it acts on the selection rather than on the one
+    // node under the pointer. Its artwork belongs to the cells, one operation each, which is why the
+    // row carries none (W1).
+    Row {
+        id: "object.boolean.set",
+        label: Message::CmdSetBoolean,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: None,
+    },
+    // The object card lists the steps a body carries and removes one from its row.
+    Row {
+        id: "object.boolean.remove",
+        label: Message::CmdRemoveBoolean,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
     Row {
         id: "object.collapse",
         label: Message::CmdCollapseToMesh,

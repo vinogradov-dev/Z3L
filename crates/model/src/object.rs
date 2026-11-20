@@ -65,7 +65,7 @@ impl TryFrom<ExtrudeWire> for Extrude {
 ///
 /// [ADR 0001]: ../docs/decisions/0001-geometry-kernel.md
 /// [ADR 0041]: ../docs/decisions/0041-every-solid-compiles-to-one-solid-plan.md
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BooleanOp {
     /// Keeps both bodies.
@@ -913,6 +913,29 @@ mod tests {
         );
         assert_eq!(project.remove_object_boolean(five, 0), Err(ProjectError::NoSuchBoolean { id: five, index: 0 }));
         assert_eq!(project.remove_object_boolean(five, 7), Err(ProjectError::NoSuchBoolean { id: five, index: 7 }));
+    }
+
+    #[test]
+    fn a_tool_cannot_be_deleted_while_a_step_names_it_but_a_target_can() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let five = Id::new(5).expect("id");
+        let six = Id::new(6).expect("id");
+        project.set_object_boolean(five, BooleanOp::Difference, six).expect("a step");
+
+        assert_eq!(project.remove_node(six), Err(ProjectError::BooleanToolInUse { id: six, body: five }));
+
+        // The target may go: the cutter stays in the tree and serves whatever names it next.
+        project.remove_node(five).expect("the target is deleted");
+        assert!(project.object(five).is_none());
+        assert!(project.object(six).is_some(), "the cutter survives its target");
+
+        // A step that is gone no longer holds the tool.
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        project.set_object_boolean(five, BooleanOp::Difference, six).expect("a step");
+        project.remove_object_boolean(five, 1).expect("the step is gone");
+        project.remove_node(six).expect("the tool is free now");
     }
 
     #[test]

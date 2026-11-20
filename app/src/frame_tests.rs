@@ -5625,6 +5625,79 @@ fn a_carried_frames_old_grip_is_no_target() {
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
 }
 
+/// A scene holding a slab 100 x 100 x 18 and a cutter 50 x 50 x 200 that passes through it, both
+/// constructive, with the cutter's id and the slab's.
+fn slab_and_cutter() -> (engine::Session, Id, Id) {
+    use model::{Constructive, Container, Geometry, Path, Placement, Project};
+    let mm = testkit::millimetres;
+    let root = Container::new(Id::new(1).expect("an id"), "Scene", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let slab = Constructive::extrude(Path::rectangle([mm(0), mm(0)], [mm(100), mm(100)]).expect("a slab"), mm(18))
+        .expect("a slab");
+    let cutter = Constructive::extrude(Path::rectangle([mm(0), mm(0)], [mm(50), mm(50)]).expect("a cutter"), mm(200))
+        .expect("a cutter");
+    let cutter_at =
+        Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+    let slab = project
+        .add_object(project.root().id(), "Slab", Placement::IDENTITY, Geometry::Constructive(slab))
+        .expect("the slab is added");
+    let cutter = project
+        .add_object(project.root().id(), "Cutter", cutter_at, Geometry::Constructive(cutter))
+        .expect("the cutter is added");
+    (engine::Session::with_directory(project, testkit::sample_catalog()), slab, cutter)
+}
+
+/// The ids the frame draws a body for, one per drawable.
+fn drawn_bodies(harness: &Harness) -> Vec<Id> {
+    harness.app.tabs.active().frame().drawables().iter().map(|drawable| drawable.id).collect()
+}
+
+#[test]
+fn an_armed_body_boolean_cuts_the_frame_and_a_hidden_cutter_still_cuts() {
+    // W1: the mode appends a step to the target's own history, the tool stays in the tree, and a
+    // cutter the eye switched off is still a cutter — hiding is sight, not material (X73).
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut harness = Harness::with_session("frame-body-boolean", session);
+    harness.settle();
+    let revision = harness.revision();
+    assert_eq!(drawn_bodies(&harness), vec![slab, cutter], "both bodies draw before the mode");
+
+    {
+        let document = harness.app.tabs.active_mut();
+        // The last selected node is the primary, so the target is picked last.
+        document.editor.select_nodes(vec![cutter, slab]);
+        assert!(
+            document.editor.arm_body_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the selected body arms the mode"
+        );
+    }
+    harness.settle();
+    {
+        let document = harness.app.tabs.active();
+        assert!(document.editor.boolean_arm().is_some_and(ui::BooleanArm::is_ready), "the cut is on screen");
+        assert_eq!(harness.revision(), revision, "a preview is not an edit");
+        assert!(!document.can_undo(), "a preview is not an undo entry");
+    }
+
+    harness.app.tabs.active_mut().editor.set_hidden(cutter, true);
+    harness.settle();
+    assert_eq!(drawn_bodies(&harness), vec![slab], "the hidden cutter draws nothing");
+    assert!(
+        harness.app.tabs.active().editor.boolean_arm().is_some_and(ui::BooleanArm::is_ready),
+        "the hidden cutter still cuts the body that names it"
+    );
+
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one command, one revision");
+    let project = document.session.project();
+    let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    assert_eq!(body.booleans().count(), 1, "the step is the whole edit");
+    assert!(project.object(cutter).is_some(), "the cutter stays in the document, hidden or not");
+}
+
 #[test]
 fn an_armed_contour_boolean_previews_and_its_enter_stores_one_object() {
     // G3, ADR 0194: the operation is a mode over the selection. The result draws in place of the

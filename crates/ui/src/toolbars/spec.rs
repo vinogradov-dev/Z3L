@@ -90,6 +90,13 @@ pub enum ToolKind {
     /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
     /// the base ring and every further picked ring as its operands (G3, ADR 0194).
     ContourBoolean(ContourOp),
+    /// Arms one body boolean over the selected constructive body: the ✓ appends a step of this
+    /// operation to the target's history and leaves the tool body in the tree (W1).
+    ///
+    /// The cell shares the membership rule's words and artwork with the contour boolean of the same
+    /// name, because it is the same operation on a solid instead of on its profile — and the two are
+    /// told apart by the tab they sit on, the Model tab's cells and the Sketch tab's.
+    BodyBoolean(ContourOp),
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
     /// Arms the niche tool: the pointer names the empty space inside the open product and writes
@@ -826,9 +833,30 @@ const MODEL: [GroupSpec; 5] = [
         id: "model.booleans",
         label: Message::GroupBooleans,
         tools: &[
-            planned("model.booleans.union", Message::ToolUnion),
-            planned("model.booleans.subtract", Message::ToolSubtract),
-            planned("model.booleans.intersect", Message::ToolIntersect),
+            ToolSpec {
+                id: "model.booleans.union",
+                label: Message::ToolUnion,
+                icon: Some(icons::contour::BOOLEAN_UNION),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Union)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "model.booleans.subtract",
+                label: Message::ToolSubtract,
+                icon: Some(icons::contour::BOOLEAN_SUBTRACT),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Subtract)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "model.booleans.intersect",
+                label: Message::ToolIntersect,
+                icon: Some(icons::contour::BOOLEAN_INTERSECT),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Intersect)),
+                method: None,
+                variants: &[],
+            },
         ],
     },
     GroupSpec {
@@ -1221,6 +1249,9 @@ mod tests {
         assert_eq!(
             live("model"),
             [
+                "model.booleans.intersect",
+                "model.booleans.subtract",
+                "model.booleans.union",
                 "model.create.extrude",
                 "model.primitives.cone",
                 "model.primitives.cuboid",
@@ -1447,6 +1478,9 @@ mod tests {
             ToolKind::ContourBoolean(engine::ContourOp::Union),
             ToolKind::ContourBoolean(engine::ContourOp::Subtract),
             ToolKind::ContourBoolean(engine::ContourOp::Intersect),
+            ToolKind::BodyBoolean(engine::ContourOp::Union),
+            ToolKind::BodyBoolean(engine::ContourOp::Subtract),
+            ToolKind::BodyBoolean(engine::ContourOp::Intersect),
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
@@ -1502,8 +1536,9 @@ mod tests {
         let sketch = tab("sketch").expect("sketch");
         // Six creation tools, the ruler, the draft pair and the three contour booleans.
         assert_eq!(sketch.columns(), 12);
-        // The planned groups draw nothing, so the Model tab is the four primitives and the extrusion.
-        assert_eq!(tab("model").expect("model").columns(), 5);
+        // The planned groups draw nothing, so the Model tab is the four primitives, the extrusion and
+        // the three body booleans (W1).
+        assert_eq!(tab("model").expect("model").columns(), 8);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         assert_eq!(tab("view").expect("view").columns(), 4);

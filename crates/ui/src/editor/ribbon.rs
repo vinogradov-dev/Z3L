@@ -19,7 +19,7 @@ use model::{Id, Path};
 use text::{Lang, Message};
 use units::Length;
 
-use super::Editor;
+use super::{BooleanOperand, Editor};
 use crate::command::{dispatch, json};
 use crate::toolbars::{self, ToolAction};
 
@@ -45,13 +45,18 @@ impl Editor {
         let selected = self.selection.primary();
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let selected_ring = selected.is_some_and(|id| engine::is_contour_operand(session.project(), id));
+        // A body boolean takes a constructive body, which is the one kind of node a step can be
+        // appended to; a primitive or a baked mesh has no history to extend (W1).
+        let selected_body = selected.is_some_and(|id| {
+            session.project().object(id).is_some_and(|object| object.geometry().as_constructive().is_some())
+        });
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
             self.box_draft().is_some(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
             self.void_armed(),
-            self.boolean_arm().map(|arm| arm.op()),
+            self.boolean_arm().map(|arm| (arm.kind(), arm.op())),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
         let context = toolbars::RibbonContext {
@@ -60,6 +65,7 @@ impl Editor {
             selected,
             selected_path,
             selected_ring,
+            selected_body,
             active,
             perspective: view.perspective,
             owns_view: view.owns_view,
@@ -131,6 +137,16 @@ impl Editor {
                         self.cancel_boolean(session);
                     } else if !self.arm_boolean(op, session.project()) {
                         return Err(Message::BooleanNeedsRing.text(lang).to_owned());
+                    }
+                }
+                ToolAction::BodyBoolean(op) => {
+                    // The three Model cells arm one mode over the selection: the target is the body
+                    // selected now and the tool is the next body picked. A second press on the same
+                    // operation drops the mode, like every other armed tool (W1).
+                    if self.boolean_arm().is_some_and(|arm| arm.op() == op && arm.kind() == BooleanOperand::Bodies) {
+                        self.cancel_boolean(session);
+                    } else if !self.arm_body_boolean(op, session.project()) {
+                        return Err(Message::BooleanNeedsBody.text(lang).to_owned());
                     }
                 }
                 ToolAction::Void => {
