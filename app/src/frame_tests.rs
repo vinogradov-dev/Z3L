@@ -5659,6 +5659,7 @@ fn an_armed_contour_boolean_previews_and_its_enter_stores_one_object() {
     harness.settle();
     let document = harness.app.tabs.active();
     assert!(document.editor.boolean_arm().is_some_and(ui::BooleanArm::is_ready), "the result is on screen");
+    assert!(harness.drew(Message::ToolUnion.text(Lang::En)), "the card names the operation: {:?}", harness.drawn);
     assert_eq!(harness.revision(), revision, "a preview is not an edit");
     assert!(!harness.app.tabs.active().can_undo(), "a preview is not an undo entry");
 

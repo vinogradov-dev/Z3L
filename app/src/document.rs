@@ -1825,7 +1825,14 @@ impl Document {
         if self.editor.update_boolean(&mut self.session) {
             let arm = self.editor.boolean_arm();
             self.boolean_preview = arm.and_then(|arm| arm.is_ready().then_some(arm.base()));
-            self.last_error = arm.and_then(|arm| arm.refusal().map(str::to_owned));
+            // The bar says what the operation holds and why it draws nothing yet: an armed mode
+            // that only presses a cell leaves the hand guessing which click it waits for (U115).
+            self.last_error = match arm {
+                Some(arm) if !arm.is_ready() => Some(arm.refusal().map(str::to_owned).unwrap_or_else(|| {
+                    Message::BooleanPick.with(ui::language(ctx), [arm.operands().len().saturating_add(1)])
+                })),
+                _ => None,
+            };
             ctx.request_repaint();
         }
     }
