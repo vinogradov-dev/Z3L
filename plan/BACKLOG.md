@@ -614,8 +614,44 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
+- `[ ]` **X102** X99 a primitive is an operand of a body boolean
+  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
+   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
+   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
+   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
+   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
+   SolidPlan at all.
+  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
+   give the kernel port a way to build a body from the closed triangle mesh the primitive
+   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
+   backend a mesh body for a primitive operand and every primitive becomes an operand of every
+   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
+   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
+   kinds it accepts from what the compiler can build, so the cells are never dead without a
+   sentence.
+  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
+   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
+   the three Model cells arm on a selection of two primitives and on a primitive beside a
+   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
+   cell while its road is unbuilt
+  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs`
 
 ## Done
+
+- `[x]` **T14** T14 a cutter whose face lies on the body's face does not cut
+  Why: The owner's second scene did not subtract at all: the block and the cylinder shared
+   their bottom face — the cylinder was drawn on the block's own surface — and the kernel
+   answers a boolean between bodies that share a face with nothing ('Difference produced no
+   solid'), so the block was a diagnostic and the picture read as 'it does not cut'. The
+   overlap was real; the coincidence was the failure.
+  Shape: A cutter's sweep starts one micrometre below and stops one micrometre above its own
+   ends, the same trade the panel cutouts and the end bevel already make; the body being cut is
+   never extended. The three boolean cells also say what they wait for when the selection is a
+   primitive, instead of a dead cell.
+  Done: Tests: a cutter whose bottom face lies on the body's bottom face cuts, and the same
+   test fails with the overshoot removed; a primitive selection makes the cells name what they
+   wait for
+  `files: crates/param/src/constructive.rs,crates/ui/src/toolbars/ready.rs` — `e2888c1`
 
 - `[x]` **T13** T13 a scene from another build names its schema before its fields
   Why: A scene from another build reported the first field that moved — 'invalid type: integer
