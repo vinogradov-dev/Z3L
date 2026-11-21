@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=831a9ef updated=2026-11-21
+STATE: milestone=M7 phase=T task=- state=idle base=1dcd495 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -16,6 +16,14 @@ the product it works in, which opens it before the steps and leaves no revision 
 `{"$ref": "<name>"}`, resolved as the batch runs, so a part and its banding are one call and one
 undo entry, and the wardrobe recipe in `app/tests/recipes` builds its 38 steps without writing a
 single document id (J18, ADR 0214).
+
+The guide is what a model reads before its first command: `engine::guide()` returns the two worlds
+a request can belong to — a product frame with the parts inside it, or a free body — and the two
+that serve neither, the order of a build from scratch, the shapes a frame takes with a real
+`Envelope` as the radius-corner example, the three stances of ADR 0105, the class registry grouped
+by family with the words a person types, the units and the four sides, all of it generated from the
+registries so a name cannot drift; every command carries the one family word it serves, so
+`command_list` and `z3l guide` teach the same world from one function (J20, ADR 0215).
 
 The final render is a path tracer, and the studio it draws a scene in is a setting of the render
 rather than the document: three lobes — a matte board, a GGX conductor completed with its multiple

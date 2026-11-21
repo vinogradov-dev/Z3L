@@ -1176,7 +1176,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    aliases; a test turns a panel by each stance and holds it to ADR 0105; the guide's
    radius-corner envelope parses into a Footprint::Cut with a fillet; command_list and z3l
    guide print the same value; cargo xtask ci is green.
-  `files: crates/engine/src,crates/mcp/src/server.rs,app/src/cli.rs` — `f7cc892`
+  `files: crates/engine/src,crates/mcp/src/server.rs,app/src/cli.rs` — `1dcd495`
 
 - `[x]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
   Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name
