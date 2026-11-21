@@ -45,6 +45,66 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
+  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
+   a shop has no place where a material is edited once and referenced by its boards. A format a
+   session invents from scratch will not be the one a joiner uses, so it takes the commonly
+   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
+   of pictures beside it.
+  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
+   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
+   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
+   whole. The library is one portable file in the workshop's user settings beside the settings
+   file (library.json) with an atomic save and a readable refusal for every refusal, and a
+   textures folder beside it: a picture is an ordinary file at a relative path that a person
+   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
+   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
+   it hands it the directory's, and the crate is registered in xtask's layer map and in
+   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
+   nothing draws.
+  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
+   empty name, a decor with no size and a picture that is missing are refusals a person can
+   read, never a panic; a replaced picture changes the frame's decor without restarting the
+   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
+   is green.
+  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src`
+
+- `[ ]` **O16** a catalogue record refers to a library material instead of describing it
+  Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
+   colour, a texture reference, roughness, metallic. The owner's model is the other way round:
+   materials live in their own library (Y8) and a nomenclature record refers to one. Two
+   descriptions of one material disagree on the first order, because the panel would name the
+   record oak while the render read an inline block and drew another wood.
+  Shape: An optional material reference on the nomenclature item envelope, the stable id the
+   library hands out; the wire schema and its golden file in the same change (ADR 0096: before
+   the first release the format has no past); a view::material reader beside board and banding;
+   and section 7 rewritten, with the Appearance block retiring and a reference replacing it. A
+   record whose material is gone is a diagnostic over a record that still resolves, the way an
+   absent catalogue item already is. A panel, a band and a hardware item refer the same way:
+   what differs between them is their kind, not how they speak about a material.
+  Done: Tests: a record with a material answers its id and one without answers none; a record
+   naming a material that is not there is a diagnostic and still resolves; the golden file
+   matches the current schema; a zero id is refused; cargo xtask ci is green.
+  `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
+
+- `[ ]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
+   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
+   material and left the mapping unwritten, so the viewport and the final render show something
+   the workshop does not buy, and they disagree with the catalogue record on the first order.
+  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
+   panel's board from its material record, a band from its own, hardware as a conductor with
+   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
+   tint its record names. A record with no material keeps the placeholder tone, because a
+   workshop that has not filled the catalogue must still see a board and not a black rectangle.
+   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
+   exposure and the filmic curve stay the command's settings.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
+   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
+   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -739,20 +799,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
    whatever the document stores when that question is answered, and this task does not decide
    the storage.
-  Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
-   texture, a roughness and a metallic pair. A finish record becomes the coat over the decor —
-   one board is matte, the next satin, the next lacquer — and a glass or mirror front is a
-   dielectric pane with the thickness and the tint its record names, because that is what a
-   workshop buys and what a cabinet actually has. The decor map is rotated per face so the
-   grain follows the item's direction on the panel's A and B faces, and an item that names no
-   grain renders the same in both. Banding takes its material's colour on its segments;
-   hardware carries a finish. Exposure and the filmic tone map are settings of the command,
-   never view state, and the viewport keeps its own colours.
+  Shape: The frame's ability, and not the mapping: a decor value on a drawable — the picture,
+   the millimetres one image width covers and the quarter turns its grain runs by — which the
+   surface's colour multiplies; the viewport samples it through one texture per decor, and the
+   tracer carries the same value as its own table and filters it with its own bilinear, repeat
+   and sRGB-to-linear arithmetic. Grain is the renderer's vocabulary: the document's storage
+   question stays open in PROJECT.md. Exposure and the filmic tone map are the command's
+   settings and were already there; the viewport keeps its own colours. The mapping from a
+   record, its banding and a handle's finish is Y7's.
   Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
-   banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
-   field darkens the image monotonically; an item that names no decor renders a flat colour
-   rather than black; `cargo xtask ci` is green.
+   and a rotated item turns them, in the viewport and in the tracer's picture; an item that
+   names no decor renders a flat colour rather than black; the exposure field darkens the image
+   monotonically; cargo xtask ci is green.
   `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
 - `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
   Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
