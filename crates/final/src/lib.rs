@@ -35,6 +35,12 @@
     clippy::unreachable
 )]
 
+pub mod bvh;
+pub mod ray;
+
+pub use bvh::Bvh;
+pub use ray::{Hit, Ray, Triangle};
+
 /// The smallest side of a final image, in pixels.
 ///
 /// Below this the request is a mistake rather than a small picture: a 4×4 crop of a cabinet shows
