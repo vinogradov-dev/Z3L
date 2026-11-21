@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U119 state=doing base=8fdd8ad updated=2026-11-21
+STATE: milestone=M7 phase=T task=X95 state=idle base=e0ec7e2 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,8 +52,7 @@ page, a glyph at the snapped point and a word in the status bar's readout.
 
 ## Next
 
-U119 is next: two snap kinds: 2.5D drops the perpendicular onto the tool's plane, 3D gives every
-tool the point itself
+the post's icon reads as a leg, not as a vertical panel (X95)
 
 ## Index
 
