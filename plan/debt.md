@@ -10,6 +10,12 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[release]` a gate that has to run before the first release, `[vendor]`.
 
+- `[gizmo]` A frame that keeps a ring answers its section exactly, but the niche's **box**, its corner
+  list and the void tool's wireframe are the box of the ring's *chords*, so a frame with a deep bulge —
+  the owner's arc is 274 mm deep — reports a smaller void than it reserves and the overlay leaves the
+  bulge out. The cell's own ring would say it; the corners are a plane-only enumeration today (N34,
+  ADR 0203).
+
 - `[gizmo]` The niche tool draws the cell's **box**, so in a cut-corner or drawn-ring frame its
   wireframe reaches into the space the frame does not reserve and the callout prints the bounds of the
   shape rather than the shape (N29, ADR 0201). Draw the cell's own prism ring when a maker needs the

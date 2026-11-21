@@ -793,6 +793,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **N34** a frame drawn as a contour builds a part, in the convex piece around the pointer
+  Why: The owner, on the saved scene /home/alx/skaf.z3l whose frame is drawn from a contour:
+   «ни одна панель не строится. Во всех видах каркаса должна строиться панель». The ring there
+   is an L — one right turn at (1684, 3703) µm, a 1746 mm arc for its bottom — and
+   `Project::niche` answers `NicheRefusal::Footprint` for every point inside it, measured on
+   the file, so no fill builds in any mode or class. The refusal is N29's rule (ADR 0201): a
+   ring that is not one convex ring reserves no one cell, because a cell is planes only. The
+   owner answers that a frame of any shape must build a part.
+  Shape: The ring is no longer refused. Around the pointer the frame's ring is clipped by every
+   edge's half-plane whose free side holds the point, through a new
+   `Region::clip_half_plane_around` (the exact boolean, so arcs stay arcs), and the cell is the
+   **convex piece of the frame around the pointer**: an L gives its bar for a point in the bar,
+   its column for a point in the column, and the square both arms share for a point in the
+   corner. The plane seed, the exact section, both fill modes and the ghost then read that
+   piece, so every existing rule follows it. A point the ring does not hold is `Outside` as it
+   already was, and a ring still not convex after the clip — an arc bulging into its own shape
+   — keeps `Footprint` with its sentence.
+  Done: Tests: an L-shaped ring gives a cell whose section is the arm the pointer names, a Fit
+   rectangle and a Shape contour inside the frame, and a panel the command creates; a point in
+   the notch is `Outside`; a ring with an inward arc is still a readable refusal; the box and
+   the convex-ring cases keep today's answers; `cargo xtask ci` is green.
+  `files: crates/geom/src/ring.rs,crates/model/src/project/niche.rs,crates/model/src/project/fill.rs` — `8fc6dd7`
+
 - `[x]` **N33** a niche keeps the frame's radii instead of cutting them to chords
   Why: The owner, on the saved scene /home/alx/skaf.z3l: «Полка, которая должна принять форму
    ниши, не видит радиусы каркаса». The product there reserves 600 x 560 x 720 with a 200 mm
