@@ -25,8 +25,8 @@
 //! or a new reason to refuse a mesh.
 
 use bytemuck::{Pod, Zeroable};
-use geom::{DMat4, DVec3, MeshData};
-use scene::{Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
+use geom::{DMat4, DVec2, DVec3, MeshData};
+use scene::{Decor, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
 
 use crate::RenderError;
 use crate::pipelines::MAX_STENCIL_OWNERS;
@@ -88,16 +88,35 @@ pub(crate) struct MeshVertex {
     pub(crate) color: [f32; 4],
 }
 
-/// The world-space centre of a built drawable's bounds, used to order translucent objects.
+/// One triangle vertex: a [`MeshVertex`] and the texture coordinate its decor is read at.
+///
+/// The coordinate is the fourth attribute and only the face pipelines read it, so the lines, the
+/// grid and the plate keep the smaller vertex they had: an edge list is the biggest buffer a dense
+/// frame holds, and eight bytes a vertex spent on a coordinate no line samples would be a third of
+/// the wireframe's memory for nothing.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct FaceVertex {
+    pub(crate) position: [f32; 3],
+    pub(crate) normal: [f32; 3],
+    pub(crate) color: [f32; 4],
+    pub(crate) uv: [f32; 2],
+}
+
+/// The world-space centre of a built face list, which is what orders translucent drawables.
 ///
 /// The box is measured from the vertices the upload has already built, so a drawable never
 /// transforms its positions a second time to learn where it is; a drawable with no vertex has no
 /// centre to sort by and sorts at the origin.
-pub(crate) fn vertices_centre(vertices: &[MeshVertex]) -> DVec3 {
+pub(crate) fn faces_centre(vertices: &[FaceVertex]) -> DVec3 {
+    centre(vertices.iter().map(|vertex| vertex.position))
+}
+
+fn centre(positions: impl Iterator<Item = [f32; 3]>) -> DVec3 {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
-    for vertex in vertices {
-        let position = vector(vertex.position);
+    for position in positions {
+        let position = vector(position);
         min = min.min(position);
         max = max.max(position);
     }
@@ -377,7 +396,8 @@ pub(crate) fn world_vertices(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
-) -> Result<(Vec<MeshVertex>, Vec<u32>), RenderError> {
+    decor: Option<&Decor>,
+) -> Result<(Vec<FaceVertex>, Vec<u32>), RenderError> {
     if mesh.positions.is_empty() || mesh.indices.is_empty() || !mesh.indices.len().is_multiple_of(3) {
         return Err(RenderError::EmptyMesh { index });
     }
@@ -398,17 +418,23 @@ pub(crate) fn world_vertices(
     let color = sanitize_color(color);
 
     if mesh.normals.is_empty() {
-        return flat_vertices(index, mesh, transform, color);
+        return flat_vertices(index, mesh, transform, color, decor);
     }
 
     let mut vertices = Vec::with_capacity(mesh.positions.len());
     for (position, normal) in mesh.positions.iter().zip(&mesh.normals) {
-        let position = transform.transform_point3(vector(*position));
+        let local = vector(*position);
+        let position = transform.transform_point3(local);
         if !position.is_finite() {
             return Err(RenderError::InvalidMesh { index });
         }
         let normal = transform.transform_vector3(vector(*normal)).try_normalize().unwrap_or(DVec3::Z);
-        vertices.push(MeshVertex { position: to_array(position), normal: to_array(normal), color });
+        vertices.push(FaceVertex {
+            position: to_array(position),
+            normal: to_array(normal),
+            color,
+            uv: decor_uv(decor, local),
+        });
     }
     Ok((vertices, mesh.indices.clone()))
 }
@@ -418,7 +444,8 @@ fn flat_vertices(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
-) -> Result<(Vec<MeshVertex>, Vec<u32>), RenderError> {
+    decor: Option<&Decor>,
+) -> Result<(Vec<FaceVertex>, Vec<u32>), RenderError> {
     let triangle_count = mesh.indices.len() / 3;
     let capacity = triangle_count.checked_mul(3).ok_or(RenderError::MeshTooLarge { index })?;
     if capacity > MAX_VERTICES {
@@ -433,6 +460,7 @@ fn flat_vertices(
         let (Some(a), Some(b), Some(c)) = (a, b, c) else {
             return Err(RenderError::InvalidMesh { index });
         };
+        let (a_local, b_local, c_local) = (a, b, c);
         let a = transform.transform_point3(a);
         let b = transform.transform_point3(b);
         let c = transform.transform_point3(c);
@@ -441,12 +469,30 @@ fn flat_vertices(
         }
         let normal = (b - a).cross(c - a).try_normalize().unwrap_or(DVec3::Z);
         let base = u32::try_from(vertices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
-        for position in [a, b, c] {
-            vertices.push(MeshVertex { position: to_array(position), normal: to_array(normal), color });
+        for (position, local) in [(a, a_local), (b, b_local), (c, c_local)] {
+            vertices.push(FaceVertex {
+                position: to_array(position),
+                normal: to_array(normal),
+                color,
+                uv: decor_uv(decor, local),
+            });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
     Ok((vertices, indices))
+}
+
+/// The texture coordinate of a point in the drawable's own frame, or the origin of the picture.
+///
+/// A drawable with no decor is sampled at one place, which the white texel it is bound to answers
+/// with the same value everywhere: the fragment multiplies its colour by that texel and the picture
+/// changes nothing. Keeping the coordinate finite is what a shader requires; the projection itself
+/// belongs to [`Decor::uv`], where the grain and the size live.
+fn decor_uv(decor: Option<&Decor>, local: DVec3) -> [f32; 2] {
+    match decor {
+        Some(decor) => decor.uv(DVec2::new(local.x, local.y)),
+        None => [0.0, 0.0],
+    }
 }
 
 fn position_at(mesh: &MeshData, index: u32) -> Option<DVec3> {

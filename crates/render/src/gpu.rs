@@ -20,6 +20,7 @@
 //! Changes when: what a buffer holds or how one frame's geometry reaches the device changes.
 
 use geom::DVec3;
+use scene::Decor;
 use wgpu::util::DeviceExt as _;
 
 use crate::RenderError;
@@ -69,6 +70,140 @@ pub(crate) struct GpuTriangles {
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) index_count: u32,
+}
+
+/// One decor as the face passes read it: the picture, its view and the group it is bound in.
+///
+/// The picture is `Rgba8UnormSrgb`, so the sampler hands the shader linear light and the fragment
+/// multiplies the surface's own linear colour by it: one arithmetic in the viewport and the same one
+/// in the final render, where a decor is read the same way. It repeats and it filters linearly,
+/// because a decor is a print seen from any distance and 300 mm of board is one picture.
+pub(crate) struct DecorGroup {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    group: wgpu::BindGroup,
+}
+
+impl DecorGroup {
+    /// The layout both the pipeline and the group are built against: one sampled picture and one
+    /// sampling rule.
+    pub(crate) fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Z3L decor layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        })
+    }
+
+    /// The sampler every decor is read with: repeat, linear, no mip chain.
+    pub(crate) fn sampler(device: &wgpu::Device) -> wgpu::Sampler {
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Z3L decor sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..wgpu::SamplerDescriptor::default()
+        })
+    }
+
+    /// A one-texel white picture, which the drawables with no decor are bound to.
+    ///
+    /// The fragment multiplies its colour by the sampled texel whatever the surface is, so a white
+    /// texel is the value that changes nothing and a surface without a decor needs no branch in the
+    /// shader — a branch that would have to be uniform to keep the sampler's derivatives defined.
+    pub(crate) fn white(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        Self::new(device, queue, layout, sampler, 1, 1, &[[255, 255, 255, 255]])
+    }
+
+    /// The decor's own picture on the device, at the size the record scanned it.
+    pub(crate) fn of(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        decor: &Decor,
+    ) -> Self {
+        let image = decor.image();
+        Self::new(device, queue, layout, sampler, image.width(), image.height(), image.texels())
+    }
+
+    /// The decor's picture on the device, or the actor's refusal when it cannot be uploaded.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        width: u32,
+        height: u32,
+        texels: &[[u8; 4]],
+    ) -> Self {
+        let bytes: Vec<u8> = texels.iter().flatten().copied().collect();
+        let size = wgpu::Extent3d { width: width.max(1), height: height.max(1), depth_or_array_layers: 1 };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Z3L decor"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size.width * 4),
+                rows_per_image: Some(size.height),
+            },
+            size,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Z3L decor bind group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            ],
+        });
+        Self { _texture: texture, _view: view, group }
+    }
+
+    /// The group a face pass binds.
+    pub(crate) fn group(&self) -> &wgpu::BindGroup {
+        &self.group
+    }
 }
 
 /// Clamps a requested target size to at least one pixel and to the device's texture limit.

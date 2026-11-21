@@ -3576,6 +3576,7 @@ dependencies = [
  "scene",
  "testkit",
  "thiserror 2.0.21",
+ "units",
  "wgpu",
 ]
 

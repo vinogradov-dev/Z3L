@@ -21,7 +21,10 @@
 
 use scene::ShadingStyle;
 
-use crate::{COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT, geometry::MeshVertex};
+use crate::{
+    COLOR_FORMAT, DEPTH_FORMAT, SHADOW_FORMAT,
+    geometry::{FaceVertex, MeshVertex},
+};
 
 /// One pipeline layout: the groups a pass binds, in order.
 pub(crate) fn pipeline_layout(
@@ -39,12 +42,28 @@ pub(crate) fn pipeline_layout(
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
 
-/// The vertex layout every pipeline of the scene reads.
+/// The vertex layout every line, plate and mask pipeline of the scene reads.
 pub(crate) fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<MeshVertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &VERTEX_ATTRIBUTES,
+    }
+}
+
+const FACE_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2];
+
+/// The vertex layout of a shaded triangle: [`vertex_layout`] and the decor's coordinate.
+///
+/// Only the face pipelines — the two triangle ones and the shadow map — read it, because only a
+/// face is sampled: the eight bytes a coordinate costs are not spent on an edge line, which is the
+/// largest buffer a dense frame holds.
+pub(crate) fn face_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<FaceVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &FACE_VERTEX_ATTRIBUTES,
     }
 }
 
@@ -93,7 +112,7 @@ pub(crate) fn create_triangle_pipeline(
             module: shader,
             entry_point: Some("vs_mesh"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(vertex_layout())],
+            buffers: &[Some(face_vertex_layout())],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -221,7 +240,7 @@ pub(crate) fn create_shadow_depth_pipeline(
             module: shader,
             entry_point: Some("vs_shadow"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(vertex_layout())],
+            buffers: &[Some(face_vertex_layout())],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -273,7 +292,7 @@ pub(crate) fn create_shadow_cover_pipeline(
             module: shader,
             entry_point: Some("vs_shadow_cover"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(vertex_layout())],
+            buffers: &[Some(face_vertex_layout())],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
