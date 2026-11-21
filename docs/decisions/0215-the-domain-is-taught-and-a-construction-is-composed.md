@@ -25,7 +25,7 @@ Measured before this record:
   board (X117), a side named `left` and placed on the viewer's right (X118).
 - The knowledge does exist, in three places that a caller cannot read: `docs/domain/*.md`, the class
   registry (`model::class::registry()`, 70 rows with slugs, labels and the words a person types —
-  «стойка», «полка», «штанга» at `20.06`), and ADR 0105's stance table. The class registry already
+  «стойка», «полка», and «штанга» at `20.06`, which gained it in this change), and ADR 0105's stance table. The class registry already
   says a hanging rail is a class; no command creates one, and nothing said so.
 - The frame shapes exist and are reachable: `Envelope` stores a `Footprint` — the rectangle, corners
   cut by a chamfer or a fillet, or a drawn ring — so a radius corner is `product.create` with
