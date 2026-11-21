@@ -387,3 +387,7 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   an evaluation service beside the contact one is the seam that closes it: one factory installed by
   the shell, one ADR, and the same seam serves the CLI, which has no kernel today either (W1,
   ADR 0197).
+
+- `[plan]` `cargo xtask task note` lifts the body's first line into the heading `# <ID> — …` and
+  keeps that line in the body, so a note that names its subject in its first line shows the sentence
+  twice. Strip the first line from the body before it is written when it is the heading (X95).

@@ -45,23 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **X95** the post's icon reads as a leg, not as a vertical panel
-  Why: Observation, from the owner: the icon of the tool that creates a post must read as a
-  rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
-  dominates, so it reads as a leg or a column beside the shelf and the panel. Expectation: a
-  tall rectangular board — the panel face plus its thickness, no top face that turns it into a
-  column — clearly the vertical sibling of the shelf and distinct from `panel.svg` and
-  `product.svg`.
-  Shape: Suspected cause: the drawing was made from the word rather than from the class (`10.10`, a
-  vertical panel with a height+depth fill): its footprint is about 5 mm wide on the 24 grid,
-  and the style guide's tone rule then makes the small top face the loudest shape. The redraw
-  follows the `draw-icon` skill — one ink, the large face in the active tone, the thickness in
-  the passive tone, the 24 grid, a 1.5 stroke — and the reference is the vertical panel the
-  fill tool creates, not a leg. The file, its name and its constant stay, so no code changes.
-  Done: The file redraws as a vertical rectangular panel; it renders at 16 and 20 pt in both themes
-  from the one ink; the theme's file-loading test still passes; the owner confirms the glyph
-  reads as a post beside the shelf.
-  `files: assets/icons/scene/post.svg,assets/README.md,assets/icons/STYLE_GUIDE.md`
 - `[ ]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
   Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post
   and the shelf, and answered that overlay or inset («накладная»/«вкладная») is not the tool's
@@ -656,6 +639,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs`
 
 ## Done
+
+- `[x]` **X95** the post's icon reads as a leg, not as a vertical panel
+  Why: Observation, from the owner: the icon of the tool that creates a post must read as a
+  rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
+  dominates, so it reads as a leg or a column beside the shelf and the panel. Expectation: a
+  tall rectangular board — the panel face plus its thickness, no top face that turns it into a
+  column — clearly the vertical sibling of the shelf and distinct from `panel.svg` and
+  `product.svg`.
+  Shape: Suspected cause: the drawing was made from the word rather than from the class (`10.10`, a
+  vertical panel with a height+depth fill): its footprint is about 5 mm wide on the 24 grid,
+  and the style guide's tone rule then makes the small top face the loudest shape. The redraw
+  follows the `draw-icon` skill — one ink, the large face in the active tone, the thickness in
+  the passive tone, the 24 grid, a 1.5 stroke — and the reference is the vertical panel the
+  fill tool creates, not a leg. The file, its name and its constant stay, so no code changes.
+  Done: The file redraws as a vertical rectangular panel; it renders at 16 and 20 pt in both themes
+  from the one ink; the theme's file-loading test still passes; the owner confirms the glyph
+  reads as a post beside the shelf.
+  `files: assets/icons/scene/post.svg,assets/README.md,assets/icons/STYLE_GUIDE.md` — `e1f3e72`
 
 - `[x]` **U119** two snap kinds: 2.5D drops the perpendicular onto the tool's plane, 3D gives every tool the point itself
   Why: The owner's report, three screenshots: the marker of a snap stands on the 3D candidate

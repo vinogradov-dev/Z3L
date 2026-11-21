@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X95 state=idle base=e0ec7e2 updated=2026-11-21
+STATE: milestone=M7 phase=T task=N28 state=idle base=e1f3e72 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,7 +52,7 @@ page, a glyph at the snapped point and a word in the status bar's readout.
 
 ## Next
 
-the post's icon reads as a leg, not as a vertical panel (X95)
+a wall fills the niche's width and height, so a back board is born from the gap (N28)
 
 ## Index
 
