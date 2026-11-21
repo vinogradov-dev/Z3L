@@ -816,6 +816,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **U127** the three panel classes are named with the shop's own words
+  Why: The owner asks whether the panel classes carry shared names and, if not, to hoist them
+   and call them Стойка, Горизонт, Стенка. They are already hoisted: every row of the registry
+   carries a Message (crates/model/src/class.rs, ClassRow::label), and the three pairs live in
+   one table in crates/text/src/messages.rs, so no surface writes them. What the words say is
+   the defect: «Вертикальная панель», «Горизонтальная панель» and «Задняя стенка» describe an
+   orientation, so a parts list, the class picker and the creation menu read a drawing instead
+   of naming a part the shop names.
+  Shape: The three labels become the shop's own words: ClassVerticalPanel is «Стойка»
+   (Upright), ClassHorizontalPanel is «Горизонт» (Horizontal) and ClassBackPanel is «Стенка»
+   (Back). The aliases keep every synonym the picker searches — боковина, перегородка, полка,
+   днище, крыша, стенка — so nothing is lost from a search. docs/domain/classes.md §10 follows
+   the table, the export golden package is regenerated because the label is a column of the
+   order package, and the UI tests that draw the old words (the picker, the properties card,
+   the scene tree's bracketed class) follow the new ones. The class codes, slugs, traits and
+   hosts do not move: this is the word only.
+  Done: One table holds the three words and every surface prints them; the picker finds
+   «Стойка», «Горизонт» and «Стенка» and still finds боковина, полка and стенка; the tree's
+   bracketed class and the properties card read the new words; the order package's class table
+   carries Upright, Horizontal and Back and the golden matches; the class code tests still pass
+   unchanged; cargo xtask ci is green.
+  `files: crates/text/src/messages.rs,crates/model/src/class.rs,docs/domain/classes.md,crates/export/tests/golden/package/classes.csv` — `0c5e5e7`
+
 - `[x]` **U117** the contour panel and the niche-fit panel have artwork of their own
   Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
   fits the niche's shape is a board with a bevel and a rounding. Today
