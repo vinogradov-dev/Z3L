@@ -1114,16 +1114,17 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and the shape; a test sends an object with an unknown key and asserts the key is named.
   `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
 - `[ ]` **Y6** the Render place shows the image as it is traced, and keeps the last one
-  Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
-   step by step where that is possible, and the render window is measured against V-Ray or
-   Blender's as a quality bar. Today the place reports a percentage and a path: `Stage::Done {
-   path, width, height, samples }` in `crates/ui/src/render_page.rs`, the PNG is written once
-   at the end and a person leaves the application to see it. ADR 0211 deferred exactly this —
-   "a preview of the last image ... needs a texture the shell registers, which is why it did
-   not come with this record" — and `plan/debt.md` `[ui]` records the same gap: no preview, no
-   status line of its own. A plate that takes minutes shows no sign of life, cannot reveal a
-   wrong exposure or a wrong camera before it finishes, and leaves nothing to look at when it
-   does.
+  why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
+   step by step where that is possible, and the render grows step by step toward a product a
+   workshop can use. V-Ray and Blender are references a session looks at, never specifications
+   it copies (AGENTS §1.3, §4.6): this entry is one step of that road, not a parity programme.
+   Today the place reports a percentage and a path — `Stage::Done { path, width, height,
+   samples }` in `crates/ui/src/render_page.rs` — the PNG is written once at the end and a
+   person leaves the application to see it. ADR 0211 deferred exactly this: "a preview of the
+   last image ... needs a texture the shell registers, which is why it did not come with this
+   record", and `plan/debt.md` `[ui]` records the same gap: no preview, no status line of its
+   own. A plate that takes minutes shows no sign of life, cannot reveal a wrong exposure or a
+   wrong camera before it finishes, and leaves nothing to look at when it does.
   shape: The quality bar is decomposed into our own words, never copied: the image is the
    surface, the numbers are a rail, the row under the picture says how far the render is, and
    the picture is still there when the run ends. (1) The page becomes image-first: the picture
