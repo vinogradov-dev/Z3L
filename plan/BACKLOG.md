@@ -377,6 +377,42 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a repaint was requested in the frame the call returned; a timing test asserts a served
    call answers without any pointer event and inside a budget written beside it.
   `files: app/src/main.rs,crates/mcp/src/server.rs,crates/mcp/src/chat.rs`
+- `[ ]` **J17** a product cannot be opened over the channel, so no furniture part can be born
+  Why: Measured 2026-11-21: `product.create` succeeded (node 3, and `query box` reports 800 x
+   460 x 2200 at the origin) and `command_list` then answered `open_product: null`; `query
+   niche` at [400, 230, 1000] answered `no niche at ... the point is outside every product` and
+   `panel.create` stays `enabled: false`, because a part is born only inside the open product
+   (ADR 0098). Opening is a session view operation (`Session::open_product`,
+   `crates/engine/src/session.rs:159`), not a command: the headless CLI opens with `--product`
+   (`app/src/cli/recipe.rs:99`) and the window opens what a person double-clicks, so a caller
+   over the channel has no door at all and every furniture command is unreachable after the
+   frame is made.
+  Shape: One way for a caller that is not the window to say which product it works in: a view
+   operation on the same tool surface (a field the batch carries, or a question about the
+   session) that writes no document field, moves no revision and leaves no undo entry, exactly
+   as the session method does, with ADR 0098 keeping one product open. The answer of a batch
+   then names the product it ran in.
+  Done: A test binds a session with no open product, opens one over the channel and asserts a
+   panel lands inside it; a test asserts a scene with two products and none named answers the
+   sentence the CLI already uses; a test asserts opening writes no revision and no undo entry.
+  `files: crates/mcp/src/server.rs,crates/engine/src/session.rs,app/src/cli/recipe.rs`
+- `[ ]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
+  Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
+   (`crates/ui/src/toolbars/spec.rs:936`) are `ToolKind::Fill { class: VERTICAL_PANEL |
+   HORIZONTAL_PANEL | BACK_PANEL, mode: Fit }`: the gesture measures the niche under the
+   pointer (`Project::niche`) and dispatches one `panel.create` with the outline, the size, the
+   placement and the class. The registry holds no fill id, so a caller that is not the window
+   has to rebuild the measurement itself and hand-write a placement with a quaternion for every
+   part, which is the arithmetic the three cells exist to remove; a copy of that arithmetic can
+   also disagree with the ribbon about the class axis pair.
+  Shape: One fill command that the three cells and any other caller share: the point, the class
+   and the mode in, and on a dry run the panel it would create, otherwise the panel. The niche
+   measurement stays where it is in `model`, so the ghost, the report row and the command read
+   one void.
+  Done: A test fills a niche with a post, a shelf and a wall and asserts the class, the
+   orientation and the size of each; a dry run answers the part without writing it; a point
+   outside every product is the refusal the query already gives.
+  `files: crates/engine/src/panel_cmds,app/src/fill_gizmo.rs,crates/ui/src/toolbars/spec.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
