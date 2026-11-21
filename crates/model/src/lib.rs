@@ -64,8 +64,8 @@ pub use light::{LightError, LightKind, LightNode};
 pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshError};
 pub use node::Node;
 pub use object::{
-    Boolean, BooleanError, BooleanOp, BooleanTool, Constructive, ConstructiveError, Contours, ContoursError, Extrude,
-    Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object,
+    AreaError, Boolean, BooleanError, BooleanOp, BooleanTool, Constructive, ConstructiveError, Contours, ContoursError,
+    Extrude, Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object,
 };
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,

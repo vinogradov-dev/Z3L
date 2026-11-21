@@ -8,6 +8,7 @@ use serde_json::Value;
 use text::Message;
 use thiserror::Error;
 
+use crate::area_cmds;
 use crate::class_rules::{self, ClassRefusal, CreationRefusal};
 use crate::contour_cmds;
 use crate::mesh_cmds;
@@ -257,6 +258,7 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_BOOLEAN_SET,
     object_cmds::OBJECT_BOOLEAN_REMOVE,
     object_cmds::OBJECT_COLLAPSE,
+    area_cmds::OBJECT_AREA_EXTRUDE,
     contour_cmds::CONTOUR_UNION,
     contour_cmds::CONTOUR_SUBTRACT,
     contour_cmds::CONTOUR_INTERSECT,
@@ -546,7 +548,10 @@ mod tests {
         assert_eq!(remove.label().text(Lang::En), "Remove boolean");
         let mark = registry.get("object.tool.set").expect("object.tool.set is registered");
         assert_eq!(mark.label().text(Lang::En), "Set tool mark");
-        assert_eq!(registry.specs().len(), 63);
+        // A pulled area is a body born from a drawing, so it creates one and names its own area.
+        let area = registry.get("object.area.extrude").expect("object.area.extrude is registered");
+        assert_eq!(area.label().text(Lang::En), "Extrude area");
+        assert_eq!(registry.specs().len(), 64);
     }
 
     #[test]

@@ -1340,6 +1340,7 @@ messages! {
     CmdCreateExtrusion = ["Create extrusion", "Создать выдавливание"],
     CmdReplaceContour = ["Replace contour", "Заменить контур"],
     CmdExtrudePath = ["Extrude path", "Выдавить путь"],
+    CmdExtrudeArea = ["Extrude area", "Выдавить область"],
     CmdSetExtrusionHeight = ["Set extrusion height", "Задать высоту выдавливания"],
     CmdCreatePath = ["Create path", "Создать путь"],
     CmdReplacePath = ["Replace path", "Заменить путь"],

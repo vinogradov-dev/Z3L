@@ -3039,6 +3039,21 @@ impl Path {
         }
         Contour::assemble(self.entries.clone(), self.next_segment_id).map_err(PathError::Contour)
     }
+
+    /// The closed path a geometry ring becomes, with fresh segment ids.
+    ///
+    /// The boundary conversion the other way, for a command that derives a shape in the geometry
+    /// layer and stores it: a boolean result ring, or one area of a drawing (G4). Every segment is
+    /// rounded to the document's units once, here and nowhere else, and the ring is then validated
+    /// as a path, so a ring the document cannot hold is refused with the reason instead of being
+    /// stored half-converted.
+    pub fn from_geometry(ring: &geom::Contour) -> Result<Self, PathError> {
+        let mut segments = Vec::with_capacity(ring.segments().len());
+        for segment in ring.segments() {
+            segments.push(ContourSegment::from_geom(*segment)?);
+        }
+        Self::new(segments, true)
+    }
 }
 
 impl From<Contour> for Path {
