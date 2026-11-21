@@ -516,8 +516,8 @@ mod tests {
     use crate::panel_cmds::{
         PanelBowClear, PanelBowSet, PanelContourCreate, PanelCornerBandingClear, PanelCornerBandingSet,
         PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMachiningAdd,
-        PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear,
-        PanelRingBandingSet,
+        PanelMachiningUpdate, PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize,
+        PanelRingBandingClear, PanelRingBandingSet,
     };
     use text::Lang;
 
@@ -1866,6 +1866,141 @@ mod tests {
         ));
         assert_eq!(session.project().revision(), Revision::ZERO);
         assert_eq!(session.project().next_id().get(), 5);
+    }
+
+    /// A whole-millimetre cutout rectangle in panel-local coordinates.
+    fn cutout_rect(x: i64, y: i64, width: i64, height: i64) -> CutoutShape {
+        CutoutShape::Rectangle(
+            model::PanelRect::new(
+                millimetres_length(x),
+                millimetres_length(y),
+                millimetres_length(width),
+                millimetres_length(height),
+            )
+            .expect("a cutout rectangle"),
+        )
+    }
+
+    #[test]
+    fn a_cutout_that_splits_the_core_is_refused_without_mutation() {
+        // A through strip across the whole 500 mm width leaves two boards, which is no longer a
+        // panel: the command refuses it before the revision moves or an id is consumed (N30).
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let request = cutout_request(panel_id, cutout_rect(0, 200, 700, 100), CutoutDepth::Through, FaceSide::A);
+        let params = json_params(&request);
+        let registry = CommandRegistry::new();
+        assert!(
+            !registry.get("panel.machining.add").expect("registered").enabled(&session, &params),
+            "the button that chooses the cutout reads the same check"
+        );
+
+        let error = session.dispatch("panel.machining.add", &params).expect_err("a split core");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutSplitsCore { panel }) if panel == panel_id),
+            "the refusal is the split, and it names the panel: {error:?}"
+        );
+        assert!(error.to_string().contains("split the core"), "the sentence names the split: {error}");
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal moves no revision");
+        assert!(!session.can_undo(), "a refusal is no undo entry");
+        assert!(session.project().panel(panel_id).expect("panel").machining().is_empty(), "no record lands");
+    }
+
+    #[test]
+    fn an_update_into_a_splitting_cutout_is_refused_without_mutation() {
+        // The same strip is legal while it is blind; turning it through is the split, and the stored
+        // record keeps the depth it had because the update validates before it writes.
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let strip = cutout_rect(0, 200, 700, 100);
+        let blind =
+            cutout_request(panel_id, strip.clone(), CutoutDepth::Blind { depth: sample_blind_depth() }, FaceSide::A);
+        let machining = session
+            .dispatch("panel.machining.add", &json_params(&blind))
+            .expect("a blind strip")
+            .created_machining_id()
+            .expect("a record");
+        let revision = session.project().revision();
+        let request = PanelMachiningUpdate {
+            panel: panel_id,
+            machining,
+            anchor: MachiningAnchor::face(FaceSide::A),
+            params: MachiningParams::Cutout(Cutout::new(strip, CutoutDepth::Through)),
+        };
+
+        let error = session.dispatch("panel.machining.update", &json_params(&request)).expect_err("a split core");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutSplitsCore { panel }) if panel == panel_id),
+            "the update is refused by the same rule: {error:?}"
+        );
+        assert_eq!(session.project().revision(), revision, "the refused edit moves no revision");
+        let record = session.project().panel(panel_id).expect("panel").machining_by_id(machining).expect("kept");
+        assert_eq!(
+            record.cutout().expect("a cutout").depth(),
+            CutoutDepth::Blind { depth: sample_blind_depth() },
+            "the stored record keeps its depth"
+        );
+        session.undo().expect("one undo");
+        assert!(
+            session.project().panel(panel_id).expect("panel").machining().is_empty(),
+            "the refused update added no history entry of its own"
+        );
+    }
+
+    #[test]
+    fn a_cutout_that_trims_a_narrow_core_is_accepted() {
+        // The material reaches only part of the strip's width: the shaped ring is 220 mm wide, so the
+        // through strip crosses its far edge and trims the end instead of splitting the board. A rule
+        // that measured the nominal box would refuse this, so the check reads the actual core.
+        let mut session = product_session();
+        let product = session.active_product().expect("a product is open");
+        let mm = millimetres_length;
+        let ring = Contour::from_polygon(vec![
+            [Length::ZERO, Length::ZERO],
+            [mm(700), Length::ZERO],
+            [mm(700), mm(220)],
+            [Length::ZERO, mm(220)],
+        ])
+        .expect("a narrow ring");
+        let create = PanelCreate {
+            parent: product,
+            name: "Narrow".to_owned(),
+            nominal_size: PanelNominalSize::new(mm(700), mm(220)).expect("a size"),
+            material: sample_material_id(),
+            placement: Placement::IDENTITY,
+            class: None,
+            outline: Some(PanelOutline::Contour { contour: ring }),
+            bevels: Vec::new(),
+        };
+        let panel_id = session
+            .dispatch("panel.create", &json_params(&create))
+            .expect("a shaped panel")
+            .created_id()
+            .expect("an id");
+        let request = cutout_request(panel_id, cutout_rect(0, 200, 700, 100), CutoutDepth::Through, FaceSide::A);
+
+        session.dispatch("panel.machining.add", &json_params(&request)).expect("a trim is not a split");
+
+        assert_eq!(session.project().panel(panel_id).expect("panel").machining().len(), 1, "the cutout lands");
+    }
+
+    #[test]
+    fn a_cutout_that_removes_the_whole_core_is_refused() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let request = cutout_request(panel_id, cutout_rect(0, 0, 700, 500), CutoutDepth::Through, FaceSide::A);
+
+        let error = session.dispatch("panel.machining.add", &json_params(&request)).expect_err("no core left");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutRemovesCore { panel }) if panel == panel_id),
+            "removing every piece is its own refusal: {error:?}"
+        );
+        assert!(error.to_string().contains("remove the whole core"), "the sentence says what is left: {error}");
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal moves no revision");
+        assert!(session.project().panel(panel_id).expect("panel").machining().is_empty(), "no record lands");
     }
 
     #[test]

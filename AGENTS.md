@@ -58,10 +58,11 @@ The contract is a template, not prose duplicated here: read
 `STATE` and `## Now` decide the answer, an interrupted session resumes at `now:` instead of starting
 over, and a broken plan is repaired with the tool (`--repair` on a write) rather than answered around
 or edited by hand. The plan declares the streams beside the state line (`STREAMS: agent=J catalog=O
-prototypes=Q`): `state=` and `task=` are the `app` stream's — this checkout's — and each declared
+prototypes=Q`), with `cargo xtask state streams <key>=<letters> …` as the line's only writer: `state=`
+and `task=` are the `app` stream's — this checkout's — and each declared
 stream is read from its own `[~]` entry, its own `plan/SESSION.<key>.md` and its row in
 `cargo xtask status` (ADR 0176). A question about the current or next tasks is answered for the stream
-this checkout serves — the branch names it — and opens with that stream's name; never as four lists
+this checkout serves — the branch names it — and opens with that stream's name; never as five lists
 merged into one, and never for another stream's entries.
 
 ### 1.2 Reading code with the language server
@@ -140,6 +141,7 @@ crates/ui              L7  egui panels and viewport, dispatches commands
 crates/mcp             L7  the editor as a tool server: the command registry projected into four MCP tools over stdio
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
+crates/final           L5  the final render: BVH, sampler, tracer, PNG
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
 crates/export          L3  order package: one manifest and flat tables other programs read
 crates/mesh            L3  evaluation cache: revision -> solid, triangle mesh and a panel's derived holes
@@ -408,9 +410,9 @@ must not lose more than the current sub-step — and close the task with
 `plan/SESSION.md`. The research note under `plan/notes/` stays: it says what a session measured and
 ruled out, and the next one reads it through `cargo xtask task <ID>`.
 
-### 6.2 Branch workflow: four streams, four worktrees
+### 6.2 Branch workflow: five streams, five worktrees
 
-The tree is split into four streams, each in its own git worktree, so two sessions never edit the same
+The tree is split into five streams, each in its own git worktree, so two sessions never edit the same
 checkout — which is how a plan line and a source file were lost once.
 
 | Stream | Branch | Where it is checked out | Task letters |
@@ -419,12 +421,13 @@ checkout — which is how a plan line and a source file were lost once.
 | MCP and the assistant | stream/agent | a sibling checkout, z3l-wt/agent | J |
 | the materials catalogue and the workshop standards | stream/catalog | z3l-wt/catalog | O |
 | the prototype mechanism | stream/prototypes | z3l-wt/prototypes | Q |
+| the final render: the tracer, its BVH and the image it writes | stream/render | z3l-wt/render | Y |
 
 - `main` holds only verified, merge-ready work and moves forward only through a `--no-ff` merge of `dev`, so the merge point is explicit. Nothing is committed directly to `main`.
 - A stream branches from `dev` and merges back into `dev` when its task is finished and `cargo xtask ci` is green there. It merges `dev` in often and never merges into another stream. A hot-fix follows the same path: fix, gate, merge.
-- **The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a stream back, because git will not move a branch another worktree has checked out and only this checkout writes `plan/`. The integration session merges every finished stream before it takes the next task, and closes the entry with the merged hash.
-- The stream's letter is the phase of its tasks: `J`, `O` and `Q` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A task runs in the checkout of its letter's stream.
-- **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so four branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
+- **The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a stream back, because git will not move a branch another worktree has checked out and only this checkout writes `plan/`. The integration session merges every finished stream before it takes the next task, and closes the entry with the merged hash. The `base` freshness rule is therefore judged here alone: a stream worktree's own commits leave its copy of `plan/` stale by design, so `cargo xtask status` and `cargo xtask plan` say which checkout the rule belongs to instead of refusing to print the state.
+- The stream's letter is the phase of its tasks: `J`, `O`, `Q` and `Y` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A stream is declared in one place, the `STREAMS:` line of `plan/STATUS.md`, with the line's only writer: `cargo xtask state streams agent=J catalog=O prototypes=Q render=Y,L` (an undeclared checkout cannot mark its own task, because its letters still belong to `app`). A task runs in the checkout of its letter's stream.
+- **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so five branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
 - A worktree builds its own copy of the plan tool: the binary records its workspace root when it is compiled, so one build directory shared by two checkouts makes the tool write the other checkout's plan. Run the tool from the worktree whose plan it edits.
 - The lock file lives inside a checkout, so nothing enforces the one-writer rule across worktrees but the rule itself.
 - A stream's live task is written down even though only this checkout writes `plan/`: `cargo xtask task start J1` marks the `[~]` entry and writes `plan/SESSION.<key>.md`, so three checkouts do not hide behind an idle state line (P17, ADR 0176).

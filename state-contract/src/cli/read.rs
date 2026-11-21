@@ -644,6 +644,7 @@ mod tests {
             tasks: vec![task],
             streams: Vec::new(),
             head: Some("fedcba9c0ffee".to_owned()),
+            branch: None,
             interrupted: false,
         };
         let facts = vec![Fact {

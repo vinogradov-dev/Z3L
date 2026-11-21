@@ -57,7 +57,7 @@ pub fn analyze(status: &str, backlog: &str, sessions: &[(String, String)]) -> Re
 
     if violations.is_empty() {
         let streams = stream_states(&streams, sessions, &tasks);
-        Ok(Summary { state, tasks, streams, head: None, interrupted: false })
+        Ok(Summary { state, tasks, streams, head: None, branch: None, interrupted: false })
     } else {
         Err(violations)
     }
@@ -169,7 +169,7 @@ fn note_violations(streams: &Streams, sessions: &[(String, String)], tasks: &[Ta
 ///
 /// `state=` and `task=` are the primary stream's: its task in progress, or the head of its work
 /// order. A stream beside it keeps its `[~]` and its note, and neither moves the state line — which
-/// is what lets four checkouts work one backlog without four writers of one line.
+/// is what lets several checkouts work one backlog without several writers of one line.
 fn primary_violations(streams: &Streams, tasks: &[Task], state: &crate::State) -> Vec<String> {
     let mut violations = Vec::new();
     let primary = streams.primary();

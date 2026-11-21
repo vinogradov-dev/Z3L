@@ -2,7 +2,7 @@
 //!
 //! A project that runs one session at a time needs nothing from this module: a plan without a
 //! `STREAMS:` line has one stream, the primary, and every rule keeps the shape it always had. A
-//! project that splits its work across checkouts — Z3L runs four streams over one backlog —
+//! project that splits its work across checkouts — Z3L runs five over one backlog —
 //! declares the others beside the `STATE:` line:
 //!
 //! ```text

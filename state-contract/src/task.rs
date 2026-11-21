@@ -487,6 +487,7 @@ mod tests {
             tasks,
             streams: Vec::new(),
             head: Some("fedcba9".to_owned()),
+            branch: None,
             interrupted: false,
         }
     }

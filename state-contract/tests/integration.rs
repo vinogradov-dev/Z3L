@@ -21,6 +21,8 @@ struct FakeGit {
     base_date: Option<&'static str>,
     /// The paths `changed` answers with; `None` is a host that cannot compare two commits.
     changed: Option<Vec<String>>,
+    /// The branch `branch` answers with; `None` is a checkout whose `HEAD` is detached.
+    branch: Option<&'static str>,
 }
 
 impl FakeGit {
@@ -31,7 +33,18 @@ impl FakeGit {
             ancestors: vec![("abc1234", HEAD), ("HEAD", HEAD)],
             base_date: Some("2025-12-01"),
             changed: None,
+            branch: None,
         }
+    }
+
+    /// The primary checkout with code commits past `base`: an idle plan that lags its own tree.
+    fn lagging_primary() -> Self {
+        Self { changed: Some(vec!["src/lib.rs".to_owned()]), ..Self::repository() }
+    }
+
+    /// A checkout of the stream named by its branch, with the same commits past `base`.
+    fn stream_checkout(branch: &'static str) -> Self {
+        Self { branch: Some(branch), ..Self::lagging_primary() }
     }
 }
 
@@ -50,6 +63,10 @@ impl Git for FakeGit {
 
     fn changed(&self, _from: &str, _to: &str) -> Option<Vec<String>> {
         self.changed.clone()
+    }
+
+    fn branch(&self) -> Option<String> {
+        self.branch.map(str::to_owned)
     }
 
     fn commit_date(&self, hash: &str) -> Option<String> {
@@ -324,6 +341,34 @@ fn head_is_a_legal_base_in_a_real_repository() {
     let summary = check(&root).expect("`HEAD` resolves in a real repository");
     assert_eq!(summary.state.base, "HEAD");
     assert!(ProcessGit::new(&root).head().is_some(), "the scratch repository has a commit");
+    assert_eq!(summary.branch, ProcessGit::new(&root).branch(), "the plan carries the branch it ran on");
+    assert!(summary.branch.is_some(), "a fresh repository is on a branch, not a detached head");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// P23: the `base` freshness rule says an idle plan describes the tree it sits in, which is the
+/// primary checkout's fact. A stream worktree holds that stream's own commits and is forbidden to
+/// write `plan/`, so it must not be refused the plan it is meant to work from.
+#[test]
+fn a_stream_checkout_does_not_judge_the_base_lag() {
+    let status = "STATE: milestone=M1 phase=A task=T1 state=idle base=abc1234 updated=2026-01-01\n\
+                  STREAMS: agent=J render=Y\n";
+    let root = plan_dir("stream-checkout", status, PLAN_BACKLOG);
+
+    // The same tree in the primary checkout is exactly the defect the rule exists for.
+    let error = check_with(&root, &FakeGit::lagging_primary()).expect_err("an idle plan that lags its tree");
+    assert!(error.iter().any(|violation| violation.contains("is not the tree this plan describes")), "{error:?}");
+
+    let summary = check_with(&root, &FakeGit::stream_checkout("stream/render"))
+        .expect("a declared stream worktree is not judged on the primary's rule");
+    assert_eq!(summary.stream_checkout().map(|stream| stream.key.as_str()), Some("render"));
+    let text = status_with(&root, &FakeGit::stream_checkout("stream/render")).expect("the block renders");
+    assert!(text.contains("base: the primary checkout's rule; this is the `render` stream"), "{text}");
+
+    // A branch naming no declared stream is not a stream checkout, and the rule stands.
+    let error = check_with(&root, &FakeGit::stream_checkout("stream/unknown"))
+        .expect_err("an undeclared branch is the primary's business");
+    assert!(error.iter().any(|violation| violation.contains("is not the tree this plan describes")), "{error:?}");
     let _ = fs::remove_dir_all(&root);
 }
 
