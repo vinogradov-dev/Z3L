@@ -367,20 +367,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J7** the window has a chat, and a scripted backend runs a turn without a network
-  Why: This is the goal in the owner's words: a person talks to the agent in the application's
-   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
-   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
-  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
-   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
-   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
-   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
-   never from `settings.json`.
-  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
-   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
-   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
-   green.
-  `files: app/src/main.rs,crates/ui/src/theme.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs`
 - `[ ]` **J8** a recipe builds a carcass in one command and one undo step
   Why: ADR 0192 makes the arithmetic ours and gives the model the choice; nothing of
    `product.build`, `carcass.box` or `wardrobe.hinged` exists, so today "build a wardrobe 600 x
@@ -524,27 +510,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **X102** X99 a primitive is an operand of a body boolean
-  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
-   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
-   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
-   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
-   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
-   SolidPlan at all.
-  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
-   give the kernel port a way to build a body from the closed triangle mesh the primitive
-   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
-   backend a mesh body for a primitive operand and every primitive becomes an operand of every
-   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
-   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
-   kinds it accepts from what the compiler can build, so the cells are never dead without a
-   sentence.
-  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
-   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
-   the three Model cells arm on a selection of two primitives and on a primitive beside a
-   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
-   cell while its road is unbuilt
-  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs`
 - `[ ]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
   Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
    under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
@@ -834,8 +799,60 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
    `cargo xtask ci` is green.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
+- `[ ]` **J14** the OpenAI-compatible backend, its consent screen and the key's two homes
+  Why: ADR 0189 names the wire and the key, and J7 ships only the scripted backend: no HTTP
+   client, no consent screen and no key handling exist, so a person cannot talk to a real model
+   yet.
+  Shape: The OpenAI-compatible client behind ChatBackend in `crates/mcp` (`ureq` plus the OS
+   TLS, one counted `openssl-sys` exception proven by a test over the resolved graph), a worker
+   thread so no frame waits, the consent card naming what leaves the machine and remembered per
+   endpoint, `Z3L_AGENT_KEY` then `agent-key` at `0600` and never `settings.json`, and the
+   endpoint and model as settings data with no provider name in code.
+  Done: A test with a local stub server runs a turn end to end and asserts one undo entry and
+   that changing `base_url` and `model` alone reaches the stub; the key is found in the
+   environment and in the file, and a log line, an error sentence and `settings.json` never
+   carry it; the first request of an endpoint asks for consent once and a cleared consent asks
+   again; `xtask layers` passes with the vendored-feature test green.
+  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs`
 
 ## Done
+
+- `[x]` **J7** the window has a chat, and a scripted backend runs a turn without a network
+  Why: This is the goal in the owner's words: a person talks to the agent in the application's
+   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
+   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
+  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
+   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
+   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
+   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
+   never from `settings.json`.
+  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
+   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
+   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,crates/mcp/src/chat.rs,crates/engine/src/session.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs,xtask/src/ui_rules.rs` — `cb37ec6`
+
+- `[x]` **X102** X99 a primitive is an operand of a body boolean
+  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
+   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
+   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
+   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
+   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
+   SolidPlan at all.
+  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
+   give the kernel port a way to build a body from the closed triangle mesh the primitive
+   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
+   backend a mesh body for a primitive operand and every primitive becomes an operand of every
+   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
+   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
+   kinds it accepts from what the compiler can build, so the cells are never dead without a
+   sentence.
+  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
+   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
+   the three Model cells arm on a selection of two primitives and on a primitive beside a
+   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
+   cell while its road is unbuilt
+  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs` — `ae7d115`
 
 - `[x]` **J6** the local channel attaches an agent to the window a person is looking at
   Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
@@ -2725,7 +2742,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A cone is drawn from a base circle and a height, the card edits both radii and the
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
-  `files: crates/model/src/primitive.rs,crates/mesh/src/primitive.rs,crates/ui/src/draw.rs,crates/ui/src/editor/drawing.rs,crates/ui/src/object_card.rs,crates/ui/src/toolbars/spec.rs,app/src/extrude_gizmo.rs,assets/icons/primitives/cone.svg` — `00c8795`
+  `files: crates/param/src/primitive.rs` — `00c8795`
 
 - `[x]` **X63** identical created objects all carry the same name in the tree and the card
   Why: Observation: every created object is named after its shape alone (ui/editor/creation.rs:
@@ -2868,7 +2885,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    covers one equal meridian step within rounding, and the counts, bounds and outward normals
    are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
    twice another, and the ball is looked at once in the live window at the default size.
-  `files: crates/mesh/src/primitive.rs` — `06ae440`
+  `files: crates/param/src/primitive.rs` — `06ae440`
 
 - `[x]` **K5** the program cannot open a scene named on its command line
   Why: Observation: `z3l cabinet.z3l` prints «`cabinet.z3l` is not a command; run `z3l --help`»
@@ -4294,7 +4311,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a face grip one, each one undo entry; a min-face drag keeps the opposite face still in
    the world; cylinder and sphere still load and build; the ribbon cell, the icon and the
    messages no longer mention a cube; cargo xtask ci is green.
-  `files: crates/model/src/primitive.rs, crates/mesh/src/primitive.rs, crates/engine/src/object_cmds.rs, crates/ui/src/toolbars.rs` — `ce8ce93`
+  `files: crates/param/src/primitive.rs` — `ce8ce93`
 
 - `[x]` **N8** the exact-distance fields: type a distance, lock it, centre it, with the keyboard
   Why: A maker cannot place a post to the millimetre with a mouse, and the same need appears in

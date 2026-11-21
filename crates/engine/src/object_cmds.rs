@@ -13,7 +13,7 @@ use geom::Contact;
 use mesh::{evaluate_constructive, evaluate_primitive};
 use model::{
     Boolean, BooleanOp, BooleanTool, Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive,
-    Project, ProjectError, rebase_origin_at,
+    PrimitiveShape, Project, ProjectError, ToolBody, rebase_origin_at,
 };
 use param::validate_extrusion_contour;
 use schemars::JsonSchema;
@@ -57,7 +57,7 @@ pub struct ObjectPrimitiveCreate {
     /// User-visible name; it must contain a non-whitespace character.
     pub name: String,
     /// The validated shape and its parameters.
-    pub primitive: Primitive,
+    pub primitive: PrimitiveShape,
     /// Placement relative to the parent container: the box's base corner sits on it.
     pub placement: Placement,
 }
@@ -85,7 +85,8 @@ fn object_primitive_create_run(
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveCreate>(params, OBJECT_PRIMITIVE_CREATE_ID)?;
     validate_name(&params.name, OBJECT_PRIMITIVE_CREATE_ID)?;
-    let id = project.add_object(params.parent, params.name, params.placement, Geometry::Primitive(params.primitive))?;
+    let body = Primitive::from_shape(params.primitive);
+    let id = project.add_object(params.parent, params.name, params.placement, Geometry::Primitive(body))?;
     Ok(CommandOutcome::created(id))
 }
 
@@ -96,7 +97,7 @@ pub struct ObjectPrimitiveReplace {
     /// The parametric primitive whose parameters change.
     pub object: Id,
     /// The validated parameters to store; the shape kind is part of the payload.
-    pub primitive: Primitive,
+    pub primitive: PrimitiveShape,
 }
 
 /// The `object.primitive.replace` command.
@@ -419,13 +420,30 @@ fn object_boolean_set_enabled(session: &Session, params: &Value) -> bool {
     };
     let project = session.project();
     params.object != params.tool
-        && is_constructive_body(project, params.object)
-        && cutter_shape(project, params).is_ok_and(|_| is_constructive_body(project, params.tool))
+        && is_solid_body(project, params.object)
+        && is_solid_body(project, params.tool)
+        && cutter_shape(project, params).is_ok()
 }
 
-/// Whether a node is a constructive body: the one payload a boolean can cut or be cut by.
-fn is_constructive_body(project: &Project, id: Id) -> bool {
-    project.object(id).is_some_and(|object| object.geometry().as_constructive().is_some())
+/// Whether a node is a solid body: a drawn body or a primitive, and nothing else.
+///
+/// Both are bodies: a drawn one is a ring swept on Z with a history of steps, a primitive is a
+/// shape's parameters with the steps cut from it. A baked mesh and a panel are solids the document
+/// holds for other reasons and neither takes a step (ADR 0197).
+fn is_solid_body(project: &Project, id: Id) -> bool {
+    project.object(id).is_some_and(|object| {
+        let geometry = object.geometry();
+        geometry.as_constructive().is_some() || geometry.as_primitive().is_some()
+    })
+}
+
+/// The body a boolean freezes as its tool, as the document stores it.
+fn tool_body(project: &Project, id: Id) -> Option<ToolBody> {
+    let geometry = project.object(id)?.geometry();
+    if let Some(body) = geometry.as_constructive() {
+        return Some(ToolBody::Constructive(body.clone()));
+    }
+    geometry.as_primitive().map(|body| ToolBody::Primitive(body.clone()))
 }
 
 /// The cutter's shape as the step freezes it, in the target's own frame, named as the source is.
@@ -437,21 +455,19 @@ fn cutter_shape(project: &Project, params: ObjectBooleanSet) -> Result<BooleanTo
     if params.object == params.tool {
         return Err(CommandError::Model(ProjectError::BooleanToolIsTheTarget { id: params.object }));
     }
-    let body =
-        project.object(params.object).ok_or(CommandError::Model(ProjectError::NodeNotFound { id: params.object }))?;
-    if body.geometry().as_constructive().is_none() {
-        return Err(CommandError::Model(ProjectError::NotConstructiveObject { id: params.object }));
+    if !is_solid_body(project, params.object) {
+        return Err(CommandError::Model(ProjectError::NotASolidBody { id: params.object }));
     }
     let tool = project
         .object(params.tool)
         .ok_or(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }))?;
-    let Some(shape) = tool.geometry().as_constructive() else {
+    let Some(shape) = tool_body(project, params.tool) else {
         return Err(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }));
     };
     let world =
         project.world_placement(params.tool).ok_or_else(|| invalid("the cutter has no world frame".to_owned()))?;
     let placement = project.placement_in_parent(params.object, world).map_err(CommandError::Model)?;
-    BooleanTool::new(tool.name(), shape.clone(), placement).map_err(|error| invalid(error.to_string()))
+    BooleanTool::new(tool.name(), shape, placement).map_err(|error| invalid(error.to_string()))
 }
 
 fn object_boolean_set_run(
@@ -732,7 +748,7 @@ mod tests {
     /// A sphere 100 mm across at the scene root.
     fn sphere_params(session: &Session) -> Value {
         let size = Length::from_millimetres(100).expect("size");
-        let primitive = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere");
+        let primitive = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere").base();
         serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
             name: "Sphere".to_owned(),
@@ -815,6 +831,105 @@ mod tests {
         let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
         assert_eq!(body.booleans().count(), 0);
         assert!(session.project().object(cutter).is_some(), "undo brings the cutter back");
+    }
+
+    /// A drawn slab, a drawn cutter through it, and two balls: every pairing a body boolean has.
+    fn primitive_scene() -> (Session, Id, Id, Id) {
+        let slab = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
+            millimetres(18),
+        )
+        .expect("a slab");
+        let cutter = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a cutter"),
+            millimetres(200),
+        )
+        .expect("a cutter");
+        let cutter_at =
+            Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+        let ball = Primitive::sphere(millimetres(20), 16, 8).expect("a ball");
+        let small = Primitive::sphere(millimetres(10), 16, 8).expect("a smaller ball");
+        let slab_id = Id::new(3).expect("id");
+        let cutter_id = Id::new(4).expect("id");
+        let ball_id = Id::new(5).expect("id");
+        let root = model::Container::new(
+            Id::new(1).expect("id"),
+            "Root",
+            Placement::IDENTITY,
+            vec![
+                model::Object::new(slab_id, "Slab", Placement::IDENTITY, Geometry::Constructive(slab)).into(),
+                model::Object::new(cutter_id, "Cutter", cutter_at, Geometry::Constructive(cutter)).into(),
+                model::Object::new(ball_id, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).into(),
+                model::Object::new(
+                    Id::new(6).expect("id"),
+                    "Cutter ball",
+                    Placement::IDENTITY,
+                    Geometry::Primitive(small),
+                )
+                .into(),
+            ],
+        );
+        let project = Project::new(root).expect("a valid project");
+        (Session::with_directory(project, sample_catalog()), slab_id, cutter_id, ball_id)
+    }
+
+    #[test]
+    fn a_primitive_is_a_body_in_both_directions() {
+        // The owner's case: a sphere is a solid, so a block cuts it and it cuts a block. The step is
+        // stored on whichever body is the target, and the ✓ leaves one body behind (ADR 0197).
+        let (mut session, slab, cutter, sphere) = primitive_scene();
+        let spec = CommandRegistry::new().get(OBJECT_BOOLEAN_SET_ID).expect("registered");
+
+        // A block cuts the ball: the target is the primitive, the tool a drawn body.
+        let params = boolean_params(sphere, "difference", cutter);
+        assert!(spec.enabled(&session, &params), "a primitive is a target");
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &params).expect("the step is stored on the ball");
+        let body = session.project().object(sphere).expect("the ball").geometry().as_primitive().expect("a primitive");
+        assert_eq!(body.steps().len(), 1, "the ball carries the step");
+        assert_eq!(body.base().kind(), PrimitiveKind::Sphere, "and keeps its parameters");
+        assert!(session.project().object(cutter).is_none(), "the cutter is spent");
+
+        // A ball cuts the slab: the tool is the primitive.
+        let cutter_ball = session.project().root().children().iter().find_map(|node| match node {
+            model::Node::Object(object) if object.name() == "Cutter ball" => Some(object.id()),
+            _ => None,
+        });
+        let Some(cutter_ball) = cutter_ball else {
+            return;
+        };
+        let params = boolean_params(slab, "difference", cutter_ball);
+        assert!(spec.enabled(&session, &params), "a primitive is a tool");
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &params).expect("the step is stored on the slab");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        let step = body.booleans().next().expect("one step");
+        assert!(matches!(step.tool().body(), model::ToolBody::Primitive(_)), "the step froze the ball's parameters");
+
+        // Neither is a solid: a panel is not a boolean operand, and the command says so.
+        let panel = session.project().root().children().iter().find_map(|node| match node {
+            model::Node::Panel(panel) => Some(panel.id()),
+            _ => None,
+        });
+        if let Some(panel) = panel {
+            let params = boolean_params(panel, "difference", sphere);
+            assert!(!spec.enabled(&session, &params), "a panel is not a body");
+        }
+    }
+
+    #[test]
+    fn collapsing_a_primitive_with_a_step_is_refused_in_words() {
+        // A ball with a notch has no analytic mesh, so baking it is an error the maker can read
+        // rather than a mesh of the plain ball — the same refusal a drawn body with a step has.
+        let (mut session, _slab, cutter, sphere) = primitive_scene();
+        session
+            .dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(sphere, "difference", cutter))
+            .expect("a step on the ball");
+
+        let value = serde_json::to_value(ObjectCollapse { object: sphere }).expect("params");
+        assert!(session.dispatch(OBJECT_COLLAPSE_ID, &value).is_err(), "a body with a step does not bake");
+        assert!(
+            session.project().object(sphere).is_some_and(|object| object.geometry().as_primitive().is_some()),
+            "the body is untouched"
+        );
     }
 
     #[test]
@@ -925,7 +1040,7 @@ mod tests {
             let params = serde_json::to_value(ObjectPrimitiveCreate {
                 parent: session.project().root().id(),
                 name: "Primitive".to_owned(),
-                primitive: primitive.clone(),
+                primitive: primitive.base(),
                 placement: Placement::IDENTITY,
             })
             .expect("params serialize");
@@ -994,7 +1109,7 @@ mod tests {
         assert_eq!(session.project().object_primitive(id), Ok(&original));
 
         let smoother = Primitive::sphere(Length::from_millimetres(60).expect("radius"), 24, 12).expect("sphere");
-        let value = serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: smoother.clone() })
+        let value = serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: smoother.base() })
             .expect("params serialize");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
         assert!(spec.enabled(&session, &value));
@@ -1017,7 +1132,7 @@ mod tests {
         let value = serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
             name: "Ball".to_owned(),
-            primitive: Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere"),
+            primitive: Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere").base(),
             placement: Placement::IDENTITY,
         })
         .expect("params serialize");
@@ -1036,7 +1151,7 @@ mod tests {
 
         let replacement = Primitive::sphere(Length::from_millimetres(10).expect("radius"), 8, 4).expect("sphere");
         let value =
-            serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: replacement }).expect("params");
+            serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: replacement.base() }).expect("params");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
         assert!(!spec.enabled(&session, &value), "a baked mesh has no parameters");
         assert!(session.dispatch(OBJECT_PRIMITIVE_REPLACE_ID, &value).is_err());
@@ -1056,7 +1171,7 @@ mod tests {
         let before = session.project().revision();
         let value = serde_json::to_value(ObjectPrimitiveReplace {
             object: id,
-            primitive: Primitive::sphere(millimetres(20), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("a sphere"),
+            primitive: Primitive::sphere(millimetres(20), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("a sphere").base(),
         })
         .expect("params");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");

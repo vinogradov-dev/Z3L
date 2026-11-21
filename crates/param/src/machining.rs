@@ -292,7 +292,10 @@ mod tests {
             panic!("a cutout subtracts one tool");
         };
         assert!(tool.steps().is_empty(), "a cutout tool is one extrusion");
-        assert_eq!(tool.base().frame().origin, DVec3::new(100.0, 100.0, -TOOL_OVERSHOOT_MM));
+        assert_eq!(
+            tool.base().extrude().expect("an extrusion").frame().origin,
+            DVec3::new(100.0, 100.0, -TOOL_OVERSHOOT_MM)
+        );
     }
 
     #[test]
@@ -398,7 +401,7 @@ mod tests {
         let plan = PanelPlan::of_panel(&panel, &geometry(&panel)).expect("panel plan");
         let tool = plan.steps()[0].tool();
         assert!(tool.steps().is_empty(), "a bevel tool is one extrusion");
-        let frame = tool.base().frame();
+        let frame = tool.base().extrude().expect("an extrusion").frame();
         // The frame starts on the bottom edge, one overshoot before its start, and its local Z runs
         // along the edge, X into the panel and Y across the thickness.
         assert!((frame.origin.x + crate::TOOL_OVERSHOOT_MM).abs() < 1.0e-9, "origin x {}", frame.origin.x);
@@ -407,8 +410,11 @@ mod tests {
         assert!((frame.x - DVec3::Y).length() < 1.0e-9, "local X points into the panel: {:?}", frame.x);
         assert!((frame.y - DVec3::Z).length() < 1.0e-9, "local Y is the thickness: {:?}", frame.y);
         assert!((frame.z - DVec3::X).length() < 1.0e-9, "local Z runs along the edge: {:?}", frame.z);
-        assert!((tool.base().height() - (100.0 + 2.0 * crate::TOOL_OVERSHOOT_MM)).abs() < 1.0e-9);
-        let profile = tool.base().profile();
+        assert!(
+            (tool.base().extrude().expect("an extrusion").height() - (100.0 + 2.0 * crate::TOOL_OVERSHOOT_MM)).abs()
+                < 1.0e-9
+        );
+        let profile = tool.base().extrude().expect("an extrusion").profile();
         assert_eq!(profile.outer.len(), 4, "the wedge is closed outside the panel");
     }
 

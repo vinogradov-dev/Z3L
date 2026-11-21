@@ -1336,6 +1336,50 @@ messages! {
     ShortcutUndo = ["Undo", "Отменить"],
     ShortcutRedo = ["Redo", "Повторить"],
     ShortcutPalette = ["Command palette", "Палитра команд"],
+    ShortcutAssistant = ["Assistant", "Ассистент"],
+
+    // ── The assistant's panel, its two modes and what a turn reports ───
+    AssistantYou = ["You", "Вы"],
+    AssistantPlaceholder = ["Ask for a change, or ask what is in the scene", "Попросите изменить изделие или спросите, что в сцене"],
+    AssistantSend = ["Send", "Отправить"],
+    AssistantStop = ["Stop", "Остановить"],
+    AssistantThinking = ["The agent is working…", "Агент работает…"],
+    AssistantPlanMode = ["Plan", "План"],
+    AssistantBuildMode = ["Build", "Сборка"],
+    AssistantPlanHint = [
+        "Plan: the agent answers with the commands it would run, and nothing is written.",
+        "План: агент отвечает командами, которые выполнил бы, и ничего не записывает."
+    ],
+    AssistantBuildHint = [
+        "Build: the next answer may change the document. Every answer is one undo entry.",
+        "Сборка: следующий ответ может изменить документ. Каждый ответ — одна запись в истории."
+    ],
+    AssistantNotConfigured = [
+        "No model is connected yet, so there is nobody to answer. The editor works without one.",
+        "Модель ещё не подключена, отвечать некому. Редактор работает и без неё."
+    ],
+    AssistantChecklist = ["Checklist", "План работы"],
+    AssistantPlanLine = [
+        "Plan: {} would be created, {} changed, {} removed. Nothing is written.",
+        "План: создать {}, изменить {}, удалить {}. Ничего не записано."
+    ],
+    AssistantLandedLine = [
+        "{} created, {} changed, {} removed, as one undo entry.",
+        "Создано {}, изменено {}, удалено {}, одной записью истории."
+    ],
+    AssistantRolledBackLine = [
+        "Refused: a step failed and the answer took back its {} created, {} changed, {} removed.",
+        "Отказ: шаг не выполнился, и ответ отменил созданные {}, изменённые {}, удалённые {}."
+    ],
+    AssistantRefusedPart = ["The step's own words: {}", "Слова самого шага: {}"],
+    AssistantStoppedLine = [
+        "The turn was stopped. The document is what the last answer left.",
+        "Ход остановлен. Документ в том виде, каким его оставил последний ответ."
+    ],
+    AssistantBudgetLine = [
+        "The turn reached its call limit and stopped; the conversation is what it left.",
+        "Ход достиг предела вызовов и остановился; в разговоре то, что он успел."
+    ],
     ShortcutProjection = ["Perspective / orthographic", "Перспектива / ортогональ"],
     ShortcutGrid = ["Toggle the drawing grid", "Переключить сетку рисования"],
     ShortcutCancel = ["Cancel the current tool", "Отменить текущий инструмент"],

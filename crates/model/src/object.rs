@@ -84,6 +84,33 @@ pub enum BooleanOp {
 /// document can recurse without a limit (ADR 0041, ADR 0197).
 pub const MAX_BOOLEAN_DEPTH: usize = 8;
 
+/// The body a boolean step combines with, frozen when the step was applied.
+///
+/// A solid is either a drawn body — a ring swept on Z and the history of steps cut from it — or a
+/// parametric primitive, and both take part in a boolean in both directions. The step stores which
+/// it was, so a load needs no node and no library to rebuild the result (ADR 0197).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolBody {
+    /// A drawn body: a path and its ordered feature history.
+    Constructive(Constructive),
+    /// A parametric primitive shape and the steps cut from it.
+    Primitive(Primitive),
+}
+
+impl ToolBody {
+    /// How deeply the operand's own steps nest, counted in booleans, for the depth guard.
+    pub fn boolean_depth(&self) -> usize {
+        match self {
+            Self::Constructive(body) => feature_depth(body.features()),
+            Self::Primitive(body) => body
+                .steps()
+                .iter()
+                .fold(1, |depth, boolean| depth.max(1usize.saturating_add(boolean.tool().body().boolean_depth()))),
+        }
+    }
+}
+
 /// The shape a boolean step cuts with, frozen when the step was applied.
 ///
 /// The cutter is a node the maker used once, not a live operand: the step stores the body it had
@@ -94,7 +121,7 @@ pub const MAX_BOOLEAN_DEPTH: usize = 8;
 #[serde(try_from = "BooleanToolWire")]
 pub struct BooleanTool {
     name: String,
-    body: Constructive,
+    body: ToolBody,
     placement: Placement,
 }
 
@@ -104,7 +131,7 @@ impl BooleanTool {
     /// The name is a label and nothing else: it is kept for the card, which says "difference · cup
     /// bore" rather than a number, and is never resolved back to a node. A blank or absurdly long
     /// name is refused, because a file must not carry a label no surface can print.
-    pub fn new(name: impl Into<String>, body: Constructive, placement: Placement) -> Result<Self, BooleanError> {
+    pub fn new(name: impl Into<String>, body: ToolBody, placement: Placement) -> Result<Self, BooleanError> {
         let name = name.into();
         if name.trim().is_empty() || name.chars().count() > MAX_TOOL_NAME {
             return Err(BooleanError::ToolName { max: MAX_TOOL_NAME });
@@ -117,8 +144,8 @@ impl BooleanTool {
         &self.name
     }
 
-    /// The cutter's own feature history, as it stood when the step was applied.
-    pub const fn body(&self) -> &Constructive {
+    /// The cutter's own body, as it stood when the step was applied.
+    pub const fn body(&self) -> &ToolBody {
         &self.body
     }
 
@@ -141,7 +168,7 @@ impl TryFrom<BooleanToolWire> for BooleanTool {
 #[serde(deny_unknown_fields)]
 struct BooleanToolWire {
     name: String,
-    body: Constructive,
+    body: ToolBody,
     placement: Placement,
 }
 
@@ -291,7 +318,7 @@ impl Constructive {
         if self.features.len() >= MAX_OBJECT_FEATURES {
             return Err(ConstructiveError::FeatureCount { count: self.features.len(), max: MAX_OBJECT_FEATURES });
         }
-        let depth = 1usize.saturating_add(feature_depth(boolean.tool().body().features()));
+        let depth = 1usize.saturating_add(boolean.tool().body().boolean_depth());
         if depth > MAX_BOOLEAN_DEPTH {
             return Err(ConstructiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH });
         }
@@ -597,7 +624,7 @@ fn feature_depth(features: &[Feature]) -> usize {
     let mut depth = 1;
     for feature in features {
         if let Feature::Boolean(boolean) = feature {
-            depth = depth.max(1usize.saturating_add(feature_depth(boolean.tool().body().features())));
+            depth = depth.max(1usize.saturating_add(boolean.tool().body().boolean_depth()));
         }
     }
     depth
@@ -955,7 +982,7 @@ mod tests {
         let path = Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a ring");
         let body = Constructive::extrude(path, millimetres(200)).expect("a body");
         let placement = Placement::new(DVec3::new(at.0, at.1, at.2), DQuat::IDENTITY).expect("a placement");
-        BooleanTool::new(name, body, placement).expect("a named tool")
+        BooleanTool::new(name, ToolBody::Constructive(body), placement).expect("a named tool")
     }
 
     fn scene(children: Vec<Node>) -> Container {
@@ -982,7 +1009,10 @@ mod tests {
         let step = stored.booleans().next().expect("one step");
         assert_eq!(step.op(), BooleanOp::Difference);
         assert_eq!(step.tool().name(), "Cup bore");
-        assert_eq!(step.tool().body().height(), Some(millimetres(200)), "the shape is frozen in the step");
+        let ToolBody::Constructive(shape) = step.tool().body() else {
+            panic!("a drawn cutter");
+        };
+        assert_eq!(shape.height(), Some(millimetres(200)), "the shape is frozen in the step");
         assert_eq!(step.tool().placement().translation(), DVec3::new(25.0, 25.0, -10.0));
         assert!(decoded.object(tool).is_some(), "a kept source is untouched");
     }
@@ -1016,11 +1046,14 @@ mod tests {
         assert_eq!(
             BooleanTool::new(
                 "  ",
-                Constructive::extrude(
-                    Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)],).expect("a ring"),
-                    millimetres(10)
-                )
-                .expect("a body"),
+                ToolBody::Constructive(
+                    Constructive::extrude(
+                        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)],)
+                            .expect("a ring"),
+                        millimetres(10)
+                    )
+                    .expect("a body")
+                ),
                 Placement::IDENTITY
             ),
             Err(BooleanError::ToolName { max: MAX_TOOL_NAME })
@@ -1033,7 +1066,8 @@ mod tests {
         )
         .expect("a body");
         for level in 1..=MAX_BOOLEAN_DEPTH {
-            let inner = BooleanTool::new("Inner", nested.clone(), Placement::IDENTITY).expect("a tool");
+            let inner =
+                BooleanTool::new("Inner", ToolBody::Constructive(nested.clone()), Placement::IDENTITY).expect("a tool");
             let mut outer = Constructive::extrude(
                 Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)]).expect("a ring"),
                 millimetres(10),
@@ -1186,7 +1220,7 @@ mod tests {
         assert!((max - DVec3::new(50.0, 50.0, 50.0)).length() < 1.0e-9);
 
         let replacement = Primitive::sphere(millimetres(80), 24, 12).expect("sphere");
-        let revision = project.set_object_primitive(id, replacement.clone()).expect("replace the primitive");
+        let revision = project.set_object_primitive(id, replacement.base()).expect("replace the primitive");
         assert_eq!(revision.get(), 2, "creation was revision one");
         assert_eq!(project.object_primitive(id), Ok(&replacement));
         assert_eq!(
@@ -1201,7 +1235,7 @@ mod tests {
         assert_eq!(object.name(), "Ball", "collapse keeps every other field");
         assert_eq!(object.geometry().as_mesh(), Some(&mesh));
         assert!(object.geometry().as_primitive().is_none(), "collapse drops the parameters");
-        assert_eq!(project.set_object_primitive(id, replacement), Err(ProjectError::NotAPrimitiveObject { id }));
+        assert_eq!(project.set_object_primitive(id, replacement.base()), Err(ProjectError::NotAPrimitiveObject { id }));
     }
 
     /// A closed rectangle ring, 100 x 50 mm at the given offset.

@@ -42,6 +42,8 @@ pub(crate) struct Shortcuts {
     pub(crate) niche: bool,
     pub(crate) maximize: bool,
     pub(crate) palette: bool,
+    /// Open or close the assistant panel (J7).
+    pub(crate) assistant: bool,
     /// Hide both side panels, or show the pair the last press put away.
     pub(crate) hide_panels: bool,
     /// Fold both side panels to strips, or unfold the pair the last press folded.
@@ -57,7 +59,7 @@ pub(crate) struct Shortcuts {
 impl Shortcuts {
     /// Whether the frame pressed the binding with `id`, for the test that walks the key table.
     fn pressed(&self, id: &str) -> bool {
-        use ui::inventory::{EDIT_REDO, EDIT_UNDO, FILE_CLOSE, FILE_NEW, FILE_SAVE, PALETTE_OPEN};
+        use ui::inventory::{ASSISTANT_OPEN, EDIT_REDO, EDIT_UNDO, FILE_CLOSE, FILE_NEW, FILE_SAVE, PALETTE_OPEN};
         use ui::inventory::{PANELS_COLLAPSE, PANELS_HIDE};
         match id {
             FILE_NEW => self.new_tab,
@@ -66,6 +68,7 @@ impl Shortcuts {
             EDIT_UNDO => self.undo,
             EDIT_REDO => self.redo,
             PALETTE_OPEN => self.palette,
+            ASSISTANT_OPEN => self.assistant,
             PANELS_HIDE => self.hide_panels,
             PANELS_COLLAPSE => self.collapse_panels,
             "node.delete" => self.delete,
@@ -97,6 +100,7 @@ impl Shortcuts {
             self.niche,
             self.maximize,
             self.palette,
+            self.assistant,
             self.hide_panels,
             self.collapse_panels,
             self.mode.is_some(),
@@ -151,6 +155,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         niche: consume(input, "furniture.panels.void"),
         maximize: consume(input, "view.layout.maximize"),
         palette: consume(input, ui::inventory::PALETTE_OPEN),
+        assistant: consume(input, ui::inventory::ASSISTANT_OPEN),
         mode: take_mode(input),
     })
 }

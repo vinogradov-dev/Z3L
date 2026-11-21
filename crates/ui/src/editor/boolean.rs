@@ -21,7 +21,7 @@
 //! stop sharing a gesture.
 
 use engine::{ContourBoolean, ContourBooleanPlan, ContourOp, OBJECT_BOOLEAN_SET_ID, ObjectBooleanSet, Session};
-use model::{BooleanOp, Constructive, Geometry, Id, Node, Project};
+use model::{BooleanOp, Geometry, Id, Node, Project};
 use text::{Lang, Message};
 
 use super::Editor;
@@ -149,8 +149,8 @@ impl Editor {
 
     /// Arms `op` on the one selected body, and says whether it could.
     ///
-    /// The target body must be constructive: a baked mesh has no history to append a step to, and a
-    /// primitive is not a boolean body yet. The tool is picked next, so the arm starts with none.
+    /// The target body must be a solid: a drawn body or a primitive. A baked mesh has no history to
+    /// append a step to. The tool is picked next, so the arm starts with none.
     pub fn arm_body_boolean(&mut self, op: ContourOp, project: &Project) -> bool {
         let Some(base) = self.selection.primary() else {
             return false;
@@ -230,12 +230,12 @@ impl Editor {
                     Err(error) => Err(Some(error.to_string())),
                 }
             }
-            (BooleanOperand::Bodies, Some(tool)) => match body_of(project, base) {
-                // A target that stopped being a constructive body — collapsed while the arm was
-                // open — draws nothing and says nothing extra: the status bar already asks for the
+            (BooleanOperand::Bodies, Some(tool)) => match frozen_body(project, base) {
+                // A target that stopped being a solid body — collapsed while the arm was open —
+                // draws nothing and says nothing extra: the status bar already asks for the
                 // operands the arm needs.
                 None => Err(None),
-                Some(body) => match boolean_preview(project, body, base, *tool, op) {
+                Some(_) => match boolean_preview(project, base, *tool, op) {
                     Ok(geometry) => Ok(geometry),
                     Err(reason) => Err(Some(reason)),
                 },
@@ -294,14 +294,25 @@ impl Editor {
     }
 }
 
-/// Whether `id` is a constructive body a boolean may act on or take as its tool.
+/// Whether `id` is a solid body a boolean may act on or take as its tool.
+///
+/// A drawn body is a ring swept on Z with its history of steps; a primitive is a sphere's or a
+/// cone's parameters with the steps cut from it. Either takes a step, so either is a target, and
+/// either is frozen into a step, so either is a tool (ADR 0197).
 fn is_body(project: &Project, id: Id) -> bool {
-    body_of(project, id).is_some()
+    project.object(id).is_some_and(|object| {
+        let geometry = object.geometry();
+        geometry.as_constructive().is_some() || geometry.as_primitive().is_some()
+    })
 }
 
-/// The constructive payload of one body, when the node carries one.
-fn body_of(project: &Project, id: Id) -> Option<&Constructive> {
-    project.object(id).and_then(|object| object.geometry().as_constructive())
+/// One node's body as a step stores it, when the node carries a solid at all.
+fn frozen_body(project: &Project, id: Id) -> Option<model::ToolBody> {
+    let geometry = project.object(id)?.geometry();
+    if let Some(body) = geometry.as_constructive() {
+        return Some(model::ToolBody::Constructive(body.clone()));
+    }
+    geometry.as_primitive().map(|body| model::ToolBody::Primitive(body.clone()))
 }
 
 /// The geometry the target would have with one step appended, or why it would draw nothing.
@@ -309,22 +320,28 @@ fn body_of(project: &Project, id: Id) -> Option<&Constructive> {
 /// The step freezes the cutter's shape exactly as the command will freeze it, so the picture on
 /// screen is the body the ✓ stores and the source may be spent afterwards without changing it
 /// (ADR 0197). The candidate is a copy: the document keeps its own history until the ✓.
-fn boolean_preview(
-    project: &Project,
-    body: &Constructive,
-    target: Id,
-    tool: Id,
-    op: ContourOp,
-) -> Result<Geometry, String> {
+fn boolean_preview(project: &Project, target: Id, tool: Id, op: ContourOp) -> Result<Geometry, String> {
     let source = project.object(tool).ok_or_else(|| format!("node {} is gone", tool.get()))?;
-    let shape =
-        source.geometry().as_constructive().ok_or_else(|| format!("{} is not a constructive body", source.name()))?;
+    let shape = frozen_body(project, tool).ok_or_else(|| format!("{} is not a solid body", source.name()))?;
     let world = project.world_placement(tool).ok_or_else(|| format!("{} has no world frame", source.name()))?;
     let placement = project.placement_in_parent(target, world).map_err(|error| error.to_string())?;
-    let tool = model::BooleanTool::new(source.name(), shape.clone(), placement).map_err(|error| error.to_string())?;
-    let mut candidate = body.clone();
-    candidate.push_boolean(model::Boolean::new(boolean_op(op), tool)).map_err(|error| error.to_string())?;
-    Ok(Geometry::Constructive(candidate))
+    let step = model::BooleanTool::new(source.name(), shape, placement).map_err(|error| error.to_string())?;
+    let boolean = model::Boolean::new(boolean_op(op), step);
+    let geometry = project
+        .object(target)
+        .map(|object| object.geometry())
+        .ok_or_else(|| format!("node {} is gone", target.get()))?;
+    if let Some(body) = geometry.as_constructive() {
+        let mut candidate = body.clone();
+        candidate.push_boolean(boolean).map_err(|error| error.to_string())?;
+        return Ok(Geometry::Constructive(candidate));
+    }
+    if let Some(body) = geometry.as_primitive() {
+        let mut candidate = body.clone();
+        candidate.push_boolean(boolean).map_err(|error| error.to_string())?;
+        return Ok(Geometry::Primitive(candidate));
+    }
+    Err(format!("{} is not a solid body", source.name()))
 }
 
 /// `word` with the first free number, so a second boolean of one drawing does not collide.

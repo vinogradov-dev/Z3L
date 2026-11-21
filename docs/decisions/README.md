@@ -213,8 +213,10 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
 | [0206](0206-a-boolean-result-is-one-object.md) | A boolean result is one object, a hole is part of one region, and splitting is a command | Accepted; the tree rule the contour boolean, a body boolean and the profile of 0205 read |
 | [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188 |
-| [0208](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
-| [0209](0211-the-render-is-a-place-beside-the-file-menu.md) | The final render is a place beside the File menu, not a dialog | Accepted; the surface the entry point of 0208 is reached from |
+| [0208](0208-a-primitive-is-a-body-a-boolean-cuts.md) | A primitive is a body, so a boolean cuts it in both directions | Accepted; closes the consequence of 0197 |
+| [0209](0209-the-assistant-panel-is-a-window-and-its-turn-runs-between-frames.md) | The assistant's panel is a window, and its turn is driven between frames | Accepted; places the panel 0186 and 0187 asked for |
+| [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
+| [0211](0211-the-render-is-a-place-beside-the-file-menu.md) | The final render is a place beside the File menu, not a dialog | Accepted; the surface the entry point of 0210 is reached from |
 
 ## Format
 

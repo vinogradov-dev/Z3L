@@ -189,6 +189,12 @@ pub enum ProjectError {
         /// The node that was asked.
         id: Id,
     },
+    /// The node is not a solid body, so no boolean step can be appended to it.
+    #[error("node {id} is not a solid body")]
+    NotASolidBody {
+        /// The rejected node.
+        id: Id,
+    },
     /// The node is not a constructive object, so it has no contour or feature history.
     #[error("node {id} is not a constructive object")]
     NotConstructiveObject {

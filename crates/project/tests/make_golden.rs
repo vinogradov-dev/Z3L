@@ -148,10 +148,30 @@ fn scene() -> SceneFile {
     // A boolean step freezes the cutter's shape and spends the source: the golden carries the step
     // and the source removed, so a file written by this build is a file the next build loads.
     let cutter = project.object(id(11)).expect("the cutter").geometry().as_constructive().expect("a body").clone();
-    let step = model::BooleanTool::new("Cutter", cutter, Placement::IDENTITY).expect("a tool");
+    let step =
+        model::BooleanTool::new("Cutter", model::ToolBody::Constructive(cutter), Placement::IDENTITY).expect("a tool");
     project
         .apply_boolean(id(3), model::Boolean::new(model::BooleanOp::Difference, step), Some(id(11)))
         .expect("the top is cut by the cutter");
+    // A primitive is a solid body in both directions, so the golden carries both: the ball is cut by
+    // a drawn block, and the top is cut by a ball (ADR 0197).
+    let block_ring = Path::rectangle([millimetres(-40), millimetres(-40)], [millimetres(40), millimetres(40)])
+        .expect("a block ring");
+    let block = Constructive::extrude(block_ring, millimetres(40)).expect("a block");
+    let block_cutter =
+        model::BooleanTool::new("Block", model::ToolBody::Constructive(block), Placement::IDENTITY).expect("a block");
+    project
+        .apply_boolean(id(5), model::Boolean::new(model::BooleanOp::Difference, block_cutter), None)
+        .expect("the ball is cut by a block");
+    let ball_cutter = model::BooleanTool::new(
+        "Ball cutter",
+        model::ToolBody::Primitive(Primitive::sphere(millimetres(20), 24, 12).expect("a ball")),
+        Placement::IDENTITY,
+    )
+    .expect("a ball");
+    project
+        .apply_boolean(id(3), model::Boolean::new(model::BooleanOp::Difference, ball_cutter), None)
+        .expect("the top is cut by a ball");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
     // (ADR 0159).

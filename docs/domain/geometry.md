@@ -127,13 +127,21 @@ primitive is described in section 5.
 
 ## 5. Primitive payload
 
-- `Primitive` is a shape and the parameters that build it, stored as
-  `Geometry::Primitive(Primitive)` (schema 25). It is never a mesh: the mesh is derived on read
-  ([0054](../decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)).
-- The inner tag is `shape`, because the outer payload already carries `kind`. The only variant is
-  `sphere { radius, segments, bands }`. A box and a cylinder are **not** primitives: they are drawn
-  profiles swept on `Z` and stored as a constructive body
+- `Primitive` is a **body**: a `PrimitiveShape` and the boolean steps cut from it, stored as
+  `Geometry::Primitive(Primitive)` (schema 32). It is never a mesh: the mesh is derived on read
+  ([0054](../decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)). A plain sphere or
+  cone has no step and is drawn from its parameters; a body with a step has no analytic mesh and is
+  built by the geometry kernel, exactly as a drawn body with a step is
+  ([0208](../decisions/0208-a-primitive-is-a-body-a-boolean-cuts.md)).
+- The parameters are tagged `shape`, because the outer payload already carries `kind`. The variants
+  are `sphere { radius, segments, bands }` and `cone { base_radius, top_radius, height, segments }`. A
+  box and a cylinder are **not** primitives: they are drawn profiles swept on `Z` and stored as a
+  constructive body
   ([0138](../decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md)).
+- A primitive is an operand of a body boolean in both directions: a block subtracted from a ball
+  leaves a rectangular notch in it, and a ball subtracted from a board leaves a round hole. The step
+  freezes the other body's shape, never a node, and a primitive's own step list is bounded by
+  `MAX_BOOLEAN_DEPTH` and `MAX_OBJECT_FEATURES`.
 - The parameter set is the shape's own: a sphere has a radius, a side count and its latitude bands.
   There is no generic tessellation field shared by shapes that do not need it.
 - The sphere is centred on its own zero, and its balance is analytic: `vertex_count`, `face_count`
@@ -150,7 +158,9 @@ primitive is described in section 5.
   keeping the id, name, placement, pivot_local and properties. The card shows the fields the shape has,
   in millimetres and whole numbers.
 - Collapsing a primitive bakes the derived mesh and drops the parameters, exactly as a constructive
-  object drops its feature list. A baked mesh and a path cannot be collapsed.
+  object drops its feature list. A primitive that carries a step has no analytic mesh, so its
+  collapse is refused with a sentence until the command path can reach the geometry kernel. A baked
+  mesh and a path cannot be collapsed.
 
 ## 6. Path payload
 
@@ -269,9 +279,13 @@ in one viewport mode. Its state is view state, not document data
   in the body's own frame. A catalogue
   material change reaches the cache through the resolved thickness and profile, so a material swap
   rebuilds the panels that use it.
-- A primitive is evaluated analytically in `mesh` (`evaluate_primitive`): the parameters
-  are document data, the ring trigonometry runs at the geometry boundary and the result is rounded
-  back to lengths. The viewport and `object.collapse` call that one function.
+- A primitive is evaluated analytically in `param` (`build_primitive_mesh`, called through
+  `mesh::evaluate_primitive`): the parameters are document data, the ring trigonometry runs at the
+  geometry boundary and the result is rounded back to lengths. The viewport and `object.collapse`
+  call that one function. A primitive that carries a step is built by the kernel from a closed
+  triangle surface instead (`mesh::primitive_mesh_with`), and the body the kernel divides stands its
+  sphere rings half a step off the equator, so no ring of vertices lies in the plane a ball is drawn
+  on.
 - Editing the contour, a feature parameter or a primitive parameter bumps the revision once; the next
   frame re-evaluates only the nodes it touched. A pass that visits fewer nodes drops the entries of
   nodes that no longer exist.

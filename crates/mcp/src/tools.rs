@@ -179,7 +179,9 @@ pub fn headless_definitions() -> Vec<Tool> {
             "Dispatch a list of commands as one operation: in order, and by default all or nothing, \
              so a refusal takes back every step before it and the whole list is one undo entry. The \
              answer reports which nodes the batch created, changed and removed, and what a file \
-             write did. With `dry_run` every step runs and nothing is written.",
+             write did. With `dry_run` every step runs and nothing is written. A session in plan \
+             mode answers every batch this way whatever the request says; `command_list` names the \
+             mode.",
             object_schema::<BatchRequest>(),
         ),
         Tool::new(

@@ -25,7 +25,7 @@
 use eframe::egui::{self, Pos2, Response, Stroke, Ui, Vec2};
 use engine::EditScope;
 use geom::{DVec2, DVec3};
-use model::{Geometry, Id, Placement, Primitive, Project};
+use model::{Geometry, Id, Placement, PrimitiveShape, Project};
 use scene::Camera;
 use units::Length;
 
@@ -132,10 +132,13 @@ impl Body {
                 bounds_centre(&body.contour().ok()?)?
             }
             Geometry::Path(path) => bounds_centre(&path.to_contour().ok()?)?,
-            Geometry::Primitive(Primitive::Cone(_)) => DVec2::ZERO,
+            Geometry::Primitive(body) => match body.base() {
+                PrimitiveShape::Cone(_) => DVec2::ZERO,
+                PrimitiveShape::Sphere(_) => return None,
+            },
             // A contour set is several rings, so there is no one profile to pull yet: a set is
             // extruded area by area, which is a later change (G4).
-            Geometry::Mesh(_) | Geometry::Primitive(Primitive::Sphere(_)) | Geometry::Contours(_) => return None,
+            Geometry::Mesh(_) | Geometry::Contours(_) => return None,
         };
         let placement = project.world_placement(object)?;
         let axis_origin = placement.transform_point(DVec3::new(centre.x, centre.y, 0.0));

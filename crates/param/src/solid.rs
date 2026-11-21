@@ -13,7 +13,7 @@
 //! integer micrometres happens at the caller's boundary, never in this module.
 
 use geom::Frame;
-use kernel::{BodyId, BooleanOp, KernelError, Profile, SolidKernel};
+use kernel::{BodyId, BooleanOp, KernelError, MeshBody, Profile, SolidKernel};
 
 /// Largest nesting depth of a solid plan.
 ///
@@ -81,21 +81,51 @@ impl PlanStep {
     }
 }
 
+/// What a plan builds its body from.
+///
+/// Two shapes start a solid: a closed profile swept along its frame's `+Z`, and a closed triangle
+/// mesh that is already a solid. The second is how a shape that no extrusion describes — a sphere,
+/// a cone, an imported part — becomes something a boolean can cut and be cut by.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SolidBase {
+    /// One extrusion of a closed profile.
+    Extrude(Extrude),
+    /// A closed triangle mesh, already the surface of a solid.
+    Mesh(MeshBody),
+}
+
+impl SolidBase {
+    /// The extrusion, when the base is one.
+    pub const fn extrude(&self) -> Option<&Extrude> {
+        match self {
+            Self::Extrude(extrude) => Some(extrude),
+            Self::Mesh(_) => None,
+        }
+    }
+
+    /// The mesh, when the base is one.
+    pub const fn mesh(&self) -> Option<&MeshBody> {
+        match self {
+            Self::Extrude(_) => None,
+            Self::Mesh(body) => Some(body),
+        }
+    }
+}
+
 /// A plan to build one solid body.
 ///
-/// The base extrusion builds the first body; every step then combines the body built so far with
-/// the body of its tool plan. This is the shape the panel compiler needs: a core, then one
-/// subtraction per cutout. A tool is itself a plan, so the tree can nest, but a flat sequence stays
-/// the common case.
+/// The base builds the first body; every step then combines the body built so far with the body of
+/// its tool plan. This is the shape the panel compiler needs: a core, then one subtraction per
+/// cutout. A tool is itself a plan, so the tree can nest, but a flat sequence stays the common case.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SolidPlan {
-    base: Extrude,
+    base: SolidBase,
     steps: Vec<PlanStep>,
 }
 
 impl SolidPlan {
-    /// The base extrusion.
-    pub const fn base(&self) -> &Extrude {
+    /// What the body is built from.
+    pub const fn base(&self) -> &SolidBase {
         &self.base
     }
 
@@ -111,7 +141,7 @@ impl SolidPlan {
 /// plan it returns is the derived description a backend consumes.
 #[derive(Clone, Debug, Default)]
 pub struct PlanBuilder {
-    base: Option<Extrude>,
+    base: Option<SolidBase>,
     steps: Vec<PlanStep>,
 }
 
@@ -124,11 +154,21 @@ impl PlanBuilder {
     /// Sets the base extrusion.
     ///
     /// A plan has exactly one base; calling this twice is an error rather than a silent replacement.
-    pub fn extrude(mut self, profile: Profile, frame: Frame, height: f64) -> Result<Self, KernelError> {
+    pub fn extrude(self, profile: Profile, frame: Frame, height: f64) -> Result<Self, KernelError> {
+        self.base(SolidBase::Extrude(Extrude::new(profile, frame, height)?))
+    }
+
+    /// Sets the base mesh body.
+    pub fn mesh(self, body: MeshBody) -> Result<Self, KernelError> {
+        self.base(SolidBase::Mesh(body))
+    }
+
+    /// Sets the one base a plan has.
+    fn base(mut self, base: SolidBase) -> Result<Self, KernelError> {
         if self.base.is_some() {
-            return Err(KernelError::InvalidInput("a solid plan has one base extrusion".into()));
+            return Err(KernelError::InvalidInput("a solid plan has one base".into()));
         }
-        self.base = Some(Extrude::new(profile, frame, height)?);
+        self.base = Some(base);
         Ok(self)
     }
 
@@ -138,10 +178,10 @@ impl PlanBuilder {
         self
     }
 
-    /// Finishes the plan, refusing a builder with no base extrusion.
+    /// Finishes the plan, refusing a builder with no base.
     pub fn build(self) -> Result<SolidPlan, KernelError> {
         let Some(base) = self.base else {
-            return Err(KernelError::InvalidInput("a solid plan needs a base extrusion".into()));
+            return Err(KernelError::InvalidInput("a solid plan needs a base".into()));
         };
         Ok(SolidPlan { base, steps: self.steps })
     }
@@ -159,6 +199,9 @@ pub trait PlanBackend {
     /// Builds one extrusion.
     fn extrude(&mut self, extrude: &Extrude) -> Result<Self::Body, KernelError>;
 
+    /// Builds one mesh body.
+    fn mesh(&mut self, body: &MeshBody) -> Result<Self::Body, KernelError>;
+
     /// Combines two built bodies.
     fn boolean(&mut self, op: BooleanOp, target: Self::Body, tool: Self::Body) -> Result<Self::Body, KernelError>;
 }
@@ -172,7 +215,10 @@ fn evaluate_at<B: PlanBackend>(plan: &SolidPlan, backend: &mut B, depth: usize) 
     if depth >= MAX_PLAN_DEPTH {
         return Err(KernelError::InvalidInput(format!("a solid plan nests deeper than {MAX_PLAN_DEPTH} steps")));
     }
-    let mut body = backend.extrude(plan.base())?;
+    let mut body = match plan.base() {
+        SolidBase::Extrude(extrude) => backend.extrude(extrude)?,
+        SolidBase::Mesh(body) => backend.mesh(body)?,
+    };
     for step in plan.steps() {
         let tool = evaluate_at(step.tool(), backend, depth + 1)?;
         body = backend.boolean(step.op(), body, tool)?;
@@ -197,6 +243,10 @@ impl PlanBackend for KernelBackend<'_> {
 
     fn extrude(&mut self, extrude: &Extrude) -> Result<BodyId, KernelError> {
         self.kernel.extrude(extrude.profile(), &extrude.frame(), extrude.height())
+    }
+
+    fn mesh(&mut self, body: &MeshBody) -> Result<BodyId, KernelError> {
+        self.kernel.mesh(body)
     }
 
     fn boolean(&mut self, op: BooleanOp, target: BodyId, tool: BodyId) -> Result<BodyId, KernelError> {
@@ -269,7 +319,26 @@ mod tests {
     }
 
     #[test]
-    fn a_second_base_extrusion_is_refused() {
+    fn a_mesh_base_builds_the_body_it_describes() {
+        // A unit tetrahedron with a 10 mm leg: a body no extrusion describes, so the plan hands the
+        // mesh to the kernel as it is.
+        use geom::DVec3;
+
+        let corners =
+            vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0), DVec3::new(0.0, 0.0, 10.0)];
+        let body = MeshBody::new(corners, vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]).expect("a closed mesh");
+        let plan = PlanBuilder::new().mesh(body).expect("a mesh base").build().expect("a plan");
+        assert!(plan.base().extrude().is_none(), "the base is a mesh");
+        assert!(plan.base().mesh().is_some(), "and it is there");
+
+        let mut kernel = TruckKernel::new();
+        let handle = evaluate(&plan, &mut kernel).expect("an evaluated body");
+        let volume = kernel.measure(handle).expect("a measured body").volume;
+        assert!((volume - 1000.0 / 6.0).abs() < 1.0, "volume was {volume}");
+    }
+
+    #[test]
+    fn a_second_base_is_refused() {
         let builder = PlanBuilder::new().extrude(rectangle(10.0, 10.0), Frame::WORLD, 5.0).expect("first base");
         let error = builder.extrude(rectangle(10.0, 10.0), Frame::WORLD, 5.0).expect_err("a plan has one base");
         assert!(matches!(error, KernelError::InvalidInput(_)));
@@ -284,6 +353,10 @@ mod tests {
 
             fn extrude(&mut self, _extrude: &Extrude) -> Result<u32, KernelError> {
                 Ok(1)
+            }
+
+            fn mesh(&mut self, _body: &MeshBody) -> Result<u32, KernelError> {
+                Ok(2)
             }
 
             fn boolean(&mut self, _op: BooleanOp, target: u32, _tool: u32) -> Result<u32, KernelError> {
