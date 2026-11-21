@@ -466,10 +466,12 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
    a compute pass that traces one primary ray per sample and estimates light from the
    document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
-   through the `image` crate. One command `render.final` carries progress and cancel. Whatever
-   is adapted from the reference project keeps its Apache-2.0 header and gets a row in
-   `ATTRIBUTION.md` (§4.6). The ADR records the decision and its deliberate limits: no spectral
-   renderer, no volumes, no hair, no displacement, no requirement for hardware ray tracing.
+   through the `image` crate. One command `render.final` carries progress and cancel. Every
+   technique is implemented from its published source, named in the note and in the ADR: the
+   reference project is measured and read for its approach, never copied as text, so no file,
+   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
+   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
+   volumes, no hair, no displacement, no requirement for hardware ray tracing.
   Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
    the viewport's to within a pixel at a known point; a second run on an unchanged revision
    reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
