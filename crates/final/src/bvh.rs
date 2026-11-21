@@ -1,21 +1,21 @@
-//! A binned-SAH BVH2 over the frame's triangles, and the traversal that reads it.
+//! A binned-SAH BVH2 over the frame's faces, and the traversal that reads it.
 //!
 //! The build is Wald's, *On Fast Construction of SAH-based Bounding Volume Hierarchies* (2007): each
-//! node bins its triangles by centroid into sixteen slabs on the axis with the widest centroid
+//! node bins its faces by centroid into sixteen slabs on the axis with the widest centroid
 //! spread, costs every split by surface area and keeps the cheapest, which is one pass over the range
-//! and no sorting. A node that holds few enough triangles, or whose split costs more than testing
-//! them, becomes a leaf. The tree is a binary layout depth-first, so a node's right child is its left
+//! and no sorting. A node that holds few enough faces, or whose split costs more than testing them,
+//! becomes a leaf. The tree is a binary layout depth-first, so a node's right child is its left
 //! child plus one and a leaf is a contiguous run of the reordered triangle array.
 //!
-//! Why a two-wide tree and not a compressed one: a whole kitchen is tens of thousands of triangles,
+//! Why a two-wide tree and not a compressed one: a whole kitchen is tens of thousands of faces,
 //! and a wide BVH pays in the millions — `plan/notes/Y1.md` carries the measurement behind that
 //! decision.
 //!
-//! Determinism is part of the contract: the same triangles in the same order give the same nodes, so
+//! Determinism is part of the contract: the same faces in the same order give the same nodes, so
 //! a cached tree can be compared rather than trusted, and a test that a revision keyed the tree
 //! correctly has something exact to compare.
 //!
-//! Refuses: a triangle with a non-finite vertex is dropped by the build (no ray can hit it, and one
+//! Refuses: a face with a non-finite vertex is dropped by the build (no ray can hit it, and one
 //! NaN box would poison every ancestor's); a range that would need a deeper tree than [`MAX_DEPTH`]
 //! becomes a leaf, so traversal's fixed stack cannot overflow by construction.
 //!
@@ -29,7 +29,7 @@ use crate::soup::Face;
 /// How many bins each axis is divided into while a split is chosen.
 const BINS: usize = 16;
 
-/// How many triangles a node may hold before it is split.
+/// How many faces a node may hold before it is split.
 const MAX_LEAF: usize = 4;
 
 /// How deep the tree may go, which is what bounds traversal's stack.
@@ -269,7 +269,7 @@ struct Item {
     centroid: DVec3,
 }
 
-/// The box around a range of triangles, or `None` when the range holds none.
+/// The box around a range of faces, or `None` when the range holds none.
 fn bounds_of(items: &[Item], first: usize, end: usize) -> Option<Aabb> {
     let mut bounds: Option<Aabb> = None;
     for item in items.get(first..end).unwrap_or_default() {
@@ -289,7 +289,7 @@ fn centroids_range(items: &[Item], first: usize, count: usize) -> Option<Aabb> {
     Aabb::of_points(items.iter().skip(first).take(count).map(|item| item.centroid))
 }
 
-/// The cheapest split of a node, or `None` when no split beats testing the triangles where they are.
+/// The cheapest split of a node, or `None` when no split beats testing the faces where they are.
 fn best_split(items: &[Item], first: usize, count: usize, bounds: Aabb) -> Option<Split> {
     let parent_area = surface_area(bounds);
     if parent_area <= 0.0 || parent_area.is_nan() {
@@ -371,7 +371,7 @@ fn bin_of(value: f64, origin: f64, scale: f64) -> usize {
     (scaled as usize).min(BINS - 1)
 }
 
-/// Reorders the range so the triangles before the returned index are on the left of the split.
+/// Reorders the range so the faces before the returned index are on the left of the split.
 fn partition(items: &mut [Item], first: usize, count: usize, spread: Option<Aabb>, split: Split) -> usize {
     let axis_index = usize::from(split.axis);
     let Some(spread) = spread else { return first };
