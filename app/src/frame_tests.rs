@@ -913,7 +913,7 @@ fn the_master_snap_switch_turns_the_whole_set_and_writes_no_revision() {
     assert!(!document.snaps().any(), "the master turns every kind off");
     assert_eq!(
         document.take_snaps_change(),
-        Some(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode: model::SnapMode::Space }),
+        Some(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode: model::SnapMode::Foot }),
         "and the shell is told once"
     );
     assert_eq!(document.take_snaps_change(), None, "once, not every frame");

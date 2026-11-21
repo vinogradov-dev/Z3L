@@ -1366,20 +1366,21 @@ mod tests {
     }
 
     #[test]
-    fn the_snap_mode_survives_a_restart_and_a_file_written_before_it_existed_draws_in_3d() {
-        // 2.5D is the reading a maker asks for, so the other setting writes it and the file carries
-        // it back; the whole section is one value, so the mode is one of its switches (U119).
+    fn the_snap_mode_survives_a_restart_and_a_file_written_before_it_existed_keeps_the_foot() {
+        // 3D is the other reading a maker asks for, so the setting writes it and the file carries it
+        // back; the whole section is one value, so the mode is one of its switches (U119).
         let mut settings = Settings::default();
-        settings.snaps.mode = model::SnapMode::Foot;
+        settings.snaps.mode = model::SnapMode::Space;
         let json = settings.to_json().expect("serialise");
         let restored = Settings::from_json(&json).expect("parse");
-        assert_eq!(restored.snaps.mode, model::SnapMode::Foot, "the mode survives a restart");
-        assert_eq!(restored.snaps.mode.target(), model::SnapTarget::Foot, "and answers as the 2.5D reading");
+        assert_eq!(restored.snaps.mode, model::SnapMode::Space, "the mode survives a restart");
+        assert_eq!(restored.snaps.mode.target(), model::SnapTarget::InPlane, "and answers as the 3D reading");
 
-        // A file written before the mode existed lands in the default: the point itself.
+        // A file written before the mode existed lands in the default, the 2.5D reading: a top view
+        // lines a board up with its shadow, which is the work a furniture maker does there.
         let old = Settings::from_json(r#"{"version":1,"snaps":{"planes":true}}"#).expect("parse");
-        assert_eq!(old.snaps.mode, model::SnapMode::Space, "3D is the reading a fresh workspace starts in");
-        assert_eq!(old.snaps.mode.target(), model::SnapTarget::InPlane);
+        assert_eq!(old.snaps.mode, model::SnapMode::Foot, "2.5D is the reading a fresh workspace starts in");
+        assert_eq!(old.snaps.mode.target(), model::SnapTarget::Foot);
     }
 
     #[test]

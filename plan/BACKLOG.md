@@ -665,6 +665,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    constructed body; a primitive target that is cut refuses with a sentence rather than a dead
    cell while its road is unbuilt
   `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs`
+- `[ ]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
+  Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
+   under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
+   world XY (z = 0) for every view but an axis-aligned orthographic one, so a 3D sketch can
+   capture only a candidate exactly on that plane; plan/debt.md records that the drawing tools
+   hand the resolver no face at all (V5, U116).
+  Shape: The draft asks the probe for the surface under the pointer while it is armed and, in
+   the 3D mode, takes that face's plane as its plane; the first click freezes it, exactly as
+   the camera plane is frozen today. The preview edge and the marker stand on the frozen plane,
+   the plane is drawn as a faint guide while the draft is open, and a click on empty space
+   keeps the camera plane. The face is the one the ruler already measures (it steps past a
+   product's reserved box). The 2.5D mode keeps today's reading: the plane is where it is, and
+   a candidate above it answers with its foot.
+  Done: Tests: a sketch started on a board's top face stores its points in that face's plane;
+   its own corners capture in 3D; a sketch started on empty space keeps the camera's plane; the
+   frozen plane does not follow the camera mid-draft; one offscreen shot of the guide and the
+   marker on the face plane; cargo xtask ci is green.
+  `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs`
 
 ## Done
 

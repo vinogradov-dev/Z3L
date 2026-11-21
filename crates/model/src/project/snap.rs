@@ -369,16 +369,22 @@ impl SnapPlane {
 /// A candidate may stand above or below that plane, and a maker expects two readings of it, so the
 /// workspace carries the choice and every plane-bound tool reads the same value (U119). A tool with
 /// no plane — the ruler, a vertex edit — is unaffected and always takes the point itself.
+///
+/// The default is the 2.5D reading, because it is the one a furniture maker works in: a top view
+/// lines a board up with the shadow it casts on the drawing plane, and the drawing plane is the world
+/// XY for every view but an axis-aligned orthographic one — so a 3D snap there would capture nothing
+/// of the furniture standing above it. The 3D reading is the switch, and it becomes the useful one
+/// once a sketch can take the plane of the face under its first click (U121).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapMode {
     /// 3D: the point itself. A tool that draws on a plane captures only a candidate that lies in it,
     /// so a figure is never built from a place it cannot contain.
-    #[default]
     Space,
     /// 2.5D: a candidate above or below the plane captures, and the point is its perpendicular foot.
     /// The shadow a board casts on the drawing plane is a place on that plane, which is what a maker
     /// lines up in a top view.
+    #[default]
     Foot,
 }
 
@@ -1374,7 +1380,7 @@ mod tests {
     fn the_mode_is_the_target_a_plane_bound_tool_declares() {
         assert_eq!(SnapMode::Space.target(), SnapTarget::InPlane);
         assert_eq!(SnapMode::Foot.target(), SnapTarget::Foot);
-        assert_eq!(SnapMode::default(), SnapMode::Space, "a fresh workspace draws in 3D");
+        assert_eq!(SnapMode::default(), SnapMode::Foot, "a fresh workspace lines a board up by its shadow");
         assert_eq!(SnapMode::ALL, [SnapMode::Space, SnapMode::Foot], "two modes, two readings");
     }
 

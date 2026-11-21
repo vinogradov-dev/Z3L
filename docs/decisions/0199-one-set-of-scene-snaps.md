@@ -41,7 +41,11 @@ the document") but the document is exactly where a panel's corners live.
   the next corner of that kind still answers.
 - **The mode is a setting, not a tool's habit.** It rides with `SnapKinds` in the workspace file and
   is drawn by one cell of the Snaps group and one row of Settings, because a reading hidden inside
-  one tool is how the footprint became a default nobody could see.
+  one tool is how the footprint became a default nobody could see. The fresh default is the 2.5D
+  reading: the drawing plane is the world XY for every view but an axis-aligned orthographic one, so
+  a 3D snap there would capture nothing of the furniture standing above it, and lining a board up
+  with its shadow is the work a maker does in a top view. The 3D reading becomes the useful default
+  when a sketch can take the plane of the face under its first click (U121).
 - **The face is the tool's reading.** A tool hands in the face it measured under the pointer — the
   ruler steps past a product's reserved box to the board behind it — and the atom only ranks it.
   That face is also the eye's limit: a candidate behind it does not capture, because a marker inside

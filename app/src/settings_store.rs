@@ -204,10 +204,10 @@ mod tests {
 
     use super::*;
 
-    /// The 2.5D reading, which is not the default: a file from before the mode existed must open in
-    /// the default, so the round trip is only proved by a value the default is not (U119).
+    /// The 3D reading, which is not the default: a file from before the mode existed must open in the
+    /// default, so the round trip is only proved by a value the default is not (U119).
     fn model_mode() -> model::SnapMode {
-        model::SnapMode::Foot
+        model::SnapMode::Space
     }
 
     /// A scratch directory this test owns.
