@@ -163,8 +163,10 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "state",
-        usage: "state <set key=value …|next|where (--body <text>|--stdin)> [--task <id>] [--repair]",
-        summary: "change the `STATE:` line, the `## Next` paragraph or the `## Where we are` prose",
+        usage: "state <set key=value …|streams key=AB …|next|where (--body <text>|--stdin)> [--task <id>] \
+                [--repair]",
+        summary: "change the `STATE:` line, the `STREAMS:` declaration, the `## Next` paragraph or the \
+                  `## Where we are` prose",
         run: |global, _, args| write::state(&global.root, args, &ProcessGit::new(&global.root)),
     },
     Command {
@@ -620,6 +622,17 @@ mod tests {
             assert!(!command.summary.is_empty() && !command.usage.is_empty(), "{} is undocumented", command.name);
             assert!(command.usage.starts_with(command.name), "{} usage starts with its name", command.name);
         }
+    }
+
+    /// A subcommand the dispatcher answers but the usage line does not name is one a session cannot
+    /// find: the render worktree filed P22 because `state streams` existed and no help printed it.
+    #[test]
+    fn the_state_usage_names_every_subcommand_it_dispatches() {
+        let state = COMMANDS.iter().find(|command| command.name == "state").expect("the table has `state`");
+        for subcommand in ["set", "streams", "next", "where"] {
+            assert!(state.usage.contains(subcommand), "`state` usage does not name `{subcommand}`: {}", state.usage);
+        }
+        assert!(state.summary.contains("STREAMS:"), "`state` summary hides the declaration: {}", state.summary);
     }
 
     #[test]

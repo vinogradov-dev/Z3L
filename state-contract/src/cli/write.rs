@@ -1005,8 +1005,14 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
     std::fs::read_to_string(root.join(path)).map_err(|error| format!("cannot read `{path}`: {error}"))
 }
 
-/// `state set key=value …`, `state next (--body <text>|--stdin) [--task <id>]` and
-/// `state where (--body <text>|--stdin)`.
+/// `state set key=value …`, `state streams key=AB …`, `state next (--body <text>|--stdin)
+/// [--task <id>]` and `state where (--body <text>|--stdin)`.
+///
+/// `state streams` owns the `STREAMS:` line, the declaration of the checkouts beside the plan's own:
+/// it rewrites the whole line from the pairs it is given, so a stream joins by naming the ones
+/// already there (`state streams agent=J catalog=O render=Y,L`), and no pairs return the plan to one
+/// stream. It is the only verb that line has, which is why the usage below names it: a fifth
+/// checkout that cannot find this verb cannot mark its own task (P22).
 ///
 /// `state next --task <id>` names a new current task in the same write: the gate requires the
 /// paragraph to name the task `STATE:` does, so a paragraph that moves on its own would be refused,
@@ -1041,7 +1047,10 @@ pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> 
         }
         Some("set") => {}
         _ => {
-            return Err("usage: cargo xtask state <set key=value …|next|where (--body <text>|--stdin)>".to_owned());
+            return Err(
+                "usage: cargo xtask state <set key=value …|streams key=AB …|next|where (--body <text>|--stdin)>"
+                    .to_owned(),
+            );
         }
     }
     let mut values: Vec<(String, String)> = Vec::new();
@@ -1078,6 +1087,19 @@ pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body"])?;
     let path = options.words.first().ok_or("`file` needs the path of a reference file")?;
     if !REFERENCE_FILES.contains(&path.as_str()) {
+        // The three plan files `file` refuses are the ones a `task` or `state` verb splices line by
+        // line, so the refusal names the verb that owns the file instead of leaving the caller to
+        // conclude the plan cannot be written at all (P22).
+        if let Some(owner) = match path.as_str() {
+            "plan/BACKLOG.md" | "plan/SESSION.md" => Some("the `task` verbs"),
+            "plan/STATUS.md" => Some("the `state` and `task` verbs"),
+            _ => None,
+        } {
+            return Err(format!(
+                "`{path}` is written by {owner}, not by `file`: a whole-file rewrite would lose the \
+                 formatting their splices keep"
+            ));
+        }
         return Err(format!("`{path}` is not a reference file a command owns; one of {}", REFERENCE_FILES.join(", ")));
     }
     let body = options.body("body")?;
@@ -1893,8 +1915,16 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
 
         let error = file(&root, &["plan/BACKLOG.md".to_owned(), "--body".to_owned(), "gone\n".to_owned()], &FakeGit)
             .expect_err("the task verbs own the backlog");
-        assert!(error.contains("not a reference file"), "{error}");
+        assert!(error.contains("the `task` verbs"), "the refusal names the verb that owns it: {error}");
         assert!(text(&root, "plan/BACKLOG.md").contains("**P6**"), "the backlog is untouched");
+
+        // `plan/STATUS.md` was the dead end P22 walked into: refused by `file`, and no help named the
+        // verb that would take it.
+        let error =
+            file(&root, &["plan/STATUS.md".to_owned(), "--body".to_owned(), "STATE: gone\n".to_owned()], &FakeGit)
+                .expect_err("the state and task verbs own the status line");
+        assert!(error.contains("the `state` and `task` verbs"), "{error}");
+        assert!(text(&root, "plan/STATUS.md").contains("STATE:"), "the state line is untouched");
 
         let error = file(&root, &["plan/debt.md".to_owned(), "--body".to_owned(), "   \n".to_owned()], &FakeGit)
             .expect_err("an empty file says nothing");
@@ -1927,6 +1957,26 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         state(&root, &["set".to_owned(), "phase=A".to_owned()], &FakeGit).expect("phase moves to A");
         assert!(text(&root, "plan/STATUS.md").contains("phase=A"));
         crate::check_with(&root, &FakeGit).expect("the plan is still valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stream_is_declared_by_the_one_verb_that_owns_the_line() {
+        let root = project("streams", STATUS, BACKLOG, None);
+        state(&root, &["streams".to_owned(), "render=Y,L".to_owned()], &FakeGit).expect("a stream joins");
+        assert!(text(&root, "plan/STATUS.md").contains("STREAMS: render=Y,L"), "{}", text(&root, "plan/STATUS.md"));
+        assert!(text(&root, "plan/STATUS.md").contains("task=P6"), "the state line keeps its task");
+
+        // An unusable declaration is a sentence, not a write.
+        let before = snapshot(&root);
+        let error =
+            state(&root, &["streams".to_owned(), "Render=Y".to_owned()], &FakeGit).expect_err("a key is lowercase");
+        assert!(error.contains("is not a key"), "{error}");
+        assert_eq!(snapshot(&root), before, "a refused declaration writes nothing");
+
+        // A subcommand the verb does not have names the ones it does, `streams` among them.
+        let error = state(&root, &["nonsense".to_owned()], &FakeGit).expect_err("there is no such subcommand");
+        assert!(error.contains("streams"), "the usage names the declaration: {error}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

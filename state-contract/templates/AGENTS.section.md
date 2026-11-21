@@ -24,7 +24,11 @@ catalog=O`), and then the plan holds one live task per stream: a task belongs to
 letter of its id, the primary stream `app` owns every letter no other stream names, and each declared
 stream keeps its own note (`plan/SESSION.<key>.md`). `STATE: task=` and `state=` speak about `app`
 alone — that is the checkout the plan is written from — so a stream beside it is read from its `[~]`
-entry, its note and its row in the status block, never from the state line.
+entry, its note and its row in the status block, never from the state line. The line has one writer,
+the `state` verb: `cargo xtask state streams agent=J catalog=O` rewrites it from the pairs it is given
+(so a stream joins by naming the ones already there), and no pairs puts the plan back on one stream. A
+checkout whose stream is not declared cannot mark its own task, because its letters still belong to
+`app`.
 
 **A task list belongs to one stream, and the checkout says which.** The stream is the one this
 checkout serves: `app` in the primary checkout, and otherwise the declared stream whose worktree the

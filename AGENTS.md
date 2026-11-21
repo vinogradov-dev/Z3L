@@ -58,7 +58,8 @@ The contract is a template, not prose duplicated here: read
 `STATE` and `## Now` decide the answer, an interrupted session resumes at `now:` instead of starting
 over, and a broken plan is repaired with the tool (`--repair` on a write) rather than answered around
 or edited by hand. The plan declares the streams beside the state line (`STREAMS: agent=J catalog=O
-prototypes=Q`): `state=` and `task=` are the `app` stream's — this checkout's — and each declared
+prototypes=Q`), with `cargo xtask state streams <key>=<letters> …` as the line's only writer: `state=`
+and `task=` are the `app` stream's — this checkout's — and each declared
 stream is read from its own `[~]` entry, its own `plan/SESSION.<key>.md` and its row in
 `cargo xtask status` (ADR 0176). A question about the current or next tasks is answered for the stream
 this checkout serves — the branch names it — and opens with that stream's name; never as four lists
