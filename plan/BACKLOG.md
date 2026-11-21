@@ -662,20 +662,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J8** a recipe builds a carcass in one command and one undo step
-  Why: ADR 0192 makes the arithmetic ours and gives the model the choice; nothing of
-   `product.build`, `carcass.box` or `wardrobe.hinged` exists, so today "build a wardrobe 600 x
-   2200 x 500" is a prompt with nobody to compute it.
-  Shape: Typed recipe functions with parameters in `Length` and `Degrees`, `product.build` as
-   one command inside one edit scope, and the recipe list with its parameter ranges generated
-   from the functions themselves so a query, a tool schema and a card cannot disagree. The
-   document keeps the prototype reference, so changing a recipe never rewrites work that was
-   built from it.
-  Done: A recipe test asserts the panel count, the sizes and the placements of `carcass.box`;
-   `product.build` restores the whole carcass with one undo; a parameter outside its range is a
-   typed refusal that names the parameter; an unknown recipe name is refused like an unknown
-   command id.
-  `files: crates/param/src,crates/engine/src/commands.rs,crates/model/src/project`
 - `[ ]` **J9** the inspector finds the seven mistakes, and the model explains them
   Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
    that does not fit, a rail through a door and a part longer than the sheet — and a model
@@ -1166,6 +1152,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J20** the agent is taught the domain and the tool families before it builds
+  Why: Measured 2026-11-21: a caller sees five tools and a command_list of 64 ids with labels
+     and schemas, and nothing says which world a request belongs to. A nut, a carcass and a scene
+     light look alike to a model, the guide a person carries is only in docs/, and the wardrobe
+     built by hand in app/tests/recipes came out in millimetres where the document wanted
+     micrometres (X115). ADR 0192 answered with Rust recipes (carcass.box, wardrobe.hinged),
+     which the owner rejected on 2026-11-21: a construction must not be hardcoded; the model
+     composes commands and the program teaches it the domain. Nothing in the tree states how a
+     build starts (a product frame), which shapes the frame takes (Footprint: rectangle, cut
+     corners, a drawn ring), which roles the parts play (model::class::registry(), 78 rows with
+     aliases like «стойка») or that a rod has a class row (20.06) and no creation command.
+  Shape: One guide the model reads before its first command: engine::guide() returns one JSON
+   value — the two worlds (furniture: the product frame and the parts inside it; geometry: free
+   bodies), the order of a build from scratch, the frame shapes with a worked radius-corner
+   example, the three stances of ADR 0105 with their rotations, the class registry's roles with
+   their aliases, the units and the four sides — built from the registries so a name cannot
+   drift, plus one family word per command (furniture, geometry, tree, scene). It travels in
+   command_list and as z3l guide.
+  Done: Every registered command carries exactly one family and the guide names only ids the
+   registry holds; the guide lists every assignable class row once with code, label and
+   aliases; a test turns a panel by each stance and holds it to ADR 0105; the guide's
+   radius-corner envelope parses into a Footprint::Cut with a fillet; command_list and z3l
+   guide print the same value; cargo xtask ci is green.
+  `files: crates/engine/src,crates/mcp/src/server.rs,app/src/cli.rs` — `f7cc892`
 
 - `[x]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
   Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name

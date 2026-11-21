@@ -1369,7 +1369,8 @@ const REGISTRY: &[ClassRow] = &[
             None,
         ),
         &[ClassPrefix::of(1002, 4)],
-    ),
+    )
+    .with_aliases(&["rod", "rail", "штанга"]),
     ClassRow::class(
         200_700,
         "filler",

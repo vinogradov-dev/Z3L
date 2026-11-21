@@ -3,13 +3,15 @@
 //! The registry is the only list, so a surface that discovers commands cannot drift from the
 //! dispatcher: an id printed here is an id [`engine::Session::dispatch`] accepts. A row says the id,
 //! the English label, what the command creates — the level the class rules gate (ADR 0098) — and the
-//! JSON Schema of its parameters, derived from the typed struct the command parses (ADR 0185). The
+//! JSON Schema of its parameters, derived from the typed struct the command parses (ADR 0185), and
+//! the family that says which world it serves (`furniture`, `geometry`, `tree`, `scene`), so a
+//! caller never infers the world from a label. The
 //! schema is the parser's own description, so a caller builds a request from the report instead of
 //! from our source, and a wrong one still comes back as the command's own sentence.
 //!
 //! Changes when: a command gains a field the discovery report must carry.
 
-use engine::{CommandRegistry, CommandSpec};
+use engine::{CommandRegistry, CommandSpec, Family};
 use serde_json::{Value, json};
 use text::Lang;
 
@@ -18,6 +20,7 @@ fn row(spec: CommandSpec) -> Value {
     let mut row = json!({
         "id": spec.id(),
         "label": spec.label().text(Lang::En),
+        "family": Family::of(spec.id()).map(Family::word),
         "params": spec.params_schema(),
     });
     if let (Some(word), Some(object)) = (spec.creation_word(), row.as_object_mut()) {
