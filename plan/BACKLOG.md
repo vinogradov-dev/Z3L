@@ -793,6 +793,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **N33** a niche keeps the frame's radii instead of cutting them to chords
+  Why: The owner, on the saved scene /home/alx/skaf.z3l: «Полка, которая должна принять форму
+   ниши, не видит радиусы каркаса». The product there reserves 600 x 560 x 720 with a 200 mm
+   radius on its top-left corner, and the shelf the empty-space tool creates in the Shape mode
+   is a rectangle with a 200/200 chamfer on that corner. Measured on that file:
+   `Project::niche` answers the section as the pentagon (0,0), (600,0), (600,560), (200,560),
+   (0,360) at every height, so `classify_outline` reads a chamfer. The chord is
+   `seed_polygon`'s doing (N29, ADR 0201), which took a curved edge by its chord because the
+   cell is planes only; N29's own Shape promised a rounded corner would come out as the case's
+   own outline, and `classify_outline` already draws radii, so this is the deviation N29's debt
+   entry filed.
+  Shape: The niche keeps the frame's arc. `Cell` holds the exact base ring beside the planes,
+   and a prism's section is that ring clipped by the upright walls through
+   `geom::intersect_regions`, which keeps lines and arcs exact; `NicheShape::Section` then
+   carries a ring with arcs, so `FillMode::Shape` classifies the frame's own radius and the
+   created panel is `Rect` with `CornerFeatureKind::Radius`. The chord planes stay the cell's
+   own walls for the probes, the corners and the largest fit, so nothing that is safe today
+   moves. The ghost draws the outline's own ring rather than the chord polygon — sampled at the
+   shell's display tolerance, the way the frame's footprint already is — so what the maker sees
+   is the radius the history records.
+  Done: Tests: a rounded frame gives a section with one arc of the frame's radius and a Shape
+   plan that is `Rect` with that radius; a panel standing across the arc clips it into a line
+   and a shorter arc of the same radius; the created panel's stored outline carries the radius;
+   the box and the chamfer cases keep today's answers; `cargo xtask ci` is green.
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/geom/src/ring.rs,app/src/fill_gizmo.rs,crates/ui/src/void.rs` — `b61776b`
+
 - `[x]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
   Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
   must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
