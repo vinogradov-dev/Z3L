@@ -1,12 +1,13 @@
-//! What the interface says about the snap kinds: one word and one hint per kind.
+//! What the interface says about the snap kinds and the snap mode: one word and one hint each.
 //!
-//! The kinds live in `model` (`SnapKind`, `SnapKinds`) and their words live in `text`; this module
-//! is the one place the two are joined, so the ribbon's Snaps group, the Settings page's Snaps
-//! section and the status bar's readout cannot name one kind three ways (ADR 0086, U116).
+//! The kinds live in `model` (`SnapKind`, `SnapKinds`, `SnapMode`) and their words live in `text`;
+//! this module is the one place the two are joined, so the ribbon's Snaps group, the Settings page's
+//! Snaps section and the status bar's readout cannot name one kind three ways (ADR 0086, U116).
 //!
-//! Changes when: a kind appears in `model::SnapKind`, which turns this match into a compile error.
+//! Changes when: a kind appears in `model::SnapKind` or a mode in `model::SnapMode`, which turns
+//! this match into a compile error.
 
-use model::SnapKind;
+use model::{SnapKind, SnapMode};
 use text::Message;
 
 /// The word a kind prints.
@@ -41,6 +42,22 @@ pub const fn hint(kind: SnapKind) -> Message {
     }
 }
 
+/// The word a snap mode prints: what the reading of a corner above the plane is called.
+pub const fn mode_word(mode: SnapMode) -> Message {
+    match mode {
+        SnapMode::Space => Message::SnapModeSpace,
+        SnapMode::Foot => Message::SnapModeFoot,
+    }
+}
+
+/// The sentence that explains a snap mode, for a settings row.
+pub const fn mode_hint(mode: SnapMode) -> Message {
+    match mode {
+        SnapMode::Space => Message::SnapModeSpaceHint,
+        SnapMode::Foot => Message::SnapModeFootHint,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use text::Lang;
@@ -56,5 +73,20 @@ mod tests {
             }
         }
         assert_ne!(word(SnapKind::Vertex).text(Lang::En), word(SnapKind::Grid).text(Lang::En), "two kinds, two words");
+    }
+
+    #[test]
+    fn every_mode_prints_two_words_and_two_hints() {
+        for mode in SnapMode::ALL {
+            for lang in Lang::ALL {
+                assert!(!mode_word(mode).text(lang).is_empty(), "{mode:?} has no word");
+                assert!(!mode_hint(mode).text(lang).is_empty(), "{mode:?} has no hint");
+            }
+        }
+        assert_ne!(
+            mode_word(SnapMode::Space).text(Lang::En),
+            mode_word(SnapMode::Foot).text(Lang::En),
+            "two modes, two words"
+        );
     }
 }

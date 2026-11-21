@@ -417,6 +417,8 @@ icons!(View, "view", View, view {
     SNAP_EDGE => "snap-edge": Reference,
     SNAP_FACE => "snap-face": Reference,
     SNAP_AXIS => "snap-axis": Reference,
+    SNAP_SPACE => "snap-space": Reference,
+    SNAP_FOOT => "snap-foot": Reference,
     ORBIT => "orbit",
     PAN => "pan",
     ZOOM => "zoom",
@@ -1262,7 +1264,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 130);
+        assert_eq!(seen.len(), 132);
     }
 
     #[test]

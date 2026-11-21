@@ -911,7 +911,11 @@ fn the_master_snap_switch_turns_the_whole_set_and_writes_no_revision() {
     let document = harness.app.tabs.active_mut();
     document.set_all_snaps(false);
     assert!(!document.snaps().any(), "the master turns every kind off");
-    assert_eq!(document.take_snaps_change(), Some(model::SnapKinds::none()), "and the shell is told once");
+    assert_eq!(
+        document.take_snaps_change(),
+        Some(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode: model::SnapMode::Space }),
+        "and the shell is told once"
+    );
     assert_eq!(document.take_snaps_change(), None, "once, not every frame");
 
     // One kind back on is a mixed set, and the master turns the rest on.
@@ -919,6 +923,26 @@ fn the_master_snap_switch_turns_the_whole_set_and_writes_no_revision() {
     document.set_all_snaps(true);
     assert!(document.snaps().all_on(), "a mixed set comes back whole");
     assert_eq!(harness.revision(), revision, "the snap set is view state");
+}
+
+#[test]
+fn the_snap_mode_cell_switches_the_reading_and_the_workspace_keeps_it() {
+    // U119: one press switches the reading every snap answers with. It is view state, so no revision
+    // moves, and the workspace file carries it into the next run exactly as it carries the kinds.
+    let mut harness = Harness::new("frame-snap-mode");
+    harness.settle();
+    let revision = harness.revision();
+    let opening = harness.app.tabs.active().snap_mode();
+    harness.app.tabs.active_mut().toggle_snap_mode();
+    let switched = harness.app.tabs.active().snap_mode();
+    assert_ne!(switched, opening, "the press switches the reading");
+
+    harness.run(Vec::new());
+    assert_eq!(harness.app.settings.snaps.mode, switched, "and the shell carries it into the workspace");
+    let written = std::fs::read_to_string(&harness.path).expect("the workspace file is written");
+    let restored = ui::settings::Settings::from_json(&written).expect("the file parses");
+    assert_eq!(restored.snaps.mode, switched, "the next run opens in the same reading");
+    assert_eq!(harness.revision(), revision, "the mode is view state");
 }
 
 #[test]
@@ -2597,57 +2621,88 @@ fn body_and_ball_session() -> engine::Session {
     engine::Session::with_directory(project, testkit::sample_catalog())
 }
 
-#[test]
-fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
-    // The owner's report: a drawn cube snapped only to the profile it was drawn from, the marker
-    // stood away from the place the click would take, and a ball snapped nowhere. Every corner of
-    // the body, the middle of every edge and the middle of every face is a candidate; a ball answers
-    // at its own centre and at its quadrants; and the marker stands on the point the draft stores,
-    // which for a sketch on a plane is the candidate's perpendicular foot in the 2.5D reading
-    // (U116, T17, U119).
-    let mut harness = Harness::with_session("snap-body", body_and_ball_session());
+/// Arms the sketch and installs the workspace's snap mode, then lets the viewport settle.
+fn sketch_in_mode(harness: &mut Harness, mode: model::SnapMode) {
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
     for _ in 0..24 {
         harness.run(Vec::new());
     }
-    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Line);
+    {
+        let document = harness.app.tabs.active_mut();
+        let kinds = document.snaps();
+        document.set_snaps(crate::document::SnapChoice { kinds, mode });
+        document.editor.start_drawing(ui::DrawTool::Line);
+    }
     for _ in 0..24 {
         harness.run(Vec::new());
     }
+}
 
-    let project = harness.app.tabs.active().session.project();
-    let boxed =
-        project.object(Id::new(2).expect("the box id")).expect("the box").geometry().as_constructive().expect("a body");
-    let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
-    let spots = [
-        ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0)),
-        ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0)),
-        ("top edge", geom::DVec3::new(x + 100.0, y, 300.0)),
-        ("vertical edge", geom::DVec3::new(x, y, 150.0)),
-        ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0)),
-        ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0)),
-    ];
-    for (name, world) in spots {
-        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
-        harness.run(vec![egui::Event::PointerMoved(at)]);
-        let document = harness.app.tabs.active();
-        let kind = document.draw_gizmo.snap_kind();
-        let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
-        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
-        assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
-        assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
-        let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
-        assert!(
-            (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
-            "the {name} reads a candidate above the plane by its perpendicular foot: {stored:?} against {world:?}"
-        );
-        let drawn =
-            gizmo_math::screen_point(harness.camera(), harness.scene(), stored).expect("the stored point is on screen");
-        assert!(
-            (marker - drawn).length() < 0.5,
-            "the {name} draws its marker at the point the click takes: {marker:?} against {drawn:?} ({kind:?})"
-        );
+#[test]
+fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
+    // The owner's report: a drawn cube snapped only to the profile it was drawn from, the marker
+    // stood away from the place the click would take, and a ball snapped nowhere. Every corner of
+    // the body, the middle of every edge and the middle of every face is a candidate; a ball answers
+    // at its own centre and at its quadrants.
+    //
+    // The table is walked in both modes, because the mode is what decides what the answer *is*
+    // (U119): in 2.5D the click stores the candidate's foot on the drawing plane, and in 3D a
+    // candidate above that plane is not a place the sketch can store at all, so only the plane's own
+    // grid answers. In both modes the marker stands on the point the click stores.
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let mut harness = Harness::with_session("snap-body", body_and_ball_session());
+        sketch_in_mode(&mut harness, mode);
+
+        let project = harness.app.tabs.active().session.project();
+        let boxed = project
+            .object(Id::new(2).expect("the box id"))
+            .expect("the box")
+            .geometry()
+            .as_constructive()
+            .expect("a body");
+        let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+        let spots = [
+            ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0)),
+            ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0)),
+            ("top edge", geom::DVec3::new(x + 100.0, y, 300.0)),
+            ("vertical edge", geom::DVec3::new(x, y, 150.0)),
+            ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0)),
+            ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0)),
+        ];
+        for (name, world) in spots {
+            let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
+            harness.run(vec![egui::Event::PointerMoved(at)]);
+            let document = harness.app.tabs.active();
+            let kind = document.draw_gizmo.snap_kind();
+            let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
+            let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+            match mode {
+                model::SnapMode::Foot => {
+                    assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
+                    assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
+                    let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
+                    assert!(
+                        (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
+                        "the {name} reads a candidate above the plane by its perpendicular foot: {stored:?} \
+                         against {world:?}"
+                    );
+                }
+                model::SnapMode::Space => {
+                    assert!(
+                        kind.is_none_or(|kind| kind == SnapKind::Grid),
+                        "the {name} stands off the sketch plane, so 3D captures nothing of it: {kind:?}"
+                    );
+                }
+            }
+            let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
+            let drawn =
+                gizmo_math::screen_point(harness.camera(), harness.scene(), stored).expect("the point is on screen");
+            assert!(
+                (marker - drawn).length() < 0.5,
+                "the {name} draws its marker at the point the click takes, in {mode:?}: {marker:?} against {drawn:?}"
+            );
+        }
     }
 }
 

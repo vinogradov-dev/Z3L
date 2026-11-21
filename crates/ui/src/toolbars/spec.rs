@@ -87,6 +87,11 @@ pub enum ToolKind {
     Snap(model::SnapKind),
     /// Turns every snap kind on, or every kind off: the set's master switch (U116).
     SnapAll,
+    /// Switches the snap mode between the point itself (3D) and its foot on the plane (2.5D).
+    ///
+    /// The cell draws the reading in force, as the projection cell draws the camera's, so a maker
+    /// reads the mode off the glyph and switches it with one press (U119).
+    SnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     Shadows,
     /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
@@ -1112,7 +1117,8 @@ const VIEW: [GroupSpec; 5] = [
     // One cell per kind, in the resolver's own order: a corner, a crossing, a middle, a centre, a
     // perpendicular, a tangent, an edge, a face, a world axis and the grid. The set is the one the
     // pointer resolver answers with, so a cell cannot offer a snap the resolver does not have
-    // (U116).
+    // (U116). The mode cell after the master switch says how every kind below reads a corner above
+    // the plane, and its glyph is the mode in force (U119).
     GroupSpec {
         id: "view.snaps",
         label: Message::GroupSnaps,
@@ -1122,6 +1128,14 @@ const VIEW: [GroupSpec; 5] = [
                 label: Message::SnapAll,
                 icon: Some(icons::view::SNAP_ALL),
                 run: Some(ToolKind::SnapAll),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.mode",
+                label: Message::SnapMode,
+                icon: Some(icons::view::SNAP_SPACE),
+                run: Some(ToolKind::SnapMode),
                 method: None,
                 variants: &[],
             },
@@ -1373,6 +1387,7 @@ mod tests {
                 "view.snaps.grid",
                 "view.snaps.intersection",
                 "view.snaps.midpoint",
+                "view.snaps.mode",
                 "view.snaps.perpendicular",
                 "view.snaps.tangent",
                 "view.snaps.vertex",
@@ -1416,7 +1431,11 @@ mod tests {
         assert_eq!(snaps.label.text(text::Lang::En), "Snaps");
         assert_eq!(snaps.label.text(text::Lang::Ru), "Привязки");
         let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.key())).collect::<Vec<_>>();
-        let mut expected = vec![("view.snaps.all", Some(ToolKind::SnapAll), None)];
+        // The master switch, then the mode every kind below reads a corner by, then the kinds.
+        let mut expected = vec![
+            ("view.snaps.all", Some(ToolKind::SnapAll), None),
+            ("view.snaps.mode", Some(ToolKind::SnapMode), None),
+        ];
         expected.extend(model::SnapKind::ALL.into_iter().map(|kind| {
             let id = match kind {
                 model::SnapKind::Vertex => "view.snaps.vertex",
@@ -1433,7 +1452,7 @@ mod tests {
             let key = (kind == model::SnapKind::Grid).then_some("G");
             (id, Some(ToolKind::Snap(kind)), key)
         }));
-        assert_eq!(tools, expected, "the master switch, then the ten kinds corner to grid");
+        assert_eq!(tools, expected, "the master switch, the mode, then the ten kinds corner to grid");
         let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
         assert!(
             display.tools.iter().all(|tool| !matches!(tool.run, Some(ToolKind::Snap(_)))),
@@ -1595,6 +1614,7 @@ mod tests {
             ToolKind::FrameAll,
             ToolKind::Projection,
             ToolKind::SnapAll,
+            ToolKind::SnapMode,
             ToolKind::Snap(model::SnapKind::Vertex),
             ToolKind::Snap(model::SnapKind::Intersection),
             ToolKind::Snap(model::SnapKind::Midpoint),
@@ -1673,18 +1693,18 @@ mod tests {
         assert_eq!(tab("model").expect("model").columns(), 8);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        // The View tab's four cells are the projection pair, the shadow switch and the grid: the
-        // Snaps group of ten cells is the second row.
-        assert_eq!(tab("view").expect("view").columns(), 14);
+        // The View tab's three cells beside the group are the projection pair and the shadow
+        // switch: the Snaps group of twelve cells is the second row.
+        assert_eq!(tab("view").expect("view").columns(), 15);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 14, "the View tab's Snaps row is the widest row of the map");
+        assert_eq!(widest, 15, "the View tab's Snaps row is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
-        // The View tab's widest row is the Snaps group's eleven cells — the master switch and the
-        // ten kinds — and its three other cells, the projection pair and the shadow switch, join it
-        // on that row.
-        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 4);
+        // The View tab's widest row is the Snaps group's twelve cells — the master switch, the mode
+        // and the ten kinds — and its three other cells, the projection pair and the shadow switch,
+        // join it on that row.
+        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 5);
     }
 
     #[test]

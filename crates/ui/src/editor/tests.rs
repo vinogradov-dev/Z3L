@@ -1714,7 +1714,13 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let ctx = egui::Context::default();
-    let view = RibbonView { perspective: true, owns_view: true, snaps: model::SnapKinds::ALL, shadows: true };
+    let view = RibbonView {
+        perspective: true,
+        owns_view: true,
+        snaps: model::SnapKinds::ALL,
+        snap_mode: model::SnapMode::default(),
+        shadows: true,
+    };
 
     let mut fill = None;
     let idle = ctx.run_ui(Default::default(), |ui| {

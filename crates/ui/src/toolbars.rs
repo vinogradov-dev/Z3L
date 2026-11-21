@@ -56,7 +56,7 @@ pub mod state;
 pub use self::ready::draft_can_close;
 pub use self::state::Toolbars;
 
-use self::ready::{projection_icon, ready};
+use self::ready::{projection_icon, ready, snap_mode_icon};
 
 /// Height of a new extrusion, in millimetres; also the height the next extrusion starts at.
 pub const DEFAULT_EXTRUDE_HEIGHT_MM: i64 = 100;
@@ -136,6 +136,8 @@ pub enum ToolAction {
     ToggleSnap(model::SnapKind),
     /// Turns every snap kind on, or every kind off (U116).
     ToggleSnapAll,
+    /// Switches the snap mode between 3D and 2.5D (U119).
+    ToggleSnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     ToggleShadows,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
@@ -331,6 +333,8 @@ pub struct RibbonView {
     pub owns_view: bool,
     /// Which snap kinds capture the pointer (U116).
     pub snaps: model::SnapKinds,
+    /// How a snap reads a corner above the drawing plane (U119).
+    pub snap_mode: model::SnapMode,
     /// The active view draws the ground shadow (U107).
     pub shadows: bool,
 }
@@ -346,6 +350,8 @@ pub enum RibbonViewAction {
     ToggleSnap(model::SnapKind),
     /// Turn every snap kind on, or every kind off (U116).
     ToggleSnapAll,
+    /// Make every snap answer the 2.5D way, or the 3D way (U119).
+    ToggleSnapMode,
     /// Turn the active view's ground shadow on or off (U107).
     ToggleShadows,
 }
@@ -411,6 +417,8 @@ pub struct RibbonContext {
     pub owns_view: bool,
     /// Which snap kinds capture the pointer (U116).
     pub snaps: model::SnapKinds,
+    /// How a snap reads a corner above the drawing plane (U119).
+    pub snap_mode: model::SnapMode,
     /// Whether the active view draws the ground shadow (U107).
     pub shadows: bool,
     /// A running draft: its tool, how many points it has, and whether it is closed.
@@ -666,7 +674,11 @@ fn show_tool(
     if !tool.has_list() {
         // The projection button draws the mode the view is *in*, so the glyph flips with the camera
         // while the hint names the switch.
-        let icon = if kind == ToolKind::Projection { projection_icon(context.perspective) } else { icon };
+        let icon = match kind {
+            ToolKind::Projection => projection_icon(context.perspective),
+            ToolKind::SnapMode => snap_mode_icon(context.snap_mode),
+            _ => icon,
+        };
         let ready = ready(kind, tool, state, context, lang);
         let response = icons::ribbon_cell(ui, RIBBON_CELL_WIDTH, icon, &ready.hint, ready.enabled, ready.armed);
         if response.clicked()
@@ -852,6 +864,7 @@ mod tests {
             perspective: true,
             owns_view: true,
             snaps: model::SnapKinds::ALL,
+            snap_mode: model::SnapMode::default(),
             shadows: true,
             draft: None,
         }
@@ -1014,6 +1027,11 @@ mod tests {
                 &[
                     "All snaps",
                     "Centre",
+                    // The mode cell's hint is the sentence about the two readings, because one
+                    // glyph cannot carry them (U119).
+                    "How a snap reads a corner above the drawing plane: 2.5D takes its foot on the \
+                     plane, 3D takes the point itself. The cell shows the reading in force; press to \
+                     switch.",
                     "Corner",
                     "Crossing",
                     "Frame all  (F)",
@@ -1703,6 +1721,29 @@ mod tests {
         // The cell is drawn in the group's first column, before the kinds it switches.
         let (_, labels, _) = draw(&mut state, full_context());
         assert!(labels.iter().any(|label| label == "All snaps"), "the cell is drawn: {labels:?}");
+    }
+
+    #[test]
+    fn the_mode_cell_draws_the_reading_in_force_and_asks_for_the_switch() {
+        // U119: one cell names the snap mode. The glyph is the mode in force — the point itself, or
+        // its foot on the plane — and a press asks for the other reading; the hint says what the two
+        // readings are, because a glyph cannot.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let cell = tool("view.snaps.mode");
+        let mut context = full_context();
+        context.snap_mode = model::SnapMode::Space;
+        let space = ready(ToolKind::SnapMode, cell, &state, context, Lang::En);
+        assert_eq!(space.action, Some(ToolAction::ToggleSnapMode), "the press asks for the other reading");
+        assert!(!space.armed, "a mode is not a switch that is on or off");
+        assert!(space.enabled, "a viewport that owns its view always has a snap mode");
+        assert_eq!(space.hint, Message::SnapModeHint.text(Lang::En), "the hint names both readings");
+        assert_eq!(ready::snap_mode_icon(context.snap_mode), icons::view::SNAP_SPACE, "3D draws the point itself");
+
+        context.snap_mode = model::SnapMode::Foot;
+        assert_eq!(ready::snap_mode_icon(context.snap_mode), icons::view::SNAP_FOOT, "2.5D draws its foot");
+        let (_, labels, _) = draw(&mut state, context);
+        assert!(labels.iter().any(|label| label == Message::SnapModeHint.text(Lang::En)), "the cell is drawn");
     }
 
     #[test]

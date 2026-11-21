@@ -91,6 +91,8 @@ pub(crate) enum DrawAction {
 pub(crate) struct DrawInput {
     /// Which snaps the workspace allows.
     pub(crate) kinds: model::SnapKinds,
+    /// How the workspace reads a candidate above the plane: the point itself, or its foot (U119).
+    pub(crate) mode: model::SnapMode,
     /// Whether the chrome owns the pointer this frame.
     pub(crate) pointer_over_widget: bool,
     /// The keyboard state a click carries.
@@ -320,7 +322,7 @@ impl DrawGizmo {
             return Ok(DrawAction::Nothing);
         };
         let sight = editor.flags().sight();
-        let Some(snapped) = snap_cursor(&draft, aim, project, sight, input.kinds, input.modifiers) else {
+        let Some(snapped) = snap_cursor(&draft, aim, project, sight, input.kinds, input.mode, input.modifiers) else {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
@@ -551,6 +553,7 @@ fn snap_cursor(
     project: &Project,
     sight: Sight<'_>,
     kinds: model::SnapKinds,
+    mode: model::SnapMode,
     modifiers: DrawModifiers,
 ) -> Option<SnapOutcome> {
     let plane = aim.plane;
@@ -569,8 +572,9 @@ fn snap_cursor(
     // Alt takes the pointer as it is: no kind captures, and Shift's explicit lock still applies.
     let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
     // The sketch draws on a plane, so it reads a candidate above that plane the way the workspace
-    // chose: the 2.5D foot today, the mode the Snaps group carries once the switch lands (U119).
-    let target = model::SnapMode::Foot.target();
+    // chose: in 2.5D the answer is the candidate's foot on the plane, in 3D only a candidate that
+    // lies in the plane captures and the answer is that point (U119).
+    let target = mode.target();
     let answer = project.snap(aim.request(kinds, target, anchor, &ends, modifiers.axis_lock, None), sight)?;
     // The answer is the point the draft stores, so the marker is projected from that point and never
     // from the candidate it came from: one place, one marker (U119).

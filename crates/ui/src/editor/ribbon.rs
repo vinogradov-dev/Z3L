@@ -74,6 +74,7 @@ impl Editor {
             perspective: view.perspective,
             owns_view: view.owns_view,
             snaps: view.snaps,
+            snap_mode: view.snap_mode,
             shadows: view.shadows,
             draft,
         };
@@ -186,6 +187,9 @@ impl Editor {
                 }
                 ToolAction::ToggleSnapAll => {
                     outcome.view = Some(toolbars::RibbonViewAction::ToggleSnapAll);
+                }
+                ToolAction::ToggleSnapMode => {
+                    outcome.view = Some(toolbars::RibbonViewAction::ToggleSnapMode);
                 }
                 ToolAction::ToggleShadows => outcome.view = Some(toolbars::RibbonViewAction::ToggleShadows),
             }

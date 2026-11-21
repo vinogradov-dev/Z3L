@@ -425,8 +425,24 @@ pub(crate) struct Document {
     /// It is view state and never document data (ADR 0065): turning a kind off costs no revision and
     /// leaves no undo entry.
     snaps: model::SnapKinds,
-    /// Whether a kind changed since the shell last wrote the workspace settings.
+    /// How a snap reads a corner above the drawing plane: the workspace's mode, live here for the
+    /// same reason the kinds are (U119).
+    snap_mode: model::SnapMode,
+    /// Whether the kinds or the mode changed since the shell last wrote the workspace settings.
     snaps_changed: bool,
+}
+
+/// The workspace's snap choice: what may capture the pointer, and how the answer reads.
+///
+/// The two travel together because they are one decision made in two places — a kind's cell in the
+/// Snaps group and the mode's cell beside it — and because the shell writes the whole section of the
+/// workspace file at once (U116, U119).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SnapChoice {
+    /// Which kinds capture the pointer.
+    pub(crate) kinds: model::SnapKinds,
+    /// How a candidate above the tool's plane is read.
+    pub(crate) mode: model::SnapMode,
 }
 
 impl Document {
@@ -523,6 +539,7 @@ impl Document {
             scene_error,
             display,
             snaps: settings.snaps.kinds(),
+            snap_mode: settings.snaps.mode,
             snaps_changed: false,
         })
     }
@@ -830,15 +847,34 @@ impl Document {
         self.snaps
     }
 
-    /// Takes the kinds the shell must write into the workspace settings, once.
-    pub(crate) fn take_snaps_change(&mut self) -> Option<model::SnapKinds> {
-        let changed = core::mem::take(&mut self.snaps_changed);
-        changed.then_some(self.snaps)
+    /// How a snap reads a corner above the drawing plane in this tab.
+    pub(crate) const fn snap_mode(&self) -> model::SnapMode {
+        self.snap_mode
     }
 
-    /// Installs the workspace's snap kinds: a settings section that changed under this tab.
-    pub(crate) fn set_snaps(&mut self, snaps: model::SnapKinds) {
-        self.snaps = snaps;
+    /// Makes every snap answer the other way — 2.5D or 3D — and marks the workspace value unsaved.
+    ///
+    /// The mode is a reading of the same candidates, not a kind: it is drawn by one cell of the
+    /// Snaps group and one row of Settings › View, and it survives a restart like the kinds do
+    /// (U119).
+    pub(crate) fn toggle_snap_mode(&mut self) {
+        self.snap_mode = match self.snap_mode {
+            model::SnapMode::Space => model::SnapMode::Foot,
+            model::SnapMode::Foot => model::SnapMode::Space,
+        };
+        self.snaps_changed = true;
+    }
+
+    /// Takes the choice the shell must write into the workspace settings, once.
+    pub(crate) fn take_snaps_change(&mut self) -> Option<SnapChoice> {
+        let changed = core::mem::take(&mut self.snaps_changed);
+        changed.then_some(SnapChoice { kinds: self.snaps, mode: self.snap_mode })
+    }
+
+    /// Installs the workspace's snap choice: a settings section that changed under this tab.
+    pub(crate) fn set_snaps(&mut self, choice: SnapChoice) {
+        self.snaps = choice.kinds;
+        self.snap_mode = choice.mode;
         self.snaps_changed = false;
     }
 
@@ -2765,13 +2801,14 @@ impl Document {
                 axis_lock: ui.input(|input| input.modifiers.shift),
                 ignore_snaps: ui.input(|input| input.modifiers.alt),
             };
+            let input = DrawInput { kinds: self.snaps, mode: self.snap_mode, pointer_over_widget, modifiers };
             let action = match self.draw_gizmo.update(
                 &response,
                 rect,
                 self.scene.camera,
                 self.session.project(),
                 &mut self.editor,
-                DrawInput { kinds: self.snaps, pointer_over_widget, modifiers },
+                input,
             ) {
                 Ok(action) => action,
                 Err(error) => {
@@ -3800,7 +3837,8 @@ impl Document {
                 Projection::Perspective { .. }
             ),
             owns_view: viewport_owns_view(self.session.project()),
-            snaps: self.snaps,
+            snaps: self.snaps(),
+            snap_mode: self.snap_mode(),
             // The shadow switch is the active view's; its intensity is the workspace's and has no
             // control in the ribbon (U107, U110).
             shadows: self.layout.active_shadows(),
@@ -3897,6 +3935,7 @@ impl Document {
                 }
                 Some(ui::RibbonViewAction::ToggleSnap(kind)) => self.set_snap_kind(kind, !self.snaps.enabled(kind)),
                 Some(ui::RibbonViewAction::ToggleSnapAll) => self.set_all_snaps(!self.snaps.all_on()),
+                Some(ui::RibbonViewAction::ToggleSnapMode) => self.toggle_snap_mode(),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
                 None => {}
             }

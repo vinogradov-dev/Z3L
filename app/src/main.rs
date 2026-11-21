@@ -78,7 +78,7 @@ use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
 use ui::{Palette, TransformMode, icons, theme};
 
-use crate::document::{DeleteRequest, Document, delete_request};
+use crate::document::{DeleteRequest, Document, SnapChoice, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::file_picker::{PickMode, Picker, Started, scene_file};
 use crate::header::{HeaderAction, HeaderState, TabView};
@@ -942,27 +942,29 @@ impl App {
             tabs.active_mut().apply_viewport_settings(&before.viewport, &settings.viewport, shell);
         }
         // A snap kind the Settings page switched applies to the whole workspace at once, exactly as
-        // the panel visibility does: every tab reads one set (U116).
-        if self.settings.snaps.kinds() != before.snaps.kinds() {
-            let snaps = self.settings.snaps.kinds();
+        // the panel visibility does: every tab reads one set (U116). The mode rides with it, because
+        // it is the reading of the same candidates (U119).
+        if self.settings.snaps.kinds() != before.snaps.kinds() || self.settings.snaps.mode != before.snaps.mode {
+            let choice = SnapChoice { kinds: self.settings.snaps.kinds(), mode: self.settings.snaps.mode };
             for (_, document) in self.tabs.iter_mut() {
-                document.set_snaps(snaps);
+                document.set_snaps(choice);
             }
         }
     }
 
-    /// Writes the snap kinds a tab switched into the workspace settings, and into every other tab.
+    /// Writes the snap choice a tab switched into the workspace settings, and into every other tab.
     ///
-    /// The tab owns the live value — a cell of the View tab's Snaps group is drawn from it inside
-    /// that tab — and the workspace owns the file, so the shell carries the change across on the
-    /// frame the cell was pressed (U116).
+    /// The tab owns the live values — the Snaps group's cells are drawn from them inside that tab —
+    /// and the workspace owns the file, so the shell carries the change across on the frame a cell
+    /// was pressed. The kinds and the mode travel together because they are one section (U116, U119).
     fn take_snaps(&mut self) {
-        let Some(snaps) = self.tabs.active_mut().take_snaps_change() else {
+        let Some(SnapChoice { kinds, mode }) = self.tabs.active_mut().take_snaps_change() else {
             return;
         };
-        self.settings.snaps.set_kinds(snaps);
+        self.settings.snaps.set_kinds(kinds);
+        self.settings.snaps.mode = mode;
         for (_, document) in self.tabs.iter_mut() {
-            document.set_snaps(snaps);
+            document.set_snaps(SnapChoice { kinds, mode });
         }
         self.persist_settings();
     }

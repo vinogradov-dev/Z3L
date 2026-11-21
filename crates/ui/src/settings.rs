@@ -410,6 +410,9 @@ pub struct SnapSettings {
     pub floor: bool,
     /// The pointer's own kinds: one switch per kind, all on in a fresh workspace (U116).
     pub kinds: PointerKinds,
+    /// How a snap reads a corner above the drawing plane: the point itself, or its foot on the
+    /// plane (U119, `model::SnapMode`).
+    pub mode: model::SnapMode,
 }
 
 /// The pointer's snap kinds: what one click may capture in the scene.
@@ -473,7 +476,14 @@ impl Default for PointerKinds {
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true, kinds: PointerKinds::default() }
+        Self {
+            planes: true,
+            frames: true,
+            tolerance_mm: DEFAULT_SNAP_MM,
+            floor: true,
+            kinds: PointerKinds::default(),
+            mode: model::SnapMode::default(),
+        }
     }
 }
 
@@ -1127,6 +1137,17 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     // piece lands on when it is dragged (N21, ADR 0146).
     ui.add_space(theme::STEP);
     ui.label(egui::RichText::new(Message::Snapping.text(lang)).strong());
+    // How a capture reads a corner above the plane is the section's first choice: the switches
+    // below decide what may capture, this decides what the capture is (U119).
+    ui.horizontal(|ui| {
+        ui.label(Message::SnapMode.text(lang));
+        for mode in model::SnapMode::ALL {
+            changed |= ui
+                .radio_value(&mut settings.snaps.mode, mode, crate::snap::mode_word(mode).text(lang))
+                .on_hover_text(crate::snap::mode_hint(mode).text(lang))
+                .changed();
+        }
+    });
     changed |= ui
         .checkbox(&mut settings.snaps.planes, Message::SnapPlanes.text(lang))
         .on_hover_text(Message::SnapPlanesHint.text(lang))
@@ -1300,6 +1321,7 @@ mod tests {
                 tolerance_mm: 12,
                 floor: false,
                 kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+                mode: model::SnapMode::Foot,
             },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
@@ -1338,8 +1360,26 @@ mod tests {
                 tolerance_mm: 12,
                 floor: false,
                 kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+                mode: model::SnapMode::Foot,
             }
         );
+    }
+
+    #[test]
+    fn the_snap_mode_survives_a_restart_and_a_file_written_before_it_existed_draws_in_3d() {
+        // 2.5D is the reading a maker asks for, so the other setting writes it and the file carries
+        // it back; the whole section is one value, so the mode is one of its switches (U119).
+        let mut settings = Settings::default();
+        settings.snaps.mode = model::SnapMode::Foot;
+        let json = settings.to_json().expect("serialise");
+        let restored = Settings::from_json(&json).expect("parse");
+        assert_eq!(restored.snaps.mode, model::SnapMode::Foot, "the mode survives a restart");
+        assert_eq!(restored.snaps.mode.target(), model::SnapTarget::Foot, "and answers as the 2.5D reading");
+
+        // A file written before the mode existed lands in the default: the point itself.
+        let old = Settings::from_json(r#"{"version":1,"snaps":{"planes":true}}"#).expect("parse");
+        assert_eq!(old.snaps.mode, model::SnapMode::Space, "3D is the reading a fresh workspace starts in");
+        assert_eq!(old.snaps.mode.target(), model::SnapTarget::InPlane);
     }
 
     #[test]

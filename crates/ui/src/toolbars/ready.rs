@@ -280,6 +280,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(crate::snap::word(kind).text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleSnap(kind)),
         },
+        // The snap mode is a reading, not a switch: the cell draws the mode in force and the hint
+        // says what the two readings are, because one glyph cannot carry a sentence (U119).
+        ToolKind::SnapMode => Ready {
+            enabled: owns_view,
+            armed: false,
+            hint: tool_hint(Message::SnapModeHint.text(lang), tool.key()),
+            action: owns_view.then_some(ToolAction::ToggleSnapMode),
+        },
         ToolKind::Shadows => Ready {
             // A view always has a shadow switch: no document, no selection and no material is
             // involved, and the press draws pressed while the shadow is on (U107).
@@ -304,6 +312,14 @@ pub const fn draft_can_close(tool: DrawTool, points: usize, closed: bool) -> boo
 /// The icon of the projection toggle: the mode the view is in.
 pub(super) fn projection_icon(perspective: bool) -> Icon {
     if perspective { icons::view::PERSPECTIVE } else { icons::view::ORTHOGRAPHIC }
+}
+
+/// The drawing of the snap mode in force: the point itself above the plane, or its foot on it.
+pub(super) fn snap_mode_icon(mode: model::SnapMode) -> Icon {
+    match mode {
+        model::SnapMode::Space => icons::view::SNAP_SPACE,
+        model::SnapMode::Foot => icons::view::SNAP_FOOT,
+    }
 }
 
 /// The hint of the extrude button: what the tool does, or why it is off.

@@ -1176,6 +1176,21 @@ messages! {
         "Turns every snap on, or every snap off: a pointer that fights the geometry gets the hand back in one click.",
         "Включает все привязки или выключает их разом: курсор, который спорит с геометрией, отдаёт руку одним нажатием."
     ],
+    SnapMode = ["Snap mode", "Режим привязки"],
+    SnapModeHint = [
+        "How a snap reads a corner above the drawing plane: 2.5D takes its foot on the plane, 3D takes the point itself. The cell shows the reading in force; press to switch.",
+        "Как привязка читает угол над плоскостью чертежа: 2.5D берёт его основание на плоскости, 3D — саму точку. Клетка показывает действующий режим; нажатие переключает."
+    ],
+    SnapModeSpace = ["3D — the point itself", "3D — сама точка"],
+    SnapModeSpaceHint = [
+        "A tool that draws on a plane captures only a point that lies in it, so a figure is never built from a place it cannot contain.",
+        "Инструмент, который чертит на плоскости, захватывает только точку, лежащую в ней, поэтому фигура никогда не строится из места, которого не может содержать."
+    ],
+    SnapModeFoot = ["2.5D — the foot on the plane", "2.5D — основание на плоскости"],
+    SnapModeFootHint = [
+        "A corner anywhere captures, and the point is its foot on the drawing plane: a top view lines a board up with the shadow it casts.",
+        "Захватывает угол из любого места, а точка — его основание на плоскости чертежа: вид сверху совмещает доску с её тенью."
+    ],
     SnapVertex = ["Corner", "Угол"],
     SnapVertexHint = [
         "A corner of a panel, a body or a frame, and a point the drawing already has.",
