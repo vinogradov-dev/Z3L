@@ -57,7 +57,7 @@ pub fn analyze(status: &str, backlog: &str, sessions: &[(String, String)]) -> Re
 
     if violations.is_empty() {
         let streams = stream_states(&streams, sessions, &tasks);
-        Ok(Summary { state, tasks, streams, head: None, interrupted: false })
+        Ok(Summary { state, tasks, streams, head: None, branch: None, interrupted: false })
     } else {
         Err(violations)
     }

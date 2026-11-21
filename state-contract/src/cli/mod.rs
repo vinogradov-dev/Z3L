@@ -320,6 +320,9 @@ fn run_plan(global: &Global) -> Result<(), String> {
     match crate::check(&global.root) {
         Ok(summary) => {
             println!("plan: {} tasks, state {}", summary.tasks.len(), summary.state.status);
+            if let Some(stream) = summary.stream_checkout() {
+                println!("plan: `base` freshness is the primary checkout's rule; this is the `{}` stream", stream.key);
+            }
             println!("plan: ok");
             Ok(())
         }

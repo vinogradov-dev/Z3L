@@ -83,6 +83,7 @@ pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Re
         streams: crate::validate::stream_states(&streams, &sessions, &tasks),
         tasks: tasks.clone(),
         head: head.clone(),
+        branch: git.branch(),
         interrupted,
     };
 

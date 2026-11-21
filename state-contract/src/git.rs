@@ -37,6 +37,13 @@ pub trait Git {
         let _ = hash;
         None
     }
+    /// The branch the checkout is on, when it is one and `HEAD` is not detached.
+    ///
+    /// The default answers `None`, like [`Git::last_touch`]: a host without a checkout has no branch,
+    /// and `None` keeps the rules that ask about one exactly as they were.
+    fn branch(&self) -> Option<String> {
+        None
+    }
     /// The paths that differ between two commits, or `None` when the host cannot compare them.
     ///
     /// The default answers `None`: a host that knows only the plan files needs nothing here, and a
@@ -113,6 +120,11 @@ impl Git for ProcessGit {
 
     fn short(&self, hash: &str) -> Option<String> {
         self.output(&["rev-parse", "--short", hash]).filter(|short| !short.is_empty())
+    }
+
+    fn branch(&self) -> Option<String> {
+        // `--abbrev-ref` prints `HEAD` in a detached checkout, which names no stream and no branch.
+        self.output(&["rev-parse", "--abbrev-ref", "HEAD"]).filter(|branch| !branch.is_empty() && branch != "HEAD")
     }
 
     fn changed(&self, from: &str, to: &str) -> Option<Vec<String>> {

@@ -196,7 +196,7 @@ session note without `now:` turns a resume into a rewrite.
 | debt tags | a `plan/debt.md` entry carries a tag the `Tags:` line does not declare, or tags without a `Tags:` line |
 | budget | `STATUS.md` over 70 lines, any session note over 50 — a warning nobody reads is not a check |
 | history | a done task without a commit hash, or a hash that is not a commit in the repository |
-| base | `base` is not a commit, or is not an ancestor of `HEAD`; `HEAD` itself is legal while the plan edit is uncommitted |
+| base | `base` is not a commit, or is not an ancestor of `HEAD`; an idle plan whose `base` lags commits that touched anything but `plan/` — except in a `stream/<key>` worktree of a declared stream, where that lag is the design and the primary judges it; `HEAD` itself is legal while the plan edit is uncommitted |
 | readme | `README.md` carries a `Status:` line or an `M<digit>` milestone: a README describes the product, the state lives in `plan/STATUS.md` |
 
 The `files:` hint may wrap onto an indented continuation line, and a task marker may be wrapped in
