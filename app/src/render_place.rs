@@ -5,7 +5,7 @@
 //! run's own counter between frames, the Cancel button sets the run's own flag, and the finished
 //! value is taken at the frame boundary exactly like a directory or a file-manager answer
 //! (`docs/domain/nomenclature.md` §13, ADR 0182). Nothing here touches a document: the frame is a
-//! clone of the one the viewport draws, and the only thing a run writes is one PNG (ADR 0208).
+//! clone of the one the viewport draws, and the only thing a run writes is one PNG (ADR 0210).
 //!
 //! The place is not a modal: it keeps its numbers and its last result while the person goes back to
 //! the tree and opens it again, because a render is a place in the work, not a question about the
@@ -124,7 +124,7 @@ impl RenderPlace {
     ///
     /// The frame is cloned into the thread: the person may keep editing while the image is drawn, and
     /// a render of a document that changed under it would be an image nobody asked for. The device is
-    /// the window's own, borrowed for the run (ADR 0208).
+    /// the window's own, borrowed for the run (ADR 0210).
     pub(crate) fn start(
         &mut self,
         ctx: &eframe::egui::Context,

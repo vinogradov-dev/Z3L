@@ -1,4 +1,4 @@
-# 0208. The final render is our own tracer in `crates/final`, and it is a job rather than a document command
+# 0210. The final render is our own tracer in `crates/final`, and it is a job rather than a document command
 
 - Status: Accepted; the road Y2, Y3, Y4 and Y5 build on
 - Date: 2026-11-21

@@ -1,11 +1,11 @@
-# 0209. The final render is a place beside the File menu, not a dialog
+# 0211. The final render is a place beside the File menu, not a dialog
 
-- Status: Accepted; the surface ADR 0208's entry point is reached from
+- Status: Accepted; the surface ADR 0210's entry point is reached from
 - Date: 2026-11-21
 
 ## Context
 
-The final render exists and can be reached from the command line (`z3l render`, ADR 0208), and the
+The final render exists and can be reached from the command line (`z3l render`, ADR 0210), and the
 owner asked for it in the interface: the render has to be one tab in the window, next to the File
 menu. The tree already had two shapes for a surface that is not the document — a modal (Home, the
 Settings window, a destructive question) and a docked place (the workspace: viewport, ribbon,

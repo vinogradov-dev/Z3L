@@ -277,7 +277,7 @@ struct App {
     settings_open: bool,
     /// Whether the Home surface is open.
     home_open: bool,
-    /// Whether the workspace shows the render place instead of the scene (ADR 0209).
+    /// Whether the workspace shows the render place instead of the scene (ADR 0211).
     render_open: bool,
     /// The render place's numbers, its run and where the last one got to.
     render_place: render_place::RenderPlace,
@@ -554,7 +554,7 @@ impl App {
             HeaderAction::ActivateTab(id) => {
                 self.tabs.activate(id);
                 // A document tab is the way back from the render place: the place is a view of the
-                // scene in front, never a replacement for it (ADR 0209).
+                // scene in front, never a replacement for it (ADR 0211).
                 self.render_open = false;
             }
             HeaderAction::Render => self.render_open = !self.render_open,
@@ -1178,7 +1178,7 @@ impl App {
     /// stops it and asks the file manager where the image goes. The scene it renders is the one in
     /// front of the person — the same frame and the same camera the viewport draws — taken at the
     /// moment the button is pressed and cloned into the worker, so an edit made while it runs does
-    /// not change the image under it (ADR 0208, ADR 0209).
+    /// not change the image under it (ADR 0210, ADR 0211).
     fn render_page(&mut self, ui: &mut egui::Ui) {
         let lang = ui::language(ui.ctx());
         let scene = self.tabs.active().file_name(lang);
@@ -1236,7 +1236,7 @@ impl App {
     ///
     /// While the render place is open this whole surface is replaced by it: a render is a place in
     /// the work, not a question over the model, and a person who opens it means to see the image,
-    /// the numbers and the progress rather than the cabinet under them (ADR 0209). Nothing floats
+    /// the numbers and the progress rather than the cabinet under them (ADR 0211). Nothing floats
     /// over the place, so the chrome it covers is empty.
     fn design_area(&mut self, ui: &mut egui::Ui) -> Chrome {
         let design = ui.available_rect_before_wrap();
@@ -1310,7 +1310,7 @@ impl App {
         self.take_pick(ui.ctx());
         // A finished render is taken at the same boundary, and a run in flight asks for the next
         // frame so its counter keeps moving even while the person is back in the document
-        // (ADR 0209).
+        // (ADR 0211).
         if self.render_place.take_finished() || self.render_place.is_running() {
             ui.ctx().request_repaint();
         }

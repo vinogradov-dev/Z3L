@@ -339,7 +339,7 @@ fn tab_row(ui: &mut Ui, state: &HeaderState, room: f32) -> Option<HeaderAction> 
         ui.horizontal(|ui| {
             // The render place is a tab of its own, first in the row and beside the File menu: it
             // has no cross and no unsaved marker, and it is pressed while the workspace shows it
-            // (ADR 0209). A press on an open one goes back to the document.
+            // (ADR 0211). A press on an open one goes back to the document.
             if render_tab(ui, state.render_open, lang) {
                 action = Some(HeaderAction::Render);
             }

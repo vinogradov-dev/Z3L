@@ -400,7 +400,7 @@ fn the_interface_renders_offscreen_to_one_png_per_cell() {
 ///
 /// The place replaces the workspace, so the picture shows what a person sees after pressing the
 /// `Render` tab — and it is the only way to judge the page's density and its progress row, which a
-/// rectangle test cannot answer (ADR 0209).
+/// rectangle test cannot answer (ADR 0211).
 #[test]
 #[ignore = "needs a GPU adapter; writes target/ui-shots/render-place.png"]
 fn the_render_place_is_painted_offscreen() {

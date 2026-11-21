@@ -4,7 +4,7 @@
 //! must not need a person, a window or a GPU surface: the subcommand reads the scene, evaluates the
 //! frame the viewport would draw, takes the active authored camera when the document has one and a
 //! fitted view when it does not, and hands the frame to `final`'s one entry point — `render.final`
-//! (ADR 0208). Nothing here mutates the document: the document is read, the image is written, and the
+//! (ADR 0210). Nothing here mutates the document: the document is read, the image is written, and the
 //! scene file is left exactly as it was.
 //!
 //! The progress and the cancel the entry point carries are visible here as themselves: the samples
@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::wgpu;
 // The crate is named `final`, which Rust reserves, so every path into it is written raw. The package
-// keeps the bare name the layer map and the plan use (ADR 0135, ADR 0208).
+// keeps the bare name the layer map and the plan use (ADR 0135, ADR 0210).
 use r#final::{FinalError, Input, Progress, Request, Settings, Tracer, run};
 use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;

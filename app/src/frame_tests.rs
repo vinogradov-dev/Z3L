@@ -734,7 +734,7 @@ fn a_pick_belongs_to_the_tab_that_asked_for_it() {
 
 #[test]
 fn the_render_tab_turns_the_workspace_into_the_render_place_and_back() {
-    // The render place is a view of the scene in front, not a replacement for it (ADR 0209): the
+    // The render place is a view of the scene in front, not a replacement for it (ADR 0211): the
     // header's tab opens it, the page draws instead of the viewport and the ribbon, nothing floats
     // over it, Escape and a document tab both go back, and no document revision moves either way.
     let mut harness = Harness::new("frame-render-place");

@@ -10,7 +10,7 @@
 //! Input is frame data, never document data: the triangles of a [`scene`] frame, the lights it
 //! carries in watts with inverse-square falloff (ADR 0039) and the session camera. This crate reads
 //! no `Project`, no catalogue and no file of its own; the shell hands it a frame and takes an image
-//! back, and the one file it ever touches is the PNG it writes (ADR 0208).
+//! back, and the one file it ever touches is the PNG it writes (ADR 0210).
 //!
 //! Layer: L5, beside `render` and above `scene`. It must not depend on `render` (a sibling, and the
 //! tracer owns its own pipelines), on `egui` or a window (the shell owns both), or on `model` (the
