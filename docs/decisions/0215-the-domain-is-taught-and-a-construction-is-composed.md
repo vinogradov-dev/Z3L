@@ -16,7 +16,7 @@ A recipe per construction also fixes one reading of every shared word and calls 
 Measured before this record:
 
 - `command_list` answers the id, the label, the level a command creates, whether it is enabled and
-  the schema of its parameters — 51 commands with **no statement of which world a command serves**. A
+  the schema of its parameters — 64 commands with **no statement of which world a command serves**. A
   nut, a carcass and a scene light are three ids among 51, and the only way to tell them apart is the
   label, which is a sentence (`crates/mcp/src/server.rs`).
 - Nothing in the machine-readable tree says how a build starts. The real wardrobe in
@@ -24,8 +24,9 @@ Measured before this record:
   supplied: millimetres fed to a micrometre field (X115), a panel origin that hung above its own
   board (X117), a side named `left` and placed on the viewer's right (X118).
 - The knowledge does exist, in three places that a caller cannot read: `docs/domain/*.md`, the class
-  registry (`model::class::registry()`, 70 rows with slugs, labels and the words a person types —
-  «стойка», «полка», and «штанга» at `20.06`, which gained it in this change), and ADR 0105's stance table. The class registry already
+  registry (`model::class::registry()`, 78 rows — eight family headings and 70 classes, 65 of them
+  assignable — with slugs, labels and the words a person types: «стойка», «полка», and «штанга» at
+  `20.06`, which gained it in this change), and ADR 0105's stance table. The class registry already
   says a hanging rail is a class; no command creates one, and nothing said so.
 - The frame shapes exist and are reachable: `Envelope` stores a `Footprint` — the rectangle, corners
   cut by a chamfer or a fillet, or a drawn ring — so a radius corner is `product.create` with
@@ -65,7 +66,7 @@ Measured before this record:
 ## Consequences
 
 - A model's first call teaches it the program: about 15 KB of compact JSON, once per session, and
-  four worlds and 51 commands it can now read without guessing. A client that already lists commands
+  four worlds and 64 commands it can now read without guessing. A client that already lists commands
   gets this for no extra call.
 - The arithmetic is the caller's, which is the cost of not hardcoding constructions: a wrong shelf
   width is not prevented by a function any more. What catches it is the inspector and its findings
