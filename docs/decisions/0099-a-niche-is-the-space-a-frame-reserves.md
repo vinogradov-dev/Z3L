@@ -53,7 +53,8 @@ problem, and the shop does not work that way.
 ## Consequences
 
 - The empty-space tool becomes "fill the niche": the ghost it draws is the probed region, and the
-  click creates a part measured by it.
+  click creates a part measured by it. *0200 widened the fill trait to three pairs after this record,
+  so the tool offers a wall beside the post and the shelf; the niche is measured the same way.*
 - A cutting list can report a niche's volume and a drawing can dimension it later; both read the same
   query, so they cannot disagree with the tool that placed the part.
 - The product frame stops being decoration: its faces bound every niche of the piece, so the envelope

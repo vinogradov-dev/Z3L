@@ -2,7 +2,7 @@ code,parent,slug,label,supply,measure,nesting,extent,level,opening,mount,fill,op
 10,,storage,Storage,,,,,,,,,[],false
 10.10,10,vertical-panel,Vertical panel,sheet,area,member,free,Part,,,height-and-depth,"[""contour"",""edge-band""]",false
 10.11,10,horizontal-panel,Horizontal panel,sheet,area,member,free,Part,,,width-and-depth,"[""contour"",""edge-band""]",false
-10.12,10,back-panel,Back panel,sheet,area,member,free,Part,,,,"[""contour""]",false
+10.12,10,back-panel,Back panel,sheet,area,member,free,Part,,,width-and-height,"[""contour""]",false
 10.20,10,hinged-door-made,"Hinged door, made",sheet,area,member,free,Component,closes,,,"[""contour"",""edge-band"",""cup-bore"",""mount-pattern""]",false
 50,,fittings,Fittings,,,,,,,,,[],false
 50.02,50,cup-hinge,Cup hinge,piece,count,never,none,Fitting,,,,[],false

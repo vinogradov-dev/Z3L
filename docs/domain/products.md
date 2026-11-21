@@ -196,7 +196,8 @@ allowed; the lock is about adding work, not about owning the object.
 
 ## 7. Filling a niche
 
-The maker's flow: open a product, choose “add a post” or “add a shelf”, point at the empty space.
+The maker's flow: open a product, choose “add a post”, “add a shelf” or “add a wall”, point at the
+empty space.
 
 - The cursor ray enters the product's **own** envelope, in the product's frame, never the world box
   around it; from a micrometre inside it the ray probes to the first surface, and the point rests a
@@ -204,9 +205,12 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   pointing into an empty piece still measures the whole reserved space (0109). Pointing at a wall
   measures the void in front of it, which is what the maker sees.
 - A **post** takes the niche's height and the depth the void leaves it; a **shelf** takes its width and
-  depth. Which axis pair a class fills is the class trait `fill` (`HeightAndDepth`, `WidthAndDepth`,
-  `None`). Each takes the cell's own cut at the board's thickness, so a post stands against a splayed
-  wall with the depth the slab really has (0106).
+  depth; a **wall** — the back board — takes its width and height and stands in the frontal plane, the
+  material running towards the open front. Which axis pair a class fills is the class trait `fill`
+  (`HeightAndDepth`, `WidthAndDepth`, `WidthAndHeight`, `None`). Each takes the cell's own cut at the
+  board's thickness, so a post stands against a splayed wall with the depth the slab really has (0106).
+  The wall's creation asks nothing about overlay or inset: the mounting is a property of the part,
+  edited after it exists (0200).
 - The part has **two builds**, chosen from the tool's own method list under a «Способ построения» /
   “Build method” caption and remembered by the workspace. The cell keeps the post or shelf glyph while
   a build is armed or pinned, so the list is a choice of build, not a choice of panel (0110):
@@ -249,9 +253,9 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   command and one undo entry: the outline — a rectangle with its corner cuts, or the ring — and the
   end bevels travel in the same `panel.create`, so a shaped part is never a create followed by a
   second edit.
-- The two fills handle a product in any orientation, because the cell is measured in the product's own
+- The three fills handle a product in any orientation, because the cell is measured in the product's own
   frame; a curved boundary is measured by the box around its body, so the part fits with a gap. A
-  drawer, a back panel and a facade need their own fill rules.
+  drawer and a facade need their own fill rules.
 
 **Exact distances.** While a fill, a box creation or a move runs, the viewport shows one distance field
 per direction of the work plane — from the new face to the first surface — and exactly one of them is
@@ -338,8 +342,8 @@ volume asks the program for it when such a report exists.
   neighbouring parts and to the 1 mm grid; wall objects are a separate decision.
 - **The interface word?** «Каркас изделия» / «Product frame».
 - **What a closed product refuses?** Creation only, in version 1.
-- **Which parts can fill a niche?** A post and a shelf first; a drawer, a back panel and a facade
-  later.
+- **Which parts can fill a niche?** A post, a shelf and a wall; a drawer and a facade need their own
+  rules.
 - **What the placeholder class is called?** «Изделие общего назначения» / “general product”, a
   `level = Product` row that is never offered for a part.
 - **How a new frame is placed?** Beside the nearest product, on the floor, clear of every envelope,

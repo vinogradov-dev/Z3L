@@ -79,6 +79,13 @@ impl ClassCode {
     /// that rule.
     pub const HORIZONTAL_PANEL: Self = Self(101_100);
 
+    /// The `back panel` row, «задняя стенка» / back panel, the class a wall fills a niche with
+    /// (ADR 0200).
+    ///
+    /// A wall takes the niche's width and height and stands in the frontal plane, so the row's
+    /// `fill` trait is what makes the wall cell a way to fill a void rather than a typed board.
+    pub const BACK_PANEL: Self = Self(101_200);
+
     /// The largest assignable code.
     pub const MAX: Self = Self(CLASS_MAX_CODE);
 
@@ -512,6 +519,8 @@ pub enum Fill {
     HeightAndDepth,
     /// Width and depth, the shelf-like fill.
     WidthAndDepth,
+    /// Width and height, the wall-like fill: the board stands in the frontal plane (ADR 0200).
+    WidthAndHeight,
 }
 
 impl Fill {
@@ -519,6 +528,7 @@ impl Fill {
         match self {
             Self::HeightAndDepth => 1,
             Self::WidthAndDepth => 2,
+            Self::WidthAndHeight => 3,
         }
     }
 
@@ -526,7 +536,8 @@ impl Fill {
         match bits {
             0 => None,
             1 => Some(Self::HeightAndDepth),
-            _ => Some(Self::WidthAndDepth),
+            2 => Some(Self::WidthAndDepth),
+            _ => Some(Self::WidthAndHeight),
         }
     }
 }
@@ -1015,10 +1026,11 @@ const REGISTRY: &[ClassRow] = &[
             &[Operation::Contour],
             None,
             None,
-            None,
+            Some(Fill::WidthAndHeight),
         ),
         &[ClassPrefix::of(1001, 4)],
-    ),
+    )
+    .with_aliases(&["wall", "back", "стенка", "задняя стенка"]),
     ClassRow::class(
         101_300,
         "drawer-box-part",
@@ -1803,6 +1815,14 @@ mod tests {
         assert_eq!(row.label(), Message::ClassHorizontalPanel);
         assert_eq!(row.traits().expect("traits").fill(), Some(Fill::WidthAndDepth));
         assert!(shelf.is_assignable());
+
+        let wall = ClassCode::BACK_PANEL;
+        let row = wall.row().expect("the back panel class is a registry row");
+        assert_eq!(row.slug(), "back-panel");
+        assert_eq!(row.label(), Message::ClassBackPanel);
+        assert_eq!(row.traits().expect("traits").fill(), Some(Fill::WidthAndHeight));
+        assert!(wall.is_assignable());
+        assert!(row.aliases().contains(&"стенка"), "the workshop's own word finds the wall: {:?}", row.aliases());
     }
 
     #[test]
@@ -2356,6 +2376,7 @@ mod tests {
         match text {
             "w+d" => Some(Fill::WidthAndDepth),
             "h+d" => Some(Fill::HeightAndDepth),
+            "w+h" => Some(Fill::WidthAndHeight),
             "—" => None,
             other => panic!("unknown fill {other}"),
         }

@@ -54,6 +54,9 @@ which tells the empty-space tool how a part fills a void: a post takes the void'
 shelf its width and depth. Both arrive with the tool that reads them, per the rule that a trait needs
 a consumer.
 
+*0200 later widened the trait with a third pair, `WidthAndHeight`: the back panel row carries it, so
+the same tool fills a void with a wall. The reading above is unchanged.*
+
 **Invariants, checked by the model.**
 
 - An envelope exists only on a container whose class has `level = Product`; the root and ordinary

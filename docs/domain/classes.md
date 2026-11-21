@@ -102,7 +102,7 @@ thing is made of.
 | `level` | `Product`, `Component`, `Part`, `Fitting` | report grouping and tree presentation | reports |
 | `opening` | `Closes`, `None` | whether the object closes an opening, and therefore has gaps and a facade report | reports, drawing |
 | `mount` | `Floor`, `Wall` | where the piece stands: on the floor or hung; `None` for anything that is not a product | the object move tool, the product card (0097) |
-| `fill` | `None`, `HeightAndDepth`, `WidthAndDepth` | which axis pair a part takes from a free box when it fills a void | the empty-space tool (0097) |
+| `fill` | `None`, `HeightAndDepth`, `WidthAndDepth`, `WidthAndHeight` | which axis pair a part takes from a free box when it fills a void | the empty-space tool (0097, 0200) |
 
 Rules for the vocabulary:
 
@@ -139,7 +139,9 @@ with one label and an alias.
 - A shelf, a bottom and a top are that one class for the same reason: the rules are identical and the
   parts specification carries the maker's names, so a second code would select nothing.
 - `10.10` vertical panel and `10.11` horizontal panel differ in `fill`, which the empty-space tool
-  reads: a post-like part takes height and depth, a shelf-like part width and depth.
+  reads: a post-like part takes height and depth, a shelf-like part width and depth. `10.12` back
+  panel carries the third pair — width and height — so the same tool offers a board in the frontal
+  plane, the wall (0200).
 - `10.20` made hinged door and `10.21` bought hinged door are one shape in two channels: a made leaf is
   nested and bored here, a bought one is counted, never nested and not bored by us, so a rule differs
   and the two report lines differ too.
@@ -297,7 +299,7 @@ this way.*
 | `host` | code prefixes it may sit in or on: `10` is every storage class, `10.2` every facade, `10.01` every cabinet form, `10.20` exactly one class; `—` has no furniture host |
 | `opening` | `closes`, `—` |
 | `mount` | `floor`, `wall`, `—` |
-| `fill` | `w+d` width and depth, `h+d` height and depth, `—` not a void filler |
+| `fill` | `w+d` width and depth, `h+d` height and depth, `w+h` width and height, `—` not a void filler |
 
 `measure` and `nesting` are the derived pair of §4; each row states them so the table is complete,
 and an override is called out where it appears. Within every group, `TT = 90..99` stays reserved for
@@ -329,23 +331,25 @@ and `chest` are search aliases of those rows, never separate classes.
 | `10.01.03` | Tall cabinet / «Шкаф высокий» | `tall-cabinet` | product | shop | count | never | free | — | — | — | floor | — |
 
 Parts. The rule that separates a vertical panel from a horizontal one is `fill`: the void tool offers
-`10.10` for a post-like fill and `10.11` for a shelf-like one. The rule that separates the back is
-`ops`: it is the one sheet part that takes no banding. Tamburat and bent parts are made here from a
-recipe, so they are counted once and their components are what is nested — how that recipe is
-written down is still open (§12).
+`10.10` for a post-like fill, `10.11` for a shelf-like one and `10.12` for a wall-like one. The rule
+that separates the back is also `fill` and `ops`: it is the one sheet part that takes no banding, and
+its pair is width and height, because a back board stands in the frontal plane (0097, 0200). Tamburat
+and bent parts are made here from a recipe, so they are counted once and their components are what is
+nested — how that recipe is written down is still open (§12).
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `10.10` | Vertical panel / «Вертикальная панель» | `vertical-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | h+d |
 | `10.11` | Horizontal panel / «Горизонтальная панель» | `horizontal-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | w+d |
-| `10.12` | Back panel / «Задняя стенка» | `back-panel` | part | sheet | area | member | free | C | `10.01` | — | — | — |
+| `10.12` | Back panel / «Задняя стенка» | `back-panel` | part | sheet | area | member | free | C | `10.01` | — | — | w+h |
 | `10.13` | Drawer box part / «Деталь ящика» | `drawer-box-part` | part | sheet | area | member | free | C E | `10.30` | — | — | — |
 | `10.14` | Glass shelf / «Стеклянная полка» | `glass-shelf` | part | piece | area | never | free | C | `10.01` | — | — | w+d |
 | `10.15` | Tamburat panel / «Плита тамбурат» | `tamburat-panel` | part | shop | count | never | free | C E | `10.01` | — | — | — |
 | `10.16` | Bent panel / «Гнутая панель» | `bent-panel` | part | shop | count | never | free | C E | `10.01` | — | — | — |
 
 The aliases carry the workshop's own words, which are not classes: `10.10` is «боковина»,
-«перегородка» and «стойка»; `10.11` is «полка», «днище» and «крыша»; `10.13` is a drawer side, bottom
+«перегородка» and «стойка»; `10.11` is «полка», «днище» and «крыша»; `10.12` is «стенка», «задняя
+стенка» and `back`; `10.13` is a drawer side, bottom
 or back. The same rows answer to the English words a person may think in — `side`, `shelf`, `bottom`,
 `top`, `drawer side` — because the picker searches the label, the slug and the aliases in both
 languages. The glass shelf is the table's one override: glass is bought by area from the glazier, so
@@ -546,7 +550,7 @@ that pair is the one rule the scenarios added.
 | Cabinet, base | `Container` | `10.01.01` | product, shop, floor | products, counted | frame drawn, opened, parts born inside, moves on the floor plane |
 | Shelf | `Panel` | `10.11` | sheet, area, member, free, C E, fill w+d | parts, area, nests | resizes freely, banding offered, offered by the void tool for a width+depth fill |
 | Side | `Panel` | `10.10` | sheet, area, member, free, C E, fill h+d | parts, area, nests | banding offered, offered by the void tool for a height+depth fill |
-| Back | `Panel` | `10.12` | sheet, area, member, free, C | parts, area, nests | no banding command, no void fill |
+| Back | `Panel` | `10.12` | sheet, area, member, free, C, fill w+h | parts, area, nests | no banding command, offered by the void tool for a width+height fill |
 | Door, hinged, made | `Panel` | `10.20` | component, sheet, area, member, free, C E U M, closes | facades, made, with gaps | closes an opening, admits cup bores and a mounting pattern, nested with the panels |
 | Door, hinged, bought | `Panel` | `10.21` | component, piece, count, never, —, closes | facades, bought | closes an opening, never nested, no in-house machining |
 | Spring hinge, overlay | `Container` | `50.02.01` | piece, count, never, none | fittings, overlay | no resize, no banding, never nested |

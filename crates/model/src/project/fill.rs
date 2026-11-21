@@ -1,10 +1,10 @@
 //! The fill plan: the one part a click in a void creates, in the mode the tool is in.
 //!
-//! A post and a shelf are the same question asked of the niche the walls leave (ADR 0099, ADR 0103,
-//! ADR 0106): which part fills it exactly, where does it land, and which outline does it store? The
-//! answer is one [`FillPlan`], derived for cadence-free reasons — the ghost the maker sees, the
-//! distance fields that place it and the `panel.create` the click dispatches all read it, so the
-//! picture, the numbers and the history cannot disagree.
+//! A post, a shelf and a wall are the same question asked of the niche the walls leave (ADR 0099,
+//! ADR 0103, ADR 0106): which part fills it exactly, where does it land, and which outline does it
+//! store? The answer is one [`FillPlan`], derived for cadence-free reasons — the ghost the maker
+//! sees, the distance fields that place it and the `panel.create` the click dispatches all read it,
+//! so the picture, the numbers and the history cannot disagree.
 //!
 //! Both modes start from the same cut of the cell at the board's own thickness ([`Niche::cut`]), so
 //! a part is inside the walls at both faces by construction:
@@ -244,6 +244,7 @@ pub const fn free_axis(fill: Fill) -> usize {
     match fill {
         Fill::WidthAndDepth => 2,
         Fill::HeightAndDepth => 0,
+        Fill::WidthAndHeight => 1,
     }
 }
 
@@ -262,9 +263,10 @@ struct Part {
 /// How a fill's board sits in the product frame: which product axis each local axis runs along.
 ///
 /// The shelf is the flat stance, the post is the shelf turned a quarter-turn to the right about `+Y`
-/// (ADR 0105), so the board's own axes are a permutation of the product's with `+1` or `-1` on local
-/// `Y` and `Z`. A fill may turn a board half a turn about its own length axis, which negates both
-/// (ADR 0108), and that is the whole vocabulary this needs.
+/// and the wall is the post turned a quarter-turn to the right about `+Z` (ADR 0105), so the board's
+/// own axes are a permutation of the product's with `+1` or `-1` on local `Y` and `Z`. A fill may
+/// turn a board half a turn about its own length axis, which negates both (ADR 0108), and that is
+/// the whole vocabulary this needs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Stance {
     /// The product axis the board's local `X` runs along.
@@ -319,6 +321,18 @@ fn stance(fill: Fill) -> Stance {
             against_z: true,
             other_face: false,
             turn: DQuat::from_rotation_y(-FRAC_PI_2),
+        },
+        // The wall is the post turned a quarter-turn to the right about `+Z`, so its length runs
+        // up, its width across the front and its material towards `+Y`, face `A` pointing at the
+        // maker (ADR 0105). Its free axis is the product's depth, which is where the pointer sits.
+        Fill::WidthAndHeight => Stance {
+            u: 2,
+            v: 0,
+            t: 1,
+            against_y: false,
+            against_z: false,
+            other_face: false,
+            turn: DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2),
         },
     }
 }
@@ -1330,7 +1344,7 @@ mod tests {
             .expect("a top placement");
         project.add_panel(product, "Top", top, None, millimetres(18), placement).expect("add a top");
         let thickness = millimetres(18);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = plan(&project, product, fill, mode, thickness)
                     .unwrap_or_else(|refusal| panic!("{fill:?}/{mode:?} refused: {refusal:?}"));
@@ -1397,7 +1411,7 @@ mod tests {
     fn the_fitted_rectangle_lies_inside_every_wall_over_the_whole_thickness() {
         let (project, product) = splayed_product();
         let thickness = millimetres(18);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             let plan = plan(&project, product, fill, FillMode::Fit, thickness).expect("a fit plan");
             let gap = thickness.millimetres_f64();
             let mut points = Vec::new();
@@ -1424,6 +1438,78 @@ mod tests {
         assert!((post.nominal_size.length().millimetres_f64() - 720.0).abs() <= 1.0e-3, "{:?}", post.nominal_size);
         assert!(post.nominal_size.width().millimetres_f64() > 0.0);
         assert!((post.free_high - post.free_low - thickness.millimetres_f64()).abs() <= 1.0e-9, "one thickness");
+    }
+
+    #[test]
+    fn a_wall_takes_the_voids_width_and_height_in_the_frontal_plane() {
+        // The third pair of the fill trait (ADR 0200): a back board stands in the frontal plane, so
+        // its length runs up the case and its width across the front, and the material is what the
+        // pointer's own depth sets (ADR 0105).
+        let (project, product) = empty_product(600, 560, 720);
+        let thickness = millimetres(18);
+        let close = |first: DVec3, second: DVec3| (first - second).length() <= 1.0e-9;
+        for mode in [FillMode::Fit, FillMode::Shape] {
+            let wall = plan(&project, product, Fill::WidthAndHeight, mode, thickness).expect("a wall fills the void");
+            assert_eq!(wall.nominal_size.length(), millimetres(720), "{mode:?}: length is the niche's height");
+            assert_eq!(wall.nominal_size.width(), millimetres(600), "{mode:?}: width is the niche's width");
+            assert_eq!(
+                wall.placement.translation(),
+                DVec3::new(0.0, 280.0, 0.0),
+                "{mode:?}: the node is the base corner at the pointer's depth"
+            );
+            assert!(close(wall.placement.transform_vector(DVec3::X), DVec3::Z), "{mode:?}: the length runs up");
+            assert!(close(wall.placement.transform_vector(DVec3::Y), DVec3::X), "{mode:?}: the width runs across");
+            assert!(close(wall.placement.transform_vector(DVec3::Z), DVec3::Y), "{mode:?}: the material faces front");
+            assert_eq!((wall.free_low, wall.free_high), (280.0, 298.0), "{mode:?}: one thickness of depth");
+            assert!(matches!(wall.outline, PanelOutline::Rect { .. }), "{mode:?}: a box keeps the rectangle panel");
+            assert!(wall.bevels.is_empty(), "{mode:?}: plumb walls ask for no end face");
+            assert!(wall.corners.iter().all(|corner| {
+                corner.x >= -1.0e-6 && corner.x <= 720.0 + 1.0e-6 && corner.y >= -1.0e-6 && corner.y <= 600.0 + 1.0e-6
+            }));
+        }
+        assert_eq!(free_axis(Fill::WidthAndHeight), 1, "the wall's free axis is the product's depth");
+    }
+
+    #[test]
+    fn a_wall_in_a_splayed_case_takes_the_shaped_board() {
+        // The posts lean in plan, so the board's two end faces are not square to them: Shape bevels
+        // both ends into the posts' own planes (ADR 0107, 0108), where Fit keeps the rectangle.
+        let (project, product) = splayed_product();
+        let thickness = millimetres(18);
+        let fitted = plan(&project, product, Fill::WidthAndHeight, FillMode::Fit, thickness).expect("a fit plan");
+        assert!(matches!(fitted.outline, PanelOutline::Rect { .. }), "a fit keeps the standard panel");
+        assert!((fitted.nominal_size.length().millimetres_f64() - 720.0).abs() <= 1.0e-3, "{:?}", fitted.nominal_size);
+        // The posts lean in plan, so the slab is narrowest at its far face: the fit has to pass
+        // through the whole thickness, and 600 − 200 · 298 / 560 is what it leaves. 300 mm at the
+        // pointer's own depth would cut into both posts at the front.
+        assert!((fitted.nominal_size.width().millimetres_f64() - 293.572).abs() <= 1.0e-2, "{:?}", fitted.nominal_size);
+
+        let shaped = plan(&project, product, Fill::WidthAndHeight, FillMode::Shape, thickness).expect("a shape plan");
+        assert!(shaped.outline.contour().is_some(), "a beveled board is a contour");
+        assert_eq!(shaped.bevels.len(), 2, "both splayed posts ask for an end face: {:?}", shaped.bevels);
+        let lean = Degrees::from_radians((100.0_f64 / 560.0).atan()).expect("a storable angle");
+        for bevel in &shaped.bevels {
+            assert_eq!(bevel.angle().millidegrees(), lean.millidegrees(), "the post's own lean");
+        }
+        assert_ne!(shaped.corners, shaped.far_corners, "the far face is set back into the walls");
+        assert!(inside(&shaped, thickness), "the board stays in the void it was measured against");
+        // The base rim is the wide face, 150..450 across at the pointer's depth; the end faces are
+        // set back by the bevel, which leaves the far rim exactly the width the fit had to keep.
+        let across = |points: &[DVec2]| {
+            let low = points.iter().map(|corner| corner.y).fold(f64::INFINITY, f64::min);
+            let high = points.iter().map(|corner| corner.y).fold(f64::NEG_INFINITY, f64::max);
+            high - low
+        };
+        assert!(
+            (across(&shaped.corners) - 300.0).abs() <= 1.0e-2,
+            "the base rim is the wide face: {}",
+            across(&shaped.corners)
+        );
+        assert!(
+            (across(&shaped.far_corners) - fitted.nominal_size.width().millimetres_f64()).abs() <= 1.0e-2,
+            "the far rim is the fitted width: {}",
+            across(&shaped.far_corners)
+        );
     }
 
     #[test]
@@ -1504,7 +1590,7 @@ mod tests {
 
     #[test]
     fn a_turned_board_keeps_its_length_axis_and_takes_the_other_face() {
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             let stance = stance(fill);
             let turned = stance.turned();
             let (standing, over) = (stance.rotation(), turned.rotation());
@@ -1524,6 +1610,7 @@ mod tests {
     fn the_free_axis_is_the_panel_thickness_axis_of_each_fill() {
         assert_eq!(free_axis(Fill::WidthAndDepth), 2);
         assert_eq!(free_axis(Fill::HeightAndDepth), 0);
+        assert_eq!(free_axis(Fill::WidthAndHeight), 1);
     }
     /// A post standing across the whole depth of the case, its thickness from `x` to `x + 18`.
     fn standing_post(project: &mut Project, product: Id, x: f64) -> Id {
@@ -1683,7 +1770,7 @@ mod turned {
             .expect("a top placement");
         project.add_panel(product, "Top", top, None, millimetres(18), placement).expect("add a top");
         let point = DVec3::new(300.0, 280.0, 360.0);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = project
                     .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None), Sight::none(), None)
