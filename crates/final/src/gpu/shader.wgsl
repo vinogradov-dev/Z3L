@@ -64,6 +64,18 @@ struct Face {
     finish: vec4<f32>,
     // rgb: Beer-Lambert extinction per millimetre.
     tint: vec4<f32>,
+    // The decor's coordinate at the first two corners: xy the first, zw the second.
+    uv_a: vec4<f32>,
+    // The third corner's coordinate in xy.
+    uv_b: vec4<f32>,
+    // x: the picture's index plus one, or zero for a surface with no decor.
+    decor: vec4<u32>,
+};
+
+// One picture: where its texels start in `decor_texels`, and how many wide and high it is.
+struct Decor {
+    // x: the first texel, y: the width, z: the height.
+    info: vec4<u32>,
 };
 
 struct Node {
@@ -109,6 +121,12 @@ struct Uniform {
 // The single-scattering directional albedo table, row-major by roughness, then one average per row,
 // from `bsdf::EnergyTable`.
 @group(0) @binding(4) var<storage, read> energy: array<f32>;
+// The board a face is cut from: its picture, packed one texel per word, and the table that finds it.
+// A storage buffer and not a sampled texture, for the reason the Sobol directions are: the shader
+// wraps and filters the coordinate itself, so the viewport and the tracer read one picture with the
+// same arithmetic instead of trusting two views of it to agree.
+@group(0) @binding(5) var<storage, read> decor_texels: array<u32>;
+@group(0) @binding(6) var<storage, read> decor_entries: array<Decor>;
 // The accumulator: one `vec4` per pixel, summed over samples and divided by the count in `crate::image`.
 @group(1) @binding(0) var<storage, read_write> accum: array<vec4<f32>>;
 
@@ -403,11 +421,91 @@ fn to_world(frame: Frame, local: vec3<f32>) -> vec3<f32> {
     return frame.tangent * local.x + frame.bitangent * local.y + frame.normal * local.z;
 }
 
-fn material_of(face: Face) -> Material {
+// One eight-bit sRGB channel as linear light, the curve the viewport's sampler applies for it.
+fn srgb_to_linear(channel: f32) -> f32 {
+    return select(channel / 12.92, pow((channel + 0.055) / 1.055, 2.4), channel > 0.04045);
+}
+
+// An integer wrapped into `0..size`, which is what a print does when the board outruns the sample.
+fn wrapped(value: i32, size: i32) -> u32 {
+    let remainder = value % size;
+    return u32(select(remainder + size, remainder, remainder >= 0));
+}
+
+// One texel of the picture, as linear light.
+fn decor_texel(entry: Decor, x: u32, y: u32) -> vec3<f32> {
+    let width = max(entry.info.y, 1u);
+    let height = max(entry.info.z, 1u);
+    let packed = decor_texels[entry.info.x + (y % height) * width + (x % width)];
+    let red = f32(packed & 255u) / 255.0;
+    let green = f32((packed >> 8u) & 255u) / 255.0;
+    let blue = f32((packed >> 16u) & 255u) / 255.0;
+    return vec3<f32>(srgb_to_linear(red), srgb_to_linear(green), srgb_to_linear(blue));
+}
+
+// The picture at `uv`, filtered bilinearly and repeated, which is the sampler the viewport binds.
+fn decor_sample(index: u32, uv: vec2<f32>) -> vec3<f32> {
+    if (index >= arrayLength(&decor_entries)) {
+        return vec3<f32>(1.0);
+    }
+    let entry = decor_entries[index];
+    let width = max(entry.info.y, 1u);
+    let height = max(entry.info.z, 1u);
+    let across = uv.x * f32(width) - 0.5;
+    let down = uv.y * f32(height) - 0.5;
+    let x = floor(across);
+    let y = floor(down);
+    let fx = across - x;
+    let fy = down - y;
+    let left = wrapped(i32(x), i32(width));
+    let right = wrapped(i32(x) + 1, i32(width));
+    let top = wrapped(i32(y), i32(height));
+    let bottom = wrapped(i32(y) + 1, i32(height));
+    let upper = mix(decor_texel(entry, left, top), decor_texel(entry, right, top), fx);
+    let lower = mix(decor_texel(entry, left, bottom), decor_texel(entry, right, bottom), fx);
+    return mix(upper, lower, fy);
+}
+
+// The corner coordinates interpolated where the ray met the face.
+//
+// The three corners' coordinates are projected from the panel's own frame and carried on the face,
+// so this is the barycentric weight of a point in a triangle and nothing else — the same triangle
+// the ray test already solved.
+fn decor_uv(face: Face, point: vec3<f32>) -> vec2<f32> {
+    let a = face.a.xyz;
+    let edge0 = face.b.xyz - a;
+    let edge1 = face.c.xyz - a;
+    let offset = point - a;
+    let d00 = dot(edge0, edge0);
+    let d01 = dot(edge0, edge1);
+    let d11 = dot(edge1, edge1);
+    let d20 = dot(offset, edge0);
+    let d21 = dot(offset, edge1);
+    let denominator = d00 * d11 - d01 * d01;
+    if (abs(denominator) < 1.0e-12) {
+        return face.uv_a.xy;
+    }
+    let second = (d11 * d20 - d01 * d21) / denominator;
+    let third = (d00 * d21 - d01 * d20) / denominator;
+    let first = 1.0 - second - third;
+    return first * face.uv_a.xy + second * face.uv_a.zw + third * face.uv_b.xy;
+}
+
+// The surface's own colour where the ray met it: the picture multiplies the colour, which is what
+// every renderer does with a tinted print and what the viewport's fragment computes.
+fn albedo_at(face: Face, point: vec3<f32>) -> vec3<f32> {
+    let base = clamp(face.colour.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    if (face.decor.x == 0u) {
+        return base;
+    }
+    return base * decor_sample(face.decor.x - 1u, decor_uv(face, point));
+}
+
+fn material_of(face: Face, point: vec3<f32>) -> Material {
     // Every field is clamped where it is used, exactly as `Material::sanitised` does: a document that
     // wrote a NaN must shade as a repaired surface, not poison the accumulator.
     var material: Material;
-    material.albedo = clamp(face.colour.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    material.albedo = albedo_at(face, point);
     material.roughness = clamp(face.finish.x, 0.0, 1.0);
     material.metallic = clamp(face.finish.y, 0.0, 1.0);
     material.ior = max(face.finish.z, 1.0);
@@ -915,13 +1013,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // Beer and Lambert: the beam lost this much on the way to the surface it just met.
         throughput = throughput * exp(-extinction * hit.t);
         let face = faces[hit.face];
-        let material = material_of(face);
+        let position = ray.origin + ray.direction * hit.t;
+        let material = material_of(face, position);
         let frame = frame_of(hit.normal);
         let wo = to_local(frame, -ray.direction);
         if (wo.z <= 0.0) {
             break;
         }
-        let position = ray.origin + ray.direction * hit.t;
         let bounce_seed = hash(pixel_seed ^ hash(bounce * 2u + 1u));
         let u = sample_pair(0u, sample, bounce_seed);
         let pick = sample_1d(2u, sample, bounce_seed);

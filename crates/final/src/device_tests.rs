@@ -16,7 +16,8 @@
 use std::sync::Arc;
 
 use geom::{DMat4, DQuat, DVec3, MeshData};
-use scene::{Camera, Drawable, SceneFrame};
+use scene::{Camera, Decor, DecorId, DecorImage, Drawable, SceneFrame, Turns};
+use units::Length;
 
 use crate::job::{Input, Settings, run};
 use crate::view::aspect;
@@ -133,7 +134,7 @@ fn a_render_twice_at_one_revision_builds_one_tree() {
     assert!(tracer.prepare(&device, &frame, 8).expect("a changed revision"), "a changed revision rebuilds");
     assert_eq!(tracer.build_count(), 2, "one tree per revision, not one per render");
     assert_eq!(tracer.revision(), Some(8));
-    assert_eq!(faces_of(&frame).expect("the fixture flattens").len(), 4, "two quads are four faces");
+    assert_eq!(faces_of(&frame).expect("the fixture flattens").faces.len(), 4, "two quads are four faces");
 }
 
 #[test]
@@ -345,6 +346,66 @@ fn a_white_sphere_in_a_white_room_disappears() {
         // The background is the environment itself, whatever the sphere's albedo is.
         assert!((corner[0] - 1.0).abs() < 1.0e-3, "the room is white: {corner:?}");
     }
+}
+
+/// A decor whose picture is two blocks: its left half red and its right half blue.
+fn two_tone(covers: i64, turns: Turns) -> Decor {
+    let texels = vec![[255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 255, 255]];
+    let image = Arc::new(DecorImage::new(4, 1, texels).expect("four texels"));
+    let id = DecorId::new(1).expect("one picture");
+    let covers = Length::from_millimetres(covers).expect("a length");
+    Decor::new(id, image, covers, turns).expect("a decor")
+}
+
+/// A square board `side` millimetres across, facing `+Z`, with its zero corner at the minimum.
+fn board(side: f32) -> Arc<MeshData> {
+    Arc::new(MeshData {
+        positions: vec![[0.0, 0.0, 0.0], [side, 0.0, 0.0], [side, side, 0.0], [0.0, side, 0.0]],
+        normals: Vec::new(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+    })
+}
+
+#[test]
+fn a_decor_shows_the_board_and_a_turn_runs_its_grain_the_other_way() {
+    // The clause about the catalogue's decor: a board is drawn with the picture the shop scanned,
+    // at the size the record names, and a quarter turn makes the grain cross the board. The furnace
+    // says what a diffuse surface returns under a uniform environment — its own albedo — so the
+    // picture is read out of the image exactly and the light needs no lamp of its own.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to draw a decor with");
+        return;
+    };
+    const SIDE: f32 = 2000.0;
+    let request = Request::new(32, 32, 8).expect("a small render");
+    let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+    let frame = |turns| {
+        let mut frame = SceneFrame::default();
+        frame.push(
+            Drawable::new(id(1), board(SIDE), DMat4::from_translation(DVec3::new(-1000.0, -1000.0, 0.0)), [1.0; 4])
+                .with_decor(two_tone(2000, turns)),
+        );
+        // The environment is the only light in the room: a white studio and no lamp.
+        frame.lighting.key_color = [0.0; 3];
+        frame.lighting.points.clear();
+        frame.lighting.environment = [1.0, 1.0, 1.0];
+        frame
+    };
+    let pixel = |linear: &[[f32; 3]], x: usize, y: usize| linear.get(y * 32 + x).copied().expect("a pixel");
+
+    let straight = linear_of(&trace_linear(&device, &queue, &frame(Turns::ALONG), camera, request));
+    let left = pixel(&straight, 8, 16);
+    let right = pixel(&straight, 24, 16);
+    assert!(left[0] > 0.9 && left[2] < 0.1, "the board's left half is the picture's red one: {left:?}");
+    assert!(right[2] > 0.9 && right[0] < 0.1, "and its right half is the blue one: {right:?}");
+
+    // A quarter turn: the picture's own width — its grain — now runs along the board's height, so
+    // the two blocks cross it instead of standing beside each other.
+    let turned = linear_of(&trace_linear(&device, &queue, &frame(Turns::ACROSS), camera, request));
+    let top = pixel(&turned, 16, 8);
+    let bottom = pixel(&turned, 16, 24);
+    assert!(top[2] > 0.9 && top[0] < 0.1, "the stripes cross the board: {top:?}");
+    assert!(bottom[0] > 0.9 && bottom[2] < 0.1, "and they are the other way round: {bottom:?}");
 }
 
 #[test]

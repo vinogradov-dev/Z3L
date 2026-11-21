@@ -72,6 +72,8 @@ struct Uploaded {
     _nodes: wgpu::Buffer,
     _sobol: wgpu::Buffer,
     _energy: wgpu::Buffer,
+    _decor_texels: wgpu::Buffer,
+    _decor_entries: wgpu::Buffer,
 }
 
 impl Tracer {
@@ -129,6 +131,19 @@ impl Tracer {
                     ty: storage(true),
                     count: None,
                 },
+                // The decors: the pictures' texels and the table that finds each one.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(true),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(true),
+                    count: None,
+                },
             ],
         });
         let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -178,7 +193,9 @@ impl Tracer {
         if self.uploaded.as_ref().is_some_and(|uploaded| uploaded.revision == revision) {
             return Ok(false);
         }
-        let tree = Bvh::build(faces_of(frame)?);
+        let soup = faces_of(frame)?;
+        let decors = layout::decors(&soup.decors);
+        let tree = Bvh::build(soup.faces);
         let faces = layout::faces(&tree)?;
         let nodes = layout::nodes(&tree)?;
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -195,6 +212,8 @@ impl Tracer {
         let energy = layout::energy_values();
         let sobol_buffer = storage_buffer(device, "Z3L final render sobol", &sobol);
         let energy_buffer = storage_buffer(device, "Z3L final render energy", &energy);
+        let decor_texels = storage_buffer(device, "Z3L final render decor texels", &decors.texels);
+        let decor_entries = storage_buffer(device, "Z3L final render decor entries", &decors.entries);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Z3L final render scene"),
@@ -205,6 +224,8 @@ impl Tracer {
                 wgpu::BindGroupEntry { binding: 2, resource: node_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: sobol_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: energy_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: decor_texels.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: decor_entries.as_entire_binding() },
             ],
         });
         if let Some(error) = pollster::block_on(scope.pop()) {
@@ -226,6 +247,8 @@ impl Tracer {
             _nodes: node_buffer,
             _sobol: sobol_buffer,
             _energy: energy_buffer,
+            _decor_texels: decor_texels,
+            _decor_entries: decor_entries,
         });
         self.builds = self.builds.saturating_add(1);
         Ok(true)

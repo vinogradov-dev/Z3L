@@ -35,6 +35,12 @@ struct ShadowCamera {
     params: vec4<f32>,
 };
 
+// The board the face being drawn is cut from: the decor's picture, sampled where its own frame
+// projects it. A surface with no decor is bound to a one-texel white picture, so the multiply below
+// changes nothing and the sampler is never branched over (which would need uniform control flow).
+@group(2) @binding(0) var decor_texture: texture_2d<f32>;
+@group(2) @binding(1) var decor_sampler: sampler;
+
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 @group(1) @binding(2) var<uniform> shadow_camera: ShadowCamera;
@@ -45,20 +51,32 @@ struct VertexIn {
     @location(2) color: vec4<f32>,
 };
 
+// A shaded triangle carries one attribute a line does not: the coordinate its decor is read at. The
+// panel's own frame is where the grain is defined, so the CPU projects it once per vertex and the
+// fragment only samples — see `scene::Decor::uv`.
+struct FaceVertexIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+};
+
 struct MeshOut {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) uv: vec2<f32>,
 };
 
 @vertex
-fn vs_mesh(vertex: VertexIn) -> MeshOut {
+fn vs_mesh(vertex: FaceVertexIn) -> MeshOut {
     var out: MeshOut;
     out.clip_position = camera.view_projection * vec4<f32>(vertex.position, 1.0);
     out.normal = vertex.normal;
     out.world_position = vertex.position;
     out.color = vertex.color;
+    out.uv = vertex.uv;
     return out;
 }
 
@@ -134,7 +152,7 @@ fn shadow_factor(normal: vec3<f32>, world_position: vec3<f32>) -> f32 {
 
 // The scene drawn from the sun: position alone, because the map holds depth and nothing else.
 @vertex
-fn vs_shadow(vertex: VertexIn) -> @builtin(position) vec4<f32> {
+fn vs_shadow(vertex: FaceVertexIn) -> @builtin(position) vec4<f32> {
     return shadow_camera.view_projection * vec4<f32>(vertex.position, 1.0);
 }
 
@@ -142,8 +160,16 @@ struct MeshIn {
     @location(0) normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) uv: vec2<f32>,
     @builtin(front_facing) front_facing: bool,
 };
+
+// The surface's own colour under its decor: the picture multiplies the colour, which is what every
+// renderer does with a tinted print. The picture is `Rgba8UnormSrgb`, so the sampler hands back
+// linear light and the multiply stays in the space the lighting is written in.
+fn albedo_of(color: vec4<f32>, uv: vec2<f32>) -> vec3<f32> {
+    return color.rgb * textureSample(decor_texture, decor_sampler, uv).rgb;
+}
 
 // Linear colour of one shaded surface, before the gamma encode the target and egui expect.
 fn shade_surface(
@@ -180,7 +206,8 @@ fn gamma_encode(rgb: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_mesh(fragment: MeshIn) -> @location(0) vec4<f32> {
-    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, fragment.color);
+    let color = vec4<f32>(albedo_of(fragment.color, fragment.uv), fragment.color.a);
+    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, color);
     return vec4<f32>(gamma_encode(rgb), fragment.color.a);
 }
 
@@ -190,7 +217,8 @@ const GHOST_ALPHA: f32 = 0.22;
 
 @fragment
 fn fs_mesh_translucent(fragment: MeshIn) -> @location(0) vec4<f32> {
-    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, fragment.color);
+    let color = vec4<f32>(albedo_of(fragment.color, fragment.uv), fragment.color.a);
+    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, color);
     return vec4<f32>(gamma_encode(rgb), min(fragment.color.a, GHOST_ALPHA));
 }
 
@@ -230,7 +258,7 @@ fn ground_extent() -> f32 {
 // Where a light ray through `position` meets the floor plane. A light that is below the horizon has
 // its strength zeroed on the CPU, so the clamped depth here only keeps the divide finite.
 @vertex
-fn vs_shadow_cover(vertex: VertexIn) -> @builtin(position) vec4<f32> {
+fn vs_shadow_cover(vertex: FaceVertexIn) -> @builtin(position) vec4<f32> {
     let light = safe_normalize(camera.light_direction.xyz);
     let depth = select(0.02, light.z, light.z > 0.02);
     let plane = vertex.position.xy - light.xy * (vertex.position.z / depth);

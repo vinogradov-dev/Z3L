@@ -19,8 +19,8 @@
 //! allocation; a mesh that indexes a vertex it does not have, or whose index list is not a whole
 //! number of triangles, is an error naming the index rather than a silently missing face.
 
-use geom::{DVec3, MeshData};
-use scene::{Drawable, SceneFrame, Surface};
+use geom::{DVec2, DVec3, MeshData};
+use scene::{Decor, Drawable, SceneFrame, Surface};
 
 use crate::FinalError;
 use crate::ray::Triangle;
@@ -41,23 +41,50 @@ pub struct Face {
     pub colour: [f32; 3],
     /// The finish the surface is made of: paint, conductor or pane.
     pub surface: Surface,
+    /// The decor's coordinate at each of the three corners, in the drawable's own frame.
+    ///
+    /// Projected once, here, from the corner's local position — the frame the grain is defined in —
+    /// so the shader only samples and two consumers cannot disagree about where a picture sits.
+    pub uv: [[f32; 2]; 3],
+    /// Which picture of [`Soup::decors`] the face is faced with, or `None` for its plain colour.
+    pub decor: Option<u32>,
 }
 
 impl Face {
     /// A matte face of one colour, which is what a frame that names no finish describes.
     pub fn matte(triangle: Triangle, colour: [f32; 3]) -> Self {
-        Self { triangle, colour, surface: Surface::MATTE }
+        Self { triangle, colour, surface: Surface::MATTE, uv: [[0.0; 2]; 3], decor: None }
     }
 }
 
-/// The frame's drawables as world-space faces, in frame order.
-pub fn faces_of(frame: &SceneFrame) -> Result<Vec<Face>, FinalError> {
+/// A frame flattened for the tracer: its faces and the pictures they are faced with.
+///
+/// The pictures travel beside the faces and are named by index, because a decor is one image however
+/// many panels are cut from it: three hundred boards of one oak are three hundred faces and one
+/// texel buffer, and a face that copied its picture would copy it a million times over.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Soup {
+    /// Every face, in frame order.
+    pub faces: Vec<Face>,
+    /// The decors the faces name, each once, in the order the frame first names them.
+    pub decors: Vec<Decor>,
+}
+
+impl Soup {
+    /// The decor a face's index names.
+    pub fn decor(&self, index: u32) -> Option<&Decor> {
+        self.decors.get(usize::try_from(index).ok()?)
+    }
+}
+
+/// The frame's drawables as world-space faces, in frame order, and the pictures they name.
+pub fn faces_of(frame: &SceneFrame) -> Result<Soup, FinalError> {
     flatten(frame, MAX_TRIANGLES)
 }
 
 /// The same flattening under a caller's ceiling, which is how the cap is tested without a million
 /// triangles.
-fn flatten(frame: &SceneFrame, max: usize) -> Result<Vec<Face>, FinalError> {
+fn flatten(frame: &SceneFrame, max: usize) -> Result<Soup, FinalError> {
     let mut count = 0usize;
     for drawable in frame.drawables() {
         count = count.saturating_add(drawable.mesh.triangle_count());
@@ -66,15 +93,19 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Vec<Face>, FinalError> {
         return Err(FinalError::TooManyTriangles { count, max });
     }
     let mut triangles = Vec::with_capacity(count);
+    let mut decors: Vec<Decor> = Vec::new();
     for drawable in frame.drawables() {
         let mesh: &MeshData = &drawable.mesh;
         let transform = drawable.world_transform;
+        // The index the faces of this drawable name, added once for the whole picture.
+        let decor = decor_index(&mut decors, drawable.decor.as_ref());
         let remainder = mesh.indices.len() % 3;
         if remainder != 0 {
             return Err(FinalError::MalformedMesh { index: mesh.indices.len() - remainder });
         }
         for corner in (0..mesh.indices.len()).step_by(3) {
             let mut points = [DVec3::ZERO; 3];
+            let mut uv = [[0.0f32; 2]; 3];
             for (offset, point) in points.iter_mut().enumerate() {
                 let Some(index) = mesh.indices.get(corner.saturating_add(offset)).copied() else {
                     return Err(FinalError::MalformedMesh { index: corner.saturating_add(offset) });
@@ -86,20 +117,38 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Vec<Face>, FinalError> {
                     return Err(FinalError::MalformedMesh { index });
                 };
                 // The one place a mesh's `f32` millimetres become the tracer's `f64` ones.
-                *point = transform.transform_point3(DVec3::new(
-                    f64::from(position[0]),
-                    f64::from(position[1]),
-                    f64::from(position[2]),
-                ));
+                let local = DVec3::new(f64::from(position[0]), f64::from(position[1]), f64::from(position[2]));
+                *point = transform.transform_point3(local);
+                // The coordinate is the panel's own: the same two numbers the viewport bakes into
+                // the vertex, projected by the same function (`scene::Decor::uv`).
+                if let (Some(decor), Some(slot)) = (drawable.decor.as_ref(), uv.get_mut(offset)) {
+                    *slot = decor.uv(DVec2::new(local.x, local.y));
+                }
             }
             triangles.push(Face {
                 triangle: Triangle::new(points[0], points[1], points[2]),
                 colour: albedo(drawable),
                 surface: drawable.surface,
+                uv,
+                decor,
             });
         }
     }
-    Ok(triangles)
+    Ok(Soup { faces: triangles, decors })
+}
+
+/// The index of `decor`'s picture in `decors`, adding it the first time the frame names it.
+///
+/// The id is the decor's own, so two drawables of one board share one entry however many revisions
+/// rebuilt them. A drawable with no decor answers `None`, which the shader reads as "the colour
+/// alone".
+fn decor_index(decors: &mut Vec<Decor>, decor: Option<&Decor>) -> Option<u32> {
+    let decor = decor?;
+    if let Some(found) = decors.iter().position(|known| known.id() == decor.id()) {
+        return u32::try_from(found).ok();
+    }
+    decors.push(decor.clone());
+    u32::try_from(decors.len().saturating_sub(1)).ok()
 }
 
 /// The linear albedo a drawable's triangles are traced with.
@@ -140,6 +189,8 @@ mod tests {
         model::Id::new(value).expect("a non-zero id")
     }
 
+    use id as id_of;
+
     fn frame(meshes: &[(Arc<MeshData>, DMat4)]) -> SceneFrame {
         let mut frame = SceneFrame::default();
         for (index, (mesh, transform)) in meshes.iter().enumerate() {
@@ -153,7 +204,7 @@ mod tests {
     fn a_mesh_becomes_world_faces_through_its_placement() {
         let mesh = quad(200.0);
         let placed = DMat4::from_translation(DVec3::new(1000.0, 500.0, 250.0));
-        let faces = faces_of(&frame(&[(Arc::clone(&mesh), placed)])).expect("the frame flattens");
+        let faces = faces_of(&frame(&[(Arc::clone(&mesh), placed)])).expect("the frame flattens").faces;
         assert_eq!(faces.len(), 2);
         assert_eq!(faces[0].triangle.v0, DVec3::new(1000.0, 500.0, 250.0), "the local origin moved with the placement");
         assert_eq!(faces[0].triangle.v1, DVec3::new(1200.0, 500.0, 250.0));
@@ -168,7 +219,7 @@ mod tests {
         let mesh = quad(10.0);
         let mut frame = SceneFrame::default();
         frame.push(Drawable::new(id(1), Arc::clone(&mesh), DMat4::IDENTITY, [f32::NAN, -2.0, 1.5, 1.0]));
-        let faces = faces_of(&frame).expect("a hostile colour is not a broken mesh");
+        let faces = faces_of(&frame).expect("a hostile colour is not a broken mesh").faces;
         assert_eq!(
             faces[0].colour,
             [0.0, 0.0, 1.0],
@@ -182,11 +233,50 @@ mod tests {
         let first = DMat4::from_translation(DVec3::new(0.0, 0.0, 0.0));
         let second = DMat4::from_translation(DVec3::new(0.0, 0.0, 900.0));
         let faces = faces_of(&frame(&[(Arc::clone(&mesh), first), (Arc::clone(&mesh), second)]))
-            .expect("two drawables flatten");
+            .expect("the frame flattens")
+            .faces;
         assert_eq!(faces.len(), 4);
         assert!((faces[0].triangle.v0.z - 0.0).abs() < 1e-9);
         assert!((faces[2].triangle.v0.z - 900.0).abs() < 1e-9, "the second drawable keeps its height");
-        assert!(faces_of(&SceneFrame::default()).expect("an empty frame").is_empty());
+        assert!(faces_of(&SceneFrame::default()).expect("an empty frame").faces.is_empty());
+    }
+
+    #[test]
+    fn a_picture_travels_with_its_faces_and_is_named_once_however_many_boards_use_it() {
+        // The board's own frame is where the decor is projected, so a placed drawable keeps the
+        // coordinates of the board and not of the room it stands in.
+        let texels = vec![[255, 0, 0, 255], [0, 0, 255, 255]];
+        let image = std::sync::Arc::new(scene::DecorImage::new(2, 1, texels).expect("two texels"));
+        let id = scene::DecorId::new(5).expect("five");
+        let covers = units::Length::from_millimetres(600).expect("600 mm");
+        let decor = scene::Decor::new(id, image, covers, scene::Turns::ALONG).expect("a decor");
+        let mesh = quad(600.0);
+        let mut frame = SceneFrame::default();
+        for (index, translation) in [(1u64, 0.0), (2, 500.0), (3, 1000.0)] {
+            let drawable = Drawable::new(
+                id_of(index),
+                Arc::clone(&mesh),
+                DMat4::from_translation(DVec3::new(0.0, 0.0, translation)),
+                [1.0; 4],
+            );
+            // Two of the three boards are cut from one picture; the third is plain paint.
+            frame.push(if index == 3 { drawable } else { drawable.with_decor(decor.clone()) });
+        }
+        let soup = faces_of(&frame).expect("the frame flattens");
+        assert_eq!(soup.decors.len(), 1, "one picture, however many boards are cut from it");
+        assert_eq!(soup.faces.len(), 6, "three quads are six triangles");
+        for (index, face) in soup.faces.iter().enumerate() {
+            if index < 4 {
+                assert_eq!(face.decor, Some(0), "a decorated face names the picture");
+                assert!((face.uv[1][0] - 1.0).abs() < 1.0e-6, "600 mm of board is one picture across: {:?}", face.uv);
+                // The picture is two texels wide and one high, so its texels are square only when it
+                // covers 300 mm down: 600 mm of board is two pictures.
+                assert!((face.uv[2][1] - 2.0).abs() < 1.0e-6, "and two of them down: {:?}", face.uv);
+            } else {
+                assert_eq!(face.decor, None, "a plain board names no picture");
+                assert_eq!(face.uv, [[0.0; 2]; 3], "and carries no coordinate");
+            }
+        }
     }
 
     #[test]

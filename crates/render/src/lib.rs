@@ -41,18 +41,18 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use geom::{Aabb, DMat4, DVec3, MeshData};
 use scene::{
-    Camera, ContactShadows, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope, SceneFrame,
-    ShadingStyle,
+    Camera, ContactShadows, Decor, DecorId, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope,
+    SceneFrame, ShadingStyle,
 };
 use thiserror::Error;
 use wgpu::util::DeviceExt as _;
 
 use self::cache::{EdgeKey, FaceKey, Rebuilt, SlotCache};
 use self::geometry::{
-    edge_ink, edge_vertices, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
-    sort_back_to_front, stencil_slot, vertices_centre, world_vertices,
+    edge_ink, edge_vertices, faces_centre, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
+    sort_back_to_front, stencil_slot, world_vertices,
 };
-use self::gpu::{GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
+use self::gpu::{DecorGroup, GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
 use self::ground::{Ground, GroundKey, PlateKey};
 use self::pipelines::{
     create_line_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state, pipeline_layout,
@@ -320,6 +320,8 @@ type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
 pub(crate) struct Drawn {
     pub(crate) faces: Arc<GpuMesh>,
     edges: Option<Arc<GpuEdges>>,
+    /// The picture the face pass binds for this drawable: its own decor, or the white texel.
+    decor: Arc<DecorGroup>,
     pub(crate) stencil_reference: u32,
     /// World-space box, or `None` when the frame never measured the drawable's extent.
     bounds: Option<Aabb>,
@@ -352,8 +354,18 @@ pub struct ViewportRenderer {
     /// Every pass of one view reads it — faces, the translucent order and both edge passes — so a
     /// culled drawable costs nothing at all instead of two buffer binds and a draw call.
     visible: Vec<usize>,
-    /// Face buffers kept between uploads, keyed by the mesh, transform and colour they hold.
+    /// Face buffers kept between uploads, keyed by the mesh, transform, colour and decor they hold.
     faces: SlotCache<FaceKey, GpuMesh>,
+    /// The layout the face pipelines bind their decor in, and the rule every decor is read with.
+    decor_layout: wgpu::BindGroupLayout,
+    decor_sampler: wgpu::Sampler,
+    /// The decors of the last upload, one device picture per id instead of one per drawable.
+    decors: SlotCache<DecorId, DecorGroup>,
+    /// The white texel a drawable with no decor is bound to, so the fragment needs no branch.
+    ///
+    /// Built by the first upload, because a renderer that never uploads a frame has no picture to
+    /// bind and no reason to own a texture.
+    white_decor: Option<Arc<DecorGroup>>,
     /// Edge buffers kept between uploads, keyed by the edge list, transform and ink they hold.
     edge_slots: SlotCache<EdgeKey, GpuEdges>,
     /// The grid's lines, rebuilt only when the grid changes.
@@ -426,7 +438,12 @@ impl ViewportRenderer {
         // depth pass over the scene, then a comparison in every face fragment (ADR 0143).
         let shadow_layout = ShadowMap::layout(device);
         let shadow = ShadowMap::new(device, &shader, &bind_group_layout, &shadow_layout);
-        let mesh_layout = pipeline_layout(device, "Z3L shaded pipeline layout", &[&bind_group_layout, &shadow_layout]);
+        // The decor of the face being drawn is the third group: a panel is a board the shop buys, and
+        // its picture is a texture the shell uploads once per decor rather than once per panel.
+        let decor_layout = DecorGroup::layout(device);
+        let decor_sampler = DecorGroup::sampler(device);
+        let mesh_layout =
+            pipeline_layout(device, "Z3L shaded pipeline layout", &[&bind_group_layout, &shadow_layout, &decor_layout]);
 
         let mesh_pipeline = create_triangle_pipeline(
             device,
@@ -500,6 +517,10 @@ impl ViewportRenderer {
             draw_order: Vec::new(),
             visible: Vec::new(),
             faces: SlotCache::new(),
+            decor_layout: decor_layout.clone(),
+            decor_sampler,
+            decors: SlotCache::new(),
+            white_decor: None,
             edge_slots: SlotCache::new(),
             grid: Rebuilt::new(),
             polylines: Rebuilt::new(),
@@ -558,16 +579,45 @@ impl ViewportRenderer {
     /// A drawable whose mesh, transform and colour are the same as the last upload keeps its
     /// buffers, so an edit costs the drawables it changed and the walk of the frame, not the
     /// scene. A frame that no longer names a drawable drops its buffers (X57).
-    pub fn upload(&mut self, device: &wgpu::Device, frame: &SceneFrame) -> Result<(), RenderError> {
+    pub fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &SceneFrame,
+    ) -> Result<(), RenderError> {
         let ink = edge_ink(frame.edge_strength);
         self.faces.begin();
         self.edge_slots.begin();
+        self.decors.begin();
+        let decor_layout = self.decor_layout.clone();
+        let decor_sampler = self.decor_sampler.clone();
+        let white = Arc::clone(
+            self.white_decor
+                .get_or_insert_with(|| Arc::new(DecorGroup::white(device, queue, &decor_layout, &decor_sampler))),
+        );
         let mut drawables = Vec::with_capacity(frame.drawables().len());
         for (index, drawable) in frame.drawables().iter().enumerate() {
-            let faces =
-                self.faces.slot(FaceKey::new(&drawable.mesh, drawable.world_transform, drawable.color), || {
-                    build_mesh(device, index, &drawable.mesh, drawable.world_transform, drawable.color)
-                })?;
+            // One device picture per decor, however many panels are cut from it: the id is the
+            // record's, and two drawables of one board bind one texture.
+            let decor = match drawable.decor.as_ref() {
+                Some(decor) => self
+                    .decors
+                    .slot(decor.id(), || Ok(DecorGroup::of(device, queue, &decor_layout, &decor_sampler, decor)))?,
+                None => Arc::clone(&white),
+            };
+            let faces = self.faces.slot(
+                FaceKey::new(&drawable.mesh, drawable.world_transform, drawable.color, drawable.decor.as_ref()),
+                || {
+                    build_mesh(
+                        device,
+                        index,
+                        &drawable.mesh,
+                        drawable.world_transform,
+                        drawable.color,
+                        drawable.decor.as_ref(),
+                    )
+                },
+            )?;
             // A drawable has no line pass when the list the current style reads is absent; the
             // other list stays out of the key, so switching the diagnostic style builds the
             // lines it needs and sweeps the ones it left.
@@ -589,11 +639,13 @@ impl ViewportRenderer {
             drawables.push(Drawn {
                 faces,
                 edges,
+                decor,
                 stencil_reference: stencil_slot(index),
                 bounds: drawable.world_bounds(),
             });
         }
         self.faces.sweep();
+        self.decors.sweep();
         self.edge_slots.sweep();
 
         // A frame-level group is rebuilt only when its own input changed, so an edit that moves one
@@ -818,6 +870,7 @@ impl ViewportRenderer {
                     // The reference is the slot this drawable stamps; the hidden-edge pass reads it
                     // back before drawing the same drawable's lines.
                     pass.set_stencil_reference(drawn.stencil_reference);
+                    pass.set_bind_group(2, drawn.decor.group(), &[]);
                     pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
                     pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
@@ -872,6 +925,7 @@ impl ViewportRenderer {
                     let Some(drawn) = self.drawables.get(index) else {
                         continue;
                     };
+                    pass.set_bind_group(2, drawn.decor.group(), &[]);
                     pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
                     pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
@@ -988,8 +1042,9 @@ fn build_mesh(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
+    decor: Option<&Decor>,
 ) -> Result<GpuMesh, RenderError> {
-    let (vertices, indices) = world_vertices(index, mesh, transform, color)?;
+    let (vertices, indices) = world_vertices(index, mesh, transform, color, decor)?;
     let index_count = u32::try_from(indices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Z3L drawable vertices"),
@@ -1001,7 +1056,7 @@ fn build_mesh(
         contents: bytemuck::cast_slice(&indices),
         usage: wgpu::BufferUsages::INDEX,
     });
-    Ok(GpuMesh { vertex_buffer, index_buffer, index_count, centre: vertices_centre(&vertices) })
+    Ok(GpuMesh { vertex_buffer, index_buffer, index_count, centre: faces_centre(&vertices) })
 }
 
 /// The shadow colour and strength the fragment shaders read.
@@ -1178,7 +1233,7 @@ mod tests {
     fn vertices_are_transformed_into_world_space() {
         let mesh = triangle();
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let (vertices, indices) = world_vertices(0, &mesh, transform, [1.0, 0.5, 0.25, 1.0]).expect("valid mesh");
+        let (vertices, indices) = world_vertices(0, &mesh, transform, [1.0, 0.5, 0.25, 1.0], None).expect("valid mesh");
 
         assert_eq!(indices, vec![0, 1, 2]);
         assert_eq!(vertices.len(), 3);
@@ -1195,7 +1250,7 @@ mod tests {
             normals: Vec::new(),
             indices: vec![0, 1, 2],
         };
-        let (vertices, indices) = world_vertices(0, &mesh, DMat4::IDENTITY, [1.0; 4]).expect("valid mesh");
+        let (vertices, indices) = world_vertices(0, &mesh, DMat4::IDENTITY, [1.0; 4], None).expect("valid mesh");
         assert_eq!(vertices.len(), 3);
         assert_eq!(indices, vec![0, 1, 2]);
         assert!((vertices[0].normal[2] - 1.0).abs() < 1.0e-6);
@@ -1382,14 +1437,23 @@ mod tests {
     fn malformed_meshes_are_rejected_before_upload() {
         let mut mesh = triangle();
         mesh.indices[2] = 3;
-        assert_eq!(world_vertices(4, &mesh, DMat4::IDENTITY, [1.0; 4]), Err(RenderError::InvalidMesh { index: 4 }));
+        assert_eq!(
+            world_vertices(4, &mesh, DMat4::IDENTITY, [1.0; 4], None),
+            Err(RenderError::InvalidMesh { index: 4 })
+        );
 
         let mut mesh = triangle();
         mesh.normals.pop();
-        assert_eq!(world_vertices(0, &mesh, DMat4::IDENTITY, [1.0; 4]), Err(RenderError::InvalidMesh { index: 0 }));
+        assert_eq!(
+            world_vertices(0, &mesh, DMat4::IDENTITY, [1.0; 4], None),
+            Err(RenderError::InvalidMesh { index: 0 })
+        );
 
         let empty = MeshData::default();
-        assert_eq!(world_vertices(0, &empty, DMat4::IDENTITY, [1.0; 4]), Err(RenderError::EmptyMesh { index: 0 }));
+        assert_eq!(
+            world_vertices(0, &empty, DMat4::IDENTITY, [1.0; 4], None),
+            Err(RenderError::EmptyMesh { index: 0 })
+        );
     }
 
     #[test]
@@ -1693,10 +1757,10 @@ mod tests {
     #[test]
     fn a_drawable_centre_is_the_world_space_centre_of_its_bounds() {
         let transform = DMat4::from_translation(DVec3::new(100.0, 20.0, 5.0));
-        let (vertices, _) = world_vertices(0, &triangle(), transform, [1.0; 4]).expect("a valid mesh");
-        let centre = vertices_centre(&vertices);
+        let (vertices, _) = world_vertices(0, &triangle(), transform, [1.0; 4], None).expect("a valid mesh");
+        let centre = faces_centre(&vertices);
         assert!((centre - DVec3::new(105.0, 25.0, 5.0)).length() < 1.0e-9);
-        assert_eq!(vertices_centre(&[]), DVec3::ZERO, "a drawable with no vertex sorts at the origin");
+        assert_eq!(faces_centre(&[]), DVec3::ZERO, "a drawable with no vertex sorts at the origin");
     }
 
     #[test]
@@ -1802,7 +1866,7 @@ mod tests {
 
     #[test]
     fn an_upload_keeps_the_buffers_of_the_drawables_it_did_not_touch() {
-        let Some((device, _queue)) = noop_device() else {
+        let Some((device, queue)) = noop_device() else {
             println!("this build has no noop backend to upload geometry with");
             return;
         };
@@ -1816,7 +1880,7 @@ mod tests {
         frame.push(drawable(id(2), DMat4::from_translation(DVec3::new(100.0, 0.0, 0.0))));
 
         let mut renderer = ViewportRenderer::new(&device, 320, 240);
-        renderer.upload(&device, &frame).expect("the first upload");
+        renderer.upload(&device, &queue, &frame).expect("the first upload");
         assert_eq!(renderer.faces.len(), 1, "both drawables share one mesh, so one vertex and index buffer pair");
         assert_eq!(renderer.edge_slots.len(), 2, "the lines are baked with their transform");
         let standing_faces = Arc::clone(&renderer.drawables[0].faces);
@@ -1826,7 +1890,7 @@ mod tests {
 
         // The same frame again, which is what a camera move or a theme change produces: no buffer
         // is created and every drawable still draws the ones the first upload built.
-        renderer.upload(&device, &frame).expect("a second upload of the same frame");
+        renderer.upload(&device, &queue, &frame).expect("a second upload of the same frame");
         assert!(Arc::ptr_eq(&standing_faces, &renderer.drawables[0].faces), "the faces keep their buffers");
         assert!(
             Arc::ptr_eq(&standing_edges, renderer.drawables[0].edges.as_ref().expect("the lines")),
@@ -1836,7 +1900,7 @@ mod tests {
 
         // One drawable moves: it gets new buffers, its neighbour keeps both of its own.
         frame.drawables[1].world_transform = DMat4::from_translation(DVec3::new(0.0, 50.0, 0.0));
-        renderer.upload(&device, &frame).expect("the edited frame");
+        renderer.upload(&device, &queue, &frame).expect("the edited frame");
         assert!(
             Arc::ptr_eq(&standing_faces, &renderer.drawables[0].faces),
             "an untouched drawable keeps the vertex and index buffer it was uploaded with"
@@ -1853,7 +1917,7 @@ mod tests {
 
         // A drawable that leaves the frame takes its buffers and its pinned mesh with it.
         frame.drawables.pop();
-        renderer.upload(&device, &frame).expect("the frame without the moved drawable");
+        renderer.upload(&device, &queue, &frame).expect("the frame without the moved drawable");
         assert_eq!(renderer.drawables.len(), 1);
         assert_eq!(renderer.faces.len(), 1, "the dropped drawable's buffers are freed");
         assert_eq!(renderer.edge_slots.len(), 1);
@@ -1956,7 +2020,7 @@ mod tests {
         // half of the view and holds the drawable at y = 200.
 
         let mut renderer = ViewportRenderer::new(&device, 800, 400);
-        renderer.upload(&device, &frame).expect("the frame uploads");
+        renderer.upload(&device, &queue, &frame).expect("the frame uploads");
         renderer.render(&device, &queue, &frame);
         let pixels = read_pixels(&renderer, &device, &queue);
         let ink = crate::geometry::edge_ink(frame.edge_strength);
@@ -1966,6 +2030,145 @@ mod tests {
         assert_eq!(renderer.edge_slots.len(), 2, "each drawable owns one edge buffer");
         assert!(upper > 20, "the upper drawable's own line buffer is drawn, {upper} pixels");
         assert!(lower > 20, "and the lower drawable's is drawn too, from its own buffer: {lower} pixels");
+    }
+
+    /// A square board `side` millimetres across, facing `+Z`, with its zero corner at the minimum.
+    ///
+    /// That is the panel frame `ADR 0004` describes, and it is what the decor's projection starts
+    /// from: a print begins at the board's own corner, not at its centre.
+    fn board(side: f64) -> MeshData {
+        let side = side as f32;
+        MeshData {
+            positions: vec![[0.0, 0.0, 0.0], [side, 0.0, 0.0], [side, side, 0.0], [0.0, side, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+        }
+    }
+
+    /// The board's placement: its zero corner moved to the middle of the view.
+    fn centred(side: f64) -> DMat4 {
+        DMat4::from_translation(DVec3::new(-side * 0.5, -side * 0.5, 0.0))
+    }
+
+    /// A two-tone decor: the left half of the picture red, its right half blue, covering `covers`.
+    fn striped(covers: i64, turns: scene::Turns) -> Decor {
+        let texels = vec![[255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 255, 255]];
+        let image = Arc::new(scene::DecorImage::new(4, 1, texels).expect("four texels"));
+        let id = DecorId::new(1).expect("one decor");
+        let covers = units::Length::from_millimetres(covers).expect("a length");
+        Decor::new(id, image, covers, turns).expect("a decor")
+    }
+
+    /// Counts the lit pixels of one rectangle whose red channel leads their blue one, and the other
+    /// way round: `(red, blue)`.
+    ///
+    /// The readback is row-major from the top, so a rectangle is named by its columns and its rows.
+    /// A pixel has to be brighter than `lit` in the channel it leads with, so the viewport's own
+    /// background — a dark grey of neither colour — is not counted as either half of a picture.
+    fn red_minus_blue(
+        pixels: &[u8],
+        width: u32,
+        columns: std::ops::Range<u32>,
+        rows: std::ops::Range<u32>,
+        lit: u8,
+        lead: i32,
+    ) -> (usize, usize) {
+        let mut red = 0;
+        let mut blue = 0;
+        for y in rows {
+            for x in columns.clone() {
+                let index = (y as usize * width as usize + x as usize) * 4;
+                let Some(pixel) = pixels.get(index..index + 4) else {
+                    continue;
+                };
+                let difference = i32::from(pixel[0]) - i32::from(pixel[2]);
+                if difference > lead && pixel[0] > lit {
+                    red += 1;
+                } else if difference < -lead && pixel[2] > lit {
+                    blue += 1;
+                }
+            }
+        }
+        (red, blue)
+    }
+
+    #[test]
+    fn one_decor_is_one_texture_however_many_panels_are_cut_from_it() {
+        let Some((device, queue)) = noop_device() else {
+            println!("this build has no noop backend to upload a decor with");
+            return;
+        };
+        let id = |value| Id::new(value).expect("id");
+        let mesh = Arc::new(board(600.0));
+        let mut frame = SceneFrame::default();
+        for value in 1..=3 {
+            let drawable = Drawable::new(id(value), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4])
+                .with_decor(striped(600, scene::Turns::ALONG));
+            frame.push(drawable);
+        }
+        // A fourth drawable cut from a plain board: it is bound to the white texel, not to a decor.
+        frame.push(Drawable::new(id(4), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4]));
+
+        let mut renderer = ViewportRenderer::new(&device, 200, 200);
+        renderer.upload(&device, &queue, &frame).expect("the frame uploads");
+        assert_eq!(renderer.decors.len(), 1, "three panels of one board upload one texture");
+        assert!(renderer.white_decor.is_some(), "and the plain board is bound to the white texel");
+        assert_eq!(renderer.faces.len(), 1, "the three decorated boards share their vertices");
+
+        // A board whose decor is turned is a different picture at a different coordinate, so its
+        // vertices are built again while the picture itself stays one texture per id.
+        frame.drawables[0] = Drawable::new(id(1), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4])
+            .with_decor(striped(600, scene::Turns::ACROSS));
+        renderer.upload(&device, &queue, &frame).expect("the turned decor uploads");
+        assert_eq!(renderer.decors.len(), 1, "a turn changes the coordinate, not the picture");
+        assert_eq!(renderer.faces.len(), 2, "the turned board is built again, its two copies are not");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; draws a striped board and reads the pixels back"]
+    fn a_decor_is_drawn_where_the_board_puts_it_and_a_turn_rotates_it() {
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a decor with");
+            return;
+        };
+        let id = Id::new(1).expect("id");
+        let mesh = Arc::new(board(600.0));
+        // Looking straight down at the board from above, so screen x is the board's x and screen y
+        // is its y: the readback's left half is the board's negative x, its top half the positive y.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+        let frame_with = |turns| {
+            let mut frame = SceneFrame {
+                camera,
+                shading: ShadingStyle::Shaded,
+                grid: Grid { visible: false, ..Grid::default() },
+                ..SceneFrame::default()
+            };
+            frame.lighting.key_direction = DVec3::new(0.0, 0.0, 1.0);
+            frame.lighting.key_color = [1.0, 1.0, 1.0];
+            frame.lighting.ambient = 0.0;
+            frame.push(
+                Drawable::new(id, Arc::clone(&mesh), centred(600.0), [1.0, 1.0, 1.0, 1.0])
+                    .with_decor(striped(600, turns)),
+            );
+            frame
+        };
+
+        let (_, straight) = shot(&device, &queue, &frame_with(scene::Turns::ALONG), 200);
+        let all_rows = 0..200;
+        let (left_red, left_blue) = red_minus_blue(&straight, 200, 0..100, all_rows.clone(), 128, 24);
+        let (right_red, right_blue) = red_minus_blue(&straight, 200, 100..200, all_rows.clone(), 128, 24);
+        assert!(left_red > 200, "the board's left half is the picture's red half: {left_red} pixels");
+        assert!(right_blue > 200, "and its right half is the blue one: {right_blue} pixels");
+        assert!(left_blue < 20 && right_red < 20, "{left_blue} and {right_red} are the wrong way round");
+
+        // A quarter turn: the picture's own width — its grain — now runs along the board's y, so the
+        // stripes cross the board instead of running along it.
+        let (_, turned) = shot(&device, &queue, &frame_with(scene::Turns::ACROSS), 200);
+        let all_columns = 0..200;
+        let (top_red, top_blue) = red_minus_blue(&turned, 200, all_columns.clone(), 0..100, 128, 24);
+        let (bottom_red, bottom_blue) = red_minus_blue(&turned, 200, all_columns, 100..200, 128, 24);
+        assert!(top_blue > 200 && bottom_red > 200, "the stripes cross the board: {top_blue} and {bottom_red}");
+        assert!(top_red < 20 && bottom_blue < 20, "and they are the other way round: {top_red} and {bottom_blue}");
     }
 
     #[test]
@@ -1995,7 +2198,7 @@ mod tests {
 
         for (name, colors) in [("dark", SceneColors::DARK), ("light", SceneColors::LIGHT)] {
             frame.apply_colors(colors);
-            renderer.upload(&device, &frame).expect("the envelopes upload");
+            renderer.upload(&device, &queue, &frame).expect("the envelopes upload");
             renderer.render(&device, &queue, &frame);
             let pixels = read_pixels(&renderer, &device, &queue);
             let path = directory.join(format!("product-envelope-{name}.png"));
@@ -2010,7 +2213,7 @@ mod tests {
         // boxes paints neither ink.
         let mut hidden = frame.clone();
         hidden.product_envelopes.retain(|envelope| envelope.state == ProductEnvelopeState::ClosedWithParts);
-        renderer.upload(&device, &hidden).expect("the hidden envelope uploads");
+        renderer.upload(&device, &queue, &hidden).expect("the hidden envelope uploads");
         renderer.render(&device, &queue, &hidden);
         let pixels = read_pixels(&renderer, &device, &queue);
         let colors = SceneColors::DARK;
@@ -2021,7 +2224,7 @@ mod tests {
     /// Uploads one frame into a fresh target, renders it and reads the pixels back.
     fn shot(device: &wgpu::Device, queue: &wgpu::Queue, frame: &SceneFrame, side: u32) -> (ViewportRenderer, Vec<u8>) {
         let mut renderer = ViewportRenderer::new(device, side, side);
-        renderer.upload(device, frame).expect("the frame uploads");
+        renderer.upload(device, queue, frame).expect("the frame uploads");
         renderer.render(device, queue, frame);
         let pixels = read_pixels(&renderer, device, queue);
         (renderer, pixels)
@@ -2061,7 +2264,7 @@ mod tests {
         let box_ = (1, DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0));
         let mut frame = shaded_scene(camera, DVec3::new(0.0, 0.8, 0.6), &[box_], ContactShadows::default());
         let mut renderer = ViewportRenderer::new(&device, 200, 200);
-        renderer.upload(&device, &frame).expect("the frame uploads");
+        renderer.upload(&device, &queue, &frame).expect("the frame uploads");
         renderer.render(&device, &queue, &frame);
         assert_eq!(renderer.shadow_rebuilds(), 1, "an upload draws the map once");
 
@@ -2074,7 +2277,7 @@ mod tests {
         renderer.render(&device, &queue, &frame);
         assert_eq!(renderer.shadow_rebuilds(), 2, "a turned sun redraws it");
 
-        renderer.upload(&device, &frame).expect("the edited frame uploads");
+        renderer.upload(&device, &queue, &frame).expect("the edited frame uploads");
         renderer.render(&device, &queue, &frame);
         assert_eq!(renderer.shadow_rebuilds(), 3, "an edit redraws it");
     }
@@ -2348,7 +2551,7 @@ mod tests {
         }
 
         let mut renderer = ViewportRenderer::new(&device, 200, 200);
-        renderer.upload(&device, &frame).expect("the field uploads");
+        renderer.upload(&device, &queue, &frame).expect("the field uploads");
         renderer.render(&device, &queue, &frame);
         assert_eq!(renderer.drawn_drawables(), 1, "the camera inside the row draws the ball in front of it");
         assert_eq!(renderer.drawables.len(), 5, "the culling drops drawables from the passes, not from the upload");

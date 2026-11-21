@@ -1236,7 +1236,7 @@ mod tests {
             return;
         };
         for count in [500, 2_000] {
-            let (cold, warm, edit, whole) = upload_costs(&render_state.device, count);
+            let (cold, warm, edit, whole) = upload_costs(&render_state.device, &render_state.queue, count);
             println!(
                 "upload at {count} drawables: cold {cold:?}, unchanged {warm:?}, one edit {edit:?}, whole {whole:?}"
             );
@@ -1249,6 +1249,7 @@ mod tests {
     /// whole-frame upload, each measured on the real adapter.
     fn upload_costs(
         device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
         count: u64,
     ) -> (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration) {
         use std::time::{Duration, Instant};
@@ -1266,14 +1267,14 @@ mod tests {
         // The frame the last editor built, uploaded into an empty renderer, is what every edit cost
         // before the cache: one vertex and index buffer per drawable and one flattened edge list.
         let started = Instant::now();
-        renderer.upload(device, &scene).expect("the first upload");
+        renderer.upload(device, queue, &scene).expect("the first upload");
         let cold = started.elapsed();
 
         // A second upload of the same frame, which is what a camera move or a theme change asks for.
         let mut warm = Duration::MAX;
         for _ in 0..5 {
             let started = Instant::now();
-            renderer.upload(device, &scene).expect("an unchanged frame uploads");
+            renderer.upload(device, queue, &scene).expect("an unchanged frame uploads");
             warm = warm.min(started.elapsed());
         }
 
@@ -1287,14 +1288,14 @@ mod tests {
             session.dispatch("node.placement.set", &params).expect("move one ball");
             scene = evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the edited scene").frame;
             let started = Instant::now();
-            renderer.upload(device, &scene).expect("the edited frame uploads");
+            renderer.upload(device, queue, &scene).expect("the edited frame uploads");
             edit = edit.min(started.elapsed());
         }
 
         // The same edited frame into an empty renderer: the cost the cache removed.
         let mut fresh = ViewportRenderer::new(device, 1280, 800);
         let started = Instant::now();
-        fresh.upload(device, &scene).expect("the whole frame uploads");
+        fresh.upload(device, queue, &scene).expect("the whole frame uploads");
         let whole = started.elapsed();
         (cold, warm, edit, whole)
     }

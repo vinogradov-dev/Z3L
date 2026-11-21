@@ -1370,6 +1370,7 @@ dependencies = [
  "scene",
  "testkit",
  "thiserror 2.0.21",
+ "units",
  "wgpu",
 ]
 
@@ -3576,6 +3577,7 @@ dependencies = [
  "scene",
  "testkit",
  "thiserror 2.0.21",
+ "units",
  "wgpu",
 ]
 
@@ -3775,6 +3777,7 @@ dependencies = [
  "model",
  "serde",
  "thiserror 2.0.21",
+ "units",
 ]
 
 [[package]]

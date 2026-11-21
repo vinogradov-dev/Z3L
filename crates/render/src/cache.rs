@@ -22,6 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use geom::{DMat4, MeshData};
+use scene::{Decor, DecorId};
 
 use crate::RenderError;
 
@@ -144,18 +145,41 @@ impl Hash for PlacementKey {
 pub(crate) struct FaceKey {
     placement: PlacementKey,
     color: [u32; 4],
+    decor: Option<DecorKey>,
+}
+
+/// What a drawable's decor contributes to its vertices: which picture, how large, how turned.
+///
+/// The coordinate is baked into the vertex, so a decor that changes size or turns the grain changes
+/// every coordinate of the drawable and the buffers are built again. The picture's texels are not
+/// part of it: they are a texture, not a vertex, and the device keeps one copy of them per id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct DecorKey {
+    id: DecorId,
+    covers: i64,
+    turns: u8,
+}
+
+impl DecorKey {
+    fn new(decor: &Decor) -> Self {
+        Self { id: decor.id(), covers: decor.covers().micrometres(), turns: decor.turns().get() }
+    }
 }
 
 impl FaceKey {
-    /// The key of the buffers `mesh`, `transform` and `color` would be built into.
-    pub(crate) fn new(mesh: &Arc<MeshData>, transform: DMat4, color: [f32; 4]) -> Self {
-        Self { placement: PlacementKey::new(mesh, transform), color: color.map(f32::to_bits) }
+    /// The key of the buffers `mesh`, `transform`, `color` and `decor` would be built into.
+    pub(crate) fn new(mesh: &Arc<MeshData>, transform: DMat4, color: [f32; 4], decor: Option<&Decor>) -> Self {
+        Self {
+            placement: PlacementKey::new(mesh, transform),
+            color: color.map(f32::to_bits),
+            decor: decor.map(DecorKey::new),
+        }
     }
 }
 
 impl PartialEq for FaceKey {
     fn eq(&self, other: &Self) -> bool {
-        self.placement == other.placement && self.color == other.color
+        self.placement == other.placement && self.color == other.color && self.decor == other.decor
     }
 }
 
@@ -166,6 +190,7 @@ impl std::fmt::Debug for FaceKey {
             .debug_struct("FaceKey")
             .field("mesh", &(Arc::as_ptr(&self.placement.mesh) as usize))
             .field("color", &self.color)
+            .field("decor", &self.decor)
             .finish()
     }
 }
@@ -176,6 +201,7 @@ impl Hash for FaceKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.placement.hash(state);
         self.color.hash(state);
+        self.decor.hash(state);
     }
 }
 
@@ -324,7 +350,8 @@ mod tests {
             slots
         };
 
-        let standing = [FaceKey::new(&mesh, DMat4::IDENTITY, solid), FaceKey::new(&mesh, DMat4::IDENTITY, selected)];
+        let standing =
+            [FaceKey::new(&mesh, DMat4::IDENTITY, solid, None), FaceKey::new(&mesh, DMat4::IDENTITY, selected, None)];
         let first = upload(&mut cache, standing.clone());
         assert_eq!(builds.get(), 2, "two colours are two slots");
         assert_eq!(cache.len(), 2);
@@ -338,8 +365,10 @@ mod tests {
         assert!(Arc::ptr_eq(&first[1], &again[1]));
 
         // One drawable gains the selection ink and the other stands still.
-        let highlighted =
-            [FaceKey::new(&mesh, DMat4::IDENTITY, solid), FaceKey::new(&mesh, DMat4::IDENTITY, [1.0, 1.0, 1.0, 1.0])];
+        let highlighted = [
+            FaceKey::new(&mesh, DMat4::IDENTITY, solid, None),
+            FaceKey::new(&mesh, DMat4::IDENTITY, [1.0, 1.0, 1.0, 1.0], None),
+        ];
         let after = upload(&mut cache, highlighted);
         assert_eq!(builds.get(), 3, "only the recoloured drawable is built again");
         assert!(Arc::ptr_eq(&again[0], &after[0]), "the standing drawable keeps its buffers");
@@ -347,8 +376,8 @@ mod tests {
 
         // A moved drawable is a new key as well; its neighbour still keeps its own.
         let moved = [
-            FaceKey::new(&mesh, DMat4::IDENTITY, solid),
-            FaceKey::new(&mesh, DMat4::from_translation(DVec3::X), [1.0, 1.0, 1.0, 1.0]),
+            FaceKey::new(&mesh, DMat4::IDENTITY, solid, None),
+            FaceKey::new(&mesh, DMat4::from_translation(DVec3::X), [1.0, 1.0, 1.0, 1.0], None),
         ];
         let translated = upload(&mut cache, moved);
         assert_eq!(builds.get(), 4, "the move is one new slot");
@@ -361,7 +390,7 @@ mod tests {
         let mut cache: SlotCache<FaceKey, usize> = SlotCache::new();
         let mesh = mesh();
         cache.begin();
-        cache.slot(FaceKey::new(&mesh, DMat4::IDENTITY, [1.0; 4]), || Ok(7)).expect("a slot");
+        cache.slot(FaceKey::new(&mesh, DMat4::IDENTITY, [1.0; 4], None), || Ok(7)).expect("a slot");
         cache.sweep();
         assert_eq!(cache.len(), 1);
         assert_eq!(Arc::strong_count(&mesh), 2, "the cache pins the mesh it compares by address");
@@ -379,8 +408,8 @@ mod tests {
         let second = mesh();
         assert_eq!(first, second, "the two meshes hold equal vertices");
         assert_ne!(
-            FaceKey::new(&first, DMat4::IDENTITY, [1.0; 4]),
-            FaceKey::new(&second, DMat4::IDENTITY, [1.0; 4]),
+            FaceKey::new(&first, DMat4::IDENTITY, [1.0; 4], None),
+            FaceKey::new(&second, DMat4::IDENTITY, [1.0; 4], None),
             "two allocations are two buffers"
         );
     }
@@ -389,7 +418,7 @@ mod tests {
     fn a_refused_build_inserts_no_slot() {
         let mut cache: SlotCache<FaceKey, usize> = SlotCache::new();
         let mesh = mesh();
-        let key = FaceKey::new(&mesh, DMat4::IDENTITY, [1.0; 4]);
+        let key = FaceKey::new(&mesh, DMat4::IDENTITY, [1.0; 4], None);
         cache.begin();
         assert!(cache.slot(key.clone(), || Err(RenderError::EmptyMesh { index: 0 })).is_err());
         assert_eq!(cache.len(), 0, "a refused upload keeps no slot");

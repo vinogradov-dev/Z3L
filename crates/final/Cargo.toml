@@ -25,6 +25,8 @@ thiserror = { workspace = true }
 wgpu = { workspace = true }
 
 [dev-dependencies]
+# A decor's size is a physical length, and the tests build one; the crate itself only reads it.
+units = { workspace = true }
 # The tests build a frame, and a drawable carries the document id it came from; already in the tree
 # through `scene`.
 model = { workspace = true }

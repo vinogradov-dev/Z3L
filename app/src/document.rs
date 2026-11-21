@@ -270,7 +270,9 @@ impl Target {
 
     /// Uploads one frame of this scene into the target.
     fn upload(&mut self, scene: &SceneFrame) -> Result<(), String> {
-        self.renderer.upload(&self.render_state.device, scene).map_err(|error| error.to_string())
+        self.renderer
+            .upload(&self.render_state.device, &self.render_state.queue, scene)
+            .map_err(|error| error.to_string())
     }
 
     /// Follows the viewport's pixel size; a size the target already has costs nothing.

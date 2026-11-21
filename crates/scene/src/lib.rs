@@ -14,7 +14,8 @@
 //! `ContactShadows`, `Lighting`, `PointLight`) beside `SceneFrame`'s own builders,
 //! and a frame is assembled from all of them at once — splitting them would put one description in
 //! nine modules a reader has to join back. [`Frustum`] is the volume a view culls the frame's
-//! drawables by, derived from the camera the frame carries.
+//! drawables by, derived from the camera the frame carries. [`decor`] is the picture a surface is
+//! faced with, which both the viewport and the final render read as one value.
 //!
 //! Changes when: what a frame carries, or how a frame describes a drawable, a shadow or a light,
 //! changes.
@@ -37,6 +38,7 @@ use crate::ray::{ray_hit_drawable, ray_hit_polyline, ray_hit_product_envelope};
 
 pub mod band;
 pub mod camera;
+pub mod decor;
 pub mod ray;
 
 pub use band::{BandCoverage, NdcRect};
@@ -44,6 +46,7 @@ pub use camera::{
     Camera, CameraError, DEFAULT_FOV_Y, MAX_DISTANCE_MM, MAX_PITCH, MIN_DISTANCE_MM, MIN_PITCH, POLE_TOLERANCE,
     Projection, canonical_up,
 };
+pub use decor::{Decor, DecorError, DecorId, DecorImage, MAX_DECOR_SIDE, Turns};
 pub use ray::{LINE_PICK_RADIUS_POINTS, Ray, ray_segment, ray_triangle};
 
 /// Gamma-space colour of a selected line chain.
@@ -394,6 +397,13 @@ pub struct Drawable {
     /// A frame that says nothing is [`Surface::MATTE`]: the paint every drawable was before a tracer
     /// could tell a handle from a board.
     pub surface: Surface,
+    /// The decor the surface is faced with, or `None` for the flat colour of [`Self::color`].
+    ///
+    /// The picture multiplies the colour, which is the arithmetic every renderer shares: the colour
+    /// tints the print, and a record with no decor is the colour alone. Both consumers read this one
+    /// value — the viewport samples it in its fragment and the tracer carries it into its own
+    /// shader — because a material the two disagree about is two materials.
+    pub decor: Option<Decor>,
     /// The box around the mesh in its own frame, as the mesh cache measured it (X56).
     ///
     /// `None` means the box was never measured, not that the drawable is empty: a view keeps a
@@ -425,13 +435,29 @@ impl Drawable {
         color: [f32; 4],
         local_bounds: Option<Aabb>,
     ) -> Self {
-        Self { id, mesh, edges: None, all_edges: None, world_transform, color, surface: Surface::MATTE, local_bounds }
+        Self {
+            id,
+            mesh,
+            edges: None,
+            all_edges: None,
+            world_transform,
+            color,
+            surface: Surface::MATTE,
+            decor: None,
+            local_bounds,
+        }
     }
 
     /// The same drawable made of `surface`, which is how a frame says a front is glass or a handle is
     /// metal without a second constructor for every joint of the two.
     pub fn with_surface(mut self, surface: Surface) -> Self {
         self.surface = surface;
+        self
+    }
+
+    /// The same drawable faced with `decor`, which is the board a panel is cut from.
+    pub fn with_decor(mut self, decor: Decor) -> Self {
+        self.decor = Some(decor);
         self
     }
 
