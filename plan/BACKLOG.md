@@ -45,6 +45,38 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
+  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
+   from the camera the viewport already shows. The reference project was measured before the
+   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
+   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
+   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
+   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
+   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
+   which must bump together (§5), and it would hand the quality tuning to a project with one
+   maintainer. The reason for our own is ownership, not the licence.
+  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
+   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
+   final-render code lives; it borrows the `wgpu` device the shell already made instead of
+   opening one. Input: the frame's triangles from `mesh` at the current revision, the
+   document's light objects in watts with inverse-square falloff (ADR 0039), the session
+   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
+   a compute pass that traces one primary ray per sample and estimates light from the
+   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
+   through the `image` crate. One command `render.final` carries progress and cancel. Every
+   technique is implemented from its published source, named in the note and in the ADR: the
+   reference project is measured and read for its approach, never copied as text, so no file,
+   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
+   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
+   volumes, no hair, no displacement, no requirement for hardware ray tracing.
+  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
+   the viewport's to within a pixel at a known point; a second run on an unchanged revision
+   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
+   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
+   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
+   `cargo xtask ci` is green.
+  `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -419,37 +451,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
    green.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
-- `[ ]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
-  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
-   from the camera the viewport already shows. The reference project was measured before the
-   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
-   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
-   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
-   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
-   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
-   which must bump together (§5), and it would hand the quality tuning to a project with one
-   maintainer. The reason for our own is ownership, not the licence.
-  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
-   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
-   final-render code lives; it borrows the `wgpu` device the shell already made instead of
-   opening one. Input: the frame's triangles from `mesh` at the current revision, the
-   document's light objects in watts with inverse-square falloff (ADR 0039), the session
-   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
-   a compute pass that traces one primary ray per sample and estimates light from the
-   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
-   through the `image` crate. One command `render.final` carries progress and cancel. Every
-   technique is implemented from its published source, named in the note and in the ADR: the
-   reference project is measured and read for its approach, never copied as text, so no file,
-   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
-   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
-   volumes, no hair, no displacement, no requirement for hardware ray tracing.
-  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
-   the viewport's to within a pixel at a known point; a second run on an unchanged revision
-   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
-   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
-   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
-   `cargo xtask ci` is green.
-  `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
 - `[ ]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
   Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
    the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
