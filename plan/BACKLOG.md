@@ -288,6 +288,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
    drawing of two rings; `cargo xtask ci` is green.
   `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
+- `[ ]` **P24** the status block says `## Now` is empty while a stream works in it
+  Why: Why: The session-start block says `-> Nothing is scheduled: `## Now` is empty, the
+   backlog keeps the work` while a declared stream's own task sits in `## Now`. Measured in
+   z3l-wt/render at `0d77dce`: `## Now` holds `[~] Y1`, the block prints that sentence, and the
+   line under it lists the same `[~] Y1`. The sentence speaks for the plan's own stream — which
+   is correct, no `app` task is scheduled — but names `## Now`, which is the whole file's
+   section and is not empty. A reader who trusts the sentence looks for the work order in `##
+   Next` and misses the task in progress.
+  Shape: Shape: The sentence names what it is about: the plan's own stream, not the file's
+   section (`Nothing is scheduled: no `app` task is in `## Now`, the backlog keeps the work`) —
+   or the empty case says there is no task at all, and the stream rows below carry the rest.
+   One string, the same in the block and in the gate's `NOTHING_SCHEDULED` prefix, with a test
+   that puts a stream's `[~]` task in `## Now` and asserts the sentence is true of what it
+   claims.
+  Done: Done: A test renders the block for a plan whose `## Now` holds only a declared stream's
+   `[~]` task and asserts the sentence does not claim `## Now` is empty; the gate's prefix and
+   the block still agree; `cargo xtask ci` is green.
+  `files: state-contract/src/status.rs,state-contract/src/lib.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
