@@ -386,7 +386,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    `crates/engine/src/session.rs:159`), not a command: the headless CLI opens with `--product`
    (`app/src/cli/recipe.rs:99`) and the window opens what a person double-clicks, so a caller
    over the channel has no door at all and every furniture command is unreachable after the
-   frame is made.
+   frame is made. The CLI is no better for a recipe that makes its own frame: it opens the
+   product before it runs the batch, so `z3l run` on an empty scene answers `panel.create
+   cannot create furniture here: Create a product first` at line 2 of a recipe whose line 1
+   makes the product - which is why the wardrobe recipe in `app/tests/recipes` starts from a
+   scene that already holds the frame.
   Shape: One way for a caller that is not the window to say which product it works in: a view
    operation on the same tool surface (a field the batch carries, or a question about the
    session) that writes no document field, moves no revision and leaves no undo entry, exactly
@@ -413,6 +417,65 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    orientation and the size of each; a dry run answers the part without writing it; a point
    outside every product is the refusal the query already gives.
   `files: crates/engine/src/panel_cmds,app/src/fill_gizmo.rs,crates/ui/src/toolbars/spec.rs`
+- `[ ]` **X112** a created frame is closed, so the first part after it is refused
+  Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say
+   so twice. Measured: `product.create` created node 3 of an empty scene and the very next
+   question answered `open_product: null`, so `query niche` refused with `the point is outside
+   every product` and `panel.create` stayed disabled - a part is born only inside the open
+   product (ADR 0098). ADR 0100 says a frame is created, opened and drawn, so the create step
+   and the open step are one act for a person and two for a caller. A caller has to ask whether
+   the frame it just made is open, and the answer is no.
+  Shape: Creating a product leaves it open, in one act, as ADR 0100 words it: the frame is
+   made, opened and ready for the first part, so a sequence of commands works without a person
+   in between. A caller still reads the open product from the answer rather than assuming it.
+  Done: A test creates a product over the channel and asserts `open_product` names it, then
+   creates a panel inside it without any other step; a test asserts that opening another
+   product closes the first, because one product is open.
+  `files: crates/engine/src/product_cmds.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs`
+- `[ ]` **X113** the render fit camera reads micrometres as millimetres, so no real scene renders
+  Why: Measured 2026-11-21: `z3l render /tmp/wardrobe.z3l --out /tmp/wardrobe.png --camera fit`
+   fails with `camera distance must be finite and between 10 and 1,000,000 mm, got
+   3585601.197`. A 2.2 m wardrobe fits at about 3.6 m, so the distance is exactly a thousand
+   times too large: `home_camera` (`app/src/scene_build.rs:658`) treats
+   `evaluated.bounds.radius()` as millimetres, and the bounds are micrometres. The run fails
+   even with `--camera scene` and an authored camera in the document, because the fallback is
+   built unconditionally before the choice is read, so no real scene can be rendered at all -
+   including the final render Y1 just landed.
+  Shape: The bounds are converted where the camera is built, so a scene of any size frames; and
+   the fallback is only built for `--camera fit` or a scene with no authored camera, so an
+   authored view is never refused because of a number it does not use.
+  Done: A test renders a scene of the golden size and a wardrobe and asserts the image is not
+   empty; a test asserts `--camera scene` with an authored camera never builds the fallback, by
+   giving it bounds that would be refused.
+  `files: app/src/scene_build.rs,app/src/cli/render.rs,crates/scene/src/camera.rs`
+- `[ ]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
+  Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
+   "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
+   and the persons Save is the write. An agent that built a wardrobe therefore owns nothing it
+   made: the document lives in one dirty tab, and a closed window loses it. The owner asked for
+   an agent that works without a person, and saving is the one step only a person can take
+   today.
+  Shape: The channel can save the scene it changed, through the same writer the headless server
+   already uses (`SceneSink`), with the persons act where a path is not decided yet: a save to
+   the open path, or a refusal naming why it cannot, and never a silent write into a new file.
+  Done: A test saves a scene over the channel and asserts the file reads back with the revision
+   the answer named; a test asserts a scene with no path refuses the save with a sentence that
+   says what to do; a test asserts no batch writes a file unless the caller asked for the save.
+  `files: crates/mcp/src/server.rs,app/src/main.rs,crates/mcp/src/tools.rs`
+- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
+  Why: Measured 2026-11-21: the workshop directory this machine reads
+   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
+   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
+   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
+   mm, and neither exists in either place, so a recipe that names them can only run against the
+   fixture in `app/tests/recipes/catalogue/`.
+  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
+   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
+   starter package the build reads, so a recipe names a row a fresh machine has too.
+  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
+   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
+   against the default directory rather than a fixture copy.
+  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
