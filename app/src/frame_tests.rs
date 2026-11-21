@@ -733,6 +733,37 @@ fn a_pick_belongs_to_the_tab_that_asked_for_it() {
 }
 
 #[test]
+fn the_render_tab_turns_the_workspace_into_the_render_place_and_back() {
+    // The render place is a view of the scene in front, not a replacement for it (ADR 0209): the
+    // header's tab opens it, the page draws instead of the viewport and the ribbon, nothing floats
+    // over it, Escape and a document tab both go back, and no document revision moves either way.
+    let mut harness = Harness::new("frame-render-place");
+    let chrome = harness.settle();
+    let revision = harness.revision();
+    assert!(chrome.ribbon.is_positive(), "the document draws its ribbon band");
+    assert!(chrome.panels.left.is_some(), "and its panels");
+    assert!(!chrome.covers(harness.last_scene.expect("the viewport").center()), "the scene is drawn");
+
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    assert!(harness.app.render_open, "the tab opens the place");
+    let chrome = harness.frame();
+    let words = harness.drawn.clone();
+    let title = Message::RenderTitle.text(text::Lang::En);
+    assert!(words.iter().any(|word| word == title), "the page names itself: {words:?}");
+    assert!(words.iter().any(|word| word == Message::RenderDestination.text(text::Lang::En)), "{words:?}");
+    assert_eq!(chrome.ribbon, egui::Rect::NOTHING, "no ribbon band is drawn behind the place");
+    assert!(chrome.panels.left.is_none() && chrome.panels.right.is_none(), "and no panel floats over it");
+    assert_eq!(harness.revision(), revision, "opening the place writes no document");
+
+    // The same tab again goes back to the document, which is what a pressed tab does.
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    assert!(!harness.app.render_open);
+    let chrome = harness.settle();
+    assert!(chrome.ribbon.is_positive() && chrome.panels.left.is_some(), "the viewport and its chrome are back");
+    assert_eq!(harness.revision(), revision, "and still no document was written");
+}
+
+#[test]
 fn a_modifier_click_in_the_viewport_builds_the_selection_order() {
     // U102: a viewport click reads the same two modifiers a tree row does — Shift appends the node
     // the click resolved to and takes it back out on a second click, Ctrl removes one member, and a

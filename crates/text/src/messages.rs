@@ -69,6 +69,8 @@ messages! {
         "Всё выделение удаляется за один шаг. Отмена (Ctrl+Z) вернёт его."
     ],
     OpenSceneTitle = ["Open scene", "Открыть сцену"],
+    SaveImageAsTitle = ["Save the image as", "Сохранить изображение как"],
+    ImageFiles = ["PNG images", "Изображения PNG"],
     SaveSceneAsTitle = ["Save scene as", "Сохранить сцену как"],
     SceneFiles = ["Scene files", "Сцены"],
     PickFailed = [
@@ -803,6 +805,30 @@ messages! {
     // ── The tool card ───────────────────────────────────────────────────────
     ToolGapLow = ["Low gap", "Нижний зазор"],
     ToolGapHigh = ["High gap", "Верхний зазор"],
+
+    // ── The render place ────────────────────────────────────────────────────
+    Render = ["Render", "Рендер"],
+    RenderTitle = ["Final render", "Финальный рендер"],
+    RenderHint = ["The final render of this scene", "Финальный рендер этой сцены"],
+    RenderOf = ["A still image of “{}”, drawn by the final render.", "Неподвижное изображение «{}», нарисованное финальным рендером."],
+    RenderPreset = ["{} — {}", "{} — {}"],
+    RenderPresetDraft = ["Draft", "Черновик"],
+    RenderPresetPrint = ["Print A4", "Печать A4"],
+    RenderWidth = ["Width", "Ширина"],
+    RenderHeight = ["Height", "Высота"],
+    RenderSamples = ["Samples", "Сэмплы"],
+    RenderExposure = ["Exposure", "Экспозиция"],
+    RenderDestination = ["File", "Файл"],
+    RenderNoPath = ["no file chosen yet", "файл ещё не выбран"],
+    RenderChoose = ["Choose…", "Выбрать…"],
+    RenderStart = ["Render", "Рендерить"],
+    RenderCancel = ["Cancel", "Отменить"],
+    RenderNeedsPath = ["Choose a file to write the image to.", "Выберите файл, куда записать изображение."],
+    RenderNeedsSize = ["Name a size for the image.", "Укажите размер изображения."],
+    RenderSamplesDone = ["{} of {} samples", "{} из {} сэмплов"],
+    RenderDone = ["Written to {} — {}, {} samples", "Записано в {} — {}, {} сэмплов"],
+    RenderCancelled = ["Cancelled; no image was written.", "Отменено; изображение не записано."],
+    RenderFailed = ["The render stopped: {}", "Рендер остановлен: {}"],
 
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],

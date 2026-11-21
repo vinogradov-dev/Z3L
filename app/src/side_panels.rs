@@ -244,6 +244,20 @@ pub(crate) struct Chrome {
 }
 
 impl Chrome {
+    /// No surface over the scene at all, for a frame where the scene is not drawn.
+    ///
+    /// The render place replaces the workspace, so nothing floats over it: the panels, the ribbon
+    /// band and the tool card are absent, and a press anywhere is the page's own (ADR 0080).
+    pub(crate) fn empty() -> Self {
+        Self {
+            panels: PanelRects { left: None, right: None },
+            ribbon: egui::Rect::NOTHING,
+            list: None,
+            menu: None,
+            tool: None,
+        }
+    }
+
     /// Whether `point` lies on chrome rather than on the scene.
     pub(crate) fn covers(&self, point: egui::Pos2) -> bool {
         self.ribbon.contains(point)

@@ -73,6 +73,8 @@ pub enum HeaderAction {
     SetMode(TransformMode),
     /// Show the document of this tab.
     ActivateTab(TabId),
+    /// Show the render place, or go back to the document when it is already open.
+    Render,
     /// Close this tab; the shell decides whether unsaved changes need a question.
     CloseTab(TabId),
 }
@@ -107,6 +109,8 @@ pub struct HeaderState {
     pub panels_collapsed: bool,
     /// The transform gesture the viewport offers, which the band beside the switches arms.
     pub mode: TransformMode,
+    /// Whether the render place is the surface the workspace shows.
+    pub render_open: bool,
 }
 
 /// Draws the header row and returns the one action it asked for, if any.
@@ -333,6 +337,12 @@ fn tab_row(ui: &mut Ui, state: &HeaderState, room: f32) -> Option<HeaderAction> 
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(ui.clip_rect().intersect(rect));
         ui.horizontal(|ui| {
+            // The render place is a tab of its own, first in the row and beside the File menu: it
+            // has no cross and no unsaved marker, and it is pressed while the workspace shows it
+            // (ADR 0209). A press on an open one goes back to the document.
+            if render_tab(ui, state.render_open, lang) {
+                action = Some(HeaderAction::Render);
+            }
             for tab in &state.tabs {
                 match tab_view(ui, tab) {
                     Some(TabClick::Activate) => action = Some(HeaderAction::ActivateTab(tab.id)),
@@ -347,6 +357,31 @@ fn tab_row(ui: &mut Ui, state: &HeaderState, room: f32) -> Option<HeaderAction> 
         });
     });
     action
+}
+
+/// The render place's tab: one fixed width, no cross and no marker, pressed while it is shown.
+///
+/// It is drawn with the document tabs' own metrics — the same margin, corner radius and accent bar —
+/// so the row reads as one strip, and it never elides: its word is one word the interface owns.
+fn render_tab(ui: &mut Ui, open: bool, lang: text::Lang) -> bool {
+    let frame = egui::Frame::new()
+        .fill(if open { active_tab_fill(ui) } else { egui::Color32::TRANSPARENT })
+        .inner_margin(egui::Margin::symmetric(10, 3))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS));
+    let inner = frame.show(ui, |ui| {
+        let colour = if open { theme::text(ui) } else { theme::text_dim(ui) };
+        ui.add(egui::Label::new(egui::RichText::new(Message::Render.text(lang)).size(12.0).color(colour)));
+    });
+    let rect = inner.response.rect;
+    if open {
+        let radius = theme::RADIUS;
+        let bar =
+            egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - ACTIVE_TAB_BAR), rect.right_bottom());
+        ui.painter().rect_filled(bar, egui::CornerRadius { nw: 0, ne: 0, sw: radius, se: radius }, theme::accent(ui));
+    }
+    let hit = ui.interact(rect, ui.scope_id().with("render_tab"), egui::Sense::click());
+    let response = hit.on_hover_text(Message::RenderHint.text(lang));
+    response.clicked()
 }
 
 /// What a click on one tab asked for.
@@ -480,6 +515,7 @@ mod tests {
             panels_hidden: false,
             panels_collapsed: false,
             mode: TransformMode::Select,
+            render_open: false,
         }
     }
 
@@ -565,6 +601,15 @@ mod tests {
         out
     }
 
+    /// The stand-in File menu button the header tests hand `show`.
+    fn file_button(ui: &mut Ui) {
+        let lang = ui::language(ui.ctx());
+        ui.add_sized(
+            egui::vec2(theme::HEADER_TEXT_WIDTH, theme::HEADER_CONTROL_HEIGHT),
+            egui::Button::new(Message::File.text(lang)),
+        );
+    }
+
     /// One frame of the header at `screen` and the shapes it drew.
     fn header_frame(state: &HeaderState, lang: text::Lang, screen: egui::Rect) -> egui::FullOutput {
         let ctx = egui::Context::default();
@@ -575,13 +620,7 @@ mod tests {
             ui.set_width(screen.width());
             // The shell hands `show` its real File menu; the stand-in takes the same text button so a
             // measurement of the row is the row the shell draws.
-            show(ui, state, |ui| {
-                let lang = ui::language(ui.ctx());
-                ui.add_sized(
-                    egui::vec2(theme::HEADER_TEXT_WIDTH, theme::HEADER_CONTROL_HEIGHT),
-                    egui::Button::new(Message::File.text(lang)),
-                );
-            });
+            show(ui, state, file_button);
         })
     }
 
@@ -606,6 +645,68 @@ mod tests {
         output.drop_without_applying_deltas();
         let words: Vec<String> = TransformMode::ALL.iter().map(|mode| mode.caption(lang)).collect();
         cells.into_iter().filter(|(_, text)| words.contains(text)).collect()
+    }
+
+    /// The centre of the render tab's word, measured from the frame the header actually drew.
+    fn render_tab_centre(state: &HeaderState, screen: egui::Rect) -> egui::Pos2 {
+        fn find(shape: &Shape, word: &str, out: &mut Option<egui::Rect>) {
+            match shape {
+                Shape::Text(text) if text.galley.text() == word => {
+                    *out = Some(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                }
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        find(shape, word, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let output = header_frame(state, text::Lang::En, screen);
+        let mut rect = None;
+        for clipped in &output.shapes {
+            find(&clipped.shape, Message::Render.text(text::Lang::En), &mut rect);
+        }
+        output.drop_without_applying_deltas();
+        rect.expect("the header drew the render tab").center()
+    }
+
+    #[test]
+    fn the_render_place_is_a_tab_first_in_the_row_and_its_press_asks_for_it() {
+        let one_scene = state(vec![tab(1, "Cabinet", false, true)], false);
+        let words = drawn(&one_scene);
+        assert!(words.iter().any(|word| word == Message::Render.text(text::Lang::En)), "{words:?}");
+        // The tab is drawn whatever the row holds, including a row with no scene in it.
+        let empty = drawn(&state(vec![], false));
+        assert!(empty.iter().any(|word| word == Message::Render.text(text::Lang::En)), "{empty:?}");
+
+        // Pressed, it asks the shell for the place; the shell owns what a second press means. The
+        // pointer arrives, the button goes down and comes back up on three frames, because egui
+        // attributes the click across them (the harness in `frame_tests` clicks the same way).
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, theme::HEADER_HEIGHT));
+        let point = render_tab_centre(&one_scene, screen);
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ui::set_language(&ctx, text::Lang::En);
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut pressed = None;
+        for events in [vec![egui::Event::PointerMoved(point)], vec![button(true)], vec![button(false)]] {
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+                ui.set_width(screen.width());
+                // The same stand-in File button the measurement drew, so the row is in the same
+                // place: a missing menu button would shift every tab by its own width.
+                if let Some(action) = show(ui, &one_scene, file_button) {
+                    pressed = Some(action);
+                }
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(pressed, Some(HeaderAction::Render), "the render tab asks for the render place");
     }
 
     #[test]

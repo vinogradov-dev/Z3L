@@ -396,6 +396,49 @@ fn the_interface_renders_offscreen_to_one_png_per_cell() {
     );
 }
 
+/// Draws the render place into one picture: the numbers, the destination and a run's progress.
+///
+/// The place replaces the workspace, so the picture shows what a person sees after pressing the
+/// `Render` tab — and it is the only way to judge the page's density and its progress row, which a
+/// rectangle test cannot answer (ADR 0209).
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/render-place.png"]
+fn the_render_place_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots/render-place").join("workspace.json");
+    let session = crate::scene_build::demo_session().expect("the sample session");
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the shell builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+    // The place, with a destination and a run that reports progress: the shot is taken between two
+    // frames of a real render, so the bar and the counter are what the page actually draws.
+    app.render_open = true;
+    app.render_place.set_path(directory.join("example.png"));
+    let mut jobs = Vec::new();
+    for _ in 0..SETTLE_FRAMES {
+        jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+    }
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let path = directory.join("render-place.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the render place is in {}", path.display());
+}
+
 /// Draws the box tool's base rectangle and pulled height into one picture.
 ///
 /// The gesture is driven through the real shell with pointer events, so the shot proves the whole
