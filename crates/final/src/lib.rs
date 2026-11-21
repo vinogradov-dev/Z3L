@@ -36,6 +36,7 @@
     clippy::unreachable
 )]
 
+pub mod bsdf;
 pub mod bvh;
 #[cfg(test)]
 mod device_tests;
