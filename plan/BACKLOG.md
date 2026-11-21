@@ -76,21 +76,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
    `cargo xtask ci` is green.
   `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
-- `[~]` **J7** the window has a chat, and a scripted backend runs a turn without a network
-  Why: This is the goal in the owner's words: a person talks to the agent in the application's
-   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
-   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
-  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
-   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
-   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
-   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
-   never from `settings.json`.
-  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
-   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
-   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
-   green.
-  `files: app/src/main.rs,app/src/chat.rs,crates/mcp/src/chat.rs,crates/engine/src/session.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs,xtask/src/ui_rules.rs`
-
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -831,6 +816,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs`
 
 ## Done
+
+- `[x]` **J7** the window has a chat, and a scripted backend runs a turn without a network
+  Why: This is the goal in the owner's words: a person talks to the agent in the application's
+   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
+   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
+  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
+   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
+   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
+   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
+   never from `settings.json`.
+  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
+   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
+   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,crates/mcp/src/chat.rs,crates/engine/src/session.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs,xtask/src/ui_rules.rs` — `cb37ec6`
 
 - `[x]` **X102** X99 a primitive is an operand of a body boolean
   Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
