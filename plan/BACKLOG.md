@@ -274,6 +274,90 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    `[~]` task and asserts the sentence does not claim `## Now` is empty; the gate's prefix and
    the block still agree; `cargo xtask ci` is green.
   `files: state-contract/src/status.rs,state-contract/src/lib.rs`
+- `[ ]` **X105** the parallelepiped is a ribbon gesture, and no command names it
+  Why: Measured 2026-11-21: `model.primitives.cuboid` (`crates/ui/src/toolbars/spec.rs:731`) is
+   a ribbon cell that arms `ToolKind::Body(DrawTool::Rectangle)`, and the registry has no box:
+   `PrimitiveShape` (`crates/model/src/primitive.rs:327`) is `Sphere | Cone`, so
+   `object.primitive.create` cannot make one. The closest command, `object.extrude.create`,
+   takes a closed `Contour` of four segments with stable ids plus a height. A session asked for
+   a 200x300x600 body found nothing by that name, read `panel.create` disabled (no open
+   product), and built the wrong entity before it found the extrusion.
+  Shape: Give the shape one name in the registry: either a `Cuboid` variant of `PrimitiveShape`
+   carrying width, depth and height and accepted by `object.primitive.create`, or
+   `object.cuboid.create` that builds the same body from three lengths. The ribbon cell then
+   draws the command it arms (place-capability), so the word on the button and the id in the
+   registry are one thing.
+  Done: Tests: a cuboid built by command with three different sizes is one body with the
+   expected bounds and one undo entry; a size outside the range is a typed refusal;
+   `command_list` names the shape a maker reads on the cell.
+  `files: crates/model/src/primitive.rs,crates/engine/src/object_cmds.rs,crates/ui/src/toolbars/spec.rs`
+- `[ ]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
+  Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
+   could not find one. Measured: the assistant panel is opened only by `shortcuts.assistant`
+   (`app/src/main.rs:1435`), bound to `Ctrl+J` (`crates/ui/src/inventory.rs:241`), and no menu,
+   ribbon or palette row draws `assistant.open`. The registry answer carries `mode: plan` and
+   the batch report leaves a caller to tell the person where the switch is; the owner found it
+   alone, by accident.
+  Shape: One row draws `assistant.open` where a person looks for a panel (menu entry, label,
+   key and icon per place-capability), and the plan-mode answer states in one sentence that
+   nothing was written and where the switch is; the switch itself stays the person act (ADR
+   0190).
+  Done: A frame test opens the assistant from the entry it belongs to and finds the two
+   segments; a plan-mode answer carries the sentence naming the place and the key; a caller
+   reading only the answer can tell a switch a person operates from a tool.
+  `files: crates/ui/src/inventory.rs,app/src/main.rs,crates/mcp/src/report.rs`
+- `[ ]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
+  Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the
+   tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
+   `the window did not answer: it is busy with a gesture no assistant may interrupt`. Nothing
+   in the answer says the edit landed, so a caller that retries builds a second body, and a
+   caller that trusts the refusal reports a failure that did not happen.
+  Shape: The answer separates what landed from what is unknown: a call that changed the
+   document reports the ids it created even when the window UI thread was busy with a gesture,
+   and a call that moved nothing says so with the window own sentence and no created ids.
+  Done: A test drives a served session whose door is busy and asserts the answer names what
+   landed and what the caller must not repeat; a test asserts a refusal with no content change
+   carries no created ids.
+  `files: crates/mcp/src/server.rs,app/src/main.rs`
+- `[ ]` **X108** the assistant window grows by itself while it is open
+  Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
+   with no drag and no resize. `Chat::show` sets `default_size`, `min_width(WIDTH)` and
+   `resizable(true)` while the transcript and the field ask for the width their own content
+   reports, so the host can grow frame after frame. Not reproduced in a test yet; the
+   observation comes from the owner looking at the open panel.
+  Shape: Reproduce it headlessly first: drive an `egui::Context` with a long transcript line
+   and a long input for a hundred frames and compare the window rect of the first frame with
+   the last. The fix is whatever the measurement names; a guess at a width is not accepted
+   before the number exists.
+  Done: A frame test opens the panel, feeds a long transcript line and a long input, runs a
+   hundred frames and asserts the window rect is the same in the first and the last frame; the
+   note records the rect the tree draws today.
+  `files: app/src/chat.rs,crates/ui/src/theme.rs`
+- `[ ]` **X109** one command over the window channel takes a minute or three
+  Why: Measured 2026-11-21 by wall clock on this machine: a dry-run `product.create` took 83 s,
+   a dry-run `object.extrude.create` took 53 s, and the landing `object.extrude.create` took
+   196 s, while `command_list` and the queries answered in about a second. A person waiting on
+   the chat and an agent planning several steps both spend minutes on a call the document
+   itself answers at once. The cause is not measured yet; the suspicion is a wait for a frame
+   boundary with the scene rebuilding in between, and it stays a suspicion until the note has a
+   number.
+  Shape: Measure where the time goes before changing anything: instrument the request path from
+   the tool call to the frame that answers it and name the wait that dominates. The entry then
+   fixes that one wait, not the frame loop in general.
+  Done: A benchmark or a test records the answer time of one served command against a budget
+   written beside it, and the note carries the measured split between the wait and the work.
+  `files: crates/mcp/src/server.rs,app/src/main.rs`
+- `[ ]` **X110** nothing answers what a body is, so a caller cannot check what it built
+  Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
+   a product; box reports the box a product reserves`, and no other query reports the bounds,
+   the size or the mesh of an object. An agent that has just built a 200x300x600 body cannot
+   read back what it built; only the screen shows it, and the agent has no screen.
+  Shape: One query answers a node own box in the frame the answer names: a panel, a body, a
+   product and a container alike. `box` keeps its product meaning and the new answer is not a
+   second spelling of it.
+  Done: A test builds a body, a panel and a product and asserts the box each one answers,
+   including a turned node; a node with no geometry is a refusal the reader can act on.
+  `files: crates/mcp/src/server.rs,crates/model/src/project/query.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
@@ -783,6 +867,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    carry it; the first request of an endpoint asks for consent once and a cleared consent asks
    again; `xtask layers` passes with the vendored-feature test green.
   `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs`
+- `[ ]` **J15** command_list answers in short rows, and a schema only for the id that was asked
+  Why: Measured 2026-11-21: one `command_list` answer is 40 151 tokens, because every command
+   carries its full JSON Schema with its doc comments inline. A reader that cannot hold the
+   answer slices it, and a sliced schema reads as a fact: one session saw `sphere` and `cone`
+   in `PrimitiveShape`, stopped at the slice and concluded the registry has no box at all,
+   never seeing `object.extrude.create`.
+  Shape: The list carries one short row per command (id, label, what it creates, whether it
+   runs here, one sentence of refusal) and the full schema is answered for one id on request,
+   from the same registry table. A test asserts the list stays inside a byte budget and that
+   the per-id answer is byte for byte the schema `command_run` validates against.
+  Done: A test asserts the list answer is under the budget and holds every command id; a test
+   asserts the per-id schema equals the one the run refuses against; an unknown id is a refusal
+   naming the ids that exist.
+  `files: crates/mcp/src/tools.rs,crates/mcp/src/server.rs`
+- `[ ]` **J16** a parameter refusal repeats the payload and never says what shape to send
+  Why: Measured 2026-11-21: a `params` value that arrived as a JSON string was answered
+   `invalid parameters for product.create: invalid type: string, expected struct
+   ProductCreate`. The sentence repeats the payload, names a Rust type a caller cannot see, and
+   never says that `params` must be an object. The tool schema declares `params` as free-form,
+   so a caller may legitimately send a string and be told nothing it can act on.
+  Shape: The refusal names the field and the shape to send, in the words the caller used, and
+   the schema for `params` states that it is an object whose keys a command own schema
+   describes.
+  Done: A test sends a string where an object belongs and asserts the refusal names the field
+   and the shape; a test sends an object with an unknown key and asserts the key is named.
+  `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
 
 ## Done
 
