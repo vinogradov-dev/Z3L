@@ -45,6 +45,34 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
+  Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
+   the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
+   project carries the three pieces that close it — next-event estimation with multiple
+   importance sampling, an Owen-scrambled Sobol sampler whose own measurements put it 25 to 40%
+   ahead of white noise, and Russian roulette — and its shader is 2.5k lines of published
+   technique rather than research.
+  Shape: BSDF evaluation and sampling for diffuse, GGX metal and rough dielectric, the last
+   with the energy-compensation tables a rough conductor needs so it does not darken as
+   roughness rises. The dielectric is refractive: an index of refraction, total internal
+   reflection and a Beer-Lambert absorption per world unit, so a pane or a sphere of tinted
+   glass behaves like glass and not like a shiny film. Glass concentrates light, so the
+   estimator carries one documented clamp on the radiance a single sample may bring, and the
+   bias it costs is measured rather than chosen by feel. Lights sampled by emitted power
+   through an alias table, MIS weights between the light sample and the BSDF sample,
+   Owen-scrambled Sobol in 2D pairs, and Russian roulette past a fixed depth. The sampler and
+   the BSDF maths live in pure Rust beside the shader and are unit-tested, and the shader is
+   their transcription, so a wrong weight fails a test without a GPU.
+  Done: Tests: the white-furnace case renders a diffuse sphere under a uniform environment to
+   that environment's radiance within 1%; a 4096 spp reference and a 200 spp render of the
+   fixture agree within 2% linear RMSE; a pane of tinted glass over a patterned floor shifts
+   the pattern by the thin-lens direction the index of refraction predicts and darkens it by
+   the absorption the thickness and the tint name; the first 8192 sampler points are unique and
+   the distribution test passes; the metal's directional albedo at roughness 1 is within 1% of
+   its table; the clamp's bias is measured against an unclamped reference and written into the
+   note; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/geom/src/lib.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -761,33 +789,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the tool schemas, the answers and the refusals - because a released build ships no prose
    (J19); `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
-  Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
-   the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
-   project carries the three pieces that close it — next-event estimation with multiple
-   importance sampling, an Owen-scrambled Sobol sampler whose own measurements put it 25 to 40%
-   ahead of white noise, and Russian roulette — and its shader is 2.5k lines of published
-   technique rather than research.
-  Shape: BSDF evaluation and sampling for diffuse, GGX metal and rough dielectric, the last
-   with the energy-compensation tables a rough conductor needs so it does not darken as
-   roughness rises. The dielectric is refractive: an index of refraction, total internal
-   reflection and a Beer-Lambert absorption per world unit, so a pane or a sphere of tinted
-   glass behaves like glass and not like a shiny film. Glass concentrates light, so the
-   estimator carries one documented clamp on the radiance a single sample may bring, and the
-   bias it costs is measured rather than chosen by feel. Lights sampled by emitted power
-   through an alias table, MIS weights between the light sample and the BSDF sample,
-   Owen-scrambled Sobol in 2D pairs, and Russian roulette past a fixed depth. The sampler and
-   the BSDF maths live in pure Rust beside the shader and are unit-tested, and the shader is
-   their transcription, so a wrong weight fails a test without a GPU.
-  Done: Tests: the white-furnace case renders a diffuse sphere under a uniform environment to
-   that environment's radiance within 1%; a 4096 spp reference and a 200 spp render of the
-   fixture agree within 2% linear RMSE; a pane of tinted glass over a patterned floor shifts
-   the pattern by the thin-lens direction the index of refraction predicts and darkens it by
-   the absorption the thickness and the tint name; the first 8192 sampler points are unique and
-   the distribution test passes; the metal's directional albedo at roughness 1 is within 1% of
-   its table; the clamp's bias is measured against an unclamped reference and written into the
-   note; `cargo xtask ci` is green.
-  `files: crates/render/src,crates/geom/src/lib.rs`
 - `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
   why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
    (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the

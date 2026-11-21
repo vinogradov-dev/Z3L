@@ -54,7 +54,7 @@ usage: z3l                 open the editor
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
        z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
-                    [--camera scene|fit]
+                    [--studio <percent>] [--camera scene|fit]
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
@@ -75,6 +75,8 @@ render draws the final image of a saved scene and writes it as a PNG, with no wi
   --size <w>x<h>     the image size in pixels; 1920x1080 by default
   --samples <n>      the samples per pixel; 4 is a draft, 256 is a catalogue plate
   --exposure <stops> the exposure applied before the filmic curve; one stop by default
+  --studio <percent> the studio behind the scene, as a percentage of a white room; zero by default,
+                     which is the black background a render has always had
   --camera <scene|fit>
                      `scene` (the default) is the active authored camera, which is the view the
                      viewport shows; `fit` is the framing the viewport opens a scene with, which
@@ -224,6 +226,8 @@ pub struct RenderArgs {
     pub samples: u32,
     /// The exposure stops applied before the filmic curve.
     pub exposure: f32,
+    /// The studio behind the scene, in percent of a white room.
+    pub studio: f32,
     /// Which camera the image is drawn from.
     pub camera: CameraChoice,
 }
@@ -406,6 +410,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let (mut width, mut height) = render::DEFAULT_SIZE;
     let mut samples = render::DEFAULT_SAMPLES;
     let mut exposure = 1.0f32;
+    let mut studio = 0.0f32;
     let mut camera = CameraChoice::Scene;
     let mut words = args.iter();
     while let Some(word) = words.next() {
@@ -415,6 +420,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
             "--size" => (width, height) = render::parse_size(value(&mut words, "--size")?)?,
             "--samples" => samples = count(value(&mut words, "--samples")?, "--samples")?,
             "--exposure" => exposure = stops(value(&mut words, "--exposure")?)?,
+            "--studio" => studio = percent(value(&mut words, "--studio")?)?,
             "--camera" => camera = CameraChoice::parse(value(&mut words, "--camera")?)?,
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not a render option; run `z3l render --help`")));
@@ -428,7 +434,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let scene = scene
         .ok_or_else(|| CliError::Usage("render needs a scene: `z3l render <scene.z3l> --out <path>`".to_owned()))?;
     let out = out.ok_or_else(|| CliError::Usage("render needs `--out <path>` to know where to write".to_owned()))?;
-    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, camera }))
+    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, camera }))
 }
 
 /// A whole number a flag carries, refusing one that is not a number.
@@ -439,6 +445,16 @@ fn count(text: &str, flag: &str) -> Result<u32, CliError> {
 /// An exposure a flag carries, refusing one that is not a number.
 fn stops(text: &str) -> Result<f32, CliError> {
     text.parse::<f32>().map_err(|_| CliError::Usage(format!("`{text}` is not an exposure in stops")))
+}
+
+/// A studio the flag carries, as a percentage of a white room.
+fn percent(text: &str) -> Result<f32, CliError> {
+    let value: f32 =
+        text.parse().map_err(|_| CliError::Usage(format!("`{text}` is not a studio in percent of a white room")))?;
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err(CliError::Usage(format!("`{text}` is not a studio between 0 and 100 percent")));
+    }
+    Ok(value)
 }
 
 /// A count of days a flag carries, refusing one that is not a number.
@@ -968,6 +984,7 @@ mod tests {
                 height: render::DEFAULT_SIZE.1,
                 samples: render::DEFAULT_SAMPLES,
                 exposure: 1.0,
+                studio: 0.0,
                 camera: CameraChoice::Scene,
             })
         );
@@ -982,6 +999,8 @@ mod tests {
             "512",
             "--exposure",
             "1.5",
+            "--studio",
+            "40",
             "--camera",
             "fit",
         ]))
@@ -995,6 +1014,7 @@ mod tests {
                 height: 3508,
                 samples: 512,
                 exposure: 1.5,
+                studio: 40.0,
                 camera: CameraChoice::Fit,
             })
         );
@@ -1006,8 +1026,13 @@ mod tests {
         assert!(error.to_string().contains("scene.z3l"), "{error}");
         let error = parse(&words(&["render", "scene.z3l"])).expect_err("a render needs a destination");
         assert!(error.to_string().contains("--out"), "{error}");
-        for (flag, value) in [("--size", "a4"), ("--samples", "many"), ("--exposure", "dark"), ("--camera", "sideways")]
-        {
+        for (flag, value) in [
+            ("--size", "a4"),
+            ("--samples", "many"),
+            ("--exposure", "dark"),
+            ("--studio", "bright"),
+            ("--camera", "sideways"),
+        ] {
             let error = parse(&words(&["render", "scene.z3l", "--out", "plate.png", flag, value]))
                 .expect_err("a broken value is a sentence");
             assert!(error.to_string().contains(value), "{flag}: {error}");

@@ -218,6 +218,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
 | [0211](0211-the-render-is-a-place-beside-the-file-menu.md) | The final render is a place beside the File menu, not a dialog | Accepted; the surface the entry point of 0210 is reached from |
 | [0212](0212-a-batch-names-the-product-it-works-in.md) | A batch names the product it works in, and opening is not a step | Accepted; the field 0098 leaves a caller without |
+| [0213](0213-a-frame-carries-a-finish-and-the-tracer-samples-by-power.md) | A frame carries a finish, and the final render samples the light it is given | Accepted; the frame contract Y3 fills from the catalogue |
 
 ## Format
 

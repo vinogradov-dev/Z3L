@@ -144,7 +144,11 @@ impl RenderPlace {
         };
         let request = r#final::Request::new(self.settings.width, self.settings.height, self.settings.samples)
             .map_err(|error| error.to_string())?;
-        let settings = RenderSettings::new(request, self.settings.exposure, path).map_err(|error| error.to_string())?;
+        // The page speaks percent of a white room and the render speaks linear radiance: the one
+        // place the two vocabularies meet is here.
+        let settings = RenderSettings::new(request, self.settings.exposure, path)
+            .and_then(|settings| settings.with_environment(self.settings.studio / 100.0))
+            .map_err(|error| error.to_string())?;
         let progress = Arc::new(Progress::new(request.samples()));
         let device = render_state.device.clone();
         let queue = render_state.queue.clone();

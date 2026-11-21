@@ -32,6 +32,13 @@ use crate::theme;
 /// elides instead of pushing the row wide.
 const COLUMN_WIDTH: f32 = 560.0;
 
+/// The brightest studio the page offers, in percent of a white room (a radiance of one).
+///
+/// A hundred percent is a room as bright as white paper, which is already brighter than any workshop
+/// a cabinet is photographed in; past it the field would be offering a light the picture cannot use
+/// without an exposure the person has to correct afterwards.
+pub const MAX_STUDIO_PERCENT: f32 = 100.0;
+
 /// The limits a render's numbers are kept inside.
 ///
 /// They are handed in by the shell from the final render's own constants (`final::MIN_SIDE` and its
@@ -101,6 +108,9 @@ pub struct Settings {
     pub samples: u32,
     /// The exposure stops applied before the filmic curve.
     pub exposure: f32,
+    /// The studio behind the scene, in percent of a white room: what a ray sees where the frame has
+    /// no geometry. Zero is no studio and the black background a render had before it could have one.
+    pub studio: f32,
     /// Where the PNG goes; `None` until the person has chosen one.
     pub path: Option<std::path::PathBuf>,
 }
@@ -109,7 +119,7 @@ impl Settings {
     /// The settings a page opens with: a draft, one stop, and no destination yet.
     pub fn draft() -> Self {
         let (width, height, samples) = Preset::Draft.values();
-        Self { width, height, samples, exposure: 1.0, path: None }
+        Self { width, height, samples, exposure: 1.0, studio: 0.0, path: None }
     }
 
     /// Sets the numbers of `preset`, keeping the destination and the exposure.
@@ -136,6 +146,10 @@ impl Settings {
         if !self.exposure.is_finite() || self.exposure <= 0.0 {
             self.exposure = 1.0;
         }
+        if !self.studio.is_finite() {
+            self.studio = 0.0;
+        }
+        self.studio = self.studio.clamp(0.0, MAX_STUDIO_PERCENT);
     }
 
     /// Why this render cannot start, if it cannot.
@@ -297,6 +311,19 @@ fn numbers_column(
         let tallest = bounds.widest(settings.width);
         number(ui, Message::RenderHeight, &mut settings.height, bounds.min_side..=tallest);
         number(ui, Message::RenderSamples, &mut settings.samples, bounds.min_samples..=bounds.max_samples);
+        // The studio is a percentage of a white room, and the exposure a number of stops: both draw
+        // their unit outside the box like every unit in the interface.
+        ui.label(Message::RenderStudio.text(lang));
+        ui.horizontal(|ui| {
+            Scrub::new(&mut settings.studio)
+                .decimals(0)
+                .speed(1.0)
+                .range(0.0..=MAX_STUDIO_PERCENT)
+                .unit("%")
+                .policy(CommitPolicy::Live)
+                .show(ui);
+        });
+        ui.end_row();
         // The exposure is the one number with a unit: stops, drawn outside the box like every unit.
         ui.label(Message::RenderExposure.text(lang));
         ui.horizontal(|ui| {
@@ -406,20 +433,36 @@ mod tests {
 
     #[test]
     fn a_clamped_request_is_one_the_tracer_accepts() {
-        let mut settings = Settings { width: 40_000, height: 40_000, samples: 100_000, exposure: 0.0, path: None };
+        let mut settings =
+            Settings { width: 40_000, height: 40_000, samples: 100_000, exposure: 0.0, studio: f32::NAN, path: None };
         settings.clamp(bounds());
         assert_eq!(settings.width, 8192);
         assert!(settings.height <= settings.width);
         assert!(u64::from(settings.width) * u64::from(settings.height) <= bounds().max_pixels);
         assert_eq!(settings.samples, 4096);
         assert_eq!(settings.exposure, 1.0, "a broken exposure falls back to one stop");
+        assert_eq!(settings.studio, 0.0, "a broken studio falls back to none");
 
         // A tall request that fits the side cap but not the pixel cap is brought inside it.
-        let mut tall = Settings { width: 8192, height: 8192, samples: 1, exposure: 1.0, path: None };
+        let mut tall = Settings { width: 8192, height: 8192, samples: 1, exposure: 1.0, studio: 0.0, path: None };
         tall.clamp(bounds());
         assert!(u64::from(tall.width) * u64::from(tall.height) <= bounds().max_pixels, "{tall:?}");
         assert_eq!(bounds().widest(1000), 8192, "a narrow image takes the whole side cap");
         assert_eq!(bounds().widest(4000), 4000, "a wide one is bounded by the pixel cap");
+    }
+
+    #[test]
+    fn the_studio_is_a_percentage_of_a_white_room_and_never_negative() {
+        // A page opens with no studio, which is the black background a render always had, and the
+        // field cannot be dragged past a white room or below none.
+        assert_eq!(Settings::draft().studio, 0.0);
+        for (asked, kept) in [(-30.0, 0.0), (0.0, 0.0), (45.0, 45.0), (100.0, 100.0), (400.0, 100.0)] {
+            let mut settings = Settings::draft();
+            settings.studio = asked;
+            settings.clamp(bounds());
+            assert_eq!(settings.studio, kept, "{asked} percent became {}", settings.studio);
+        }
+        assert_eq!(MAX_STUDIO_PERCENT, 100.0, "a white room is the brightest studio the field offers");
     }
 
     #[test]
