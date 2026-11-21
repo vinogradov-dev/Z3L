@@ -89,11 +89,13 @@ rule is how the first build came out mirrored (X118).
 - Banding totals 19 edges: 11 × 1 m and 2 × 5.098 m on the doors.
 - `z3l render --camera fit` draws it: 800 × 1000 at 24 samples, a closed carcass with two overlaid
   doors, a top that overhangs the sides by nothing and the gap between the doors where it should be.
+  The image is not kept in the tree — the command in "What is not verified" below is the record —
+  because this project stores no pictures.
 
 ## What is not verified, and why
 
 - **Nothing checks a part against its product.** `query diagnostics` answers panel problems only, so a
-  part placed kilometres away reports nothing; the only reason the picture above is right is that the
+  part placed kilometres away reports nothing; the only reason the render above is right is that the
   recipe was read line by line (X116). The wardrobe's own failure is the proof: it built, listed and
   passed with every coordinate a thousand times too large.
 - **The machine's own workshop directory could not build this wardrobe**: it stocks a 25 mm board and
