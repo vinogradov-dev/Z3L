@@ -281,6 +281,12 @@ impl DrawGizmo {
         self.hover.map(|hover| hover.screen)
     }
 
+    /// The point the next click would place, for a test that asks where the snap answered.
+    #[cfg(test)]
+    pub(crate) fn hover_point(&self) -> Option<[Length; 2]> {
+        self.hover.map(|hover| hover.point)
+    }
+
     /// Applies the pointer to the live draft.
     ///
     /// A click appends the point the plates place — the snapped pointer with every typed number in
@@ -536,10 +542,9 @@ fn paint_guides(
 
 /// The snapped cursor point, in document units and on screen.
 ///
-/// The point the draft stores is a work-plane coordinate, so a scene snap — a corner, a centre, a
-/// crossing — is taken at its own place in the world and read back on the plane: that footprint is
-/// where the figure draws, and the marker stands on the candidate itself so the maker sees what
-/// captured the pointer. The one resolver answers which candidate that is (U116).
+/// The resolver answers the point the draft stores, so whatever captured the pointer — a corner, a
+/// crossing, the grid — the marker is drawn at that point and the figure grows to it; a typed number
+/// is the one thing that moves it elsewhere (U116, T17, U119).
 fn snap_cursor(
     draft: &DrawDraft,
     aim: PlaneSnap,
@@ -563,12 +568,16 @@ fn snap_cursor(
         .collect::<Vec<_>>();
     // Alt takes the pointer as it is: no kind captures, and Shift's explicit lock still applies.
     let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
-    let answer = project.snap(aim.request(kinds, anchor, &ends, modifiers.axis_lock, None), sight)?;
+    // The sketch draws on a plane, so it reads a candidate above that plane the way the workspace
+    // chose: the 2.5D foot today, the mode the Snaps group carries once the switch lands (U119).
+    let target = model::SnapMode::Foot.target();
+    let answer = project.snap(aim.request(kinds, target, anchor, &ends, modifiers.axis_lock, None), sight)?;
+    // The answer is the point the draft stores, so the marker is projected from that point and never
+    // from the candidate it came from: one place, one marker (U119).
     let local = plane.local(answer.point);
     let point = [length_from_millimetres(local.x)?, length_from_millimetres(local.y)?];
-    let on_plane = plane.world(DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
-    let screen =
-        screen_point(aim.camera, aim.rect, answer.point).or_else(|| screen_point(aim.camera, aim.rect, on_plane))?;
+    let stored = plane.world(DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
+    let screen = screen_point(aim.camera, aim.rect, stored)?;
     Some(SnapOutcome { point, kind: answer.kind, locked: answer.locked, screen })
 }
 

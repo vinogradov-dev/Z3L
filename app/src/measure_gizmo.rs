@@ -210,8 +210,11 @@ fn resolve(
     };
     let anchor = first.map(world_point);
     let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
+    // The ruler measures what the eye sees, so it takes the candidate where it is: a corner 300 mm
+    // above the floor is a place of its own, not a shadow, and the mode never reaches it (U119).
+    let target = model::SnapTarget::Free;
     let answer =
-        project.snap(snap.request(kinds, anchor, &[], modifiers.axis_lock && anchor.is_some(), face), sight)?;
+        project.snap(snap.request(kinds, target, anchor, &[], modifiers.axis_lock && anchor.is_some(), face), sight)?;
     measure_point(answer.point, camera, rect, answer.kind, answer.locked)
 }
 

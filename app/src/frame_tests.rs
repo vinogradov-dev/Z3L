@@ -2600,10 +2600,11 @@ fn body_and_ball_session() -> engine::Session {
 #[test]
 fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
     // The owner's report: a drawn cube snapped only to the profile it was drawn from, the marker
-    // stood on the base contour instead of the candidate, and a ball snapped nowhere. Every corner of
+    // stood away from the place the click would take, and a ball snapped nowhere. Every corner of
     // the body, the middle of every edge and the middle of every face is a candidate; a ball answers
-    // at its own centre and at its quadrants; the eye's side wins a pair that lines up; and the marker
-    // draws on the candidate itself (U116).
+    // at its own centre and at its quadrants; and the marker stands on the point the draft stores,
+    // which for a sketch on a plane is the candidate's perpendicular foot in the 2.5D reading
+    // (U116, T17, U119).
     let mut harness = Harness::with_session("snap-body", body_and_ball_session());
     harness.settle();
     harness.app.tabs.active_mut().frame_all();
@@ -2632,13 +2633,20 @@ fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
         harness.run(vec![egui::Event::PointerMoved(at)]);
         let document = harness.app.tabs.active();
         let kind = document.draw_gizmo.snap_kind();
-        let marker = document.draw_gizmo.hover_screen();
+        let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
+        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
         assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
         assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
-        let marker = marker.expect("a marker where the candidate drew");
+        let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
         assert!(
-            (marker - at).length() < 24.0,
-            "the {name} answers where the pointer is: {marker:?} against {at:?} ({kind:?})"
+            (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
+            "the {name} reads a candidate above the plane by its perpendicular foot: {stored:?} against {world:?}"
+        );
+        let drawn =
+            gizmo_math::screen_point(harness.camera(), harness.scene(), stored).expect("the stored point is on screen");
+        assert!(
+            (marker - drawn).length() < 0.5,
+            "the {name} draws its marker at the point the click takes: {marker:?} against {drawn:?} ({kind:?})"
         );
     }
 }

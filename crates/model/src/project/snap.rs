@@ -16,14 +16,25 @@
 //! a midpoint, and so on down to the grid. A maker who points near both a corner and an edge means
 //! the corner, even when the edge is a little nearer; the nearest candidate inside one kind wins it.
 //!
+//! A candidate may stand above or below the plane a tool draws on, and a maker expects two readings
+//! of that: the **2.5D** snap takes such a candidate anywhere and answers its perpendicular foot, so a
+//! top view lines a board up with a shadow (this is the mode a furniture maker works in), and the
+//! **3D** snap answers the candidate itself and leaves it to the tool: a tool that stores a point in
+//! space — the ruler, a vertex edit — takes it, and a tool that stores a point of its own plane
+//! captures it only while the candidate lies in that plane. The tool declares which of the three it
+//! wants ([`SnapTarget`]), the workspace says which mode it is in ([`SnapMode`]), and the resolver
+//! returns the point the tool stores — never a marker separate from it (U116, T17, U119).
+//!
 //! [`Project::snap_marks`] is the same candidate set without the pointer: the points of the tree and
 //! their kinds. The object move reads it to align a carried piece with a neighbour's centre, which is
 //! the one coordinate its faces do not offer.
 //!
-//! Changes when: a snap kind appears or its priority changes, or a document shape gains a corner, a
-//! centre or an edge the pointer should see.
+//! Changes when: a snap kind appears or its priority changes, a document shape gains a corner, a
+//! centre or an edge the pointer should see, or a snap mode appears.
 
 use geom::{DVec2, DVec3};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use units::Length;
 
 use super::sight::Sight;
@@ -41,6 +52,12 @@ const MAX_ARC_SAMPLES: usize = 64;
 
 /// Tolerance for treating two directions as parallel or two points as one, in millimetres.
 const DEGENERATE: f64 = 1.0e-9;
+
+/// How far a candidate may stand off the plane and still count as lying in it, in millimetres.
+///
+/// The document's own quantum: a point is either in the plane or it is not, and the only slack a
+/// candidate needs is the arithmetic of a placement that carried it there (U119).
+const ON_PLANE_MM: f64 = 1.0e-3;
 
 /// How much nearer two candidates must be to the pointer to count as the same place.
 ///
@@ -347,6 +364,76 @@ impl SnapPlane {
     }
 }
 
+/// How a snap answers a candidate for a tool that draws on a plane.
+///
+/// A candidate may stand above or below that plane, and a maker expects two readings of it, so the
+/// workspace carries the choice and every plane-bound tool reads the same value (U119). A tool with
+/// no plane — the ruler, a vertex edit — is unaffected and always takes the point itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapMode {
+    /// 3D: the point itself. A tool that draws on a plane captures only a candidate that lies in it,
+    /// so a figure is never built from a place it cannot contain.
+    #[default]
+    Space,
+    /// 2.5D: a candidate above or below the plane captures, and the point is its perpendicular foot.
+    /// The shadow a board casts on the drawing plane is a place on that plane, which is what a maker
+    /// lines up in a top view.
+    Foot,
+}
+
+impl SnapMode {
+    /// Every mode, for the Settings row and the ribbon cell.
+    pub const ALL: [Self; 2] = [Self::Space, Self::Foot];
+
+    /// The target a plane-bound tool declares in this mode.
+    pub const fn target(self) -> SnapTarget {
+        match self {
+            Self::Space => SnapTarget::InPlane,
+            Self::Foot => SnapTarget::Foot,
+        }
+    }
+}
+
+/// What a tool can do with a snap answer, and so what the answer is.
+///
+/// The tool declares it, because only the tool knows whether its point may leave the plane it draws
+/// on. The resolver returns the point the tool stores, so a caller paints its marker at
+/// [`SnapAnswer::point`] and the marker names the place the click will take — one answer, one place
+/// (U119).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapTarget {
+    /// The tool takes the point where it is: the ruler and a vertex edit work in space, and the mode
+    /// does not apply to them.
+    Free,
+    /// The tool stores a point of the request's plane and takes only a candidate in it: the 3D
+    /// reading of a plane-bound tool.
+    InPlane,
+    /// The tool stores a point of the request's plane and takes a candidate from anywhere by its
+    /// perpendicular foot: the 2.5D reading of a plane-bound tool.
+    Foot,
+}
+
+impl SnapTarget {
+    /// The point the tool stores for a candidate, or `None` when it is not a place this tool takes.
+    ///
+    /// The two plane targets answer the candidate's plane coordinates, so the answer is a point of
+    /// the plane for a candidate that lies in it as well; the mode of a free tool changes nothing.
+    pub fn answer(self, plane: SnapPlane, point: DVec3) -> Option<DVec3> {
+        if !point.is_finite() {
+            return None;
+        }
+        match self {
+            Self::Free => Some(point),
+            Self::Foot => Some(plane.world(plane.local(point))),
+            Self::InPlane => {
+                let offset = plane.distance(point);
+                offset.is_finite().then_some(plane.world(plane.local(point))).filter(|_| offset.abs() <= ON_PLANE_MM)
+            }
+        }
+    }
+}
+
 /// One frame of the pointer's snap question.
 ///
 /// It carries the ray, the plane the tool draws on, the kinds the workspace allows and the two
@@ -372,6 +459,8 @@ pub struct SnapRequest<'a> {
     pub kinds: SnapKinds,
     /// The plane the tool draws on.
     pub plane: SnapPlane,
+    /// What the tool does with the answer, which fixes what the answer is (U119).
+    pub target: SnapTarget,
     /// The previous point of the draft, in the world, when there is one.
     pub anchor: Option<DVec3>,
     /// The draft's own points, in the world: the `vertex` kind of the figure being drawn.
@@ -391,7 +480,8 @@ pub struct SnapRequest<'a> {
 /// Where the pointer landed, and what captured it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SnapAnswer {
-    /// The snapped point in the world, on the sketch plane.
+    /// The point the tool stores: the candidate itself for a free tool, and the candidate's place on
+    /// the tool's plane for a plane-bound one. A caller paints its marker here and nowhere else.
     pub point: DVec3,
     /// The kind that captured it, or `None` when the pointer's own point stands.
     pub kind: Option<SnapKind>,
@@ -426,10 +516,10 @@ impl Project {
     /// The snapped point the pointer's ray asks for, or `None` when the ray misses its plane.
     ///
     /// The kinds are tried in their own priority order, and the first one with a candidate inside the
-    /// tolerance answers. When none does, the point is the ray's own point on the plane — locked to a
-    /// plane axis through the anchor if the hand asked for that, rounded to the grid if the grid is
-    /// on. A grid point is the plane's quantum and not a capture, so it rounds wherever the pointer
-    /// is; every other kind needs the tolerance.
+    /// tolerance answers, in the shape [`SnapRequest::target`] asks for. When none does, the point is
+    /// the ray's own point on the plane — locked to a plane axis through the anchor if the hand asked
+    /// for that, rounded to the grid if the grid is on. A grid point is the plane's quantum and not a
+    /// capture, so it rounds wherever the pointer is; every other kind needs the tolerance.
     pub fn snap(&self, request: SnapRequest<'_>, sight: Sight<'_>) -> Option<SnapAnswer> {
         let plane = request.plane;
         let free = plane.intersect(request.ray_origin, request.ray_direction)?;
@@ -485,6 +575,10 @@ impl Project {
             || kinds.edge;
         let scene = if wants_scene { self.snap_scene(sight) } else { Scene::default() };
         let plane = request.plane;
+        // A candidate the target refuses is not a place this tool may take, so it is dropped before
+        // the kind ranks its candidates: the next corner of the same kind is still a corner, and a
+        // sketch in the 3D mode must not lose one because a nearer one stands off its plane (U119).
+        let accept = |point: DVec3| request.target.answer(plane, point).is_some();
         let pointer = plane.local(free);
         let anchor = request.anchor.map(|anchor| plane.local(anchor));
         for kind in SnapKind::ALL {
@@ -498,6 +592,7 @@ impl Project {
                         .iter()
                         .copied()
                         .chain(scene.marks.iter().filter(|mark| mark.kind == kind).map(|mark| mark.point)),
+                    &accept,
                     request.ray_origin,
                     request.ray_direction,
                     reach,
@@ -505,6 +600,7 @@ impl Project {
                 SnapKind::Intersection => intersection(plane, &scene.lines, pointer, tolerance),
                 SnapKind::Midpoint | SnapKind::Centre => nearest_point_to_ray(
                     scene.marks.iter().filter(|mark| mark.kind == kind).map(|mark| mark.point),
+                    &accept,
                     request.ray_origin,
                     request.ray_direction,
                     reach,
@@ -513,12 +609,18 @@ impl Project {
                     anchor.and_then(|anchor| perpendicular(plane, &scene.lines, anchor, pointer, tolerance))
                 }
                 SnapKind::Tangent => anchor.and_then(|anchor| tangent(plane, &scene.arcs, anchor, pointer, tolerance)),
-                SnapKind::Edge => nearest_on_lines(&scene.lines, request.ray_origin, request.ray_direction, reach)
-                    .or_else(|| nearest_on_arcs(&scene.arcs, request.ray_origin, request.ray_direction, reach)),
-                SnapKind::Face => request.face.filter(|face| face.is_finite()),
+                SnapKind::Edge => {
+                    nearest_on_lines(&scene.lines, &accept, request.ray_origin, request.ray_direction, reach).or_else(
+                        || nearest_on_arcs(&scene.arcs, &accept, request.ray_origin, request.ray_direction, reach),
+                    )
+                }
+                SnapKind::Face => request.face.filter(|face| face.is_finite() && accept(*face)),
                 SnapKind::Axis | SnapKind::Grid => None,
             };
-            if let Some(point) = point.filter(|point| visible(*point, request, tolerance)) {
+            if let Some(point) = point
+                .filter(|point| visible(*point, request, tolerance))
+                .and_then(|point| request.target.answer(plane, point))
+            {
                 return Some(SnapAnswer { point, kind: Some(kind), locked: false });
             }
         }
@@ -931,11 +1033,11 @@ fn on_arc(plane: SnapPlane, arc: &SceneArc, point: DVec2, tolerance: f64) -> boo
 
 /// Whether a candidate is in front of the face the tool measured.
 ///
-/// A tool that stores the point itself — the ruler — measures what the eye sees, so a corner or a
-/// centre behind the first surface is not a place it may land on: the marker would name a point
-/// hidden inside a board. A tool that stores a plane coordinate — every sketch tool — hands in no
-/// face and keeps every candidate, because the point it stores is the candidate's footprint on the
-/// plane and a board above the drawing is exactly what its shadow is for (U116).
+/// A tool that measures what the eye sees — the ruler — hands in the face it measured, so a corner or
+/// a centre behind the first surface is not a place it may land on: the marker would name a point
+/// hidden inside a board. A tool that draws on a plane hands in no face and keeps every candidate;
+/// what it does with one is [`SnapTarget`]'s business — the 2.5D reading takes its shadow, the 3D one
+/// refuses it (U116, U119).
 fn visible(point: DVec3, request: &SnapRequest<'_>, tolerance: f64) -> bool {
     let Some(face) = request.face else {
         return true;
@@ -989,9 +1091,10 @@ fn ray_to_segment(origin: DVec3, direction: DVec3, start: DVec3, end: DVec3) -> 
     distance.is_finite().then_some((distance, on_segment))
 }
 
-/// The nearest candidate to a ray, inside the tolerance.
+/// The nearest candidate to a ray, inside the tolerance, among those `accept` takes.
 fn nearest_point_to_ray(
     points: impl Iterator<Item = DVec3>,
+    accept: &dyn Fn(DVec3) -> bool,
     origin: DVec3,
     direction: DVec3,
     reach: Reach,
@@ -999,7 +1102,7 @@ fn nearest_point_to_ray(
     let direction = direction.try_normalize()?;
     let mut best: Option<(f64, f64, DVec3)> = None;
     for point in points {
-        if !point.is_finite() {
+        if !point.is_finite() || !accept(point) {
             continue;
         }
         let offset = point - origin;
@@ -1019,14 +1122,23 @@ fn nearest_point_to_ray(
     best.map(|(_, _, point)| point)
 }
 
-/// The point of the nearest straight edge to a ray, inside the tolerance.
-fn nearest_on_lines(lines: &[[DVec3; 2]], origin: DVec3, direction: DVec3, reach: Reach) -> Option<DVec3> {
+/// The point of the nearest straight edge to a ray, inside the tolerance, among those `accept` takes.
+fn nearest_on_lines(
+    lines: &[[DVec3; 2]],
+    accept: &dyn Fn(DVec3) -> bool,
+    origin: DVec3,
+    direction: DVec3,
+    reach: Reach,
+) -> Option<DVec3> {
     let direction = direction.try_normalize()?;
     let mut best: Option<(f64, f64, DVec3)> = None;
     for [start, end] in lines.iter().copied() {
         let Some((distance, point)) = ray_to_segment(origin, direction, start, end) else {
             continue;
         };
+        if !accept(point) {
+            continue;
+        }
         let along = (point - origin).dot(direction);
         if distance > reach.at(along) {
             continue;
@@ -1040,8 +1152,14 @@ fn nearest_on_lines(lines: &[[DVec3; 2]], origin: DVec3, direction: DVec3, reach
     best.map(|(_, _, point)| point)
 }
 
-/// The point of the nearest arc's chain to a ray, inside the tolerance.
-fn nearest_on_arcs(arcs: &[SceneArc], origin: DVec3, direction: DVec3, reach: Reach) -> Option<DVec3> {
+/// The point of the nearest arc's chain to a ray, inside the tolerance, among those `accept` takes.
+fn nearest_on_arcs(
+    arcs: &[SceneArc],
+    accept: &dyn Fn(DVec3) -> bool,
+    origin: DVec3,
+    direction: DVec3,
+    reach: Reach,
+) -> Option<DVec3> {
     let direction = direction.try_normalize()?;
     let mut best: Option<(f64, f64, DVec3)> = None;
     for arc in arcs {
@@ -1049,6 +1167,9 @@ fn nearest_on_arcs(arcs: &[SceneArc], origin: DVec3, direction: DVec3, reach: Re
             let Some((distance, point)) = ray_to_segment(origin, direction, pair[0], pair[1]) else {
                 continue;
             };
+            if !accept(point) {
+                continue;
+            }
             let along = (point - origin).dot(direction);
             if distance > reach.at(along) {
                 continue;
@@ -1146,11 +1267,22 @@ mod tests {
             tolerance_depth: 0.0,
             kinds,
             plane: SnapPlane::world_xy(),
+            target: SnapTarget::Free,
             anchor: None,
             ends: &[],
             axis_lock: false,
             face: None,
         }
+    }
+
+    /// The same question from a tool that draws on the plane, in the mode the workspace chose.
+    fn targeted(plane: SnapPlane, ray: (DVec3, DVec3), kinds: SnapKinds, target: SnapTarget) -> SnapRequest<'static> {
+        SnapRequest { plane, target, ..request(ray, kinds) }
+    }
+
+    /// A plane parallel to the floor at `z`: a face a figure is drawn on, or the base itself.
+    fn plane_at(z: f64) -> SnapPlane {
+        SnapPlane::new(DVec3::new(0.0, 0.0, z), DVec3::X, DVec3::Y).expect("a plane parallel to the floor")
     }
 
     /// The settings that let one kind capture.
@@ -1175,6 +1307,75 @@ mod tests {
         // The eye looks down, so the corner it can see is the one on the upper face.
         assert!(close(answer.point, DVec3::new(700.0, 500.0, 18.0)), "{:?}", answer.point);
         assert!(!answer.locked);
+    }
+
+    #[test]
+    fn a_sketch_takes_the_candidate_in_its_plane_and_the_foot_of_one_that_is_not() {
+        // One corner of the shelf, asked by a tool that draws on a plane: the 2.5D reading takes it
+        // from anywhere and answers its perpendicular foot, the 3D reading refuses it and leaves the
+        // pointer's own point (U119).
+        let foot = targeted(plane_at(100.0), down(698.0, 499.0), only(SnapKind::Vertex), SnapTarget::Foot);
+        let answer = snapped(&shelf(), foot);
+        assert_eq!(answer.kind, Some(SnapKind::Vertex), "2.5D still takes a corner above the plane");
+        assert!(close(answer.point, DVec3::new(700.0, 500.0, 100.0)), "the answer is the foot: {:?}", answer.point);
+
+        let sharp = targeted(plane_at(100.0), down(698.0, 499.0), only(SnapKind::Vertex), SnapTarget::InPlane);
+        let answer = snapped(&shelf(), sharp);
+        assert_eq!(answer.kind, None, "3D takes no candidate that stands off the plane");
+        assert!(
+            close(answer.point, DVec3::new(698.0, 499.0, 100.0)),
+            "the pointer's own plane point stands: {:?}",
+            answer.point
+        );
+    }
+
+    #[test]
+    fn a_sketch_takes_a_corner_of_its_own_face_in_both_modes() {
+        // Drawing on the board's top face: its corners lie in that plane, so the 3D reading takes
+        // them exactly as the 2.5D one does. This is where a figure's plane comes from (U119).
+        for target in [SnapTarget::InPlane, SnapTarget::Foot] {
+            let request = targeted(plane_at(18.0), down(698.0, 499.0), only(SnapKind::Vertex), target);
+            let answer = snapped(&shelf(), request);
+            assert_eq!(answer.kind, Some(SnapKind::Vertex), "{target:?}");
+            assert!(close(answer.point, DVec3::new(700.0, 500.0, 18.0)), "{target:?}: {:?}", answer.point);
+        }
+    }
+
+    #[test]
+    fn the_3d_mode_drops_the_candidate_off_the_plane_and_keeps_the_one_in_it() {
+        // The board's upper and lower corners lie on one line through the eye. The 3D reading refuses
+        // the upper one and still answers the lower one, because a kind ranks the candidates its
+        // target takes and not the answer it then throws away (U119).
+        let request = targeted(SnapPlane::world_xy(), down(698.0, 499.0), only(SnapKind::Vertex), SnapTarget::InPlane);
+        let answer = snapped(&shelf(), request);
+        assert_eq!(answer.kind, Some(SnapKind::Vertex));
+        assert!(close(answer.point, DVec3::new(700.0, 500.0, 0.0)), "{:?}", answer.point);
+    }
+
+    #[test]
+    fn every_answer_of_a_plane_tool_lies_on_its_plane() {
+        // The invariant a marker stands on: whatever captured the pointer and whichever mode is in
+        // force, the point a plane-bound tool stores is a point of that plane (U119).
+        let plane = plane_at(40.0);
+        for target in [SnapTarget::Foot, SnapTarget::InPlane] {
+            for pointer in [down(698.0, 499.0), down(352.0, 251.0), down(200.0, 2.0)] {
+                for kind in SnapKind::ALL {
+                    let request = targeted(plane, pointer, only(kind), target);
+                    if let Some(answer) = shelf().snap(request, Sight::none()) {
+                        let off = plane.distance(answer.point).abs();
+                        assert!(off <= 1.0e-6, "{target:?} {kind:?} left the plane by {off}: {:?}", answer.point);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_mode_is_the_target_a_plane_bound_tool_declares() {
+        assert_eq!(SnapMode::Space.target(), SnapTarget::InPlane);
+        assert_eq!(SnapMode::Foot.target(), SnapTarget::Foot);
+        assert_eq!(SnapMode::default(), SnapMode::Space, "a fresh workspace draws in 3D");
+        assert_eq!(SnapMode::ALL, [SnapMode::Space, SnapMode::Foot], "two modes, two readings");
     }
 
     #[test]

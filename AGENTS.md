@@ -337,6 +337,8 @@ line budget.
 
 Then check by hand:
 
+- [ ] Every question the task raised was asked before the first edit and answered in the note or
+      `plan/questions.md`; nothing ambiguous was decided by the session (§8).
 - [ ] New behaviour has tests; a fixed bug has a regression test.
 - [ ] No new `unwrap`/`expect`/panic path (tests in the same file may use them).
 - [ ] No floating-point physical sizes outside the geometry/render boundary.
@@ -442,13 +444,18 @@ checkout — which is how a plan line and a source file were lost once.
 
 ## 8. Working with the owner
 
-- **An unclear task is a question, not a guess.** When a task is ambiguous, when a fact it needs is
-  missing, or when a sentence of it does not match what the tree does today, do not pick a reading
-  and build it: say what is unclear, say what the code measures now, and offer the two or three
-  plausible shapes with what each one changes and costs. Ask once, with the options and the default
-  you would take, and leave the work untouched until the answer arrives — a session that guesses
-  spends the owner's time twice. A task whose answer needs a decision outside the tree (a place, a
-  gesture, a document field) is the same case, not an invitation to improvise.
+- **An unclear task is a question, not a guess.** This is a duty, not a preference: the session
+  must ask, and a session that builds a reading of its own has failed the task even when the gate is
+  green and the code is clean. When a task is ambiguous, when a fact it needs is missing, or when a
+  sentence of it does not match what the tree does today, do not pick a reading and build it: say
+  what is unclear, say what the code measures now, and offer the two or three plausible shapes with
+  what each one changes and costs. Ask once, with the options and the default you would take, and
+  leave the work untouched until the answer arrives — a guess costs the owner a whole rework and
+  spends their time twice, and a defect that survives it is reported to them a second time. A task
+  whose answer needs a decision outside the tree (a place, a gesture, a document field, a behaviour
+  a maker expects) is the same case, not an invitation to improvise. "It seemed reasonable" is not
+  an answer to "why did you do that": the question goes to the owner before the first edit, and the
+  answer is written into the task's note.
 - **Plan before build.** Any task larger than one file starts with a plan; the owner is the technical director and approves it.
 - **Explain non-obvious decisions in one sentence** (why this crate, this representation, this boundary). Do not re-explain variables and functions.
 - **Expertise leads; the owner can overrule.** When a brief contradicts what the domain, UI/UX or these

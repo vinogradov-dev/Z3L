@@ -45,6 +45,35 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **U119** two snap kinds: 2.5D drops the perpendicular onto the tool's plane, 3D gives every tool the point itself
+  Why: The owner's report, three screenshots: the marker of a snap stands on the 3D candidate
+   while the point the sketch stores is its foot on the work plane, so the preview edge and the
+   L and angle plates land 150-180 px away from what the marker names; the contour editor and
+   the vertex editor ask the resolver nothing at all. U116 made the footprint the one answer
+   for every tool and T17 moved only the marker, so the same defect came back as a second
+   report. The owner asked for two snap kinds: a 2.5D snap that drops the perpendicular onto
+   the tool's plane, for work on a top view, and a full 3D snap every tool reads the same way.
+  Shape: One workspace value model::SnapMode (Space is 3D, Foot is 2.5D) beside the kinds, and
+   one request value model::SnapTarget the tool declares: Free (the tool takes the point where
+   it is: the ruler, a vertex edit), Foot (2.5D: a candidate captures from anywhere and the
+   answer is its perpendicular foot), InPlane (3D: only a candidate in the tool's plane
+   captures, and the answer is that point). The resolver applies the target where the candidate
+   is accepted, so the answer is always the point the tool stores and the marker is drawn at
+   the answer: the split of U116/T17 disappears by construction. The sketch and the contour
+   edit declare a plane target from the mode; in 3D a sketch draws on the plane of the face
+   under its first click, so its own figure's corners lie in it. The Snaps group gains one mode
+   cell (two drawings) and the Settings page one row; the value is written to the workspace
+   file like the kinds. Every point-placing tool is tested against the same table: marker
+   screen equals the placed point's screen, the placed point equals the candidate in 3D and the
+   foot in 2.5D, and a tool with no plane is unaffected by the mode.
+  Done: Tests: for the same pointer over a board 18 mm above the planes, the sketch in 3D
+   captures nothing off its plane and the sketch in 2.5D lands on the foot; the ruler answers
+   the candidate in both modes; the marker's screen position equals the placed point's screen
+   position for every tool and mode in the table; the mode cell and its Settings row survive a
+   restart; one offscreen shot of the sketch overlay shows the marker on the end of the
+   preview. The three screenshots of the report stop being reproducible in a frame test.
+  `files: crates/model/src/project/snap.rs,crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,crates/ui/src/toolbars/spec.rs,app/src/gizmo_math.rs,app/src/draw_gizmo.rs,app/src/measure_gizmo.rs,app/src/contour_gizmo.rs,app/src/vertex_gizmo.rs`
+
 - `[ ]` **X95** the post's icon reads as a leg, not as a vertical panel
   Why: Observation, from the owner: the icon of the tool that creates a post must read as a
   rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
@@ -127,6 +156,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   inside the footprint; a non-convex footprint is a readable refusal and never a board outside
   the case; the box case keeps today's answers; `cargo xtask ci` is green.
   `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
+- `[ ]` **U120** a round body answers its own places, not the corners of its box
+  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
+   the ones that come later. Today Scene::object files a bound box for every geometry and a
+   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
+   eight corners of the square around its base, which are points in the air, and its upper rim
+   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
+   sphere answers the box face centres — six points on the surface, but chosen by the world
+   axes rather than by the body. A marker on the corner of a box around a round body names a
+   place no maker can work at, in either snap mode.
+  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
+   payload files what its parameters describe. A sphere files its centre, its two poles and the
+   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
+   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
+   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
+   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
+   error until it answers its places, and each round answer ships with a test that the point is
+   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
+   rather than in the air around it.
+  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
+   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
+   radius; the pointer over the empty air beside a round body captures nothing of it; a future
+   PrimitiveKind cannot be added without its arm.
+  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and

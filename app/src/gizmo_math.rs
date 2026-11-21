@@ -836,9 +836,14 @@ impl PlaneSnap {
     }
 
     /// The request one tool's pointer makes of the resolver.
+    ///
+    /// `target` is the tool's own word on what it does with the answer: a tool that stores a point in
+    /// space takes the candidate, and one that draws on a plane declares which reading of a candidate
+    /// above it the workspace is in ([`model::SnapTarget`], U119).
     pub(crate) fn request<'a>(
         self,
         kinds: model::SnapKinds,
+        target: model::SnapTarget,
         anchor: Option<DVec3>,
         ends: &'a [DVec3],
         axis_lock: bool,
@@ -851,6 +856,7 @@ impl PlaneSnap {
             tolerance_depth: self.depth,
             kinds,
             plane: self.plane.snap_plane(),
+            target,
             anchor,
             ends,
             axis_lock,
