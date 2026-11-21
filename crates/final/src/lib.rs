@@ -43,6 +43,7 @@ mod device_tests;
 pub mod gpu;
 pub mod image;
 pub mod job;
+pub mod light;
 pub mod ray;
 pub mod sampler;
 pub mod soup;
