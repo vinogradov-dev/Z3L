@@ -1,4 +1,4 @@
-# 0208. The assistant's panel is a window, and its turn is driven between frames
+# 0209. The assistant's panel is a window, and its turn is driven between frames
 
 - Status: Accepted
 - Date: 2026-11-21
