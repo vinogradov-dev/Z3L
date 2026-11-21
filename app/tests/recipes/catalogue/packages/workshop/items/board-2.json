@@ -1,0 +1,2 @@
+{ "id": "1-2", "kind": "sheet-material", "name": "White melamine chipboard 18 mm", "slug": "board-2",
+  "props": { "thickness": { "type": "length", "value": 18000 }, "color": { "type": "text", "value": "white" } } }

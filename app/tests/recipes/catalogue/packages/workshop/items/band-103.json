@@ -1,0 +1,3 @@
+{ "id": "1-103", "kind": "edge-banding", "name": "White ABS edge 1 mm", "slug": "band-103",
+  "props": { "thickness": { "type": "length", "value": 1000 }, "width": { "type": "length", "value": 22000 },
+             "color": { "type": "text", "value": "white" } } }
