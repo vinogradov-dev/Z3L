@@ -271,6 +271,49 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    says which checkout the rule belongs to; a stream branch whose stream the plan does not
    declare keeps the old refusal.
   `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs`
+- `[ ]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
+  Why: Observation: a contour drawing that has been stored once is a dead operand. In
+   /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
+   segments miss each other by 4.6, 6.7, 10.1 and 12.4 µm — the rounding
+   `ContourSegment::from_geom` does at storage, which the document accepts on `2 µm + radius ×
+   1.746e-5` (ADR 0072). `contour.boolean.union` over those two rings answers "nothing to
+   create: the rings do not meet, so nothing is left", and `object.area.extrude` answers "the
+   point is not inside any area" for every point, because `partition_regions` starts with
+   `union_regions`. Expectation: a joint the document accepts is a joint to the geometry layer,
+   so a stored drawing combines and its areas are non-empty. Suspected cause, measured:
+   `geom::boolean` welds vertices at `VERTEX_TOLERANCE = 1e-6` mm and never closes a joint gap
+   of a few micrometres, and `model::Contour::to_geometry` builds the ring with
+   `new_with_joint_tolerance` — so the ring is legal for the document and open for the boolean.
+   A control probe with a 3 µm gap reproduces it: the same ring unions fine at 0 µm, loses its
+   disjoint partner at 3 µm and leaves nothing when two such rings are unioned.
+  Shape: One rule for a joint: the gap the document is allowed to store is the gap the boolean
+   welds, so `collect_edges` welds at the operand ring's own joint tolerance instead of one
+   nanometre — or the conversion closes the joint before the ring reaches the geometry layer,
+   and then the boolean keeps its nanometre. The tested round trip decides which: every stored
+   ring the document accepts must be closed for `union_regions`.
+  Done: A test unions two rings whose joints are `2 µm + radius × 1.746e-5` apart and gets both
+   pieces, another unions the two rings of the cross.z3l intersection and gets one object, and
+   `object.area.extrude` on that object reaches both caps; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
+- `[ ]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
+  Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
+   circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
+   a contour set is not a valid ring: a contour needs at least three segments, got 1"; the same
+   happens with two disjoint circles and, from the scene, when a drawing carries a circle
+   beside another ring. Expectation: a union of a circle and a shape is a drawing of two rings,
+   and of two circles is two rings. Suspected cause, measured: `simplify_loop` merges
+   consecutive pieces on one circle, so the four arcs become one 360° arc, and
+   `Contour::assemble` refuses a ring of fewer than three segments — the boolean produces a
+   ring the document cannot store.
+  Shape: Keep a closed ring storable: either `simplify_loop` never merges a ring down to one
+   segment, or a single closed arc is a legal contour. The second is the smaller rule and the
+   one that names the shape honestly; the first keeps every stored ring looking like the figure
+   it was drawn from. The test is the round trip of a stored one-arc ring through the file and
+   the mesh.
+  Done: A test unions a circle with a disjoint rectangle and stores two rings, another
+   round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
+   drawing of two rings; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's

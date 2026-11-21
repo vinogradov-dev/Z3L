@@ -61,6 +61,3 @@ this file only when a task touches the question.
   whatever drawing it is over. Reading the pointer's drawing instead is a mode whose target is not the
   selection, and it changes what the cell means for every other payload; confirm the narrower reading
   or ask for the pointer-driven one.
-- A face with a hole cannot become a body yet (G5 stores the profile with holes). Until G5 lands,
-  should such a face be pulled as several bodies — one per piece the hole leaves — or stay refused
-  with a sentence? One click, one body is what shipped.
