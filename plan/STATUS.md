@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=22b5c6a updated=2026-11-21
+STATE: milestone=M7 phase=T task=- state=idle base=a838503 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -17,7 +17,9 @@ token in the settings folder, every call answered at the top of a frame against 
 `ui_inspect`, and `z3l mcp serve --attach` as that channel without a window (J6, ADR 0188, ADR 0207).
 The window also has a chat: `Ctrl+J` opens the panel, one message is one turn, and `plan` answers
 every agent batch with the command line's dry run while `build` lands one undo entry per message, the
-person's own commands never gated (J7, ADR 0187, ADR 0190, ADR 0209).
+person's own commands never gated (J7, ADR 0187, ADR 0190, ADR 0209). A run or a batch names the
+product it works in — `product`, opened before the steps and not as one — and the answer says which
+product it ran in (J17, ADR 0212).
 
 The nomenclature directory is edited by a window of its own: `z3l directory [<folder>]` opens the item
 tree, the record's card and the registry view, and a save is one record plus the package's revision,
@@ -52,9 +54,9 @@ tones and encodes in Rust; `z3l render` is the same entry point headless (Y1, AD
 
 ## Next
 
-Nothing is scheduled: Y1 landed, so the editor draws a final image from the place beside the File
-menu, and the render stream's order holds the quality behind it (Y2 to Y5). J14 waits with the
-network adapter, its consent card and the key's two homes, and P18 and P19 beside it.
+Nothing is scheduled: J17 landed, so a caller over the channel names a product, lands parts inside
+it and reads which product a batch ran in. J18 is the next step of that build; J14 waits with the
+network adapter, its consent card and the key's two homes, with P18 and P19 beside it.
 
 ## Index
 

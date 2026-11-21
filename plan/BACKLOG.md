@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **J17** a product cannot be opened over the channel, so no furniture part can be born
-  Why: Measured 2026-11-21: `product.create` succeeded (node 3, and `query box` reports 800 x
-   460 x 2200 at the origin) and `command_list` then answered `open_product: null`; `query
-   niche` at [400, 230, 1000] answered `no niche at ... the point is outside every product` and
-   `panel.create` stays `enabled: false`, because a part is born only inside the open product
-   (ADR 0098). Opening is a session view operation (`Session::open_product`,
-   `crates/engine/src/session.rs:159`), not a command: the headless CLI opens with `--product`
-   (`app/src/cli/recipe.rs:99`) and the window opens what a person double-clicks, so a caller
-   over the channel has no door at all and every furniture command is unreachable after the
-   frame is made. The CLI is no better for a recipe that makes its own frame: it opens the
-   product before it runs the batch, so `z3l run` on an empty scene answers `panel.create
-   cannot create furniture here: Create a product first` at line 2 of a recipe whose line 1
-   makes the product - which is why the wardrobe recipe in `app/tests/recipes` starts from a
-   scene that already holds the frame.
-  Shape: One way for a caller that is not the window to say which product it works in: a view
-   operation on the same tool surface (a field the batch carries, or a question about the
-   session) that writes no document field, moves no revision and leaves no undo entry, exactly
-   as the session method does, with ADR 0098 keeping one product open. The answer of a batch
-   then names the product it ran in.
-  Done: A test binds a session with no open product, opens one over the channel and asserts a
-   panel lands inside it; a test asserts a scene with two products and none named answers the
-   sentence the CLI already uses; a test asserts opening writes no revision and no undo entry.
-  `files: crates/mcp/src/server.rs,crates/engine/src/session.rs,app/src/cli/recipe.rs`
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -1182,6 +1159,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
 
 ## Done
+
+- `[x]` **J17** a product cannot be opened over the channel, so no furniture part can be born
+  Why: Measured 2026-11-21: `product.create` succeeded (node 3, and `query box` reports 800 x
+   460 x 2200 at the origin) and `command_list` then answered `open_product: null`; `query
+   niche` at [400, 230, 1000] answered `no niche at ... the point is outside every product` and
+   `panel.create` stays `enabled: false`, because a part is born only inside the open product
+   (ADR 0098). Opening is a session view operation (`Session::open_product`,
+   `crates/engine/src/session.rs:159`), not a command: the headless CLI opens with `--product`
+   (`app/src/cli/recipe.rs:99`) and the window opens what a person double-clicks, so a caller
+   over the channel has no door at all and every furniture command is unreachable after the
+   frame is made. The CLI is no better for a recipe that makes its own frame: it opens the
+   product before it runs the batch, so `z3l run` on an empty scene answers `panel.create
+   cannot create furniture here: Create a product first` at line 2 of a recipe whose line 1
+   makes the product - which is why the wardrobe recipe in `app/tests/recipes` starts from a
+   scene that already holds the frame.
+  Shape: One way for a caller that is not the window to say which product it works in: a view
+   operation on the same tool surface (a field the batch carries, or a question about the
+   session) that writes no document field, moves no revision and leaves no undo entry, exactly
+   as the session method does, with ADR 0098 keeping one product open. The answer of a batch
+   then names the product it ran in.
+  Done: A test binds a session with no open product, opens one over the channel and asserts a
+   panel lands inside it; a test asserts a scene with two products and none named answers the
+   sentence the CLI already uses; a test asserts opening writes no revision and no undo entry.
+  `files: crates/mcp/src/server.rs,crates/engine/src/session.rs,app/src/cli/recipe.rs` — `a838503`
 
 - `[x]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
   Why: The owner needs a final render, not a screenshot: one still image at print resolution,
