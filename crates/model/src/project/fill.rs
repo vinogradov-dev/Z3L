@@ -25,7 +25,7 @@
 use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use geom::{Contact, DQuat, DVec2, DVec3};
+use geom::{Contact, DQuat, DVec2, DVec3, Region};
 use units::{Degrees, Length};
 
 use super::niche::{document_ring, signed_area, surface_corners};
@@ -384,21 +384,23 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     let value = follow(free.unwrap_or(local[stance.t]), low, high);
     // A hidden body is a boundary of the part and not a slice out of it: the footprint is cut back at
     // the body's face in both modes, so the part stops where the material starts (X73, ADR 0175).
-    let trim = |polygon: Vec<DVec2>, stance: &Stance| -> Result<Vec<DVec2>, FillRefusal> {
+    // The cuts are handed back with the polygon so an exact outline takes the same ones (ADR 0204).
+    let trim = |polygon: Vec<DVec2>, stance: &Stance| -> Result<(Vec<DVec2>, Vec<Cut>), FillRefusal> {
         trim_footprint(polygon, hidden, stance, local, (value, value + gap))
     };
-    let (stance, polygon, angles) = match mode {
+    let (stance, polygon, angles, cuts) = match mode {
         FillMode::Fit => {
             let footprint = fit_footprint(niche, &stance, (value, value + gap)).ok_or(FillRefusal::TooSmall)?;
-            (stance, trim(footprint, &stance)?, Vec::new())
+            let (polygon, cuts) = trim(footprint, &stance)?;
+            (stance, polygon, Vec::new(), cuts)
         }
         FillMode::Shape => match reference_face(niche, value, gap, stance) {
             Ok(stance) => {
                 let face = stance.face(value, gap);
                 let section = niche.cut(stance.t, (face, face), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-                let section = trim(section, &stance)?;
+                let (section, cuts) = trim(section, &stance)?;
                 let angles = wall_bevels(niche, &section, face, &stance);
-                (stance, section, angles)
+                (stance, section, angles, cuts)
             }
             // The wall planes here cannot all be met by one flat end face: two walls lean against
             // each other, or a wall lies nearly level with the board. The shape is still useful and
@@ -408,12 +410,13 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
             Err(FillRefusal::WallsDisagree | FillRefusal::Wedge) => {
                 let section =
                     niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-                (stance, trim(section, &stance)?, Vec::new())
+                let (section, cuts) = trim(section, &stance)?;
+                (stance, section, Vec::new(), cuts)
             }
             Err(refusal) => return Err(refusal),
         },
     };
-    let exact = exact_section(niche, mode, hidden.is_empty(), &stance);
+    let exact = exact_section(niche, mode, &stance, &cuts, DVec2::new(local[stance.u], local[stance.v]));
     let shape = PartShape {
         footprint: &polygon,
         mode,
@@ -449,18 +452,52 @@ fn fit_footprint(niche: &Niche, stance: &Stance, slab: (f64, f64)) -> Option<Vec
     niche.cut(stance.t, slab, (stance.u, stance.v))
 }
 
-/// The frame's own section a part is cut to, when the cell can answer one and nothing trims it.
+/// The frame's own section a part is cut to, when the cell can answer one.
 ///
-/// A cell seeded from a shaped frame keeps that frame's ring exactly (ADR 0201, N33), and a prism's
-/// section is the same at every height, so a shelf takes the ring itself instead of the chords of it.
-/// Three conditions hold it back: the part must be the shape rather than the largest fit, its own plane
-/// must *be* the section plane (a post or a wall stands across the cell, where the section is a
-/// projection of the ring and not the ring), and no hidden body may trim the footprint, because a trim
-/// is a polygon rule.
-fn exact_section<'a>(niche: &'a Niche, mode: FillMode, untrimmed: bool, stance: &Stance) -> Option<&'a Contour> {
+/// A cell seeded from a shaped frame keeps that frame's ring exactly (ADR 0201, N33, ADR 0204), and a
+/// prism's section is the same at every height, so a shelf takes the ring itself instead of the chords
+/// of it. Two conditions hold it back: the part must be the shape rather than the largest fit, and its
+/// own plane must *be* the section plane and keep the panel's own axes — a post or a wall stands across
+/// the cell, where the section is a projection of the ring and not the ring.
+///
+/// A hidden body trims the ring by the half-planes the polygon trim chose, not by a polygon rule, so a
+/// part that stops at a hidden part still keeps the frame's own arc (ADR 0204, X73, ADR 0175).
+fn exact_section(niche: &Niche, mode: FillMode, stance: &Stance, cuts: &[Cut], point: DVec2) -> Option<Contour> {
     let flat = stance.u == 0 && stance.v == 1 && stance.t == 2;
     let square = !stance.against_y && !stance.against_z && !stance.other_face;
-    (mode == FillMode::Shape && untrimmed && flat && square).then(|| niche.section()).flatten()
+    if mode != FillMode::Shape || !flat || !square {
+        return None;
+    }
+    let section = niche.section()?;
+    if cuts.is_empty() {
+        return Some(section.clone());
+    }
+    let ring = section.to_geometry().ok()?;
+    let mut region = Region::new(ring, Vec::new()).ok()?;
+    for cut in cuts {
+        region = region.clip_half_plane_around(cut.normal, cut.offset, point).ok()??;
+    }
+    region_contour(&region)
+}
+
+/// The document ring a region's outer boundary draws, or `None` when it cannot be stored.
+fn region_contour(region: &Region) -> Option<Contour> {
+    let segments = region
+        .outer()
+        .segments()
+        .iter()
+        .map(|segment| ContourSegment::from_geom(*segment).ok())
+        .collect::<Option<Vec<_>>>()?;
+    Contour::new(segments).ok()
+}
+
+/// One half-plane a hidden body's face cuts away from the part: its normal and its offset.
+#[derive(Clone, Copy, Debug)]
+struct Cut {
+    /// The normal of the kept side, in the board's own two axes.
+    normal: DVec2,
+    /// The offset of the face along that normal.
+    offset: f64,
 }
 
 /// The stance whose base face is the wide one: the face a cut-only bevel can keep as the outline.
@@ -577,7 +614,7 @@ struct PartShape<'a> {
     /// The material's thickness.
     thickness: Length,
     /// The frame's own ring, when the part takes the shape rather than the largest fit.
-    exact: Option<&'a Contour>,
+    exact: Option<Contour>,
     /// The pointer's own place in the board's two axes: a fit goes where the hand points.
     pointer: DVec2,
 }
@@ -613,7 +650,7 @@ fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
         }
         FillMode::Shape if exact.is_some() => {
             let ring = exact.ok_or(FillRefusal::TooSmall)?;
-            exact_part(ring, stance)
+            exact_part(&ring, stance)
         }
         FillMode::Shape => {
             let ring = local_ring(footprint, angles, stance, low, high);
@@ -1202,8 +1239,9 @@ fn trim_footprint(
     stance: &Stance,
     at: DVec3,
     slab: (f64, f64),
-) -> Result<Vec<DVec2>, FillRefusal> {
+) -> Result<(Vec<DVec2>, Vec<Cut>), FillRefusal> {
     let mut polygon = polygon;
+    let mut cuts = Vec::new();
     for body in hidden {
         // A body that only reaches the slab's own faces is contact, not a cut.
         if body.max[stance.t] <= slab.0 + TRIM_TOLERANCE || body.min[stance.t] >= slab.1 - TRIM_TOLERANCE {
@@ -1215,7 +1253,7 @@ fn trim_footprint(
         if !polygon_hits_rect(&polygon, min, max) {
             continue;
         }
-        let mut best: Option<((bool, f64), Vec<DVec2>)> = None;
+        let mut best: Option<((bool, f64), Vec<DVec2>, Cut)> = None;
         for axis in [stance.u, stance.v] {
             // The two faces of the body on this axis, each keeping the side it bounds.
             for (face, side) in [(body.min[axis], -1.0), (body.max[axis], 1.0)] {
@@ -1226,17 +1264,20 @@ fn trim_footprint(
                 };
                 let stands = side * (at[axis] - face) > TRIM_TOLERANCE;
                 let score = (stands, signed_area(&kept));
-                if best.as_ref().is_none_or(|(seen, _)| score > *seen) {
-                    best = Some((score, kept));
+                if best.as_ref().is_none_or(|(seen, ..)| score > *seen) {
+                    best = Some((score, kept, Cut { normal, offset: side * face }));
                 }
             }
         }
         match best {
-            Some((_, kept)) => polygon = kept,
+            Some((_, kept, cut)) => {
+                polygon = kept;
+                cuts.push(cut);
+            }
             None => return Err(FillRefusal::TooSmall),
         }
     }
-    Ok(polygon)
+    Ok((polygon, cuts))
 }
 
 /// Whether a convex polygon and an axis-aligned rectangle share any area.
@@ -2159,6 +2200,49 @@ mod tests {
         // Shown again, the post is a wall of the void and the same point is inside a niche.
         let shown = project.fill_plan(product, request(300.0), Sight::none(), None);
         assert!(shown.is_ok(), "the post's own faces bound the void when it is shown: {shown:?}");
+    }
+
+    #[test]
+    fn a_trimmed_shape_still_keeps_the_frames_own_radius() {
+        // A hidden body stops the part at its face, and the part still takes the frame's shape: the
+        // trim cuts the frame's own ring by the body's half-plane instead of swapping the ring for the
+        // polygon of chords, so a rounded corner stays a radius (ADR 0204, X73).
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a rounded case");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Rounded", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a rounded product");
+        // A sheet standing across the depth between x = 100 and x = 118, hidden from the eye and
+        // present to the saw; the pointer is on its far side, where the frame's radius is.
+        let nominal = PanelNominalSize::new(millimetres(720), millimetres(500)).expect("a sheet size");
+        let placement = Placement::new(DVec3::new(100.0, 0.0, 720.0), DQuat::from_rotation_y(FRAC_PI_2))
+            .expect("a sheet placement");
+        let sheet =
+            project.add_panel(product, "Sheet", nominal, None, millimetres(18), placement).expect("add a sheet");
+        let hidden = hiding(sheet);
+        let request = FillRequest::new(
+            DVec3::new(400.0, 300.0, 300.0),
+            Fill::WidthAndDepth,
+            FillMode::Shape,
+            millimetres(18),
+            None,
+        );
+        let shaped = project.fill_plan(product, request, Sight::of(&hidden), None).expect("a trimmed shape");
+        let ring = shaped.outline.ring_for(shaped.nominal_size).expect("the outline's ring");
+        assert!(
+            ring.segments().iter().any(|segment| matches!(segment, geom::Segment::Arc(_))),
+            "the frame's rounded corner survives the trim: {:?}",
+            shaped.outline
+        );
+        assert!(
+            (shaped.nominal_size.length().millimetres_f64() - 482.0).abs() < 1.0e-3,
+            "the sheet is the near wall: {:?}",
+            shaped.nominal_size
+        );
     }
 
     #[test]

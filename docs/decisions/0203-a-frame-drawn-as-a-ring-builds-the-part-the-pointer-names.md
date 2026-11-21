@@ -1,7 +1,7 @@
 # 0203. A frame drawn as a ring builds the part the pointer names
 
 - Status: Accepted; supersedes the non-convex refusal of 0201 and the box shortcut of 0106 for a shaped
-  frame
+  frame; its piece-only seed is superseded by 0204 for the section and the box
 - Date: 2026-11-21
 
 ## Context
