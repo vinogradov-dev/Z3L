@@ -50,25 +50,33 @@ millimetres (X115).
 | part | size | position | class |
 |---|---|---|---|
 | Дно опорное | 800 × 438 × 18 | z 50..68, the sides stand on it | 10.11 |
-| Стойка левая / правая | 2114 × 438 × 18 | x 0..18 / 782..800, z 68..2182 | 10.10 |
+| Стойка левая / правая | 2114 × 438 × 18 | left is `+X`: 782..800 / 0..18, z 68..2182 | 10.10 |
 | Крыша накладная | 800 × 438 × 18 | z 2182..2200, over both sides | 10.11 |
 | Перегородка | 1736 × 438 × 18 | x 391..409, z 68..1804, up to the антресоль | 10.10 |
 | Антресольная полка | 764 × 438 × 18 | z 1804..1822, 360 clear above it | 10.11 |
-| Полка 1..5 (справа) | 373 × 438 × 18 | x 409..782, 274 clear apart, the top cell 276 | 10.11 |
+| Полка 1..5 (справа, `−X`) | 373 × 438 × 18 | x 18..391, 274 clear apart, the top cell 276 | 10.11 |
 | Задняя стенка | 800 × 2150 × 4 | y 0..4, HDF `1-3` | 10.12 |
-| Дверь левая / правая | 399 × 2150 × 18 | y 442..460, z 50..2200, 2 mm gap between them | 10.20 |
+| Дверь левая / правая | 399 × 2150 × 18 | y 442..460, z 50..2200, 2 mm gap; left is x 401..800 | 10.20 |
 | Ножка 1..4 | Ø60 × 50 | inset 60 from the carcass edges | — |
-| Штанга | Ø25 × 373 | axis y 223, z 1700, between the left side and the divider | — |
+| Штанга | Ø25 × 373 | axis y 223, z 1700, in the left section x 409..782 | — |
 
 The five right-hand cells are one clear opening each, by the domain rule that a quoted spacing is the
 opening between two surfaces, not a pitch between centres: 1646 mm of space over six cells gives
 274, and the last cell takes the 2 mm the division leaves.
 
 A panel's local frame has its zero at the minimum corner, the plate in XY and the thickness along
-`+Z`, so a part stands up by being placed with a quarter turn: `[0, s, 0, s]` turns local `+Z` into
-world `+X` (the sides and the divider), `[-s, 0, 0, s]` turns it into world `+Y` (the back and the
-doors), and the flat parts keep the identity. `RectEdge::Top` — edge 3, the `+Y` edge — is the one a
-maker sees on a carcass board, so that is the edge banded; the doors are banded on all four.
+`+Z`, so a part stands up by being placed with a quarter turn. The turns are the model's own stances
+(`crates/model/src/project/fill.rs`, ADR 0105): the post is `rotation_y(-90°)` — `[0, -s, 0, s]` —
+which puts the board's zero corner at the **bottom** and its thickness along `+X`; a `+90°` turn
+hangs the origin at the top of the board instead (X117). The wall — the back and the doors — is
+`[-0.5, -0.5, -0.5, 0.5]`: length up, width across `+X`, thickness along `+Y`. `RectEdge::Top` —
+edge 3, the `+Y` edge — is the one a maker sees on a carcass board, so that is the edge banded; the
+doors are banded on all four.
+
+**Left is `+X`.** The front view looks from `+Y`, so what a person standing in front of the piece
+sees on their left lies at `+X` (`crates/model/src/side.rs`): the shelves are the right-hand section
+(`−X`) and the rail hangs in the left-hand one (`+X`). Writing "left" into a coordinate without that
+rule is how the first build came out mirrored (X118).
 
 ## What was measured on 2026-11-21
 
