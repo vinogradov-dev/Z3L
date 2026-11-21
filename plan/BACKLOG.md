@@ -515,6 +515,64 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
    asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
   `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md`
+- `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
+  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
+   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
+   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
+   landed at the top of the board (z = 2182) and the part grew downward. The model states the
+   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
+   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
+   `panel.create` takes a placement as it is, and neither the schema nor any check says which
+   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
+  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
+   created by a command has its origin at a corner of its base face, decided once for every
+   command that creates a part, so the horizontal and the upright placement cannot disagree
+   about which end is the origin. The fill stance then stops being the only place the rule is
+   written.
+  Done: A test creates an upright panel by command and asserts its origin is a base corner of
+   the part; a test asserts a placement whose origin is not on the base face is refused with a
+   sentence naming the anchor rule; the wardrobe fixture has every origin at the bottom.
+  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
+- `[ ]` **X118** a side has no name on the tool surface, so a caller maps "left" onto its own axes and the piece comes out mirrored
+  Why: Owner report 2026-11-21: the wardrobe came out mirrored against the description -
+   "говоря левая стойка это лево по отношению взора". Measured: `crates/model/src/side.rs:45`
+   says `Side::Left => DVec3::X` with the comment "left is +X, seen from the front", and
+   `docs/domain/products.md` §2.1 repeats it, but the build put the left side at `x 0..18`,
+   which is the viewer right. The reason is not a missing convention but a missing word on the
+   surface: no command, schema or answer names a side - `Side`, `OpeningView` and the four side
+   names live in the model and the docs, while a caller writes coordinates, so it maps a person
+   words onto its own mental picture (screen axes) and is wrong half the time. The model states
+   the rule and a test in the interface holds `Side::Left` to it, so nothing failed: the caller
+   was never told.
+  Shape: The side is a word the surface can carry, like `class` already is: the product answer
+   names its four sides with the axis and the face each one is (`left: +X, face at x = 800`),
+   and a part can be placed by side where a side is what the caller means. A recipe then says
+   "стойка на стороне left" and no coordinate is guessed, so the words of a description and the
+   document cannot disagree.
+  Done: A test reads the four sides of a product from the answer and asserts left is +X with
+   the face it names; a test places a part by side and asserts its world box; the wardrobe
+   recipe names its sides rather than the coordinates they happen to be.
+  `files: crates/model/src/side.rs,crates/mcp/src/server.rs,docs/domain/products.md`
+- `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
+  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
+   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
+   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
+   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
+   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
+   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
+   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
+   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
+   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
+   on a key (`app/src/document.rs:2543`), but nothing says the view was left behind, so the
+   person reads it as a camera that moves by itself.
+  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
+   the model outside the current frame refits and the status bar says so, and once the person
+   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
+   and gets the place a person looks for it among the view controls.
+  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
+   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
+   centre; the frame-all control is reachable from the view controls and by its key.
+  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
