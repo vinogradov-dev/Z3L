@@ -563,8 +563,10 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
    model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
    the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
-   on a key (`app/src/document.rs:2543`), but nothing says the view was left behind, so the
-   person reads it as a camera that moves by itself.
+   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
+   view was left behind, so the person reads it as a camera that moves by itself. The same
+   stale target is why a standard view does not centre the model (X121) and why the
+   orthographic height was left at the scale of the earlier oversized build (X120).
   Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
    the model outside the current frame refits and the status bar says so, and once the person
    frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
@@ -573,6 +575,47 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    a view the person moved is left alone; a test asserts the orbit target is the framed bounds
    centre; the frame-all control is reachable from the view controls and by its key.
   `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs`
+- `[ ]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
+  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
+   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
+   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
+   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
+   so the promise its own comment makes - "the distance that shows the same height" - is broken
+   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
+   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
+   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
+   coming back from a kilometre takes about twenty-eight notches and reads as movement by
+   micrometres.
+  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
+   height cannot be shown in perspective the view refits the scene or says why instead of
+   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
+   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
+   explicit escape.
+  Done: A test switches a large orthographic height to perspective and asserts the visible
+   height at the target is unchanged, or that the answer says the view was refitted; a test
+   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
+   notches; a test asserts no projection switch leaves the camera clamped at the cap.
+  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs`
+- `[ ]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
+  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
+   центрируется на центр сцены". Measured: `Layout::apply_preset`
+   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
+   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
+   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
+   the same. So the target is whatever the view had before, and in this tab that is the empty
+   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
+   coming from Blender numpad or a view cube expects a standard view to centre the model, and
+   the older X119 is what put a meaningless target behind it.
+  Shape: A standard view centres the scene: the preset writes the direction, the projection and
+   the target, and the distance frames the scene bounds in that direction, keeping the size the
+   person had chosen when they had already framed this view by hand. ADR 0049 records the
+   exception it makes to "a preset moves the direction only", so the next reader does not
+   reinstate the old rule.
+  Done: A frame test asks for the top view of a model standing away from the origin and asserts
+   the model bounds are inside the frame and its centre lands on the view centre; a test
+   asserts a view the person framed by hand keeps its size through a preset; a test asserts
+   orbiting after a preset keeps the new target.
+  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
