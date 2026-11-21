@@ -1,6 +1,6 @@
 # 0192. A recipe is Rust that emits commands, and the recipe language waits
 
-- Status: Accepted
+- Status: Superseded by 0215: a recipe is not a Rust function; its units, its typed refusal and "the model chooses and explains" stand
 - Date: 2026-11-21
 
 ## Context

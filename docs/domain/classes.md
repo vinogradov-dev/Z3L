@@ -350,7 +350,7 @@ nested — how that recipe is written down is still open (§12).
 The aliases carry the workshop's own words, which are not classes: `10.10` is «боковина»,
 «перегородка» and «стойка»; `10.11` is «полка», «днище» and «крыша»; `10.12` is «стенка», «задняя
 стенка» and `back`; `10.13` is a drawer side, bottom
-or back. The same rows answer to the English words a person may think in — `side`, `shelf`, `bottom`,
+or back; `20.06`, the hanging rail, answers to «штанга» and to `rod` and `rail`. The same rows answer to the English words a person may think in — `side`, `shelf`, `bottom`,
 `top`, `drawer side` — because the picker searches the label, the slug and the aliases in both
 languages. The glass shelf is the table's one override: glass is bought by area from the glazier, so
 `measure` stays area under a `piece` supply, and no sheet is nested.

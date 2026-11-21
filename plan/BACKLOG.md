@@ -45,30 +45,65 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
-  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
-   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
-   decor at its real texel scale, the grain along the direction the piece is cut, the banding
-   in the colour of its own band, the handle as metal. A shader-node material format would put
-   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
-   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
-   whatever the document stores when that question is answered, and this task does not decide
-   the storage.
-  Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
-   texture, a roughness and a metallic pair. A finish record becomes the coat over the decor —
-   one board is matte, the next satin, the next lacquer — and a glass or mirror front is a
-   dielectric pane with the thickness and the tint its record names, because that is what a
-   workshop buys and what a cabinet actually has. The decor map is rotated per face so the
-   grain follows the item's direction on the panel's A and B faces, and an item that names no
-   grain renders the same in both. Banding takes its material's colour on its segments;
-   hardware carries a finish. Exposure and the filmic tone map are settings of the command,
-   never view state, and the viewport keeps its own colours.
+- `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
+  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
+   a shop has no place where a material is edited once and referenced by its boards. A format a
+   session invents from scratch will not be the one a joiner uses, so it takes the commonly
+   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
+   of pictures beside it.
+  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
+   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
+   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
+   whole. The library is one portable file in the workshop's user settings beside the settings
+   file (library.json) with an atomic save and a readable refusal for every refusal, and a
+   textures folder beside it: a picture is an ordinary file at a relative path that a person
+   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
+   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
+   it hands it the directory's, and the crate is registered in xtask's layer map and in
+   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
+   nothing draws.
+  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
+   empty name, a decor with no size and a picture that is missing are refusals a person can
+   read, never a panic; a replaced picture changes the frame's decor without restarting the
+   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
+   is green.
+  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src`
+
+- `[ ]` **O16** a catalogue record refers to a library material instead of describing it
+  Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
+   colour, a texture reference, roughness, metallic. The owner's model is the other way round:
+   materials live in their own library (Y8) and a nomenclature record refers to one. Two
+   descriptions of one material disagree on the first order, because the panel would name the
+   record oak while the render read an inline block and drew another wood.
+  Shape: An optional material reference on the nomenclature item envelope, the stable id the
+   library hands out; the wire schema and its golden file in the same change (ADR 0096: before
+   the first release the format has no past); a view::material reader beside board and banding;
+   and section 7 rewritten, with the Appearance block retiring and a reference replacing it. A
+   record whose material is gone is a diagnostic over a record that still resolves, the way an
+   absent catalogue item already is. A panel, a band and a hardware item refer the same way:
+   what differs between them is their kind, not how they speak about a material.
+  Done: Tests: a record with a material answers its id and one without answers none; a record
+   naming a material that is not there is a diagnostic and still resolves; the golden file
+   matches the current schema; a zero id is refused; cargo xtask ci is green.
+  `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
+
+- `[ ]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
+   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
+   material and left the mapping unwritten, so the viewport and the final render show something
+   the workshop does not buy, and they disagree with the catalogue record on the first order.
+  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
+   panel's board from its material record, a band from its own, hardware as a conductor with
+   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
+   tint its record names. A record with no material keeps the placeholder tone, because a
+   workshop that has not filled the catalogue must still see a board and not a black rectangle.
+   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
+   exposure and the filmic curve stay the command's settings.
   Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
-   banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
-   field darkens the image monotonically; an item that names no decor renders a flat colour
-   rather than black; `cargo xtask ci` is green.
-  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
+   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
+   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
+   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
@@ -687,20 +722,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J8** a recipe builds a carcass in one command and one undo step
-  Why: ADR 0192 makes the arithmetic ours and gives the model the choice; nothing of
-   `product.build`, `carcass.box` or `wardrobe.hinged` exists, so today "build a wardrobe 600 x
-   2200 x 500" is a prompt with nobody to compute it.
-  Shape: Typed recipe functions with parameters in `Length` and `Degrees`, `product.build` as
-   one command inside one edit scope, and the recipe list with its parameter ranges generated
-   from the functions themselves so a query, a tool schema and a card cannot disagree. The
-   document keeps the prototype reference, so changing a recipe never rewrites work that was
-   built from it.
-  Done: A recipe test asserts the panel count, the sizes and the placements of `carcass.box`;
-   `product.build` restores the whole carcass with one undo; a parameter outside its range is a
-   typed refusal that names the parameter; an unknown recipe name is refused like an unknown
-   command id.
-  `files: crates/param/src,crates/engine/src/commands.rs,crates/model/src/project`
 - `[ ]` **J9** the inspector finds the seven mistakes, and the model explains them
   Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
    that does not fit, a rail through a door and a part longer than the sheet — and a model
@@ -769,6 +790,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the tool schemas, the answers and the refusals - because a released build ships no prose
    (J19); `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
+- `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
+  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
+   decor at its real texel scale, the grain along the direction the piece is cut, the banding
+   in the colour of its own band, the handle as metal. A shader-node material format would put
+   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
+   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
+   whatever the document stores when that question is answered, and this task does not decide
+   the storage.
+  Shape: The frame's ability, and not the mapping: a decor value on a drawable — the picture,
+   the millimetres one image width covers and the quarter turns its grain runs by — which the
+   surface's colour multiplies; the viewport samples it through one texture per decor, and the
+   tracer carries the same value as its own table and filters it with its own bilinear, repeat
+   and sRGB-to-linear arithmetic. Grain is the renderer's vocabulary: the document's storage
+   question stays open in PROJECT.md. Exposure and the filmic tone map are the command's
+   settings and were already there; the viewport keeps its own colours. The mapping from a
+   record, its banding and a handle's finish is Y7's.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them, in the viewport and in the tracer's picture; an item that
+   names no decor renders a flat colour rather than black; the exposure field darkens the image
+   monotonically; cargo xtask ci is green.
+  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
 - `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
   Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
    visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
@@ -1114,8 +1157,84 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test sends a string where an object belongs and asserts the refusal names the field
    and the shape; a test sends an object with an unknown key and asserts the key is named.
   `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
+- `[ ]` **Y6** the Render place shows the image as it is traced, and keeps the last one
+  why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
+   step by step where that is possible, and the render grows step by step toward a product a
+   workshop can use. V-Ray and Blender are references a session looks at, never specifications
+   it copies (AGENTS §1.3, §4.6): this entry is one step of that road, not a parity programme.
+   Today the place reports a percentage and a path — `Stage::Done { path, width, height,
+   samples }` in `crates/ui/src/render_page.rs` — the PNG is written once at the end and a
+   person leaves the application to see it. ADR 0211 deferred exactly this: "a preview of the
+   last image ... needs a texture the shell registers, which is why it did not come with this
+   record", and `plan/debt.md` `[ui]` records the same gap: no preview, no status line of its
+   own. A plate that takes minutes shows no sign of life, cannot reveal a wrong exposure or a
+   wrong camera before it finishes, and leaves nothing to look at when it does.
+  shape: The quality bar is decomposed into our own words, never copied: the image is the
+   surface, the numbers are a rail, the row under the picture says how far the render is, and
+   the picture is still there when the run ends. (1) The page becomes image-first: the picture
+   fills the room the shell gives the place, fitted to the image's aspect ratio and letterboxed
+   against the panel ink, with the numbers column kept as a rail beside it; the split and its
+   metric are chosen against `.pi/skills/ui-design/references/checklist.md` and recorded in an
+   ADR, and ADR 0211's decision that the render is a place and not a modal stands. (2) The
+   tracer moves from strip-major to sample-major — one sample over every strip, then the next,
+   with the device accumulators held for the whole run — so the first checkpoint shows the
+   whole frame at a low sample count and every later one refines it, where today a strip is
+   finished before the next one starts and only the end of the run has pixels. (3) A checkpoint
+   hands back a display-sized picture and not the accumulator: a small compute pass averages
+   the accumulation into a buffer capped at 1024 on its longer side, because a full 8192-side
+   accumulator would move 256 MB across the bus per checkpoint; the shell tone-maps it with the
+   curve the file already uses, `Image::from_accumulation` then `to_rgba8`, so dragging the
+   exposure re-tones the last snapshot instead of waiting for another run. (4) A bounded
+   mailbox and not a queue: the worker publishes at most one snapshot the shell has not taken,
+   on a checkpoint interval chosen so a 2480 × 3508 plate publishes about four times a second,
+   and a snapshot nobody read is replaced rather than kept. `ui` still sees no `wgpu`: `final`
+   hands a `Snapshot { width, height, samples, pixels: Vec<u8> }`, the shell registers and
+   updates an `egui` texture (`register_native_texture`, as `app/src/document.rs` already does
+   for the viewport) and the page draws it by `TextureId`. (5) The place owns its status row —
+   resolution, samples done and total, elapsed and estimated time, destination — which closes
+   the second half of the `plan/debt.md` `[ui]` entry. (6) The last snapshot survives the end
+   of a run, a cancel and a trip to another document; a change of exposure re-tones it, while a
+   change of size or samples needs a new run and the page says so. (7) A camera move or an edit
+   made while the plate is drawn changes nothing: the frame was cloned at the press (ADR 0211).
+  Done: Tests: a device test traces 128 × 128 at 16 samples and asserts at least three
+   snapshots arrive with strictly increasing sample counts, each at the requested size, and
+   that the last one is the finished image's pixels to the code value; a second test asserts
+   the mailbox holds at most one unread snapshot, so a slow reader loses pictures rather than
+   growing memory (a counter, not a wall clock); a cancel keeps the last snapshot on the page
+   and writes no file; a page test drives the place with `RawInput` at two window sizes and
+   asserts the picture is letterboxed inside the room, fitted and centred, and that the paint
+   names the texture the shell gave it; an exposure change re-tones the last snapshot with no
+   second run (a shell test on the tone map); the status row prints resolution, samples,
+   elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
+   is green.
+  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J20** the agent is taught the domain and the tool families before it builds
+  Why: Measured 2026-11-21: a caller sees five tools and a command_list of 64 ids with labels
+     and schemas, and nothing says which world a request belongs to. A nut, a carcass and a scene
+     light look alike to a model, the guide a person carries is only in docs/, and the wardrobe
+     built by hand in app/tests/recipes came out in millimetres where the document wanted
+     micrometres (X115). ADR 0192 answered with Rust recipes (carcass.box, wardrobe.hinged),
+     which the owner rejected on 2026-11-21: a construction must not be hardcoded; the model
+     composes commands and the program teaches it the domain. Nothing in the tree states how a
+     build starts (a product frame), which shapes the frame takes (Footprint: rectangle, cut
+     corners, a drawn ring), which roles the parts play (model::class::registry(), 78 rows with
+     aliases like «стойка») or that a rod has a class row (20.06) and no creation command.
+  Shape: One guide the model reads before its first command: engine::guide() returns one JSON
+   value — the two worlds (furniture: the product frame and the parts inside it; geometry: free
+   bodies), the order of a build from scratch, the frame shapes with a worked radius-corner
+   example, the three stances of ADR 0105 with their rotations, the class registry's roles with
+   their aliases, the units and the four sides — built from the registries so a name cannot
+   drift, plus one family word per command (furniture, geometry, tree, scene). It travels in
+   command_list and as z3l guide.
+  Done: Every registered command carries exactly one family and the guide names only ids the
+   registry holds; the guide lists every assignable class row once with code, label and
+   aliases; a test turns a panel by each stance and holds it to ADR 0105; the guide's
+   radius-corner envelope parses into a Footprint::Cut with a fillet; command_list and z3l
+   guide print the same value; cargo xtask ci is green.
+  `files: crates/engine/src,crates/mcp/src/server.rs,app/src/cli.rs` — `1dcd495`
 
 - `[x]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
   Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name
