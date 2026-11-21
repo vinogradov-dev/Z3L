@@ -146,6 +146,32 @@ impl Mailbox {
     }
 }
 
+/// One call and the answer a host gives it, apart from any socket.
+///
+/// This is the seam a host's own test drives: the socket, the token and the handshake are the
+/// channel's own promise and are tested here, so a frame test can ask "does this frame answer the
+/// queue?" without a second process, a client or a runtime.
+#[doc(hidden)]
+pub fn queued(call: Call) -> (Pending, Answering) {
+    let (reply, answered) = oneshot::channel();
+    (Pending { call, reply }, Answering(answered))
+}
+
+/// The other end of [`queued`]: what the host answered, read without a runtime.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Answering(oneshot::Receiver<Answer>);
+
+impl Answering {
+    /// The answer, once the host has given it; `None` when the request was dropped unanswered.
+    ///
+    /// It waits, so it is for a test that has already driven the frame that answers: a window never
+    /// calls it.
+    pub fn take(self) -> Option<Answer> {
+        self.0.blocking_recv().ok()
+    }
+}
+
 /// The answer a host gives while a gesture holds the window.
 ///
 /// A piece in hand and a question waiting for an answer are the two gestures that outlive a frame;

@@ -48,7 +48,7 @@ use model::Project;
 use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use channel::{Call, Channel, ChannelError, Mailbox, Pending, busy};
+pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, busy, queued};
 pub use inspect::{Tab, Window};
 pub use server::{CommandServer, Door, asking, dispatch, listing, serve_session};
 pub use tools::{

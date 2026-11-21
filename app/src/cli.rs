@@ -54,7 +54,7 @@ usage: z3l                 open the editor
                     [--price-max-age <days>]
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
-       z3l mcp serve [<scene.z3l>] [--product <node>]
+       z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
        z3l query --resources
        z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
        z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
@@ -85,6 +85,10 @@ ship can list the commands and dispatch them. It binds no port and prints no rep
 are the protocol's. A scene named on the line is written back when a batch lands; without one the
 document lives in memory and every answer says nothing was written.
   --product <node>   the product the tools work in; a scene with exactly one product opens it
+  --attach           serve the local control channel instead of the standard streams: 127.0.0.1 on
+                     an ephemeral port, a token minted for this run and written into the settings
+                     folder, and `ui_inspect` beside the four tools. The channel stops when standard
+                     input closes, and that is how a parent ends it.
 
 query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
@@ -157,6 +161,8 @@ pub struct McpArgs {
     pub scene: Option<PathBuf>,
     /// The product the tools work in; the document's only product when it is absent.
     pub product: Option<Id>,
+    /// Whether to serve the local control channel instead of the standard streams.
+    pub attach: bool,
 }
 
 /// One `query` request, already checked.
@@ -390,7 +396,8 @@ fn run_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
 }
 
-/// Reads the words after `mcp`: the one subcommand `serve`, an optional scene and the product.
+/// Reads the words after `mcp`: the one subcommand `serve`, an optional scene, the product and
+/// whether the local channel is the door.
 ///
 /// One subcommand is the whole surface today, and `serve` is spelled out rather than implied so a
 /// later `mcp client` or `mcp attach` cannot silently change what a line does.
@@ -408,10 +415,12 @@ fn mcp_args(args: &[String]) -> Result<Command, CliError> {
     }
     let mut scene: Option<PathBuf> = None;
     let mut product: Option<Id> = None;
+    let mut attach = false;
     while let Some(word) = words.next() {
         match word.as_str() {
             "-h" | "--help" => return Ok(Command::Help(USAGE)),
             "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            "--attach" => attach = true,
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not an option of `mcp serve`; run `z3l --help`")));
             }
@@ -421,7 +430,7 @@ fn mcp_args(args: &[String]) -> Result<Command, CliError> {
             other => scene = Some(PathBuf::from(other)),
         }
     }
-    Ok(Command::Mcp(McpArgs { scene, product }))
+    Ok(Command::Mcp(McpArgs { scene, product, attach }))
 }
 
 /// Reads the words after `query`: the resource table, or one scene and one report.
