@@ -68,6 +68,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    radius; the pointer over the empty air beside a round body captures nothing of it; a future
    PrimitiveKind cannot be added without its arm.
   `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
+- `[~]` **J5** a client we did not write drives the editor, headless
+  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
+   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
+   process can call a command except the command line. A client we did not write cannot reach
+   the editor at all.
+  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
+   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
+   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
+   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
+   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
+   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
+   reason beside its predicate: the clause J2 measured and left to the first door that needs
+   both halves.
+  Done: A test drives a served session over stdio through `command_list` and a two-line
+   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
+   sentence that says why a disabled command is disabled, in the command's own words; `cargo
+   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
+   the file the way `z3l run` does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -298,25 +318,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J5** a client we did not write drives the editor, headless
-  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
-   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
-   process can call a command except the command line. A client we did not write cannot reach
-   the editor at all.
-  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
-   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
-   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
-   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
-   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
-   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
-   reason beside its predicate: the clause J2 measured and left to the first door that needs
-   both halves.
-  Done: A test drives a served session over stdio through `command_list` and a two-line
-   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
-   sentence that says why a disabled command is disabled, in the command's own words; `cargo
-   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
-   the file the way `z3l run` does.
-  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
 - `[ ]` **J6** the local channel attaches an agent to the window a person is looking at
   Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
    measured: a stdio child edits a saved file, not the document a person is looking at, so
