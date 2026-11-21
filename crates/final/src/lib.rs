@@ -235,6 +235,12 @@ pub enum FinalError {
         /// What the device or the driver said.
         reason: String,
     },
+    /// A studio radiance that is not a finite, non-negative number.
+    #[error("the studio behind the scene is a radiance of zero or more, and {value} was asked for")]
+    Environment {
+        /// The value the request carried.
+        value: f32,
+    },
     /// An exposure that is not a positive number of stops.
     #[error("an exposure is a positive number of stops, and {exposure} was asked for")]
     Exposure {

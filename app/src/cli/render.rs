@@ -57,7 +57,9 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
     };
     let revision = session.project().revision().get();
     let request = Request::new(args.width, args.height, args.samples).map_err(describe)?;
-    let settings = Settings::new(request, args.exposure, &args.out).map_err(describe)?;
+    let settings = Settings::new(request, args.exposure, &args.out)
+        .and_then(|settings| settings.with_environment(args.studio / 100.0))
+        .map_err(describe)?;
     let (device, queue) = device()?;
     let mut tracer = Tracer::new(&device).map_err(describe)?;
     let progress = Progress::new(request.samples());
@@ -184,6 +186,7 @@ mod tests {
             height: 720,
             samples: 64,
             exposure: 1.0,
+            studio: 30.0,
             camera: super::super::CameraChoice::Fit,
         };
         let lines = perform(&args).expect("the demo renders");

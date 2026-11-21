@@ -818,6 +818,7 @@ messages! {
     RenderHeight = ["Height", "Высота"],
     RenderSamples = ["Samples", "Сэмплы"],
     RenderExposure = ["Exposure", "Экспозиция"],
+    RenderStudio = ["Studio", "Студия"],
     RenderDestination = ["File", "Файл"],
     RenderNoPath = ["no file chosen yet", "файл ещё не выбран"],
     RenderChoose = ["Choose…", "Выбрать…"],

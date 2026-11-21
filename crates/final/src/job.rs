@@ -33,11 +33,16 @@ use crate::{FinalError, Request};
 /// registry does not carry it and no undo entry answers for it (`AGENTS.md` §4.1).
 pub const RENDER_FINAL_ID: &str = "render.final";
 
-/// What one render was asked for: the image, the exposure and where the file goes.
+/// What one render was asked for: the image, the exposure, the studio and where the file goes.
+///
+/// The environment is the render's, not the document's: a final image is made by a person who chose a
+/// studio for it, and the scene's own lights are the workshops'. It stays a setting of this command
+/// until a document object claims it (`plan/notes/Y2.md`, ADR 0212).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     request: Request,
     exposure: f32,
+    environment: f32,
     path: PathBuf,
 }
 
@@ -52,12 +57,31 @@ impl Settings {
         if !exposure.is_finite() || exposure <= 0.0 {
             return Err(FinalError::Exposure { exposure });
         }
-        Ok(Self { request, exposure, path: path.into() })
+        Ok(Self { request, exposure, environment: 0.0, path: path.into() })
     }
 
     /// A render at one stop and the given destination, which is what a surface starts with.
     pub fn default_for(request: Request, path: impl Into<PathBuf>) -> Result<Self, FinalError> {
         Self::new(request, 1.0, path)
+    }
+
+    /// The same render in a studio of `environment` linear radiance, which is what a ray sees where
+    /// the frame has no geometry.
+    ///
+    /// The value is one number for a neutral room, not a colour: a tinted studio is a decision no
+    /// catalogue image has needed yet. Zero is no studio at all, so a render that asks for nothing
+    /// keeps the black background every frame had before the final render could see one.
+    pub fn with_environment(mut self, environment: f32) -> Result<Self, FinalError> {
+        if !environment.is_finite() || environment < 0.0 {
+            return Err(FinalError::Environment { value: environment });
+        }
+        self.environment = environment;
+        Ok(self)
+    }
+
+    /// The radiance of the studio behind the scene, in linear RGB.
+    pub fn environment(&self) -> [f32; 3] {
+        [self.environment; 3]
     }
 
     /// The image size and sample count.
@@ -121,7 +145,11 @@ pub fn run(
     }
     let Input { frame, camera, revision } = input;
     tracer.prepare(device, frame, revision)?;
-    let accumulation = tracer.render(device, queue, camera, &frame.lighting, request, progress)?;
+    // The frame's lights are the scene's; the studio is this render's, so it is written over the
+    // frame's own value on the copy the tracer reads and never into the frame a viewport shares.
+    let mut lighting = frame.lighting.clone();
+    lighting.environment = settings.environment();
+    let accumulation = tracer.render(device, queue, camera, &lighting, request, progress)?;
     if progress.cancelled() {
         return Err(FinalError::Cancelled { samples: progress.done(), total: progress.total() });
     }
@@ -156,8 +184,29 @@ mod tests {
             let error = Settings::new(request, hostile, "out.png").expect_err("a broken exposure is refused");
             assert!(matches!(error, FinalError::Exposure { .. }), "{hostile} was accepted");
         }
-        // One stop is what a surface starts with.
-        assert_eq!(Settings::default_for(request, "out.png").expect("one stop").exposure(), 1.0);
+        // One stop is what a surface starts with, and no studio at all.
+        let defaults = Settings::default_for(request, "out.png").expect("one stop");
+        assert_eq!(defaults.exposure(), 1.0);
+        assert_eq!(defaults.environment(), [0.0; 3], "a render that names no studio is black");
+    }
+
+    #[test]
+    fn a_studio_is_one_finite_radiance_and_a_hostile_one_is_refused() {
+        let request = Request::new(64, 64, 1).expect("a small request");
+        let lit = Settings::default_for(request, "out.png")
+            .expect("a setting")
+            .with_environment(1.0)
+            .expect("a white studio");
+        assert_eq!(lit.environment(), [1.0; 3], "a neutral studio, not a colour");
+        assert_eq!(lit.exposure(), 1.0, "the studio does not touch the exposure");
+        for hostile in [-1.0, f32::NAN, f32::INFINITY] {
+            let error = Settings::default_for(request, "out.png")
+                .expect("a setting")
+                .with_environment(hostile)
+                .expect_err("a broken studio is refused");
+            assert!(matches!(error, FinalError::Environment { .. }), "{hostile} was accepted");
+            assert!(error.to_string().contains("studio"), "the sentence names the field: {error}");
+        }
     }
 
     #[test]

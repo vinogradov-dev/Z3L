@@ -624,3 +624,38 @@ fn the_radiance_clamp_is_out_of_reach_and_measurably_biased_when_it_is_not() {
     assert!(huge > 0.0, "a clamped picture is a picture, not a hole");
     assert!(huge < unclamped, "the clamp fires on a lamp this bright");
 }
+
+#[test]
+fn the_studio_is_the_render_settings_and_not_the_frames() {
+    // The frame's own environment is zero here, so a picture that is not black can only come from the
+    // command's studio: this is the test that the setting reaches the shader through `run`.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to light a studio with");
+        return;
+    };
+    let mut frame = SceneFrame::default();
+    frame.push(Drawable::new(id(1), plate(-800.0, -800.0, 800.0, 800.0, 0.0), DMat4::IDENTITY, [1.0, 1.0, 1.0, 1.0]));
+    frame.lighting.key_color = [0.0; 3];
+    frame.lighting.points.clear();
+    assert_eq!(frame.lighting.environment, [0.0; 3], "the frame carries no studio of its own");
+    let camera = Camera::new(DVec3::ZERO, 1500.0).expect("a camera looking at the plate");
+    let request = Request::new(16, 16, 4).expect("a tiny render");
+    let mut tracer = Tracer::new(&device).expect("the integrator compiles");
+    let mut centre_of = |studio: f32, name: &str| -> [u8; 4] {
+        let path = scratch_png(name);
+        let settings = Settings::default_for(request, &path)
+            .expect("a render setting")
+            .with_environment(studio)
+            .expect("a studio");
+        let progress = Progress::new(request.samples());
+        run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 5 }, &settings, &progress)
+            .expect("the frame renders");
+        let (width, _height, pixels) = read_png(&path);
+        pixels.get((8 * width + 8) as usize).copied().expect("the centre pixel")
+    };
+    let dark = centre_of(0.0, "studio-none");
+    let lit = centre_of(1.0, "studio-white");
+    assert_eq!(dark, [0, 0, 0, 255], "no studio and no lamp is a black picture");
+    assert!(lit[0] > 200, "a white studio returns the room: {lit:?}");
+    assert_eq!((lit[0], lit[1], lit[2]), (lit[0], lit[0], lit[0]), "a neutral studio is not a colour");
+}
