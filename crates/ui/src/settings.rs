@@ -623,6 +623,24 @@ pub struct PanelsSettings {
     pub inspector: PanelState,
 }
 
+/// The *Assistant* section: the local control channel an agent attaches to.
+///
+/// The channel is on for a fresh workspace because a feature a person has to discover a flag for is a
+/// feature that does not exist (ADR 0188). Its exposure is one machine, one account and one token that
+/// dies with the process, and this switch is the one place a workshop closes the door.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AssistantSettings {
+    /// Whether the window offers the loopback control channel.
+    pub attach: bool,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self { attach: true }
+    }
+}
+
 /// Everything the workspace remembers between runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -645,6 +663,8 @@ pub struct Settings {
     pub ribbon: RibbonSettings,
     /// The visibility and fold of the two side panels.
     pub panels: PanelsSettings,
+    /// The local control channel an agent attaches to.
+    pub assistant: AssistantSettings,
 }
 
 impl Default for Settings {
@@ -659,6 +679,7 @@ impl Default for Settings {
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
             panels: PanelsSettings::default(),
+            assistant: AssistantSettings::default(),
         }
     }
 }
@@ -821,11 +842,13 @@ pub enum SettingsSection {
     Panels,
     /// The shortcut table.
     Shortcuts,
+    /// The assistant: the local control channel an agent attaches to.
+    Assistant,
 }
 
 impl SettingsSection {
     /// Every section in the order the window lists them.
-    pub const ALL: [Self; 4] = [Self::Appearance, Self::Viewport, Self::Panels, Self::Shortcuts];
+    pub const ALL: [Self; 5] = [Self::Appearance, Self::Viewport, Self::Panels, Self::Shortcuts, Self::Assistant];
 
     /// The user-visible name.
     pub const fn label(self) -> Message {
@@ -834,6 +857,7 @@ impl SettingsSection {
             Self::Viewport => Message::SectionViewport,
             Self::Panels => Message::SectionPanels,
             Self::Shortcuts => Message::SectionShortcuts,
+            Self::Assistant => Message::SectionAssistant,
         }
     }
 }
@@ -881,6 +905,7 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
                     SettingsSection::Viewport => viewport_ui(ui, settings, lang),
                     SettingsSection::Panels => panels_ui(ui, settings, lang),
                     SettingsSection::Shortcuts => shortcuts_ui(ui, lang),
+                    SettingsSection::Assistant => assistant_ui(ui, settings, lang),
                 };
             });
         });
@@ -1007,6 +1032,21 @@ fn preset_card(ui: &mut Ui, settings: &mut Settings, preset: theme::ThemePreset,
 fn swatch(ui: &mut Ui, fill: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 10.0), egui::Sense::hover());
     ui.painter().rect_filled(rect, egui::CornerRadius::same(2), fill);
+}
+
+/// The *Assistant* page: the one switch that closes the local control channel.
+///
+/// The page names both places a support question lands — this switch and the token file in the
+/// settings folder — because a person answering "my agent cannot see the window" has to know which of
+/// the two is the door (ADR 0188). Nothing here reaches the network: the channel binds loopback.
+fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
+    ui.heading(Message::SectionAssistant.text(lang));
+    let changed = ui
+        .checkbox(&mut settings.assistant.attach, Message::AttachChannel.text(lang))
+        .on_hover_text(Message::AttachChannelHint.text(lang))
+        .changed();
+    ui.label(egui::RichText::new(Message::AttachChannelHint.text(lang)).small().color(theme::text_dim(ui)));
+    changed
 }
 
 /// The *Panels* page: the two floating side panels and the opacity they share with the chrome.
@@ -1336,6 +1376,7 @@ mod tests {
                 scene: PanelState { visible: false, expanded: true },
                 inspector: PanelState { visible: true, expanded: false },
             },
+            assistant: AssistantSettings { attach: false },
         }
     }
 
@@ -1381,6 +1422,20 @@ mod tests {
         let old = Settings::from_json(r#"{"version":1,"snaps":{"planes":true}}"#).expect("parse");
         assert_eq!(old.snaps.mode, model::SnapMode::Foot, "2.5D is the reading a fresh workspace starts in");
         assert_eq!(old.snaps.mode.target(), model::SnapTarget::Foot);
+    }
+
+    #[test]
+    fn the_channel_switch_is_on_for_a_workspace_that_never_heard_of_it() {
+        // A file from before the assistant section exists opens with the channel on: the default is
+        // the feature, and the switch is only how a workshop closes it (ADR 0188).
+        let settings = Settings::from_json(r#"{"version":1,"appearance":{"ui_scale":125}}"#).expect("parse");
+        assert!(settings.assistant.attach, "a fresh workspace lets a local agent reach the window");
+        assert_eq!(settings.appearance.ui_scale, 125, "and the rest of the file is the workspace's");
+
+        let off = Settings::from_json(r#"{"version":1,"assistant":{"attach":false}}"#).expect("parse");
+        assert!(!off.assistant.attach, "a closed door stays closed across a restart");
+        let text = off.to_json().expect("serialise");
+        assert!(!Settings::from_json(&text).expect("reread").assistant.attach);
     }
 
     #[test]
