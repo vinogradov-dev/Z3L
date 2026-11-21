@@ -163,11 +163,17 @@ pub fn listing(session: &Session) -> Value {
     json!({
         "revision": session.project().revision().get(),
         "open_product": session.active_product().map(|id| id.get()),
+        "mode": session.agent_mode().word(),
         "commands": commands,
     })
 }
 
 /// The `command_run` and `command_batch` answer: the report of one batch, and what the file holds.
+///
+/// The batch goes through [`Session::agent_batch`], so the mode a person left the session in decides
+/// what a call may do: `plan` runs the same steps with writing off and answers with the plan, and no
+/// request field can talk it into writing (ADR 0190). The answer names the mode, so a model that was
+/// answered a plan reads why nothing moved instead of guessing.
 pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -> Answer {
     if request.steps.is_empty() {
         return Answer::refused("a batch names at least one step; nothing was dispatched");
@@ -175,13 +181,13 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
     let steps: Vec<BatchStep> =
         request.steps.iter().map(|step| BatchStep::new(step.command.clone(), step.params.clone())).collect();
     let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
-    let report = session.batch(&steps, options);
+    let report = session.agent_batch(&steps, options);
     let write = match door {
         Door::Headless { sink: Some(sink) } => sink_write(sink, session, &report),
         Door::Headless { sink: None } => Write::NoFile,
         Door::Window => Write::Window,
     };
-    let body = report::batch(&report, &steps, &write, session.project().revision().get());
+    let body = report::batch(&report, &steps, &write, session.project().revision().get(), session.agent_mode());
     if report.refusal().is_some() || write.failed() { Answer::fail(body) } else { Answer::ok(body) }
 }
 
