@@ -45,30 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
-  Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post
-  and the shelf, and answered that overlay or inset («накладная»/«вкладная») is not the tool's
-  question: the tool creates the frontal panel and the mounting is a property chosen later.
-  The fill trait has exactly two pairs today (`10.10`, h+d for a post, `10.11`, w+d for a
-  shelf) and the table's frontal sheet part, `10.12` back panel, carries `fill —` with the
-  editor rule «no void fill», so the board in the frontal plane can only be drawn or typed,
-  never created from the space it closes. The class table is the one statement of that rule,
-  so the request changes the table, not only the toolbar.
-  Shape: A third `Fill::WidthAndHeight`; the `10.12` row gains `w+h` and its editor row becomes «no
-  banding command, offered by the void tool for a width+height fill», with «стенка» among its
-  aliases. A tool `furniture.panels.wall` (label «Стенка» / Wall) sits in the Panels group
-  beside the post and the shelf with the same two methods, Fit and Shape, the same ghost and
-  the same `panel.create` click; its thickness is the material's (the default catalogue's
-  4 mm sheet, O1) and the section is the niche's frontal cut. The creation asks nothing about
-  overlay or inset: the panel is born as the frontal fill and the mounting is a property
-  edited afterwards. One new record amends the trait list of ADR 0097 and the fill rule of
-  ADR 0099, and `docs/domain/classes.md` §7 and §10 change with it.
-  Done: Tests: a bare frame's void gives a frontal panel of the niche's width and height at the
-  material's thickness; Fit and Shape take the same two modes and a splayed case gives the
-  shaped board; the class row's fill is `WidthAndHeight` and its alias answers «стенка»; the
-  tool is one click, one undo entry, the ghost matches the created panel, and no field asks
-  overlay or inset; `cargo xtask ci` is green.
-  `files: crates/model/src/class.rs,crates/model/src/project/fill.rs,crates/ui/src/toolbars/spec.rs,crates/engine/src/panel_cmds/panel.rs,docs/domain/classes.md`
 - `[ ]` **U117** the contour panel and the niche-fit panel have artwork of their own
   Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
   fits the niche's shape is a board with a bevel and a rounding. Today
@@ -639,6 +615,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs`
 
 ## Done
+
+- `[x]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
+  Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post
+  and the shelf, and answered that overlay or inset («накладная»/«вкладная») is not the tool's
+  question: the tool creates the frontal panel and the mounting is a property chosen later.
+  The fill trait has exactly two pairs today (`10.10`, h+d for a post, `10.11`, w+d for a
+  shelf) and the table's frontal sheet part, `10.12` back panel, carries `fill —` with the
+  editor rule «no void fill», so the board in the frontal plane can only be drawn or typed,
+  never created from the space it closes. The class table is the one statement of that rule,
+  so the request changes the table, not only the toolbar.
+  Shape: A third `Fill::WidthAndHeight`; the `10.12` row gains `w+h` and its editor row becomes «no
+  banding command, offered by the void tool for a width+height fill», with «стенка» among its
+  aliases. A tool `furniture.panels.wall` (label «Стенка» / Wall) sits in the Panels group
+  beside the post and the shelf with the same two methods, Fit and Shape, the same ghost and
+  the same `panel.create` click; its thickness is the material's (the default catalogue's
+  4 mm sheet, O1) and the section is the niche's frontal cut. The creation asks nothing about
+  overlay or inset: the panel is born as the frontal fill and the mounting is a property
+  edited afterwards. One new record amends the trait list of ADR 0097 and the fill rule of
+  ADR 0099, and `docs/domain/classes.md` §7 and §10 change with it.
+  Done: Tests: a bare frame's void gives a frontal panel of the niche's width and height at the
+  material's thickness; Fit and Shape take the same two modes and a splayed case gives the
+  shaped board; the class row's fill is `WidthAndHeight` and its alias answers «стенка»; the
+  tool is one click, one undo entry, the ghost matches the created panel, and no field asks
+  overlay or inset; `cargo xtask ci` is green.
+  `files: crates/model/src/class.rs,crates/model/src/project/fill.rs,crates/ui/src/toolbars/spec.rs,crates/engine/src/panel_cmds/panel.rs,docs/domain/classes.md` — `e1e281c`
 
 - `[x]` **X95** the post's icon reads as a leg, not as a vertical panel
   Why: Observation, from the owner: the icon of the tool that creates a post must read as a
