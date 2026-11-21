@@ -762,6 +762,16 @@ impl Document {
         &self.scene
     }
 
+    /// The frame the viewport draws, for a surface that needs the scene as data rather than as
+    /// pixels.
+    ///
+    /// The render place takes exactly what the viewport shows — the same triangles, the same lights
+    /// and the same camera — so it reads the frame here instead of evaluating a second one
+    /// (`AGENTS.md` §4.2, ADR 0210).
+    pub(crate) fn drawn_frame(&self) -> &SceneFrame {
+        &self.scene
+    }
+
     /// Applies the viewport section of the workspace settings to this scene.
     ///
     /// The style default applies to the active view at once and the other views keep theirs; a grid,

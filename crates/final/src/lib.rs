@@ -9,7 +9,8 @@
 //!
 //! Input is frame data, never document data: the triangles of a [`scene`] frame, the lights it
 //! carries in watts with inverse-square falloff (ADR 0039) and the session camera. This crate reads
-//! no `Project`, no catalogue and no file; the shell hands it a frame and takes an image back.
+//! no `Project`, no catalogue and no file of its own; the shell hands it a frame and takes an image
+//! back, and the one file it ever touches is the PNG it writes (ADR 0210).
 //!
 //! Layer: L5, beside `render` and above `scene`. It must not depend on `render` (a sibling, and the
 //! tracer owns its own pipelines), on `egui` or a window (the shell owns both), or on `model` (the
@@ -36,13 +37,21 @@
 )]
 
 pub mod bvh;
+#[cfg(test)]
+mod device_tests;
+pub mod gpu;
+pub mod image;
+pub mod job;
 pub mod ray;
 pub mod soup;
 pub mod view;
 
 pub use bvh::Bvh;
+pub use gpu::{Accumulation, Progress, Tracer};
+pub use image::Image;
+pub use job::{Input, RENDER_FINAL_ID, Report, Settings, run};
 pub use ray::{Hit, Ray, Triangle};
-pub use soup::{MAX_TRIANGLES, triangles_of};
+pub use soup::{Face, MAX_TRIANGLES, faces_of};
 
 /// The smallest side of a final image, in pixels.
 ///
@@ -133,7 +142,11 @@ impl Request {
 }
 
 /// What the final render refuses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+///
+/// Every variant prints a sentence with the field or the path in it, because a refusal reaches the
+/// person who asked for the image and "invalid parameters" costs them the next question. The type is
+/// not `Copy`: a write names its destination, and a device's refusal carries the driver's own words.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum FinalError {
     /// A side below [`MIN_SIDE`].
     #[error("a final render's side is at least {min} pixels, and {side} was asked for")]
@@ -189,6 +202,79 @@ pub enum FinalError {
         /// The index that is not a whole triangle of the mesh.
         index: usize,
     },
+    /// An image whose sides do not multiply out to a buffer.
+    #[error("a {width} by {height} image has no pixels to trace")]
+    ImageSize {
+        /// The width the request carried.
+        width: u32,
+        /// The height the request carried.
+        height: u32,
+    },
+    /// An accumulator the tracer did not write: the wrong length, or no samples.
+    #[error(
+        "a {width} by {height} image at {samples} samples needs {width} × {height} accumulated pixels, and {pixels} \
+         arrived; a final render refuses it"
+    )]
+    Accumulation {
+        /// How many accumulated pixels the device handed back.
+        pixels: usize,
+        /// The width the render asked for.
+        width: u32,
+        /// The height the render asked for.
+        height: u32,
+        /// The sample count the render took.
+        samples: u32,
+    },
+    /// The device could not run the tracer: no adapter, a shader that does not compile, a map that
+    /// never lands. The reason is the driver's own sentence.
+    #[error("the final render's device cannot trace: {reason}")]
+    Device {
+        /// What the device or the driver said.
+        reason: String,
+    },
+    /// An exposure that is not a positive number of stops.
+    #[error("an exposure is a positive number of stops, and {exposure} was asked for")]
+    Exposure {
+        /// The value the request carried.
+        exposure: f32,
+    },
+    /// A progress counter that belongs to another request's sample count.
+    #[error("this render takes {samples} samples and its counter carries {total}; one progress bar, one render")]
+    Progress {
+        /// The counter's own total.
+        total: u32,
+        /// The request's sample count.
+        samples: u32,
+    },
+    /// An image that could not be encoded.
+    #[error("a final render could not be encoded as a PNG: {reason}")]
+    Image {
+        /// What the encoder said.
+        reason: String,
+    },
+    /// An image that could not be written to its destination.
+    #[error("a final render could not write {}: {reason}", path.display())]
+    Write {
+        /// The destination that failed.
+        path: std::path::PathBuf,
+        /// What the filesystem said.
+        reason: String,
+    },
+    /// A render the person stopped: nothing was written and the session returns to idle.
+    #[error("the final render was cancelled after {samples} of {total} samples, and no image was written")]
+    Cancelled {
+        /// How many samples were taken before the cancel.
+        samples: u32,
+        /// How many the request asked for.
+        total: u32,
+    },
+}
+
+impl FinalError {
+    /// Whether this refusal means "the person stopped the render", which a surface reports as itself.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled { .. })
+    }
 }
 
 #[cfg(test)]

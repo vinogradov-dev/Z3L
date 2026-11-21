@@ -1,0 +1,363 @@
+//! The device's view of a frame: flat faces, flat nodes and one uniform.
+//!
+//! The BVH and the frame's lights are ours in `f64` and `DVec3`; a shader has neither. This module is
+//! the one place a final render's numbers become `f32` and a fixed layout, so the CPU side and the
+//! WGSL side are two readings of one struct rather than two guesses: every struct here is `#[repr(C)]`
+//! with only `vec4`-shaped members, which is why the WGSL declarations at the top of `shader.wgsl`
+//! can name the same offsets without a padding attribute anywhere.
+//!
+//! Refuses: a tree or a frame larger than a `u32` index can name (past [`MAX_TRIANGLES`], which the
+//! soup already caps), and a camera or a light whose numbers are not finite — a NaN vertex in a
+//! uniform is a whole image of noise, so a hostile value stops the render instead.
+//!
+//! Changes when: a field of the shader's input changes, or the tree's layout does.
+
+use geom::DVec3;
+use scene::{Camera, Lighting, MAX_POINT_LIGHTS, Projection};
+
+use crate::bvh::Bvh;
+use crate::soup::MAX_TRIANGLES;
+use crate::{FinalError, Request};
+
+/// The most `f32` coordinates a triangle takes: three vertices, each a `vec4`.
+const VERTEX_SLOTS: usize = 3;
+
+/// One face as the shader reads it: three vertices and the surface's colour.
+///
+/// The fourth channel of every vector is unused and zero. It is there because a `vec3` in a storage
+/// array is padded to sixteen bytes anyway, and a named slot says so instead of leaving the reader to
+/// count.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuFace {
+    /// The first vertex and the padding.
+    pub(crate) a: [f32; 4],
+    /// The second vertex and the padding.
+    pub(crate) b: [f32; 4],
+    /// The third vertex and the padding.
+    pub(crate) c: [f32; 4],
+    /// Linear RGB albedo and the padding.
+    pub(crate) colour: [f32; 4],
+}
+
+/// One node as the shader reads it: a box and what it means.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuNode {
+    /// The minimum corner and the padding.
+    pub(crate) min: [f32; 4],
+    /// The maximum corner and the padding.
+    pub(crate) max: [f32; 4],
+    /// `x` is a leaf's first face or an interior node's left child, `y` a leaf's face count, and the
+    /// rest is unused.
+    pub(crate) info: [u32; 4],
+}
+
+/// Everything the shader reads that is not a face or a node: the camera, the lights and the count.
+///
+/// The camera's basis travels as three unit vectors and a projection kind rather than as a matrix,
+/// because the shader builds the ray exactly the way [`scene::Camera::ray_ndc`] does — one formula
+/// written twice, in two languages, with a test that compares the two answers (`crate::view`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct Uniform {
+    /// `xyz` the eye, `w` one for an orthographic view and zero for a perspective one.
+    pub(crate) eye: [f32; 4],
+    /// `xyz` the view's right vector.
+    pub(crate) right: [f32; 4],
+    /// `xyz` the view's up vector.
+    pub(crate) up: [f32; 4],
+    /// `xyz` the view's forward vector.
+    pub(crate) forward: [f32; 4],
+    /// `x` the half height of the view at unit depth (the tangent of half the vertical field of view,
+    /// or half the orthographic height), `y` the aspect ratio, `z` the image width, `w` its height.
+    pub(crate) view: [f32; 4],
+    /// `x` the face count, `y` the node count, `z` the index of the sample being taken, `w` the light
+    /// count including the key light.
+    pub(crate) counts: [u32; 4],
+    /// `x` the first image row of the strip this dispatch traces, `y` its row count. An image larger
+    /// than one accumulator buffer is traced strip by strip (`gpu::MAX_STRIP_PIXELS`).
+    pub(crate) strip: [u32; 4],
+    /// `xyz` the key light's colour as irradiance on a surface facing it, `w` one when it exists.
+    pub(crate) key: [f32; 4],
+    /// `xyz` the unit direction from a surface towards the key light.
+    pub(crate) key_direction: [f32; 4],
+    /// The point lights' world positions, `w` unused.
+    pub(crate) point_position: [[f32; 4]; MAX_POINT_LIGHTS],
+    /// The point lights' linear colour, `w` their radiant power in watts.
+    pub(crate) point_colour: [[f32; 4]; MAX_POINT_LIGHTS],
+}
+
+/// The frame's faces as the shader reads them, in the tree's order.
+pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
+    if bvh.face_count() > MAX_TRIANGLES {
+        return Err(FinalError::TooManyTriangles { count: bvh.face_count(), max: MAX_TRIANGLES });
+    }
+    let mut faces = Vec::with_capacity(bvh.face_count());
+    for face in bvh.faces() {
+        let mut slots = [[0.0f32; 4]; VERTEX_SLOTS];
+        for (slot, vertex) in slots.iter_mut().zip(face.triangle.vertices()) {
+            *slot = [vertex.x as f32, vertex.y as f32, vertex.z as f32, 0.0];
+        }
+        let [a, b, c] = slots;
+        faces.push(GpuFace { a, b, c, colour: [face.colour[0], face.colour[1], face.colour[2], 0.0] });
+    }
+    Ok(faces)
+}
+
+/// The tree as the shader reads it: root first, children adjacent, a leaf's run of faces contiguous.
+pub(crate) fn nodes(bvh: &Bvh) -> Result<Vec<GpuNode>, FinalError> {
+    let mut nodes = Vec::with_capacity(bvh.node_count());
+    for node in bvh.nodes() {
+        let bounds = node.bounds();
+        let first = u32::try_from(node.first())
+            .map_err(|_| FinalError::TooManyTriangles { count: bvh.face_count(), max: MAX_TRIANGLES })?;
+        let count = u32::try_from(node.count())
+            .map_err(|_| FinalError::TooManyTriangles { count: bvh.face_count(), max: MAX_TRIANGLES })?;
+        let (min, max) = (bounds.min(), bounds.max());
+        nodes.push(GpuNode {
+            min: [min.x as f32, min.y as f32, min.z as f32, 0.0],
+            max: [max.x as f32, max.y as f32, max.z as f32, 0.0],
+            info: [first, count, 0, 0],
+        });
+    }
+    Ok(nodes)
+}
+
+/// The uniform for one sample of one strip of one image.
+///
+/// `sample` counts from zero, so the shader's noise changes with it and the same image is reproducible
+/// from the same numbers: two renders of one revision and one camera are the same pixels. `counts` is
+/// the frame's own face and node counts, and `strip` is the run of rows this dispatch covers.
+pub(crate) fn uniform(
+    camera: Camera,
+    lighting: &Lighting,
+    request: Request,
+    counts: (u32, u32),
+    strip: (u32, u32),
+    sample: u32,
+) -> Result<Uniform, FinalError> {
+    let finite = |vector: DVec3| vector.is_finite();
+    let (eye, right, up, forward) = (camera.eye(), camera.right(), camera.up(), camera.forward());
+    if !finite(eye) || !finite(right) || !finite(up) || !finite(forward) {
+        return Err(refuse("the camera's basis is not finite"));
+    }
+    let Some(aspect) = crate::view::aspect(request.width(), request.height()) else {
+        return Err(FinalError::ImageSize { width: request.width(), height: request.height() });
+    };
+    let (orthographic, half_height) = match camera.projection() {
+        Projection::Perspective { fov_y } => {
+            if !fov_y.is_finite() || fov_y <= 0.0 {
+                return Err(refuse("the camera's field of view is not a number"));
+            }
+            (0.0, (fov_y * 0.5).tan())
+        }
+        Projection::Orthographic { height } => {
+            if !height.is_finite() || height <= 0.0 {
+                return Err(refuse("the camera's orthographic height is not a number"));
+            }
+            (1.0, height * 0.5)
+        }
+    };
+    let mut point_position = [[0.0f32; 4]; MAX_POINT_LIGHTS];
+    let mut point_colour = [[0.0f32; 4]; MAX_POINT_LIGHTS];
+    let mut point_count = 0usize;
+    for (index, (position, colour)) in point_position.iter_mut().zip(point_colour.iter_mut()).enumerate() {
+        let Some(light) = lighting.points.get(index) else { break };
+        if !light.position.is_finite() || !light.power.is_finite() || !light.color.iter().all(|c| c.is_finite()) {
+            return Err(refuse("a point light's numbers are not finite"));
+        }
+        if light.power <= 0.0 {
+            continue;
+        }
+        *position = [light.position.x as f32, light.position.y as f32, light.position.z as f32, 0.0];
+        *colour = [light.color[0], light.color[1], light.color[2], light.power];
+        point_count = point_count.saturating_add(1);
+    }
+    // The key light is the viewport's sun: its colour is the irradiance a surface facing it receives.
+    // A black key light is no light at all, so it does not count towards the light a sample picks.
+    let key_lit = lighting.key_color.iter().all(|channel| channel.is_finite())
+        && lighting.key_color.iter().any(|channel| *channel > 0.0)
+        && lighting.key_direction.is_finite();
+    if !key_lit && lighting.key_color.iter().any(|channel| !channel.is_finite()) {
+        return Err(refuse("the key light's colour is not finite"));
+    }
+    if !lighting.key_direction.is_finite() || lighting.key_direction.length() <= 0.0 {
+        return Err(refuse("the key light's direction is not a unit vector"));
+    }
+    let (face_count, node_count) = counts;
+    let direction = lighting.key_direction;
+    let light_count = point_count.saturating_add(usize::from(key_lit));
+    let Ok(light_count) = u32::try_from(light_count) else {
+        return Err(refuse("the frame carries more lights than a sample can name"));
+    };
+    Ok(Uniform {
+        eye: [eye.x as f32, eye.y as f32, eye.z as f32, orthographic],
+        right: [right.x as f32, right.y as f32, right.z as f32, 0.0],
+        up: [up.x as f32, up.y as f32, up.z as f32, 0.0],
+        forward: [forward.x as f32, forward.y as f32, forward.z as f32, 0.0],
+        view: [half_height as f32, aspect as f32, request.width() as f32, request.height() as f32],
+        counts: [face_count, node_count, sample, light_count],
+        strip: [strip.0, strip.1, 0, 0],
+        key: [
+            if key_lit { lighting.key_color[0] } else { 0.0 },
+            if key_lit { lighting.key_color[1] } else { 0.0 },
+            if key_lit { lighting.key_color[2] } else { 0.0 },
+            if key_lit { 1.0 } else { 0.0 },
+        ],
+        key_direction: [direction.x as f32, direction.y as f32, direction.z as f32, 0.0],
+        point_position,
+        point_colour,
+    })
+}
+
+/// A refusal the device's input cannot be built from.
+fn refuse(reason: &str) -> FinalError {
+    FinalError::Device { reason: reason.to_owned() }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use geom::Aabb;
+    use scene::{PointLight, SceneFrame};
+
+    use crate::ray::Triangle;
+    use crate::soup::Face;
+
+    use super::*;
+
+    fn bvh(faces: Vec<Face>) -> Bvh {
+        Bvh::build(faces)
+    }
+
+    fn face(v0: DVec3, v1: DVec3, v2: DVec3, colour: [f32; 3]) -> Face {
+        Face { triangle: Triangle::new(v0, v1, v2), colour }
+    }
+
+    fn request() -> Request {
+        Request::new(200, 100, 8).expect("a small request")
+    }
+
+    #[test]
+    fn a_face_reaches_the_device_with_its_vertices_and_its_colour() {
+        let tree =
+            bvh(vec![face(DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0), [0.25, 0.5, 0.75])]);
+        let faces = faces(&tree).expect("a flat face list");
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].a, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(faces[0].b, [10.0, 0.0, 0.0, 0.0]);
+        assert_eq!(faces[0].c, [0.0, 10.0, 0.0, 0.0]);
+        assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0]);
+    }
+
+    #[test]
+    fn a_leaf_names_a_run_of_faces_and_an_interior_node_names_its_left_child() {
+        // Eight quads far enough apart that the build must split them.
+        let mut soup = Vec::new();
+        for index in 0..8 {
+            let x = index as f64 * 100.0;
+            let a = DVec3::new(x, 0.0, 0.0);
+            let b = DVec3::new(x + 10.0, 0.0, 0.0);
+            let c = DVec3::new(x, 10.0, 0.0);
+            soup.push(face(a, b, c, [1.0, 1.0, 1.0]));
+        }
+        let tree = bvh(soup);
+        let nodes = nodes(&tree).expect("flat nodes");
+        assert_eq!(nodes.len(), tree.node_count());
+        assert!(nodes.len() > 1, "eight spread quads split");
+        for (index, node) in tree.nodes().iter().enumerate() {
+            let flat = nodes[index];
+            let bounds: Aabb = node.bounds();
+            assert!((flat.min[0] - bounds.min().x as f32).abs() < 1e-3);
+            assert!((flat.max[2] - bounds.max().z as f32).abs() < 1e-3);
+            if node.is_leaf() {
+                assert_eq!(flat.info, [node.first() as u32, node.count() as u32, 0, 0]);
+                assert!(node.first() + node.count() <= tree.face_count(), "a leaf stays inside the face list");
+            } else {
+                assert_eq!(flat.info[1], 0, "an interior node holds no faces");
+                assert!(nodes.get(node.first() + 1).is_some(), "an interior node names both children");
+            }
+        }
+        // Every face is named by exactly one leaf: the layout loses nothing and repeats nothing.
+        let mut named = vec![0usize; tree.face_count()];
+        for node in tree.nodes().iter().filter(|node| node.is_leaf()) {
+            for index in node.first()..node.first() + node.count() {
+                if let Some(slot) = named.get_mut(index) {
+                    *slot += 1;
+                }
+            }
+        }
+        assert!(named.iter().all(|count| *count == 1), "{named:?}");
+    }
+
+    #[test]
+    fn the_uniform_carries_the_view_the_aspect_and_the_lights() {
+        let mut frame = SceneFrame::default();
+        frame.lighting.points.push(PointLight {
+            position: DVec3::new(500.0, 0.0, 300.0),
+            color: [1.0, 0.9, 0.8],
+            power: 1000.0,
+        });
+        frame.lighting.points.push(PointLight { position: DVec3::new(0.0, 0.0, 0.0), color: [1.0; 3], power: 0.0 });
+        let camera = Camera::new(DVec3::new(0.0, 0.0, 500.0), 2000.0).expect("a camera");
+        let uniform = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 7).expect("a uniform");
+        assert_eq!(uniform.counts, [3, 5, 7, 2], "one key light and one lit point light");
+        assert!((uniform.view[0] - (scene::DEFAULT_FOV_Y * 0.5).tan() as f32).abs() < 1e-6);
+        assert!((uniform.view[1] - 2.0).abs() < 1e-6, "200 by 100 is two to one");
+        assert_eq!(&uniform.view[2..], &[200.0, 100.0]);
+        assert_eq!(uniform.eye[3], 0.0, "a perspective view");
+        assert_eq!(uniform.point_position[0], [500.0, 0.0, 300.0, 0.0]);
+        assert_eq!(uniform.point_colour[0], [1.0, 0.9, 0.8, 1000.0]);
+        assert_eq!(uniform.point_colour[1], [0.0; 4], "a dead light is not uploaded as a lamp");
+    }
+
+    #[test]
+    fn an_orthographic_view_says_so_and_a_black_key_light_is_no_light() {
+        let mut camera = Camera::new(DVec3::ZERO, 1000.0).expect("a camera");
+        camera.set_orthographic();
+        let mut frame = SceneFrame::default();
+        frame.lighting.key_color = [0.0; 3];
+        let uniform = uniform(camera, &frame.lighting, request(), (1, 1), (0, 100), 0).expect("a uniform");
+        assert_eq!(uniform.eye[3], 1.0, "an orthographic view");
+        assert_eq!(uniform.counts[3], 0, "a black key light lights nothing");
+        assert_eq!(uniform.key, [0.0; 4]);
+    }
+
+    #[test]
+    fn a_frame_with_no_geometry_at_all_still_builds_a_uniform() {
+        let empty = SceneFrame::default();
+        let camera = Camera::new(DVec3::ZERO, 1000.0).expect("a camera");
+        let uniform = uniform(camera, &empty.lighting, request(), (0, 0), (0, 100), 0).expect("a uniform");
+        assert_eq!(uniform.counts[0], 0);
+        assert_eq!(uniform.counts[1], 0);
+        assert!(faces(&Bvh::default()).expect("no faces").is_empty());
+        assert!(nodes(&Bvh::default()).expect("no nodes").is_empty());
+        // The key light of a default frame is a real light even with nothing to light.
+        assert_eq!(uniform.counts[3], 1);
+    }
+
+    #[test]
+    fn a_hostile_camera_or_light_is_a_sentence_not_a_uniform_of_nan() {
+        let mut camera = Camera::new(DVec3::ZERO, 1000.0).expect("a camera");
+        let mut frame = SceneFrame::default();
+        let request = request();
+        frame.lighting.points.push(PointLight { position: DVec3::NAN, color: [1.0; 3], power: 10.0 });
+        assert!(uniform(camera, &frame.lighting, request, (0, 0), (0, 100), 0).is_err(), "a NaN light is refused");
+        frame.lighting.points.clear();
+        frame.lighting.key_color = [f32::NAN, 1.0, 1.0];
+        assert!(uniform(camera, &frame.lighting, request, (0, 0), (0, 100), 0).is_err(), "a NaN key colour is refused");
+        frame.lighting.key_color = [1.0; 3];
+        frame.lighting.key_direction = DVec3::ZERO;
+        assert!(
+            uniform(camera, &frame.lighting, request, (0, 0), (0, 100), 0).is_err(),
+            "a sun with no direction is refused"
+        );
+        frame.lighting.key_direction = DVec3::Z;
+        // The scene's own camera refuses a non-finite basis, so a broken view cannot reach the shader
+        // through it; the guard here stays for a future caller that builds a uniform from raw numbers.
+        camera.roll_to(f64::NAN);
+        assert!(camera.right().is_finite() && camera.forward().is_finite(), "the camera keeps a usable basis");
+    }
+}

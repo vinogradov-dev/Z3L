@@ -1,21 +1,21 @@
-//! A binned-SAH BVH2 over the frame's triangles, and the traversal that reads it.
+//! A binned-SAH BVH2 over the frame's faces, and the traversal that reads it.
 //!
 //! The build is Wald's, *On Fast Construction of SAH-based Bounding Volume Hierarchies* (2007): each
-//! node bins its triangles by centroid into sixteen slabs on the axis with the widest centroid
+//! node bins its faces by centroid into sixteen slabs on the axis with the widest centroid
 //! spread, costs every split by surface area and keeps the cheapest, which is one pass over the range
-//! and no sorting. A node that holds few enough triangles, or whose split costs more than testing
-//! them, becomes a leaf. The tree is a binary layout depth-first, so a node's right child is its left
+//! and no sorting. A node that holds few enough faces, or whose split costs more than testing them,
+//! becomes a leaf. The tree is a binary layout depth-first, so a node's right child is its left
 //! child plus one and a leaf is a contiguous run of the reordered triangle array.
 //!
-//! Why a two-wide tree and not a compressed one: a whole kitchen is tens of thousands of triangles,
+//! Why a two-wide tree and not a compressed one: a whole kitchen is tens of thousands of faces,
 //! and a wide BVH pays in the millions — `plan/notes/Y1.md` carries the measurement behind that
 //! decision.
 //!
-//! Determinism is part of the contract: the same triangles in the same order give the same nodes, so
+//! Determinism is part of the contract: the same faces in the same order give the same nodes, so
 //! a cached tree can be compared rather than trusted, and a test that a revision keyed the tree
 //! correctly has something exact to compare.
 //!
-//! Refuses: a triangle with a non-finite vertex is dropped by the build (no ray can hit it, and one
+//! Refuses: a face with a non-finite vertex is dropped by the build (no ray can hit it, and one
 //! NaN box would poison every ancestor's); a range that would need a deeper tree than [`MAX_DEPTH`]
 //! becomes a leaf, so traversal's fixed stack cannot overflow by construction.
 //!
@@ -23,12 +23,13 @@
 
 use geom::{Aabb, DVec3};
 
-use crate::ray::{Hit, Ray, Triangle};
+use crate::ray::{Hit, Ray};
+use crate::soup::Face;
 
 /// How many bins each axis is divided into while a split is chosen.
 const BINS: usize = 16;
 
-/// How many triangles a node may hold before it is split.
+/// How many faces a node may hold before it is split.
 const MAX_LEAF: usize = 4;
 
 /// How deep the tree may go, which is what bounds traversal's stack.
@@ -46,9 +47,9 @@ const AXIS_NONE: u8 = 3;
 /// The slots traversal may occupy: one per level plus the root, with room to spare.
 const MAX_STACK: usize = MAX_DEPTH as usize + 16;
 
-/// One node: a box, and either a run of triangles or the index of its left child.
+/// One node: a box, and either a run of faces or the index of its left child.
 #[derive(Clone, Copy, Debug)]
-struct Node {
+pub struct Node {
     /// The box around everything below this node.
     bounds: Aabb,
     /// A leaf's first triangle index, or an interior node's left child.
@@ -60,8 +61,31 @@ struct Node {
 }
 
 impl Node {
-    /// Whether this node holds triangles rather than children.
-    fn is_leaf(&self) -> bool {
+    /// The box around everything below this node, in world millimetres.
+    pub fn bounds(&self) -> Aabb {
+        self.bounds
+    }
+
+    /// A leaf's first face index, or an interior node's left child.
+    pub fn first(&self) -> usize {
+        self.first
+    }
+
+    /// A leaf's face count, or zero for an interior node.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// The axis an interior node was split on; [`AXIS_NONE`] for a leaf.
+    ///
+    /// [`AXIS_NONE`] is not public: a caller that needs "which axis" is the debug view, and a caller
+    /// that needs "leaf or not" asks [`Node::is_leaf`].
+    pub fn axis(&self) -> u8 {
+        self.axis
+    }
+
+    /// Whether this node holds faces rather than children.
+    pub fn is_leaf(&self) -> bool {
         self.count > 0
     }
 }
@@ -75,26 +99,26 @@ struct Split {
     bin: usize,
 }
 
-/// A bounding volume hierarchy over a triangle list.
+/// A bounding volume hierarchy over a face list.
 #[derive(Clone, Debug, Default)]
 pub struct Bvh {
-    /// The triangles, reordered so every leaf owns a contiguous run.
-    triangles: Vec<Triangle>,
+    /// The faces, reordered so every leaf owns a contiguous run.
+    faces: Vec<Face>,
     /// The nodes, the root first, children of a node adjacent.
     nodes: Vec<Node>,
 }
 
 impl Bvh {
-    /// Builds the tree over `triangles`, dropping any whose vertices are not finite.
-    pub fn build(triangles: Vec<Triangle>) -> Self {
+    /// Builds the tree over `faces`, dropping any whose vertices are not finite.
+    pub fn build(faces: Vec<Face>) -> Self {
         // A triangle's box and centroid are read by the split of its node, by the bounds of its
         // children and by the traversal, and computing them once here is the difference between a
         // kitchen's tree in tens of milliseconds and in hundreds: one triangle's box used to be
         // rebuilt three times per tree level.
-        let mut items: Vec<Item> = Vec::with_capacity(triangles.len());
-        for triangle in triangles {
-            let Some(bounds) = triangle.bounds() else { continue };
-            items.push(Item { triangle, bounds, centroid: triangle.centroid() });
+        let mut items: Vec<Item> = Vec::with_capacity(faces.len());
+        for face in faces {
+            let Some(bounds) = face.triangle.bounds() else { continue };
+            items.push(Item { face, bounds, centroid: face.triangle.centroid() });
         }
         let count = items.len();
         let Some(root_bounds) = bounds_of(&items, 0, count) else {
@@ -133,17 +157,25 @@ impl Bvh {
             work.push((left + 1, mid, first + count - mid, depth + 1));
             work.push((left, first, mid - first, depth + 1));
         }
-        Self { triangles: items.into_iter().map(|item| item.triangle).collect(), nodes }
+        Self { faces: items.into_iter().map(|item| item.face).collect(), nodes }
     }
 
-    /// The triangles the tree holds, in tree order.
-    pub fn triangles(&self) -> &[Triangle] {
-        &self.triangles
+    /// The faces the tree holds, in tree order.
+    pub fn faces(&self) -> &[Face] {
+        &self.faces
     }
 
-    /// How many triangles the tree holds.
-    pub fn triangle_count(&self) -> usize {
-        self.triangles.len()
+    /// How many faces the tree holds.
+    pub fn face_count(&self) -> usize {
+        self.faces.len()
+    }
+
+    /// The nodes, in the depth-first layout the traversal reads.
+    ///
+    /// A node's right child is its left child plus one, which is what lets the tracer flatten the
+    /// tree for the device without a second index array.
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
     }
 
     /// How many nodes the tree holds; zero for an empty tree.
@@ -193,8 +225,8 @@ impl Bvh {
             let Some(node) = self.nodes.get(node_index) else { continue };
             if node.is_leaf() {
                 for index in node.first..node.first + node.count {
-                    let Some(triangle) = self.triangles.get(index) else { continue };
-                    if let Some(hit) = triangle.intersect(ray, t_min, far) {
+                    let Some(face) = self.faces.get(index) else { continue };
+                    if let Some(hit) = face.triangle.intersect(ray, t_min, far) {
                         far = hit.t;
                         best = Some((index, hit));
                     }
@@ -226,18 +258,18 @@ impl Bvh {
     }
 }
 
-/// One triangle with the two numbers the build reads again and again.
+/// One face with the two numbers the build reads again and again.
 #[derive(Clone, Copy, Debug)]
 struct Item {
-    /// The triangle itself.
-    triangle: Triangle,
+    /// The face itself.
+    face: Face,
     /// The box around it, measured once.
     bounds: Aabb,
     /// The average of its vertices, which the split bins by.
     centroid: DVec3,
 }
 
-/// The box around a range of triangles, or `None` when the range holds none.
+/// The box around a range of faces, or `None` when the range holds none.
 fn bounds_of(items: &[Item], first: usize, end: usize) -> Option<Aabb> {
     let mut bounds: Option<Aabb> = None;
     for item in items.get(first..end).unwrap_or_default() {
@@ -257,7 +289,7 @@ fn centroids_range(items: &[Item], first: usize, count: usize) -> Option<Aabb> {
     Aabb::of_points(items.iter().skip(first).take(count).map(|item| item.centroid))
 }
 
-/// The cheapest split of a node, or `None` when no split beats testing the triangles where they are.
+/// The cheapest split of a node, or `None` when no split beats testing the faces where they are.
 fn best_split(items: &[Item], first: usize, count: usize, bounds: Aabb) -> Option<Split> {
     let parent_area = surface_area(bounds);
     if parent_area <= 0.0 || parent_area.is_nan() {
@@ -339,7 +371,7 @@ fn bin_of(value: f64, origin: f64, scale: f64) -> usize {
     (scaled as usize).min(BINS - 1)
 }
 
-/// Reorders the range so the triangles before the returned index are on the left of the split.
+/// Reorders the range so the faces before the returned index are on the left of the split.
 fn partition(items: &mut [Item], first: usize, count: usize, spread: Option<Aabb>, split: Split) -> usize {
     let axis_index = usize::from(split.axis);
     let Some(spread) = spread else { return first };
@@ -369,6 +401,8 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
+    use crate::ray::Triangle;
+
     use super::*;
 
     /// A deterministic pseudo-random generator, so a failure is the same failure twice.
@@ -389,9 +423,14 @@ mod tests {
         }
     }
 
+    /// One face of one grey surface, which is what a flat colour makes of a triangle.
+    fn face(triangle: Triangle) -> Face {
+        Face { triangle, colour: [0.5, 0.5, 0.5] }
+    }
+
     /// A kitchen's worth of quads: `quads` two-triangle faces spread over a 3000 × 2200 × 600 box.
-    fn kitchen(quads: usize) -> Vec<Triangle> {
-        let mut triangles = Vec::with_capacity(quads * 2);
+    fn kitchen(quads: usize) -> Vec<Face> {
+        let mut faces = Vec::with_capacity(quads * 2);
         for index in 0..quads {
             let x = (index % 100) as f64 * 30.0;
             let y = ((index / 100) % 50) as f64 * 44.0;
@@ -400,15 +439,15 @@ mod tests {
             let b = DVec3::new(x + 28.0, y, z);
             let c = DVec3::new(x + 28.0, y + 42.0, z);
             let d = DVec3::new(x, y + 42.0, z + 6.0);
-            triangles.push(Triangle::new(a, b, c));
-            triangles.push(Triangle::new(a, c, d));
+            faces.push(face(Triangle::new(a, b, c)));
+            faces.push(face(Triangle::new(a, c, d)));
         }
-        triangles
+        faces
     }
 
-    fn random_scene(triangles: usize, extent: f64, seed: u64) -> Vec<Triangle> {
+    fn random_scene(faces: usize, extent: f64, seed: u64) -> Vec<Face> {
         let mut rng = Lcg(seed);
-        (0..triangles).map(|_| Triangle::new(rng.point(extent), rng.point(extent), rng.point(extent))).collect()
+        (0..faces).map(|_| face(Triangle::new(rng.point(extent), rng.point(extent), rng.point(extent)))).collect()
     }
 
     #[test]
@@ -421,7 +460,7 @@ mod tests {
             let ray = Ray::new(rng.point(1500.0), rng.point(1.0)).expect("a ray with a direction");
             let expected = scene
                 .iter()
-                .filter_map(|triangle| triangle.intersect(ray, 0.0, f64::INFINITY))
+                .filter_map(|face| face.triangle.intersect(ray, 0.0, f64::INFINITY))
                 .map(|hit| hit.t)
                 .fold(f64::INFINITY, f64::min);
             let answered = tree.intersect(ray, 0.0, f64::INFINITY).map(|(_, hit)| hit.t).unwrap_or(f64::INFINITY);
@@ -438,7 +477,7 @@ mod tests {
         let first = Bvh::build(scene.clone());
         let second = Bvh::build(scene);
         assert_eq!(first.nodes.len(), second.nodes.len());
-        assert_eq!(first.triangles, second.triangles, "the same input gives the same reorder");
+        assert_eq!(first.faces, second.faces, "the same input gives the same reorder");
         for (a, b) in first.nodes.iter().zip(&second.nodes) {
             assert_eq!(a.first, b.first);
             assert_eq!(a.count, b.count);
@@ -446,7 +485,7 @@ mod tests {
         }
         let empty = Bvh::build(Vec::new());
         assert_eq!(empty.node_count(), 0);
-        assert_eq!(empty.triangle_count(), 0);
+        assert_eq!(empty.face_count(), 0);
         assert_eq!(empty.depth(), 0);
         assert!(empty.intersect(Ray::new(DVec3::ZERO, DVec3::Z).expect("a ray"), 0.0, 1.0).is_none());
     }
@@ -454,10 +493,10 @@ mod tests {
     #[test]
     fn a_triangle_with_a_non_finite_vertex_is_dropped_rather_than_poisoning_a_box() {
         let mut scene = random_scene(10, 100.0, 5);
-        scene.push(Triangle::new(DVec3::NAN, DVec3::ZERO, DVec3::X));
-        scene.push(Triangle::new(DVec3::ZERO, DVec3::new(f64::INFINITY, 0.0, 0.0), DVec3::X));
+        scene.push(face(Triangle::new(DVec3::NAN, DVec3::ZERO, DVec3::X)));
+        scene.push(face(Triangle::new(DVec3::ZERO, DVec3::new(f64::INFINITY, 0.0, 0.0), DVec3::X)));
         let tree = Bvh::build(scene);
-        assert_eq!(tree.triangle_count(), 10, "the two hostile triangles are not in the tree");
+        assert_eq!(tree.face_count(), 10, "the two hostile triangles are not in the tree");
         for node in &tree.nodes {
             assert!(node.bounds.min().is_finite() && node.bounds.max().is_finite(), "{node:?}");
         }
@@ -465,23 +504,23 @@ mod tests {
 
     #[test]
     fn a_kitchen_sized_frame_builds_fast_and_shallow() {
-        let triangles = kitchen(25_000);
-        assert_eq!(triangles.len(), 50_000);
+        let faces = kitchen(25_000);
+        assert_eq!(faces.len(), 50_000);
         let start = Instant::now();
-        let tree = Bvh::build(triangles);
+        let tree = Bvh::build(faces);
         let elapsed = start.elapsed();
         println!(
-            "BVH build: {} triangles, {} nodes, depth {}, {elapsed:?}",
-            tree.triangle_count(),
+            "BVH build: {} faces, {} nodes, depth {}, {elapsed:?}",
+            tree.face_count(),
             tree.node_count(),
             tree.depth()
         );
         assert!(elapsed < Duration::from_millis(500), "a kitchen's tree took {elapsed:?}");
         assert!(tree.depth() < MAX_DEPTH, "a kitchen's tree is not at the depth limit: {}", tree.depth());
         // A binary layout cannot exceed two nodes per leaf, and our leaf size keeps it far below.
-        assert!(tree.node_count() < 2 * tree.triangle_count(), "{} nodes", tree.node_count());
+        assert!(tree.node_count() < 2 * tree.face_count(), "{} nodes", tree.node_count());
         assert!(
-            tree.node_count() * 8 < tree.triangle_count() * 12,
+            tree.node_count() * 8 < tree.face_count() * 12,
             "the tree holds more nodes than a coarse split needs: {}",
             tree.node_count()
         );

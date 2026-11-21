@@ -48,6 +48,7 @@ mod placement_card;
 mod point_fields;
 pub mod product_card;
 mod properties_card;
+pub mod render_page;
 mod scene_tree;
 mod scrub;
 mod section;

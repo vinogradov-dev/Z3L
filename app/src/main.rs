@@ -48,6 +48,7 @@ mod mesh_pick;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
+mod render_place;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;
@@ -290,6 +291,10 @@ struct App {
     settings_open: bool,
     /// Whether the Home surface is open.
     home_open: bool,
+    /// Whether the workspace shows the render place instead of the scene (ADR 0211).
+    render_open: bool,
+    /// The render place's numbers, its run and where the last one got to.
+    render_place: render_place::RenderPlace,
     /// The command palette and its last-used order; session state, never document data.
     palette: Palette,
     /// The product-frame card: window chrome, like the File dialogs, so it outlives a tab switch.
@@ -437,6 +442,8 @@ impl App {
             settings_section: SettingsSection::default(),
             settings_open: false,
             home_open: false,
+            render_open: false,
+            render_place: render_place::RenderPlace::new(),
             palette: Palette::new(),
             product_card: ProductCard::new(),
             settings_notice: loaded.notice,
@@ -490,6 +497,14 @@ impl App {
         let Some((order, answer)) = self.picker.take() else {
             return;
         };
+        // A render's destination belongs to the place, not to a tab: the answer lands wherever the
+        // run will read it, and the page keeps drawing while the file manager is up (ADR 0182).
+        if order.mode == PickMode::Image {
+            if let Some(path) = answer {
+                self.render_place.set_path(path);
+            }
+            return;
+        }
         // The pick is the asking tab's (ADR 0081): its answer lands there even when another tab was
         // activated behind the file manager's own window.
         let Some(asking) = self.pick_tab.take() else {
@@ -509,8 +524,10 @@ impl App {
             // without one becomes a file the next *Open* can see.
             PickMode::Save => FileAction::Save(scene_file(path)),
             // The editor never asks for a price list: that pick belongs to the directory application.
-            PickMode::Prices => {
-                log::warn!("a price list was picked for a scene: nothing to read");
+            PickMode::Prices | PickMode::Image => {
+                // Both are answered before this point: the price list belongs to the directory
+                // application, and an image to the render place.
+                log::warn!("a pick that is not a scene reached the tab that asked for it");
                 return;
             }
         };
@@ -558,7 +575,11 @@ impl App {
             }
             HeaderAction::ActivateTab(id) => {
                 self.tabs.activate(id);
+                // A document tab is the way back from the render place: the place is a view of the
+                // scene in front, never a replacement for it (ADR 0211).
+                self.render_open = false;
             }
+            HeaderAction::Render => self.render_open = !self.render_open,
             HeaderAction::CloseTab(id) => self.close_tab(id, lang),
         }
     }
@@ -1226,6 +1247,128 @@ impl App {
     /// [`egui::Context`] and no window at all (U77), and the chrome the frame gave the window comes
     /// back, so the presses it keeps and the rectangles it hands out are asserted without pixels
     /// (U78).
+    /// Draws the render place in the workspace and performs the one action it asked for.
+    ///
+    /// The page edits the place's own numbers and draws its own report; the shell starts the run,
+    /// stops it and asks the file manager where the image goes. The scene it renders is the one in
+    /// front of the person — the same frame and the same camera the viewport draws — taken at the
+    /// moment the button is pressed and cloned into the worker, so an edit made while it runs does
+    /// not change the image under it (ADR 0210, ADR 0211).
+    fn render_page(&mut self, ui: &mut egui::Ui) {
+        let lang = ui::language(ui.ctx());
+        let scene = self.tabs.active().file_name(lang);
+        let stage = self.render_place.stage();
+        let action = ui::render_page::show(
+            ui,
+            ui::render_page::Page {
+                scene: &scene,
+                settings: self.render_place.settings(),
+                bounds: render_place::RenderPlace::bounds(),
+                stage: &stage,
+            },
+        );
+        match action {
+            Some(ui::render_page::Action::Render) => self.start_render(ui.ctx()),
+            Some(ui::render_page::Action::Cancel) => self.render_place.cancel(),
+            Some(ui::render_page::Action::Choose) => self.ask_for_image(ui.ctx()),
+            Some(ui::render_page::Action::Close) => self.render_open = false,
+            None => {}
+        }
+    }
+
+    /// Starts the run the page asked for, or reports on the place why it could not.
+    fn start_render(&mut self, ctx: &egui::Context) {
+        let document = self.tabs.active();
+        let frame = document.drawn_frame().clone();
+        let camera = document.camera();
+        let revision = document.session.project().revision().get();
+        let state = self.render_state.clone();
+        if let Err(reason) = self.render_place.start(ctx, state.as_ref(), frame, camera, revision) {
+            self.render_place.failed(reason);
+        }
+    }
+
+    /// Asks the system file manager where the image goes, in the folder the scene lives in.
+    fn ask_for_image(&mut self, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
+        let document = self.tabs.active();
+        let folder = file_picker::folder_of(document.path());
+        let name = match document.path().and_then(|path| path.file_stem()) {
+            Some(stem) => format!("{}.{}", stem.to_string_lossy(), file_picker::IMAGE_EXTENSION),
+            None => format!("render.{}", file_picker::IMAGE_EXTENSION),
+        };
+        let order = file_picker::Order { mode: PickMode::Image, folder, name: Some(name), lang };
+        if let Err(error) = self.picker.start(ctx, order) {
+            self.render_place.failed(error);
+        }
+    }
+
+    /// Draws the workspace under the header and returns the chrome it covered.
+    ///
+    /// The ribbon, the viewport, the two floating panels and the view cluster are one surface: the
+    /// panels float over the scene, so the frame's geometry is computed once and handed to the
+    /// viewport, and picking and the split views read exactly the rectangles the panels cover (M2).
+    ///
+    /// While the render place is open this whole surface is replaced by it: a render is a place in
+    /// the work, not a question over the model, and a person who opens it means to see the image,
+    /// the numbers and the progress rather than the cabinet under them (ADR 0211). Nothing floats
+    /// over the place, so the chrome it covers is empty.
+    fn design_area(&mut self, ui: &mut egui::Ui) -> Chrome {
+        let design = ui.available_rect_before_wrap();
+        if self.render_open {
+            self.render_page(ui);
+            self.status_bar(ui);
+            return Chrome::empty();
+        }
+        self.ribbon(ui, design);
+        self.status_bar(ui);
+        // The viewport is the whole area under the header and above the status bar: the panels float
+        // over it, so the rendered scene runs under their translucent fill (M2). The frame's
+        // geometry is computed once and handed to the viewport, so picking and the split views read
+        // exactly the rectangles the panels cover.
+        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        let ribbon_open = self.tabs.active().ribbon_open();
+        let band = self.shell.ribbon_band(viewport, ribbon_open);
+        let band_height = self.shell.ribbon_inset(ribbon_open);
+        let ctx = ui.ctx().clone();
+        let animated_band =
+            ctx.animate_value_with_time(egui::Id::unique("ribbon_band_height"), band_height, ANIMATION_SECONDS);
+        let width = |id: &str, state: ui::settings::PanelState| {
+            let target = if state.expanded { EXPANDED_WIDTH } else { STRIP_WIDTH };
+            ctx.animate_value_with_time(egui::Id::unique((id, "panel_width")), target, ANIMATION_SECONDS)
+        };
+        let top = viewport.top() + panel_top(animated_band);
+        let panels = &self.shell.panels;
+        let rects = PanelRects::of(
+            viewport,
+            top,
+            panels,
+            (width("scene_tree", panels.scene), width("panel_card", panels.inspector)),
+        );
+        let chrome = Chrome {
+            panels: rects,
+            ribbon: band,
+            list: self.shell.list_rect,
+            menu: self.tabs.active().menu_rect(),
+            tool: self.tabs.active().tool_card_rect(),
+        };
+        self.workspace(ui, &chrome);
+        if let Some(rect) = rects.left {
+            self.scene_tree(&ctx, rect);
+        }
+        if let Some(rect) = rects.right {
+            self.panel_card(&ctx, rect);
+        }
+        self.sync_panels();
+        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
+        // write it: the editor recorded the wish and the shell applies it here, after both menus
+        // have drawn (U113).
+        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
+            self.shell.mode = mode;
+        }
+        chrome
+    }
+
     fn frame(&mut self, ui: &mut egui::Ui) -> Chrome {
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
@@ -1243,6 +1386,12 @@ impl App {
         // The file manager answers on its own schedule, so its path is taken at the same boundary
         // and becomes the open or the save the gesture would have been (ADR 0182).
         self.take_pick(ui.ctx());
+        // A finished render is taken at the same boundary, and a run in flight asks for the next
+        // frame so its counter keeps moving even while the person is back in the document
+        // (ADR 0211).
+        if self.render_place.take_finished() || self.render_place.is_running() {
+            ui.ctx().request_repaint();
+        }
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.
@@ -1334,7 +1483,7 @@ impl App {
                         id,
                         title: document.file_name(ui::language(ui.ctx())),
                         dirty: document.is_dirty(),
-                        active: id == active,
+                        active: id == active && !self.render_open,
                     })
                     .collect(),
                 can_undo: self.tabs.active().can_undo(),
@@ -1343,6 +1492,7 @@ impl App {
                 panels_hidden: !self.shell.panels.any_visible(),
                 panels_collapsed: self.shell.panels.all_collapsed(),
                 mode: self.shell.mode,
+                render_open: self.render_open,
             }
         };
         let mut header_action = None;
@@ -1363,53 +1513,7 @@ impl App {
         }
         self.answer_question(ui.ctx());
 
-        let design = ui.available_rect_before_wrap();
-        self.ribbon(ui, design);
-        self.status_bar(ui);
-        // The viewport is the whole area under the header and above the status bar: the panels float
-        // over it, so the rendered scene runs under their translucent fill (M2). The frame's
-        // geometry is computed once and handed to the viewport, so picking and the split views read
-        // exactly the rectangles the panels cover.
-        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
-        let ribbon_open = self.tabs.active().ribbon_open();
-        let band = self.shell.ribbon_band(viewport, ribbon_open);
-        let band_height = self.shell.ribbon_inset(ribbon_open);
-        let ctx = ui.ctx().clone();
-        let animated_band =
-            ctx.animate_value_with_time(egui::Id::unique("ribbon_band_height"), band_height, ANIMATION_SECONDS);
-        let width = |id: &str, state: ui::settings::PanelState| {
-            let target = if state.expanded { EXPANDED_WIDTH } else { STRIP_WIDTH };
-            ctx.animate_value_with_time(egui::Id::unique((id, "panel_width")), target, ANIMATION_SECONDS)
-        };
-        let top = viewport.top() + panel_top(animated_band);
-        let panels = &self.shell.panels;
-        let rects = PanelRects::of(
-            viewport,
-            top,
-            panels,
-            (width("scene_tree", panels.scene), width("panel_card", panels.inspector)),
-        );
-        let chrome = Chrome {
-            panels: rects,
-            ribbon: band,
-            list: self.shell.list_rect,
-            menu: self.tabs.active().menu_rect(),
-            tool: self.tabs.active().tool_card_rect(),
-        };
-        self.workspace(ui, &chrome);
-        if let Some(rect) = rects.left {
-            self.scene_tree(&ctx, rect);
-        }
-        if let Some(rect) = rects.right {
-            self.panel_card(&ctx, rect);
-        }
-        self.sync_panels();
-        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
-        // write it: the editor recorded the wish and the shell applies it here, after both menus
-        // have drawn (U113).
-        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
-            self.shell.mode = mode;
-        }
+        let chrome = self.design_area(ui);
         self.command_palette(ui);
         // The cluster's *Configure…* link is drawn inside the viewport, which only has the shell;
         // the window owns the Settings modal, so it opens it here on the same frame (U64).

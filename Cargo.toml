@@ -24,6 +24,7 @@ param = { path = "crates/param" }
 mesh = { path = "crates/mesh" }
 project = { path = "crates/project" }
 export = { path = "crates/export" }
+final = { path = "crates/final" }
 scene = { path = "crates/scene" }
 render = { path = "crates/render" }
 engine = { path = "crates/engine" }

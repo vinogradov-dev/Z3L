@@ -23,6 +23,7 @@
 mod commands;
 mod query;
 mod recipe;
+mod render;
 mod served;
 
 pub use query::Ask;
@@ -52,6 +53,8 @@ usage: z3l                 open the editor
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
+       z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
+                    [--camera scene|fit]
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
@@ -66,6 +69,17 @@ export writes an order package from a saved scene without opening a window:
   --price-max-age <days>
                      flag a material's price older than this many days, judged against the export
   --no-timestamp     leave the export time out of the manifest, so a package can be compared
+
+render draws the final image of a saved scene and writes it as a PNG, with no window:
+  --out <path>       where the PNG goes
+  --size <w>x<h>     the image size in pixels; 1920x1080 by default
+  --samples <n>      the samples per pixel; 4 is a draft, 256 is a catalogue plate
+  --exposure <stops> the exposure applied before the filmic curve; one stop by default
+  --camera <scene|fit>
+                     `scene` (the default) is the active authored camera, which is the view the
+                     viewport shows; `fit` is the framing the viewport opens a scene with, which
+                     is what a scene without a camera, or one whose camera looks elsewhere, needs
+  The document is read and never written.
 
 commands lists what this build can dispatch: one id, its label and what it creates.
   --json             print one JSON array instead of one line per command; each row carries the
@@ -126,6 +140,8 @@ pub enum Command {
     Help(&'static str),
     /// Write an order package and exit.
     Export(ExportArgs),
+    /// Draw the final image of a saved scene and exit.
+    Render(RenderArgs),
     /// List the commands this build can dispatch and exit.
     Commands {
         /// Print one JSON array instead of one line per command.
@@ -193,6 +209,45 @@ pub struct ExportArgs {
     pub price_max_age_days: Option<u32>,
 }
 
+/// One `render` request, already read from the line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// Where the PNG goes.
+    pub out: PathBuf,
+    /// The image width in pixels.
+    pub width: u32,
+    /// The image height in pixels.
+    pub height: u32,
+    /// The samples taken per pixel.
+    pub samples: u32,
+    /// The exposure stops applied before the filmic curve.
+    pub exposure: f32,
+    /// Which camera the image is drawn from.
+    pub camera: CameraChoice,
+}
+
+/// The two cameras a headless render can draw from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraChoice {
+    /// The scene's active authored camera: the view the viewport shows.
+    Scene,
+    /// The framing the viewport opens a scene with, fitted to its bounds.
+    Fit,
+}
+
+impl CameraChoice {
+    /// Reads `scene` or `fit`, refusing anything else rather than guessing.
+    fn parse(word: &str) -> Result<Self, CliError> {
+        match word {
+            "scene" => Ok(Self::Scene),
+            "fit" => Ok(Self::Fit),
+            other => Err(CliError::Usage(format!("`{other}` is not a camera; name `scene` or `fit`"))),
+        }
+    }
+}
+
 /// The two forms the writer produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -237,6 +292,8 @@ pub enum CliError {
     },
     /// A query cannot answer what it was asked.
     Query(String),
+    /// A final render cannot be made: no device, or a request its own ranges refuse.
+    Render(String),
     /// The tool server cannot start, or stopped with a failure.
     Mcp(String),
 }
@@ -251,6 +308,7 @@ impl std::fmt::Display for CliError {
             Self::Recipe(message) => formatter.write_str(message),
             Self::Dispatch { line, command, error } => write!(formatter, "line {line} `{command}`: {error}"),
             Self::Query(message) => formatter.write_str(message),
+            Self::Render(message) => formatter.write_str(message),
             Self::Mcp(message) => formatter.write_str(message),
         }
     }
@@ -271,6 +329,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         Some("run") => run_args(&args[1..]),
         Some("mcp") => mcp_args(&args[1..]),
         Some("query") => query_args(&args[1..]),
+        Some("render") => render_args(&args[1..]),
         Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
         // One scene path opens the editor on it; the extension is the claim, because a path that
@@ -338,6 +397,48 @@ fn export_args(args: &[String]) -> Result<Command, CliError> {
         .ok_or_else(|| CliError::Usage("export needs a scene: `z3l export <scene.z3l> --out <path>`".to_owned()))?;
     let out = out.ok_or_else(|| CliError::Usage("export needs `--out <path>` to know where to write".to_owned()))?;
     Ok(Command::Export(ExportArgs { scene, out, format, timestamp, price_max_age_days }))
+}
+
+/// Reads the words after `render`: a scene, `--out`, and the numbers a render takes.
+fn render_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let (mut width, mut height) = render::DEFAULT_SIZE;
+    let mut samples = render::DEFAULT_SAMPLES;
+    let mut exposure = 1.0f32;
+    let mut camera = CameraChoice::Scene;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--out" => out = Some(PathBuf::from(value(&mut words, "--out")?)),
+            "--size" => (width, height) = render::parse_size(value(&mut words, "--size")?)?,
+            "--samples" => samples = count(value(&mut words, "--samples")?, "--samples")?,
+            "--exposure" => exposure = stops(value(&mut words, "--exposure")?)?,
+            "--camera" => camera = CameraChoice::parse(value(&mut words, "--camera")?)?,
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not a render option; run `z3l render --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("render reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    let scene = scene
+        .ok_or_else(|| CliError::Usage("render needs a scene: `z3l render <scene.z3l> --out <path>`".to_owned()))?;
+    let out = out.ok_or_else(|| CliError::Usage("render needs `--out <path>` to know where to write".to_owned()))?;
+    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, camera }))
+}
+
+/// A whole number a flag carries, refusing one that is not a number.
+fn count(text: &str, flag: &str) -> Result<u32, CliError> {
+    text.parse::<u32>().map_err(|_| CliError::Usage(format!("`{text}` is not a number of `{flag}` units")))
+}
+
+/// An exposure a flag carries, refusing one that is not a number.
+fn stops(text: &str) -> Result<f32, CliError> {
+    text.parse::<f32>().map_err(|_| CliError::Usage(format!("`{text}` is not an exposure in stops")))
 }
 
 /// A count of days a flag carries, refusing one that is not a number.
@@ -568,6 +669,10 @@ pub fn run(command: &Command) -> Option<i32> {
         }),
         Command::Commands { json } => Some(print_stdout(&(commands::report(*json) + "\n"))),
         Command::Run(args) => Some(match recipe::perform(args) {
+            Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Render(args) => Some(match render::perform(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
@@ -849,6 +954,69 @@ mod tests {
             parse(&words(&["query", "--resources"])).expect("the resource table"),
             Command::Query(QueryArgs { scene: None, ask: Ask::Resources, id: None, at: None })
         );
+    }
+
+    #[test]
+    fn render_reads_a_size_a_count_a_stop_and_a_camera_or_the_defaults() {
+        let defaults = parse(&words(&["render", "scene.z3l", "--out", "plate.png"])).expect("a render");
+        assert_eq!(
+            defaults,
+            Command::Render(RenderArgs {
+                scene: PathBuf::from("scene.z3l"),
+                out: PathBuf::from("plate.png"),
+                width: render::DEFAULT_SIZE.0,
+                height: render::DEFAULT_SIZE.1,
+                samples: render::DEFAULT_SAMPLES,
+                exposure: 1.0,
+                camera: CameraChoice::Scene,
+            })
+        );
+        let named = parse(&words(&[
+            "render",
+            "scene.z3l",
+            "--out",
+            "plate.png",
+            "--size",
+            "2480x3508",
+            "--samples",
+            "512",
+            "--exposure",
+            "1.5",
+            "--camera",
+            "fit",
+        ]))
+        .expect("every render flag at once");
+        assert_eq!(
+            named,
+            Command::Render(RenderArgs {
+                scene: PathBuf::from("scene.z3l"),
+                out: PathBuf::from("plate.png"),
+                width: 2480,
+                height: 3508,
+                samples: 512,
+                exposure: 1.5,
+                camera: CameraChoice::Fit,
+            })
+        );
+    }
+
+    #[test]
+    fn a_render_refuses_a_missing_scene_a_missing_out_and_a_broken_number() {
+        let error = parse(&words(&["render", "--out", "plate.png"])).expect_err("a render needs a scene");
+        assert!(error.to_string().contains("scene.z3l"), "{error}");
+        let error = parse(&words(&["render", "scene.z3l"])).expect_err("a render needs a destination");
+        assert!(error.to_string().contains("--out"), "{error}");
+        for (flag, value) in [("--size", "a4"), ("--samples", "many"), ("--exposure", "dark"), ("--camera", "sideways")]
+        {
+            let error = parse(&words(&["render", "scene.z3l", "--out", "plate.png", flag, value]))
+                .expect_err("a broken value is a sentence");
+            assert!(error.to_string().contains(value), "{flag}: {error}");
+        }
+        let error = parse(&words(&["render", "one.z3l", "two.z3l", "--out", "plate.png"]))
+            .expect_err("one render reads one scene");
+        assert!(error.to_string().contains("two.z3l"), "{error}");
+        let error = parse(&words(&["render", "scene.z3l", "--out"])).expect_err("a flag without a value");
+        assert!(error.to_string().contains("--out"), "{error}");
     }
 
     #[test]
