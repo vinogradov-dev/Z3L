@@ -411,14 +411,21 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   twice. Strip the first line from the body before it is written when it is the heading (X95).
 
 - `[render]` The frame carries one key light and up to eight point lights, so the final render traces
-  no area light: a window, a softbox or a strip is a point or nothing. A rectangular emitter is L2's
-  (the document gains the object, the frame carries it), and Y2's next-event estimation with MIS is
-  written against a light that has an area, so Y2 waits for L2's emitter or samples the points alone.
+  no area light: a window, a softbox or a strip is a point or nothing. Y2 samples the point lights by
+  emitted power through an alias table and weights a light sample by the power heuristic, but every
+  light in the frame is a delta emitter, so that weight is one and the BSDF sample never competes for
+  the same path. A rectangular emitter is L2's (the document gains the object, the frame carries it);
+  until it lands, multiple importance sampling has nothing to combine.
 
-- `[render]` The final render is direct light only until Y2: a shadow, the inside of a through-cutout
-  and every surface the key light does not see are black, and a white room is the frame's background
-  only when someone adds geometry for it. Y2's lobes and its environment close this; the ADR records
-  the limit so no one reads the image as a bug.
+- `[render]` A tinted pane seen through glass reads above the hand-summed series of its internal
+  reflections: 3, 8 and 21 percent in red, green and blue for a 400 mm slab at 40 degrees, while the
+  clear pane is exact and a matched-index slab reproduces Beer-Lambert to five decimals. The
+  discrepancy grows with the tint, so it points at a further internal path or a path length the series
+  does not model rather than at the absorption law (Y2, `plan/notes/Y2.md`).
+
+- `[render]` Glass casts a black shadow: a pane is a geometric occluder for every shadow ray, so a
+  floor lit through a window is in shadow rather than lit by the window. Closing it needs a light that
+  transmits, which is L2's area emitter and a shadow ray that knows what it crossed.
 
 - `[ui]` The render place has no preview of the last image and no status line of its own: the picture
   is written and named, and the status bar still describes the node the selection points at while the
