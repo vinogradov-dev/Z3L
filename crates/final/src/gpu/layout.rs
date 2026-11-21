@@ -15,12 +15,16 @@
 use geom::DVec3;
 use scene::{Camera, Lighting, MAX_POINT_LIGHTS, Projection};
 
+use crate::bsdf;
 use crate::bvh::Bvh;
 use crate::soup::MAX_TRIANGLES;
 use crate::{FinalError, Request};
 
 /// The most `f32` coordinates a triangle takes: three vertices, each a `vec4`.
 const VERTEX_SLOTS: usize = 3;
+
+/// How many `vec4`s the alias table of [`MAX_POINT_LIGHTS`] columns occupies.
+const ALIAS_WORDS: usize = MAX_POINT_LIGHTS.div_ceil(4);
 
 /// One face as the shader reads it: three vertices and the surface's colour.
 ///
@@ -38,6 +42,10 @@ pub(crate) struct GpuFace {
     pub(crate) c: [f32; 4],
     /// Linear RGB albedo and the padding.
     pub(crate) colour: [f32; 4],
+    /// The finish: `x` roughness, `y` metallic, `z` the index of refraction, `w` transmission.
+    pub(crate) finish: [f32; 4],
+    /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the padding.
+    pub(crate) tint: [f32; 4],
 }
 
 /// One node as the shader reads it: a box and what it means.
@@ -86,6 +94,14 @@ pub(crate) struct Uniform {
     pub(crate) point_position: [[f32; 4]; MAX_POINT_LIGHTS],
     /// The point lights' linear colour, `w` their radiant power in watts.
     pub(crate) point_colour: [[f32; 4]; MAX_POINT_LIGHTS],
+    /// `xyz` the uniform environment's radiance, `w` unused.
+    pub(crate) environment: [f32; 4],
+    /// The alias table's own probabilities, one column per point light, four to a vector.
+    pub(crate) point_probability: [[f32; 4]; ALIAS_WORDS],
+    /// The alias table's other column per point light, the same four to a vector.
+    pub(crate) point_alias: [[u32; 4]; ALIAS_WORDS],
+    /// The share of the light each point light carries, which is the density of a draw.
+    pub(crate) point_share: [[f32; 4]; ALIAS_WORDS],
 }
 
 /// The frame's faces as the shader reads them, in the tree's order.
@@ -100,7 +116,15 @@ pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
             *slot = [vertex.x as f32, vertex.y as f32, vertex.z as f32, 0.0];
         }
         let [a, b, c] = slots;
-        faces.push(GpuFace { a, b, c, colour: [face.colour[0], face.colour[1], face.colour[2], 0.0] });
+        let surface = face.surface;
+        faces.push(GpuFace {
+            a,
+            b,
+            c,
+            colour: [face.colour[0], face.colour[1], face.colour[2], 0.0],
+            finish: [surface.roughness, surface.metallic, surface.ior, surface.transmission],
+            tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], 0.0],
+        });
     }
     Ok(faces)
 }
@@ -187,10 +211,33 @@ pub(crate) fn uniform(
     }
     let (face_count, node_count) = counts;
     let direction = lighting.key_direction;
-    let light_count = point_count.saturating_add(usize::from(key_lit));
-    let Ok(light_count) = u32::try_from(light_count) else {
+    let Ok(light_count) = u32::try_from(point_count) else {
         return Err(refuse("the frame carries more lights than a sample can name"));
     };
+    // The key light is a sun and is traced at every vertex; the point lights are the set a sample
+    // picks from, by emitted power. A table that cannot be built is a frame with no lit point light,
+    // which is not an error: the key light alone is a legal picture.
+    let powers: Vec<f32> = point_colour.iter().take(point_count).map(|colour| colour[3]).collect();
+    let alias = crate::light::AliasTable::build(&powers);
+    let mut point_probability = [[0.0f32; 4]; ALIAS_WORDS];
+    let mut point_alias = [[0u32; 4]; ALIAS_WORDS];
+    let mut point_share = [[0.0f32; 4]; ALIAS_WORDS];
+    if let Some(table) = &alias {
+        for index in 0..point_count {
+            let (vector, channel) = (index / 4, index % 4);
+            let (probability, instead) = table.column(index);
+            if let Some(slot) = point_probability.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = probability.clamp(0.0, 1.0);
+            }
+            if let Some(slot) = point_share.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = table.share(index) as f32;
+            }
+            if let Some(slot) = point_alias.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = instead;
+            }
+        }
+    }
+    let environment = lighting.environment.map(|channel| if channel.is_finite() { channel.max(0.0) } else { 0.0 });
     Ok(Uniform {
         eye: [eye.x as f32, eye.y as f32, eye.z as f32, orthographic],
         right: [right.x as f32, right.y as f32, right.z as f32, 0.0],
@@ -208,8 +255,41 @@ pub(crate) fn uniform(
         key_direction: [direction.x as f32, direction.y as f32, direction.z as f32, 0.0],
         point_position,
         point_colour,
+        environment: [environment[0], environment[1], environment[2], 0.0],
+        point_probability,
+        point_alias,
+        point_share,
     })
 }
+
+/// Sobol's direction numbers, flattened for the device: four dimensions of thirty-two words.
+///
+/// The shader reads the same words `sampler::direction_numbers` generated, so the sequence on the
+/// device is the sequence the tests measured and no constant is retyped.
+pub(crate) fn sobol_directions() -> Vec<u32> {
+    let table = crate::sampler::direction_numbers();
+    let mut words = Vec::with_capacity(table.len() * 32);
+    for dimension in table.iter() {
+        words.extend_from_slice(dimension);
+    }
+    words
+}
+
+/// The energy table flattened for the device: sixteen rows of sixteen cells, then the sixteen
+/// averages, with the tail padded to a whole `vec4`.
+pub(crate) fn energy_values() -> Vec<f32> {
+    let table = bsdf::EnergyTable::get();
+    let mut values = Vec::with_capacity(ENERGY_VALUES);
+    for row in table.values().iter() {
+        values.extend_from_slice(row);
+    }
+    values.extend_from_slice(table.averages());
+    values.resize(ENERGY_VALUES, 0.0);
+    values
+}
+
+/// How many `f32`s the energy table occupies, padded to a whole `vec4`.
+pub(crate) const ENERGY_VALUES: usize = 288;
 
 /// A refusal the device's input cannot be built from.
 fn refuse(reason: &str) -> FinalError {
@@ -233,7 +313,7 @@ mod tests {
     }
 
     fn face(v0: DVec3, v1: DVec3, v2: DVec3, colour: [f32; 3]) -> Face {
-        Face { triangle: Triangle::new(v0, v1, v2), colour }
+        Face::matte(Triangle::new(v0, v1, v2), colour)
     }
 
     fn request() -> Request {
@@ -250,6 +330,8 @@ mod tests {
         assert_eq!(faces[0].b, [10.0, 0.0, 0.0, 0.0]);
         assert_eq!(faces[0].c, [0.0, 10.0, 0.0, 0.0]);
         assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0]);
+        assert_eq!(faces[0].finish, [1.0, 0.0, 1.5, 0.0], "a face that names no finish is matte paint");
+        assert_eq!(faces[0].tint, [0.0; 4]);
     }
 
     #[test]
@@ -303,7 +385,7 @@ mod tests {
         frame.lighting.points.push(PointLight { position: DVec3::new(0.0, 0.0, 0.0), color: [1.0; 3], power: 0.0 });
         let camera = Camera::new(DVec3::new(0.0, 0.0, 500.0), 2000.0).expect("a camera");
         let uniform = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 7).expect("a uniform");
-        assert_eq!(uniform.counts, [3, 5, 7, 2], "one key light and one lit point light");
+        assert_eq!(uniform.counts, [3, 5, 7, 1], "one lit point light: the key light is not in the table");
         assert!((uniform.view[0] - (scene::DEFAULT_FOV_Y * 0.5).tan() as f32).abs() < 1e-6);
         assert!((uniform.view[1] - 2.0).abs() < 1e-6, "200 by 100 is two to one");
         assert_eq!(&uniform.view[2..], &[200.0, 100.0]);
@@ -334,8 +416,10 @@ mod tests {
         assert_eq!(uniform.counts[1], 0);
         assert!(faces(&Bvh::default()).expect("no faces").is_empty());
         assert!(nodes(&Bvh::default()).expect("no nodes").is_empty());
-        // The key light of a default frame is a real light even with nothing to light.
-        assert_eq!(uniform.counts[3], 1);
+        // A default frame has a key light and no point light, so the table a sample draws from is
+        // empty and every light it traces is the sun.
+        assert_eq!(uniform.counts[3], 0);
+        assert_eq!(uniform.key[3], 1.0, "the key light is still there");
     }
 
     #[test]

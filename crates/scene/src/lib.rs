@@ -311,6 +311,13 @@ pub struct Lighting {
     pub ambient: f32,
     /// Point lights in tree order, at most [`MAX_POINT_LIGHTS`] of them when built from a scene.
     pub points: Vec<PointLight>,
+    /// The radiance of an infinite, uniform environment, linear RGB and zero for none.
+    ///
+    /// This is the studio the workshop does not build: the light a final render sees where the frame
+    /// has no geometry, which is how a shadow gets a value and a white page stays white instead of
+    /// black. It is not the viewport's background colour — that is view state (ADR 0029) and never a
+    /// radiance — and a frame that says nothing is black, which is what every view drew before.
+    pub environment: [f32; 3],
 }
 
 impl Default for Lighting {
@@ -320,7 +327,42 @@ impl Default for Lighting {
             key_color: [1.0, 0.97, 0.92],
             ambient: 0.32,
             points: Vec::new(),
+            environment: [0.0; 3],
         }
+    }
+}
+
+/// The physical surface a drawable is made of: what a tracer needs and a viewport ignores.
+///
+/// A viewport shades a drawable by its colour and its display style, and a final render has to know
+/// more: a handle is a rough conductor and a glass front is a pane, and neither is a paint. The fields
+/// are the tracer's own vocabulary — not the document's material record, which is a catalogue item
+/// and is mapped onto this by the render that reads it (`plan/BACKLOG.md`, Y3).
+///
+/// Every value is clamped by the tracer where it is used, so a frame that carries a hostile number
+/// shades as a repaired surface rather than poisoning an image (`crates/final/src/bsdf.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Surface {
+    /// Microfacet roughness of the coat or the metal, `0..=1`.
+    pub roughness: f32,
+    /// `0` for a dielectric, `1` for a metal.
+    pub metallic: f32,
+    /// Index of refraction of the dielectric.
+    pub ior: f32,
+    /// How much of the beam crosses the surface, `0..=1`.
+    pub transmission: f32,
+    /// Beer-Lambert extinction inside the material, per millimetre, linear RGB.
+    pub absorption: [f32; 3],
+}
+
+impl Surface {
+    /// Painted or veneered board: diffuse, opaque, dielectric.
+    pub const MATTE: Self = Self { roughness: 1.0, metallic: 0.0, ior: 1.5, transmission: 0.0, absorption: [0.0; 3] };
+}
+
+impl Default for Surface {
+    fn default() -> Self {
+        Self::MATTE
     }
 }
 
@@ -347,6 +389,11 @@ pub struct Drawable {
     pub world_transform: DMat4,
     /// Linear RGB colour and opacity.
     pub color: [f32; 4],
+    /// What the surface is made of, which a final render shades by and a viewport ignores.
+    ///
+    /// A frame that says nothing is [`Surface::MATTE`]: the paint every drawable was before a tracer
+    /// could tell a handle from a board.
+    pub surface: Surface,
     /// The box around the mesh in its own frame, as the mesh cache measured it (X56).
     ///
     /// `None` means the box was never measured, not that the drawable is empty: a view keeps a
@@ -378,7 +425,14 @@ impl Drawable {
         color: [f32; 4],
         local_bounds: Option<Aabb>,
     ) -> Self {
-        Self { id, mesh, edges: None, all_edges: None, world_transform, color, local_bounds }
+        Self { id, mesh, edges: None, all_edges: None, world_transform, color, surface: Surface::MATTE, local_bounds }
+    }
+
+    /// The same drawable made of `surface`, which is how a frame says a front is glass or a handle is
+    /// metal without a second constructor for every joint of the two.
+    pub fn with_surface(mut self, surface: Surface) -> Self {
+        self.surface = surface;
+        self
     }
 
     /// The box around the drawable in world space, or `None` when its extent was never measured.

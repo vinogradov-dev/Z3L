@@ -70,6 +70,8 @@ struct Uploaded {
     /// frame the tracer owns instead of inferring it from a reference count.
     _faces: wgpu::Buffer,
     _nodes: wgpu::Buffer,
+    _sobol: wgpu::Buffer,
+    _energy: wgpu::Buffer,
 }
 
 impl Tracer {
@@ -111,6 +113,18 @@ impl Tracer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(true),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(true),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: storage(true),
                     count: None,
@@ -175,6 +189,12 @@ impl Tracer {
         });
         let face_buffer = storage_buffer(device, "Z3L final render faces", &faces);
         let node_buffer = storage_buffer(device, "Z3L final render nodes", &nodes);
+        // The two tables the shader transcribes rather than retypes: the sampler's direction numbers
+        // and the conductors' measured energy completion.
+        let sobol = layout::sobol_directions();
+        let energy = layout::energy_values();
+        let sobol_buffer = storage_buffer(device, "Z3L final render sobol", &sobol);
+        let energy_buffer = storage_buffer(device, "Z3L final render energy", &energy);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Z3L final render scene"),
@@ -183,6 +203,8 @@ impl Tracer {
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: face_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: node_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: sobol_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: energy_buffer.as_entire_binding() },
             ],
         });
         if let Some(error) = pollster::block_on(scope.pop()) {
@@ -202,6 +224,8 @@ impl Tracer {
             bind_group,
             _faces: face_buffer,
             _nodes: node_buffer,
+            _sobol: sobol_buffer,
+            _energy: energy_buffer,
         });
         self.builds = self.builds.saturating_add(1);
         Ok(true)
@@ -429,5 +453,10 @@ impl Accumulation {
     /// The raw sums, per pixel, for a test that wants one sample's own value.
     pub fn sums(&self) -> &[[f32; 4]] {
         &self.sums
+    }
+
+    /// How many samples each pixel took, which is what the sums are divided by.
+    pub fn samples(&self) -> u32 {
+        self.samples
     }
 }

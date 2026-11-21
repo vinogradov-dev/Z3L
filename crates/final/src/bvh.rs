@@ -425,7 +425,7 @@ mod tests {
 
     /// One face of one grey surface, which is what a flat colour makes of a triangle.
     fn face(triangle: Triangle) -> Face {
-        Face { triangle, colour: [0.5, 0.5, 0.5] }
+        Face::matte(triangle, [0.5, 0.5, 0.5])
     }
 
     /// A kitchen's worth of quads: `quads` two-triangle faces spread over a 3000 × 2200 × 600 box.

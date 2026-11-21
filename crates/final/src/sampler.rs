@@ -49,8 +49,10 @@ const TABLE: [(u32, u32, [u32; 3]); DIMENSIONS] =
 /// The direction numbers of every dimension, each a `u32` per bit of an index.
 ///
 /// Built once, because they are a pure function of the table above: 32 words per dimension, and the
-/// sequence is then one XOR per set bit of the Gray code.
-fn direction_numbers() -> &'static [[u32; 32]; DIMENSIONS] {
+/// sequence is then one XOR per set bit of the Gray code. The device reads the same words from a
+/// buffer this function fills ([`crate::gpu::layout`]), so the shader transcribes the algorithm and
+/// never retypes 128 constants.
+pub fn direction_numbers() -> &'static [[u32; 32]; DIMENSIONS] {
     static NUMBERS: OnceLock<[[u32; 32]; DIMENSIONS]> = OnceLock::new();
     NUMBERS.get_or_init(|| {
         let mut table = [[0u32; 32]; DIMENSIONS];

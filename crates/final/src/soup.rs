@@ -20,7 +20,7 @@
 //! number of triangles, is an error naming the index rather than a silently missing face.
 
 use geom::{DVec3, MeshData};
-use scene::{Drawable, SceneFrame};
+use scene::{Drawable, SceneFrame, Surface};
 
 use crate::FinalError;
 use crate::ray::Triangle;
@@ -32,13 +32,22 @@ use crate::ray::Triangle;
 /// mistake rather than a big scene.
 pub const MAX_TRIANGLES: usize = 1_000_000;
 
-/// One triangle and the linear colour of the surface it came from.
+/// One triangle, the linear colour of the surface it came from and what that surface is made of.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Face {
     /// The triangle, in world millimetres.
     pub triangle: Triangle,
     /// The linear RGB albedo of the surface, every channel inside `0..=1`.
     pub colour: [f32; 3],
+    /// The finish the surface is made of: paint, conductor or pane.
+    pub surface: Surface,
+}
+
+impl Face {
+    /// A matte face of one colour, which is what a frame that names no finish describes.
+    pub fn matte(triangle: Triangle, colour: [f32; 3]) -> Self {
+        Self { triangle, colour, surface: Surface::MATTE }
+    }
 }
 
 /// The frame's drawables as world-space faces, in frame order.
@@ -83,7 +92,11 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Vec<Face>, FinalError> {
                     f64::from(position[2]),
                 ));
             }
-            triangles.push(Face { triangle: Triangle::new(points[0], points[1], points[2]), colour: albedo(drawable) });
+            triangles.push(Face {
+                triangle: Triangle::new(points[0], points[1], points[2]),
+                colour: albedo(drawable),
+                surface: drawable.surface,
+            });
         }
     }
     Ok(triangles)

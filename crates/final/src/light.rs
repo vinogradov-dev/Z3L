@@ -118,6 +118,12 @@ impl AliasTable {
     pub fn share(&self, index: usize) -> f64 {
         f64::from(self.share.get(index).copied().unwrap_or(0.0))
     }
+
+    /// The column a device needs to draw the same way: the threshold it answers for itself with, and
+    /// the column it answers with instead.
+    pub fn column(&self, index: usize) -> (f32, u32) {
+        (self.probability.get(index).copied().unwrap_or(0.0), self.alias.get(index).copied().unwrap_or(0))
+    }
 }
 
 /// The power heuristic's weight for a sample both strategies could have found.
