@@ -6437,3 +6437,17 @@ fn the_assistant_switch_closes_and_reopens_the_channel() {
     harness.app.apply_channel();
     assert!(file.exists(), "turning it back on publishes a new token");
 }
+
+#[test]
+fn the_settings_window_offers_the_assistant_switch() {
+    // The switch is drawn where a person looks for it: its own page, named, with the sentence that
+    // says what it closes (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-page");
+    harness.app.settings_open = true;
+    harness.app.settings_section = SettingsSection::Assistant;
+    harness.settle();
+    assert!(harness.drew(Message::SectionAssistant.text(Lang::En)), "the page is named: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannel.text(Lang::En)), "and the switch is on it: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannelHint.text(Lang::En)), "with the sentence that says what it is");
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace leaves the door open");
+}

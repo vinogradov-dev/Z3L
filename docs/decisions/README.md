@@ -212,6 +212,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0204](0204-a-niche-keeps-the-whole-shape-the-frame-draws.md) | A niche keeps the whole shape the frame draws | Accepted; supersedes the piece-only seed of 0203 for the section and the box; amends the chord rule of 0201 for a shelf's section |
 | [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
 | [0206](0206-a-boolean-result-is-one-object.md) | A boolean result is one object, a hole is part of one region, and splitting is a command | Accepted; the tree rule the contour boolean, a body boolean and the profile of 0205 read |
+| [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188 |
 
 ## Format
 

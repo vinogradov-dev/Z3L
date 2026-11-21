@@ -227,7 +227,10 @@ desktop assistant, a script, an agent process — reaches the same tools over MC
   adapter that may be local or remote, reached through one OpenAI-compatible client whose endpoint and
   model are settings, never types (ADR 0189). There is no network service: `z3l mcp serve` speaks over
   stdio and binds nothing, and a local control channel — loopback, a token minted per run, a switch in
-  the settings — is how an agent attaches to a running window (ADR 0188).
+  the settings — is how an agent attaches to a running window (ADR 0188). The channel publishes its
+  port and token in the settings folder, a connection presents the token first, and `ui_inspect`
+  reports the window it attached to; `z3l mcp serve --attach` serves the same channel from a process
+  with no window (ADR 0207).
 - A chat turn is one undo entry named after the message, the first enable is read-only, and a plan is
   the `dry_run` result shown as a checklist — so what a person approves is what ran (ADR 0187). The
   agent works in `plan` or `build`, and only a person switches between them (ADR 0190).

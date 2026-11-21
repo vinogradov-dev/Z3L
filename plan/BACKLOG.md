@@ -76,6 +76,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
    `cargo xtask ci` is green.
   `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
+- `[~]` **J6** the local channel attaches an agent to the window a person is looking at
+  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
+   measured: a stdio child edits a saved file, not the document a person is looking at, so
+   without the channel the agent cannot work in the window the product is about.
+  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
+   writes the port and the token into an owner-only file in the settings directory and removes
+   it on exit; the setting is on by default and switches it off; the tools are the headless set
+   plus `ui_inspect`; a request without the token is refused before it is read as a command,
+   and a turn still dispatches at a frame boundary.
+  Done: A test with the token reaches `command_list` and one without is refused; the token file
+   is owner-only and gone after a clean exit; a second instance's file does not take the first
+   one's channel; an unauthenticated request never reaches the dispatcher.
+  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs`
 
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
@@ -376,19 +389,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J6** the local channel attaches an agent to the window a person is looking at
-  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
-   measured: a stdio child edits a saved file, not the document a person is looking at, so
-   without the channel the agent cannot work in the window the product is about.
-  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
-   writes the port and the token into an owner-only file in the settings directory and removes
-   it on exit; the setting is on by default and switches it off; the tools are the headless set
-   plus `ui_inspect`; a request without the token is refused before it is read as a command,
-   and a turn still dispatches at a frame boundary.
-  Done: A test with the token reaches `command_list` and one without is refused; the token file
-   is owner-only and gone after a clean exit; a second instance's file does not take the first
-   one's channel; an unauthenticated request never reaches the dispatcher.
-  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs`
 - `[ ]` **J7** the window has a chat, and a scripted backend runs a turn without a network
   Why: This is the goal in the owner's words: a person talks to the agent in the application's
    own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
