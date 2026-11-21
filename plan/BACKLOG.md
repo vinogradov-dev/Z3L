@@ -45,6 +45,29 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
+  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
+   decor at its real texel scale, the grain along the direction the piece is cut, the banding
+   in the colour of its own band, the handle as metal. A shader-node material format would put
+   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
+   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
+   whatever the document stores when that question is answered, and this task does not decide
+   the storage.
+  Shape: The frame's ability, and not the mapping: a decor value on a drawable — the picture,
+   the millimetres one image width covers and the quarter turns its grain runs by — which the
+   surface's colour multiplies; the viewport samples it through one texture per decor, and the
+   tracer carries the same value as its own table and filters it with its own bilinear, repeat
+   and sRGB-to-linear arithmetic. Grain is the renderer's vocabulary: the document's storage
+   question stays open in PROJECT.md. Exposure and the filmic tone map are the command's
+   settings and were already there; the viewport keeps its own colours. The mapping from a
+   record, its banding and a handle's finish is Y7's.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them, in the viewport and in the tracer's picture; an item that
+   names no decor renders a flat colour rather than black; the exposure field darkens the image
+   monotonically; cargo xtask ci is green.
+  `files: crates/scene/src,crates/render/src,crates/final/src`
+
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -790,28 +813,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the tool schemas, the answers and the refusals - because a released build ships no prose
    (J19); `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
-  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
-   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
-   decor at its real texel scale, the grain along the direction the piece is cut, the banding
-   in the colour of its own band, the handle as metal. A shader-node material format would put
-   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
-   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
-   whatever the document stores when that question is answered, and this task does not decide
-   the storage.
-  Shape: The frame's ability, and not the mapping: a decor value on a drawable — the picture,
-   the millimetres one image width covers and the quarter turns its grain runs by — which the
-   surface's colour multiplies; the viewport samples it through one texture per decor, and the
-   tracer carries the same value as its own table and filters it with its own bilinear, repeat
-   and sRGB-to-linear arithmetic. Grain is the renderer's vocabulary: the document's storage
-   question stays open in PROJECT.md. Exposure and the filmic tone map are the command's
-   settings and were already there; the viewport keeps its own colours. The mapping from a
-   record, its banding and a handle's finish is Y7's.
-  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them, in the viewport and in the tracer's picture; an item that
-   names no decor renders a flat colour rather than black; the exposure field darkens the image
-   monotonically; cargo xtask ci is green.
-  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
 - `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
   Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
    visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
