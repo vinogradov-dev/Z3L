@@ -915,6 +915,7 @@ messages! {
     ToolPost = ["Post", "Стойка"],
     ToolVoid = ["Niche", "Ниша"],
     ToolShelf = ["Shelf", "Полка"],
+    ToolWall = ["Wall", "Стенка"],
     ToolContourPanel = ["Panel from contour", "Панель по контуру"],
     ToolAssembly = ["Assembly", "Сборка"],
     ToolGroupNode = ["Group", "Группа"],

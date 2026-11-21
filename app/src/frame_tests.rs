@@ -3099,6 +3099,76 @@ fn the_empty_space_tool_creates_the_ghost_as_one_classed_part_in_one_undo_step()
     assert!(document.session.project().panel(created).is_none(), "one undo removes the part");
 }
 
+#[test]
+fn the_wall_cell_creates_the_frontal_board_in_one_undo_step() {
+    // N28: the wall is the first fill whose free axis is the depth, so it is the first board the
+    // carriage carries towards and away from the maker. The click is still one `panel.create` and
+    // one undo entry, and the part stands in the frontal plane (ADR 0105, ADR 0200).
+    let mut harness = Harness::with_session("frame-fill-wall", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    let before = harness.revision();
+    let (product, pointer, envelope_size) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let centre = placement.transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let pointer = gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen");
+        assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::BACK_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the wall arms inside the open frame");
+        (product, pointer, (envelope.x(), envelope.y(), envelope.z()))
+    };
+
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    let planned = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the pointer measures a ghost");
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let created = {
+        let document = harness.app.tabs.active();
+        let created = document.editor.selected_node().expect("the new part is selected");
+        let panel = document.session.project().panel(created).expect("the click created a panel");
+        assert_eq!(panel.nominal_size(), planned.nominal_size, "the part is exactly the ghost's size");
+        assert_eq!(panel.placement(), planned.placement, "and exactly the ghost's placement");
+        // The wall is the niche's height by its width, and its material runs along the depth.
+        assert_eq!(panel.nominal_size().length(), envelope_size.2, "the length is the niche's height");
+        assert_eq!(panel.nominal_size().width(), envelope_size.0, "the width is the niche's width");
+        let rotation = panel.placement().rotation();
+        let close = |first: geom::DVec3, second: geom::DVec3| (first - second).length() <= 1.0e-9;
+        assert!(close(rotation.mul_vec3(geom::DVec3::X), geom::DVec3::Z), "the length runs up the case");
+        assert!(close(rotation.mul_vec3(geom::DVec3::Y), geom::DVec3::X), "the width runs across the front");
+        assert!(close(rotation.mul_vec3(geom::DVec3::Z), geom::DVec3::Y), "and the material faces the maker");
+        assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+        assert_eq!(
+            document.session.project().class(created),
+            Some(ClassCode::BACK_PANEL),
+            "the wall cell's class travels with the same command"
+        );
+        created
+    };
+    assert!(harness.revision() > before, "the click writes the document once");
+
+    let document = harness.app.tabs.active_mut();
+    assert!(document.session.can_undo());
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the board");
+}
+
 /// A harness whose open product holds two posts standing at an angle, plus the pointer at the
 /// void's centre and the product's id.
 ///

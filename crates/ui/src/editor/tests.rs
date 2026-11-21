@@ -2072,11 +2072,21 @@ fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
         "a shelf takes the niche's width and depth in the mode it was asked for"
     );
 
-    let back: ClassCode = "30.12.00".parse().expect("a back panel");
-    let refusal =
-        editor.arm_fill(&session, back, FillMode::Fit, crate::Lang::En).expect_err("a back panel does not fill a void");
+    editor.arm_fill(&session, ClassCode::BACK_PANEL, FillMode::Fit, crate::Lang::En).expect("a wall fills a void");
+    assert_eq!(
+        editor.fill_arm(),
+        Some(FillArm { class: ClassCode::BACK_PANEL, fill: model::Fill::WidthAndHeight, mode: FillMode::Fit }),
+        "a wall takes the niche's width and height, so the back panel row fills a void (ADR 0200)"
+    );
+
+    // A class without the trait still has no axis pair to take: a drawer box part is machined, not
+    // cut to a void.
+    let drawer: ClassCode = "10.13".parse().expect("a drawer box part");
+    let refusal = editor
+        .arm_fill(&session, drawer, FillMode::Fit, crate::Lang::En)
+        .expect_err("a drawer box part does not fill a void");
     assert!(refusal.contains(text::Message::FillNeedsFillTrait.text(crate::Lang::En)), "{refusal}");
-    assert_eq!(editor.fill_arm().map(|arm| arm.class), Some(ClassCode::HORIZONTAL_PANEL), "a refusal keeps the arm");
+    assert_eq!(editor.fill_arm().map(|arm| arm.class), Some(ClassCode::BACK_PANEL), "a refusal keeps the arm");
 }
 
 #[test]

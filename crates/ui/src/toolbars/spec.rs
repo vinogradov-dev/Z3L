@@ -173,6 +173,14 @@ const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
     run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape }),
 }];
 
+/// The wall's second method: take the whole section instead of the largest fit.
+const FILL_WALL_SHAPE: &[VariantSpec] = &[VariantSpec {
+    id: "furniture.panels.wall.shape",
+    label: Message::FillMethodShape,
+    icon: Some(icons::contour::POLYGON),
+    run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+}];
+
 /// One tool: one cell of a group's row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolSpec {
@@ -938,6 +946,16 @@ const FURNITURE: [GroupSpec; 6] = [
                 method: Some(Message::FillMethodFit),
                 variants: FILL_SHELF_SHAPE,
             },
+            // The wall is the board in the frontal plane: the back panel row's own fill pair, so
+            // the tool exists because the class carries `WidthAndHeight` (N28, ADR 0200).
+            ToolSpec {
+                id: "furniture.panels.wall",
+                label: Message::ToolWall,
+                icon: Some(icons::scene::WALL),
+                run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
+                method: Some(Message::FillMethodFit),
+                variants: FILL_WALL_SHAPE,
+            },
             // The niche is the space the two cells above fill: it sits with them because a maker
             // reads the gap and the part together, and it creates nothing (ADR 0118).
             ToolSpec {
@@ -1369,6 +1387,7 @@ mod tests {
                 "furniture.panels.post",
                 "furniture.panels.shelf",
                 "furniture.panels.void",
+                "furniture.panels.wall",
                 "furniture.product.frame",
             ]
         );
@@ -1607,6 +1626,8 @@ mod tests {
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape },
+            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit },
+            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape },
             ToolKind::Void,
             ToolKind::Assembly,
             ToolKind::Camera,
@@ -1691,7 +1712,7 @@ mod tests {
         // The planned groups draw nothing, so the Model tab is the four primitives, the extrusion and
         // the three body booleans (W1).
         assert_eq!(tab("model").expect("model").columns(), 8);
-        assert_eq!(tab("furniture").expect("furniture").columns(), 5);
+        assert_eq!(tab("furniture").expect("furniture").columns(), 6);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         // The View tab's three cells beside the group are the projection pair and the shadow
         // switch: the Snaps group of twelve cells is the second row.

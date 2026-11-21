@@ -544,6 +544,41 @@ mod tests {
     }
 
     #[test]
+    fn a_wall_stands_in_the_frontal_plane_and_its_ghost_is_the_plan() {
+        // N28: the wall is the third fill pair, so the ghost needs no rule of its own — it draws the
+        // plan the click will store, in the stance ADR 0105 fixes for the wall.
+        let (project, product) = piece();
+        let point = DVec3::new(300.0, 280.0, 360.0);
+        let ghost = plan(&project, product, point, Fill::WidthAndHeight, millimetres(18), Sight::none())
+            .expect("a wall fills the void");
+        assert_eq!(ghost.nominal_size.length(), millimetres(720), "the niche height is the wall's length");
+        assert_eq!(ghost.nominal_size.width(), millimetres(600), "and the niche width is its width");
+        assert_eq!(ghost.size_mm, DVec3::new(720.0, 600.0, 18.0));
+        let near = |point: DVec3, wanted: DVec3| (point - wanted).length() < 1e-9;
+        assert!(near(ghost.placement.translation(), DVec3::new(0.0, 280.0, 0.0)), "{:?}", ghost.placement);
+        // Vertex 1 is the base corner: the panel's length runs up, its width across the front and its
+        // thickness towards the maker, so the board's base face is the one at the pointer's depth.
+        assert!(near(ghost.world[0], DVec3::new(0.0, 280.0, 0.0)), "the first corner is the base corner");
+        assert!(near(ghost.world[1], DVec3::new(0.0, 280.0, 720.0)), "the second stands directly above it");
+        assert!(near(ghost.world[3], DVec3::new(600.0, 280.0, 0.0)), "the width runs across the front");
+        assert!(near(ghost.top[0], DVec3::new(0.0, 298.0, 0.0)), "the material runs towards +Y");
+        assert_eq!((ghost.free_low, ghost.free_high), (280.0, 298.0), "one thickness of depth");
+        assert!(ghost.low_face().is_some_and(|face| (face.y - 280.0).abs() < 1e-9), "the fields measure the base face");
+        // The ghost is the plan the command receives, to the micrometre.
+        let stored = project
+            .fill_plan(
+                product,
+                model::FillRequest::new(point, Fill::WidthAndHeight, FillMode::Fit, millimetres(18), None),
+                Sight::none(),
+                None,
+            )
+            .expect("the same plan");
+        assert_eq!(ghost.placement, stored.placement, "the ghost stores the plan's placement");
+        assert_eq!(ghost.nominal_size, stored.nominal_size, "and its size");
+        assert_eq!(ghost.outline, stored.outline, "and its outline");
+    }
+
+    #[test]
     fn a_post_keeps_its_board_inside_the_void_at_both_ends_of_its_travel() {
         let (project, product) = piece();
         // The pointer's plane is the face the post grows away from, so the board spans one thickness

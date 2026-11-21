@@ -1019,6 +1019,7 @@ mod tests {
                     "Post: Largest rectangle",
                     "Product frame",
                     "Shelf: Largest rectangle",
+                    "Wall: Largest rectangle",
                 ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
@@ -1591,7 +1592,7 @@ mod tests {
     fn the_empty_space_tool_arms_a_fill_class_only_inside_an_open_product() {
         let state = Toolbars::new();
         let closed = RibbonContext { product_open: false, ..full_context() };
-        for tool_id in ["furniture.panels.post", "furniture.panels.shelf"] {
+        for tool_id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
             let tool = tool(tool_id);
             let kind = tool.primary().expect("a live tool");
             let cell = ready(kind, tool, &state, closed, Lang::En);
@@ -1613,6 +1614,11 @@ mod tests {
         let shelf = tool("furniture.panels.shelf");
         let cell = ready(shelf.primary().expect("a live tool"), shelf, &state, full_context(), Lang::En);
         assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }));
+
+        let wall = tool("furniture.panels.wall");
+        let cell = ready(wall.primary().expect("a live tool"), wall, &state, full_context(), Lang::En);
+        assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }));
+        assert_eq!(wall.icon, Some(icons::scene::WALL), "the wall draws its own board");
     }
 
     #[test]
@@ -1991,7 +1997,7 @@ mod tests {
     fn the_fill_methods_read_as_two_builds_of_one_panel() {
         // The Shape row used to be a blank line named like a second panel. It now carries its own
         // glyph beside the fit row, and the list is one flat list of the two builds (ADR 0110, U84).
-        for id in ["furniture.panels.post", "furniture.panels.shelf"] {
+        for id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
             let tool = tool(id);
             let methods = tool.methods().collect::<Vec<_>>();
             assert_eq!(methods.len(), 2, "{id} has one cell with two builds");
@@ -2028,6 +2034,33 @@ mod tests {
                 "`{gone}` is gone: the method it promised is now a cell"
             );
         }
+    }
+
+    #[test]
+    fn the_wall_cell_runs_the_two_builds_of_the_back_panel() {
+        // N28: the wall is the third fill pair, so its cell runs the same two builds over the class
+        // that carries `WidthAndHeight` — and asks nothing about overlay or inset (ADR 0200).
+        let wall = tool("furniture.panels.wall");
+        assert_eq!(wall.label.text(Lang::Ru), "Стенка", "the workshop's word for the board");
+        assert!(wall.icon.is_some_and(Icon::is_drawn), "the cell carries artwork");
+        let methods = wall.methods().collect::<Vec<_>>();
+        assert_eq!(
+            methods.iter().map(|method| method.run).collect::<Vec<_>>(),
+            vec![
+                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
+                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+            ],
+            "one cell, the fit and the shape of the same class"
+        );
+        let mut state = Toolbars::new();
+        state.set_tab(tab("furniture"));
+        let (actions, labels) = click_cell(&mut state, wall, main_point());
+        assert_eq!(actions, vec![ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }]);
+        assert!(labels.iter().any(|label| label == "Wall: Largest rectangle"), "the hint names the tool: {labels:?}");
+        assert!(
+            !labels.iter().any(|label| label.contains("Overlay") || label.contains("Inset")),
+            "the tool asks nothing about mounting: {labels:?}"
+        );
     }
 
     #[test]
