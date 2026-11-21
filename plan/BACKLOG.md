@@ -45,24 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U117** the contour panel and the niche-fit panel have artwork of their own
-  Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
-  fits the niche's shape is a board with a bevel and a rounding. Today
-  `furniture.panels.contour` draws `scene::panel.svg`, the same isometric board as the fill
-  cells, and both Shape methods draw the generic `contour::POLYGON`, so a maker cannot tell the
-  free outline from the niche-fit build and the two method rows share a glyph that says neither
-  fit nor shape.
-  Shape: `panel.svg` is redrawn as the wavy shelf — isometric, one long side a wave, the other three
-  straight, one ink and the two tone steps — and a new `panel-shape.svg` draws the bevelled
-  board: one corner cut at an angle, the opposite corner rounded, so both read at 16 pt. The
-  contour cell keeps `scene::PANEL`; `FILL_POST_SHAPE` and `FILL_SHELF_SHAPE` point at the new
-  constant and `contour::POLYGON` leaves the furniture table. Both files follow
-  `assets/README.md`, gain their row in the `scene` theme table, and the icon test that every
-  theme file loads and is non-empty covers them.
-  Done: The contour cell draws the wavy shelf and both Shape rows draw the bevelled board;
-  `POLYGON` no longer names a furniture build; the theme table lists both files; the icon test
-  passes and `cargo xtask ci` is green.
-  `files: assets/icons/scene/panel.svg,crates/ui/src/toolbars/spec.rs,crates/ui/src/icons.rs,assets/README.md`
 - `[ ]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
   Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
   must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
@@ -615,6 +597,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs`
 
 ## Done
+
+- `[x]` **U117** the contour panel and the niche-fit panel have artwork of their own
+  Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
+  fits the niche's shape is a board with a bevel and a rounding. Today
+  `furniture.panels.contour` draws `scene::panel.svg`, the same isometric board as the fill
+  cells, and both Shape methods draw the generic `contour::POLYGON`, so a maker cannot tell the
+  free outline from the niche-fit build and the two method rows share a glyph that says neither
+  fit nor shape.
+  Shape: `panel.svg` is redrawn as the wavy shelf — isometric, one long side a wave, the other three
+  straight, one ink and the two tone steps — and a new `panel-shape.svg` draws the bevelled
+  board: one corner cut at an angle, the opposite corner rounded, so both read at 16 pt. The
+  contour cell keeps `scene::PANEL`; `FILL_POST_SHAPE` and `FILL_SHELF_SHAPE` point at the new
+  constant and `contour::POLYGON` leaves the furniture table. Both files follow
+  `assets/README.md`, gain their row in the `scene` theme table, and the icon test that every
+  theme file loads and is non-empty covers them.
+  Done: The contour cell draws the wavy shelf and both Shape rows draw the bevelled board;
+  `POLYGON` no longer names a furniture build; the theme table lists both files; the icon test
+  passes and `cargo xtask ci` is green.
+  `files: assets/icons/scene/panel.svg,crates/ui/src/toolbars/spec.rs,crates/ui/src/icons.rs,assets/README.md` — `032712d`
 
 - `[x]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
   Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post

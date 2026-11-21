@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U117 state=idle base=e1e281c updated=2026-11-21
+STATE: milestone=M7 phase=T task=N29 state=idle base=032712d updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,7 +52,8 @@ page, a glyph at the snapped point and a word in the status bar's readout.
 
 ## Next
 
-U117 is next: the contour panel and the niche-fit panel have artwork of their own
+N29 is next: the niche starts from the frame's footprint, so a panel in a cut-corner case takes its
+shape
 
 ## Index
 
