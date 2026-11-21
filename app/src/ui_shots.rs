@@ -422,7 +422,17 @@ fn the_render_place_is_painted_offscreen() {
     // The place, with a destination and a run that reports progress: the shot is taken between two
     // frames of a real render, so the bar and the counter are what the page actually draws.
     app.render_open = true;
-    app.render_place.set_path(directory.join("example.png"));
+    // A real run at a size that finishes in a second, so the picture shows the page's own report
+    // line rather than a stage no person has reached yet.
+    let image = directory.join("render-place-example.png");
+    let _ = std::fs::remove_file(&image);
+    app.render_place.set_path(image.clone());
+    app.render_place.settings().width = 480;
+    app.render_place.settings().height = 360;
+    app.render_place.settings().samples = 4;
+    app.start_render(&ctx);
+    app.render_place.wait();
+    assert!(image.is_file(), "the place wrote its image");
     let mut jobs = Vec::new();
     for _ in 0..SETTLE_FRAMES {
         jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
