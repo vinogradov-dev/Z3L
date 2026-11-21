@@ -136,6 +136,10 @@ impl PlanBackend for MeshBackend {
         mesh_from_extrusion(extrude)
     }
 
+    fn mesh(&mut self, _body: &kernel::MeshBody) -> Result<Mesh, KernelError> {
+        Err(KernelError::Unsupported("the analytic backend evaluates one extrusion"))
+    }
+
     fn boolean(&mut self, _op: BooleanOp, _target: Mesh, _tool: Mesh) -> Result<Mesh, KernelError> {
         Err(KernelError::Unsupported("the analytic backend evaluates one extrusion"))
     }
@@ -371,10 +375,10 @@ mod tests {
         assert_eq!(plan.steps().len(), 1);
         let step = plan.steps().first().expect("one step");
         assert_eq!(step.op(), BooleanOp::Difference);
-        let frame = step.tool().base().frame();
+        let frame = step.tool().base().extrude().expect("a cutter is an extrusion").frame();
         assert!((frame.origin.z + 5.0 + CUTTER_OVERSHOOT_MM).abs() < 1.0e-9, "the cutter reaches past its own end");
         assert!((frame.origin.x - 25.0).abs() < 1.0e-9, "and stands where the step froze it");
-        let height = step.tool().base().height();
+        let height = step.tool().base().extrude().expect("a cutter is an extrusion").height();
         assert!((height - (30.0 + 2.0 * CUTTER_OVERSHOOT_MM)).abs() < 1.0e-9, "the sweep covers both ends");
     }
 

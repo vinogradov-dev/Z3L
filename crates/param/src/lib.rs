@@ -1754,7 +1754,7 @@ mod tests {
 
         let plan = build_cutout_tool(geometry, cutout, entry).expect("cutout tool");
         assert!(plan.steps().is_empty(), "a cutout tool is one extrusion");
-        let frame = plan.base().frame();
+        let frame = plan.base().extrude().expect("an extrusion").frame();
         assert_eq!(frame.origin.x, 10.0);
         assert_eq!(frame.origin.y, 20.0);
     }
@@ -1780,7 +1780,7 @@ mod tests {
 
         let plan = build_cutout_tool(geometry, cutout, entry).expect("contour cutout tool");
         assert!(plan.steps().is_empty(), "a cutout tool is one extrusion");
-        let extrude = plan.base();
+        let extrude = plan.base().extrude().expect("an extrusion");
         assert_eq!(extrude.frame(), Frame { origin: DVec3::new(0.0, 0.0, -TOOL_OVERSHOOT_MM), ..Frame::WORLD });
         assert_eq!(extrude.height(), 18.0 + 2.0 * TOOL_OVERSHOOT_MM);
         let profile = extrude.profile();
