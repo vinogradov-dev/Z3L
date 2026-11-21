@@ -35,7 +35,7 @@ checkout serves: `app` in the primary checkout, and otherwise the declared strea
 session runs in, which its branch names. A question about the current tasks, the next task or "what is
 left" is answered for that stream alone — its `[~]` entry, its own note and its own entries in `## Now`
 and `## Next` — and the answer opens with the stream it is about. Another stream's entry is named only
-to say that it is not ours. Do not merge the four streams into one list, and do not ask which stream
+to say that it is not ours. Do not merge the streams into one list, and do not ask which stream
 was meant when the checkout already answers it.
 
 **The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a

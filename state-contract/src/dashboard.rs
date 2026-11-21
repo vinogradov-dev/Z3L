@@ -105,7 +105,7 @@ pub fn dashboard_with(root: &Path, opts: &DashboardOptions, git: &dyn Git) -> Re
     }
 
     // One block per stream that is working: the plan's own note and every declared stream's, so a
-    // dashboard of four checkouts shows four sessions instead of the primary's alone.
+    // dashboard of several checkouts shows several sessions instead of the primary's alone.
     for stream in summary.streams.iter().filter(|stream| stream.live.is_some()) {
         let Some(note) = sessions.iter().find(|(path, _)| *path == stream.note_path) else { continue };
         let mut block = Section::new("SESSION", stream.note_path.as_str());

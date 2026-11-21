@@ -154,7 +154,7 @@ mod tests {
         }
     }
 
-    /// A primary stream beside a declared one, the shape a plan with four checkouts prints.
+    /// A primary stream beside a declared one, the shape a plan with several checkouts prints.
     fn declared() -> Summary {
         let mut list = summary("idle", Some("fedcba9"), None);
         list.streams[0].live = None;
