@@ -6419,10 +6419,7 @@ fn an_agent_cannot_move_the_document_under_a_question() {
         Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(1, Lang::En) });
     let before = harness.revision();
     let request = mcp::BatchRequest {
-        steps: vec![mcp::StepRequest {
-            command: "node.rename".to_owned(),
-            params: serde_json::json!({"node": 1, "name": "Renamed"}),
-        }],
+        steps: vec![mcp::StepRequest::new("node.rename", serde_json::json!({"node": 1, "name": "Renamed"}))],
         product: None,
         atomic: true,
         dry_run: false,

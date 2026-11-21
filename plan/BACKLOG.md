@@ -45,6 +45,24 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
+  Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name
+   the id another step creates, and the id is only known after the step runs, so banding a
+   panel needs a second batch and the build becomes three undo entries instead of one - 14
+   creates, 19 bands, 5 bodies. `command_batch` promises one undo entry per call and
+   `BatchStep` carries a command id and a plain params object, so there is no way to write
+   `panel: <the panel line 3 made>`; the CLI recipe has the same hole and the wardrobe fixture
+   gets round it by hard-coding the ids of a fixed scene, which breaks the moment the document
+   already holds anything.
+  Shape: One way for a later step to name what an earlier step made: a name a step gives its
+   created node and a reference a later step resolves against it, resolved as the batch runs,
+   so one build is one call and one undo entry. The reference is a batch concept, not a
+   document one: nothing new is serialized and a saved scene has no placeholders.
+  Done: A test builds a panel and bands it in one batch and asserts one undo entry and one
+   landed document; a test asserts a reference to a step that refused or made nothing is a
+   readable refusal naming the step; a saved scene after a batch holds no reference, only ids.
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs,crates/mcp/src/tools.rs,crates/mcp/src/report.rs,app/src/cli/recipe.rs,app/tests/recipes/wardrobe-800x460x2200.jsonl,docs/decisions/README.md`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -437,23 +455,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
    against the default directory rather than a fixture copy.
   `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
-- `[ ]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
-  Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name
-   the id another step creates, and the id is only known after the step runs, so banding a
-   panel needs a second batch and the build becomes three undo entries instead of one - 14
-   creates, 19 bands, 5 bodies. `command_batch` promises one undo entry per call and
-   `BatchStep` carries a command id and a plain params object, so there is no way to write
-   `panel: <the panel line 3 made>`; the CLI recipe has the same hole and the wardrobe fixture
-   gets round it by hard-coding the ids of a fixed scene, which breaks the moment the document
-   already holds anything.
-  Shape: One way for a later step to name what an earlier step made: a name a step gives its
-   created node and a reference a later step resolves against it, resolved as the batch runs,
-   so one build is one call and one undo entry. The reference is a batch concept, not a
-   document one: nothing new is serialized and a saved scene has no placeholders.
-  Done: A test builds a panel and bands it in one batch and asserts one undo entry and one
-   landed document; a test asserts a reference to a step that refused or made nothing is a
-   readable refusal naming the step; a saved scene after a batch holds no reference, only ids.
-  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs`
 - `[ ]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
   Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
    `panel.create` carries `nominal_size` as `Length` - integer micrometres - and

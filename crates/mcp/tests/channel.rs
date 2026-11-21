@@ -164,10 +164,7 @@ async fn a_window_batch_lands_in_the_document_and_says_the_file_is_the_persons()
     let mut session = session();
     let steps = [BatchStep::new("node.rename", json!({"node": 1, "name": "Renamed"}))];
     let request = mcp::BatchRequest {
-        steps: steps
-            .iter()
-            .map(|step| mcp::StepRequest { command: step.command().to_owned(), params: step.params().clone() })
-            .collect(),
+        steps: steps.iter().map(|step| mcp::StepRequest::new(step.command(), step.params().clone())).collect(),
         product: None,
         atomic: true,
         dry_run: false,

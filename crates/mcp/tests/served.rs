@@ -166,6 +166,55 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
 }
 
 #[tokio::test]
+async fn a_client_names_what_one_step_makes_and_the_next_step_refers_to_it() {
+    // J18: a build is one call and one undo entry, so a step that bands a panel names the panel it
+    // creates and the band step refers to the name instead of an id only the answer knows.
+    let (mut session, products) = session_with(1);
+    let product = *products.first().expect("one product");
+    assert!(session.open_product(product), "the fixture opens the one product");
+    let session = Arc::new(Mutex::new(session));
+    let sink = Arc::new(CountingSink::default());
+    let (mut client, task) =
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+    let edge = testkit::sample_edge_material_id().to_string();
+
+    let steps = json!({"steps": [
+        {"command": "panel.create", "as": "side", "params": panel(product, "Side")},
+        {"command": "panel.edge_banding.set", "params": {
+            "panel": {"$ref": "side"},
+            "edge": 1,
+            "material": edge,
+            "included_in_size": true,
+        }},
+    ]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
+        .await
+        .expect("the batch answers");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_eq!(report["written"], json!(true), "{report}");
+    assert_eq!(report["steps"][0]["as"], json!("side"), "the answer says which id the name stands for");
+    assert_eq!(report["steps"][1]["ok"], json!(true), "the reference resolved: {report}");
+    assert_eq!(report["created"].as_array().map(Vec::len), Some(1), "one part, not two: {report}");
+    assert_eq!(sink.writes(), 1, "one call, one write");
+
+    let created = report["created"][0].as_u64().expect("the created id");
+    let panel = Id::new(created).expect("a document id");
+    {
+        let mut session = session.lock().expect("the server did not poison the session");
+        let stored = session.project().panel(panel).expect("the panel is in the document");
+        assert_eq!(stored.edge_banding().len(), 1, "the band landed on the panel the name meant");
+        session.undo().expect("the build is one entry");
+        assert!(!session.can_undo(), "one call, one undo entry");
+        assert!(session.project().panel(panel).is_none(), "and the one entry takes the whole build back");
+    }
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
 async fn a_command_that_cannot_run_says_why_before_it_is_called() {
     // Two products and none open: the rule one product opens itself cannot be a guess.
     let (session, _products) = session_with(2);

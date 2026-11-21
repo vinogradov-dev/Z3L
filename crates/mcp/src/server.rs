@@ -26,7 +26,8 @@ use text::Lang;
 use crate::SceneSink;
 use crate::report::{self, Write};
 use crate::tools::{
-    Answer, BatchRequest, CommandListRequest, RunRequest, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN, parse,
+    Answer, BatchRequest, CommandListRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
+    parse,
 };
 
 /// What the server tells a client about the vocabulary it is about to use.
@@ -38,8 +39,9 @@ These tools drive Z3L, a cabinet-furniture editor. Call `command_list` first: it
 command this build can dispatch, the JSON Schema of the parameters each one takes, and the \
 commands that cannot run in this session with the sentence that says why. Dispatch a change with \
 `command_run` or, for several changes that must land together, `command_batch` — the whole batch is \
-one undo entry, and by default a refusal takes back every step before it. A furniture part is born \
-only inside the open product, so name one with `product` when the scene holds several: opening it \
+one undo entry, and by default a refusal takes back every step before it. A step names what it \
+creates with `as` and a later step refers to that name as `{\"$ref\": \"<name>\"}`, so a part and \
+the machining on it are one call. A furniture part is born only inside the open product, so name one with `product` when the scene holds several: opening it \
 is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
 the scene with `query` and never guess a number: a length on the wire is millimetres, an angle is \
 degrees and intrinsic XYZ Euler angles.";
@@ -188,8 +190,7 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
     {
         return Answer::refused(refusal.to_string());
     }
-    let steps: Vec<BatchStep> =
-        request.steps.iter().map(|step| BatchStep::new(step.command.clone(), step.params.clone())).collect();
+    let steps: Vec<BatchStep> = request.steps.iter().map(step_of).collect();
     let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
     let report = session.agent_batch(&steps, options);
     let write = match door {
@@ -206,6 +207,16 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
         session.active_product(),
     );
     if report.refusal().is_some() || write.failed() { Answer::fail(body) } else { Answer::ok(body) }
+}
+
+/// The engine step a request's step is: the command, the parameters, and the name a later step of
+/// the same batch refers to what it made by.
+pub(crate) fn step_of(step: &StepRequest) -> BatchStep {
+    let engine_step = BatchStep::new(step.command.clone(), step.params.clone());
+    match &step.name {
+        Some(name) => engine_step.named(name.clone()),
+        None => engine_step,
+    }
 }
 
 /// The `query` answer: the read model's own report, untouched.
