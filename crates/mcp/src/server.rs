@@ -38,9 +38,11 @@ These tools drive Z3L, a cabinet-furniture editor. Call `command_list` first: it
 command this build can dispatch, the JSON Schema of the parameters each one takes, and the \
 commands that cannot run in this session with the sentence that says why. Dispatch a change with \
 `command_run` or, for several changes that must land together, `command_batch` — the whole batch is \
-one undo entry, and by default a refusal takes back every step before it. Read the scene with \
-`query` and never guess a number: a length on the wire is millimetres, an angle is degrees and \
-intrinsic XYZ Euler angles.";
+one undo entry, and by default a refusal takes back every step before it. A furniture part is born \
+only inside the open product, so name one with `product` when the scene holds several: opening it \
+is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
+the scene with `query` and never guess a number: a length on the wire is millimetres, an angle is \
+degrees and intrinsic XYZ Euler angles.";
 
 /// The one session a served process dispatches into, and where its document is written.
 #[derive(Clone)]
@@ -178,6 +180,14 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
     if request.steps.is_empty() {
         return Answer::refused("a batch names at least one step; nothing was dispatched");
     }
+    // Opening is a view operation and not a step (ADR 0098): it is done before the batch rather
+    // than as one of its steps, so a refusal takes back the change and not the product the caller
+    // works in. An id that is not a product is the only way this fails, and it writes nothing.
+    if let Some(id) = request.product
+        && let Err(refusal) = session.open_named_product(id)
+    {
+        return Answer::refused(refusal.to_string());
+    }
     let steps: Vec<BatchStep> =
         request.steps.iter().map(|step| BatchStep::new(step.command.clone(), step.params.clone())).collect();
     let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
@@ -187,7 +197,14 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
         Door::Headless { sink: None } => Write::NoFile,
         Door::Window => Write::Window,
     };
-    let body = report::batch(&report, &steps, &write, session.project().revision().get(), session.agent_mode());
+    let body = report::batch(
+        &report,
+        &steps,
+        &write,
+        session.project().revision().get(),
+        session.agent_mode(),
+        session.active_product(),
+    );
     if report.refusal().is_some() || write.failed() { Answer::fail(body) } else { Answer::ok(body) }
 }
 

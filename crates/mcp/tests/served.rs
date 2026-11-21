@@ -316,3 +316,127 @@ async fn a_session_in_plan_mode_answers_every_call_with_a_plan_and_writes_nothin
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
 }
+
+#[tokio::test]
+async fn a_batch_names_the_product_it_works_in() {
+    // A caller that is not the window has no double click to point at (ADR 0098), so the batch names
+    // the product and the answer says which one the steps ran in (ADR 0212).
+    let (session, products) = session_with(2);
+    let second = *products.get(1).expect("the fixture makes two products");
+    let first = *products.first().expect("the fixture makes two products");
+    let before = session.project().revision().get();
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    let ghost = Id::new(9_999).expect("an id the scene does not hold");
+    let unknown =
+        json!({"product": ghost.get(), "steps": [{"command": "panel.create", "params": panel(second, "Side")}]});
+    let refused = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(unknown)))
+        .await
+        .expect("an id that is not a product is an answer");
+    assert!(refused.is_error.unwrap_or(false), "the call refuses before it dispatches anything");
+    let refused = body(&refused);
+    assert!(refused["error"].as_str().is_some_and(|sentence| sentence.contains("no product has id 9999")), "{refused}");
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert_eq!(session.project().revision().get(), before, "a refused open writes nothing");
+        assert_eq!(session.active_product(), None, "and opens nothing");
+    }
+
+    let named =
+        json!({"product": second.get(), "steps": [{"command": "panel.create", "params": panel(second, "Side")}]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(named)))
+        .await
+        .expect("the batch answers");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_eq!(report["open_product"], json!(second.get()), "the answer names the product it ran in: {report}");
+    assert_eq!(report["created"].as_array().map(Vec::len), Some(1), "one panel landed: {report}");
+    {
+        let mut session = session.lock().expect("the server did not poison the session");
+        assert_eq!(session.active_product(), Some(second), "the server opened the product it was told to");
+        assert_eq!(session.project().container(second).map(|container| container.children().len()), Some(1));
+        assert_eq!(
+            session.project().container(first).map(|container| container.children().len()),
+            Some(0),
+            "the other product is untouched"
+        );
+        session.undo().expect("the batch is one entry");
+        assert_eq!(session.project().container(second).map(|container| container.children().len()), Some(0));
+        assert!(!session.can_undo(), "opening left no entry of its own");
+        assert_eq!(session.active_product(), Some(second), "an undo takes back the panel, not the product");
+    }
+
+    // The list agrees with the batch: one answer about which product is open.
+    let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
+    assert_eq!(body(&listed)["open_product"], json!(second.get()));
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
+async fn a_scene_with_two_products_and_none_named_refuses_in_the_commands_words() {
+    // The same sentence a person reads from `z3l run` on such a scene: the batch does not guess
+    // between two products, and the first step that needs one says what to do.
+    let (session, products) = session_with(2);
+    let first = *products.first().expect("the fixture makes two products");
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    let steps = json!({"steps": [{"command": "panel.create", "params": panel(first, "Side")}]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
+        .await
+        .expect("the refusal is an answer");
+    assert!(answered.is_error.unwrap_or(false), "nothing landed, so the call failed");
+    let refused = body(&answered);
+    assert_eq!(refused["effect"], json!("rolled_back"), "{refused}");
+    assert_eq!(refused["open_product"], Value::Null, "no product was opened by guessing: {refused}");
+    assert_eq!(
+        refused["refusal"]["error"],
+        json!("`panel.create` cannot create furniture here: Create a product first."),
+        "{refused}"
+    );
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
+async fn naming_a_product_opens_it_with_no_revision_and_no_undo_entry() {
+    // Opening is session view state (ADR 0098): a batch whose steps all refuse still opened the
+    // product it was told to, and neither the revision nor the history moved for it (ADR 0212).
+    let (session, products) = session_with(2);
+    let second = *products.get(1).expect("the fixture makes two products");
+    let before = session.project().revision().get();
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    let missing = Id::new(9_999).expect("an id the scene does not hold");
+    let named = json!({
+        "product": second.get(),
+        "steps": [{"command": "node.rename", "params": {"node": missing.get(), "name": "Ghost"}}],
+    });
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(named)))
+        .await
+        .expect("the refusal is an answer");
+    assert!(answered.is_error.unwrap_or(false), "the step refused, so the call failed");
+    let refused = body(&answered);
+    assert_eq!(refused["effect"], json!("rolled_back"), "{refused}");
+    assert_eq!(refused["revision"], json!(before), "opening writes no revision: {refused}");
+    assert_eq!(refused["open_product"], json!(second.get()), "the product is open: {refused}");
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert_eq!(session.project().revision().get(), before, "the document did not move");
+        assert!(!session.can_undo(), "opening is not an undo entry, and the refusal is none either");
+        assert_eq!(session.active_product(), Some(second));
+        assert_eq!(session.agent_mode(), engine::AgentMode::Build, "the mode is untouched");
+    }
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}

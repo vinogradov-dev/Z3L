@@ -54,8 +54,19 @@ const fn effect_word(effect: BatchEffect) -> &'static str {
 }
 
 /// The report of one batch: its steps, the nodes it created, changed and removed, its refusal, the
-/// mode that decided what it could do, and what the file holds.
-pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision: u64, mode: AgentMode) -> Value {
+/// mode that decided what it could do, what the file holds, and the product it ran in.
+///
+/// `open_product` is the session's view state read after the batch, so the answer says which product
+/// the steps worked inside rather than leaving a caller to assume the one it named or the one the
+/// person had open (ADR 0098, ADR 0212).
+pub fn batch(
+    report: &BatchReport,
+    steps: &[BatchStep],
+    write: &Write,
+    revision: u64,
+    mode: AgentMode,
+    open_product: Option<model::Id>,
+) -> Value {
     let rows: Vec<Value> = report
         .steps()
         .iter()
@@ -89,6 +100,7 @@ pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision:
         "changed": ids(report.changed()),
         "removed": ids(report.removed()),
         "written": write.written(),
+        "open_product": open_product.map(|id| id.get()),
     });
     if let Some(object) = body.as_object_mut() {
         object.insert("write".to_owned(), write_word(write));

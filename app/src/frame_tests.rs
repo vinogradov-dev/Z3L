@@ -6423,6 +6423,7 @@ fn an_agent_cannot_move_the_document_under_a_question() {
             command: "node.rename".to_owned(),
             params: serde_json::json!({"node": 1, "name": "Renamed"}),
         }],
+        product: None,
         atomic: true,
         dry_run: false,
     };
