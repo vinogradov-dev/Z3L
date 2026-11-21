@@ -45,25 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **J5** a client we did not write drives the editor, headless
-  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
-   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
-   process can call a command except the command line. A client we did not write cannot reach
-   the editor at all.
-  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
-   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
-   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
-   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
-   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
-   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
-   reason beside its predicate: the clause J2 measured and left to the first door that needs
-   both halves.
-  Done: A test drives a served session over stdio through `command_list` and a two-line
-   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
-   sentence that says why a disabled command is disabled, in the command's own words; `cargo
-   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
-   the file the way `z3l run` does.
-  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
 - `[~]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
   Why: The owner needs a final render, not a screenshot: one still image at print resolution,
    from the camera the viewport already shows. The reference project was measured before the
@@ -855,6 +836,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **J5** a client we did not write drives the editor, headless
+  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
+   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
+   process can call a command except the command line. A client we did not write cannot reach
+   the editor at all.
+  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
+   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
+   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
+   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
+   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
+   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
+   reason beside its predicate: the clause J2 measured and left to the first door that needs
+   both halves.
+  Done: A test drives a served session over stdio through `command_list` and a two-line
+   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
+   sentence that says why a disabled command is disabled, in the command's own words; `cargo
+   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
+   the file the way `z3l run` does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs` — `5403358`
 
 - `[x]` **G4** an area between contours is picked and extruded, the SketchUp way
   Why: A drawing made of several contours encloses areas between them and inside their holes,
