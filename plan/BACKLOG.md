@@ -311,7 +311,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
    `the window did not answer: it is busy with a gesture no assistant may interrupt`. Nothing
    in the answer says the edit landed, so a caller that retries builds a second body, and a
-   caller that trusts the refusal reports a failure that did not happen.
+   caller that trusts the refusal reports a failure that did not happen. The wait behind that
+   sentence is the one X111 names: the window repaints on input, so a call from the channel
+   waits for a pointer event, and the call gives up before the person brings one.
   Shape: The answer separates what landed from what is unknown: a call that changed the
    document reports the ids it created even when the window UI thread was busy with a gesture,
    and a call that moved nothing says so with the window own sentence and no created ids.
@@ -333,20 +335,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    hundred frames and asserts the window rect is the same in the first and the last frame; the
    note records the rect the tree draws today.
   `files: app/src/chat.rs,crates/ui/src/theme.rs`
-- `[ ]` **X109** one command over the window channel takes a minute or three
-  Why: Measured 2026-11-21 by wall clock on this machine: a dry-run `product.create` took 83 s,
-   a dry-run `object.extrude.create` took 53 s, and the landing `object.extrude.create` took
-   196 s, while `command_list` and the queries answered in about a second. A person waiting on
-   the chat and an agent planning several steps both spend minutes on a call the document
-   itself answers at once. The cause is not measured yet; the suspicion is a wait for a frame
-   boundary with the scene rebuilding in between, and it stays a suspicion until the note has a
-   number.
-  Shape: Measure where the time goes before changing anything: instrument the request path from
-   the tool call to the frame that answers it and name the wait that dominates. The entry then
-   fixes that one wait, not the frame loop in general.
-  Done: A benchmark or a test records the answer time of one served command against a budget
-   written beside it, and the note carries the measured split between the wait and the work.
-  `files: crates/mcp/src/server.rs,app/src/main.rs`
 - `[ ]` **X110** nothing answers what a body is, so a caller cannot check what it built
   Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
    a product; box reports the box a product reserves`, and no other query reports the bounds,
@@ -372,6 +360,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the lock named) and that neither entry is lost; a test asserts the lock is gone after a
    normal write and after a refused one.
   `files: state-contract/src/cli/write.rs,plan/BACKLOG.md`
+- `[ ]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
+  Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing
+   appeared; the cube showed up only when the pointer was moved onto the window. The document
+   had already changed — the tree reported node 2, the revision had moved to 1 and the tab was
+   dirty — so the frame the person saw was the old one. The same wait explains the measurements
+   filed before: a dry run took 83 s and 53 s, the landing call 196 s, while the queries
+   answered in about a second, and the answer to the landing call was `the window did not
+   answer: it is busy with a gesture no assistant may interrupt`. The window repaints on input,
+   so a call from the channel waits for a pointer event that only the person brings.
+  Shape: A batch that lands from the channel asks for a frame in the same call instead of
+   waiting for the next input, and the answer comes from the frame that landed it; the request
+   path states which frame answered it. A headless session has no pointer at all, so the wait
+   must not exist there either.
+  Done: A frame test dispatches a command with no input event and asserts the scene was rebuilt
+   and a repaint was requested in the frame the call returned; a timing test asserts a served
+   call answers without any pointer event and inside a budget written beside it.
+  `files: app/src/main.rs,crates/mcp/src/server.rs,crates/mcp/src/chat.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
