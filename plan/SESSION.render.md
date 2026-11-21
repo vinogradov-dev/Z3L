@@ -7,8 +7,8 @@ goal: the render reads the catalogue, not a shader graph: decor with grain, band
 steps:
   [ ] starting the task
 
-now: starting the task
+now: the shape is measured; three decisions are the owner's
 blocked: nothing
 run: cargo xtask task Y3
-resume: read the first `files:` path and its callers
+resume: ask the three questions, then the catalogue's appearance block
 ```
