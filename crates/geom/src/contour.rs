@@ -328,7 +328,63 @@ impl Contour {
                 )?),
             });
         }
-        Self::new(segments, self.closed)
+        // The map is rigid, so every joint keeps the gap it came with: a ring converted from document
+        // units keeps the rounding of its arcs instead of being refused for it.
+        Ok(Self { segments, closed: self.closed })
+    }
+
+    /// The same contour with every joint closed on one point, within the tolerance the caller sets.
+    ///
+    /// A ring can come from a document that keeps an arc by its centre, radius and angles: its
+    /// endpoints are then derived and can miss the line they meet by the document's own rounding —
+    /// tens of micrometres on a metre-scale radius (ADR 0072). Exact work, a boolean or a half-plane
+    /// cut, needs one boundary, so each joint is closed on the segment that can move without moving a
+    /// curve: a **line's** endpoint takes the arc's, and two arcs close by shortening or extending the
+    /// later one's start while its end stays where it is. An arc's own end never moves with its start,
+    /// so a fix cannot disturb the joint after it.
+    ///
+    /// `tolerance` is the widest gap each joint may have, judged per joint like
+    /// [`Contour::new_with_joint_tolerance`]. A joint past it, or a non-finite value anywhere, answers
+    /// `None`: the caller keeps the ring it had rather than an exact one nobody drew.
+    pub fn welded<F>(&self, tolerance: F) -> Option<Self>
+    where
+        F: Fn(&Segment, &Segment) -> f64,
+    {
+        if !self.closed || self.segments.len() < 3 {
+            return None;
+        }
+        let count = self.segments.len();
+        let mut segments = self.segments.clone();
+        for index in 0..count {
+            let previous = *segments.get((index + count - 1) % count)?;
+            let current = *segments.get(index)?;
+            let gap = (previous.end() - current.start()).length();
+            if !gap.is_finite() || !previous.end().is_finite() || !current.start().is_finite() {
+                return None;
+            }
+            if gap <= EPSILON {
+                continue;
+            }
+            let allowed = tolerance(&previous, &current);
+            if !allowed.is_finite() || allowed < 0.0 || gap > allowed {
+                return None;
+            }
+            match (previous, current) {
+                // The line side of a joint moves onto the arc's own end.
+                (_, Segment::Line(line)) => {
+                    *segments.get_mut(index)? = Segment::Line(Line::new(previous.end(), line.end()).ok()?);
+                }
+                (Segment::Line(line), Segment::Arc(_)) => {
+                    *segments.get_mut((index + count - 1) % count)? =
+                        Segment::Line(Line::new(line.start(), current.start()).ok()?);
+                }
+                // Two arcs: the later one starts where the earlier one ended, and its end stays put.
+                (Segment::Arc(_), Segment::Arc(arc)) => {
+                    *segments.get_mut(index)? = Segment::Arc(arc.with_start_point(previous.end()).ok()?);
+                }
+            }
+        }
+        Self::new(segments, true).ok()
     }
 
     /// The same path with the opposite direction of travel.
@@ -432,6 +488,38 @@ mod tests {
             Segment::Arc(Arc::new(point(radius, radius), radius, PI, PI * 0.5).expect("bottom-left")),
         ];
         Contour::new(segments, true).expect("rounded rectangle")
+    }
+
+    #[test]
+    fn a_weld_closes_a_joint_the_document_rounded_apart() {
+        // A ring stored in a document keeps an arc by its angles, so its endpoint can miss the line it
+        // meets (ADR 0072). Here the corner arc runs from (500, 0) to (1000, 500) and the line before it
+        // stops 20 µm short, which is what a ring stored in millimetres and millidegrees looks like; the
+        // weld moves the line onto the arc and leaves the curve alone (N34).
+        let arc = Arc::new(point(500.0, 500.0), 500.0, -FRAC_PI_2, FRAC_PI_2).expect("a quarter arc");
+        let rounded = Contour::new_with_tolerance(
+            vec![
+                Segment::Line(Line::new(point(0.0, 0.0), point(500.02, 0.0)).expect("bottom")),
+                Segment::Arc(arc),
+                Segment::Line(Line::new(point(1000.0, 500.0), point(1000.0, 1000.0)).expect("right")),
+                Segment::Line(Line::new(point(1000.0, 1000.0), point(0.0, 1000.0)).expect("top")),
+                Segment::Line(Line::new(point(0.0, 1000.0), point(0.0, 0.0)).expect("left")),
+            ],
+            true,
+            0.05,
+        )
+        .expect("a ring rounded into a document");
+        let welded = rounded.welded(|_, _| 0.05).expect("the weld closes it");
+        assert_eq!(
+            welded.segments().iter().filter(|segment| matches!(segment, Segment::Arc(found) if *found == arc)).count(),
+            1,
+            "the arc keeps its own curve"
+        );
+        for (index, segment) in welded.segments().iter().enumerate() {
+            let next = welded.segments().get((index + 1) % welded.segments().len()).expect("a joint");
+            assert!((segment.end() - next.start()).length() < 1.0e-9, "joint {index} meets");
+        }
+        assert!(rounded.welded(|_, _| 1.0e-9).is_none(), "a joint past the bound is not welded");
     }
 
     #[test]

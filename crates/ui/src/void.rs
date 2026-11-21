@@ -426,33 +426,44 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_whose_ring_turns_right_says_so_of_itself() {
-        // The model refuses a frame that reserves no one convex cell by its own name (ADR 0201), and
-        // the atom carries the reason through so every surface prints the same sentence (N29).
-        let mut project = clean_project();
-        let ring = model::Path::polyline(
+    fn a_frame_whose_ring_bulges_inwards_says_so_of_itself() {
+        // A frame drawn as a ring builds the convex piece around the pointer (N34, ADR 0203), but a ring
+        // whose own arc bulges into its shape is still no one cell, and the atom carries that reason
+        // through so every surface prints the same sentence.
+        let ring = geom::Contour::new(
             vec![
-                [Length::ZERO, Length::ZERO],
-                [millimetres(600), Length::ZERO],
-                [millimetres(600), millimetres(560)],
-                [millimetres(300), millimetres(560)],
-                [millimetres(300), millimetres(400)],
-                [millimetres(200), millimetres(400)],
-                [millimetres(200), millimetres(560)],
-                [Length::ZERO, millimetres(560)],
+                geom::Segment::Line(geom::Line::new(geom::DVec2::ZERO, geom::DVec2::new(600.0, 0.0)).expect("bottom")),
+                geom::Segment::Line(
+                    geom::Line::new(geom::DVec2::new(600.0, 0.0), geom::DVec2::new(600.0, 560.0)).expect("right"),
+                ),
+                geom::Segment::Arc(
+                    geom::Arc::from_endpoints_sagitta(
+                        geom::DVec2::new(600.0, 560.0),
+                        geom::DVec2::new(0.0, 560.0),
+                        50.0,
+                    )
+                    .expect("an inward arc"),
+                ),
+                geom::Segment::Line(geom::Line::new(geom::DVec2::new(0.0, 560.0), geom::DVec2::ZERO).expect("left")),
             ],
             true,
         )
-        .expect("a closed ring")
-        .to_contour()
-        .expect("a contour");
-        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        .expect("a ring");
+        let contour = model::Contour::new(
+            ring.segments()
+                .iter()
+                .map(|segment| model::ContourSegment::from_geom(*segment).expect("a document segment"))
+                .collect(),
+        )
+        .expect("a document ring");
+        let envelope = Envelope::with_ring(&contour, millimetres(720)).expect("a bowed frame");
+        let mut project = clean_project();
         let root = project.root().id();
         project
-            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
-            .expect("a notched product");
+            .add_product(root, "Bowed", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a bowed product");
         let mut atom = Void::new();
-        atom.measure(&project, DVec3::new(100.0, 200.0, 300.0), Sight::none(), None);
+        atom.measure(&project, DVec3::new(300.0, 200.0, 300.0), Sight::none(), None);
         let refusal = atom.refusal().expect("a frame that reserves no cell names no void");
         assert_eq!(refusal, VoidRefusal::Footprint);
         assert_eq!(refusal.words(), Message::VoidFootprint, "the sentence every surface prints");

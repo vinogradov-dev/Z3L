@@ -206,8 +206,9 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0198](0198-a-batch-is-planned-on-a-copy-and-lands-in-one-piece.md) | A batch is planned on a copy and lands in one piece | Accepted; implements the session operation 0190 asked for |
 | [0199](0199-one-set-of-scene-snaps.md) | One set of scene snaps, resolved in the model | Accepted; extends 0051 and narrows its "no document" clause |
 | [0200](0200-a-wall-fills-a-void-and-a-back-board-is-born-from-the-gap.md) | A wall fills a void, and a back board is born from the gap | Accepted; amends the `fill` trait of 0097 and the fill rule of 0099 |
-| [0201](0201-the-niche-starts-from-the-frames-footprint.md) | The niche starts from the frame's footprint | Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202 |
+| [0201](0201-the-niche-starts-from-the-frames-footprint.md) | The niche starts from the frame's footprint | Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202; the non-convex refusal superseded by 0203 |
 | [0202](0202-a-section-keeps-the-frames-curve.md) | A section keeps the frame's curve | Accepted; supersedes the chord rule of 0201 for the section |
+| [0203](0203-a-frame-drawn-as-a-ring-builds-the-part-the-pointer-names.md) | A frame drawn as a ring builds the part the pointer names | Accepted; supersedes the non-convex refusal of 0201 and the box shortcut of 0106 for a shaped frame |
 
 ## Format
 

@@ -1615,7 +1615,9 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_whose_ring_turns_right_is_refused_and_builds_no_part() {
+    fn a_notched_frame_builds_a_part_inside_the_arm_the_pointer_names() {
+        // A frame drawn as any closed ring builds a part: the cell is the convex piece of the frame
+        // around the pointer (N34, ADR 0203), and the part stands inside the frame it was cut to.
         let ring = Path::polyline(
             vec![
                 [millimetres(0), millimetres(0)],
@@ -1637,15 +1639,42 @@ mod tests {
         let mut project = Project::new(root).expect("an empty project");
         let root = project.root().id();
         let product = project
-            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope.clone(), Placement::IDENTITY)
             .expect("a notched frame");
         let thickness = millimetres(18);
         for mode in [FillMode::Fit, FillMode::Shape] {
-            assert_eq!(
-                plan(&project, product, Fill::WidthAndDepth, mode, thickness),
-                Err(FillRefusal::Footprint),
-                "a frame that reserves no one cell answers no part ({mode:?})"
-            );
+            let plan = plan(&project, product, Fill::WidthAndDepth, mode, thickness).expect("a plan in the arm");
+            // The pointer is the envelope's centre, which falls in the arm beside the notch.
+            assert_eq!((plan.free_low, plan.free_high), (360.0, 378.0), "the part sits at the pointer's height");
+            let id = project
+                .add_panel_with_outline(
+                    product,
+                    "Part",
+                    plan.nominal_size,
+                    plan.outline.clone(),
+                    &plan.bevels,
+                    None,
+                    thickness,
+                    plan.placement,
+                )
+                .expect("the click creates the part");
+            let panel = project.panel(id).expect("the part is in the tree");
+            let stored = panel
+                .outline()
+                .ring_for(panel.nominal_size())
+                .expect("the stored outline draws its own ring")
+                .sample(0.25)
+                .expect("the ring samples");
+            let gap = thickness.millimetres_f64();
+            for point in &stored {
+                for face in [0.0, gap] {
+                    let local = plan.placement.transform_point(DVec3::new(point.x, point.y, face));
+                    assert!(
+                        envelope.holds(DVec2::new(local.x, local.y)),
+                        "{mode:?} put a point of the part outside the notched frame: {point:?}"
+                    );
+                }
+            }
         }
     }
 

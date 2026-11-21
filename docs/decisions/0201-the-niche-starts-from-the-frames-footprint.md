@@ -1,6 +1,6 @@
 # 0201. The niche starts from the frame's footprint
 
-- Status: Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202
+- Status: Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202; the non-convex refusal superseded by 0203
 - Date: 2026-11-21
 
 ## Context
@@ -51,8 +51,9 @@ dropped. Measured on an empty case: 4 sides 16 µs, 16 sides 43 µs, 24 sides 55
 - A rounded corner gave a **chamfer** of the radius' span, not a radius: the part fitted and classified,
   and its corner was one straight cut where the frame is round. 0202 closed that gap without widening
   the cell — the section keeps the ring's own curve, and the planes keep the chord.
-- A non-convex frame reserves no fillable cell at all until the query can answer several cells. The
-  refusal names the frame, so the maker is not told the gap is merely odd.
+- A non-convex frame reserved no fillable cell at all: the refusal named the frame, so the maker was not
+  told the gap was merely odd. 0203 removed that refusal — the cell is the convex piece of the frame
+  around the pointer, and only a ring that bulges into its own shape is still refused.
 - The niche's box is still the footprint's bounds: the size callout and the niche tool's wireframe
   describe a box that can reach into a cut corner. The cell's own ring would say the same space the
   fill does, and that is a drawing change of its own.

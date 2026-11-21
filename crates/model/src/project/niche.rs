@@ -329,6 +329,13 @@ struct Cell {
     /// ring is kept beside those planes and clipped by the walls the probes added — never by the chords
     /// it seeded. `None` for a rectangular frame, whose planes already are its ring (ADR 0201, N33).
     ring: Option<(Region, usize)>,
+    /// One flag per plane: whether it is the chord over an **arc** of the frame's ring.
+    ///
+    /// Such a plane is a conservative inner wall of the cell, because a chord lies inside the arc it
+    /// spans. The ring itself is the boundary there, so a point of the bulge between a chord and its arc
+    /// is inside the cell — the frame reserves it — and the flag keeps that plane out of the
+    /// containment test while the cut, the corners and the probes keep the wall (N34).
+    arc_chords: Vec<bool>,
 }
 
 impl Cell {
@@ -337,18 +344,21 @@ impl Cell {
     ///
     /// The seed is the frame's own section and not the box around it (ADR 0159, ADR 0201): a rectangle
     /// answers the six planes it always did, one per side and one per height face, while a cut corner
-    /// or a drawn ring answers one upright plane per edge, so a part measured against it cannot grow
-    /// into the corner the frame cut away. A footprint that is not one convex ring is the footprint's
-    /// own refusal, and a ring too fine for the plane budget is unrepresentable — never a cell the
-    /// walls were quietly dropped from.
-    fn footprint(envelope: &Envelope) -> Result<Self, NicheRefusal> {
+    /// answers one upright plane per edge, so a part measured against it cannot grow into the corner the
+    /// frame cut away. A ring drawn as any closed shape answers the convex piece its edges leave around
+    /// `point` (ADR 0203); a ring still not convex after that clip is the footprint's own refusal, and so
+    /// is a ring too fine for the plane budget — never a cell the walls were quietly dropped from.
+    fn footprint(envelope: &Envelope, point: DVec2) -> Result<Self, NicheRefusal> {
         let outline =
             envelope.footprint().outline(envelope.x(), envelope.y()).map_err(|_| NicheRefusal::Unrepresentable)?;
-        let (ring, polygon) = seed(&outline)?;
+        let ring = frame_ring(&outline, point)?;
+        let polygon = chord_polygon(&ring);
         if polygon.len().saturating_add(2) > MAX_CELL_PLANES {
             return Err(NicheRefusal::Unrepresentable);
         }
         let mut planes: Vec<NichePlane> = Vec::with_capacity(polygon.len().saturating_add(2));
+        let mut arc_chords: Vec<bool> = Vec::with_capacity(polygon.len().saturating_add(2));
+        let segments = ring.segments();
         for index in 0..polygon.len() {
             let (Some(start), Some(end)) = (polygon.get(index), polygon.get((index + 1) % polygon.len())) else {
                 return Err(NicheRefusal::Unrepresentable);
@@ -356,11 +366,14 @@ impl Cell {
             let edge = *end - *start;
             let inward = DVec2::new(-edge.y, edge.x).try_normalize().ok_or(NicheRefusal::Unrepresentable)?;
             planes.push(NichePlane { normal: DVec3::new(inward.x, inward.y, 0.0), offset: inward.dot(*start) });
+            arc_chords.push(matches!(segments.get(index), Some(Segment::Arc(_))));
         }
         let height = envelope.z().millimetres_f64();
         planes.push(NichePlane { normal: DVec3::Z, offset: 0.0 });
         planes.push(NichePlane { normal: DVec3::NEG_Z, offset: -height });
-        let mut cell = Self { planes, corners: Vec::new(), ring: None };
+        arc_chords.push(false);
+        arc_chords.push(false);
+        let mut cell = Self { planes, corners: Vec::new(), ring: None, arc_chords };
         if !cell.rebuild() {
             return Err(NicheRefusal::Unrepresentable);
         }
@@ -427,9 +440,27 @@ impl Cell {
         true
     }
 
-    /// Whether the point lies in every plane, allowing the micrometre the corners are stored in.
+    /// Whether the point lies in every plane, and inside the frame's own ring when it keeps one.
+    ///
+    /// The planes are the ring's **chords**, so on a curved frame they cut the space between a chord and
+    /// its arc away — the frame's own bulge. The ring says what the planes cannot, so it is asked too: a
+    /// point the frame reserves and its chords do not is still inside the void (N34, ADR 0203).
     fn contains(&self, point: DVec3) -> bool {
-        self.corners.len() >= 4 && self.planes.iter().all(|plane| plane.distance_to(point) >= -COORDINATE_TOLERANCE)
+        let outside = self
+            .planes
+            .iter()
+            .zip(&self.arc_chords)
+            .any(|(plane, chord)| !chord && plane.distance_to(point) < -COORDINATE_TOLERANCE);
+        if self.corners.len() < 4 || outside {
+            return false;
+        }
+        match self.ring.as_ref() {
+            None => true,
+            Some((ring, _)) => {
+                let local = DVec2::new(point.x, point.y);
+                ring.contains(local) || ring.boundary_distance(local) <= COORDINATE_TOLERANCE
+            }
+        }
     }
 
     /// Whether the cell is one section from its floor to its ceiling, so one ring describes it.
@@ -464,6 +495,7 @@ impl Cell {
         }
         let mut cut = self.clone();
         cut.planes.push(plane);
+        cut.arc_chords.push(false);
         cut.rebuild().then_some(cut)
     }
 
@@ -570,7 +602,7 @@ impl Project {
             return Err(NicheRefusal::Outside);
         }
         let surroundings = self.surroundings_around(point, sight);
-        let mut cell = Cell::footprint(own)?;
+        let mut cell = Cell::footprint(own, DVec2::new(local.x, local.y))?;
         let mut settled = false;
         for round in 0..MAX_CELL_ROUNDS {
             let mut added = false;
@@ -834,53 +866,94 @@ pub(super) fn surface_corners(surface: SurfaceBox) -> Vec<DVec3> {
     corners
 }
 
-/// The ring a footprint reserves, turned counter-clockwise, with the chord polygon its planes take.
+/// The ring a frame reserves, turned counter-clockwise, as the one convex cell around `point`.
 ///
-/// The two travel together because they are one reading of one shape: the planes the cell is built from
-/// take an arc by its **chord**, which is the safe wall for a probe (a convex ring's arc bulges away from
-/// the shape it cuts, so the chord lies inside the frame), and the ring is the exact curve the section a
-/// board is cut to keeps (ADR 0201, ADR 0202).
+/// A frame may be drawn as any closed ring, and a cell is one convex cell (ADR 0106), so the ring is
+/// read at the point: **every edge whose free side holds the point clips it**, and what is left is the
+/// convex piece of the frame the pointer names (ADR 0203). An L answers its bar for a point in the bar,
+/// its column for a point in the column, and the square both arms share for a point in the corner —
+/// because the tool cannot know which arm a hand in the corner meant, and the square is the piece both
+/// answer. A ring that is already convex answers itself, with no clip at all, so a rectangle or a
+/// cut-corner frame keeps exactly the cell it had (ADR 0201, ADR 0202).
 ///
-/// The ring is turned counter-clockwise first, because a drawn ring may run either way; then every
-/// corner it makes must turn left. A ring that turns right somewhere, or one whose arc bulges into its
-/// own shape, is not one convex cell and answers the footprint's refusal rather than a board outside
-/// the case.
-fn seed(ring: &Ring) -> Result<(Ring, Vec<DVec2>), NicheRefusal> {
-    let ring = match ring.is_counter_clockwise() {
-        Some(true) => ring.clone(),
-        Some(false) => ring.reversed().map_err(|_| NicheRefusal::Unrepresentable)?,
+/// The clip runs through the exact boolean (`Region::clip_half_plane_around`), so an arc of the frame
+/// stays an arc. A point the ring does not hold is `Outside`, and a ring still not convex after the
+/// clip — an arc bulging into its own shape — is the footprint's own refusal.
+fn frame_ring(outline: &Ring, point: DVec2) -> Result<Ring, NicheRefusal> {
+    let ring = match outline.is_counter_clockwise() {
+        Some(true) => outline.clone(),
+        Some(false) => outline.reversed().map_err(|_| NicheRefusal::Unrepresentable)?,
         None => return Err(NicheRefusal::Unrepresentable),
     };
-    let segments = ring.segments();
-    if segments.len() < 3 {
+    if ring.segments().len() < 3 {
         return Err(NicheRefusal::Unrepresentable);
     }
-    let mut polygon: Vec<DVec2> = Vec::with_capacity(segments.len());
-    for (index, segment) in segments.iter().enumerate() {
-        let start = segment.start();
-        if !start.is_finite() {
+    if is_convex(&ring) {
+        return Ok(ring);
+    }
+    let mut piece = Region::new(ring.clone(), Vec::new()).map_err(|_| NicheRefusal::Unrepresentable)?;
+    let polygon = chord_polygon(&ring);
+    for index in 0..polygon.len() {
+        let (Some(start), Some(end)) = (polygon.get(index), polygon.get((index + 1) % polygon.len())) else {
             return Err(NicheRefusal::Unrepresentable);
+        };
+        let edge = *end - *start;
+        let Some(inward) = DVec2::new(-edge.y, edge.x).try_normalize() else {
+            continue;
+        };
+        // A wall the point stands outside bounds the piece the point is *not* in.
+        if inward.dot(point) < inward.dot(*start) - SECTION_TOLERANCE {
+            continue;
+        }
+        piece = piece
+            .clip_half_plane_around(inward, inward.dot(*start), point)
+            .map_err(|_| NicheRefusal::Unrepresentable)?
+            .ok_or(NicheRefusal::Footprint)?;
+    }
+    let ring = piece.outer().clone();
+    if is_convex(&ring) { Ok(ring) } else { Err(NicheRefusal::Footprint) }
+}
+
+/// Whether a counter-clockwise ring is one convex piece: every joint turns left and every arc sweeps left.
+fn is_convex(ring: &Ring) -> bool {
+    let segments = ring.segments();
+    if segments.len() < 3 {
+        return false;
+    }
+    for (index, segment) in segments.iter().enumerate() {
+        if !segment.start().is_finite() {
+            return false;
         }
         // A counter-clockwise arc curves left; one stored the other way bulges into the shape.
         if let Segment::Arc(arc) = segment
             && arc.sweep_angle() <= 0.0
         {
-            return Err(NicheRefusal::Footprint);
+            return false;
         }
         let Some(next) = segments.get((index + 1) % segments.len()) else {
-            return Err(NicheRefusal::Unrepresentable);
+            return false;
         };
         if segment.tangent_at_end().perp_dot(next.tangent_at_start()) < -CONVEX_TURN {
-            return Err(NicheRefusal::Footprint);
+            return false;
         }
-        polygon.push(start);
     }
-    Ok((ring, polygon))
+    true
+}
+
+/// The chord polygon of a convex ring: one corner per segment, the arc's own start.
+///
+/// The chords are the cell's planes: a safe wall for a probe, because a convex ring's arc bulges away
+/// from the shape it cuts and its chord therefore lies inside the frame (ADR 0201).
+fn chord_polygon(ring: &Ring) -> Vec<DVec2> {
+    ring.segments().iter().map(|segment| segment.start()).collect()
 }
 
 /// The shape a cell answers with: a box, one section, or the sloped cell itself.
 fn cell_shape(cell: &Cell, corners: &[DVec3], low: DVec3, high: DVec3) -> Result<NicheShape, NicheRefusal> {
-    if is_box(corners, low, high) {
+    // A box is the answer only when the planes' own box *is* the shape. A frame that keeps a ring is
+    // asked its ring instead: its chords can bound the very box the corners span while the ring bulges
+    // past it — the box's corners cannot see a curve (N34).
+    if is_box(corners, low, high) && cell.ring.is_none() {
         return Ok(NicheShape::Box);
     }
     if !cell.is_prism() {
@@ -1035,12 +1108,16 @@ fn centre(points: &[DVec2]) -> Option<DVec2> {
 /// the micrometre and angles to the millidegree the document holds. A ring the document cannot close is
 /// no section at all.
 pub(super) fn document_ring(ring: &Ring) -> Option<Contour> {
-    let segments = ring
-        .segments()
-        .iter()
-        .map(|segment| ContourSegment::from_geom(*segment))
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
+    let mut segments = Vec::with_capacity(ring.segments().len());
+    for segment in ring.segments() {
+        match ContourSegment::from_geom(*segment) {
+            Ok(segment) => segments.push(segment),
+            // A segment the document's step rounds away is the ring's own curve, not a hole in it: what
+            // is left of the joint is a micrometre, which the ring's joint tolerance already covers.
+            Err(ContourSegmentError::ZeroLength) => {}
+            Err(_) => return None,
+        }
+    }
     Contour::new(segments).ok()
 }
 
@@ -1386,12 +1463,8 @@ mod tests {
         assert!((section.bounds_micrometres().1[0] - 560_000).abs() <= 1000, "the wall is the new edge");
     }
 
-    #[test]
-    fn a_footprint_that_turns_right_is_a_refusal_of_its_own() {
-        // A ring with a notch reserves a space no one convex cell bounds. A board cut to an
-        // approximation of it would stand in material the frame kept, so the niche refuses it by name
-        // rather than measuring the box around the notch (ADR 0201).
-        let mut project = clean_project();
+    /// A frame drawn as an L: 600 x 560 with a notch cut out of its top between x = 200 and x = 300.
+    fn notched(project: &mut Project) -> Id {
         let ring = Path::polyline(
             vec![
                 [millimetres(0), millimetres(0)],
@@ -1409,11 +1482,134 @@ mod tests {
         .to_contour()
         .expect("a contour");
         let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        shaped(project, envelope, (0, 0, 0))
+    }
+
+    #[test]
+    fn a_notched_frame_builds_the_arm_the_pointer_names() {
+        // A frame may be drawn as any closed ring, and a cell is one convex cell: the ring is read at the
+        // point, every edge whose free side holds the point clips it, and what is left is the arm the
+        // pointer names (N34, ADR 0203). The tool cannot know which arm a hand in the corner meant — a
+        // point in the corner answers the square both arms share, and a hand that wants an arm moves.
+        let mut project = clean_project();
+        notched(&mut project);
+        let left =
+            project.niche(DVec3::new(100.0, 200.0, 300.0), Sight::none(), None).expect("the void in the left arm");
+        assert_eq!(left.local_min, DVec3::ZERO);
+        assert_eq!(left.size, DVec3::new(200.0, 400.0, 720.0), "the left arm's own square");
+        let tall = project
+            .niche(DVec3::new(100.0, 520.0, 300.0), Sight::none(), None)
+            .expect("the void above the notch's floor");
+        assert_eq!(tall.size, DVec3::new(200.0, 560.0, 720.0), "a point above the notch's floor keeps the column");
+        let right =
+            project.niche(DVec3::new(450.0, 200.0, 300.0), Sight::none(), None).expect("the void beside the notch");
+        assert_eq!(right.local_min, DVec3::new(300.0, 0.0, 0.0));
+        assert_eq!(right.size, DVec3::new(300.0, 400.0, 720.0), "the arm beside the notch");
+
+        // The notch itself reserves nothing: a point there is outside the piece, not a cell.
+        assert_eq!(
+            project.niche(DVec3::new(250.0, 500.0, 300.0), Sight::none(), None),
+            Err(NicheRefusal::Outside),
+            "the notch is the corner the frame gave away"
+        );
+    }
+
+    /// A frame whose top edge bows up by `sagitta` millimetres: a rectangle with a bulge.
+    fn bowed(sagitta: f64) -> Envelope {
+        let ring = geom::Contour::new(
+            vec![
+                geom::Segment::Line(geom::Line::new(geom::DVec2::ZERO, geom::DVec2::new(600.0, 0.0)).expect("bottom")),
+                geom::Segment::Line(
+                    geom::Line::new(geom::DVec2::new(600.0, 0.0), geom::DVec2::new(600.0, 560.0)).expect("right"),
+                ),
+                geom::Segment::Arc(
+                    geom::Arc::from_endpoints_sagitta(
+                        geom::DVec2::new(600.0, 560.0),
+                        geom::DVec2::new(0.0, 560.0),
+                        -sagitta,
+                    )
+                    .expect("a bowed top"),
+                ),
+                geom::Segment::Line(geom::Line::new(geom::DVec2::new(0.0, 560.0), geom::DVec2::ZERO).expect("left")),
+            ],
+            true,
+        )
+        .expect("a ring");
+        let contour = Contour::new(
+            ring.segments()
+                .iter()
+                .map(|segment| ContourSegment::from_geom(*segment).expect("a document segment"))
+                .collect(),
+        )
+        .expect("a document ring");
+        Envelope::with_ring(&contour, millimetres(720)).expect("a bowed frame")
+    }
+
+    #[test]
+    fn a_point_in_a_bowed_frames_bulge_is_inside_the_void() {
+        // The cell's planes are the ring's chords, and a chord lies inside the arc it spans, so a point of
+        // the bulge is outside every plane and inside the frame. The frame reserves it, so the cell asks
+        // its ring too, and the section keeps the curve the bulge is made of (N34).
+        let mut project = clean_project();
+        shaped(&mut project, bowed(100.0), (0, 0, 0));
+        for y in [300.0, 620.0] {
+            let niche = project
+                .niche(DVec3::new(300.0, y, 300.0), Sight::none(), None)
+                .expect("the frame reserves the bulge, so a point in it is inside the void");
+            let section = niche.section().expect("one section");
+            let highest = section
+                .sampled_points(1000.0)
+                .expect("the ring samples")
+                .iter()
+                .map(|point| point[1].millimetres_f64())
+                .fold(f64::MIN, f64::max);
+            assert!(highest > 650.0, "the section keeps the bulge's own curve at y = {y}, was {highest}");
+        }
+        // The chord is still the wall the cell's own planes describe, so its box reports the rectangle
+        // under it; the ring is what says the bulge is reserved (a gap for the niche's callout, N34).
+        let plain =
+            project.niche(DVec3::new(300.0, 300.0, 300.0), Sight::none(), None).expect("the void under the chord");
+        assert!((plain.size.y - 560.0).abs() < 0.01, "the chord bounds the box: {:?}", plain.size);
+    }
+
+    #[test]
+    fn a_ring_that_bulges_into_its_own_shape_is_still_a_refusal() {
+        // The frame's own square with its top edge pulled down into the material: no clip around a point
+        // can straighten an arc that bulges inwards, so the frame keeps its own refusal rather than a
+        // cell that would cut into it (ADR 0203).
+        let ring = geom::Contour::new(
+            vec![
+                geom::Segment::Line(geom::Line::new(geom::DVec2::ZERO, geom::DVec2::new(600.0, 0.0)).expect("bottom")),
+                geom::Segment::Line(
+                    geom::Line::new(geom::DVec2::new(600.0, 0.0), geom::DVec2::new(600.0, 560.0)).expect("right"),
+                ),
+                geom::Segment::Arc(
+                    geom::Arc::from_endpoints_sagitta(
+                        geom::DVec2::new(600.0, 560.0),
+                        geom::DVec2::new(0.0, 560.0),
+                        50.0,
+                    )
+                    .expect("an inward arc"),
+                ),
+                geom::Segment::Line(geom::Line::new(geom::DVec2::new(0.0, 560.0), geom::DVec2::ZERO).expect("left")),
+            ],
+            true,
+        )
+        .expect("a ring");
+        let contour = Contour::new(
+            ring.segments()
+                .iter()
+                .map(|segment| ContourSegment::from_geom(*segment).expect("a document segment"))
+                .collect(),
+        )
+        .expect("a document ring");
+        let envelope = Envelope::with_ring(&contour, millimetres(720)).expect("a bowed frame");
+        let mut project = clean_project();
         shaped(&mut project, envelope, (0, 0, 0));
         assert_eq!(
-            project.niche(DVec3::new(100.0, 200.0, 300.0), Sight::none(), None),
+            project.niche(DVec3::new(300.0, 200.0, 300.0), Sight::none(), None),
             Err(NicheRefusal::Footprint),
-            "a frame whose ring turns right reserves no one cell"
+            "a ring that is not one convex piece still answers no cell"
         );
     }
 

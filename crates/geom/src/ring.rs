@@ -119,6 +119,34 @@ impl Region {
     ///
     /// A zero, non-finite or NaN normal, or a non-finite offset, is `None`.
     pub fn clip_half_plane(&self, normal: DVec2, offset: f64) -> Result<Option<Self>, RegionError> {
+        let Some(mut pieces) = self.half_plane_pieces(normal, offset)? else {
+            return Ok(None);
+        };
+        Ok(pieces.drain(..).max_by(|first, second| first.area().total_cmp(&second.area())))
+    }
+
+    /// The piece of this region on the free side of one line that holds `point`, or `None` when the
+    /// cut leaves the point outside it.
+    ///
+    /// The same cut as [`Region::clip_half_plane`], read for a region that need not be convex: a line
+    /// can split a notched ring into several pieces, and only the one holding the point is wanted — a
+    /// frame drawn as a notch answers the piece the pointer names, never the largest other one. A zero
+    /// or non-finite normal, a non-finite offset and a point the cut leaves out all answer `None`.
+    pub fn clip_half_plane_around(
+        &self,
+        normal: DVec2,
+        offset: f64,
+        point: DVec2,
+    ) -> Result<Option<Self>, RegionError> {
+        let Some(pieces) = self.half_plane_pieces(normal, offset)? else {
+            return Ok(None);
+        };
+        Ok(pieces.into_iter().find(|piece| piece.contains(point)))
+    }
+
+    /// The pieces of this region on the free side of `normal · point = offset`, or `None` when the
+    /// normal or the offset is unusable.
+    fn half_plane_pieces(&self, normal: DVec2, offset: f64) -> Result<Option<Vec<Region>>, RegionError> {
         if !normal.is_finite() || !offset.is_finite() {
             return Ok(None);
         }
@@ -146,7 +174,7 @@ impl Region {
         ];
         let free = Region::from_loops(corners, Vec::new())?;
         let pieces = crate::boolean::intersect_regions(std::slice::from_ref(self), std::slice::from_ref(&free))?;
-        Ok(pieces.into_iter().max_by(|first, second| first.area().total_cmp(&second.area())))
+        Ok(Some(pieces))
     }
 
     /// The axis-aligned bounds of every ring, in millimetres.
@@ -763,6 +791,32 @@ mod tests {
         assert!((arc.end() - DVec2::new(93.228_756_5, 45.0)).length() < 1.0e-5, "and ends on the cut line");
         assert!(clipped.area() < plate.area(), "the plate lost the corner above the line");
         assert!((clipped.bounds().expect("bounds").1.y - 45.0).abs() < 1.0e-6, "the cut is the new top");
+    }
+
+    #[test]
+    fn a_clip_reads_the_piece_the_point_names() {
+        // An L: the bar along the bottom and the column up the left. A line through the corner splits it
+        // into both arms, and the piece a caller asks for is the one holding its point (N34).
+        let ring = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(100.0, 0.0),
+            DVec2::new(100.0, 40.0),
+            DVec2::new(40.0, 40.0),
+            DVec2::new(40.0, 100.0),
+            DVec2::new(0.0, 100.0),
+        ];
+        let elbow = Region::from_loops(ring, vec![]).expect("an L");
+        let bar = elbow.clip_half_plane_around(DVec2::new(0.0, -1.0), -40.0, DVec2::new(70.0, 20.0));
+        let (low, high) = bar.expect("a clip").expect("the bar holds the point").bounds().expect("bounds");
+        assert!((low - DVec2::ZERO).length() < 1.0e-6, "the arm along the bottom: {low:?}");
+        assert!((high - DVec2::new(100.0, 40.0)).length() < 1.0e-6, "{high:?}");
+        let column = elbow.clip_half_plane_around(DVec2::new(-1.0, 0.0), -40.0, DVec2::new(20.0, 70.0));
+        let (low, high) = column.expect("a clip").expect("the column holds the point").bounds().expect("bounds");
+        assert!((low - DVec2::ZERO).length() < 1.0e-6, "the arm up the side: {low:?}");
+        assert!((high - DVec2::new(40.0, 100.0)).length() < 1.0e-6, "{high:?}");
+        // A point on the other side of the line is in no piece at all.
+        let away = elbow.clip_half_plane_around(DVec2::new(0.0, -1.0), -40.0, DVec2::new(70.0, 70.0));
+        assert!(away.expect("a clip").is_none(), "the column is not in the bar's half-plane");
     }
 
     #[test]

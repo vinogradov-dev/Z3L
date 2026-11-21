@@ -134,7 +134,13 @@ impl Footprint {
             }
             Self::Ring { contour } => PanelOutline::Contour { contour: contour.clone() },
         };
-        outline.ring_for(size).map_err(FootprintError::Outline)
+        let ring = outline.ring_for(size).map_err(FootprintError::Outline)?;
+        // A drawn ring keeps an arc by its centre, radius and angles, so its joints can miss by the
+        // document's own rounding — tens of micrometres on a metre-scale radius (ADR 0072). The exact
+        // readers — the niche's half-plane cut, a region's containment test — need one boundary, so the
+        // ring is welded on its lines here, once, for every reader. A ring the document's tolerance
+        // cannot close is handed on as it came, and those readers refuse it instead of guessing (N34).
+        Ok(ring.welded(|first, next| crate::joint_tolerance_mm(*first, *next)).unwrap_or(ring))
     }
 }
 
