@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=66e6f831c1f32a5d125c6f89bf08497f08e4d210 updated=2026-11-21
+STATE: milestone=M7 phase=T task=- state=idle base=ae7d115 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -40,9 +40,9 @@ the View tab's Snaps group and the creation parent the container card's (U115).
 
 A contour boolean reads any node that draws one closed chain — a path object's chain or the profile a
 body was extruded from — so a drawn figure and the body extruded from it combine alike (X98). A
-boolean between two bodies is a step of the target's own history that names another constructive
-body: the cutter stays in the tree, may cut several bodies and re-derives them when it moves, while
-the Model tab's three cells arm the mode and the object card lists the steps (W1, ADR 0197).
+boolean between two bodies is a step of the target's own history that freezes the other body's shape,
+and a primitive is a body in both directions — a block notches a ball, a ball holes a board — because
+it carries the steps cut from it (W1, X102, ADR 0197, ADR 0208).
 
 The snaps are one set and one resolver: ten kinds in priority order — a corner, a crossing, a middle,
 a centre, a perpendicular foot, a tangent point, a point on an edge or a face, a world axis and the
@@ -55,7 +55,8 @@ square around a round body answers nothing (U120).
 
 ## Next
 
-Nothing is scheduled: the app work order is empty, and X102 waits at the head of `## Next`.
+Nothing is scheduled: X102 landed; the app work order is empty again and P18 and P19 wait in `##
+Next`.
 
 ## Index
 

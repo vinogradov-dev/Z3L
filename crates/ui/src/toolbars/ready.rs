@@ -41,7 +41,6 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         selected_ring,
         selected_drawing,
         selected_body,
-        selected_primitive,
         active,
         owns_view,
         snaps,
@@ -246,18 +245,12 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             }
         }
         // A body boolean is a mode over one selected body: the target is the body selected when the
-        // cell was pressed and the tool is the next body picked. The cell is off until a
-        // constructive body is selected, so the hint says what to do instead of arming a tool with
-        // nothing to combine (W1).
+        // cell was pressed and the tool is the next body picked. A drawn body and a primitive are
+        // both solids, so both arm the cell; the tool is picked next, so the cell needs nothing but
+        // a target (W1, ADR 0197).
         ToolKind::BodyBoolean(op) => {
             let enabled = selected_body;
-            // A primitive is a solid but not a body this boolean can cut with yet: the cell says
-            // what it waits for instead of sitting there dead (W1, ADR 0197).
-            let hint = if enabled || !selected_primitive {
-                tool_hint(tool.label.text(lang), tool.key())
-            } else {
-                Message::BooleanNeedsBody.text(lang).to_owned()
-            };
+            let hint = tool_hint(tool.label.text(lang), tool.key());
             Ready {
                 enabled,
                 armed: is_armed(active, kind),

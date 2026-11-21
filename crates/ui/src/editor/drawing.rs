@@ -17,6 +17,7 @@
 use engine::{EditScope, Session};
 use model::{
     DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
+    PrimitiveShape,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -47,10 +48,10 @@ fn body_name(profile: &model::Path, lang: Lang) -> String {
 /// 0139). A cone reads the same circle as its base and starts sharp, so `height` — the ribbon's
 /// height, or the one the pull has reached — is the distance it rises; the top radius is the pull's
 /// own number and is typed there (ADR 0140).
-fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<Primitive, PrimitiveError> {
+fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<PrimitiveShape, PrimitiveError> {
     match kind {
-        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
-        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS),
+        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS).map(|body| body.base()),
+        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS).map(|body| body.base()),
     }
 }
 

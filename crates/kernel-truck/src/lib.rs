@@ -13,10 +13,13 @@
     clippy::unreachable
 )]
 
+use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use geom::{DVec2, DVec3, Frame, MeshData};
-use kernel::{BodyId, BooleanOp, KernelError, Measure, Profile, Result, SolidKernel, TessOptions, signed_area};
+use kernel::{
+    BodyId, BooleanOp, KernelError, Measure, MeshBody, Profile, Result, SolidKernel, TessOptions, signed_area,
+};
 use truck_meshalgo::prelude::{MeshedShape, PolygonMesh, RobustMeshableShape, StandardVertex};
 use truck_modeling as tm;
 use truck_modeling::builder;
@@ -131,6 +134,12 @@ impl SolidKernel for TruckKernel {
         self.store(result)
     }
 
+    fn mesh(&mut self, body: &MeshBody) -> Result<BodyId> {
+        let solid = guard("build from a mesh", || solid_from_mesh(body))?;
+        guard("check solid", || ensure_closed(&solid))?;
+        self.store(solid)
+    }
+
     fn tessellate(&self, body: BodyId, options: &TessOptions) -> Result<MeshData> {
         let polygon = self.polygon(body, options.deflection)?;
         polygon_to_mesh(&polygon)
@@ -170,6 +179,50 @@ fn ensure_closed(solid: &tm::Solid) -> Result<()> {
     } else {
         Err(KernelError::Failed("the result is not a closed solid".into()))
     }
+}
+
+/// Builds one solid from a closed triangle mesh.
+///
+/// The port has already checked that every edge is used twice with opposite winding, so the mesh
+/// bounds a volume. The shell is built with **shared** topology — one vertex per mesh vertex, one
+/// edge per undirected pair, reused by both faces that meet along it — because `truck` decides a
+/// shell is closed from the identity of its edges: a triangle soup that gives every triangle its
+/// own copy of a shared edge is an open shell of loose faces, and a boolean of it is a broken
+/// result, not an error.
+fn solid_from_mesh(body: &MeshBody) -> Result<tm::Solid> {
+    let positions = body.positions();
+    let vertices: Vec<tm::Vertex> =
+        positions.iter().map(|point| builder::vertex(tm::Point3::new(point.x, point.y, point.z))).collect();
+    let mut edges: HashMap<(u32, u32), tm::Edge> = HashMap::with_capacity(body.triangle_count().saturating_mul(3));
+    let mut faces: Vec<tm::Face> = Vec::with_capacity(body.triangle_count());
+    for triangle in body.triangles() {
+        let mut wire = Vec::with_capacity(3);
+        for index in 0..3 {
+            let front = triangle[index];
+            let back = triangle[(index + 1) % 3];
+            let (low, high) = if front < back { (front, back) } else { (back, front) };
+            let Some(first) = vertices.get(low as usize) else {
+                return Err(KernelError::InvalidInput("a mesh triangle names a vertex outside the mesh".into()));
+            };
+            let Some(second) = vertices.get(high as usize) else {
+                return Err(KernelError::InvalidInput("a mesh triangle names a vertex outside the mesh".into()));
+            };
+            let edge = edges.entry((low, high)).or_insert_with(|| builder::line(first, second)).clone();
+            wire.push(if low == front { edge } else { edge.inverse() });
+        }
+        let wire: tm::Wire = wire.into_iter().collect();
+        let face = builder::try_attach_plane(&[wire])
+            .map_err(|error| KernelError::Failed(format!("a mesh triangle has no plane: {error}")))?;
+        faces.push(face);
+    }
+    let shell: tm::Shell = faces.into_iter().collect();
+    if shell.shell_condition() != tm::ShellCondition::Closed {
+        return Err(KernelError::Failed(format!(
+            "a mesh body does not close: its shell is {:?}",
+            shell.shell_condition()
+        )));
+    }
+    tm::Solid::try_new(vec![shell]).map_err(|error| KernelError::Failed(format!("a mesh body is not a solid: {error}")))
 }
 
 /// Builds a closed planar wire from a profile loop. Outer loops must be counter-clockwise and
@@ -367,6 +420,81 @@ mod tests {
         let body = kernel.extrude(&profile, &Frame::WORLD, 1.0).expect("body");
         assert!(kernel.boolean(BooleanOp::Difference, body, body).is_err());
         assert!(kernel.tessellate(body, &TessOptions { deflection: 0.0 }).is_err());
+    }
+
+    /// A uv sphere as a closed triangle mesh, the shape a primitive evaluates to.
+    fn sphere_mesh(radius: f64, segments: u32, bands: u32, centre: DVec3) -> MeshBody {
+        let mut positions = vec![centre + DVec3::new(0.0, 0.0, -radius)];
+        for band in 1..bands {
+            let latitude = std::f64::consts::PI * band as f64 / bands as f64;
+            let (sin_lat, cos_lat) = latitude.sin_cos();
+            for segment in 0..segments {
+                let angle = std::f64::consts::TAU * segment as f64 / segments as f64;
+                let (sin, cos) = angle.sin_cos();
+                positions.push(centre + DVec3::new(radius * sin_lat * cos, radius * sin_lat * sin, -radius * cos_lat));
+            }
+        }
+        let top = u32::try_from(positions.len()).expect("an index");
+        positions.push(centre + DVec3::new(0.0, 0.0, radius));
+        let ring = |band: u32, segment: u32| 1 + (band - 1) * segments + segment % segments;
+        let mut triangles = Vec::new();
+        for segment in 0..segments {
+            let next = (segment + 1) % segments;
+            triangles.push([0, ring(1, next), ring(1, segment)]);
+        }
+        for band in 1..bands - 1 {
+            for segment in 0..segments {
+                let next = (segment + 1) % segments;
+                triangles.push([ring(band, segment), ring(band, next), ring(band + 1, next)]);
+                triangles.push([ring(band, segment), ring(band + 1, next), ring(band + 1, segment)]);
+            }
+        }
+        for segment in 0..segments {
+            let next = (segment + 1) % segments;
+            triangles.push([top, ring(bands - 1, segment), ring(bands - 1, next)]);
+        }
+        MeshBody::new(positions, triangles).expect("a closed sphere")
+    }
+
+    #[test]
+    fn a_mesh_body_cuts_and_is_cut() {
+        // The owner's two cases: a ball cuts a board — a void with a round edge — and a block cuts a
+        // ball, which leaves a rectangular notch in it.
+        let mut kernel = TruckKernel::new();
+        let board =
+            kernel.extrude(&Profile::rectangle(100.0, 100.0).expect("board"), &Frame::WORLD, 18.0).expect("board");
+        let ball = kernel.mesh(&sphere_mesh(10.0, 32, 16, DVec3::new(50.0, 50.0, -1.0))).expect("a ball body");
+
+        let cut = kernel.boolean(BooleanOp::Difference, board, ball).expect("the board minus the ball");
+        let volume = kernel.measure(cut).expect("measure").volume;
+        // The ball's centre stands one millimetre below the board's bottom face, so the void is a
+        // cap of height 9 mm. The mesh is inscribed, so it is a little smaller than the ideal solid.
+        let cap = std::f64::consts::PI * 81.0 * 21.0 / 3.0;
+        let expected = 180_000.0 - cap;
+        assert!((volume - expected).abs() < expected * 0.01, "volume was {volume}, expected about {expected}");
+
+        let mut kernel = TruckKernel::new();
+        let ball_body = kernel.mesh(&sphere_mesh(10.0, 32, 16, DVec3::ZERO)).expect("a ball body");
+        let frame = Frame { origin: DVec3::new(-6.0, -6.0, -20.0), ..Frame::WORLD };
+        let block = kernel.extrude(&Profile::rectangle(12.0, 12.0).expect("block"), &frame, 40.0).expect("block");
+
+        let notch = kernel.boolean(BooleanOp::Difference, ball_body, block).expect("the ball minus the block");
+        let volume = kernel.measure(notch).expect("measure").volume;
+        let sphere = 4.0 / 3.0 * std::f64::consts::PI * 1_000.0;
+        assert!(volume > 0.0 && volume < sphere, "a notch of a ball is less than the ball, got {volume}");
+    }
+
+    #[test]
+    fn a_mesh_body_reaches_the_engine_and_a_broken_one_does_not() {
+        let mut kernel = TruckKernel::new();
+        // Four corners and their four outward faces close a tetrahedron, which the engine accepts.
+        let corners = vec![DVec3::ZERO, DVec3::X * 10.0, DVec3::Y * 10.0, DVec3::Z * 10.0];
+        let tetrahedron =
+            MeshBody::new(corners, vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]).expect("a closed tetrahedron");
+        let body = kernel.mesh(&tetrahedron).expect("the engine takes a mesh body");
+        let volume = kernel.measure(body).expect("measure").volume;
+        assert!((volume - 1_000.0 / 6.0).abs() < 1.0, "volume was {volume}");
+        assert!(kernel.mesh(&sphere_mesh(10.0, 8, 4, DVec3::ZERO)).is_ok());
     }
 
     #[test]

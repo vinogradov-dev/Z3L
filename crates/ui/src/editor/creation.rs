@@ -21,7 +21,7 @@ use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
 use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, PanelNominalSize, PanelOutline, Placement,
-    Primitive, Project,
+    PrimitiveShape, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -291,7 +291,7 @@ impl Editor {
         &mut self,
         session: &mut Session,
         parent: Id,
-        primitive: Primitive,
+        primitive: PrimitiveShape,
         placement: Placement,
         scope: Option<EditScope>,
     ) -> Result<Id, String> {
@@ -312,7 +312,7 @@ impl Editor {
         scope: Option<EditScope>,
         session: &mut Session,
         object: Id,
-        primitive: Primitive,
+        primitive: PrimitiveShape,
     ) -> Result<(), String> {
         let params = json(&ObjectPrimitiveReplace { object, primitive })?;
         dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())

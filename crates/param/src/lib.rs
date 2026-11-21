@@ -37,16 +37,24 @@ use units::Length;
 
 mod constructive;
 mod machining;
+mod primitive;
 mod profile;
 mod solid;
 
 pub use constructive::{build_constructive_mesh, constructive_plan, evaluate_constructive_body};
 pub use machining::{CompileMachining, CompiledMachining, OpEffect, PanelPlan};
+pub use primitive::{build_primitive_mesh, evaluate_primitive_body, primitive_plan};
 
 use solid::{PlanBuilder, SolidPlan};
 
 /// Extra millimetres added to a cutting tool so booleans do not depend on coincident faces.
 const TOOL_OVERSHOOT_MM: f64 = 0.001;
+/// How far a mesh cutter grows past its own surface, in millimetres.
+///
+/// One micrometre, the document's own resolution: a ball drawn on the face it cuts touches that
+/// face at one point, and a body that only touches another is the case the kernel answers with
+/// nothing at all.
+const CUTTER_OVERSHOOT_MM: f64 = 0.001;
 /// Largest distance a band end may reach past its own segment, in millimetres.
 const MAX_JOINT_EXTENSION_MM: f64 = 50.0;
 /// Tolerance for two points at a joint that should coincide, in millimetres.
@@ -76,6 +84,12 @@ pub enum ParamError {
     /// The path of a constructive object is not a ring.
     #[error("a constructive path is not a ring: {0}")]
     ConstructivePath(#[from] model::PathError),
+    /// The derived mesh of a primitive shape is not a mesh the document accepts.
+    #[error("invalid primitive mesh: {0}")]
+    Mesh(#[from] model::MeshError),
+    /// A coordinate of a derived primitive mesh cannot be a document length or an index.
+    #[error("invalid primitive mesh: {0}")]
+    PrimitiveMesh(String),
     /// A rectangle a profile would be built from has no positive extent.
     #[error(transparent)]
     Region(#[from] RegionError),
@@ -793,6 +807,10 @@ mod tests {
 
         fn boolean(&mut self, _op: BooleanOp, target: BodyId, _tool: BodyId) -> kernel::Result<BodyId> {
             Ok(target)
+        }
+
+        fn mesh(&mut self, _body: &kernel::MeshBody) -> kernel::Result<BodyId> {
+            Err(KernelError::Unsupported("recording kernel does not build mesh bodies"))
         }
 
         fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> kernel::Result<geom::MeshData> {
@@ -1750,7 +1768,7 @@ mod tests {
 
         let plan = build_cutout_tool(geometry, cutout, entry).expect("cutout tool");
         assert!(plan.steps().is_empty(), "a cutout tool is one extrusion");
-        let frame = plan.base().frame();
+        let frame = plan.base().extrude().expect("an extrusion").frame();
         assert_eq!(frame.origin.x, 10.0);
         assert_eq!(frame.origin.y, 20.0);
     }
@@ -1776,7 +1794,7 @@ mod tests {
 
         let plan = build_cutout_tool(geometry, cutout, entry).expect("contour cutout tool");
         assert!(plan.steps().is_empty(), "a cutout tool is one extrusion");
-        let extrude = plan.base();
+        let extrude = plan.base().extrude().expect("an extrusion");
         assert_eq!(extrude.frame(), Frame { origin: DVec3::new(0.0, 0.0, -TOOL_OVERSHOOT_MM), ..Frame::WORLD });
         assert_eq!(extrude.height(), 18.0 + 2.0 * TOOL_OVERSHOOT_MM);
         let profile = extrude.profile();

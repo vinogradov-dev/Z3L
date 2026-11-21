@@ -17,7 +17,9 @@
     clippy::unreachable
 )]
 
-use geom::{DVec2, Frame, MeshData};
+use std::collections::HashMap;
+
+use geom::{DVec2, DVec3, Frame, MeshData};
 use thiserror::Error;
 
 /// A geometry error that a caller can report to the user.
@@ -149,6 +151,108 @@ impl BodyId {
     }
 }
 
+/// Largest coordinate a mesh body may name, in millimetres (ten kilometres).
+pub const MAX_MESH_COORDINATE: f64 = 1.0e7;
+
+/// Most triangles a mesh body may hold.
+///
+/// A boolean between bodies of this size costs the better part of a second, which a rebuild can
+/// still hide once; past it the scene stalls, so the limit is a refusal with a sentence instead of
+/// a frozen window (measured on `truck`: 960 triangles boolean in 22 ms, 3 968 in 100 ms, 16 128 in
+/// 613 ms).
+pub const MAX_MESH_BODY_TRIANGLES: usize = 16_384;
+
+/// A closed triangle mesh in millimetres: a body that no extrusion describes.
+///
+/// This is the one way a shape built as polygons — a sphere, a cone, an imported part — becomes a
+/// solid the kernel can cut and be cut by. The mesh must be a **closed, consistently wound**
+/// surface, so it bounds a volume: every edge is used by exactly two triangles, once in each
+/// direction. The kernel port validates that before an adapter sees it, because a triangle soup
+/// from a file is hostile input and a broken shell makes a modelling engine misbehave, not fail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshBody {
+    positions: Vec<DVec3>,
+    triangles: Vec<[u32; 3]>,
+}
+
+impl MeshBody {
+    /// Validates a triangle soup and stores it as a body.
+    pub fn new(positions: Vec<DVec3>, triangles: Vec<[u32; 3]>) -> Result<MeshBody> {
+        if triangles.len() < 4 {
+            return Err(KernelError::InvalidInput("a mesh body needs at least four triangles".into()));
+        }
+        if triangles.len() > MAX_MESH_BODY_TRIANGLES {
+            return Err(KernelError::InvalidInput(format!(
+                "a mesh body may hold at most {MAX_MESH_BODY_TRIANGLES} triangles, got {}",
+                triangles.len()
+            )));
+        }
+        if positions.is_empty() {
+            return Err(KernelError::InvalidInput("a mesh body has no vertices".into()));
+        }
+        for (index, point) in positions.iter().enumerate() {
+            if !point.is_finite() || point.abs().max_element() > MAX_MESH_COORDINATE {
+                return Err(KernelError::InvalidInput(format!(
+                    "mesh vertex {index} is not a finite coordinate inside the supported range"
+                )));
+            }
+        }
+        let count = positions.len();
+        // Each undirected edge is counted with a sign: +1 for the direction it was first seen in,
+        // and a second use must run the other way. A shell whose edges pair up is closed and
+        // oriented, which is exactly what bounds a volume.
+        let mut edges: HashMap<(u32, u32), i32> = HashMap::with_capacity(triangles.len().saturating_mul(3));
+        for (index, triangle) in triangles.iter().enumerate() {
+            for [a, b] in [[triangle[0], triangle[1]], [triangle[1], triangle[2]], [triangle[2], triangle[0]]] {
+                if a as usize >= count || b as usize >= count {
+                    return Err(KernelError::InvalidInput(format!(
+                        "mesh triangle {index} names a vertex outside the mesh"
+                    )));
+                }
+                if a == b {
+                    return Err(KernelError::InvalidInput(format!("mesh triangle {index} is degenerate")));
+                }
+                let (low, high) = if a < b { (a, b) } else { (b, a) };
+                let sign = if a < b { 1 } else { -1 };
+                match edges.get_mut(&(low, high)) {
+                    Some(seen) => {
+                        if *seen == sign {
+                            return Err(KernelError::InvalidInput(
+                                "a mesh body's triangles wind the same way across one edge".into(),
+                            ));
+                        }
+                        *seen += sign;
+                    }
+                    None => {
+                        edges.insert((low, high), sign);
+                    }
+                }
+            }
+        }
+        if let Some(((low, high), _)) = edges.iter().find(|(_, seen)| **seen != 0) {
+            return Err(KernelError::InvalidInput(format!(
+                "a mesh body is open: the edge between vertex {low} and vertex {high} has no second triangle"
+            )));
+        }
+        Ok(MeshBody { positions, triangles })
+    }
+
+    /// The vertex positions, in millimetres.
+    pub fn positions(&self) -> &[DVec3] {
+        &self.positions
+    }
+
+    /// The triangles, as three vertex indices each.
+    pub fn triangles(&self) -> &[[u32; 3]] {
+        &self.triangles
+    }
+
+    /// Number of triangles.
+    pub fn triangle_count(&self) -> usize {
+        self.triangles.len()
+    }
+}
+
 /// Tessellation quality.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TessOptions {
@@ -187,6 +291,12 @@ pub struct Measure {
 pub trait SolidKernel {
     /// Extrudes `profile` from `frame` towards `frame.z` by `height` millimetres.
     fn extrude(&mut self, profile: &Profile, frame: &Frame, height: f64) -> Result<BodyId>;
+
+    /// Builds a body from a closed triangle mesh.
+    ///
+    /// The mesh is already validated as the closed, oriented surface of one solid, so an adapter
+    /// turns it into its own body type and reports a failure of its own engine as a typed error.
+    fn mesh(&mut self, body: &MeshBody) -> Result<BodyId>;
 
     /// Applies a boolean operation to two bodies and returns the result.
     ///
@@ -235,5 +345,56 @@ mod tests {
         assert!(TessOptions::new(0.05).is_ok());
         assert!(TessOptions::new(0.0).is_err());
         assert!(TessOptions::new(f64::INFINITY).is_err());
+    }
+
+    /// The four corners of a unit tetrahedron and its outward-wound triangles.
+    fn tetrahedron() -> (Vec<DVec3>, Vec<[u32; 3]>) {
+        let positions =
+            vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0), DVec3::new(0.0, 0.0, 10.0)];
+        (positions, vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]])
+    }
+
+    #[test]
+    fn a_closed_oriented_mesh_is_a_body() {
+        let (positions, triangles) = tetrahedron();
+        let body = MeshBody::new(positions, triangles).expect("a closed tetrahedron");
+        assert_eq!(body.triangle_count(), 4);
+    }
+
+    #[test]
+    fn a_mesh_that_is_not_a_closed_surface_is_refused() {
+        let (positions, triangles) = tetrahedron();
+        // The last triangle repeats one of the others instead of closing the fourth corner, so the
+        // shell keeps a boundary edge.
+        let open = MeshBody::new(positions.clone(), vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 1]])
+            .expect_err("an open shell");
+        assert!(open.to_string().contains("open"), "{open}");
+
+        // Two triangles wound the same way across a shared edge fold the surface instead of closing
+        // it, which is a shell no engine can tell inside from outside.
+        let flipped = MeshBody::new(positions.clone(), vec![[0, 1, 2], [0, 1, 3], [1, 2, 3], [2, 0, 3]])
+            .expect_err("a folded shell");
+        assert!(flipped.to_string().contains("wind"), "{flipped}");
+
+        let mut index = triangles.clone();
+        index[0] = [0, 1, 9];
+        assert!(MeshBody::new(positions.clone(), index).is_err(), "a vertex outside the mesh");
+
+        let mut degenerate = triangles.clone();
+        degenerate[0] = [0, 0, 1];
+        assert!(MeshBody::new(positions.clone(), degenerate).is_err(), "a degenerate triangle");
+
+        assert!(MeshBody::new(positions, triangles).is_ok(), "the same tetrahedron still builds");
+    }
+
+    #[test]
+    fn a_mesh_body_beyond_the_boolean_budget_is_refused() {
+        let (positions, triangles) = tetrahedron();
+        let mut many = Vec::with_capacity(MAX_MESH_BODY_TRIANGLES + 1);
+        for index in 0..=MAX_MESH_BODY_TRIANGLES {
+            many.push([triangles[index % 4][0], triangles[index % 4][1], triangles[index % 4][2]]);
+        }
+        let error = MeshBody::new(positions, many).expect_err("a mesh past the budget");
+        assert!(error.to_string().contains("at most"), "{error}");
     }
 }

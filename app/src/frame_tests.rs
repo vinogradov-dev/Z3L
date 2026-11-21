@@ -2907,7 +2907,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
             assert_eq!(node.name(), "Cone", "{tool:?}: the node is what the cell places");
             let stored = node.geometry().as_primitive().expect("{tool:?}: the parameters are stored");
             assert_eq!(stored.kind(), model::PrimitiveKind::Cone, "{tool:?}: a cone");
-            let model::Primitive::Cone(cone) = stored else {
+            let model::PrimitiveShape::Cone(cone) = stored.base() else {
                 panic!("{tool:?}: the shape is a cone");
             };
             let measured = cone.base_radius().millimetres_f64();
@@ -2933,7 +2933,10 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         document.preview_extrude(object, mesh(300), Some(mesh(40))).expect("{tool:?}: the preview builds");
         assert_eq!(document.session.project().revision(), revision, "{tool:?}: a preview writes nothing");
         let preview = document.session.preview().geometry(object).expect("{tool:?}: a previewed solid");
-        let model::Geometry::Primitive(model::Primitive::Cone(previewed)) = preview else {
+        let model::Geometry::Primitive(body) = preview else {
+            panic!("a cone body");
+        };
+        let model::PrimitiveShape::Cone(previewed) = body.base() else {
             panic!("{tool:?}: the preview is a cone");
         };
         assert_eq!(previewed.height(), mesh(300));
@@ -2942,7 +2945,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         document.finish_extrude(object, mesh(300), Some(mesh(40)), Lang::En).expect("{tool:?}: the check stores");
         let project = document.session.project();
         let stored = project.object_primitive(object).expect("{tool:?}: still a cone");
-        let model::Primitive::Cone(cone) = stored else {
+        let model::PrimitiveShape::Cone(cone) = stored.base() else {
             panic!("{tool:?}: the shape is a cone");
         };
         assert_eq!(cone.height(), mesh(300), "{tool:?}: the pulled height");

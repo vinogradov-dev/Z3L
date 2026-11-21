@@ -50,13 +50,13 @@ impl Editor {
         let selected_drawing = selected.is_some_and(|id| {
             session.project().object(id).is_some_and(|object| object.geometry().as_contours().is_some())
         });
-        // A body boolean takes a constructive body, which is the one kind of node a step can be
-        // appended to; a primitive or a baked mesh has no history to extend (W1).
+        // A body boolean takes a solid: a drawn body or a primitive, either of which a step extends
+        // and either of which a step may freeze as its tool. A baked mesh has no history (W1).
         let selected_body = selected.is_some_and(|id| {
-            session.project().object(id).is_some_and(|object| object.geometry().as_constructive().is_some())
-        });
-        let selected_primitive = selected.is_some_and(|id| {
-            session.project().object(id).is_some_and(|object| object.geometry().as_primitive().is_some())
+            session.project().object(id).is_some_and(|object| {
+                let geometry = object.geometry();
+                geometry.as_constructive().is_some() || geometry.as_primitive().is_some()
+            })
         });
         let active = toolbars::tool_activity(
             self.drawing.as_ref().map(|draft| (draft.tool(), self.drawing_intent)),
@@ -76,7 +76,6 @@ impl Editor {
             selected_ring,
             selected_drawing,
             selected_body,
-            selected_primitive,
             active,
             perspective: view.perspective,
             owns_view: view.owns_view,

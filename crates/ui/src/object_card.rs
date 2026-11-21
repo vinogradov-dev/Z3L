@@ -40,7 +40,7 @@ use engine::{
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
     MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_POLYGON_SIDES, MIN_PRIMITIVE_SIZE, MIN_SEGMENTS, Path, PathShape,
-    Primitive, Project,
+    Primitive, PrimitiveShape, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -109,7 +109,7 @@ impl ContourDraft {
 #[derive(Clone, Debug)]
 struct PrimitiveDraft {
     object: Id,
-    base: Primitive,
+    base: PrimitiveShape,
     fields: PrimitiveFields,
 }
 
@@ -142,15 +142,15 @@ struct PrimitiveFields {
 }
 
 impl PrimitiveFields {
-    fn read(primitive: &Primitive) -> Self {
+    fn read(shape: PrimitiveShape) -> Self {
         let mut fields = Self::default();
-        match primitive {
-            Primitive::Sphere(sphere) => {
+        match shape {
+            PrimitiveShape::Sphere(sphere) => {
                 fields.radius = sphere.radius().millimetres_f64();
                 fields.segments = sphere.segments();
                 fields.bands = sphere.bands();
             }
-            Primitive::Cone(cone) => {
+            PrimitiveShape::Cone(cone) => {
                 fields.radius = cone.base_radius().millimetres_f64();
                 fields.top_radius = cone.top_radius().millimetres_f64();
                 fields.height = cone.height().millimetres_f64();
@@ -162,8 +162,8 @@ impl PrimitiveFields {
 }
 
 impl PrimitiveDraft {
-    fn new(object: Id, primitive: &Primitive) -> Self {
-        Self { object, base: primitive.clone(), fields: PrimitiveFields::read(primitive) }
+    fn new(object: Id, base: PrimitiveShape) -> Self {
+        Self { object, base, fields: PrimitiveFields::read(base) }
     }
 
     /// The primitive the fields describe, or a readable reason they do not.
@@ -171,23 +171,23 @@ impl PrimitiveDraft {
     /// The shape comes from `base`, so a field that belongs to another shape is never invented: a
     /// sphere has a radius, its sides and its bands, and the box and cylinder fields left with the
     /// shapes the body cells draw (ADR 0138).
-    fn parse(&self, lang: Lang) -> Result<Primitive, String> {
+    fn parse(&self, lang: Lang) -> Result<PrimitiveShape, String> {
         let length = |value: f64| {
             scrub::millimetres(value)
                 .ok_or_else(|| Message::PrimitiveRefused.with(lang, [Message::LengthErrorOutOfRange.text(lang)]))
         };
-        let primitive = match &self.base {
-            Primitive::Sphere(_) => {
+        let shape = match self.base {
+            PrimitiveShape::Sphere(_) => {
                 Primitive::sphere(length(self.fields.radius)?, self.fields.segments, self.fields.bands)
             }
-            Primitive::Cone(_) => Primitive::cone(
+            PrimitiveShape::Cone(_) => Primitive::cone(
                 length(self.fields.radius)?,
                 length(self.fields.top_radius)?,
                 length(self.fields.height)?,
                 self.fields.segments,
             ),
         };
-        primitive.map_err(|error| Message::PrimitiveRefused.with(lang, [error.to_string()]))
+        shape.map(|body| body.base()).map_err(|error| Message::PrimitiveRefused.with(lang, [error.to_string()]))
     }
 }
 
@@ -363,7 +363,8 @@ struct ObjectSummary {
     contour: Option<Contour>,
     path: Option<Path>,
     height: Option<Length>,
-    primitive: Option<Primitive>,
+    /// The parameters a primitive body is built from; its steps are drawn by `boolean_rows`.
+    primitive: Option<PrimitiveShape>,
 }
 
 fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
@@ -389,7 +390,7 @@ fn object_summary(project: &Project, id: Id) -> Option<ObjectSummary> {
             contour: None,
             path: None,
             height: None,
-            primitive: Some(primitive.clone()),
+            primitive: Some(primitive.base()),
         }),
         Geometry::Constructive(constructive) => Some(ObjectSummary {
             name: object.name().to_owned(),
@@ -545,7 +546,7 @@ impl ObjectCard {
         }
         if let Some(primitive) = &summary.primitive {
             if self.primitive_draft.as_ref().is_none_or(|draft| draft.object != object_id || draft.base != *primitive) {
-                self.primitive_draft = Some(PrimitiveDraft::new(object_id, primitive));
+                self.primitive_draft = Some(PrimitiveDraft::new(object_id, *primitive));
             }
         } else {
             self.primitive_draft = None;
@@ -844,26 +845,39 @@ impl ObjectCard {
     /// A step is a reference, not a copy: the row names the operation and the tool body, and
     /// removing the step leaves the tool in the tree where it still serves whatever names it next
     /// (W1). A body with no step draws nothing here, so the card of an extrusion is unchanged.
+    /// Both kinds of body carry steps: a drawn body's history starts with the extrusion it grew
+    /// from, so its steps begin at one, while a primitive's starts with its first step.
     fn boolean_rows(&mut self, ui: &mut Ui, session: &Session, object: Id) -> Option<usize> {
         let lang = crate::language(ui.ctx());
-        let features = session.project().object(object)?.geometry().as_constructive()?.features();
-        if features.len() <= 1 {
+        let geometry = session.project().object(object)?.geometry();
+        let steps: Vec<(usize, model::BooleanOp, &str)> = match geometry {
+            Geometry::Constructive(body) => body
+                .features()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, feature)| match feature {
+                    model::Feature::Boolean(step) => Some((index, step.op(), step.tool().name())),
+                    model::Feature::Extrude(_) => None,
+                })
+                .collect(),
+            Geometry::Primitive(body) => {
+                body.steps().iter().enumerate().map(|(index, step)| (index, step.op(), step.tool().name())).collect()
+            }
+            Geometry::Mesh(_) | Geometry::Path(_) | Geometry::Contours(_) => return None,
+        };
+        if steps.is_empty() {
             return None;
         }
         let mut removed = None;
         ui.separator();
-        for (index, feature) in features.iter().enumerate() {
-            let model::Feature::Boolean(step) = feature else {
-                continue;
-            };
-            // The step carries the cutter's name, so a body keeps saying what cut it after the
-            // source was spent (ADR 0197).
-            let tool = step.tool().name().to_owned();
-            let operation = match step.op() {
+        for (index, operation, tool) in steps {
+            let operation = match operation {
                 model::BooleanOp::Union => Message::ToolUnion,
                 model::BooleanOp::Difference => Message::ToolSubtract,
                 model::BooleanOp::Intersection => Message::ToolIntersect,
             };
+            // The step carries the cutter's name, so a body keeps saying what cut it after the
+            // source was spent (ADR 0197).
             ui.horizontal(|ui| {
                 ui.label(format!("{} \u{00b7} {tool}", operation.text(lang)));
                 if ui.small_button("\u{2212}").on_hover_text(Message::CmdRemoveBoolean.text(lang)).clicked() {
@@ -925,7 +939,7 @@ impl ObjectCard {
         ui: &mut Ui,
         summary: &ObjectSummary,
         fresh: EditScope,
-    ) -> (Option<Result<Primitive, String>>, FieldReport) {
+    ) -> (Option<Result<PrimitiveShape, String>>, FieldReport) {
         let mut report = FieldReport::default();
         let Some(primitive) = summary.primitive.as_ref() else {
             return (None, report);
@@ -935,8 +949,8 @@ impl ObjectCard {
             return (None, report);
         };
         ui.separator();
-        match primitive {
-            Primitive::Sphere(_) => {
+        match *primitive {
+            PrimitiveShape::Sphere(_) => {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
                 report.absorb(count_row(
                     ui,
@@ -953,7 +967,7 @@ impl ObjectCard {
                     fresh,
                 ));
             }
-            Primitive::Cone(_) => {
+            PrimitiveShape::Cone(_) => {
                 report.absorb(length_row(ui, Message::FieldRadius.text(lang), &mut draft.fields.radius, fresh));
                 // The top radius may be zero, and that zero is the sharp cone rather than a bad
                 // number, so its field starts at the bottom of the range instead of the smallest
@@ -1352,7 +1366,7 @@ fn replace_body_height(
 fn replace_primitive(
     session: &mut Session,
     object: Id,
-    primitive: Primitive,
+    primitive: PrimitiveShape,
     scope: Option<EditScope>,
 ) -> Result<(), String> {
     let params = json(&ObjectPrimitiveReplace { object, primitive })?;
@@ -1467,7 +1481,7 @@ mod tests {
         let summary = object_summary(&project, id).expect("summary");
         assert_eq!(summary.kind, Message::PrimitiveBadgePrimitive);
         assert!(!summary.is_mesh, "the mesh is derived, not stored");
-        assert_eq!(summary.primitive, Some(primitive));
+        assert_eq!(summary.primitive, Some(primitive.base()));
         assert_eq!(summary.contour, None);
         assert_eq!(summary.path, None);
         assert!(!offers_contour_edit(&summary), "a primitive stores parameters, not a contour");
@@ -1486,9 +1500,9 @@ mod tests {
     #[test]
     fn the_primitive_fields_read_and_parse_the_stored_parameters() {
         let primitive = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
-        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &primitive);
-        assert_eq!(draft.fields, PrimitiveFields::read(&primitive), "{primitive:?} reads back");
-        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive), "{primitive:?} parses from its own numbers");
+        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), primitive.base());
+        assert_eq!(draft.fields, PrimitiveFields::read(primitive.base()), "{primitive:?} reads back");
+        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&primitive.base()), "{primitive:?} parses from its own numbers");
     }
 
     #[test]
@@ -1500,11 +1514,11 @@ mod tests {
             24,
         )
         .expect("cone");
-        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), &cone);
-        assert_eq!(draft.fields, PrimitiveFields::read(&cone), "{cone:?} reads back");
+        let draft = PrimitiveDraft::new(Id::new(1).expect("id"), cone.base());
+        assert_eq!(draft.fields, PrimitiveFields::read(cone.base()), "{cone:?} reads back");
         assert_eq!(draft.fields.top_radius, 12.0);
         assert_eq!(draft.fields.height, 90.0);
-        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&cone), "{cone:?} parses from its own numbers");
+        assert_eq!(draft.parse(Lang::En).as_ref(), Ok(&cone.base()), "{cone:?} parses from its own numbers");
     }
 
     #[test]
@@ -1516,10 +1530,10 @@ mod tests {
             24,
         )
         .expect("cone");
-        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &cone);
+        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), cone.base());
         draft.fields.top_radius = 0.0;
         let sharp = draft.parse(Lang::En).expect("zero is the apex, not a bad number");
-        let Primitive::Cone(stored) = &sharp else {
+        let PrimitiveShape::Cone(stored) = &sharp else {
             panic!("the card keeps the shape it read");
         };
         assert!(stored.is_sharp());
@@ -1534,7 +1548,7 @@ mod tests {
     #[test]
     fn the_primitive_fields_refuse_a_value_the_document_cannot_hold() {
         let sphere = Primitive::sphere(Length::from_millimetres(40).expect("radius"), 24, 12).expect("sphere");
-        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), &sphere);
+        let mut draft = PrimitiveDraft::new(Id::new(1).expect("id"), sphere.base());
         draft.fields.segments = 2;
         assert!(draft.parse(Lang::En).is_err(), "two sides are not a ring");
         draft.fields.segments = 24;
@@ -1548,7 +1562,7 @@ mod tests {
         let (mut session, id) = primitive_session(original.clone());
         let before = session.project().revision();
         let wider = Primitive::sphere(Length::from_millimetres(70).expect("radius"), 24, 12).expect("sphere");
-        replace_primitive(&mut session, id, wider.clone(), None).expect("replace the parameters");
+        replace_primitive(&mut session, id, wider.base(), None).expect("replace the parameters");
         assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision per commit");
         assert_eq!(session.project().object_primitive(id), Ok(&wider));
         assert_eq!(session.project().object(id).expect("object").name(), "Shape", "only the parameters change");
@@ -1565,7 +1579,7 @@ mod tests {
         let (mut session, id) = primitive_session(original.clone());
         let scope = session.edit_scope();
         for radius in [42.0, 44.0, 46.0] {
-            replace_primitive(&mut session, id, ball(radius), Some(scope))
+            replace_primitive(&mut session, id, ball(radius).base(), Some(scope))
                 .expect("the field writes while the hand moves");
         }
         session.end_edit();

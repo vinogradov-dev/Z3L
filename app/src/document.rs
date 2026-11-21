@@ -4489,9 +4489,12 @@ fn extrude_writes(committed: Option<Length>, height: Length) -> bool {
 fn previewed_body(project: &Project, object: Id, height: Length, top: Option<Length>) -> Result<Geometry, String> {
     let node = project.object(object).ok_or_else(|| format!("{object:?} is not in the scene"))?;
     match node.geometry() {
-        Geometry::Primitive(model::Primitive::Cone(cone)) => {
-            cone_at(project, object, height, top.unwrap_or(cone.top_radius())).map(Geometry::Primitive)
-        }
+        Geometry::Primitive(body) => match body.base() {
+            model::PrimitiveShape::Cone(cone) => cone_at(project, object, height, top.unwrap_or(cone.top_radius()))
+                .map(model::Primitive::from_shape)
+                .map(Geometry::Primitive),
+            model::PrimitiveShape::Sphere(_) => Err(format!("{} is not a cone", node.name())),
+        },
         Geometry::Path(path) => {
             // A profile has no height yet, so the preview is the body the ✓ would build from it
             // (ADR 0138).
@@ -4515,12 +4518,14 @@ fn previewed_body(project: &Project, object: Id, height: Length, top: Option<Len
 ///
 /// The base radius and the side count are the drawn ones, so the pull changes exactly the two
 /// numbers it shows and a preview is the solid the ✓ would store (ADR 0141).
-fn cone_at(project: &Project, object: Id, height: Length, top: Length) -> Result<model::Primitive, String> {
+fn cone_at(project: &Project, object: Id, height: Length, top: Length) -> Result<model::PrimitiveShape, String> {
     let primitive = project.object_primitive(object).map_err(|error| error.to_string())?;
-    let model::Primitive::Cone(cone) = primitive else {
+    let model::PrimitiveShape::Cone(cone) = primitive.base() else {
         return Err(format!("{object:?} is not a cone"));
     };
-    model::Primitive::cone(cone.base_radius(), top, height, cone.segments()).map_err(|error| error.to_string())
+    model::Primitive::cone(cone.base_radius(), top, height, cone.segments())
+        .map(|body| body.base())
+        .map_err(|error| error.to_string())
 }
 
 /// World placements a drag previews for cameras and lights.

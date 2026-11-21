@@ -352,7 +352,7 @@ fn a_geometry_edit_leaves_an_objects_frame_alone() {
     project.set_node_pivot(primitive_id, pivot).expect("author the pivot");
     let before = frame_of(&project, primitive_id);
     let replaced = Primitive::sphere(millimetres(60), 32, 16).expect("another sphere");
-    project.set_object_primitive(primitive_id, replaced).expect("replace the parameters");
+    project.set_object_primitive(primitive_id, replaced.base()).expect("replace the parameters");
     assert_eq!(frame_of(&project, primitive_id), before, "a primitive edit keeps the frame");
 
     let panel = project

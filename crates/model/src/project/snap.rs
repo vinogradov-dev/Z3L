@@ -46,7 +46,9 @@ use units::Length;
 
 use super::sight::Sight;
 use crate::tree::object_bounds_mm;
-use crate::{Constructive, Container, Contour, ContourSegment, Geometry, Id, Node, Placement, Primitive, Project};
+use crate::{
+    Constructive, Container, Contour, ContourSegment, Geometry, Id, Node, Placement, Primitive, PrimitiveShape, Project,
+};
 
 /// The step of the sketch plane's grid, in millimetres.
 pub const SNAP_GRID_MM: f64 = 10.0;
@@ -890,8 +892,8 @@ impl Scene {
     /// The match is over the payload and has no catch-all, so a new primitive is a compile error
     /// until it says where a pointer may capture it (U120).
     fn primitive(&mut self, id: Id, primitive: &Primitive, world: Placement) {
-        match primitive {
-            Primitive::Sphere(sphere) => {
+        match primitive.base() {
+            PrimitiveShape::Sphere(sphere) => {
                 let radius = sphere.radius().millimetres_f64();
                 // The middle of a ball is a place the maker names even though the material is there
                 // (ADR 0139); the poles and the equator quadrants are its own six extremes.
@@ -907,7 +909,7 @@ impl Scene {
                     self.mark(id, world.transform_point(point), SnapKind::Vertex);
                 }
             }
-            Primitive::Cone(cone) => {
+            PrimitiveShape::Cone(cone) => {
                 let base = cone.base_radius().millimetres_f64();
                 let height = cone.height().millimetres_f64();
                 // The base circle is the round the maker drew, so its middle is the node's origin.
