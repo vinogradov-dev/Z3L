@@ -610,7 +610,10 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    with a scripted fixture and runs the five scenarios: build a cabinet 800 x 2200 x 560, check
    it, make it 900 wide, copy it and change the doors, put it in a niche 820 x 2140 x 580.
    Every assertion goes through `inspect`, the file or `render_preview`, never into the
-   document directly.
+   document directly. The first scenario has a recorded form already: the wardrobe in
+   `app/tests/recipes` (38 commands, its own scene, its own catalogue rows) is what a correct
+   build looks like, so the test drives the server to that document and compares the cut list
+   rather than the transcript.
   Done: The five scenarios pass, each asserting one undo entry per turn, the count of mutating
    calls and that `undo` restores the document the scenario started from; the scripted model
    needs no network and no key; `cargo xtask ci` is green.
