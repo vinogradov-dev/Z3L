@@ -2746,3 +2746,42 @@ fn a_boolean_cell_without_a_ring_arms_nothing_and_a_second_press_drops_it() {
     assert_eq!(session.project().revision(), revision, "the cell wrote nothing");
     assert!(!actions.started_drawing, "arming a boolean starts no draft");
 }
+
+#[test]
+fn the_extrude_cell_arms_the_area_pull_on_a_drawing() {
+    // A drawing of several rings has no one profile to sweep, so the cell arms the pointer instead
+    // of extruding a selection (G4). The popup, the palette and the cell read one row, so the door
+    // is the same wherever it is pressed.
+    let mut project = sample_project();
+    let root = project.root().id();
+    let set = model::Contours::new(vec![
+        Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]).expect("a ring"),
+        Path::rectangle([millimetres(20), millimetres(10)], [millimetres(60), millimetres(30)]).expect("a ring"),
+    ])
+    .expect("a contour set");
+    let drawing = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a drawing");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(drawing));
+
+    // The cell is live and hands the editor the drawing; the drawing is pullable, so the arm is set.
+    editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::AreaPull { object: drawing }], crate::Lang::En)
+        .expect("the cell arms the pull");
+    assert_eq!(editor.area_pull(), Some(drawing), "the pointer reads the selected drawing");
+
+    let revision = session.project().revision();
+    assert!(editor.area_measure(session.project(), [millimetres(40), millimetres(20)]), "the opening is measured");
+    assert_eq!(editor.area_pick(), Some((drawing, [millimetres(40), millimetres(20)])));
+    assert_eq!(editor.area_refusal(), None);
+    assert_eq!(session.project().revision(), revision, "the hover writes nothing");
+
+    assert!(editor.area_measure(session.project(), [millimetres(5), millimetres(5)]));
+    assert_eq!(editor.area_refusal(), Some(text::Message::AreaHole), "the frame's area has a hole");
+    assert!(editor.area_pick().is_none() || editor.area().region().is_none());
+
+    // Another tool takes the pointer and drops the measured face with it.
+    editor.arm_void();
+    assert_eq!(editor.area_pull(), None);
+    assert!(editor.area().region().is_none());
+}

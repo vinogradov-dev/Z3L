@@ -45,6 +45,11 @@ impl Editor {
         let selected = self.selection.primary();
         let selected_path = selected.and_then(|id| session.project().object_path(id).ok()).map(Path::is_closed);
         let selected_ring = selected.is_some_and(|id| engine::is_contour_operand(session.project(), id));
+        // A drawing of several rings encloses areas rather than one ring, so the Extrude cell arms
+        // the area pull instead of extruding a profile (G4).
+        let selected_drawing = selected.is_some_and(|id| {
+            session.project().object(id).is_some_and(|object| object.geometry().as_contours().is_some())
+        });
         // A body boolean takes a constructive body, which is the one kind of node a step can be
         // appended to; a primitive or a baked mesh has no history to extend (W1).
         let selected_body = selected.is_some_and(|id| {
@@ -59,6 +64,7 @@ impl Editor {
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
             self.void_armed(),
+            self.area_pull().is_some(),
             self.boolean_arm().map(|arm| (arm.kind(), arm.op())),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
@@ -68,6 +74,7 @@ impl Editor {
             selected,
             selected_path,
             selected_ring,
+            selected_drawing,
             selected_body,
             selected_primitive,
             active,
@@ -172,6 +179,7 @@ impl Editor {
                 ToolAction::CreateAssembly => self.create_assembly(session, target)?,
                 ToolAction::CreateCamera => self.create_camera(session, target)?,
                 ToolAction::CreateLight => self.create_light(session, target)?,
+                ToolAction::AreaPull { object } => self.arm_area_pull(object),
                 ToolAction::ExtrudePath { object, height } => {
                     self.extrude_path(session, object, height, lang)?;
                     outcome.extruded = Some((object, height));

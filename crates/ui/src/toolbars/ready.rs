@@ -39,6 +39,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         selected,
         selected_path,
         selected_ring,
+        selected_drawing,
         selected_body,
         selected_primitive,
         active,
@@ -96,8 +97,18 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         },
         ToolKind::Extrude => {
             // Only a closed path encloses a ring, so the button is off for anything else and the
-            // hint names what is missing: a selection, a path, or a closed chain. The height is a
-            // typed default, so a valid number is always there.
+            // hint names what is missing: a selection, a path, or a closed chain. A drawing of
+            // several rings is neither: it encloses *areas*, so the cell arms the pull and the
+            // pointer names the area the click takes (G4). The height is a typed default, so a
+            // valid number is always there.
+            if let Some(object) = selected.filter(|_| selected_drawing) {
+                return Ready {
+                    enabled: true,
+                    armed: is_armed(active, kind),
+                    hint: tool_hint(Message::ExtrudeSelectedDrawing.text(lang), tool.key()),
+                    action: Some(ToolAction::AreaPull { object }),
+                };
+            }
             let action = match (selected, selected_path) {
                 (Some(object), Some(true)) => Some(ToolAction::ExtrudePath { object, height: state.extrude_height() }),
                 _ => None,
