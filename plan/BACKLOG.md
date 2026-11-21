@@ -513,16 +513,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    technique rather than research.
   Shape: BSDF evaluation and sampling for diffuse, GGX metal and rough dielectric, the last
    with the energy-compensation tables a rough conductor needs so it does not darken as
-   roughness rises. Lights sampled by emitted power through an alias table, MIS weights between
-   the light sample and the BSDF sample, Owen-scrambled Sobol in 2D pairs, and Russian roulette
-   past a fixed depth. The sampler and the BSDF maths live in pure Rust beside the shader and
-   are unit-tested, and the shader is their transcription, so a wrong weight fails a test
-   without a GPU.
+   roughness rises. The dielectric is refractive: an index of refraction, total internal
+   reflection and a Beer-Lambert absorption per world unit, so a pane or a sphere of tinted
+   glass behaves like glass and not like a shiny film. Glass concentrates light, so the
+   estimator carries one documented clamp on the radiance a single sample may bring, and the
+   bias it costs is measured rather than chosen by feel. Lights sampled by emitted power
+   through an alias table, MIS weights between the light sample and the BSDF sample,
+   Owen-scrambled Sobol in 2D pairs, and Russian roulette past a fixed depth. The sampler and
+   the BSDF maths live in pure Rust beside the shader and are unit-tested, and the shader is
+   their transcription, so a wrong weight fails a test without a GPU.
   Done: Tests: the white-furnace case renders a diffuse sphere under a uniform environment to
    that environment's radiance within 1%; a 4096 spp reference and a 200 spp render of the
-   fixture agree within 2% linear RMSE; the first 8192 sampler points are unique and the
-   distribution test passes; the metal's directional albedo at roughness 1 is within 1% of its
-   table; `cargo xtask ci` is green.
+   fixture agree within 2% linear RMSE; a pane of tinted glass over a patterned floor shifts
+   the pattern by the thin-lens direction the index of refraction predicts and darkens it by
+   the absorption the thickness and the tint name; the first 8192 sampler points are unique and
+   the distribution test passes; the metal's directional albedo at roughness 1 is within 1% of
+   its table; the clamp's bias is measured against an unclamped reference and written into the
+   note; `cargo xtask ci` is green.
   `files: crates/render/src,crates/geom/src/lib.rs`
 - `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
   why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
@@ -534,11 +541,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    whatever the document stores when that question is answered, and this task does not decide
    the storage.
   Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
-   texture, a roughness and a metallic pair. The decor map is rotated per face so the grain
-   follows the item's direction on the panel's A and B faces, and an item that names no grain
-   renders the same in both. Banding takes its material's colour on its segments; hardware
-   carries a finish. Exposure and the filmic tone map are settings of the command, never view
-   state, and the viewport keeps its own colours.
+   texture, a roughness and a metallic pair. A finish record becomes the coat over the decor —
+   one board is matte, the next satin, the next lacquer — and a glass or mirror front is a
+   dielectric pane with the thickness and the tint its record names, because that is what a
+   workshop buys and what a cabinet actually has. The decor map is rotated per face so the
+   grain follows the item's direction on the panel's A and B faces, and an item that names no
+   grain renders the same in both. Banding takes its material's colour on its segments;
+   hardware carries a finish. Exposure and the filmic tone map are settings of the command,
+   never view state, and the viewport keeps its own colours.
   Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
    and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
    banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
