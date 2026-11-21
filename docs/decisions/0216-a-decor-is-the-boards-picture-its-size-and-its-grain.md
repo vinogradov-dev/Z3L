@@ -1,4 +1,4 @@
-# 0215. A decor is the board's picture, the size it covers and its grain
+# 0216. A decor is the board's picture, the size it covers and its grain
 
 - Status: Accepted; the render half of the material library (Y3)
 - Date: 2026-11-21
