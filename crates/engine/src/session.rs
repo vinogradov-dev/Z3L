@@ -62,6 +62,42 @@ pub struct Session {
     /// operation, never by a command and never written to the scene file. A tab owns its session,
     /// so two tabs keep two different products open.
     active_product: Option<Id>,
+    /// What an agent attached to this session may do with the document; see [`AgentMode`].
+    ///
+    /// The mode is view state (ADR 0029, ADR 0190), so it is never serialised, never enters the
+    /// history and dies with the session. A headless session is created in [`AgentMode::Build`],
+    /// because a process that started a tool server made that choice by starting it; the window's
+    /// tab sets its own mode on creation, and that mode starts at [`AgentMode::Plan`].
+    agent: AgentMode,
+}
+
+/// What an agent attached to a session may do with the document it is looking at.
+///
+/// Two modes, held by the session and switched by the person, never by the model (ADR 0190):
+/// [`AgentMode::Plan`] answers every agent batch with the dry run the command line already has, so
+/// the person reads what *would* land, and [`AgentMode::Build`] lets it land as one undo entry.
+/// The switch gates the agent doors — the tool server, the attached channel and a chat turn — and
+/// never the person's own commands, which dispatch straight into the session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentMode {
+    /// The agent answers with a plan: the same commands run on a copy and nothing is written.
+    #[default]
+    Plan,
+    /// The agent's batch lands, as one undo entry per call.
+    Build,
+}
+
+impl AgentMode {
+    /// The word the wire and the panel print for this mode.
+    ///
+    /// It is English because a tool answer is a contract a model reads, not a sentence the
+    /// interface translates; the panel draws its own words from `text::Message` (ADR 0135).
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Plan => "plan",
+            Self::Build => "build",
+        }
+    }
 }
 
 impl Session {
@@ -89,6 +125,7 @@ impl Session {
             preview: Preview::new(),
             contact: Arc::new(NoContact),
             active_product: None,
+            agent: AgentMode::Build,
         }
     }
 
@@ -143,6 +180,16 @@ impl Session {
         {
             self.active_product = None;
         }
+    }
+
+    /// What an agent attached to this session may do with the document (ADR 0190).
+    pub const fn agent_mode(&self) -> AgentMode {
+        self.agent
+    }
+
+    /// Switches the agent's mode. This is the person's act, and it writes no document field.
+    pub fn set_agent_mode(&mut self, mode: AgentMode) {
+        self.agent = mode;
     }
 
     /// The current document. Commands are the only way to mutate it.
@@ -369,6 +416,21 @@ impl Session {
     /// over both: nothing is installed, so [`BatchReport::effect`] says `Planned` and the report is
     /// what would have landed.
     pub fn batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(None, steps, options)
+    }
+
+    /// Runs a batch as part of an open edit, so the whole edit is one undo entry.
+    ///
+    /// This is what a chat turn needs (ADR 0187): several answers of one message land inside one
+    /// scope, so `undo` takes the whole message back in one step. The scope is a token minted by
+    /// [`Session::edit_scope`]; a scope that is not the open one starts a fresh entry instead of
+    /// merging into history it does not own, exactly as [`Session::dispatch_in`] does.
+    pub fn batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The one batch path, with the scope it may merge into, or `None` for its own entry.
+    fn batch_in_scope(&mut self, scope: Option<EditScope>, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
         let mut trial = self.trial();
         let reports = batch::run(&mut trial, steps);
         let refused = reports.iter().any(|step| step.refusal().is_some());
@@ -386,9 +448,46 @@ impl Session {
         // that ran, so the diff needs no copy of the state before the batch.
         let report = BatchReport::new(effect, reports, &self.project, trial.project());
         if report.landed() && report.content_changed() {
-            self.land(trial.project);
+            self.land(trial.project, scope);
         }
         report
+    }
+
+    /// Runs a batch an agent asked for, in the mode the person left the session in (ADR 0190).
+    ///
+    /// It is the one dispatcher of the agent doors: the tool server, the attached channel and a
+    /// chat turn all come through here, so a session in [`AgentMode::Plan`] answers every one of
+    /// them with the dry run and nothing else can be made to write. In [`AgentMode::Build`] the
+    /// request's own options stand, `atomic` and `dry_run` included.
+    ///
+    /// The person's own dispatch is deliberately not this call: a switch that silenced the
+    /// person's own field would be a mode over the whole editor, and ADR 0190 makes it a switch
+    /// over the agent.
+    pub fn agent_batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(None, steps, options)
+    }
+
+    /// The same for a turn that lands several answers as one undo entry.
+    ///
+    /// A chat message is one entry (ADR 0187), so the shell mints one scope per turn and hands every
+    /// batch of that turn to this call: the first one pushes the state before the message and the
+    /// rest replace the document inside the same entry.
+    pub fn agent_batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The agent's one batch path, in the person's mode and possibly inside an edit scope.
+    fn agent_batch_in_scope(
+        &mut self,
+        scope: Option<EditScope>,
+        steps: &[BatchStep],
+        options: BatchOptions,
+    ) -> BatchReport {
+        let options = match self.agent {
+            AgentMode::Build => options,
+            AgentMode::Plan => options.dry_run(true),
+        };
+        self.batch_in_scope(scope, steps, options)
     }
 
     /// A copy of this session for a batch to run in before anything lands.
@@ -412,6 +511,7 @@ impl Session {
             preview: Preview::new(),
             contact: Arc::clone(&self.contact),
             active_product: self.active_product,
+            agent: self.agent,
         }
     }
 
@@ -423,12 +523,22 @@ impl Session {
     ///
     /// A batch is its own entry, so it closes an edit scope that happened to be open, the way a plain
     /// dispatch does: a drag that lands afterwards must not merge into the entry this batch pushed,
-    /// or one undo would take the person's drag and somebody else's batch back together.
-    fn land(&mut self, project: Project) {
-        self.edit = None;
+    /// or one undo would take the person's drag and somebody else's batch back together. A batch that
+    /// was handed a scope which is already open and holds the state before the turn merges into it
+    /// instead, which is how one message stays one entry (ADR 0187).
+    fn land(&mut self, project: Project, scope: Option<EditScope>) {
+        let merged = matches!(
+            (scope, self.edit),
+            (Some(scope), Some(open)) if open.scope == scope && open.snapshot_pushed && !self.undo.is_empty()
+        );
         let previous = std::mem::replace(&mut self.project, project);
-        self.undo.push(previous);
-        self.redo.clear();
+        if !merged {
+            // The entry holds the state before this batch; a scope that was handed in stays open so
+            // the next batch of the same turn merges into it.
+            self.edit = scope.map(|scope| OpenEdit { scope, snapshot_pushed: true });
+            self.undo.push(previous);
+            self.redo.clear();
+        }
         self.dirty = !self.project.same_content(&self.saved_project);
         self.retain_active_product();
     }
@@ -1502,6 +1612,41 @@ mod tests {
         assert!(!session.can_undo(), "a dry run records no history");
         assert!(!session.is_dirty());
         assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_session_in_plan_mode_answers_an_agent_batch_with_the_plan() {
+        // ADR 0190: the mode is the person's switch over the agent doors, plan is the dry run the
+        // command line already had, and the person's own dispatch is not what it gates.
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let steps = [BatchStep::new("panel.create", json_params(&panel_create(&session, "Side")))];
+        session.set_agent_mode(AgentMode::Plan);
+
+        let report = session.agent_batch(&steps, BatchOptions::ALL_OR_NOTHING);
+
+        assert_eq!(report.effect(), BatchEffect::Planned, "a plan says what would land");
+        assert!(!report.landed());
+        assert_eq!(report.created().len(), 1, "and names the node it would create");
+        assert!(session.project().same_content(&before), "and writes nothing");
+        assert_eq!(session.project().revision(), before.revision());
+        assert!(!session.can_undo(), "a plan is not an undo entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+
+        // The person's own command still writes: the switch is the agent's, not the editor's.
+        session
+            .dispatch("panel.create", &json_params(&panel_create(&session, "Side")))
+            .expect("the person's own dispatch is not gated by the agent's mode");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
+
+        session.set_agent_mode(AgentMode::Build);
+        let report = session.agent_batch(&steps, BatchOptions::ALL_OR_NOTHING);
+        assert_eq!(report.effect(), BatchEffect::Landed, "build runs the request's own options");
+        assert!(report.landed());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 2);
+        session.undo().expect("the agent's batch is one entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
     }
 
     #[test]

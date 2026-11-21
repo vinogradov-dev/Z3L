@@ -55,8 +55,8 @@ square around a round body answers nothing (U120).
 
 ## Next
 
-Nothing is scheduled: X102 landed; the app work order is empty again and P18 and P19 wait in `##
-Next`.
+Nothing is scheduled: X102 landed and the app work order is empty again. J14 waits in `## Next` with
+the network adapter, its consent card and the key's two homes, and P18 and P19 beside it.
 
 ## Index
 

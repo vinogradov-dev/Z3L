@@ -262,3 +262,57 @@ async fn a_refused_batch_takes_back_its_steps_and_writes_nothing() {
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
 }
+
+#[tokio::test]
+async fn a_session_in_plan_mode_answers_every_call_with_a_plan_and_writes_nothing() {
+    // ADR 0190: the mode belongs to the session and the person, so a client cannot talk it into
+    // writing — the same batch answers a plan here and a landed change once the switch is build.
+    let (session, products) = session_with(1);
+    let product = *products.first().expect("one product");
+    let mut session = session;
+    assert!(session.open_product(product));
+    session.set_agent_mode(engine::AgentMode::Plan);
+    let session = Arc::new(Mutex::new(session));
+    let sink = Arc::new(CountingSink::default());
+    let (mut client, task) =
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+
+    let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
+    assert_eq!(body(&listed)["mode"], json!("plan"), "the list says which mode the session answers in");
+
+    let steps = json!({"steps": [{"command": "panel.create", "params": panel(product, "Side")}]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps.clone())))
+        .await
+        .expect("a plan is an answer");
+    let plan = body(&answered);
+    assert_eq!(plan["effect"], json!("planned"), "{plan}");
+    assert_eq!(plan["mode"], json!("plan"), "{plan}");
+    assert_eq!(plan["created"].as_array().map(Vec::len), Some(1), "the plan names what would be created");
+    assert_eq!(plan["written"], json!(false), "a plan writes no file");
+    assert_eq!(sink.writes(), 0);
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert!(!session.can_undo(), "a plan is not history");
+        assert_eq!(session.project().container(product).map(|container| container.children().len()), Some(0));
+    }
+
+    // The person's switch is the session's: the same call lands once it is build.
+    session.lock().expect("the session").set_agent_mode(engine::AgentMode::Build);
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
+        .await
+        .expect("the batch answers");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_eq!(report["mode"], json!("build"));
+    assert_eq!(sink.writes(), 1);
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert!(session.can_undo(), "the landing batch is one entry");
+        assert_eq!(session.project().container(product).map(|container| container.children().len()), Some(1));
+    }
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}

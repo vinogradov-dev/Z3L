@@ -21,6 +21,8 @@
 
 mod area_gizmo;
 mod box_gizmo;
+/// The assistant panel: the conversation the turn appends to, and the person's two modes (J7).
+mod chat;
 /// The command line: `z3l export` runs before the window exists (K3).
 mod cli;
 mod contour_gizmo;
@@ -79,6 +81,7 @@ use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
 use ui::{Palette, TransformMode, icons, theme};
 
+use crate::chat::{Chat, ChatAction};
 use crate::document::{DeleteRequest, Document, SnapChoice, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::file_picker::{PickMode, Picker, Started, scene_file};
@@ -139,6 +142,17 @@ impl Transform {
             TransformMode::ObjectRotate => Some(Self::ObjectRotate),
         }
     }
+}
+
+/// A tab's session, in the mode the assistant is born in (ADR 0190).
+///
+/// A headless session is created in build: a process that started a tool server made that choice by
+/// starting it, and the command line's own `--dry-run` is its plan. The window is the one place with
+/// a person in front of the switch, so its tabs start in plan and the first answer may only propose —
+/// the switch that lets an agent write is the person's second act.
+fn plan_mode(mut session: engine::Session) -> engine::Session {
+    session.set_agent_mode(engine::AgentMode::Plan);
+    session
 }
 
 /// The window's own view state: what every tab shares and no document owns.
@@ -304,6 +318,12 @@ struct App {
     /// A frame owns the list while it answers it, because an answer borrows the document the call is
     /// about; the queue itself is the channel's.
     queued: Vec<mcp::Pending>,
+    /// The assistant panel: the conversation, the person's mode switch and the turn in flight.
+    ///
+    /// The panel is window state, not document state: it is never serialised and it cannot write the
+    /// document except through a turn, which lands through the same batch an agent's call does
+    /// (ADR 0186, ADR 0187).
+    chat: Chat,
 }
 
 impl App {
@@ -405,7 +425,8 @@ impl App {
             colors: theme::scene_colors(ctx.theme()),
             ..Shell::default()
         };
-        let document = Document::new(render_state.as_ref(), &settings, &shell, session, PreservedSections::new())?;
+        let document =
+            Document::new(render_state.as_ref(), &settings, &shell, plan_mode(session), PreservedSections::new())?;
         Ok(Self {
             tabs: Tabs::new(document),
             render_state,
@@ -426,6 +447,7 @@ impl App {
             channel: None,
             mailbox: None,
             queued: Vec::new(),
+            chat: Chat::new(),
         })
     }
 
@@ -712,7 +734,13 @@ impl App {
     fn empty_tab(&mut self, id: TabId) {
         let directory = self.tabs.active().session.directory_shared();
         let built = empty_session_with(directory).and_then(|session| {
-            Document::new(self.render_state.as_ref(), &self.settings, &self.shell, session, PreservedSections::new())
+            Document::new(
+                self.render_state.as_ref(),
+                &self.settings,
+                &self.shell,
+                plan_mode(session),
+                PreservedSections::new(),
+            )
         });
         match built {
             Ok(document) => {
@@ -816,6 +844,53 @@ impl App {
     /// the person's answer, and both mean "not now" rather than "move the document" (ADR 0187).
     fn gesture_in_flight(&self) -> bool {
         self.pending_question.is_some() || self.tabs.active().holding_piece()
+    }
+
+    /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
+    ///
+    /// A turn asks the model for one reply per frame and dispatches at most one batch per frame, so
+    /// the person's Stop lands between two calls and a drag is never interleaved with an answer. A
+    /// gesture in flight pauses the turn instead of failing it: the next frame that has the window
+    /// to itself carries on.
+    fn serve_chat(&mut self, lang: text::Lang) {
+        if self.gesture_in_flight() {
+            return;
+        }
+        let Self { tabs, chat, .. } = self;
+        chat.serve(&mut tabs.active_mut().session, lang);
+    }
+
+    /// Draws the assistant panel and performs the one action it asked for.
+    ///
+    /// The mode switch is the session's, so it survives a panel close and dies with the tab; leaving
+    /// build ends a running turn at its next call boundary, because an answer that started while the
+    /// agent could write must not keep writing after the person dropped to plan (ADR 0190).
+    fn assistant(&mut self, ctx: &egui::Context) {
+        if !self.chat.open {
+            return;
+        }
+        let lang = ui::language(ctx);
+        let mode = self.tabs.active().session.agent_mode();
+        let busy = self.gesture_in_flight();
+        match self.chat.show(ctx, mode, lang, busy) {
+            ChatAction::None => {}
+            ChatAction::Send => {
+                let text = std::mem::take(&mut self.chat.input);
+                self.send_chat(text, lang);
+            }
+            ChatAction::Stop => self.chat.stop(),
+            ChatAction::Mode(mode) => {
+                self.chat.stop();
+                self.tabs.active_mut().session.set_agent_mode(mode);
+            }
+            ChatAction::Close => self.chat.open = false,
+        }
+    }
+
+    /// Sends one message as one turn of the active tab's session.
+    fn send_chat(&mut self, text: String, lang: text::Lang) {
+        let Self { tabs, chat, .. } = self;
+        chat.begin(&mut tabs.active_mut().session, text, lang);
     }
 
     /// The window as `ui_inspect` reports it: the scenes, the one in front, the gesture and the
@@ -1158,6 +1233,9 @@ impl App {
         // An agent's call is answered here, between frames, before anything this frame derives: a
         // command lands in the active document and the scene is built from what it left (ADR 0187).
         self.serve_channel();
+        // A chat turn takes the same boundary: one answer per frame, so the person's stop lands
+        // between two calls and the scene this frame draws is what the agent left (ADR 0187).
+        self.serve_chat(ui::language(ui.ctx()));
         // A directory another application finished writing is swapped in here, at the frame
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
@@ -1188,6 +1266,7 @@ impl App {
         // or leaves a tool, and a question never answers itself with a second Delete.
         let modals = self.settings_open
             || self.home_open
+            || self.chat.open
             || self.palette.is_open()
             || self.product_card.is_open()
             || self.pending_question.is_some();
@@ -1202,6 +1281,9 @@ impl App {
             let shortcuts = take_shortcuts(ui.ctx());
             if shortcuts.palette {
                 self.palette.open();
+            }
+            if shortcuts.assistant {
+                self.chat.open = !self.chat.open;
             }
             let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
@@ -1337,6 +1419,7 @@ impl App {
             self.settings_notice = None;
         }
         self.settings_window(ui.ctx());
+        self.assistant(ui.ctx());
         self.take_snaps();
         self.product_frame_card(ui.ctx());
         self.home_surface(ui.ctx());

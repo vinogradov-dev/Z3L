@@ -5,7 +5,7 @@
 //! effect says whether the document holds the batch, the write says whether the file does, and a
 //! refusal carries the command's own sentence instead of a summary of it (ADR 0185, ADR 0198).
 
-use engine::{BatchEffect, BatchReport, BatchStep, StepOutcome};
+use engine::{AgentMode, BatchEffect, BatchReport, BatchStep, StepOutcome};
 use serde_json::{Value, json};
 
 /// What writing the document did after a batch.
@@ -53,9 +53,9 @@ const fn effect_word(effect: BatchEffect) -> &'static str {
     }
 }
 
-/// The report of one batch: its steps, the nodes it created, changed and removed, its refusal and
-/// what the file holds.
-pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision: u64) -> Value {
+/// The report of one batch: its steps, the nodes it created, changed and removed, its refusal, the
+/// mode that decided what it could do, and what the file holds.
+pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision: u64, mode: AgentMode) -> Value {
     let rows: Vec<Value> = report
         .steps()
         .iter()
@@ -82,6 +82,7 @@ pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision:
         .collect();
     let mut body = json!({
         "effect": effect_word(report.effect()),
+        "mode": mode.word(),
         "revision": revision,
         "steps": rows,
         "created": ids(report.created()),

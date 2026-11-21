@@ -59,6 +59,7 @@ const HOST_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/tool_card.rs", owns: "the armed tool's card at the pointer" },
     Owner { path: "crates/ui/src/toolbars.rs", owns: "the ribbon and the anchor of its variant list" },
     Owner { path: "crates/ui/src/toolbars/list.rs", owns: "the ribbon's variant list" },
+    Owner { path: "app/src/chat.rs", owns: "the assistant panel: its conversation, its modes and its field" },
     Owner { path: "app/src/contour_gizmo.rs", owns: "the numeric entry beside a contour grip" },
     Owner { path: "app/src/file_menu.rs", owns: "the destructive question a close, a quit or a delete asks" },
     Owner { path: "app/src/main.rs", owns: "the window skeleton: the central workspace and the header band" },

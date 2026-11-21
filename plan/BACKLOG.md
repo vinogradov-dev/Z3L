@@ -367,20 +367,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J7** the window has a chat, and a scripted backend runs a turn without a network
-  Why: This is the goal in the owner's words: a person talks to the agent in the application's
-   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
-   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
-  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
-   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
-   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
-   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
-   never from `settings.json`.
-  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
-   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
-   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
-   green.
-  `files: app/src/main.rs,crates/ui/src/theme.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs`
 - `[ ]` **J8** a recipe builds a carcass in one command and one undo step
   Why: ADR 0192 makes the arithmetic ours and gives the model the choice; nothing of
    `product.build`, `carcass.box` or `wardrobe.hinged` exists, so today "build a wardrobe 600 x
@@ -813,8 +799,38 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
    `cargo xtask ci` is green.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
+- `[ ]` **J14** the OpenAI-compatible backend, its consent screen and the key's two homes
+  Why: ADR 0189 names the wire and the key, and J7 ships only the scripted backend: no HTTP
+   client, no consent screen and no key handling exist, so a person cannot talk to a real model
+   yet.
+  Shape: The OpenAI-compatible client behind ChatBackend in `crates/mcp` (`ureq` plus the OS
+   TLS, one counted `openssl-sys` exception proven by a test over the resolved graph), a worker
+   thread so no frame waits, the consent card naming what leaves the machine and remembered per
+   endpoint, `Z3L_AGENT_KEY` then `agent-key` at `0600` and never `settings.json`, and the
+   endpoint and model as settings data with no provider name in code.
+  Done: A test with a local stub server runs a turn end to end and asserts one undo entry and
+   that changing `base_url` and `model` alone reaches the stub; the key is found in the
+   environment and in the file, and a log line, an error sentence and `settings.json` never
+   carry it; the first request of an endpoint asks for consent once and a cleared consent asks
+   again; `xtask layers` passes with the vendored-feature test green.
+  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs`
 
 ## Done
+
+- `[x]` **J7** the window has a chat, and a scripted backend runs a turn without a network
+  Why: This is the goal in the owner's words: a person talks to the agent in the application's
+   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
+   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
+  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
+   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
+   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
+   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
+   never from `settings.json`.
+  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
+   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
+   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,crates/mcp/src/chat.rs,crates/engine/src/session.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs,xtask/src/ui_rules.rs` — `cb37ec6`
 
 - `[x]` **X102** X99 a primitive is an operand of a body boolean
   Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
