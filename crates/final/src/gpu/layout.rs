@@ -46,6 +46,59 @@ pub(crate) struct GpuFace {
     pub(crate) finish: [f32; 4],
     /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the padding.
     pub(crate) tint: [f32; 4],
+    /// The decor's coordinate at the first two corners: `xy` the first, `zw` the second.
+    pub(crate) uv_a: [f32; 4],
+    /// The third corner's coordinate in `xy`; `z` and `w` are unused.
+    pub(crate) uv_b: [f32; 4],
+    /// `x` is the picture's index plus one, or zero for a surface with no decor.
+    pub(crate) decor: [u32; 4],
+}
+
+/// One picture as the shader reads it: where its texels start, and how many there are.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuDecor {
+    /// `x` the first texel's index in the texel array, `y` the width, `z` the height.
+    pub(crate) info: [u32; 4],
+}
+
+/// The pictures the frame names: their texels, packed one per word, and the table that finds them.
+pub(crate) struct DecorTable {
+    /// Every picture's texels, eight-bit sRGB RGBA packed little-endian into one `u32`.
+    pub(crate) texels: Vec<u32>,
+    /// One entry per picture, in the order the faces name them.
+    pub(crate) entries: Vec<GpuDecor>,
+}
+
+/// The frame's decors as the shader reads them: one run of texels per picture, and its entry.
+///
+/// The pictures are a storage buffer rather than a sampled texture for the reason the Sobol
+/// directions are: the shader does its own filtering — a board is longer than the sample scanned
+/// from it, so the coordinate repeats and repeats need a wrap, which a `fract` does without a
+/// sampler, a bind group or an sRGB view format to keep in step with the viewport's.
+pub(crate) fn decors(decors: &[scene::Decor]) -> DecorTable {
+    let mut texels = Vec::new();
+    let mut entries = Vec::with_capacity(decors.len());
+    for decor in decors {
+        let image = decor.image();
+        let first = texels.len() as u32;
+        for texel in image.texels() {
+            texels.push(
+                u32::from(texel[0])
+                    | (u32::from(texel[1]) << 8)
+                    | (u32::from(texel[2]) << 16)
+                    | (u32::from(texel[3]) << 24),
+            );
+        }
+        entries.push(GpuDecor { info: [first, image.width(), image.height(), 0] });
+    }
+    if texels.is_empty() {
+        // An empty storage buffer cannot be created, and a frame of plain paint is the case a
+        // render must not refuse: one black texel answers every coordinate it never asks for.
+        texels.push(0);
+        entries.push(GpuDecor { info: [0, 1, 1, 0] });
+    }
+    DecorTable { texels, entries }
 }
 
 /// One node as the shader reads it: a box and what it means.
@@ -117,6 +170,7 @@ pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
         }
         let [a, b, c] = slots;
         let surface = face.surface;
+        let uv = face.uv;
         faces.push(GpuFace {
             a,
             b,
@@ -124,6 +178,10 @@ pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
             colour: [face.colour[0], face.colour[1], face.colour[2], 0.0],
             finish: [surface.roughness, surface.metallic, surface.ior, surface.transmission],
             tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], 0.0],
+            uv_a: [uv[0][0], uv[0][1], uv[1][0], uv[1][1]],
+            uv_b: [uv[2][0], uv[2][1], 0.0, 0.0],
+            // One-based, so zero — the value a cleared slot holds — is "no picture".
+            decor: [face.decor.map_or(0, |index| index.saturating_add(1)), 0, 0, 0],
         });
     }
     Ok(faces)
