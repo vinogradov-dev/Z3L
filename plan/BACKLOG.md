@@ -212,6 +212,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    is refused with the field error, because the layout is genuinely broken; every existing
    scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
   `files: crates/model/src/project/wire.rs,crates/project/tests/scene_file.rs,crates/model/src/project/mod.rs`
+- `[ ]` **P21** a field label typed in another case lands as written, and the gate reads it as correct
+  Why: Observation, from a session filing a task: `cargo xtask task set Y1 --field shape --body
+   …` wrote ` shape: …` into plan/BACKLOG.md, with the label in the case it was typed, and
+   `cargo xtask plan` answered `plan: ok` over it. The entry format writes `Shape:`, so the
+   file now carries a label the format does not use, and only a reader notices. Expectation:
+   the label is written in the spelling the format declares, or the write is refused; the gate
+   does not accept a label in a case the entry format never writes. Suspected cause:
+   `edit::set_field` (state-contract/src/edit.rs:204) hands the argument as typed to
+   `field_lines`, while `known_label` (state-contract/src/edit.rs:219) and `parse::label_of`
+   (state-contract/src/parse.rs:139) compare case-insensitively, so every check agrees with
+   every spelling.
+  `files: state-contract/src/edit.rs,state-contract/src/parse.rs`
+
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
