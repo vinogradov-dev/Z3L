@@ -68,7 +68,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    radius; the pointer over the empty air beside a round body captures nothing of it; a future
    PrimitiveKind cannot be added without its arm.
   `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
-
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -806,6 +805,40 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    green.
   `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 ## Done
+
+- `[x]` **N36** a part never runs through a post the pointer never pointed at
+  why: Why: The owner, on the same cabinet at `/home/alx/skaf.z3l`: «уже очень хорошо, но
+   посмотри сцену ещё раз. В одном случаи полка прошила стенку». Measured on the file: the post
+   «Стойка» (id 12) stands at x 1792..1817, y 1090..3704, z 2457..3885, and the shelf «Горизонт
+   5» (id 14, z 3212..3237) is the frame's own ring, so it runs through the post over its whole
+   2244 mm width. The post was there before that shelf was planned (id 13, «Горизонт 4», is
+   clipped at x = 1792 exactly). The cause is the probe: every ray is cast from the pointer, so
+   a wall the pointer's own rays never meet is invisible to the cell — a point standing past
+   the post's far end, in the top-left arm, looks along +x above the post and sees nothing. ADR
+   0204 made the shape the frame's whole ring, which is what turned that blind spot into a part
+   through a wall: the piece-only cell of ADR 0203 could not reach the post either, but it also
+   never claimed to.
+  shape: Shape: A body standing in the space the frame reserves bounds the part, whether or not
+   a ray from the pointer ever met it. After the probe rounds settle, every surface of the
+   surroundings is read in the product's frame: a body whose box does not reach into the cell's
+   own height is no wall of the plan (a shelf below, a board above); a body that stands in the
+   ring and spans the cell from floor to ceiling is a post, a divider or a side wall, and the
+   ring is clipped at the face the pointer stands behind — the rule a hidden body already trims
+   by (X73, ADR 0175) — chosen by `trimmed_ring`: of the body's four faces, the side the
+   pointer stands on wins, and a hand inside the body's own footprint takes the cut that keeps
+   the most of the frame. A body that stands inside the cell without spanning its height is
+   refused as before, because the void is then no one cell. The rounds repeat until a round
+   clips nothing, so a post behind a post is bounded too, and the loop is bounded by the cell's
+   own round budget.
+  done: Done: `a_part_never_runs_through_a_post_the_pointer_never_pointed_at` — a notched frame
+   with a post in the arm beside the pointer's own: the niche is clipped at the post's face and
+   no point of the Shape plan's outline stands inside the post. On `/home/alx/skaf.z3l`, a
+   scratch probe (deleted): the niche at three heights around the post is 1792 mm wide, the
+   Shape plan runs x 0..1792 and crosses the post nowhere, nothing outside the frame; a sweep
+   of 1771 plans over eight heights found no planned part overlapping any existing panel's box.
+   `the_part_a_shaped_case_creates_stands_inside_its_footprint` now gives each part a fresh
+   case, because a part left standing is material and the next one is measured against it.
+  `files: crates/model/src/project/niche.rs` — `72b7164`
 
 - `[x]` **N35** a niche keeps the whole shape the frame draws
   why: Why: The owner, on the saved scene /home/alx/skaf.z3l and the screenshot `Screenshot
