@@ -194,6 +194,7 @@ dependencies = [
  "eframe",
  "engine",
  "export",
+ "final",
  "geom",
  "kernel",
  "kernel-truck",

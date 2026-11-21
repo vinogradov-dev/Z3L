@@ -20,6 +20,10 @@ workspace = true
 eframe = { workspace = true }
 engine = { workspace = true }
 export = { workspace = true }
+# The final render: `z3l render` hands it the evaluated frame and takes one PNG back (ADR 0208). The
+# crate is named `final`, a Rust keyword, so its paths are written `r#final::` — the package name stays
+# bare for the layer map and the plan (ADR 0135).
+final = { workspace = true }
 geom = { workspace = true }
 kernel = { workspace = true }
 kernel-truck = { workspace = true }
