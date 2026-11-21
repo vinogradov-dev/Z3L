@@ -39,6 +39,14 @@ and the machine's own workshop package names other rows with the same numbers.
 Millimetres, in the product's own frame: the envelope is `[0..800] × [0..460] × [0..2200]`, and the
 depth includes the overlaid fronts, so the carcass is 442 deep and the back sheet takes 4 of it.
 
+**The two units of one command.** A recipe line carries `nominal_size` as `Length` — integer
+micrometres — and `placement.translation` as `[f64; 3]` **millimetres** (`crates/model/src/placement.rs`
+is where placement coordinates meet floating-point millimetres). The JSON schema states neither, so a
+recipe that writes micrometres in both is a wardrobe a thousand times its size: measured on
+2026-11-21, 2200 mm became 2 200 000 mm, `query diagnostics` said nothing (X116) and the render asked
+for a 3 585 601 mm camera distance. Every recipe here writes sizes in micrometres and positions in
+millimetres (X115).
+
 | part | size | position | class |
 |---|---|---|---|
 | Дно опорное | 800 × 438 × 18 | z 50..68, the sides stand on it | 10.11 |
@@ -67,17 +75,20 @@ maker sees on a carcass board, so that is the edge banded; the doors are banded 
 - 38 steps, one undo entry, one write; the run leaves the document at revision 53.
 - 14 panel parts: 3 × `10.10`, 9 × `10.11`, 1 × `10.12`, 2 × `10.20`; plus 5 bodies (4 legs, 1 rail).
 - `query parts` reports the sizes above; `query diagnostics` reports no issue on any of the 14 parts.
-- The world box of every part was computed from the recipe and checked by hand: nothing lies outside
-  the envelope, and no two parts overlap. The divider was shortened to 1736 because a full-height one
-  crossed the антресоль shelf.
+- The world box of every part was computed from the recipe and checked by hand: the furthest
+  coordinate is 2200 mm, nothing lies outside the envelope, and no two parts overlap. The divider
+  was shortened to 1736 because a full-height one crossed the антресоль shelf.
 - Banding totals 19 edges: 11 × 1 m and 2 × 5.098 m on the doors.
+- `z3l render --camera fit` draws it: 800 × 1000 at 24 samples, a closed carcass with two overlaid
+  doors, a top that overhangs the sides by nothing and the gap between the doors where it should be.
 
 ## What is not verified, and why
 
-- **No image.** `z3l render` refuses every real scene today: the fit camera reads the scene bounds in
-  micrometres as millimetres and asks for a 3,585,601 mm distance (X113). It fails before it can use
-  an authored camera.
-- **The machine's own workshop directory cannot build this wardrobe**: it stocks a 25 mm board and a
-  2 mm edge, so the recipe runs against the fixture in `catalogue/` instead (O15).
+- **Nothing checks a part against its product.** `query diagnostics` answers panel problems only, so a
+  part placed kilometres away reports nothing; the only reason the picture above is right is that the
+  recipe was read line by line (X116). The wardrobe's own failure is the proof: it built, listed and
+  passed with every coordinate a thousand times too large.
+- **The machine's own workshop directory could not build this wardrobe**: it stocks a 25 mm board and
+  a 2 mm edge, so the recipe runs against the fixture in `catalogue/` instead (O15).
 - **The recipe cannot make its own product.** The CLI opens the product before it runs the batch, so
   the frame has to exist already; `wardrobe-start.z3l` is that frame (J17).
