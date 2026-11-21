@@ -37,6 +37,7 @@ pub use self::boolean::{BooleanArm, BooleanOperand};
 pub use self::fill::FillArm;
 pub use self::selection::{BandRule, BandView, SelectionBand};
 
+mod area;
 mod boolean;
 mod cards;
 mod contour;
@@ -83,6 +84,10 @@ pub struct Editor {
     void: crate::void::Void,
     /// Whether the niche tool itself owns the pointer, rather than a fill that consumes its value.
     void_armed: bool,
+    /// The area under the pointer: the face of a drawing a click would pull (G4).
+    area: crate::area::Area,
+    /// The drawing whose areas the armed pull reads, or `None` when no pull is armed.
+    area_pull: Option<Id>,
     /// The visibility revision the measured niche was taken at, so a stale cell is dropped.
     ///
     /// Switching a part off changes the void without moving the pointer, so a hand that holds still

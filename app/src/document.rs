@@ -40,6 +40,7 @@ use ui::{
 };
 use units::Length;
 
+use crate::area_gizmo;
 use crate::box_gizmo::{self, BoxGrips, GripUpdate};
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
@@ -1411,17 +1412,19 @@ impl Document {
         if self.extrude_gizmo.is_growing() {
             let scope = self.extrude_gizmo.scope();
             self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
-            self.session.end_edit();
         } else if let Some(top) = top {
             // A cone's ✓ writes both of its numbers into the scope the create opened, so the base
             // and the taper are one entry and the ✓ applies once (ADR 0141).
             let scope = self.extrude_gizmo.scope();
             let primitive = cone_at(self.session.project(), object, height, top)?;
             self.editor.replace_primitive_in(scope, &mut self.session, object, primitive)?;
-            self.session.end_edit();
         } else if extrude_writes(self.extrude_gizmo.committed(), height) {
-            self.editor.set_extrude_height(&mut self.session, object, height)?;
+            // The height joins the scope the pull's body was created in, so a body born from an area
+            // is one undo entry with the height it reaches (G4, ADR 0138).
+            let scope = self.extrude_gizmo.scope();
+            self.editor.set_extrude_height_in(scope, &mut self.session, object, height)?;
         }
+        self.session.end_edit();
         self.extrude_gizmo.cancel();
         self.session.clear_preview();
         self.refresh()
@@ -1994,6 +1997,62 @@ impl Document {
         if changed {
             ui.ctx().request_repaint();
         }
+    }
+
+    /// Feeds the pointer to the armed area pull and takes the click that starts it.
+    ///
+    /// The pointer names a point in the drawing's own plane; the atom answers the face around it and
+    /// highlights it. A click takes that face: the body is created in a scope of its own and the pull
+    /// arrow adjusts its height in the same scope, so the whole gesture is one undo entry. A face that
+    /// cannot be pulled — one with a hole — writes nothing and says why in the status bar.
+    fn update_area_pull(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        pointer_over_widget: bool,
+    ) {
+        let Some(object) = self.editor.area_pull() else {
+            return;
+        };
+        let pointer = ui.input(|input| input.pointer.latest_pos());
+        let changed = pointer.is_some_and(|pointer| {
+            area_gizmo::point_at(self.session.project(), object, self.scene.camera, rect, pointer)
+                .is_some_and(|point| self.editor.area_measure(self.session.project(), point))
+        });
+        if changed {
+            ui.ctx().request_repaint();
+        }
+        if pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
+            return;
+        }
+        if let Err(error) = self.start_area_pull(ui::language(ui.ctx())) {
+            self.last_error = Some(error);
+        }
+    }
+
+    /// Creates the body the highlighted area names and hands it to the pull arrow.
+    ///
+    /// One `object.area.extrude` in a new edit scope, then the arrow on the body's top face: the ✓
+    /// closes the scope with one undo entry, the ✕ rolls it back and leaves no body behind, and the
+    /// drawing keeps its rings either way (G4).
+    fn start_area_pull(&mut self, lang: text::Lang) -> Result<(), String> {
+        let Some((object, point)) = self.editor.area_pick() else {
+            // Nothing to pull: the sentence says what the pointer rests on, and the document is as it
+            // was, so the tool stays armed for the next click.
+            if let Some(words) = self.editor.area_refusal() {
+                self.last_error = Some(words.text(lang).to_owned());
+            }
+            return Ok(());
+        };
+        let height = self.editor.extrude_height();
+        let scope = self.session.begin_edit();
+        let created = self.editor.extrude_area_in(Some(scope), &mut self.session, object, point, height, lang)?;
+        self.extrude_gizmo.start_created(created, scope, height);
+        if let Err(error) = self.preview_extrude(created, height, None) {
+            self.last_error = Some(error);
+        }
+        self.refresh()
     }
 
     /// Whether this frame's press landed on the tool card rather than on the scene.
@@ -2725,6 +2784,11 @@ impl Document {
         // The niche names the empty space under the pointer and creates nothing; it owns the press
         // the same way the ruler does, so a click never selects through it (ADR 0118).
         let voiding = interactive && !pointer_on_chrome && self.editor.void_armed();
+        // The area pull owns the next click while it is armed and before its body exists: the pointer
+        // names a face of the drawing the Extrude cell was pressed on, and the click takes it (G4).
+        // Once the body exists the pull arrow owns the pointer, so this yields to `pulling`.
+        let area_pulling =
+            interactive && !pointer_on_chrome && self.editor.area_pull().is_some() && !self.extrude_gizmo.is_active();
         // An armed navigation gesture owns a primary-button drag, but not the other tools: while a
         // contour edit, a draft or a sub-object mode is live, that mode keeps the pointer.
         let navigation = shell.cluster.navigation;
@@ -2735,12 +2799,15 @@ impl Document {
             && !pulling
             && !filling
             && !measuring
-            && !voiding;
-        let mesh_object = if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding {
-            None
-        } else {
-            self.editor.mesh_edit().map(|edit| edit.object())
-        };
+            && !voiding
+            && !area_pulling;
+        let mesh_object =
+            if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding || area_pulling
+            {
+                None
+            } else {
+                self.editor.mesh_edit().map(|edit| edit.object())
+            };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -2867,6 +2934,10 @@ impl Document {
             self.update_void(ui, &response, rect, pointer_over_widget);
         }
 
+        if area_pulling {
+            self.update_area_pull(ui, &response, rect, pointer_over_widget);
+        }
+
         // An armed contour boolean shows its result in place of the base ring; the picks are the
         // selection, so an ordinary click and a Shift-click pick operands (G3).
         self.sync_boolean(ui.ctx());
@@ -2902,6 +2973,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !area_pulling
             && !self.translate_gizmo.is_following()
             && self.grip_target().is_some();
         if gripping {
@@ -2954,6 +3026,7 @@ impl Document {
                 || filling
                 || measuring
                 || voiding
+                || area_pulling
                 || mesh_object.is_some()
                 || locked_selection.is_some())
         {
@@ -2967,6 +3040,7 @@ impl Document {
             || filling
             || measuring
             || voiding
+            || area_pulling
             || self.box_grips.is_dragging()
             || navigating
             || mesh_object.is_some()
@@ -3035,6 +3109,7 @@ impl Document {
             || filling
             || measuring
             || voiding
+            || area_pulling
             || self.box_grips.is_dragging()
         {
             true
@@ -3158,6 +3233,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !area_pulling
             && mesh_object.is_none()
             && navigation.is_none()
             && !self.translate_gizmo.is_dragging()
@@ -3189,6 +3265,7 @@ impl Document {
             && !pulling
             && !measuring
             && !voiding
+            && !area_pulling
             && !consumed_click
             && response.clicked_by(egui::PointerButton::Secondary)
             && let Some(pointer) = response.interact_pointer_pos()
@@ -3218,6 +3295,7 @@ impl Document {
             && !pulling
             && !measuring
             && !voiding
+            && !area_pulling
             && clicked
             && !pointer_over_gizmo
             && !consumed_click
@@ -3440,6 +3518,12 @@ impl Document {
             self.fill_gizmo.paint(ui, rect, self.scene.camera);
         } else if let Some(measure) = self.editor.measure() {
             self.measure_gizmo.paint(ui, rect, self.scene.camera, measure);
+        } else if area_pulling {
+            // The face under the pointer reads as the plate it is, so the click takes the area the
+            // maker sees and not one a pixel beside it (G4).
+            if let (Some(object), Some(area)) = (self.editor.area().object(), self.editor.area().region()) {
+                area_gizmo::paint(ui, rect, self.scene.camera, self.session.project(), object, area);
+            }
         } else if voiding {
             // The niche draws the cell it names: a wireframe box in the product's own frame, so the
             // void reads through the boards around it, with the three sides at its middle.
@@ -4082,6 +4166,11 @@ impl Document {
                 // Escape leaves the niche tool the same way, and writes nothing because the tool
                 // wrote nothing: the point and the cell it named are view state (ADR 0118).
                 self.cancel_void();
+            } else if self.editor.area_pull().is_some() {
+                // Escape leaves the area pull before a container level, and writes nothing: the arm
+                // and the highlight it holds are view state, and a pull that already created its
+                // body is handled above, where its scope is rolled back (G4).
+                self.editor.cancel_area_pull();
             } else if self.editor.creation_parent().is_some() {
                 // The arm outranks leaving a container level: it is the mode the next creation uses,
                 // and the chip names it until Escape or ✕ clears it (ADR 0056).

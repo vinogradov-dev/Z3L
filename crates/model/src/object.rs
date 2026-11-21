@@ -6,6 +6,7 @@
 //! parameters that build its mesh. In both cases the mesh is derived and replaces the parameters
 //! only when the user collapses it. A path payload is a flat drawing that has no solid yet.
 
+use geom::{DVec2, Region, RegionError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -427,6 +428,38 @@ impl Contours {
         }
         Self::new(paths)
     }
+
+    /// The areas the drawing's rings enclose, derived on read.
+    ///
+    /// A set's rings enclose material and their boundaries divide it into the areas a maker points
+    /// at: two nested rectangles leave the frame between them and the opening inside it. The
+    /// division is the geometry layer's exact partition, carried out in the set's own plane in
+    /// millimetres, and nothing about it is stored: an edited ring derives new areas in the same
+    /// breath as it draws a new outline.
+    ///
+    /// The areas are disjoint and together they cover exactly the material of the rings, so a point
+    /// inside the material lies in one of them and a point outside lies in none. A ring that the
+    /// document holds is already validated, so a failure here is a set built without its
+    /// constructor or a drawing too fine to divide into faces.
+    pub fn areas(&self) -> Result<Vec<Region>, AreaError> {
+        let mut rings = Vec::with_capacity(self.paths.len());
+        for (index, path) in self.paths.iter().enumerate() {
+            let contour = path.to_contour().map_err(|error| AreaError::Ring { index, error })?;
+            let ring = contour.to_geometry().map_err(|error| AreaError::Contour { index, error })?;
+            rings.push(Region::new(ring, Vec::new()).map_err(|error| AreaError::Partition { error })?);
+        }
+        geom::partition_regions(&rings).map_err(|error| AreaError::Partition { error })
+    }
+
+    /// The area the point falls in, in the set's own plane, or `None` when it falls in none.
+    ///
+    /// This is the whole of what a pointer over a drawing reads: the areas are derived and the one
+    /// that contains the point is the one under the hand, so an area needs no id and the document
+    /// stores nothing about it (G4). Two faces that share a boundary answer the first of them, which
+    /// is a boundary point rather than a place a pointer rests.
+    pub fn area_at(&self, point: DVec2) -> Result<Option<Region>, AreaError> {
+        Ok(self.areas()?.into_iter().find(|area| area.contains(point)))
+    }
 }
 
 impl TryFrom<ContoursWire> for Contours {
@@ -464,6 +497,33 @@ pub enum ContoursError {
         index: usize,
         /// The ring rule the ring broke.
         error: PathError,
+    },
+}
+
+/// Why a contour set's areas cannot be derived.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum AreaError {
+    /// One ring of the set is not a closed chain the document can read back.
+    #[error("ring {index} of a contour set cannot become an area: {error}")]
+    Ring {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The rule the ring broke.
+        error: PathError,
+    },
+    /// One ring of the set cannot cross into the geometry layer.
+    #[error("ring {index} of a contour set cannot become an area: {error}")]
+    Contour {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The rule the ring broke.
+        error: ContourError,
+    },
+    /// The geometry layer refused a ring as a region, or refused the partition of them.
+    #[error("the areas of a contour set cannot be derived: {error}")]
+    Partition {
+        /// Why the partition refused the rings.
+        error: RegionError,
     },
 }
 
@@ -1165,6 +1225,44 @@ mod tests {
         assert_eq!(Contours::new(vec![open]), Err(ContoursError::OpenRing { index: 0 }));
         let many = vec![rectangle_ring(0, 0); MAX_CONTOURS + 1];
         assert!(matches!(Contours::new(many), Err(ContoursError::Count { .. })));
+    }
+
+    #[test]
+    fn two_nested_rings_leave_the_frame_and_the_opening_as_areas() {
+        let outer =
+            Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]).expect("the frame");
+        let inner = Path::rectangle([millimetres(20), millimetres(10)], [millimetres(60), millimetres(30)])
+            .expect("the opening");
+        let set = Contours::new(vec![outer, inner]).expect("two rings");
+
+        let areas = set.areas().expect("the areas are derived");
+        assert_eq!(areas.len(), 2, "the frame and the opening");
+        let opening = set.area_at(DVec2::new(40.0, 20.0)).expect("a derived set").expect("the opening");
+        assert!((opening.area() - 800.0).abs() < 1.0e-6, "{} mm²", opening.area());
+        assert!(opening.holes().is_empty(), "the opening is a face on its own");
+        let frame = set.area_at(DVec2::new(5.0, 5.0)).expect("a derived set").expect("the frame");
+        assert!((frame.area() - 4200.0).abs() < 1.0e-6, "{} mm²", frame.area());
+        assert_eq!(frame.holes().len(), 1, "the opening is the frame's hole");
+        assert!(set.area_at(DVec2::new(200.0, 20.0)).expect("a derived set").is_none(), "outside every ring");
+    }
+
+    #[test]
+    fn one_ring_of_a_set_is_one_area() {
+        let set = Contours::new(vec![rectangle_ring(0, 0)]).expect("one ring");
+        let areas = set.areas().expect("the area is derived");
+        assert_eq!(areas.len(), 1);
+        assert!((areas[0].area() - 5000.0).abs() < 1.0e-6);
+        assert!(set.area_at(DVec2::new(50.0, 25.0)).expect("a derived set").is_some());
+    }
+
+    #[test]
+    fn an_area_becomes_a_stored_path_again() {
+        let set = Contours::new(vec![rectangle_ring(0, 0)]).expect("one ring");
+        let area = set.area_at(DVec2::new(50.0, 25.0)).expect("a derived set").expect("the area");
+        let path = Path::from_geometry(area.outer()).expect("the ring is a path again");
+        assert!(path.is_closed());
+        assert_eq!(path.bounds_micrometres(), ([0, 0], [100_000, 50_000]), "the ring keeps its place");
+        assert_eq!(path.to_contour().expect("a ring").bounds_micrometres(), ([0, 0], [100_000, 50_000]));
     }
 
     #[test]

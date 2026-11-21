@@ -1,4 +1,6 @@
-//! The general boolean over planar regions: union, intersection and difference of exact ring sets.
+//! The general boolean over planar regions: union, intersection and difference of exact ring sets,
+//! and the partition those three describe — the faces a drawing of several rings divides its own
+//! material into.
 //!
 //! The method is the boundary-of-the-set arrangement of ADR 0043. Every edge of both operands is
 //! oriented with its own material on the left, split at every point where it meets another edge (a
@@ -75,6 +77,57 @@ pub fn intersect_regions(first: &[Region], second: &[Region]) -> Result<Vec<Regi
 /// reaches the boundary of `from` opens a notch instead of leaving a sliver.
 pub fn subtract_regions(from: &[Region], remove: &[Region]) -> Result<Vec<Region>, RegionError> {
     boolean_regions(from, remove, BooleanOp::Difference)
+}
+
+/// Largest number of faces one partition may leave before it refuses the drawing.
+///
+/// Every ring is intersected with and subtracted from every face, so the work grows with the square
+/// of the input. A drawing that would leave more faces than one screen can show is refused here
+/// rather than after a pause nobody can explain.
+pub const MAX_PARTITION_FACES: usize = 64;
+
+/// The faces the rings' own boundaries divide the material they enclose into.
+///
+/// A drawing of several closed rings encloses material, and the ring boundaries divide it into the
+/// areas a maker points at: two nested rectangles leave the frame between them and the opening
+/// inside it, two crossing circles leave three pieces. The material is the [`union_regions`] of the
+/// rings, and every ring then splits each face into the part it covers and the part it leaves. The
+/// result is disjoint, its faces together cover exactly the material of the rings, and a face that
+/// a ring lies inside carries that ring as a hole.
+///
+/// The partition is exact — the faces are ring sets like their input, so area, bounds and
+/// containment never sample anything — and it is order-independent: the faces are the faces of the
+/// arrangement, whichever ring is given first. Their order in the result is not part of the
+/// contract; a caller finds a face by [`Region::contains`].
+///
+/// It refuses input that would leave more than [`MAX_PARTITION_FACES`] faces with
+/// [`RegionError::TooManyFaces`], and reports whatever a single boolean reports.
+pub fn partition_regions(rings: &[Region]) -> Result<Vec<Region>, RegionError> {
+    if rings.is_empty() {
+        return Ok(Vec::new());
+    }
+    if rings.len() == 1 {
+        // One ring divides its own material nowhere: it is the one face, holes included.
+        return Ok(rings.to_vec());
+    }
+    let mut faces = union_regions(rings)?;
+    if faces.len() > MAX_PARTITION_FACES {
+        return Err(RegionError::TooManyFaces { count: faces.len(), max: MAX_PARTITION_FACES });
+    }
+    for ring in rings {
+        let mut split: Vec<Region> = Vec::with_capacity(faces.len() + 1);
+        for face in &faces {
+            let inside = intersect_regions(std::slice::from_ref(face), std::slice::from_ref(ring))?;
+            let mut outside = subtract_regions(std::slice::from_ref(face), std::slice::from_ref(ring))?;
+            split.extend(inside);
+            split.append(&mut outside);
+            if split.len() > MAX_PARTITION_FACES {
+                return Err(RegionError::TooManyFaces { count: split.len(), max: MAX_PARTITION_FACES });
+            }
+        }
+        faces = split;
+    }
+    Ok(faces)
 }
 
 /// Which membership rule a boolean result follows.
@@ -1029,5 +1082,80 @@ mod tests {
         assert_eq!(regions.len(), 2);
         assert!(regions[0].bounds().is_some_and(|(min, _)| min.x < 1.0));
         assert!(regions[1].bounds().is_some_and(|(min, _)| min.x > 49.0));
+    }
+
+    #[test]
+    fn one_ring_is_its_own_one_face() {
+        let ring = rect_region(0.0, 0.0, 100.0, 50.0);
+        let faces = partition_regions(std::slice::from_ref(&ring)).expect("a partition");
+        assert_eq!(faces, vec![ring], "one ring divides nothing, so it is the one face");
+    }
+
+    #[test]
+    fn two_nested_rectangles_leave_the_frame_and_the_opening() {
+        let faces = partition_regions(&[rect_region(0.0, 0.0, 100.0, 50.0), rect_region(20.0, 10.0, 40.0, 20.0)])
+            .expect("a partition");
+        assert_eq!(faces.len(), 2);
+        let opening = faces.iter().find(|face| face.contains(DVec2::new(30.0, 15.0))).expect("the opening");
+        assert_close(opening.area(), 800.0);
+        assert!(opening.holes().is_empty(), "the opening is a face on its own");
+        let frame = faces.iter().find(|face| face.contains(DVec2::new(5.0, 5.0))).expect("the frame");
+        assert_close(frame.area(), 4200.0);
+        assert_eq!(frame.holes().len(), 1, "the opening is the frame's hole");
+        assert!(!frame.contains(DVec2::new(30.0, 15.0)));
+        assert_close(total(&faces), 5000.0);
+    }
+
+    #[test]
+    fn two_crossing_rectangles_leave_three_pieces() {
+        let faces = partition_regions(&[rect_region(0.0, 0.0, 10.0, 10.0), rect_region(5.0, 5.0, 10.0, 10.0)])
+            .expect("a partition");
+        assert_eq!(faces.len(), 3);
+        assert!(faces.iter().all(|face| face.holes().is_empty()), "a crossing leaves no hole");
+        assert_close(total(&faces), 175.0);
+        let shared = faces.iter().find(|face| face.contains(DVec2::new(7.0, 7.0))).expect("the shared corner");
+        assert_close(shared.area(), 25.0);
+        for point in [DVec2::new(1.0, 1.0), DVec2::new(7.0, 7.0), DVec2::new(13.0, 13.0)] {
+            assert_eq!(faces.iter().filter(|face| face.contains(point)).count(), 1, "one face per point");
+        }
+    }
+
+    #[test]
+    fn two_apart_rings_keep_a_face_each() {
+        let faces = partition_regions(&[rect_region(0.0, 0.0, 10.0, 10.0), rect_region(40.0, 0.0, 10.0, 10.0)])
+            .expect("a partition");
+        assert_eq!(faces.len(), 2);
+        for face in &faces {
+            assert_close(face.area(), 100.0);
+        }
+    }
+
+    #[test]
+    fn three_nested_rings_leave_two_frames_and_the_middle() {
+        let faces = partition_regions(&[
+            rect_region(0.0, 0.0, 100.0, 100.0),
+            rect_region(10.0, 10.0, 80.0, 80.0),
+            rect_region(20.0, 20.0, 60.0, 60.0),
+        ])
+        .expect("a partition");
+        assert_eq!(faces.len(), 3);
+        assert_close(total(&faces), 10_000.0);
+        let middle = faces.iter().find(|face| face.contains(DVec2::new(50.0, 50.0))).expect("the middle");
+        assert_close(middle.area(), 3600.0);
+        assert!(faces.iter().filter(|face| face.contains(DVec2::new(50.0, 50.0))).count() == 1);
+    }
+
+    #[test]
+    fn the_face_order_does_not_depend_on_the_ring_order() {
+        let first = partition_regions(&[rect_region(0.0, 0.0, 100.0, 50.0), rect_region(20.0, 10.0, 40.0, 20.0)])
+            .expect("a partition");
+        let second = partition_regions(&[rect_region(20.0, 10.0, 40.0, 20.0), rect_region(0.0, 0.0, 100.0, 50.0)])
+            .expect("a partition");
+        assert_eq!(first, second, "the faces are the arrangement's, whichever ring came first");
+    }
+
+    #[test]
+    fn an_empty_drawing_has_no_face() {
+        assert!(partition_regions(&[]).expect("a partition").is_empty());
     }
 }

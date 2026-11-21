@@ -161,7 +161,11 @@ impl Void {
     /// rounded millimetre reading; the value is the one the fill plan takes its part from.
     pub fn size(&self) -> Option<[Length; 3]> {
         let size = self.niche()?.size;
-        Some([length_from_millimetres(size.x)?, length_from_millimetres(size.y)?, length_from_millimetres(size.z)?])
+        Some([
+            Length::from_millimetres_f64(size.x)?,
+            Length::from_millimetres_f64(size.y)?,
+            Length::from_millimetres_f64(size.z)?,
+        ])
     }
 }
 
@@ -385,18 +389,6 @@ fn box_entry(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<
         return None;
     }
     Some(enter.max(0.0))
-}
-
-/// A cell side in millimetres as the document's own `Length`, or `None` when it does not fit.
-fn length_from_millimetres(value: f64) -> Option<Length> {
-    if !value.is_finite() {
-        return None;
-    }
-    let micrometres = (value * 1_000.0).round();
-    if micrometres < i64::MIN as f64 || micrometres > i64::MAX as f64 {
-        return None;
-    }
-    Some(Length::from_micrometres(micrometres as i64))
 }
 
 #[cfg(test)]

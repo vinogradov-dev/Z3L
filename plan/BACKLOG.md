@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U120** a round body answers its own places, not the corners of its box
-  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
-   the ones that come later. Today Scene::object files a bound box for every geometry and a
-   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
-   eight corners of the square around its base, which are points in the air, and its upper rim
-   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
-   sphere answers the box face centres — six points on the surface, but chosen by the world
-   axes rather than by the body. A marker on the corner of a box around a round body names a
-   place no maker can work at, in either snap mode.
-  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
-   payload files what its parameters describe. A sphere files its centre, its two poles and the
-   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
-   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
-   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
-   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
-   error until it answers its places, and each round answer ships with a test that the point is
-   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
-   rather than in the air around it.
-  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
-   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
-   radius; the pointer over the empty air beside a round body captures nothing of it; a future
-   PrimitiveKind cannot be added without its arm.
-  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -421,37 +398,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    calls and that `undo` restores the document the scenario started from; the scripted model
    needs no network and no key; `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **P20** the tool files a task where work is collected, and an interjection still takes the order
-  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
-   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
-   worktree that was working through it. The plan has one writer precisely so that one session
-   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
-   it serves.
-  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
-   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
-   owner-directed interjection, which now implies `## Now` because a task at the top of `##
-   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
-   `state-contract/README.md` say the same thing.
-  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
-   asserts a section named beside `--at end` receives the task; the interjection test passes
-   with no `--section`; `cargo xtask ci` is green.
-  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md`
-- `[ ]` **G4** an area between contours is picked and extruded, the SketchUp way
-  Why: A drawing made of several contours encloses areas between them and inside their holes,
-   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
-   rings, so a maker who drew a frame cannot extrude the opening it leaves.
-  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
-   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
-   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
-   tool measures its cell. The hover highlights that region through the session overlay (ADR
-   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
-   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
-   has, so an area is a query result and not a document field.
-  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
-   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
-   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
-   revision. The area is derived on read and cached by the set, its revision and its placement.
-  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs`
 - `[ ]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
   Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
    that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
@@ -867,8 +813,78 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
    green.
   `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
+- `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
+  Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
+   features }` cannot store a profile with holes, although the kernel Profile and a panel core
+   already do. A maker who pulls the frame between two nested rings is told the area has a hole
+   and cannot become a part.
+  Shape: The profile becomes outer plus holes: the payload's wire form, its validation, the
+   extrusion compiler, the mesh and the golden file change together, with schema 30 and no
+   migration (ADR 0096). The area command stops refusing and hands the face's holes to the body
+   it creates.
+  Done: A test extrudes an annulus into one body whose profile carries the hole, the golden
+   file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
+   `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **G4** an area between contours is picked and extruded, the SketchUp way
+  Why: A drawing made of several contours encloses areas between them and inside their holes,
+   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
+   rings, so a maker who drew a frame cannot extrude the opening it leaves.
+  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
+   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
+   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
+   tool measures its cell. The hover highlights that region through the session overlay (ADR
+   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
+   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
+   has, so an area is a query result and not a document field.
+  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
+   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
+   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
+   revision. The area is derived on read and cached by the set, its revision and its placement.
+  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs` — `229b539`
+
+- `[x]` **P20** the tool files a task where work is collected, and an interjection still takes the order
+  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
+   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
+   worktree that was working through it. The plan has one writer precisely so that one session
+   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
+   it serves.
+  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
+   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
+   owner-directed interjection, which now implies `## Now` because a task at the top of `##
+   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
+   `state-contract/README.md` say the same thing.
+  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
+   asserts a section named beside `--at end` receives the task; the interjection test passes
+   with no `--section`; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md` — `02b2dc4`
+
+- `[x]` **U120** a round body answers its own places, not the corners of its box
+  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
+   the ones that come later. Today Scene::object files a bound box for every geometry and a
+   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
+   eight corners of the square around its base, which are points in the air, and its upper rim
+   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
+   sphere answers the box face centres — six points on the surface, but chosen by the world
+   axes rather than by the body. A marker on the corner of a box around a round body names a
+   place no maker can work at, in either snap mode.
+  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
+   payload files what its parameters describe. A sphere files its centre, its two poles and the
+   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
+   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
+   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
+   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
+   error until it answers its places, and each round answer ships with a test that the point is
+   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
+   rather than in the air around it.
+  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
+   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
+   radius; the pointer over the empty air beside a round body captures nothing of it; a future
+   PrimitiveKind cannot be added without its arm.
+  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs` — `b56d0bc`
 
 - `[x]` **N36** a part never runs through a post the pointer never pointed at
   why: Why: The owner, on the same cabinet at `/home/alx/skaf.z3l`: «уже очень хорошо, но

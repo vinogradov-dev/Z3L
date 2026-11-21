@@ -14,6 +14,7 @@
     clippy::unreachable
 )]
 
+mod area_cmds;
 mod batch;
 mod class_rules;
 mod commands;
@@ -31,6 +32,9 @@ mod resolve;
 pub mod scene_cmds;
 mod session;
 
+pub use area_cmds::{
+    AreaBodyPlan, AreaExtrudeError, OBJECT_AREA_EXTRUDE_ID, OBJECT_AREA_EXTRUDE_LABEL, ObjectAreaExtrude,
+};
 pub use batch::{BatchEffect, BatchOptions, BatchReport, BatchStep, StepOutcome, StepReport};
 pub use class_rules::{
     ClassRefusal, CreationRefusal, Dimension, NodeRules, allow_creation, is_furniture, operation_of,

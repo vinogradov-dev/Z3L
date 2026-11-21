@@ -210,6 +210,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0202](0202-a-section-keeps-the-frames-curve.md) | A section keeps the frame's curve | Accepted; supersedes the chord rule of 0201 for the section |
 | [0203](0203-a-frame-drawn-as-a-ring-builds-the-part-the-pointer-names.md) | A frame drawn as a ring builds the part the pointer names | Accepted; supersedes the non-convex refusal of 0201 and the box shortcut of 0106 for a shaped frame; its piece-only seed superseded by 0204 for the section and the box |
 | [0204](0204-a-niche-keeps-the-whole-shape-the-frame-draws.md) | A niche keeps the whole shape the frame draws | Accepted; supersedes the piece-only seed of 0203 for the section and the box; amends the chord rule of 0201 for a shelf's section |
+| [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
 
 ## Format
 

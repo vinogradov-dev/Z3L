@@ -156,7 +156,7 @@ pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new::<ObjectE
     object_extrude_create_run,
 );
 
-fn valid_extrusion_height(height: Length) -> bool {
+pub(crate) fn valid_extrusion_height(height: Length) -> bool {
     height.is_positive() && height.micrometres() <= model::MAX_CONTOUR_COORDINATE.micrometres()
 }
 

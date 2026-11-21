@@ -29,8 +29,15 @@
 //! their kinds. The object move reads it to align a carried piece with a neighbour's centre, which is
 //! the one coordinate its faces do not offer.
 //!
+//! A payload answers its own places and not the box around it: a panel offers its box, a swept
+//! rectangle the box that body *is*, a swept circle its two rims and the two ends of its axis, a ball
+//! its middle, its poles and its equator quadrants, a cone its rims, its ends and its apex, and a
+//! baked mesh the box it was baked with (U120).
+//!
 //! Changes when: a snap kind appears or its priority changes, a document shape gains a corner, a
 //! centre or an edge the pointer should see, or a snap mode appears.
+
+use std::f64::consts::{FRAC_PI_2, TAU};
 
 use geom::{DVec2, DVec3};
 use schemars::JsonSchema;
@@ -39,7 +46,7 @@ use units::Length;
 
 use super::sight::Sight;
 use crate::tree::object_bounds_mm;
-use crate::{Container, Contour, ContourSegment, Geometry, Id, Node, Placement, Project};
+use crate::{Constructive, Container, Contour, ContourSegment, Geometry, Id, Node, Placement, Primitive, Project};
 
 /// The step of the sketch plane's grid, in millimetres.
 pub const SNAP_GRID_MM: f64 = 10.0;
@@ -72,13 +79,14 @@ const TIE: f64 = 1.0e-6;
 /// the list from the corner down to the grid and the first kind that answers wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SnapKind {
-    /// A corner of a panel, a body, a frame, or a point of the draft being drawn.
+    /// A corner of a panel, a body or a frame, a quadrant of a round body's rim, a ball's pole, or a
+    /// point of the draft being drawn.
     Vertex,
     /// Where two edges cross in the sketch plane.
     Intersection,
     /// The middle of an edge.
     Midpoint,
-    /// The centre of a face, a box, a primitive, or an arc or circle.
+    /// The centre of a face, a box, a primitive or a circle, or one end of a round body's axis.
     Centre,
     /// The foot of the perpendicular from the previous point onto an edge.
     Perpendicular,
@@ -661,7 +669,7 @@ impl Project {
                     );
                     scene.boxed(panel.id(), DVec3::ZERO, max, world);
                     if let Some(contour) = panel.outline_contour() {
-                        scene.ring(panel.id(), contour, world);
+                        scene.ring(panel.id(), contour, world, 0.0);
                     }
                 }
                 Node::Object(object) => scene.object(object.id(), object.geometry(), world),
@@ -774,31 +782,32 @@ impl Scene {
         }
     }
 
-    /// Files a drawn ring: its corners, its segment midpoints, its arc centres and its curves.
-    fn ring(&mut self, id: Id, contour: &Contour, world: Placement) {
-        self.segments(id, contour.segments(), world);
+    /// Files a drawn ring, `lift` millimetres above the node's own plane: its corners, its segment
+    /// midpoints, its arc centres and its curves.
+    fn ring(&mut self, id: Id, contour: &Contour, world: Placement, lift: f64) {
+        self.segments(id, contour.segments(), world, lift);
     }
 
-    /// Files one chain of drawn segments, in the node's own plane at `z = 0`.
-    fn segments(&mut self, id: Id, segments: impl Iterator<Item = ContourSegment>, world: Placement) {
-        let lift = |point: [Length; 2]| {
-            world.transform_point(DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0))
+    /// Files one chain of drawn segments, in the node's own plane at `z = lift`.
+    fn segments(&mut self, id: Id, segments: impl Iterator<Item = ContourSegment>, world: Placement, lift: f64) {
+        let at = |point: [Length; 2]| {
+            world.transform_point(DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), lift))
         };
         for segment in segments {
             let (Ok(start), Ok(end)) = (segment.start(), segment.end()) else {
                 continue;
             };
-            let (start, end) = (lift(start), lift(end));
+            let (start, end) = (at(start), at(end));
             match segment {
                 ContourSegment::Line { .. } => self.line(id, start, end),
                 ContourSegment::Arc { center, radius, start_angle, sweep } => {
-                    let centre = lift(center);
+                    let centre = at(center);
                     let radius = radius.millimetres_f64();
                     let (start_angle, sweep) = (start_angle.radians_f64(), sweep.radians_f64());
                     self.mark(id, start, SnapKind::Vertex);
                     self.mark(id, end, SnapKind::Vertex);
                     if let Some(middle) = segment_middle(segment) {
-                        self.mark(id, lift(middle), SnapKind::Midpoint);
+                        self.mark(id, at(middle), SnapKind::Midpoint);
                     }
                     self.mark(id, centre, SnapKind::Centre);
                     let normal = world.transform_vector(DVec3::Z);
@@ -809,7 +818,7 @@ impl Scene {
                         let local = DVec3::new(
                             center[0].millimetres_f64() + radius * turn.cos(),
                             center[1].millimetres_f64() + radius * turn.sin(),
-                            0.0,
+                            lift,
                         );
                         points.push(world.transform_point(local));
                     }
@@ -819,31 +828,147 @@ impl Scene {
         }
     }
 
-    /// Files an object: its drawn chain, its box, or its primitive.
+    /// Files an object: the places its own payload describes.
+    ///
+    /// The bound box is no longer the answer for every geometry: a box that stands around a round
+    /// body offers eight corners in the air and neither the body's rim nor its axis (U120). A baked
+    /// mesh is the one payload with no parameters left, so its box is the shape it *is*; every other
+    /// payload files the places its numbers name.
     fn object(&mut self, id: Id, geometry: &Geometry, world: Placement) {
+        let bounds = object_bounds_mm(geometry);
         match geometry {
-            Geometry::Constructive(constructive) => {
-                if let Ok(contour) = constructive.contour() {
-                    self.ring(id, &contour, world);
+            Geometry::Mesh(_) => {
+                if let Some((min, max)) = bounds {
+                    self.boxed(id, min, max, world);
                 }
             }
-            Geometry::Path(path) => self.segments(id, path.segments(), world),
+            Geometry::Path(path) => self.segments(id, path.segments(), world, 0.0),
             Geometry::Contours(contours) => {
                 for path in contours.paths() {
-                    self.segments(id, path.segments(), world);
+                    self.segments(id, path.segments(), world, 0.0);
                 }
             }
-            Geometry::Mesh(_) | Geometry::Primitive(_) => {}
+            Geometry::Constructive(constructive) => {
+                let Some((min, max)) = bounds else {
+                    return;
+                };
+                self.body(id, constructive, min, max, world);
+            }
+            Geometry::Primitive(primitive) => self.primitive(id, primitive, world),
         }
-        if let Some((min, max)) = object_bounds_mm(geometry) {
+    }
+
+    /// Files a body swept from a drawn profile: its two rims and the axis it turns about.
+    ///
+    /// A rectangle swept on Z is a box to the micrometre, so the box's own corners, edge middles and
+    /// six face centres are the places a maker works at, and they stay (U116). Any other profile — a
+    /// drawn circle, a hexagon, a rectangle turned in its plane — leaves the corners of its box in the
+    /// air, so the body answers the ring it was drawn from and the same ring lifted by the extrusion
+    /// height, plus the middle of each end: the two places the axis offers (U120).
+    fn body(&mut self, id: Id, constructive: &Constructive, min: DVec3, max: DVec3, world: Placement) {
+        let Ok(contour) = constructive.contour() else {
+            return;
+        };
+        self.ring(id, &contour, world, 0.0);
+        if is_axis_rectangle(&contour) {
             self.boxed(id, min, max, world);
-            // A primitive is built around its own centre — a sphere's middle, a cone's axis — so the
-            // ball's centre is a place the maker names even though the material is there (ADR 0139).
-            if matches!(geometry, Geometry::Primitive(_)) {
-                self.mark(id, world.transform_point((min + max) * 0.5), SnapKind::Centre);
+            return;
+        }
+        let height = constructive.height().map_or(0.0, |height| height.millimetres_f64());
+        if !height.is_finite() || height <= 0.0 {
+            return;
+        }
+        self.ring(id, &contour, world, height);
+        let middle = (min + max) * 0.5;
+        for z in [0.0, height] {
+            self.mark(id, world.transform_point(DVec3::new(middle.x, middle.y, z)), SnapKind::Centre);
+        }
+    }
+
+    /// Files a primitive's own places: a ball's middle and six quadrants, a cone's rims and ends.
+    ///
+    /// The match is over the payload and has no catch-all, so a new primitive is a compile error
+    /// until it says where a pointer may capture it (U120).
+    fn primitive(&mut self, id: Id, primitive: &Primitive, world: Placement) {
+        match primitive {
+            Primitive::Sphere(sphere) => {
+                let radius = sphere.radius().millimetres_f64();
+                // The middle of a ball is a place the maker names even though the material is there
+                // (ADR 0139); the poles and the equator quadrants are its own six extremes.
+                self.mark(id, world.transform_point(DVec3::ZERO), SnapKind::Centre);
+                for point in [
+                    DVec3::new(0.0, 0.0, radius),
+                    DVec3::new(0.0, 0.0, -radius),
+                    DVec3::new(radius, 0.0, 0.0),
+                    DVec3::new(-radius, 0.0, 0.0),
+                    DVec3::new(0.0, radius, 0.0),
+                    DVec3::new(0.0, -radius, 0.0),
+                ] {
+                    self.mark(id, world.transform_point(point), SnapKind::Vertex);
+                }
+            }
+            Primitive::Cone(cone) => {
+                let base = cone.base_radius().millimetres_f64();
+                let height = cone.height().millimetres_f64();
+                // The base circle is the round the maker drew, so its middle is the node's origin.
+                self.mark(id, world.transform_point(DVec3::ZERO), SnapKind::Centre);
+                self.rim(id, world, 0.0, base);
+                if cone.is_sharp() {
+                    // A sharp cone ends in one apex, which is the axis's other end.
+                    self.mark(id, world.transform_point(DVec3::new(0.0, 0.0, height)), SnapKind::Vertex);
+                } else {
+                    let top = cone.top_radius().millimetres_f64();
+                    self.rim(id, world, height, top);
+                    self.mark(id, world.transform_point(DVec3::new(0.0, 0.0, height)), SnapKind::Centre);
+                }
             }
         }
     }
+
+    /// Files one round rim: its four quadrants, the middle of each quarter and its curve.
+    ///
+    /// The points come from the body's own frame, so a turned leg answers where it stands and not
+    /// where the world axes point. The four quadrants and their middles are the places a drawn
+    /// circle already offers, so a cone's rim and a swept circle's rim answer alike (U120).
+    fn rim(&mut self, id: Id, world: Placement, z: f64, radius: f64) {
+        if !radius.is_finite() || radius <= 0.0 || !z.is_finite() {
+            return;
+        }
+        let at = |turn: f64| world.transform_point(DVec3::new(radius * turn.cos(), radius * turn.sin(), z));
+        for quarter in [0.0, 1.0, 2.0, 3.0] {
+            self.mark(id, at(quarter * FRAC_PI_2), SnapKind::Vertex);
+            self.mark(id, at((quarter + 0.5) * FRAC_PI_2), SnapKind::Midpoint);
+        }
+        let centre = world.transform_point(DVec3::new(0.0, 0.0, z));
+        let normal = world.transform_vector(DVec3::Z);
+        let samples = arc_samples(radius, TAU);
+        let mut points = Vec::with_capacity(samples + 1);
+        for step in 0..=samples {
+            let turn = TAU * (step as f64 / samples as f64);
+            points.push(at(turn));
+        }
+        self.arcs.push(SceneArc { centre, normal, radius, points });
+    }
+}
+
+/// Whether a drawn ring is an axis-aligned rectangle, so the body swept from it fills its box.
+///
+/// Four straight sides that run along the ring's own axes close a rectangle and nothing else, which
+/// is the body a box describes to the micrometre. A tilted rectangle, a hexagon or a ring with a cut
+/// corner fails here, and its box corners stand in the air around the body (U120).
+fn is_axis_rectangle(contour: &Contour) -> bool {
+    let mut sides = 0;
+    for segment in contour.segments() {
+        let ContourSegment::Line { start, end } = segment else {
+            return false;
+        };
+        sides += 1;
+        // Two coordinates that both move make a diagonal, and two that both stay make a point.
+        if (start[0] == end[0]) == (start[1] == end[1]) {
+            return false;
+        }
+    }
+    sides == 4
 }
 
 /// The middle of a segment, in its own plane.
@@ -1306,6 +1431,41 @@ mod tests {
         (point - expected).length() <= 1.0e-6
     }
 
+    /// A project holding one object of `geometry` at the world origin.
+    fn body_of(geometry: Geometry) -> Project {
+        let mut project = empty();
+        let root = project.root().id();
+        project.add_object(root, "Body", Placement::IDENTITY, geometry).expect("a body");
+        project
+    }
+
+    /// A project holding one drawn circle swept on Z, which is how a cylinder is built.
+    fn swept_circle(radius: i64, height: i64) -> Project {
+        let ring = Path::circle([millimetres(0), millimetres(0)], millimetres(radius)).expect("a circle");
+        let body = Constructive::extrude(ring, millimetres(height)).expect("a swept circle");
+        body_of(Geometry::Constructive(body))
+    }
+
+    /// The settings that let every kind but the grid capture: the grid rounds wherever the pointer
+    /// is, so it answers even over empty air and tells nothing about the scene.
+    fn scene_kinds() -> SnapKinds {
+        let mut kinds = SnapKinds::ALL;
+        kinds.set(SnapKind::Grid, false);
+        kinds
+    }
+
+    /// How many distinct places of one kind the project offers: a place two payloads happen to file
+    /// twice is one place a pointer can name.
+    fn distinct(project: &Project, kind: SnapKind) -> usize {
+        let mut points: Vec<DVec3> = Vec::new();
+        for mark in project.snap_marks(Sight::none()).iter().filter(|mark| mark.kind == kind) {
+            if !points.iter().any(|point| (*point - mark.point).length() <= 1.0e-6) {
+                points.push(mark.point);
+            }
+        }
+        points.len()
+    }
+
     #[test]
     fn a_click_near_a_panel_corner_snaps_to_it() {
         let answer = snapped(&shelf(), request(down(698.0, 499.0), SnapKinds::ALL));
@@ -1568,6 +1728,138 @@ mod tests {
         let hidden: HashSet<Id> = [id(2)].into_iter().collect();
         assert!(!project.snap_marks(Sight::none()).is_empty());
         assert!(project.snap_marks(Sight::of(&hidden)).is_empty(), "a hidden shelf has no corners");
+    }
+
+    #[test]
+    fn a_swept_circle_answers_its_rims_and_its_axis_and_no_corner_of_its_box() {
+        // U120: a cylinder is a drawn circle swept on Z. Its own places are the two rims and the
+        // middle of each end; the square around its base used to answer with eight corners in the
+        // air, while its upper rim and its axis were nowhere.
+        let project = swept_circle(100, 200);
+        let rim = snapped(&project, request(down(100.5, 0.5), only(SnapKind::Vertex)));
+        assert_eq!(rim.kind, Some(SnapKind::Vertex), "a quadrant of a rim");
+        assert!((rim.point.x - 100.0).abs() < 0.5 && rim.point.y.abs() < 0.5, "{:?}", rim.point);
+        assert!(
+            rim.point.z.abs() < 1.0e-6 || (rim.point.z - 200.0).abs() < 1.0e-6,
+            "a rim point stands on the base or on the lifted ring: {:?}",
+            rim.point
+        );
+
+        // The axis: the middle of an end face, which no rim offers.
+        let axis = snapped(&project, request(down(0.5, 0.5), only(SnapKind::Centre)));
+        assert_eq!(axis.kind, Some(SnapKind::Centre));
+        assert!(axis.point.x.abs() < 0.5 && axis.point.y.abs() < 0.5, "on the axis: {:?}", axis.point);
+        assert!(axis.point.z.abs() < 1.0e-6 || (axis.point.z - 200.0).abs() < 1.0e-6, "an end face: {:?}", axis.point);
+
+        // The corner of the square around the base stands 41 mm off the rim, in the air.
+        let air = snapped(&project, request(down(100.0, 100.0), scene_kinds()));
+        assert_eq!(air.kind, None, "the corner of the square names nothing: {:?}", air.point);
+
+        // Every mark the body offers is a place on it: a point of a rim at its radius, or a point
+        // of the axis the two ends share. A micrometre of slack is the document's own quantum, which
+        // the middle of a quarter arc is rounded to.
+        let marks = project.snap_marks(Sight::none());
+        assert!(!marks.is_empty());
+        for mark in &marks {
+            let radius = mark.point.truncate().length();
+            assert!(
+                (radius - 100.0).abs() <= 1.0e-3 || radius <= 1.0e-3,
+                "{:?} is not on the swept circle (radius {radius})",
+                mark.point
+            );
+        }
+    }
+
+    #[test]
+    fn a_cone_answers_its_apex_its_base_circle_and_the_middle_of_each_end() {
+        let cone = |base: i64, top: i64| {
+            Primitive::cone(millimetres(base), millimetres(top), millimetres(200), 32).expect("a cone")
+        };
+        let sharp = body_of(Geometry::Primitive(cone(80, 0)));
+        let apex = snapped(&sharp, request(down(1.0, 1.0), only(SnapKind::Vertex)));
+        assert_eq!(apex.kind, Some(SnapKind::Vertex), "the apex");
+        assert!(close(apex.point, DVec3::new(0.0, 0.0, 200.0)), "{:?}", apex.point);
+
+        let rim = snapped(&sharp, request(down(0.5, 80.0), only(SnapKind::Edge)));
+        assert_eq!(rim.kind, Some(SnapKind::Edge), "the base circle");
+        assert!((rim.point - DVec3::new(0.5, 80.0, 0.0)).length() < 0.2, "{:?}", rim.point);
+
+        // A truncated cone answers its top rim and the middle of its top face as well.
+        let truncated = body_of(Geometry::Primitive(cone(80, 40)));
+        let top = snapped(&truncated, request(down(40.5, 0.5), only(SnapKind::Vertex)));
+        assert_eq!(top.kind, Some(SnapKind::Vertex), "a quadrant of the top rim");
+        assert!(close(top.point, DVec3::new(40.0, 0.0, 200.0)), "{:?}", top.point);
+        let middle = snapped(&truncated, request(down(0.5, 0.5), only(SnapKind::Centre)));
+        assert_eq!(middle.kind, Some(SnapKind::Centre), "the middle of the top face");
+        assert!(close(middle.point, DVec3::new(0.0, 0.0, 200.0)), "{:?}", middle.point);
+
+        // Every mark stands inside the cone's own radii and height, so none of them is a corner of
+        // the box around it.
+        for mark in truncated.snap_marks(Sight::none()) {
+            let radius = mark.point.truncate().length();
+            let z = mark.point.z;
+            assert!((-1.0e-3..=200.0 + 1.0e-3).contains(&z), "a mark at z = {z}: {:?}", mark.point);
+            let allowed = 80.0 + (40.0 - 80.0) * (z / 200.0);
+            assert!(radius <= allowed + 1.0e-3, "{:?} stands outside the cone", mark.point);
+        }
+    }
+
+    #[test]
+    fn every_mark_of_a_ball_lies_at_its_radius() {
+        let ball = Primitive::sphere(millimetres(50), 16, 8).expect("a ball");
+        let centre = DVec3::new(300.0, 20.0, 100.0);
+        // A ball turned a quarter turn about X, so a mark taken from the world axes would show.
+        let placed = Placement::new(centre, geom::DQuat::from_rotation_x(FRAC_PI_2)).expect("a place");
+        let mut project = empty();
+        let root = project.root().id();
+        project.add_object(root, "Ball", placed, Geometry::Primitive(ball)).expect("a ball");
+
+        let marks = project.snap_marks(Sight::none());
+        assert_eq!(marks.len(), 7, "the middle, the two poles and the four equator quadrants");
+        for mark in &marks {
+            let distance = (mark.point - centre).length();
+            assert!(
+                distance <= 1.0e-6 || (distance - 50.0).abs() <= 1.0e-6,
+                "{:?} stands {distance} mm from the middle, neither on it nor on the ball",
+                mark.point
+            );
+        }
+
+        // The poles follow the body's own frame: the turn about X stands them along the world Y.
+        let pole = snapped(&project, request(down(300.5, -29.5), only(SnapKind::Vertex)));
+        assert_eq!(pole.kind, Some(SnapKind::Vertex), "the pole");
+        assert!(close(pole.point, DVec3::new(300.0, -30.0, 100.0)), "{:?}", pole.point);
+    }
+
+    #[test]
+    fn a_swept_rectangle_keeps_the_marks_its_box_describes() {
+        // The box *is* the body when the profile is a rectangle, so the places U116 promised a drawn
+        // cube — the middle of every face and of every edge — stay exactly as they were (U120).
+        let ring = Path::rectangle([millimetres(-100), millimetres(-75)], [millimetres(100), millimetres(75)])
+            .expect("a rectangle");
+        let box_ = Constructive::extrude(ring, millimetres(300)).expect("a box");
+        let project = body_of(Geometry::Constructive(box_));
+        // The drawn ring files the base corners a second time, which names a place and not a second
+        // one: the counts below are of distinct points.
+        assert_eq!(distinct(&project, SnapKind::Vertex), 8, "the eight corners");
+        assert_eq!(distinct(&project, SnapKind::Midpoint), 12, "the middle of every edge");
+        assert_eq!(distinct(&project, SnapKind::Centre), 6, "the middle of every face");
+
+        let face = snapped(&project, request(down(100.0, 0.5), only(SnapKind::Centre)));
+        assert_eq!(face.kind, Some(SnapKind::Centre), "the middle of a side face");
+        assert!((face.point - DVec3::new(100.0, 0.0, 150.0)).length() < 0.5, "{:?}", face.point);
+    }
+
+    #[test]
+    fn a_flat_drawing_answers_its_own_points_and_not_the_corners_of_its_box() {
+        let diagonal = open_path(vec![[millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]]);
+        let project = body_of(Geometry::Path(diagonal));
+        let marks = project.snap_marks(Sight::none());
+        assert_eq!(marks.len(), 3, "the two ends and the middle of the one line");
+        assert!(
+            !marks.iter().any(|mark| close(mark.point, DVec3::new(0.0, 50.0, 0.0))),
+            "a corner of the box around a diagonal line is empty air"
+        );
     }
 
     #[test]

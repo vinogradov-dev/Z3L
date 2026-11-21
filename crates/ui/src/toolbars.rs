@@ -120,6 +120,11 @@ pub enum ToolAction {
         /// Height along the path's local Z.
         height: Length,
     },
+    /// Arms the area pull on the selected drawing: the pointer names an area, a click pulls it (G4).
+    AreaPull {
+        /// The contour set whose areas the pointer reads.
+        object: Id,
+    },
     /// Creates a camera at the scene root.
     CreateCamera,
     /// Creates a sun light at the scene root.
@@ -213,6 +218,9 @@ pub enum ToolActivity {
     Measure,
     /// The niche tool is armed and names the empty space under the pointer.
     Void,
+    /// The area pull is armed: the pointer names an area of the selected drawing, and a click pulls
+    /// it into a body of its own (G4).
+    AreaPull,
     /// A contour boolean is armed and collects the picked rings.
     ContourBoolean(ContourOp),
     /// A body boolean is armed and collects the target and its tool.
@@ -230,6 +238,7 @@ pub fn tool_activity(
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
+    pull: bool,
     boolean: Option<(crate::editor::BooleanOperand, ContourOp)>,
 ) -> Option<ToolActivity> {
     let drawing = match (drawing, frame, fill, measure, niche) {
@@ -249,7 +258,7 @@ pub fn tool_activity(
     // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
     // a running draft or a fill (G3). The two operand kinds are two cells on two tabs, and the kind
     // decides which one draws pressed (W1).
-    drawing.or(boolean.map(|(kind, op)| match kind {
+    drawing.or(pull.then_some(ToolActivity::AreaPull)).or(boolean.map(|(kind, op)| match kind {
         crate::editor::BooleanOperand::Rings => ToolActivity::ContourBoolean(op),
         crate::editor::BooleanOperand::Bodies => ToolActivity::BodyBoolean(op),
     }))
@@ -275,6 +284,8 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         }
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         (Some(ToolActivity::Void), ToolKind::Void) => true,
+        // The pull owns the pointer and the Extrude cell is the one that armed it (G4).
+        (Some(ToolActivity::AreaPull), ToolKind::Extrude) => true,
         (Some(ToolActivity::ContourBoolean(armed)), ToolKind::ContourBoolean(op)) => armed == op,
         (Some(ToolActivity::BodyBoolean(armed)), ToolKind::BodyBoolean(op)) => armed == op,
         _ => false,
@@ -404,6 +415,8 @@ pub struct RibbonContext {
     /// Whether the selection draws one closed ring a boolean can take: a path object or a body's
     /// own profile (X98).
     pub selected_ring: bool,
+    /// Whether the selection is a contour set, whose enclosed areas the Extrude cell pulls (G4).
+    pub selected_drawing: bool,
     /// Whether the selection is a constructive body, which is what a body boolean edits (W1).
     pub selected_body: bool,
     /// Whether the selection is a parametric primitive: a solid, but not one a boolean cuts with
@@ -858,6 +871,7 @@ mod tests {
             selected: None,
             selected_path: None,
             selected_ring: false,
+            selected_drawing: false,
             selected_body: false,
             selected_primitive: false,
             active: None,
@@ -1314,11 +1328,18 @@ mod tests {
                 _ => None,
             };
             assert_eq!(
-                tool_activity(drawing, frame, fill, measure, niche, boolean),
+                tool_activity(drawing, frame, fill, measure, niche, false, boolean),
                 expected,
                 "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche} boolean={boolean:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_armed_area_pull_is_the_pressed_extrude_cell() {
+        let activity = tool_activity(None, false, None, false, false, true, None);
+        assert_eq!(activity, Some(ToolActivity::AreaPull));
+        assert_eq!(tool_activity(None, false, None, false, false, false, None), None, "no pull, no armed cell");
     }
 
     #[test]
@@ -1445,6 +1466,51 @@ mod tests {
         let kind = extrude.run.expect("the extrude cell runs a tool");
         assert!(!ready(kind, extrude, &state, body, Lang::En).enabled, "a body is not a path to extrude");
         assert!(ready(kind, extrude, &state, path, Lang::En).enabled, "a closed path still extrudes");
+    }
+
+    #[test]
+    fn a_drawing_arms_the_area_pull_from_the_extrude_cell() {
+        // A drawing of several rings has no one profile to sweep, so the same cell hands the editor
+        // the drawing and the pointer names the area the click takes (G4). A closed path keeps its
+        // one-shot extrusion, so the two payloads are two doors of one cell.
+        let state = Toolbars::new();
+        let node = Id::new(7).expect("id");
+        let cell = tool("model.create.extrude");
+        let kind = cell.run.expect("the extrude cell runs a tool");
+
+        let drawing = ready(
+            kind,
+            cell,
+            &state,
+            RibbonContext { selected: Some(node), selected_drawing: true, ..full_context() },
+            Lang::En,
+        );
+        assert_eq!(drawing.action, Some(ToolAction::AreaPull { object: node }));
+        assert!(drawing.enabled && !drawing.armed, "the cell is live and the pointer is not yet pulled");
+        assert_eq!(drawing.hint, "Pull an area of the selected drawing");
+
+        let armed = ready(
+            kind,
+            cell,
+            &state,
+            RibbonContext {
+                selected: Some(node),
+                selected_drawing: true,
+                active: Some(ToolActivity::AreaPull),
+                ..full_context()
+            },
+            Lang::En,
+        );
+        assert!(armed.armed, "the cell draws pressed while the pointer names an area");
+
+        let path = ready(
+            kind,
+            cell,
+            &state,
+            RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() },
+            Lang::En,
+        );
+        assert!(matches!(path.action, Some(ToolAction::ExtrudePath { .. })), "a closed path still extrudes");
     }
 
     #[test]
