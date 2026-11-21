@@ -223,6 +223,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    (state-contract/src/parse.rs:139) compare case-insensitively, so every check agrees with
    every spelling.
   `files: state-contract/src/edit.rs,state-contract/src/parse.rs`
+- `[ ]` **P22** a fifth stream has no way to be declared, so its worktree cannot mark its task
+  Why: Observation, from a session opening the render worktree: the project gives every plan
+   file a verb — `task`, `state`, `file` — but the `STREAMS:` line of `plan/STATUS.md` has
+   none. `cargo xtask state set streams=render` answers that `STATE:` carries `streams=`, which
+   nobody reads, and `cargo xtask file plan/STATUS.md` refuses because `REFERENCE_FILES`
+   (state-contract/src/cli/write.rs:1062) does not carry `plan/STATUS.md`. Without a declared
+   stream, `task start Y1` run in that worktree writes `plan/SESSION.md` and the `STATE:` line
+   — the plan's own checkout's files — which is the collision the one-writer rule exists to
+   prevent (ADR 0176). Expectation: a stream is declared with a verb, so a worktree marks its
+   entry as in progress and writes its own `plan/SESSION.<key>.md` while leaving `STATE:`
+   alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
+   and no writer was added when P17 landed.
+  `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
