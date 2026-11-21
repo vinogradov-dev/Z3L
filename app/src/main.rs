@@ -941,6 +941,30 @@ impl App {
             let Self { tabs, shell, settings, .. } = self;
             tabs.active_mut().apply_viewport_settings(&before.viewport, &settings.viewport, shell);
         }
+        // A snap kind the Settings page switched applies to the whole workspace at once, exactly as
+        // the panel visibility does: every tab reads one set (U116).
+        if self.settings.snaps.kinds() != before.snaps.kinds() {
+            let snaps = self.settings.snaps.kinds();
+            for (_, document) in self.tabs.iter_mut() {
+                document.set_snaps(snaps);
+            }
+        }
+    }
+
+    /// Writes the snap kinds a tab switched into the workspace settings, and into every other tab.
+    ///
+    /// The tab owns the live value — a cell of the View tab's Snaps group is drawn from it inside
+    /// that tab — and the workspace owns the file, so the shell carries the change across on the
+    /// frame the cell was pressed (U116).
+    fn take_snaps(&mut self) {
+        let Some(snaps) = self.tabs.active_mut().take_snaps_change() else {
+            return;
+        };
+        self.settings.snaps.set_kinds(snaps);
+        for (_, document) in self.tabs.iter_mut() {
+            document.set_snaps(snaps);
+        }
+        self.persist_settings();
     }
 
     /// Draws the Home surface and performs the one action it asked for.
@@ -1163,6 +1187,7 @@ impl App {
             self.settings_notice = None;
         }
         self.settings_window(ui.ctx());
+        self.take_snaps();
         self.product_frame_card(ui.ctx());
         self.home_surface(ui.ctx());
         self.draw_work_cursor(ui.ctx());

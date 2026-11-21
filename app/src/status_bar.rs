@@ -52,7 +52,10 @@ struct StatusInfo {
     void: Option<Result<[Length; 3], VoidRefusal>>,
     /// Whether the object move is carrying a piece the pointer moves with no button held.
     holding: bool,
+    /// Whether the drawing plane's grid snap is on.
     grid: bool,
+    /// What captured the pointer in the last frame, when a snapping tool owns it (U116).
+    snap: Option<model::SnapKind>,
     mesh: Option<(MeshElement, usize)>,
     /// The navigation mode armed in the floating cluster, if any.
     navigation: Option<NavigationMode>,
@@ -534,9 +537,19 @@ fn status_center_ui(ui: &mut egui::Ui, summary: &StatusSummary, lang: Lang) {
 /// one state — the step is written in the primary colour while it holds and dim while it does not.
 fn status_right_ui(ui: &mut egui::Ui, info: &StatusInfo) {
     let lang = ui::language(ui.ctx());
-    let snap_ink = if info.grid { theme::text(ui) } else { theme::text_dim(ui) };
-    ui.label(egui::RichText::new(Message::SnapTenMillimetres.text(lang)).color(snap_ink))
-        .on_hover_text(Message::ShortcutGrid.text(lang));
+    // The readout names the kind while a snap holds the pointer and the grid's own step while none
+    // does: a capture nobody can name is a jump nobody can explain (U115, U116).
+    let (snap_line, snap_ink) = match info.snap {
+        Some(kind) => (Message::SnapCaptured.with(lang, [ui::snap::word(kind).text(lang)]), theme::text(ui)),
+        None => (
+            Message::SnapTenMillimetres.text(lang).to_owned(),
+            if info.grid { theme::text(ui) } else { theme::text_dim(ui) },
+        ),
+    };
+    ui.label(egui::RichText::new(snap_line).color(snap_ink)).on_hover_text(match info.snap {
+        Some(kind) => ui::snap::hint(kind).text(lang),
+        None => Message::ShortcutGrid.text(lang),
+    });
     theme::divider(ui);
     let projection = match info.projection {
         Projection::Perspective { .. } => Message::Perspective,
@@ -602,7 +615,8 @@ impl Document {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),
             holding: self.holding_piece(),
-            grid: self.draw_gizmo.grid(),
+            grid: self.snaps().grid,
+            snap: self.draw_gizmo.snap_kind().or_else(|| self.measure_gizmo.snap_kind()),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
                     MeshElement::Vertex => edit.vertices().len(),
@@ -640,6 +654,7 @@ mod tests {
             void: None,
             holding: false,
             grid: true,
+            snap: None,
             mesh: None,
             navigation: None,
             summary: StatusSummary::default(),

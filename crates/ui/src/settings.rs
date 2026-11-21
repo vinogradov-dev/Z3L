@@ -381,40 +381,135 @@ impl GizmoSettings {
     }
 }
 
-/// The *Snapping* section: what an object drag captures and stops at, and how near it must come.
+/// The *Snapping* section: what a pointer captures, what a drag stops at, and how near it must come.
 ///
 /// Snapping is a taste and a workshop standard, so the values are the workspace's and never the
-/// document's: turning the planes off costs no undo entry and leaves no revision behind. The model
-/// owns what each value means (`model::SnapSettings`, `model::MoveSettings`) and the shell hands them
-/// over once when a drag starts, so a change applies to the next drag and never to the one under the
-/// hand (ADR 0146). The floor is a stop beside them rather than a capture: it answers whether a body
-/// may sink below Z = 0 at all (X87, ADR 0177).
+/// document's: turning a kind off costs no undo entry and leaves no revision behind. The model owns
+/// what each value means (`model::SnapKinds`, `model::SnapSettings`, `model::MoveSettings`) and the
+/// shell hands them over — once when a drag starts, every frame to a pointer tool — so a change
+/// applies to the next pointer position and never bends a drag already under the hand (ADR 0146,
+/// U116). The floor is a stop beside them rather than a capture: it answers whether a body may sink
+/// below Z = 0 at all (X87, ADR 0177).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SnapSettings {
-    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
+    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture, the floor included: the
+    /// `axis` kind of the set.
     ///
     /// Until a house-wall tool exists they stand in for the walls of a room: a base cabinet against
     /// the back wall of a shop and a piece standing on the floor are the same snap.
     pub planes: bool,
     /// Whether another product's envelope captures a drag with its virtual faces.
     pub frames: bool,
-    /// How near a surface must be to capture a drag, in millimetres; zero captures nothing.
+    /// How near a surface must be to capture, in millimetres; zero captures nothing.
     pub tolerance_mm: u32,
     /// Whether the invisible floor at Z = 0 stops every moved body.
     ///
-    /// It is a stop and not a snap, so it holds whatever the two switches above say, and a workspace
-    /// that turns it off has no floor at all (ADR 0177).
+    /// It is a stop and not a snap, so it holds whatever the switches say, and a workspace that
+    /// turns it off has no floor at all (ADR 0177).
     pub floor: bool,
+    /// The pointer's own kinds: one switch per kind, all on in a fresh workspace (U116).
+    pub kinds: PointerKinds,
+}
+
+/// The pointer's snap kinds: what one click may capture in the scene.
+///
+/// The switches are saved under the names of the kinds the resolver answers with
+/// (`model::SnapKind`), so the Settings page, the View tab's Snaps group and a file written on
+/// another machine name the same ten things. A workspace written before the section existed snaps
+/// everything, which is the fresh default.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PointerKinds {
+    /// A corner.
+    #[serde(default = "on")]
+    pub vertex: bool,
+    /// A crossing of two edges.
+    #[serde(default = "on")]
+    pub intersection: bool,
+    /// The middle of an edge.
+    #[serde(default = "on")]
+    pub midpoint: bool,
+    /// A centre.
+    #[serde(default = "on")]
+    pub centre: bool,
+    /// A perpendicular foot.
+    #[serde(default = "on")]
+    pub perpendicular: bool,
+    /// A tangent point.
+    #[serde(default = "on")]
+    pub tangent: bool,
+    /// A point on an edge.
+    #[serde(default = "on")]
+    pub edge: bool,
+    /// A point on a face.
+    #[serde(default = "on")]
+    pub face: bool,
+    /// The drawing plane's grid.
+    #[serde(default = "on")]
+    pub grid: bool,
+}
+
+/// The default of a switch a workspace written before the section did not carry: on.
+fn on() -> bool {
+    true
+}
+
+impl Default for PointerKinds {
+    fn default() -> Self {
+        Self {
+            vertex: true,
+            intersection: true,
+            midpoint: true,
+            centre: true,
+            perpendicular: true,
+            tangent: true,
+            edge: true,
+            face: true,
+            grid: true,
+        }
+    }
 }
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true }
+        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true, kinds: PointerKinds::default() }
     }
 }
 
 impl SnapSettings {
+    /// The kinds the pointer resolver reads: every switch of the section as one value.
+    pub fn kinds(&self) -> model::SnapKinds {
+        model::SnapKinds {
+            vertex: self.kinds.vertex,
+            intersection: self.kinds.intersection,
+            midpoint: self.kinds.midpoint,
+            centre: self.kinds.centre,
+            perpendicular: self.kinds.perpendicular,
+            tangent: self.kinds.tangent,
+            edge: self.kinds.edge,
+            face: self.kinds.face,
+            axis: self.planes,
+            grid: self.kinds.grid,
+        }
+    }
+
+    /// Writes the kinds back into the section, so a toggle in a tab survives the restart.
+    pub fn set_kinds(&mut self, kinds: model::SnapKinds) {
+        self.planes = kinds.axis;
+        self.kinds = PointerKinds {
+            vertex: kinds.vertex,
+            intersection: kinds.intersection,
+            midpoint: kinds.midpoint,
+            centre: kinds.centre,
+            perpendicular: kinds.perpendicular,
+            tangent: kinds.tangent,
+            edge: kinds.edge,
+            face: kinds.face,
+            grid: kinds.grid,
+        };
+    }
+
     /// The value the move rule reads: the same facts, with the tolerance as the document's own unit so
     /// the model never sees a millimetre as a number.
     pub fn move_settings(&self) -> model::MoveSettings {
@@ -422,8 +517,7 @@ impl SnapSettings {
         model::MoveSettings {
             axes: model::MoveAxes::Document,
             snaps: Some(model::SnapSettings {
-                // The coordinate planes are the world-axis kind of the snap set (U116).
-                kinds: model::SnapKinds { axis: self.planes, ..model::SnapKinds::ALL },
+                kinds: self.kinds(),
                 frames: self.frames,
                 tolerance: units::Length::from_micrometres(tolerance * 1000),
             }),
@@ -1041,6 +1135,27 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         .checkbox(&mut settings.snaps.frames, Message::SnapFrames.text(lang))
         .on_hover_text(Message::SnapFramesHint.text(lang))
         .changed();
+    // The pointer's kinds, one row each: the same ten the View tab's Snaps group switches, so a
+    // maker who learns the set in one place finds it in the other (U116). The coordinate planes
+    // above are the `axis` kind and are not repeated here.
+    for kind in model::SnapKind::ALL.into_iter().filter(|kind| *kind != model::SnapKind::Axis) {
+        let slot = match kind {
+            model::SnapKind::Vertex => &mut settings.snaps.kinds.vertex,
+            model::SnapKind::Intersection => &mut settings.snaps.kinds.intersection,
+            model::SnapKind::Midpoint => &mut settings.snaps.kinds.midpoint,
+            model::SnapKind::Centre => &mut settings.snaps.kinds.centre,
+            model::SnapKind::Perpendicular => &mut settings.snaps.kinds.perpendicular,
+            model::SnapKind::Tangent => &mut settings.snaps.kinds.tangent,
+            model::SnapKind::Edge => &mut settings.snaps.kinds.edge,
+            model::SnapKind::Face => &mut settings.snaps.kinds.face,
+            model::SnapKind::Grid => &mut settings.snaps.kinds.grid,
+            model::SnapKind::Axis => continue,
+        };
+        changed |= ui
+            .checkbox(slot, crate::snap::word(kind).text(lang))
+            .on_hover_text(crate::snap::hint(kind).text(lang))
+            .changed();
+    }
     ui.horizontal(|ui| {
         ui.label(Message::SnapTolerance.text(lang));
         changed |= ui
@@ -1179,7 +1294,13 @@ mod tests {
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
-            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false },
+            snaps: SnapSettings {
+                planes: false,
+                frames: true,
+                tolerance_mm: 12,
+                floor: false,
+                kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+            },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
@@ -1209,7 +1330,38 @@ mod tests {
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
         assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
-        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false });
+        assert_eq!(
+            restored.snaps,
+            SnapSettings {
+                planes: false,
+                frames: true,
+                tolerance_mm: 12,
+                floor: false,
+                kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+            }
+        );
+    }
+
+    #[test]
+    fn a_workspace_written_before_the_kinds_existed_snaps_them_all() {
+        // A file from before U116 carries no `kinds` section: every kind is on, exactly as a fresh
+        // workspace is, and the section's own switches keep their values.
+        let settings = Settings::from_json(r#"{"version":1,"snaps":{"planes":false,"tolerance_mm":12}}"#)
+            .expect("parse a file written before the kinds existed");
+        assert_eq!(settings.snaps.kinds, PointerKinds::default(), "every kind is on");
+        assert!(!settings.snaps.planes, "and the switches the file carried keep their values");
+        assert_eq!(settings.snaps.tolerance_mm, 12);
+
+        // One kind off survives the write, and comes back as the model's own value.
+        let mut toggled = settings.clone();
+        let mut kinds = toggled.snaps.kinds();
+        kinds.tangent = false;
+        kinds.axis = true;
+        toggled.snaps.set_kinds(kinds);
+        let json = toggled.to_json().expect("serialise");
+        let restored = Settings::from_json(&json).expect("parse");
+        assert_eq!(restored.snaps.kinds(), kinds, "the toggles survive a restart");
+        assert!(restored.snaps.planes, "the axis kind is the coordinate-planes switch");
     }
 
     #[test]

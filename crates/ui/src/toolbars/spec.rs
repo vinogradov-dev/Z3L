@@ -83,8 +83,8 @@ pub enum ToolKind {
     FrameAll,
     /// Switches between perspective and orthographic.
     Projection,
-    /// Turns the work-plane grid snap on or off.
-    GridSnap,
+    /// Turns one snap kind on or off: the View tab's Snaps group, one cell per kind (U116).
+    Snap(model::SnapKind),
     /// Turns the ground shadow of the active view on or off (U107).
     Shadows,
     /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
@@ -1107,17 +1107,96 @@ const VIEW: [GroupSpec; 5] = [
             planned("view.navigation.zoom", Message::ToolZoom),
         ],
     },
+    // One cell per kind, in the resolver's own order: a corner, a crossing, a middle, a centre, a
+    // perpendicular, a tangent, an edge, a face, a world axis and the grid. The set is the one the
+    // pointer resolver answers with, so a cell cannot offer a snap the resolver does not have
+    // (U116).
     GroupSpec {
         id: "view.snaps",
         label: Message::GroupSnaps,
-        tools: &[ToolSpec {
-            id: "view.snaps.grid",
-            label: Message::ToolGridSnap,
-            icon: Some(icons::view::GRID_SNAP),
-            run: Some(ToolKind::GridSnap),
-            method: None,
-            variants: &[],
-        }],
+        tools: &[
+            ToolSpec {
+                id: "view.snaps.vertex",
+                label: Message::SnapVertex,
+                icon: Some(icons::view::SNAP_VERTEX),
+                run: Some(ToolKind::Snap(model::SnapKind::Vertex)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.intersection",
+                label: Message::SnapIntersection,
+                icon: Some(icons::view::SNAP_INTERSECTION),
+                run: Some(ToolKind::Snap(model::SnapKind::Intersection)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.midpoint",
+                label: Message::SnapMidpoint,
+                icon: Some(icons::view::SNAP_MIDPOINT),
+                run: Some(ToolKind::Snap(model::SnapKind::Midpoint)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.centre",
+                label: Message::SnapCentre,
+                icon: Some(icons::view::SNAP_CENTRE),
+                run: Some(ToolKind::Snap(model::SnapKind::Centre)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.perpendicular",
+                label: Message::SnapPerpendicular,
+                icon: Some(icons::view::SNAP_PERPENDICULAR),
+                run: Some(ToolKind::Snap(model::SnapKind::Perpendicular)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.tangent",
+                label: Message::SnapTangent,
+                icon: Some(icons::view::SNAP_TANGENT),
+                run: Some(ToolKind::Snap(model::SnapKind::Tangent)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.edge",
+                label: Message::SnapEdge,
+                icon: Some(icons::view::SNAP_EDGE),
+                run: Some(ToolKind::Snap(model::SnapKind::Edge)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.face",
+                label: Message::SnapFace,
+                icon: Some(icons::view::SNAP_FACE),
+                run: Some(ToolKind::Snap(model::SnapKind::Face)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.axis",
+                label: Message::SnapAxis,
+                icon: Some(icons::view::SNAP_AXIS),
+                run: Some(ToolKind::Snap(model::SnapKind::Axis)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.grid",
+                // The grid keeps the cell and the key it always had; its word is the kind's.
+                label: Message::SnapGrid,
+                icon: Some(icons::view::GRID_SNAP),
+                run: Some(ToolKind::Snap(model::SnapKind::Grid)),
+                method: None,
+                variants: &[],
+            },
+        ],
     },
 ];
 
@@ -1272,7 +1351,21 @@ mod tests {
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
         assert_eq!(
             live("view"),
-            ["view.display.shadows", "view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]
+            [
+                "view.display.shadows",
+                "view.projection.frame-all",
+                "view.projection.toggle",
+                "view.snaps.axis",
+                "view.snaps.centre",
+                "view.snaps.edge",
+                "view.snaps.face",
+                "view.snaps.grid",
+                "view.snaps.intersection",
+                "view.snaps.midpoint",
+                "view.snaps.perpendicular",
+                "view.snaps.tangent",
+                "view.snaps.vertex",
+            ]
         );
     }
 
@@ -1303,19 +1396,39 @@ mod tests {
     }
 
     #[test]
-    fn the_grid_snap_is_filed_under_its_own_snaps_caption() {
-        // The snap changes where a click lands, not how the scene looks, so it left *View › Display*
-        // for a group the endpoint, the axis and the object snaps can join (U91).
+    fn the_snaps_group_holds_one_cell_per_kind_in_the_resolvers_order() {
+        // The ten cells are the resolver's ten kinds, in its priority order, so a cell cannot offer a
+        // snap the pointer does not answer with (U116). The grid keeps the cell and the key it has
+        // had since U91.
         let view = tab("view").expect("the view tab");
         let snaps = view.groups.iter().find(|group| group.id == "view.snaps").expect("the snaps group");
         assert_eq!(snaps.label.text(text::Lang::En), "Snaps");
         assert_eq!(snaps.label.text(text::Lang::Ru), "Привязки");
         let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.key())).collect::<Vec<_>>();
-        assert_eq!(tools, vec![("view.snaps.grid", Some(ToolKind::GridSnap), Some("G"))], "the G key and the cell");
+        let expected = model::SnapKind::ALL
+            .into_iter()
+            .map(|kind| {
+                let id = match kind {
+                    model::SnapKind::Vertex => "view.snaps.vertex",
+                    model::SnapKind::Intersection => "view.snaps.intersection",
+                    model::SnapKind::Midpoint => "view.snaps.midpoint",
+                    model::SnapKind::Centre => "view.snaps.centre",
+                    model::SnapKind::Perpendicular => "view.snaps.perpendicular",
+                    model::SnapKind::Tangent => "view.snaps.tangent",
+                    model::SnapKind::Edge => "view.snaps.edge",
+                    model::SnapKind::Face => "view.snaps.face",
+                    model::SnapKind::Axis => "view.snaps.axis",
+                    model::SnapKind::Grid => "view.snaps.grid",
+                };
+                let key = (kind == model::SnapKind::Grid).then_some("G");
+                (id, Some(ToolKind::Snap(kind)), key)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tools, expected, "the ten kinds, corner to grid");
         let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
         assert!(
-            display.tools.iter().all(|tool| tool.run != Some(ToolKind::GridSnap)),
-            "the snap is still filed under Display"
+            display.tools.iter().all(|tool| !matches!(tool.run, Some(ToolKind::Snap(_)))),
+            "a snap cell belongs to the Snaps group and not to Display"
         );
         // The Display group holds the shadow's switch and no number: the intensity is a workspace
         // value and its one control is the slider in Settings › View (U110).
@@ -1472,7 +1585,16 @@ mod tests {
             ToolKind::Light,
             ToolKind::FrameAll,
             ToolKind::Projection,
-            ToolKind::GridSnap,
+            ToolKind::Snap(model::SnapKind::Vertex),
+            ToolKind::Snap(model::SnapKind::Intersection),
+            ToolKind::Snap(model::SnapKind::Midpoint),
+            ToolKind::Snap(model::SnapKind::Centre),
+            ToolKind::Snap(model::SnapKind::Perpendicular),
+            ToolKind::Snap(model::SnapKind::Tangent),
+            ToolKind::Snap(model::SnapKind::Edge),
+            ToolKind::Snap(model::SnapKind::Face),
+            ToolKind::Snap(model::SnapKind::Axis),
+            ToolKind::Snap(model::SnapKind::Grid),
             ToolKind::Shadows,
             ToolKind::Measure,
             ToolKind::ContourBoolean(engine::ContourOp::Union),
@@ -1541,14 +1663,17 @@ mod tests {
         assert_eq!(tab("model").expect("model").columns(), 8);
         assert_eq!(tab("furniture").expect("furniture").columns(), 5);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        assert_eq!(tab("view").expect("view").columns(), 4);
+        // The View tab's four cells are the projection pair, the shadow switch and the grid: the
+        // Snaps group of ten cells is the second row.
+        assert_eq!(tab("view").expect("view").columns(), 13);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 12, "the sketch tab is the widest row of the map");
+        assert_eq!(widest, 13, "the View tab's Snaps row is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
-        // The View tab's four cells are the projection pair, the shadow switch and the snap.
-        assert_eq!(tab("view").expect("view").columns(), 2 + 1 + 1);
+        // The View tab's widest row is the Snaps group's ten cells, and its three other cells —
+        // the projection pair and the shadow switch — join it on that row.
+        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 3);
     }
 
     #[test]

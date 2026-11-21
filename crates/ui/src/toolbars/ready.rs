@@ -43,7 +43,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         selected_primitive,
         active,
         owns_view,
-        grid,
+        snaps,
         shadows,
         draft,
         ..
@@ -262,11 +262,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: tool_hint(tool.label.text(lang), tool.key()),
             action: product_open.then_some(ToolAction::Void),
         },
-        ToolKind::GridSnap => Ready {
+        // A snap cell is a switch of the workspace's set, and the set belongs to the view's work
+        // plane: a view an authored camera pins has none, so the cells are drawn disabled there and
+        // the hint says why (U116).
+        ToolKind::Snap(kind) => Ready {
             enabled: owns_view,
-            armed: grid,
-            hint: tool_hint(tool.label.text(lang), tool.key()),
-            action: owns_view.then_some(ToolAction::ToggleGrid),
+            armed: snaps.enabled(kind),
+            hint: tool_hint(crate::snap::word(kind).text(lang), tool.key()),
+            action: owns_view.then_some(ToolAction::ToggleSnap(kind)),
         },
         ToolKind::Shadows => Ready {
             // A view always has a shadow switch: no document, no selection and no material is

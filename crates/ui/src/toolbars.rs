@@ -132,8 +132,8 @@ pub enum ToolAction {
     FrameAll,
     /// Switches the viewport between perspective and orthographic.
     ToggleProjection,
-    /// Turns the work-plane grid snap on or off.
-    ToggleGrid,
+    /// Turns one snap kind on or off (U116).
+    ToggleSnap(model::SnapKind),
     /// Turns the ground shadow of the active view on or off (U107).
     ToggleShadows,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
@@ -327,8 +327,8 @@ pub struct RibbonView {
     pub perspective: bool,
     /// The viewport owns its projection; an authored camera pins it.
     pub owns_view: bool,
-    /// The work-plane grid snap is on.
-    pub grid: bool,
+    /// Which snap kinds capture the pointer (U116).
+    pub snaps: model::SnapKinds,
     /// The active view draws the ground shadow (U107).
     pub shadows: bool,
 }
@@ -340,8 +340,8 @@ pub enum RibbonViewAction {
     FrameAll,
     /// Switch between perspective and orthographic.
     ToggleProjection,
-    /// Turn the work-plane grid snap on or off.
-    ToggleGrid,
+    /// Turn one snap kind on or off (U116).
+    ToggleSnap(model::SnapKind),
     /// Turn the active view's ground shadow on or off (U107).
     ToggleShadows,
 }
@@ -405,8 +405,8 @@ pub struct RibbonContext {
     pub perspective: bool,
     /// Whether the viewport owns its projection; an authored camera pins it.
     pub owns_view: bool,
-    /// Whether the work-plane grid snap is on.
-    pub grid: bool,
+    /// Which snap kinds capture the pointer (U116).
+    pub snaps: model::SnapKinds,
     /// Whether the active view draws the ground shadow (U107).
     pub shadows: bool,
     /// A running draft: its tool, how many points it has, and whether it is closed.
@@ -847,7 +847,7 @@ mod tests {
             active: None,
             perspective: true,
             owns_view: true,
-            grid: true,
+            snaps: model::SnapKinds::ALL,
             shadows: true,
             draft: None,
         }
@@ -1005,7 +1005,24 @@ mod tests {
                 ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
-            ("view", &["Frame all  (F)", "Grid snap  (G)", "Shadows  (S)", "Switch the projection  (O)"]),
+            (
+                "view",
+                &[
+                    "Centre",
+                    "Corner",
+                    "Crossing",
+                    "Frame all  (F)",
+                    "Grid  (G)",
+                    "Middle",
+                    "On a face",
+                    "On an edge",
+                    "Perpendicular",
+                    "Shadows  (S)",
+                    "Switch the projection  (O)",
+                    "Tangent",
+                    "World axes",
+                ],
+            ),
         ];
         for (id, hints) in expected {
             let mut state = Toolbars::new();

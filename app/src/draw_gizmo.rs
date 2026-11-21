@@ -17,18 +17,15 @@
 
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
 use geom::{DVec2, DVec3};
-use model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path};
+use model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path, Project, Sight};
 use scene::Camera;
-use ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides};
+use ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides, theme};
 use units::Length;
 
 use crate::gizmo_math::{
-    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, reference_screen, screen_point,
-    snap_point,
+    PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, reference_screen, screen_point,
 };
 
-/// Pointer distance inside which a draft end captures the pointer, in points.
-const SNAP_RADIUS_POINTS: f32 = 10.0;
 /// Radius of a placed draft point marker, in points.
 const POINT_RADIUS: f32 = 3.5;
 /// Sampling tolerance for a painted preview, in millimetres.
@@ -85,21 +82,24 @@ pub(crate) enum DrawAction {
     Cancel,
 }
 
-/// How the live pointer is snapped to the work plane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SnapSettings {
-    /// The 10 mm grid is on.
-    grid: bool,
-    /// Shift locks the next point to an axis through the anchor.
-    axis_lock: bool,
-    /// Alt drops the end and grid snaps.
-    ignore_snaps: bool,
+/// Everything one pointer frame of the drawing tool carries besides the camera and the draft.
+///
+/// The workspace's snap kinds, the chrome under the pointer and the keyboard travel together
+/// because a frame reads all three once and the frame's own signature is already at clippy's
+/// argument threshold (AGENTS §1.5, U116).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DrawInput {
+    /// Which snaps the workspace allows.
+    pub(crate) kinds: model::SnapKinds,
+    /// Whether the chrome owns the pointer this frame.
+    pub(crate) pointer_over_widget: bool,
+    /// The keyboard state a click carries.
+    pub(crate) modifiers: DrawModifiers,
 }
 
 /// Pointer state of the drawing tool; the draft itself belongs to the editor.
 #[derive(Debug)]
 pub(crate) struct DrawGizmo {
-    grid: bool,
     hover: Option<SnapOutcome>,
     /// The plane the draft started on, frozen while the tool runs.
     ///
@@ -129,19 +129,21 @@ pub(crate) struct DrawGizmo {
 /// The snapped cursor and where on screen it landed.
 #[derive(Clone, Copy, Debug)]
 struct SnapOutcome {
-    /// The point a click would use.
+    /// The point a click would use, in work-plane millimetres.
     point: [Length; 2],
-    /// Why the point moved.
-    target: SnapTarget,
-    /// The snapped point in viewport points.
+    /// What captured it, or `None` for the pointer's own point.
+    kind: Option<model::SnapKind>,
+    /// Whether Shift's axis lock moved it onto a plane axis through the anchor.
+    locked: bool,
+    /// The snapped point in viewport points: the candidate itself, which a scene snap may draw
+    /// above or below the plane the draft is stored on.
     screen: Pos2,
 }
 
 impl DrawGizmo {
-    /// A drawing tool with the 10 mm grid on and no hover.
+    /// A drawing tool with no hover.
     pub(crate) fn new() -> Self {
         Self {
-            grid: true,
             hover: None,
             plane: None,
             preview: None,
@@ -268,15 +270,9 @@ impl DrawGizmo {
         editor.drawing().cloned().unwrap_or(draft)
     }
 
-    /// Whether points snap to the 10 mm grid.
-    pub(crate) const fn grid(&self) -> bool {
-        self.grid
-    }
-
-    /// Turns the grid snap on or off.
-    pub(crate) fn toggle_grid(&mut self) {
-        self.grid = !self.grid;
-        self.hover = None;
+    /// What captured the pointer in the last frame, for the status bar's readout.
+    pub(crate) fn snap_kind(&self) -> Option<model::SnapKind> {
+        self.hover.and_then(|hover| hover.kind)
     }
 
     /// Applies the pointer to the live draft.
@@ -293,9 +289,9 @@ impl DrawGizmo {
         response: &egui::Response,
         rect: egui::Rect,
         camera: Camera,
+        project: &Project,
         editor: &mut Editor,
-        pointer_over_widget: bool,
-        modifiers: DrawModifiers,
+        input: DrawInput,
     ) -> Result<DrawAction, String> {
         let Some(draft) = editor.drawing().cloned() else {
             self.reset();
@@ -307,14 +303,12 @@ impl DrawGizmo {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
-        let Some(snapped) = snap_cursor(
-            &draft,
-            plane,
-            camera,
-            rect,
-            pointer,
-            SnapSettings { grid: self.grid, axis_lock: modifiers.axis_lock, ignore_snaps: modifiers.ignore_snaps },
-        ) else {
+        let Some(aim) = PlaneSnap::at(camera, rect, pointer, plane) else {
+            self.hover = None;
+            return Ok(DrawAction::Nothing);
+        };
+        let sight = editor.flags().sight();
+        let Some(snapped) = snap_cursor(&draft, aim, project, sight, input.kinds, input.modifiers) else {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
@@ -325,14 +319,14 @@ impl DrawGizmo {
         let draft = self.apply_sides(editor, draft);
         let placed = self.fields.as_ref().and_then(|fields| PointState::placed(&draft, raw, fields));
         let (point, at) = placed.as_ref().map_or((snapped.point, raw), |state| (state.point, state.at));
-        let screen = project(plane, camera, rect, at).unwrap_or(snapped.screen);
+        let screen = screen_point(camera, rect, plane.world(at)).unwrap_or(snapped.screen);
         self.pointer = Some(raw);
         self.state = placed;
-        self.hover = Some(SnapOutcome { point, target: snapped.target, screen });
+        self.hover = Some(SnapOutcome { point, kind: snapped.kind, locked: snapped.locked, screen });
         self.refresh_preview(&draft, point);
 
         // A click that the orientation widget owns must not also place a point.
-        if pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
+        if input.pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
             return Ok(DrawAction::Nothing);
         }
         let action = apply_click(editor, &draft, point)?;
@@ -454,10 +448,11 @@ impl DrawGizmo {
             for point in draft.points() {
                 paint_point(&painter, camera, rect, plane, *point, DRAFT_COLOR, POINT_RADIUS);
             }
-            if closes_at(draft, hover.point) {
+            let closing = closes_at(draft, hover.point);
+            if closing {
                 paint_point(&painter, camera, rect, plane, hover.point, CLOSE_COLOR, POINT_RADIUS + 2.0);
             }
-            paint_marker(&painter, hover);
+            paint_marker(&painter, hover, theme::accent(ui), closing);
         } else {
             for point in draft.points() {
                 paint_point(&painter, camera, rect, plane, *point, DRAFT_COLOR, POINT_RADIUS);
@@ -527,44 +522,41 @@ fn paint_guides(
 }
 
 /// The snapped cursor point, in document units and on screen.
+///
+/// The point the draft stores is a work-plane coordinate, so a scene snap — a corner, a centre, a
+/// crossing — is taken at its own place in the world and read back on the plane: that footprint is
+/// where the figure draws, and the marker stands on the candidate itself so the maker sees what
+/// captured the pointer. The one resolver answers which candidate that is (U116).
 fn snap_cursor(
     draft: &DrawDraft,
-    plane: WorkPlane,
-    camera: Camera,
-    rect: egui::Rect,
-    pointer: Pos2,
-    settings: SnapSettings,
+    aim: PlaneSnap,
+    project: &Project,
+    sight: Sight<'_>,
+    kinds: model::SnapKinds,
+    modifiers: DrawModifiers,
 ) -> Option<SnapOutcome> {
-    let ray = ray_to(pointer, rect, camera);
-    let world = plane.ray_point(ray)?;
-    let depth = (world - camera.eye()).dot(camera.forward());
-    let radius = camera.world_per_point(depth, f64::from(rect.height())) * f64::from(SNAP_RADIUS_POINTS);
-    let raw = plane.local(world);
-    // The next segment starts where the last stored segment ended, so the axis and end snap use the
-    // stored joint rather than the click that began it.
-    let anchor = draft.last_end().map(plane_point);
+    let plane = aim.plane;
+    // The next segment starts where the last stored segment ended, so the axis lock and the
+    // perpendicular and tangent constructions measure from the stored joint rather than from the
+    // click that began it.
+    let anchor = draft.last_end().map(|point| plane.world(plane_point(point)));
     // The last point is the segment start, so it is not offered as a place to join.
     let ends = draft
         .points()
         .split_last()
         .map_or(&[][..], |(_, ends)| ends)
         .iter()
-        .map(|point| plane_point(*point))
+        .map(|point| plane.world(plane_point(*point)))
         .collect::<Vec<_>>();
-    let snapped = snap_point(SnapRequest {
-        point: raw,
-        anchor,
-        ends: &ends,
-        mode: if settings.grid { SnapMode::Grid } else { SnapMode::Free },
-        axis_lock: settings.axis_lock,
-        end_radius: radius,
-        ignore_snaps: settings.ignore_snaps,
-    });
-    let (x, y) = (length_from_millimetres(snapped.point.x), length_from_millimetres(snapped.point.y));
-    let point = [x?, y?];
-    let world = plane.world(DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
-    let screen = screen_point(camera, rect, world)?;
-    Some(SnapOutcome { point, target: snapped.target, screen })
+    // Alt takes the pointer as it is: no kind captures, and Shift's explicit lock still applies.
+    let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
+    let answer = project.snap(aim.request(kinds, anchor, &ends, modifiers.axis_lock, None), sight)?;
+    let local = plane.local(answer.point);
+    let point = [length_from_millimetres(local.x)?, length_from_millimetres(local.y)?];
+    let on_plane = plane.world(DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
+    let screen =
+        screen_point(aim.camera, aim.rect, answer.point).or_else(|| screen_point(aim.camera, aim.rect, on_plane))?;
+    Some(SnapOutcome { point, kind: answer.kind, locked: answer.locked, screen })
 }
 
 /// The whole side count a plate's number names, inside the range a polygon accepts.
@@ -726,26 +718,13 @@ fn paint_point(
     painter.circle_stroke(position, radius, Stroke::new(1.0, Color32::from_black_alpha(160)));
 }
 
-/// Paints the snap marker: a diamond whose colour says what captured the pointer.
-fn paint_marker(painter: &egui::Painter, hover: SnapOutcome) {
-    let color = match hover.target {
-        SnapTarget::End => CLOSE_COLOR,
-        SnapTarget::Grid => Color32::from_gray(210),
-        SnapTarget::Axis => Color32::from_rgb(255, 220, 96),
-        // The drawing tools never resolve a surface point; the ruler does, and paints its own
-        // marker. The arm keeps the match total rather than inventing a colour here.
-        SnapTarget::Surface => Color32::from_rgb(120, 200, 255),
-        SnapTarget::Free => Color32::from_gray(150),
-    };
-    let center = hover.screen;
-    let size = 6.0;
-    let corners = vec![
-        Pos2::new(center.x, center.y - size),
-        Pos2::new(center.x + size, center.y),
-        Pos2::new(center.x, center.y + size),
-        Pos2::new(center.x - size, center.y),
-    ];
-    painter.add(Shape::closed_line(corners, Stroke::new(1.5, color)));
+/// Paints the snap marker: the kind's own glyph, in the theme's ink.
+///
+/// A point that would close the ring keeps the green the chain has always drawn, because that is a
+/// promise about the draft and not a kind of snap.
+fn paint_marker(painter: &egui::Painter, hover: SnapOutcome, ink: Color32, closing: bool) {
+    let ink = if closing { CLOSE_COLOR } else { ink };
+    paint_snap_marker(painter, hover.screen, hover.kind, hover.locked, ink);
 }
 
 #[cfg(test)]
@@ -972,7 +951,7 @@ mod tests {
 
     /// Every dash a frame painted, as the segment it draws.
     fn dashes(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Pos2, Pos2)> {
-        fn collect(shape: &Shape, out: &mut Vec<(Pos2, Pos2)>) {
+        fn collect(shape: &egui::Shape, out: &mut Vec<(Pos2, Pos2)>) {
             match shape {
                 Shape::LineSegment { points, .. } => out.push((points[0], points[1])),
                 Shape::Vec(shapes) => {
@@ -1066,17 +1045,5 @@ mod tests {
         gizmo.refresh_preview(&draft, through);
         assert!(gizmo.preview().is_some(), "the pending arc never blanks the preview");
         assert!(gizmo.preview_error().is_some(), "the degenerate arc names its reason");
-    }
-
-    #[test]
-    fn a_grid_click_and_a_free_click_produce_different_points() {
-        let draft = DrawDraft::new(DrawTool::Polyline);
-        let mut gizmo = DrawGizmo::new();
-        assert!(gizmo.grid());
-        gizmo.toggle_grid();
-        assert!(!gizmo.grid());
-        gizmo.toggle_grid();
-        assert!(gizmo.grid());
-        let _ = draft;
     }
 }

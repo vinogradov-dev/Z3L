@@ -51,6 +51,7 @@ mod scene_tree;
 mod scrub;
 mod section;
 pub mod settings;
+pub mod snap;
 mod target;
 pub mod theme;
 pub mod tool_card;

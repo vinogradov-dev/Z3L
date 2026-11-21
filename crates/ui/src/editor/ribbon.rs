@@ -73,7 +73,7 @@ impl Editor {
             active,
             perspective: view.perspective,
             owns_view: view.owns_view,
-            grid: view.grid,
+            snaps: view.snaps,
             shadows: view.shadows,
             draft,
         };
@@ -181,7 +181,9 @@ impl Editor {
                 ToolAction::ToggleProjection => {
                     outcome.view = Some(toolbars::RibbonViewAction::ToggleProjection);
                 }
-                ToolAction::ToggleGrid => outcome.view = Some(toolbars::RibbonViewAction::ToggleGrid),
+                ToolAction::ToggleSnap(kind) => {
+                    outcome.view = Some(toolbars::RibbonViewAction::ToggleSnap(kind));
+                }
                 ToolAction::ToggleShadows => outcome.view = Some(toolbars::RibbonViewAction::ToggleShadows),
             }
         }

@@ -407,6 +407,15 @@ icons!(View, "view", View, view {
     RESTORE => "restore",
     HOME => "home",
     GRID_SNAP => "grid-snap": Reference,
+    SNAP_VERTEX => "snap-vertex": Reference,
+    SNAP_INTERSECTION => "snap-intersection": Reference,
+    SNAP_MIDPOINT => "snap-midpoint": Reference,
+    SNAP_CENTRE => "snap-centre": Reference,
+    SNAP_PERPENDICULAR => "snap-perpendicular": Reference,
+    SNAP_TANGENT => "snap-tangent": Reference,
+    SNAP_EDGE => "snap-edge": Reference,
+    SNAP_FACE => "snap-face": Reference,
+    SNAP_AXIS => "snap-axis": Reference,
     ORBIT => "orbit",
     PAN => "pan",
     ZOOM => "zoom",
@@ -1252,7 +1261,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 120);
+        assert_eq!(seen.len(), 129);
     }
 
     #[test]

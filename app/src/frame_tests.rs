@@ -14,9 +14,9 @@
 #![allow(clippy::expect_used)]
 
 use crate::file_picker::{Order, PickMode};
-use crate::gizmo_math::SnapTarget;
 use eframe::egui;
 use geom::DVec2;
+use model::SnapKind;
 use model::{ClassCode, ContourSegment, Envelope, Id};
 use scene::Camera;
 use text::{Lang, Message};
@@ -879,20 +879,23 @@ fn a_locked_node_refuses_the_delete_key_and_names_itself() {
 }
 
 #[test]
-fn the_grid_key_turns_the_running_drafts_grid_and_nothing_else() {
-    // The key is read with the shell's table and its effect belongs to the draft in front: outside a
-    // draft the shell asks for it and the document changes nothing (U96).
+fn the_grid_key_turns_the_workspaces_snap_and_nothing_else() {
+    // The switch is the workspace's set of kinds and not a tool's, so the key works with no draft in
+    // front and the value survives a restart; it writes no revision and leaves no undo entry (U96,
+    // U116).
     let mut harness = Harness::new("frame-grid-key");
     harness.settle();
-    let idle = harness.app.tabs.active().draw_gizmo.grid();
+    let idle = harness.app.tabs.active().snaps().grid;
     harness.press(egui::Key::G, egui::Modifiers::NONE);
-    assert_eq!(harness.app.tabs.active().draw_gizmo.grid(), idle, "no draft, no snap to turn");
+    assert_ne!(harness.app.tabs.active().snaps().grid, idle, "the key turns the grid with no draft");
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_eq!(harness.app.tabs.active().snaps().grid, idle, "and turns it back");
 
     harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Line);
     harness.settle();
     let revision = harness.revision();
     harness.press(egui::Key::G, egui::Modifiers::NONE);
-    assert_ne!(harness.app.tabs.active().draw_gizmo.grid(), idle, "the key turned the draft's grid");
+    assert_ne!(harness.app.tabs.active().snaps().grid, idle, "the key runs with a draft too");
     assert_eq!(harness.revision(), revision, "the grid is view state");
 }
 
@@ -1482,6 +1485,9 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1770,6 +1776,9 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1841,6 +1850,9 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -3645,7 +3657,7 @@ fn the_ruler_measures_two_points_and_writes_nothing() {
         assert_eq!(axis.micrometres() % 10_000, 0, "the grid snapped the point: {axis}");
     }
     assert!(
-        matches!(harness.app.tabs.active().measure_gizmo.hover().map(|hover| hover.target), Some(SnapTarget::Grid)),
+        matches!(harness.app.tabs.active().measure_gizmo.hover().and_then(|hover| hover.kind), Some(SnapKind::Grid)),
         "the marker says the grid captured the pointer"
     );
 
@@ -3855,7 +3867,12 @@ fn the_ruler_snaps_to_the_board_under_the_pointer() {
     harness.press(egui::Key::M, egui::Modifiers::NONE);
     harness.hover(at);
     let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
-    assert_eq!(hover.target, SnapTarget::Surface, "the panel face captures the pointer");
+    assert_ne!(
+        hover.kind,
+        Some(SnapKind::Grid),
+        "a scene point captures the pointer and not the work plane's grid: {:?}",
+        hover.kind
+    );
     let revision = harness.revision();
     harness.click(at, egui::PointerButton::Primary);
 
@@ -3896,7 +3913,12 @@ fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
     harness.press(egui::Key::M, egui::Modifiers::NONE);
     harness.hover(at);
     let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
-    assert_eq!(hover.target, SnapTarget::Surface, "the board captures the pointer, not the envelope");
+    assert_ne!(
+        hover.kind,
+        Some(SnapKind::Grid),
+        "a face of the board captures the pointer and not the envelope or the plane: {:?}",
+        hover.kind
+    );
     harness.click(at, egui::PointerButton::Primary);
 
     let document = harness.app.tabs.active();
@@ -5224,6 +5246,9 @@ fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -5280,6 +5305,9 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);

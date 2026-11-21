@@ -43,14 +43,14 @@ use units::Length;
 use crate::box_gizmo::{self, BoxGrips, GripUpdate};
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
-use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawModifiers};
+use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawInput, DrawModifiers};
 use crate::extrude_gizmo::{ExtrudeEvent, ExtrudeGizmo};
 use crate::file_menu::{FileAction, FileMenu, PreservedSections};
 use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
-use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
+use crate::measure_gizmo::{MeasureGizmo, MeasureInput, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
 use crate::osd;
@@ -419,6 +419,14 @@ pub(crate) struct Document {
     /// The window's display state, kept so a frame rebuilt outside the viewport draws what the
     /// viewport would.
     display: Display,
+    /// Which snap kinds capture the pointer: the workspace's value, kept live here so a frame reads
+    /// it without a settings lookup and the shell writes the file from it (U116).
+    ///
+    /// It is view state and never document data (ADR 0065): turning a kind off costs no revision and
+    /// leaves no undo entry.
+    snaps: model::SnapKinds,
+    /// Whether a kind changed since the shell last wrote the workspace settings.
+    snaps_changed: bool,
 }
 
 impl Document {
@@ -514,6 +522,8 @@ impl Document {
             scene_failures,
             scene_error,
             display,
+            snaps: settings.snaps.kinds(),
+            snaps_changed: false,
         })
     }
 
@@ -785,15 +795,38 @@ impl Document {
         save
     }
 
-    /// Turns the work-plane grid on or off for the tool in front of the person.
+    /// Turns the work-plane grid on or off: the `G` key and the View tab's Snaps group.
     ///
-    /// The key is the shell's, so it is read with the rest of the key table even when no tool runs;
-    /// outside a draft or the ruler the action has nothing to snap and changes nothing. The ruler
-    /// reads the same switch as the drawing tools, because both snap on the one work plane (0051).
+    /// The switch is the workspace's and not a tool's, so the key works with no tool armed and the
+    /// value survives a restart: the shell writes the file whenever a kind changes (U116).
     pub(crate) fn toggle_draw_grid(&mut self) {
-        if self.editor.drawing().is_some() || self.editor.measure().is_some() {
-            self.draw_gizmo.toggle_grid();
+        self.set_snap_kind(model::SnapKind::Grid, !self.snaps.grid);
+    }
+
+    /// Turns one snap kind on or off, and marks the workspace value as unsaved.
+    pub(crate) fn set_snap_kind(&mut self, kind: model::SnapKind, on: bool) {
+        if self.snaps.enabled(kind) == on {
+            return;
         }
+        self.snaps.set(kind, on);
+        self.snaps_changed = true;
+    }
+
+    /// Which snap kinds capture the pointer in this tab.
+    pub(crate) const fn snaps(&self) -> model::SnapKinds {
+        self.snaps
+    }
+
+    /// Takes the kinds the shell must write into the workspace settings, once.
+    pub(crate) fn take_snaps_change(&mut self) -> Option<model::SnapKinds> {
+        let changed = core::mem::take(&mut self.snaps_changed);
+        changed.then_some(self.snaps)
+    }
+
+    /// Installs the workspace's snap kinds: a settings section that changed under this tab.
+    pub(crate) fn set_snaps(&mut self, snaps: model::SnapKinds) {
+        self.snaps = snaps;
+        self.snaps_changed = false;
     }
 
     /// Removes nodes in one `node.delete.many`, so the whole batch is one undo entry.
@@ -2723,9 +2756,9 @@ impl Document {
                 &response,
                 rect,
                 self.scene.camera,
+                self.session.project(),
                 &mut self.editor,
-                pointer_over_widget,
-                modifiers,
+                DrawInput { kinds: self.snaps, pointer_over_widget, modifiers },
             ) {
                 Ok(action) => action,
                 Err(error) => {
@@ -2764,14 +2797,10 @@ impl Document {
             };
             let changed = self.measure_gizmo.update(
                 &response,
-                rect,
-                self.scene.camera,
                 self.session.project(),
                 self.session.contact(),
                 &mut self.editor,
-                self.draw_gizmo.grid(),
-                pointer_over_widget,
-                modifiers,
+                MeasureInput { camera: self.scene.camera, rect, kinds: self.snaps, pointer_over_widget, modifiers },
             );
             if changed {
                 ui.ctx().request_repaint();
@@ -3758,7 +3787,7 @@ impl Document {
                 Projection::Perspective { .. }
             ),
             owns_view: viewport_owns_view(self.session.project()),
-            grid: self.draw_gizmo.grid(),
+            snaps: self.snaps,
             // The shadow switch is the active view's; its intensity is the workspace's and has no
             // control in the ribbon (U107, U110).
             shadows: self.layout.active_shadows(),
@@ -3853,7 +3882,7 @@ impl Document {
                 Some(ui::RibbonViewAction::ToggleProjection) => {
                     self.toggle_view_projection();
                 }
-                Some(ui::RibbonViewAction::ToggleGrid) => self.draw_gizmo.toggle_grid(),
+                Some(ui::RibbonViewAction::ToggleSnap(kind)) => self.set_snap_kind(kind, !self.snaps.enabled(kind)),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
                 None => {}
             }

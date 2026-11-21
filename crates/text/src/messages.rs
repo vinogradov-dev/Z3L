@@ -1172,6 +1172,51 @@ messages! {
         "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
         "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
     ],
+    SnapVertex = ["Corner", "Угол"],
+    SnapVertexHint = [
+        "A corner of a panel, a body or a frame, and a point the drawing already has.",
+        "Угол панели, тела или корпуса и уже поставленная точка чертежа."
+    ],
+    SnapIntersection = ["Crossing", "Пересечение"],
+    SnapIntersectionHint = [
+        "Where two edges cross as the drawing plane sees them.",
+        "Место, где два ребра пересекаются в плоскости чертежа."
+    ],
+    SnapMidpoint = ["Middle", "Середина"],
+    SnapMidpointHint = ["The middle of an edge.", "Середина ребра."],
+    SnapCentre = ["Centre", "Центр"],
+    SnapCentreHint = [
+        "The centre of a face, a box, a primitive or a circle.",
+        "Центр грани, коробки, тела или окружности."
+    ],
+    SnapPerpendicular = ["Perpendicular", "Перпендикуляр"],
+    SnapPerpendicularHint = [
+        "The foot of the perpendicular from the previous point onto an edge.",
+        "Основание перпендикуляра из предыдущей точки на ребро."
+    ],
+    SnapTangent = ["Tangent", "Касание"],
+    SnapTangentHint = [
+        "Where a line from the previous point touches a circle in the drawing plane.",
+        "Точка, где линия из предыдущей точки касается окружности в плоскости чертежа."
+    ],
+    SnapEdge = ["On an edge", "На ребре"],
+    SnapEdgeHint = ["A point anywhere along an edge.", "Точка в любом месте ребра."],
+    SnapFace = ["On a face", "На грани"],
+    SnapFaceHint = [
+        "The surface the pointer points at, as the ruler measures it.",
+        "Поверхность, на которую указывает курсор, как её измеряет линейка."
+    ],
+    SnapAxis = ["World axes", "Мировые оси"],
+    SnapAxisHint = [
+        "A point on the world X, Y or Z axis, where the drawing plane holds it.",
+        "Точка на мировой оси X, Y или Z там, где её держит плоскость чертежа."
+    ],
+    SnapGrid = ["Grid", "Сетка"],
+    SnapGridHint = [
+        "The drawing plane's 10 mm grid.",
+        "Сетка плоскости чертежа с шагом 10 мм."
+    ],
+    SnapCaptured = ["Snap: {}", "Привязка: {}"],
     SnapTolerance = ["Tolerance", "Допуск"],
     SnapToleranceHint = [
         "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
