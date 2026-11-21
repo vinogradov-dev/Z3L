@@ -129,6 +129,8 @@ If an element cannot be labelled with its role (guide §3), remove it.
 - the action is clear without text, at 16 px, in one ink;
 - the ink is the family's literal from the table and the file carries no other colour;
 - the result is the strongest element; auxiliary geometry does not compete;
+- the largest face carries the result tone: when a passive face is the biggest shape the glyph shows
+  another form, as a narrow slab's top face turns an upright panel into a column;
 - no decorative lines, no random detail, no white patch;
 - the metaphor matches the operation, not a neighbouring command;
 - a service icon uses the same glyph on every surface and distinguishes status by enclosure;
