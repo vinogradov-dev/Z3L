@@ -976,6 +976,22 @@ mod tests {
     }
 
     #[test]
+    fn the_snap_readout_names_the_kind_that_captured_the_pointer() {
+        // U116: a capture nobody can name is a jump nobody can explain, so the readout takes the
+        // kind's own word while a snap holds the pointer and the grid's step while none does.
+        let ctx = context(Lang::En);
+        let info = StatusInfo { snap: Some(model::SnapKind::Intersection), ..idle_status() };
+        let (output, _) = row_frame(&ctx, &info, 1024.0);
+        let texts = drawn_text(&output.shapes);
+        output.drop_without_applying_deltas();
+        assert!(texts.iter().any(|text| text == "Snap: Crossing"), "the readout names the kind: {texts:?}");
+        assert!(
+            !texts.iter().any(|text| text.contains("Snap 10 mm")),
+            "and it does not name the step as well: {texts:?}"
+        );
+    }
+
+    #[test]
     fn the_snap_readout_is_quiet_while_the_snap_is_off() {
         // The ink is the readout's one state: the step is written in the primary colour while it
         // holds and in the dim one while it does not, so the line says which state the window is in

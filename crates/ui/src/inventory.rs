@@ -845,6 +845,16 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Container),
         icon: Some(crate::icons::scene::VOID),
     },
+    // The snap resolver is the canonical atom: it reads the pointer's ray and the document, answers
+    // a point and a kind, and writes nothing. The View tab's Snaps group draws its ten switches, and
+    // the drawing tool, the ruler and the object move consume it (ADR 0118, ADR 0199, U116).
+    Row {
+        id: "snap.scene",
+        label: Message::GroupSnaps,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::view::SNAP_VERTEX),
+    },
     // The ground shadow's switch is view state: it writes no document, leaves no undo entry and the
     // renderer reads it per view (U107). Its intensity is one workspace value with no command of its
     // own — a field on the Settings page, not a capability (U110).
@@ -867,7 +877,7 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "view.display.shadows"];
+pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {

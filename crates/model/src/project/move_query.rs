@@ -252,7 +252,11 @@ impl SnapSettings {
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { kinds: SnapKinds::ALL, frames: true, tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000) }
+        Self {
+            kinds: SnapKinds::ALL,
+            frames: true,
+            tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000),
+        }
     }
 }
 

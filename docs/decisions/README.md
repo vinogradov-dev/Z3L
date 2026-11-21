@@ -204,6 +204,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0196](0196-the-read-model-is-one-typed-question.md) | The read model is one typed question, and its stable answers are resources | Accepted; implements 0183's report set and 0185's "session read-only queries" |
 | [0197](0197-a-body-boolean-is-a-step-that-names-its-tool.md) | A body boolean is a step that names its tool | Accepted; implements 0041's boolean steps as a document feature |
 | [0198](0198-a-batch-is-planned-on-a-copy-and-lands-in-one-piece.md) | A batch is planned on a copy and lands in one piece | Accepted; implements the session operation 0190 asked for |
+| [0199](0199-one-set-of-scene-snaps.md) | One set of scene snaps, resolved in the model | Accepted; extends 0051 and narrows its "no document" clause |
 
 ## Format
 

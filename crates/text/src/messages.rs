@@ -926,7 +926,6 @@ messages! {
     ToolAssignMaterial = ["Assign material", "Назначить материал"],
     ToolFrameAll = ["Frame all", "Показать всё"],
     ToolProjection = ["Projection", "Проекция"],
-    ToolGridSnap = ["Grid snap", "Привязка"],
     ToolStyle = ["Display style", "Стиль отображения"],
     ToolContours = ["Contours", "Контуры"],
     ToolShadows = ["Shadows", "Тени"],

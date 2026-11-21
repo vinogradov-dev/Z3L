@@ -23,7 +23,7 @@
 //! Changes when: a snap kind appears or its priority changes, or a document shape gains a corner, a
 //! centre or an edge the pointer should see.
 
-use geom::{Contact, DVec2, DVec3};
+use geom::{DVec2, DVec3};
 use units::Length;
 
 use super::sight::Sight;
@@ -323,6 +323,12 @@ pub struct SnapRequest<'a> {
     /// anchor. The lock is a constraint the maker states and not a kind, so it survives every
     /// switch and composes with the grid exactly as it always has (ADR 0051).
     pub axis_lock: bool,
+    /// The face the tool itself measured under the pointer, in world millimetres.
+    ///
+    /// The surface is the tool's own reading — the ruler steps past a product's reserved box to the
+    /// board behind it — and this resolver only gives it its place in the order: a measured face is
+    /// a place the maker can see, so it beats the grid and loses to a corner (ADR 0183).
+    pub face: Option<DVec3>,
 }
 
 /// Where the pointer landed, and what captured it.
@@ -367,16 +373,11 @@ impl Project {
     /// plane axis through the anchor if the hand asked for that, rounded to the grid if the grid is
     /// on. A grid point is the plane's quantum and not a capture, so it rounds wherever the pointer
     /// is; every other kind needs the tolerance.
-    pub fn snap(
-        &self,
-        request: SnapRequest<'_>,
-        sight: Sight<'_>,
-        contact: Option<&dyn Contact>,
-    ) -> Option<SnapAnswer> {
+    pub fn snap(&self, request: SnapRequest<'_>, sight: Sight<'_>) -> Option<SnapAnswer> {
         let plane = request.plane;
         let free = plane.intersect(request.ray_origin, request.ray_direction)?;
         let tolerance = request.tolerance.millimetres_f64().max(0.0);
-        if let Some(hit) = self.point_snap(&request, sight, contact, free, tolerance) {
+        if let Some(hit) = self.point_snap(&request, sight, free, tolerance) {
             return Some(hit);
         }
         if request.kinds.axis
@@ -413,7 +414,6 @@ impl Project {
         &self,
         request: &SnapRequest<'_>,
         sight: Sight<'_>,
-        contact: Option<&dyn Contact>,
         free: DVec3,
         tolerance: f64,
     ) -> Option<SnapAnswer> {
@@ -451,20 +451,16 @@ impl Project {
                     request.ray_direction,
                     tolerance,
                 ),
-                SnapKind::Perpendicular => anchor
-                    .and_then(|anchor| perpendicular(plane, &scene.lines, anchor, pointer, tolerance)),
+                SnapKind::Perpendicular => {
+                    anchor.and_then(|anchor| perpendicular(plane, &scene.lines, anchor, pointer, tolerance))
+                }
                 SnapKind::Tangent => anchor.and_then(|anchor| tangent(plane, &scene.arcs, anchor, pointer, tolerance)),
-                SnapKind::Edge => nearest_on_lines(
-                    &scene.lines,
-                    request.ray_origin,
-                    request.ray_direction,
-                    tolerance,
-                )
-                .or_else(|| nearest_on_arcs(&scene.arcs, request.ray_origin, request.ray_direction, tolerance)),
-                SnapKind::Face => face(self, request, sight, contact, free, tolerance),
+                SnapKind::Edge => nearest_on_lines(&scene.lines, request.ray_origin, request.ray_direction, tolerance)
+                    .or_else(|| nearest_on_arcs(&scene.arcs, request.ray_origin, request.ray_direction, tolerance)),
+                SnapKind::Face => request.face.filter(|face| face.is_finite()),
                 SnapKind::Axis | SnapKind::Grid => None,
             };
-            if let Some(point) = point {
+            if let Some(point) = point.filter(|point| visible(*point, request, tolerance)) {
                 return Some(SnapAnswer { point, kind: Some(kind), locked: false });
             }
         }
@@ -503,6 +499,7 @@ impl Project {
                     }
                 }
                 Node::Object(object) => scene.object(object.id(), object.geometry(), world),
+                // (a container's envelope is filed below, beside its box)
                 Node::Container(inner) => {
                     if let Some(envelope) = inner.envelope() {
                         let max = DVec3::new(
@@ -511,6 +508,9 @@ impl Project {
                             envelope.z().millimetres_f64(),
                         );
                         scene.boxed(inner.id(), DVec3::ZERO, max, world);
+                        // The middle of a piece's reserved space is empty, so it is a place a pointer
+                        // may name: the centre of a cabinet's inside, not of a board (U116).
+                        scene.mark(inner.id(), world.transform_point(max * 0.5), SnapKind::Centre);
                     }
                     self.collect_snap_scene(inner, scene, depth.saturating_add(1), sight);
                 }
@@ -594,8 +594,10 @@ impl Scene {
             self.lines.push([above, above_next]);
             self.lines.push([corner, above]);
         }
+        // The six face centres are places a pointer can name: each is on the surface of the part. The
+        // middle of the box is inside the material, so a panel or a body offers no such mark — a
+        // marker drawn in the middle of a board names no place a maker works at (U116).
         let centre = (min + max) * 0.5;
-        self.mark(id, world.transform_point(centre), SnapKind::Centre);
         for axis in 0..3 {
             let mut low = centre;
             let mut high = centre;
@@ -669,6 +671,11 @@ impl Scene {
         }
         if let Some((min, max)) = object_bounds_mm(geometry) {
             self.boxed(id, min, max, world);
+            // A primitive is built around its own centre — a sphere's middle, a cone's axis — so the
+            // ball's centre is a place the maker names even though the material is there (ADR 0139).
+            if matches!(geometry, Geometry::Primitive(_)) {
+                self.mark(id, world.transform_point((min + max) * 0.5), SnapKind::Centre);
+            }
         }
     }
 }
@@ -864,24 +871,23 @@ fn on_arc(plane: SnapPlane, arc: &SceneArc, point: DVec2, tolerance: f64) -> boo
         .any(|(start, end)| point_to_segment(point, start, end) <= tolerance.max(1.0e-3))
 }
 
-/// The face under the pointer, when it stands no further from the sketch plane than the tolerance.
+/// Whether a candidate is in front of the face the tool measured.
 ///
-/// A face the plane runs through is the face the maker is drawing on, and the pointer's own point is
-/// that face's: capturing it changes nothing. A face far from the plane — a board over the drawing —
-/// is a different place in the world, and the footprint of a corner on the floor is not the corner,
-/// so it does not capture. The distance is the standoff, not the ray, because the ray always meets
-/// the face it names.
-fn face(
-    project: &Project,
-    request: &SnapRequest<'_>,
-    sight: Sight<'_>,
-    contact: Option<&dyn Contact>,
-    free: DVec3,
-    tolerance: f64,
-) -> Option<DVec3> {
-    let probe = project.probe(request.ray_origin, request.ray_direction, sight, contact)?;
-    let point = probe.face.point;
-    ((point - free).length() <= tolerance).then_some(point)
+/// A tool that stores the point itself — the ruler — measures what the eye sees, so a corner or a
+/// centre behind the first surface is not a place it may land on: the marker would name a point
+/// hidden inside a board. A tool that stores a plane coordinate — every sketch tool — hands in no
+/// face and keeps every candidate, because the point it stores is the candidate's footprint on the
+/// plane and a board above the drawing is exactly what its shadow is for (U116).
+fn visible(point: DVec3, request: &SnapRequest<'_>, tolerance: f64) -> bool {
+    let Some(face) = request.face else {
+        return true;
+    };
+    let Some(direction) = request.ray_direction.try_normalize() else {
+        return true;
+    };
+    let face_along = (face - request.ray_origin).dot(direction);
+    let point_along = (point - request.ray_origin).dot(direction);
+    point_along <= face_along + tolerance
 }
 
 /// The nearest point of a segment to another point in the plane.
@@ -913,7 +919,8 @@ fn ray_to_segment(origin: DVec3, direction: DVec3, start: DVec3, end: DVec3) -> 
     let denominator = ray_along * length - along * along;
     // The ray starts at the eye and never runs backwards, so its parameter is clamped at zero; the
     // segment is clamped to its own ends, and one more pass keeps the two answers consistent.
-    let mut ray_parameter = if denominator.abs() > DEGENERATE { (along * segment_offset - length * ray_offset) / denominator } else { 0.0 };
+    let mut ray_parameter =
+        if denominator.abs() > DEGENERATE { (along * segment_offset - length * ray_offset) / denominator } else { 0.0 };
     ray_parameter = ray_parameter.max(0.0);
     let mut segment_parameter = (along * ray_parameter + segment_offset) / length;
     segment_parameter = segment_parameter.clamp(0.0, 1.0);
@@ -1064,6 +1071,7 @@ mod tests {
             anchor: None,
             ends: &[],
             axis_lock: false,
+            face: None,
         }
     }
 
@@ -1075,7 +1083,7 @@ mod tests {
     }
 
     fn snapped(project: &Project, request: SnapRequest<'_>) -> SnapAnswer {
-        project.snap(request, Sight::none(), None).expect("the ray meets the plane")
+        project.snap(request, Sight::none()).expect("the ray meets the plane")
     }
 
     fn close(point: DVec3, expected: DVec3) -> bool {
@@ -1098,8 +1106,8 @@ mod tests {
         assert!(close(midpoint.point, DVec3::new(700.0, 250.0, 0.0)), "{:?}", midpoint.point);
 
         let centre = snapped(&project, request(down(352.0, 251.0), only(SnapKind::Centre)));
-        assert_eq!(centre.kind, Some(SnapKind::Centre), "the box's own middle");
-        assert!(close(centre.point, DVec3::new(350.0, 250.0, 9.0)), "{:?}", centre.point);
+        assert_eq!(centre.kind, Some(SnapKind::Centre), "the middle of a face");
+        assert!(close(centre.point, DVec3::new(350.0, 250.0, 0.0)), "{:?}", centre.point);
     }
 
     #[test]
@@ -1212,24 +1220,36 @@ mod tests {
     }
 
     #[test]
-    fn a_face_far_from_the_sketch_plane_does_not_capture() {
+    fn the_face_the_tool_measured_stands_above_the_grid_and_below_a_corner() {
         let project = shelf();
-        let above = snapped(&project, request(down(350.0, 250.0), only(SnapKind::Face)));
-        assert_eq!(above.kind, None, "the board's face is 18 mm above the plane the tool draws on");
-        assert!(close(above.point, DVec3::new(350.0, 250.0, 0.0)));
+        let mut request = request(down(403.0, 253.0), SnapKinds::ALL);
+        request.face = Some(DVec3::new(403.0, 253.0, 18.0));
+        let answer = snapped(&project, request);
+        assert_eq!(answer.kind, Some(SnapKind::Face), "the surface the pointer points at");
+        assert!(close(answer.point, DVec3::new(403.0, 253.0, 18.0)), "{:?}", answer.point);
 
-        let mut on_face = request(down(350.0, 250.0), only(SnapKind::Face));
-        on_face.plane = SnapPlane::new(DVec3::new(0.0, 0.0, 18.0), DVec3::X, DVec3::Y).expect("a plane on the face");
-        let answer = snapped(&project, on_face);
-        assert_eq!(answer.kind, Some(SnapKind::Face), "a plane drawn on the face captures it");
-        assert!(close(answer.point, DVec3::new(350.0, 250.0, 18.0)), "{:?}", answer.point);
+        // A corner still wins over the face, because a corner is an exact point of the figure — and
+        // a corner *behind* the face the tool measured does not, because the maker cannot see it.
+        let mut near_corner = request;
+        near_corner.ray_origin = DVec3::new(698.0, 499.0, 500.0);
+        near_corner.face = Some(DVec3::new(698.0, 499.0, 0.0));
+        assert_eq!(snapped(&project, near_corner).kind, Some(SnapKind::Vertex));
+        near_corner.face = Some(DVec3::new(698.0, 499.0, 0.0));
+        let mut behind = near_corner;
+        behind.ray_origin = DVec3::new(698.0, 499.0, 500.0);
+        behind.face = Some(DVec3::new(698.0, 499.0, 400.0));
+        assert_eq!(
+            snapped(&project, behind).kind,
+            Some(SnapKind::Face),
+            "a corner behind the face is hidden from the eye"
+        );
     }
 
     #[test]
     fn a_ray_along_the_plane_answers_nothing() {
         let project = shelf();
         let ray = (DVec3::new(0.0, 0.0, 0.0), DVec3::X);
-        assert!(project.snap(request(ray, SnapKinds::ALL), Sight::none(), None).is_none());
+        assert!(project.snap(request(ray, SnapKinds::ALL), Sight::none()).is_none());
     }
 
     #[test]
@@ -1238,7 +1258,7 @@ mod tests {
         let count = |kind| marks.iter().filter(|mark| mark.kind == kind).count();
         assert_eq!(count(SnapKind::Vertex), 8, "a box's eight corners");
         assert_eq!(count(SnapKind::Midpoint), 12, "the middle of each of its edges");
-        assert_eq!(count(SnapKind::Centre), 7, "its centre and its six face centres");
+        assert_eq!(count(SnapKind::Centre), 6, "the middle of each of its six faces");
         assert!(marks.iter().all(|mark| mark.id == id(2)), "every mark names the node it belongs to");
     }
 

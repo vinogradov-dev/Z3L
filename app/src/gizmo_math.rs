@@ -1786,6 +1786,52 @@ mod tests {
     }
 
     #[test]
+    fn every_snap_kind_draws_a_glyph_of_its_own() {
+        // Ten kinds, ten glyphs: a maker learns the shapes once and reads them on every tool. A
+        // glyph is signed by the primitives it draws and where they land, so a kind that painted
+        // nothing, or the same picture as its neighbour, is the failure this test names (U116).
+        let mut drawn = std::collections::BTreeSet::new();
+        for kind in model::SnapKind::ALL {
+            let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+                paint_snap_marker(ui.painter(), Pos2::new(10.0, 10.0), Some(kind), false, Color32::WHITE);
+            });
+            output.textures_delta.clear();
+            let signature = glyph(&output.shapes.iter().map(|clipped| &clipped.shape).collect::<Vec<_>>());
+            assert!(!signature.is_empty(), "{kind:?} draws nothing");
+            assert!(drawn.insert(signature.clone()), "{kind:?} draws the glyph of another kind: {signature:?}");
+        }
+        assert_eq!(drawn.len(), model::SnapKind::ALL.len(), "one glyph per kind");
+
+        // The constraint the hand states draws the diamond the draft always drew.
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            paint_snap_marker(ui.painter(), Pos2::new(10.0, 10.0), None, true, Color32::WHITE);
+        });
+        output.textures_delta.clear();
+        assert!(!glyph(&output.shapes.iter().map(|clipped| &clipped.shape).collect::<Vec<_>>()).is_empty());
+    }
+
+    /// The primitives a glyph draws and where they land: two glyphs differ when one number differs.
+    fn glyph(shapes: &[&egui::Shape]) -> Vec<String> {
+        let mut out = Vec::new();
+        for shape in shapes {
+            if let egui::Shape::Vec(inner) = shape {
+                out.extend(glyph(&inner.iter().collect::<Vec<_>>()));
+                continue;
+            }
+            let name = match shape {
+                egui::Shape::Rect(_) => "rect",
+                egui::Shape::Circle(_) => "circle",
+                egui::Shape::LineSegment { .. } => "line",
+                egui::Shape::Path(_) => "path",
+                _ => "other",
+            };
+            let rect = shape.visual_bounding_rect();
+            out.push(format!("{name} {:.1},{:.1},{:.1},{:.1}", rect.min.x, rect.min.y, rect.max.x, rect.max.y));
+        }
+        out
+    }
+
+    #[test]
     fn screen_segments_reject_degenerate_input() {
         assert!(distance_to_segment(Pos2::ZERO, Pos2::ZERO, Pos2::ZERO).is_none());
         assert_eq!(distance_to_segment(Pos2::new(0.0, 3.0), Pos2::ZERO, Pos2::new(10.0, 0.0)), Some(3.0));

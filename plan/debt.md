@@ -321,11 +321,17 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   walking the merged table rather than the const. It waits for the owner's word and for a Settings
   section that can hold it (U96).
 
-- `[gizmo]` A drawing point is taken from the work plane only: the draw gizmo snaps to draft ends, the
-  grid and the axes, and never to a face the pointer aims at, so a sketch point cannot yet come from a
-  face-plane tangency the way the ruler's surface probe does (V5). The sphere's three-point method
-  already takes any point and asks nothing about where it came from, so the missing piece is the snap
-  itself — one surface probe shared with the ruler and a marker of its own.
+- `[gizmo]` A sketch tool hands the snap resolver no face, so the `face` kind never captures for a
+  drawing point: the point lands at the footprint of the corner or the edge the pointer names, and
+  the ruler's own surface reading (which steps past a product's reserved box) is not shared with it
+  (V5, U116). The atom already ranks a face the tool measured; the missing piece is one probe the
+  drawing tools would have to ask before they hand it in. Add it when the owner asks to draw on the
+  face under the pointer rather than on the work plane.
+
+- `[gizmo]` The fill and the niche ghost keep the niche atom's cursor rule (`ui::pointer_point`) and
+  do not read the snap resolver: the point they name is the *space* the pointer is in, so a snap that
+  moved it by the tolerance would name the same cell and change nothing on screen (U116, ADR 0199).
+  Revisit if a fill ever needs the pointer's *place* along its free axis as a snapped coordinate.
 
 - `[perf]` Measured on 2026-11-17 in a headless run (`app/src/scene_build.rs`, the probe
   `an_edit_costs_the_walk_of_the_tree_and_not_the_vertices`, dev profile with opt-level 2): an edit
