@@ -9,6 +9,7 @@
 //! engine installed it — the same order `z3l run` keeps. A write that fails is reported as a
 //! failure and never as success: the next client must not believe the file holds what it does not.
 
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use engine::{BatchOptions, BatchStep, CommandRegistry, Query, Session};
@@ -73,31 +74,17 @@ impl CommandServer {
             Ok(session) => session,
             Err(_) => return Answer::refused(BUSY),
         };
-        let registry = CommandRegistry::new();
-        let commands: Vec<Value> = registry.specs().iter().map(|spec| command_row(&session, *spec)).collect();
-        Answer::ok(json!({
-            "revision": session.project().revision().get(),
-            "open_product": session.active_product().map(|id| id.get()),
-            "commands": commands,
-        }))
+        Answer::ok(listing(&session))
     }
 
     /// The `command_run` and `command_batch` answer: the report of one batch, and the write.
     pub fn dispatch(&self, request: &BatchRequest) -> Answer {
-        if request.steps.is_empty() {
-            return Answer::refused("a batch names at least one step; nothing was dispatched");
-        }
-        let steps: Vec<BatchStep> =
-            request.steps.iter().map(|step| BatchStep::new(step.command.clone(), step.params.clone())).collect();
         let mut session = match self.session.lock() {
             Ok(session) => session,
             Err(_) => return Answer::refused(BUSY),
         };
-        let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
-        let report = session.batch(&steps, options);
-        let write = self.write(&session, &report);
-        let body = report::batch(&report, &steps, &write, session.project().revision().get());
-        if report.refusal().is_some() || write.failed() { Answer::fail(body) } else { Answer::ok(body) }
+        let sink = self.sink.as_deref();
+        dispatch(&mut session, request, Door::Headless { sink })
     }
 
     /// The `query` answer: the read model's own report, untouched.
@@ -106,27 +93,7 @@ impl CommandServer {
             Ok(session) => session,
             Err(_) => return Answer::refused(BUSY),
         };
-        match session.read(query) {
-            Ok(answer) => Answer::ok(json!({
-                "revision": session.project().revision().get(),
-                "answer": answer,
-            })),
-            Err(error) => Answer::refused(error.to_string()),
-        }
-    }
-
-    /// Writes a landed batch through the sink, and says what that came to.
-    fn write(&self, session: &Session, report: &engine::BatchReport) -> Write {
-        if !report.landed() || !report.content_changed() {
-            return Write::Nothing;
-        }
-        match &self.sink {
-            None => Write::NoFile,
-            Some(sink) => match sink.save(session.project()) {
-                Ok(()) => Write::Written,
-                Err(message) => Write::Failed(message),
-            },
-        }
+        asking(&session, query)
     }
 
     /// Performs one tool call, naming the tool in the sentence a malformed request answers with.
@@ -155,6 +122,88 @@ impl CommandServer {
                 None,
             )),
         }
+    }
+}
+
+/// Where a batch is served from, which is the one thing a window and a headless session do
+/// differently.
+///
+/// A headless session may write the scene it was handed, so a landed batch reaches the file. The
+/// window never writes: the tab is dirty on purpose, the path may not exist yet, and the person's
+/// *Save* is the write. The report says which of the two happened instead of leaving a caller to
+/// guess (ADR 0005, ADR 0188).
+#[derive(Clone, Copy)]
+pub enum Door<'a> {
+    /// A session a process serves, with the writer the shell handed in, if it handed one in.
+    Headless {
+        /// Where a landed batch is written; `None` serves a document that lives in memory.
+        sink: Option<&'a dyn SceneSink>,
+    },
+    /// The document a person is looking at: changed in the window, written by its own *Save*.
+    Window,
+}
+
+impl fmt::Debug for Door<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Headless { sink } => formatter.debug_tuple("Headless").field(&sink.is_some()).finish(),
+            Self::Window => formatter.write_str("Window"),
+        }
+    }
+}
+
+/// The `command_list` answer: every command this build dispatches, what it takes, and whether it can
+/// run in `session`.
+///
+/// It is a free function because two doors ask it — the headless server and the attached window —
+/// and a second copy of the projection is the second registry ADR 0185 forbids.
+pub fn listing(session: &Session) -> Value {
+    let registry = CommandRegistry::new();
+    let commands: Vec<Value> = registry.specs().iter().map(|spec| command_row(session, *spec)).collect();
+    json!({
+        "revision": session.project().revision().get(),
+        "open_product": session.active_product().map(|id| id.get()),
+        "commands": commands,
+    })
+}
+
+/// The `command_run` and `command_batch` answer: the report of one batch, and what the file holds.
+pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -> Answer {
+    if request.steps.is_empty() {
+        return Answer::refused("a batch names at least one step; nothing was dispatched");
+    }
+    let steps: Vec<BatchStep> =
+        request.steps.iter().map(|step| BatchStep::new(step.command.clone(), step.params.clone())).collect();
+    let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
+    let report = session.batch(&steps, options);
+    let write = match door {
+        Door::Headless { sink: Some(sink) } => sink_write(sink, session, &report),
+        Door::Headless { sink: None } => Write::NoFile,
+        Door::Window => Write::Window,
+    };
+    let body = report::batch(&report, &steps, &write, session.project().revision().get());
+    if report.refusal().is_some() || write.failed() { Answer::fail(body) } else { Answer::ok(body) }
+}
+
+/// The `query` answer: the read model's own report, untouched.
+pub fn asking(session: &Session, query: Query) -> Answer {
+    match session.read(query) {
+        Ok(answer) => Answer::ok(json!({
+            "revision": session.project().revision().get(),
+            "answer": answer,
+        })),
+        Err(error) => Answer::refused(error.to_string()),
+    }
+}
+
+/// Writes a landed batch through `sink` and says what that came to.
+fn sink_write(sink: &dyn SceneSink, session: &Session, report: &engine::BatchReport) -> Write {
+    if !report.landed() || !report.content_changed() {
+        return Write::Nothing;
+    }
+    match sink.save(session.project()) {
+        Ok(()) => Write::Written,
+        Err(message) => Write::Failed(message),
     }
 }
 
@@ -191,14 +240,14 @@ fn command_row(session: &Session, spec: engine::CommandSpec) -> Value {
 }
 
 /// The refusal a malformed request answers with, as the protocol's own invalid-parameters error.
-fn tool_error(answer: Answer) -> ErrorData {
+pub(crate) fn tool_error(answer: Answer) -> ErrorData {
     let sentence =
         answer.body().get("error").and_then(Value::as_str).unwrap_or("the arguments cannot be read").to_owned();
     ErrorData::invalid_params(sentence, None)
 }
 
 /// The tool result a client reads: the JSON as text, and the same JSON as a structured answer.
-fn result(answer: Answer) -> CallToolResult {
+pub(crate) fn result(answer: Answer) -> CallToolResult {
     let text = answer.body().to_string();
     let content = vec![ContentBlock::text(text)];
     let mut result = if answer.failed() { CallToolResult::error(content) } else { CallToolResult::success(content) };

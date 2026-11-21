@@ -17,6 +17,12 @@ pub enum Write {
     Written,
     /// The session has no scene: it was served without one, so its document lives in memory only.
     NoFile,
+    /// The document is the one a person is looking at, so the window's own *Save* is the write.
+    ///
+    /// A batch that lands in an attached window is in the document and not on disk, and saying so
+    /// is the whole point: the tab is dirty on purpose, and a file write nobody asked for could
+    /// overwrite work the person has not saved yet.
+    Window,
     /// The write was attempted and failed, with the sentence that says why.
     Failed(String),
 }
@@ -99,13 +105,15 @@ pub fn batch(report: &BatchReport, steps: &[BatchStep], write: &Write, revision:
 
 /// The one word that says what happened to the file.
 ///
-/// It is the answer to "does the file hold what the document holds", and the four words are the
-/// four honest answers: nothing landed, it was written, there is no file to write, the write failed.
+/// It is the answer to "does the file hold what the document holds", and the five words are the
+/// five honest answers: nothing landed, it was written, there is no file to write, the document is a
+/// window's and its own *Save* writes it, the write failed.
 fn write_word(write: &Write) -> Value {
     json!(match write {
         Write::Nothing => "nothing",
         Write::Written => "written",
         Write::NoFile => "no_file",
+        Write::Window => "window",
         Write::Failed(_) => "failed",
     })
 }
