@@ -55,6 +55,24 @@ impl Length {
         self.0 as f64 / 1_000.0
     }
 
+    /// The length nearest a millimetre reading, or `None` when the value is not one a document can
+    /// hold.
+    ///
+    /// The other half of [`Length::millimetres_f64`]: a pointer that resolved to a point in geometry
+    /// millimetres comes back into the document here, rounded to the micrometre the document stores.
+    /// A value that is not finite, or a rounding that overflows, is `None` rather than a wrapped
+    /// coordinate.
+    pub fn from_millimetres_f64(millimetres: f64) -> Option<Self> {
+        if !millimetres.is_finite() {
+            return None;
+        }
+        let micrometres = (millimetres * 1_000.0).round();
+        if micrometres < i64::MIN as f64 || micrometres > i64::MAX as f64 {
+            return None;
+        }
+        Some(Self(micrometres as i64))
+    }
+
     /// Parses a length from decimal millimetres, with an optional `mm` suffix.
     ///
     /// The parser works on digits, not floats, so `18.5` becomes exactly 18 500 micrometres and a

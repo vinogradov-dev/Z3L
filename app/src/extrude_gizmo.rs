@@ -182,6 +182,15 @@ impl ExtrudeGizmo {
         self.start_pull(Pull { object, committed: None, scope: Some(scope), height, top: None });
     }
 
+    /// Starts a pull on a body a click has just created, inside `scope` (G4).
+    ///
+    /// The area pull stores its body on the click, in the scope its ✓ closes, so the arrow adjusts the
+    /// height the body already has and a ✕ rolls the whole pull back. The precedence is the cone's:
+    /// the node exists, the number is typed or dragged, and one command closes the gesture.
+    pub(crate) fn start_created(&mut self, object: Id, scope: EditScope, height: Length) {
+        self.start_pull(Pull { object, committed: Some(height), scope: Some(scope), height, top: None });
+    }
+
     /// Starts a pull on the cone a cell has just drawn and created (ADR 0141).
     ///
     /// The node is in the document already, at the height the ribbon names, inside `scope`; the ✓

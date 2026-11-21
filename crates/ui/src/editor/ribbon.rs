@@ -267,8 +267,27 @@ impl Editor {
     /// extrusion, while the document only ever sees the command. A refused height leaves both the
     /// document and the default untouched.
     pub fn set_extrude_height(&mut self, session: &mut Session, object: Id, height: Length) -> Result<(), String> {
+        self.set_extrude_height_in(None, session, object, height)
+    }
+
+    /// Sets one body's extrusion height as a step of an open edit scope (ADR 0138).
+    ///
+    /// A pull that created its body already shares the scope, so the height the ✓ writes joins the
+    /// same undo entry instead of starting a second one.
+    pub fn set_extrude_height_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        height: Length,
+    ) -> Result<(), String> {
         let params = json(&ObjectExtrudeHeightSet { object, height })?;
-        dispatch(session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params)?;
+        match scope {
+            Some(scope) => {
+                session.dispatch_in(scope, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params).map_err(|error| error.to_string())?
+            }
+            None => dispatch(session, OBJECT_EXTRUDE_HEIGHT_SET_ID, &params)?,
+        };
         self.toolbars.set_extrude_height(height);
         Ok(())
     }

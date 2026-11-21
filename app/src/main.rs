@@ -19,6 +19,7 @@
     clippy::unreachable
 )]
 
+mod area_gizmo;
 mod box_gizmo;
 /// The command line: `z3l export` runs before the window exists (K3).
 mod cli;

@@ -10,11 +10,13 @@
 //!
 //! Changes when: the pull stops reading the selected drawing, or a second surface arms it.
 
+use engine::{EditScope, OBJECT_AREA_EXTRUDE_ID, ObjectAreaExtrude, Session};
 use model::{Id, Project};
-use text::Message;
+use text::{Lang, Message};
 use units::Length;
 
 use super::Editor;
+use crate::command::{dispatch, json};
 
 impl Editor {
     /// The live area under the pointer, whichever surface armed it.
@@ -64,5 +66,34 @@ impl Editor {
     /// The sentence that says why the face under the pointer cannot be pulled, when it cannot.
     pub fn area_refusal(&self) -> Option<Message> {
         self.area.refusal().map(crate::area::AreaRefusal::words)
+    }
+
+    /// Pulls the area under the pointer into a body of its own and returns the new node.
+    ///
+    /// One `object.area.extrude`: the body is born beside the drawing in the drawing's own frame and
+    /// the drawing keeps its rings. The name says which drawing the body came from, so two bodies of
+    /// one drawing are told apart in the tree.
+    pub fn extrude_area_in(
+        &mut self,
+        scope: Option<EditScope>,
+        session: &mut Session,
+        object: Id,
+        point: [Length; 2],
+        height: Length,
+        lang: Lang,
+    ) -> Result<Id, String> {
+        let drawing = session.project().object(object).map(|node| node.name().to_owned()).unwrap_or_default();
+        let name = Message::AreaBodyName.with(lang, [drawing]);
+        let params = json(&ObjectAreaExtrude { object, area: point, height, name })?;
+        let created = match scope {
+            Some(scope) => session
+                .dispatch_in(scope, OBJECT_AREA_EXTRUDE_ID, &params)
+                .map_err(|error| error.to_string())?
+                .created_id(),
+            None => dispatch(session, OBJECT_AREA_EXTRUDE_ID, &params)?.created_id(),
+        };
+        let created = created.ok_or_else(|| Message::AreaOutside.text(lang).to_owned())?;
+        self.select_node(Some(created));
+        Ok(created)
     }
 }

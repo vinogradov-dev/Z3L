@@ -6222,3 +6222,128 @@ fn an_armed_boolean_whose_result_is_not_a_solid_refuses_its_enter() {
     let body = document.session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
     assert_eq!(body.booleans().count(), 0, "the body keeps its history");
 }
+
+/// A headless window whose scene root holds one drawing of the given rings, and the drawing's id.
+fn drawing_session(name: &str, rings: Vec<model::Path>) -> (Harness, model::Id) {
+    let root = model::Container::new(model::Id::new(1).expect("id"), "Scene", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let set = model::Contours::new(rings).expect("a contour set");
+    let drawing = project
+        .add_object(root, "Union", model::Placement::IDENTITY, model::Geometry::Contours(set))
+        .expect("a drawing");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    (Harness::with_session(name, session), drawing)
+}
+
+/// The rectangle ring a drawing fixture is built from, in millimetres.
+fn frame_ring(x0: i64, y0: i64, x1: i64, y1: i64) -> model::Path {
+    model::Path::rectangle(
+        [testkit::millimetres(x0), testkit::millimetres(y0)],
+        [testkit::millimetres(x1), testkit::millimetres(y1)],
+    )
+    .expect("a rectangle ring")
+}
+
+#[test]
+fn the_area_pull_creates_the_face_under_the_pointer_in_one_undo_step() {
+    // A drawing of two nested rings: the opening inside the frame is its own area (G4).
+    let (mut harness, drawing) =
+        drawing_session("frame-area", vec![frame_ring(0, 0, 100, 50), frame_ring(20, 10, 60, 30)]);
+    harness.settle();
+    let (pointer, rect, before) = {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(drawing));
+        document.editor.arm_area_pull(drawing);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, geom::DVec3::new(40.0, 20.0, 0.0))
+            .expect("the opening is on screen");
+        assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+        (pointer, rect, harness.revision())
+    };
+
+    harness.hover(pointer);
+    let measured = harness
+        .app
+        .tabs
+        .active()
+        .editor
+        .area()
+        .region()
+        .map(|area| area.area())
+        .expect("the pointer names the opening");
+    assert!((measured - 800.0).abs() < 1e-3, "the opening is 40 x 20 mm, got {measured}");
+    assert!(
+        harness.drawn.iter().any(|text| text.contains("Pull an area")),
+        "the status bar says what the next click does"
+    );
+
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let created = {
+        let document = harness.app.tabs.active();
+        let created = document.editor.selected_node().expect("the new body is selected");
+        let body = document
+            .session
+            .project()
+            .object(created)
+            .and_then(|object| object.geometry().as_constructive())
+            .expect("the click created a body");
+        assert_eq!(
+            body.contour().expect("a ring").bounds_micrometres(),
+            ([20_000, 10_000], [60_000, 30_000]),
+            "the body stands where the opening stood"
+        );
+        assert!(document.extrude_gizmo.is_active(), "the pull arrow took the body");
+        assert!(document.session.project().object(drawing).is_some(), "the drawing keeps its rings");
+        created
+    };
+    assert!(harness.revision() > before, "the click writes the body once");
+
+    // The ✓ closes the gesture: one entry for the body and its height, and the drawing stays.
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().extrude_gizmo.is_active(), "the ✓ ends the pull");
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().object(created).is_none(), "one undo removes the body");
+    assert!(document.session.project().object(drawing).is_some(), "and leaves the drawing");
+    assert!(!document.session.can_undo(), "the pull was one entry, not two");
+    let _ = rect;
+}
+
+#[test]
+fn escaping_the_area_pull_takes_the_body_back_and_leaves_no_entry() {
+    let (mut harness, drawing) = drawing_session("frame-area-cancel", vec![frame_ring(0, 0, 100, 50)]);
+    harness.settle();
+    let pointer = {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(drawing));
+        document.editor.arm_area_pull(drawing);
+        let rect = document.scene_rect().expect("a scene rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, geom::DVec3::new(50.0, 25.0, 0.0)).expect("on screen");
+        assert!(rect.contains(pointer));
+        pointer
+    };
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.click(pointer, egui::PointerButton::Primary);
+    assert!(harness.revision() > before, "the click wrote the body");
+    assert!(harness.app.tabs.active().extrude_gizmo.is_active());
+
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Escape drops the pull");
+    assert_eq!(
+        document.session.project().geometry_ids_under(document.session.project().root().id()).map(|ids| ids.len()),
+        Some(1),
+        "the body went with the scope: the drawing is the only geometry left"
+    );
+    assert!(document.session.project().object(drawing).is_some(), "the drawing is untouched");
+    assert!(!document.session.can_undo(), "a cancelled pull leaves no entry");
+    assert_eq!(document.editor.area_pull(), Some(drawing), "the tool stays armed for the next click");
+}
