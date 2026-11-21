@@ -407,6 +407,7 @@ icons!(View, "view", View, view {
     RESTORE => "restore",
     HOME => "home",
     GRID_SNAP => "grid-snap": Reference,
+    SNAP_ALL => "snap-all": Reference,
     SNAP_VERTEX => "snap-vertex": Reference,
     SNAP_INTERSECTION => "snap-intersection": Reference,
     SNAP_MIDPOINT => "snap-midpoint": Reference,
@@ -1261,7 +1262,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 129);
+        assert_eq!(seen.len(), 130);
     }
 
     #[test]

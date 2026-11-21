@@ -184,6 +184,9 @@ impl Editor {
                 ToolAction::ToggleSnap(kind) => {
                     outcome.view = Some(toolbars::RibbonViewAction::ToggleSnap(kind));
                 }
+                ToolAction::ToggleSnapAll => {
+                    outcome.view = Some(toolbars::RibbonViewAction::ToggleSnapAll);
+                }
                 ToolAction::ToggleShadows => outcome.view = Some(toolbars::RibbonViewAction::ToggleShadows),
             }
         }

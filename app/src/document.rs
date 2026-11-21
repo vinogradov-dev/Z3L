@@ -803,6 +803,19 @@ impl Document {
         self.set_snap_kind(model::SnapKind::Grid, !self.snaps.grid);
     }
 
+    /// Turns every snap kind on or off: the master cell of the View tab's Snaps group.
+    ///
+    /// A press asks for the opposite of what the cell draws: the set goes on unless every kind is
+    /// already on, so a mixed set — one kind switched off by hand — comes back whole in one click
+    /// (U116).
+    pub(crate) fn set_all_snaps(&mut self, on: bool) {
+        if self.snaps.all_on() == on && (on || !self.snaps.any()) {
+            return;
+        }
+        self.snaps.set_all(on);
+        self.snaps_changed = true;
+    }
+
     /// Turns one snap kind on or off, and marks the workspace value as unsaved.
     pub(crate) fn set_snap_kind(&mut self, kind: model::SnapKind, on: bool) {
         if self.snaps.enabled(kind) == on {
@@ -3883,6 +3896,7 @@ impl Document {
                     self.toggle_view_projection();
                 }
                 Some(ui::RibbonViewAction::ToggleSnap(kind)) => self.set_snap_kind(kind, !self.snaps.enabled(kind)),
+                Some(ui::RibbonViewAction::ToggleSnapAll) => self.set_all_snaps(!self.snaps.all_on()),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
                 None => {}
             }

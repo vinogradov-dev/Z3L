@@ -265,6 +265,15 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         // A snap cell is a switch of the workspace's set, and the set belongs to the view's work
         // plane: a view an authored camera pins has none, so the cells are drawn disabled there and
         // the hint says why (U116).
+        // The master switch reads the whole set: it is pressed only while every kind is on, and a
+        // press turns the set on from any other state — a mixed set becomes all-on in one click
+        // (U116).
+        ToolKind::SnapAll => Ready {
+            enabled: owns_view,
+            armed: snaps.all_on(),
+            hint: tool_hint(Message::SnapAll.text(lang), tool.key()),
+            action: owns_view.then_some(ToolAction::ToggleSnapAll),
+        },
         ToolKind::Snap(kind) => Ready {
             enabled: owns_view,
             armed: snaps.enabled(kind),

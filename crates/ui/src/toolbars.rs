@@ -134,6 +134,8 @@ pub enum ToolAction {
     ToggleProjection,
     /// Turns one snap kind on or off (U116).
     ToggleSnap(model::SnapKind),
+    /// Turns every snap kind on, or every kind off (U116).
+    ToggleSnapAll,
     /// Turns the ground shadow of the active view on or off (U107).
     ToggleShadows,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
@@ -342,6 +344,8 @@ pub enum RibbonViewAction {
     ToggleProjection,
     /// Turn one snap kind on or off (U116).
     ToggleSnap(model::SnapKind),
+    /// Turn every snap kind on, or every kind off (U116).
+    ToggleSnapAll,
     /// Turn the active view's ground shadow on or off (U107).
     ToggleShadows,
 }
@@ -1008,6 +1012,7 @@ mod tests {
             (
                 "view",
                 &[
+                    "All snaps",
                     "Centre",
                     "Corner",
                     "Crossing",
@@ -1671,6 +1676,33 @@ mod tests {
         context.shadows = false;
         let off = ready(ToolKind::Shadows, tool("view.display.shadows"), &state, context, Lang::En);
         assert!(!off.armed, "a shadow that is off draws quiet");
+    }
+
+    #[test]
+    fn the_master_switch_reads_the_whole_set_and_asks_for_it() {
+        // U116: one cell turns every snap on or off. It draws pressed only while every kind is on, and
+        // from any other state — a mixed set included — one press turns the set on.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let all = tool("view.snaps.all");
+        let mut context = full_context();
+        context.snaps = model::SnapKinds::ALL;
+        let on = ready(ToolKind::SnapAll, all, &state, context, Lang::En);
+        assert!(on.armed, "every kind on draws pressed");
+        assert_eq!(on.action, Some(ToolAction::ToggleSnapAll), "and the press asks for the set");
+        assert_eq!(on.hint, "All snaps", "the cell names itself");
+
+        let mut mixed = model::SnapKinds::ALL;
+        mixed.vertex = false;
+        context.snaps = mixed;
+        assert!(!ready(ToolKind::SnapAll, all, &state, context, Lang::En).armed, "a mixed set draws quiet");
+
+        context.snaps = model::SnapKinds::none();
+        assert!(!ready(ToolKind::SnapAll, all, &state, context, Lang::En).armed, "a set with nothing on draws quiet");
+
+        // The cell is drawn in the group's first column, before the kinds it switches.
+        let (_, labels, _) = draw(&mut state, full_context());
+        assert!(labels.iter().any(|label| label == "All snaps"), "the cell is drawn: {labels:?}");
     }
 
     #[test]

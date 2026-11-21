@@ -900,6 +900,28 @@ fn the_grid_key_turns_the_workspaces_snap_and_nothing_else() {
 }
 
 #[test]
+fn the_master_snap_switch_turns_the_whole_set_and_writes_no_revision() {
+    // U116: one cell of the View tab's Snaps group turns every kind off, and a press from a mixed set
+    // turns them all on again; the value is the workspace's, so no revision and no undo entry move.
+    let mut harness = Harness::new("frame-snap-master");
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.snaps().all_on(), "a fresh workspace snaps everything");
+    let revision = harness.revision();
+    let document = harness.app.tabs.active_mut();
+    document.set_all_snaps(false);
+    assert!(!document.snaps().any(), "the master turns every kind off");
+    assert_eq!(document.take_snaps_change(), Some(model::SnapKinds::none()), "and the shell is told once");
+    assert_eq!(document.take_snaps_change(), None, "once, not every frame");
+
+    // One kind back on is a mixed set, and the master turns the rest on.
+    document.set_snap_kind(model::SnapKind::Vertex, true);
+    document.set_all_snaps(true);
+    assert!(document.snaps().all_on(), "a mixed set comes back whole");
+    assert_eq!(harness.revision(), revision, "the snap set is view state");
+}
+
+#[test]
 fn no_chrome_gesture_writes_a_revision() {
     // A fold, a hide, a ribbon fold and a camera move are view state: the document must not gain an
     // undo entry, a dirty marker or a rebuild from any of them.

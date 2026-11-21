@@ -1171,6 +1171,11 @@ messages! {
         "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
         "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
     ],
+    SnapAll = ["All snaps", "Все привязки"],
+    SnapAllHint = [
+        "Turns every snap on, or every snap off: a pointer that fights the geometry gets the hand back in one click.",
+        "Включает все привязки или выключает их разом: курсор, который спорит с геометрией, отдаёт руку одним нажатием."
+    ],
     SnapVertex = ["Corner", "Угол"],
     SnapVertexHint = [
         "A corner of a panel, a body or a frame, and a point the drawing already has.",

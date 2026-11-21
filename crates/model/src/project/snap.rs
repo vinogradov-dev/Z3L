@@ -161,6 +161,25 @@ impl SnapKinds {
             || self.grid
     }
 
+    /// Whether every kind is on: the state the master switch reads.
+    pub const fn all_on(self) -> bool {
+        self.vertex
+            && self.intersection
+            && self.midpoint
+            && self.centre
+            && self.perpendicular
+            && self.tangent
+            && self.edge
+            && self.face
+            && self.axis
+            && self.grid
+    }
+
+    /// Turns every kind on or off at once: the master switch of the set.
+    pub fn set_all(&mut self, on: bool) {
+        *self = if on { Self::ALL } else { Self::none() };
+    }
+
     /// Whether this kind may capture.
     pub const fn enabled(self, kind: SnapKind) -> bool {
         match kind {
@@ -1280,6 +1299,15 @@ mod tests {
         assert!(!kinds.any(), "nothing is on");
         kinds.set(SnapKind::Centre, true);
         assert!(kinds.any() && kinds.enabled(SnapKind::Centre) && !kinds.enabled(SnapKind::Vertex));
+        assert!(!kinds.all_on(), "one kind on is not the whole set");
         assert_eq!(SnapKinds::default(), SnapKinds::ALL, "a fresh workspace snaps everything");
+        assert!(SnapKinds::ALL.all_on(), "and every kind is on in it");
+
+        // The master switch: all off, then all on again, one value either way.
+        kinds.set_all(true);
+        assert_eq!(kinds, SnapKinds::ALL, "the master turns every kind on");
+        kinds.set_all(false);
+        assert_eq!(kinds, SnapKinds::none(), "and every kind off");
+        assert!(!kinds.any() && !kinds.all_on());
     }
 }
