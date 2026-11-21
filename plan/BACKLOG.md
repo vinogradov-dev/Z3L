@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U120** a round body answers its own places, not the corners of its box
-  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
-   the ones that come later. Today Scene::object files a bound box for every geometry and a
-   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
-   eight corners of the square around its base, which are points in the air, and its upper rim
-   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
-   sphere answers the box face centres — six points on the surface, but chosen by the world
-   axes rather than by the body. A marker on the corner of a box around a round body names a
-   place no maker can work at, in either snap mode.
-  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
-   payload files what its parameters describe. A sphere files its centre, its two poles and the
-   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
-   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
-   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
-   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
-   error until it answers its places, and each round answer ships with a test that the point is
-   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
-   rather than in the air around it.
-  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
-   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
-   radius; the pointer over the empty air beside a round body captures nothing of it; a future
-   PrimitiveKind cannot be added without its arm.
-  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -869,6 +846,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
 
 ## Done
+
+- `[x]` **U120** a round body answers its own places, not the corners of its box
+  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
+   the ones that come later. Today Scene::object files a bound box for every geometry and a
+   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
+   eight corners of the square around its base, which are points in the air, and its upper rim
+   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
+   sphere answers the box face centres — six points on the surface, but chosen by the world
+   axes rather than by the body. A marker on the corner of a box around a round body names a
+   place no maker can work at, in either snap mode.
+  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
+   payload files what its parameters describe. A sphere files its centre, its two poles and the
+   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
+   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
+   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
+   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
+   error until it answers its places, and each round answer ships with a test that the point is
+   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
+   rather than in the air around it.
+  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
+   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
+   radius; the pointer over the empty air beside a round body captures nothing of it; a future
+   PrimitiveKind cannot be added without its arm.
+  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs` — `b56d0bc`
 
 - `[x]` **N36** a part never runs through a post the pointer never pointed at
   why: Why: The owner, on the same cabinet at `/home/alx/skaf.z3l`: «уже очень хорошо, но
