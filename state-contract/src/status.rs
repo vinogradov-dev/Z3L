@@ -35,6 +35,10 @@ pub fn render_with_detail(summary: &Summary, detail: Option<&str>) -> String {
         render_session(&mut text, session);
     }
     render_streams(&mut text, summary);
+    if let Some(stream) = summary.stream_checkout() {
+        // Silence here would read as "the gate checked everything", and it cannot check this one.
+        let _ = writeln!(text, "  base: the primary checkout's rule; this is the `{}` stream", stream.key);
+    }
     if summary.interrupted {
         // The one fact `AGENTS.md` §1.1 otherwise asks the reader to derive from `base`, `HEAD` and
         // the note's steps.
@@ -150,11 +154,12 @@ mod tests {
                 session,
             }],
             head: head.map(str::to_owned),
+            branch: None,
             interrupted: false,
         }
     }
 
-    /// A primary stream beside a declared one, the shape a plan with four checkouts prints.
+    /// A primary stream beside a declared one, the shape a plan with several checkouts prints.
     fn declared() -> Summary {
         let mut list = summary("idle", Some("fedcba9"), None);
         list.streams[0].live = None;

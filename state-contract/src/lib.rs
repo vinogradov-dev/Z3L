@@ -75,11 +75,23 @@ pub struct Summary {
     pub streams: Vec<StreamState>,
     /// The `HEAD` commit, filled in by whichever caller resolved it; `None` outside a checkout.
     pub head: Option<String>,
+    /// The branch that commit is on, filled in like [`Summary::head`]; `None` when `HEAD` is detached.
+    pub branch: Option<String>,
     /// Whether the session looks cut short: `doing`, a note with open steps, and commits past `base`.
     pub interrupted: bool,
 }
 
 impl Summary {
+    /// The stream this checkout is, when its branch is `stream/<key>` of a stream the plan declares.
+    ///
+    /// The checkouts beside the primary are named that way, and a checkout that is not one of them —
+    /// the primary on its own branch, a detached `HEAD`, a plan read outside a repository — answers
+    /// `None`, which leaves every rule that asks about a stream exactly as it was.
+    pub fn stream_checkout(&self) -> Option<&StreamState> {
+        let key = self.branch.as_deref()?.trim().strip_prefix("stream/")?;
+        self.streams.iter().find(|stream| !stream.primary && stream.key == key)
+    }
+
     /// The primary stream: the plan's own checkout, whose task `STATE:` names.
     pub fn primary(&self) -> Option<&StreamState> {
         self.streams.iter().find(|stream| stream.primary)
@@ -284,6 +296,7 @@ pub fn check_text(root: &Path, plan: &PlanText<'_>, git: &dyn Git) -> Result<Sum
     if let Some(summary) = summary.as_mut() {
         // One git call answers both the `base` rule and the head line the block prints.
         summary.head = git.head();
+        summary.branch = git.branch();
         let primary = summary.primary().map(|stream| stream.note_path.clone()).unwrap_or_else(|| NOTE.to_owned());
         let primary_note = note_text(plan, &primary);
         summary.interrupted = session_interrupted(&summary.state, primary_note, summary.head.as_deref(), git);
@@ -486,6 +499,13 @@ fn base_freshness(summary: &Summary, git: &dyn Git) -> Vec<String> {
     };
     let base = summary.state.base.as_str();
     if base == head {
+        return Vec::new();
+    }
+    // The rule is the primary checkout's: it says an idle plan describes the tree that checkout has.
+    // A stream worktree holds that stream's own commits and is forbidden to write `plan/`, so its lag
+    // is the design and not a defect; the primary judges it after the merge, and until then this
+    // checkout could only be told to write a file it must not touch (P23).
+    if summary.stream_checkout().is_some() {
         return Vec::new();
     }
     let Some(paths) = git.changed(base, head) else { return Vec::new() };
