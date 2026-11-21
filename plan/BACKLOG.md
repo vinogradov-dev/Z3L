@@ -480,27 +480,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    calls and that `undo` restores the document the scenario started from; the scripted model
    needs no network and no key; `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
-  Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
-   that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
-   evaluated, so the command stores the cutout, the revision moves, undo gains an entry and the
-   panel simply stops drawing. The maker reads a vanished board instead of a refusal, and the
-   ghost that previewed the cutout said nothing either.
-  Shape: The rule is the one `panel.outline.set` already keeps: a command validates what it
-   would produce before the document changes. `panel.machining.add` and
-   `panel.machining.update` run the same 2D subtraction on a copy of the panel's core region —
-   `PanelGeometry::core_region` minus the new cutout — and refuse when it leaves more than one
-   piece, with a sentence that names the panel and the split; a blind cutout never reaches the
-   core's full thickness and keeps its own rule. The preview ghost of a fill and the cutout
-   card's add button both read the same check, so the refusal appears where the cutout is
-   chosen.
-  Done: Tests: a cutout that crosses the whole board is refused by `panel.machining.add` and
-   `panel.machining.update` with the panel and the split named, and the revision, the undo
-   stack and the panel's records are unchanged; the same cutout on a panel with a material that
-   reaches only part of the width is accepted; a cutout that removes the core entirely is
-   refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
-   green.
-  `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
 - `[ ]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
   Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
    the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
@@ -879,6 +858,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
+  Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
+   that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
+   evaluated, so the command stores the cutout, the revision moves, undo gains an entry and the
+   panel simply stops drawing. The maker reads a vanished board instead of a refusal, and the
+   ghost that previewed the cutout said nothing either.
+  Shape: The rule is the one `panel.outline.set` already keeps: a command validates what it
+   would produce before the document changes. `panel.machining.add` and
+   `panel.machining.update` run the same 2D subtraction on a copy of the panel's core region —
+   `PanelGeometry::core_region` minus the new cutout — and refuse when it leaves more than one
+   piece, with a sentence that names the panel and the split; a blind cutout never reaches the
+   core's full thickness and keeps its own rule. The preview ghost of a fill and the cutout
+   card's add button both read the same check, so the refusal appears where the cutout is
+   chosen.
+  Done: Tests: a cutout that crosses the whole board is refused by `panel.machining.add` and
+   `panel.machining.update` with the panel and the split named, and the revision, the undo
+   stack and the panel's records are unchanged; the same cutout on a panel with a material that
+   reaches only part of the width is accepted; a cutout that removes the core entirely is
+   refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
+   green.
+  `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs` — `5d054a2`
 
 - `[x]` **J5** a client we did not write drives the editor, headless
   Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
