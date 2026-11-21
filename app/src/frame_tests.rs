@@ -6347,3 +6347,107 @@ fn escaping_the_area_pull_takes_the_body_back_and_leaves_no_entry() {
     assert!(!document.session.can_undo(), "a cancelled pull leaves no entry");
     assert_eq!(document.editor.area_pull(), Some(drawing), "the tool stays armed for the next click");
 }
+
+#[test]
+fn a_channel_call_is_answered_at_the_frame_boundary() {
+    // An agent's call is taken at the top of the frame, before anything the frame derives: the
+    // answer is the registry's own listing and the window's own report, and the window is exactly
+    // the one the test is looking at (ADR 0187, ADR 0188).
+    let mut harness = Harness::new("frame-channel");
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List);
+    let (inspected, inspected_answer) = mcp::queued(mcp::Call::Inspect);
+    harness.app.queued.push(listed);
+    harness.app.queued.push(inspected);
+    harness.frame();
+
+    let listed = listed_answer.take().expect("the frame answered the list");
+    assert!(!listed.failed(), "the listing is not a refusal: {:?}", listed.body());
+    assert!(
+        listed.body()["commands"].as_array().is_some_and(|rows| rows.len() > 50),
+        "the whole registry reaches a caller: {:?}",
+        listed.body()
+    );
+    let reported = inspected_answer.take().expect("the frame answered the report");
+    let window: mcp::Window = serde_json::from_value(reported.body().clone()).expect("the report is a window");
+    assert_eq!(window.tabs.len(), 1, "one scene is open in the window");
+    assert_eq!(window.active, 0, "and it is the one in front");
+    assert!(!window.mode.is_empty(), "the armed gesture is named: {window:?}");
+    assert!(!window.busy, "an idle frame is not a gesture");
+}
+
+#[test]
+fn an_agent_cannot_move_the_document_under_a_question() {
+    // The two gestures that outlive a frame answer "busy" instead of moving the document: a question
+    // waiting for the person's answer is one of them (ADR 0187).
+    let mut harness = Harness::new("frame-channel-busy");
+    harness.settle();
+    harness.app.pending_question =
+        Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(1, Lang::En) });
+    let before = harness.revision();
+    let request = mcp::BatchRequest {
+        steps: vec![mcp::StepRequest {
+            command: "node.rename".to_owned(),
+            params: serde_json::json!({"node": 1, "name": "Renamed"}),
+        }],
+        atomic: true,
+        dry_run: false,
+    };
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(request));
+    harness.app.queued.push(pending);
+    harness.frame();
+
+    let answer = answering.take().expect("the frame answered the call");
+    assert!(answer.failed(), "a gesture in hand is a refusal: {:?}", answer.body());
+    assert!(answer.body()["error"].as_str().is_some_and(|reason| reason.contains("busy")), "{:?}", answer.body());
+    assert_eq!(harness.revision(), before, "and the document did not move");
+}
+
+#[test]
+fn a_closed_window_removes_the_token_it_published() {
+    // A clean exit leaves nothing behind: a reader that cannot connect reads "no window is open
+    // here", never a token nobody answers (ADR 0188).
+    let folder = testkit::scratch_dir("frame-channel-token");
+    let file = mcp::Channel::file(&folder);
+    {
+        let mut harness = Harness::new("frame-channel-window");
+        assert!(harness.app.attach_channel(&folder), "the channel opens in a folder of its own");
+        assert!(file.exists(), "the port and the token are published");
+        harness.frame();
+    }
+    assert!(!file.exists(), "a window that closes removes its own token file");
+}
+
+#[test]
+fn the_assistant_switch_closes_and_reopens_the_channel() {
+    // The settings page is the door: the switch pressed on one frame closes or opens the channel,
+    // so the token file always describes the window that is there (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-switch");
+    let file = mcp::Channel::file(&testkit::scratch_dir("frame-channel-switch"));
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace offers the channel");
+
+    harness.app.apply_channel();
+    assert!(file.exists(), "the channel publishes its token while the switch is on");
+
+    harness.app.settings.assistant.attach = false;
+    harness.app.apply_channel();
+    assert!(harness.app.channel.is_none(), "the switch closes the door");
+    assert!(!file.exists(), "and the token goes with it");
+
+    harness.app.settings.assistant.attach = true;
+    harness.app.apply_channel();
+    assert!(file.exists(), "turning it back on publishes a new token");
+}
+
+#[test]
+fn the_settings_window_offers_the_assistant_switch() {
+    // The switch is drawn where a person looks for it: its own page, named, with the sentence that
+    // says what it closes (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-page");
+    harness.app.settings_open = true;
+    harness.app.settings_section = SettingsSection::Assistant;
+    harness.settle();
+    assert!(harness.drew(Message::SectionAssistant.text(Lang::En)), "the page is named: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannel.text(Lang::En)), "and the switch is on it: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannelHint.text(Lang::En)), "with the sentence that says what it is");
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace leaves the door open");
+}

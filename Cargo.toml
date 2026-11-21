@@ -57,9 +57,13 @@ rfd = { version = "0.18", default-features = false, features = ["xdg-portal", "w
 # crate allowed to depend on it and on its runtime. No editor path awaits it: the tools dispatch
 # through `Session::batch`, which is synchronous (ADR 0185, ADR 0186).
 rmcp = { version = "3.11", default-features = false, features = ["server", "transport-io"] }
-# The runtime the protocol runs on, in `mcp` alone. `rt` is the whole runtime we need: the served
-# session is one current-thread executor that blocks the headless process (ADR 0186).
-tokio = { version = "1.54", default-features = false, features = ["rt", "io-std", "io-util", "sync"] }
+# The runtime the protocol runs on, in `mcp` alone. `rt` is the whole runtime a served session
+# needs, and `net` with `time` are the local control channel's: one loopback listener and the
+# deadline the handshake answers on (ADR 0186, ADR 0188).
+tokio = { version = "1.54", default-features = false, features = ["rt", "io-std", "io-util", "sync", "net", "time"] }
+# The bytes of the channel's run token, from the operating system's generator: MIT OR Apache-2.0,
+# pure Rust (a syscall on every platform, no C source) and already in the tree through `uuid`.
+getrandom = "0.3"
 # The parameter schema a command publishes to a model or a CLI: a derive over the `serde` struct
 # that already validates the parameters, so the description cannot drift from the parser (ADR 0185).
 schemars = { version = "1.2", features = ["derive"] }

@@ -18,6 +18,12 @@
 //! stdio and binds no port, which is what keeps ADR 0028's "the application does not listen" true
 //! while a foreign client can still work headless.
 //!
+//! The second door is [`channel`]: a loopback socket with a per-run token, which is how an agent
+//! attaches to a window a person is looking at (ADR 0188). It binds `127.0.0.1` and nothing else, it
+//! refuses a connection that does not present the token before a byte is read as a command, and it
+//! never touches the document itself: a tool call becomes a [`Call`] the host answers at a frame
+//! boundary (ADR 0187).
+//!
 //! Changes when: a tool is added, a tool's answer changes shape, or the crate gains a dependency.
 
 #![forbid(unsafe_code)]
@@ -30,6 +36,8 @@
     clippy::unreachable
 )]
 
+pub mod channel;
+pub mod inspect;
 mod report;
 pub mod server;
 pub mod tools;
@@ -37,11 +45,15 @@ pub mod tools;
 use std::fmt;
 
 use model::Project;
+use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use server::{CommandServer, serve_session};
+pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, busy, queued};
+pub use inspect::{Tab, Window};
+pub use server::{CommandServer, Door, asking, dispatch, listing, serve_session};
 pub use tools::{
-    BatchRequest, CommandListRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
+    Answer, BatchRequest, CommandListRequest, InspectRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_INSPECT,
+    TOOL_LIST, TOOL_QUERY, TOOL_RUN,
 };
 
 /// Where a served session writes the document a batch changed.
@@ -80,15 +92,25 @@ impl fmt::Display for ServeError {
 
 impl std::error::Error for ServeError {}
 
+/// The one runtime this crate builds: current-thread, because the channel's thread and the headless
+/// session each serve one document and a second thread would buy nothing but a lock to cross.
+pub(crate) fn make_runtime() -> Result<tokio::runtime::Runtime, ServeError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| ServeError::Runtime(error.to_string()))
+}
+
 /// Serves `server` over one pair of streams until the client closes them.
 ///
 /// The pair is what the process's standard input and output are, and what a test hands in to drive
 /// the server without a second process: the protocol is newline-delimited JSON over a byte stream,
-/// so a pipe and a terminal are the same thing to it.
-pub async fn serve<R, W>(server: CommandServer, reader: R, writer: W) -> Result<(), ServeError>
+/// so a pipe, a terminal and a loopback socket are the same thing to it.
+pub async fn serve<R, W, S>(server: S, reader: R, writer: W) -> Result<(), ServeError>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
+    S: ServerHandler,
 {
     let running =
         rmcp::serve_server(server, (reader, writer)).await.map_err(|error| ServeError::Start(error.to_string()))?;
@@ -103,10 +125,11 @@ where
 /// is synchronous on purpose — the composition root starts it before any window exists and has no
 /// runtime of its own (ADR 0186).
 pub fn serve_stdio(server: CommandServer) -> Result<(), ServeError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| ServeError::Runtime(error.to_string()))?;
+    make_runtime()?.block_on(stdio(server))
+}
+
+/// Serves `server` over this process's standard streams on the runtime the caller built.
+async fn stdio(server: CommandServer) -> Result<(), ServeError> {
     let (reader, writer) = rmcp::transport::stdio();
-    runtime.block_on(serve(server, reader, writer))
+    serve(server, reader, writer).await
 }

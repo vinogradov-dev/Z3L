@@ -2311,6 +2311,8 @@ name = "mcp"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "getrandom 0.3.4",
+ "log",
  "model",
  "rmcp",
  "schemars",

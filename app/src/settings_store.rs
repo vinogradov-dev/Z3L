@@ -84,6 +84,12 @@ impl SettingsStore {
         self.path.as_deref()
     }
 
+    /// The folder the workspace lives in: the settings file, the nomenclature directory and the
+    /// control channel's token file all sit in it, so a workshop moves them by copying one folder.
+    pub(crate) fn folder(&self) -> Option<&Path> {
+        self.path().and_then(Path::parent)
+    }
+
     /// The folder the workshop's nomenclature directory lives in, beside the settings file.
     ///
     /// Settings and the directory sit beside each other in the application's config folder, so a

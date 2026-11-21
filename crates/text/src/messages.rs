@@ -1115,6 +1115,12 @@ messages! {
     SectionViewport = ["Viewport", "Область просмотра"],
     SectionPanels = ["Panels", "Панели"],
     SectionShortcuts = ["Shortcuts", "Горячие клавиши"],
+    SectionAssistant = ["Assistant", "Ассистент"],
+    AttachChannel = ["Let a local agent reach this window", "Разрешить локальному агенту доступ к окну"],
+    AttachChannelHint = [
+        "An agent on this computer reaches the window through a token file in the settings folder, and the switch closes that door. Nothing is reachable from a network, and the token dies with the window.",
+        "Агент на этом компьютере получает доступ к окну через файл с токеном в папке настроек, и выключатель закрывает эту дверь. Из сети окно недоступно, а токен живёт только пока открыто окно."
+    ],
     Theme = ["Theme", "Тема"],
     ThemeDark = ["Dark", "Тёмная"],
     ThemeLight = ["Light", "Светлая"],

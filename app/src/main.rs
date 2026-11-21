@@ -292,6 +292,18 @@ struct App {
     /// Whether the frame should close the window: the context that sends the command is only at
     /// hand there, and quitting is a window operation, not a document one.
     quit_requested: bool,
+    /// The local control channel an agent attaches to, while the settings let it listen.
+    ///
+    /// The channel owns the socket, the token file and its thread; dropping it closes the door and
+    /// removes the file, so a closed window leaves nothing behind for a client to reach (ADR 0188).
+    channel: Option<mcp::Channel>,
+    /// What the channel queued since the last frame: the frame answers it before anything else.
+    mailbox: Option<mcp::Mailbox>,
+    /// The calls taken off the mailbox and not answered yet.
+    ///
+    /// A frame owns the list while it answers it, because an answer borrows the document the call is
+    /// about; the queue itself is the channel's.
+    queued: Vec<mcp::Pending>,
 }
 
 impl App {
@@ -326,6 +338,7 @@ impl App {
         let watch = directory_watch::Watch::start(root, start.revision);
         let session = empty_session_with(start.directory)?;
         let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        app.apply_channel();
         if let Some(refusal) = start.refusal {
             log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
             app.failed(refusal);
@@ -410,6 +423,9 @@ impl App {
             pick_tab: None,
             pending_question: None,
             quit_requested: false,
+            channel: None,
+            mailbox: None,
+            queued: Vec::new(),
         })
     }
 
@@ -708,6 +724,129 @@ impl App {
         }
     }
 
+    /// Opens or closes the local control channel, so the settings switch is the door (ADR 0188).
+    ///
+    /// The channel listens only while the window is open and only while the workspace allows it: a
+    /// switch pressed in the Settings window takes effect on that frame, and a closed window removes
+    /// the token file a client would have read.
+    fn apply_channel(&mut self) {
+        if !self.settings.assistant.attach {
+            if let Some(channel) = self.channel.take() {
+                log::info!(target: "z3l::shell", "the control channel on port {} is closed", channel.port());
+            }
+            self.mailbox = None;
+            self.queued.clear();
+            return;
+        }
+        if self.channel.is_some() || self.mailbox.is_some() {
+            return;
+        }
+        let Some(folder) = self.settings_store.folder().map(std::path::Path::to_path_buf) else {
+            log::info!(target: "z3l::shell", "no settings folder is known, so no agent can reach this window");
+            return;
+        };
+        self.attach_channel(&folder);
+    }
+
+    /// Opens the channel in `folder`, keeping the window when it cannot be opened.
+    ///
+    /// A second window is the ordinary case, not an error a person has to solve: the first window's
+    /// channel is the one a client reaches, and this one stays without a door and says so in the log
+    /// (ADR 0188).
+    fn attach_channel(&mut self, folder: &Path) -> bool {
+        match mcp::Channel::open(folder) {
+            Ok((channel, mailbox)) => {
+                log::info!(
+                    target: "z3l::shell",
+                    "an agent may reach this window on 127.0.0.1:{}; the token is in {}",
+                    channel.port(),
+                    channel.published_at().display()
+                );
+                self.channel = Some(channel);
+                self.mailbox = Some(mailbox);
+                true
+            }
+            Err(error) => {
+                log::warn!(target: "z3l::shell", "{error}");
+                false
+            }
+        }
+    }
+
+    /// Answers every call the channel queued, at the frame boundary.
+    ///
+    /// The queue is taken before anything this frame derives from it, so a command lands between
+    /// frames and never inside a gesture, and the scene the person sees on this frame is the scene
+    /// the agent left (ADR 0187).
+    fn serve_channel(&mut self) {
+        if let Some(mailbox) = self.mailbox.as_mut() {
+            self.queued.extend(mailbox.drain());
+        }
+        for pending in std::mem::take(&mut self.queued) {
+            let answer = self.answer_channel(pending.call());
+            pending.answer(answer);
+        }
+    }
+
+    /// Answers one call against the document a person is looking at.
+    fn answer_channel(&mut self, call: &mcp::Call) -> mcp::Answer {
+        match call {
+            mcp::Call::List => mcp::Answer::ok(mcp::listing(&self.tabs.active().session)),
+            mcp::Call::Ask(query) => mcp::asking(&self.tabs.active().session, *query),
+            mcp::Call::Inspect => match serde_json::to_value(self.window_state()) {
+                Ok(value) => mcp::Answer::ok(value),
+                // A window state is plain data by construction; a caller that reaches this arm is
+                // told so instead of being handed a value that is not the window.
+                Err(error) => mcp::Answer::refused(format!("the window cannot be reported: {error}")),
+            },
+            mcp::Call::Dispatch(request) => {
+                if self.gesture_in_flight() {
+                    return mcp::busy();
+                }
+                let session = &mut self.tabs.active_mut().session;
+                mcp::dispatch(session, request, mcp::Door::Window)
+            }
+        }
+    }
+
+    /// Whether a gesture holds the window, so a command would land in the middle of it.
+    ///
+    /// A dispatch happens between frames and so can never interleave with a gizmo drag; the two
+    /// gestures that outlive a frame are a piece carried by the pointer and a question waiting for
+    /// the person's answer, and both mean "not now" rather than "move the document" (ADR 0187).
+    fn gesture_in_flight(&self) -> bool {
+        self.pending_question.is_some() || self.tabs.active().holding_piece()
+    }
+
+    /// The window as `ui_inspect` reports it: the scenes, the one in front, the gesture and the
+    /// selection, which are exactly the facts a headless session cannot have.
+    fn window_state(&self) -> mcp::Window {
+        let active = self.tabs.active_id();
+        let mut index = 0;
+        let mut tabs = Vec::new();
+        for (position, (id, document)) in self.tabs.iter().enumerate() {
+            if id == active {
+                index = position;
+            }
+            tabs.push(mcp::Tab {
+                title: document.file_name(text::Lang::En),
+                path: document.path().map(|path| path.display().to_string()),
+                dirty: document.is_dirty(),
+                revision: document.session.project().revision().get(),
+                product: document.session.active_product().map(model::Id::get),
+            });
+        }
+        let document = self.tabs.active();
+        mcp::Window {
+            tabs,
+            active: index,
+            mode: self.shell.mode.id().to_owned(),
+            selection: document.editor.selected_nodes().iter().map(|id| id.get()).collect(),
+            busy: self.gesture_in_flight(),
+            status: document.last_error.clone(),
+        }
+    }
+
     /// Writes the workspace settings and reports a failure in the status bar.
     ///
     /// The write is cheap and rare — a settings close, an opened or saved scene — so it happens at
@@ -945,6 +1084,11 @@ impl App {
         // A snap kind the Settings page switched applies to the whole workspace at once, exactly as
         // the panel visibility does: every tab reads one set (U116). The mode rides with it, because
         // it is the reading of the same candidates (U119).
+        // The assistant section is the channel's door: a switch pressed here closes or opens it on
+        // this frame, so the file a client reads describes the window that is actually there.
+        if self.settings.assistant != before.assistant {
+            self.apply_channel();
+        }
         if self.settings.snaps.kinds() != before.snaps.kinds() || self.settings.snaps.mode != before.snaps.mode {
             let choice = SnapChoice { kinds: self.settings.snaps.kinds(), mode: self.settings.snaps.mode };
             for (_, document) in self.tabs.iter_mut() {
@@ -1011,6 +1155,9 @@ impl App {
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        // An agent's call is answered here, between frames, before anything this frame derives: a
+        // command lands in the active document and the scene is built from what it left (ADR 0187).
+        self.serve_channel();
         // A directory another application finished writing is swapped in here, at the frame
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
@@ -1210,6 +1357,11 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        // The channel's file outlives nothing: a clean exit removes it, so a reader that cannot
+        // connect reads "no window is open here" and never a token nobody answers (ADR 0188).
+        if let Some(channel) = self.channel.take() {
+            channel.shutdown();
+        }
         self.persist_settings();
     }
 }

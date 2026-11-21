@@ -52,6 +52,9 @@ pub(super) fn open(args: &McpArgs) -> Result<(engine::Session, Option<Arc<dyn mc
 /// sentence a person may want — that the server is up, and that a scene is or is not written — goes
 /// to the log.
 pub(super) fn perform(args: &McpArgs) -> Result<(), CliError> {
+    if args.attach {
+        return attach(args);
+    }
     let (session, sink) = open(args)?;
     log::info!(
         target: "z3l::shell",
@@ -63,6 +66,62 @@ pub(super) fn perform(args: &McpArgs) -> Result<(), CliError> {
     );
     mcp::serve_stdio(mcp::serve_session(session, sink)).map_err(|error| CliError::Mcp(error.to_string()))
 }
+
+/// Serves the local control channel until standard input closes.
+///
+/// This is the second door of ADR 0188 for a process with no window: the same channel a window
+/// offers, over a loopback socket and a token in the settings folder, answered by a session this
+/// process owns. The lifecycle is the parent's: a client that spawns the child holds its standard
+/// input, and closing it is how the channel stops — no signal handler, no second dependency.
+///
+/// `ui_inspect` is listed here as it is in a window, and answers that this process has no window:
+/// the tool is the channel's, and hiding it would make one tool list describe two doors.
+fn attach(args: &McpArgs) -> Result<(), CliError> {
+    let (mut session, sink) = open(args)?;
+    let folder = crate::settings_store::config_dir()
+        .ok_or_else(|| CliError::Mcp("the settings folder is not known, so no token can be published".to_owned()))?;
+    let (channel, mut mailbox) = mcp::Channel::open(&folder).map_err(|error| CliError::Mcp(error.to_string()))?;
+    log::info!(
+        target: "z3l::shell",
+        "serving the control channel on 127.0.0.1:{}; the token is in {}",
+        channel.port(),
+        channel.published_at().display()
+    );
+    let stopping = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let stopping = std::sync::Arc::clone(&stopping);
+        std::thread::spawn(move || {
+            use std::io::Read as _;
+            let mut byte = [0u8; 1];
+            let mut stdin = std::io::stdin();
+            while let Ok(read) = stdin.read(&mut byte) {
+                if read == 0 {
+                    break;
+                }
+            }
+            stopping.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+    while !stopping.load(std::sync::atomic::Ordering::SeqCst) {
+        for pending in mailbox.drain() {
+            let answer = match pending.call() {
+                mcp::Call::List => mcp::Answer::ok(mcp::listing(&session)),
+                mcp::Call::Ask(query) => mcp::asking(&session, *query),
+                mcp::Call::Dispatch(request) => {
+                    mcp::dispatch(&mut session, request, mcp::Door::Headless { sink: sink.as_deref() })
+                }
+                mcp::Call::Inspect => mcp::Answer::refused(NO_WINDOW),
+            };
+            pending.answer(answer);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    channel.shutdown();
+    Ok(())
+}
+
+/// The sentence `ui_inspect` answers with in a process that has no window.
+const NO_WINDOW: &str = "this process serves a document without a window: `ui_inspect` reports the window a person is looking at, and there is none here";
 
 /// The scene a served session writes, and the sections this build must give back.
 #[derive(Debug)]
@@ -130,18 +189,25 @@ mod tests {
         let product = Id::new(7).expect("an id");
         assert_eq!(
             parsed,
-            crate::cli::Command::Mcp(McpArgs { scene: Some(PathBuf::from("cabinet.z3l")), product: Some(product) }),
+            crate::cli::Command::Mcp(McpArgs {
+                scene: Some(PathBuf::from("cabinet.z3l")),
+                product: Some(product),
+                attach: false
+            }),
             "the line names the scene and the product the tools work in"
         );
         let bare = crate::cli::parse(&["mcp".to_owned(), "serve".to_owned()]).expect("no scene is legal");
-        assert_eq!(bare, crate::cli::Command::Mcp(McpArgs { scene: None, product: None }));
+        assert_eq!(bare, crate::cli::Command::Mcp(McpArgs { scene: None, product: None, attach: false }));
+        let channel = crate::cli::parse(&["mcp".to_owned(), "serve".to_owned(), "--attach".to_owned()])
+            .expect("the local channel is a mode of the same door");
+        assert_eq!(channel, crate::cli::Command::Mcp(McpArgs { scene: None, product: None, attach: true }));
     }
 
     #[test]
     fn the_line_reads_a_scene_and_serves_the_product_inside_it() {
         let directory = scratch_dir("cli-mcp-open");
         let (path, product) = saved(&directory);
-        let args = McpArgs { scene: Some(path.clone()), product: None };
+        let args = McpArgs { scene: Some(path.clone()), product: None, attach: false };
         let (session, sink) = open(&args).expect("the scene serves");
         assert_eq!(session.active_product(), Some(product), "one product opens by itself");
         assert!(sink.is_some(), "a scene is written back");
@@ -149,7 +215,8 @@ mod tests {
 
     #[test]
     fn a_line_without_a_scene_serves_a_document_that_is_not_written() {
-        let (session, sink) = open(&McpArgs { scene: None, product: None }).expect("an empty document serves");
+        let (session, sink) =
+            open(&McpArgs { scene: None, product: None, attach: false }).expect("an empty document serves");
         assert!(session.project().products().is_empty(), "nothing was read");
         assert!(sink.is_none(), "there is no file, so the answers must not claim one");
     }
@@ -169,7 +236,7 @@ mod tests {
             .expect("the fixture is written");
 
         let (mut session, sink) =
-            open(&McpArgs { scene: Some(path.clone()), product: None }).expect("the scene serves");
+            open(&McpArgs { scene: Some(path.clone()), product: None, attach: false }).expect("the scene serves");
         let sink = sink.expect("a scene is written back");
         session
             .dispatch("node.rename", &json!({"node": product.get(), "name": "Renamed"}))

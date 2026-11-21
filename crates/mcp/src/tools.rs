@@ -28,6 +28,8 @@ pub const TOOL_RUN: &str = "command_run";
 pub const TOOL_BATCH: &str = "command_batch";
 /// The tool that asks the scene a question and writes nothing.
 pub const TOOL_QUERY: &str = "query";
+/// The tool that reports the window's own state, which only an attached channel can answer.
+pub const TOOL_INSPECT: &str = "ui_inspect";
 
 /// The arguments of `command_list`: none.
 ///
@@ -146,12 +148,17 @@ impl Answer {
     }
 }
 
-/// The four tools, with the schema each one's own argument type publishes.
+/// The tool list a headless session offers: the four coarse tools and no window report.
+pub fn definitions() -> Vec<Tool> {
+    headless_definitions()
+}
+
+/// The four coarse tools, with the schema each one's own argument type publishes.
 ///
 /// A schema is built per call, the way a command's own is: discovery is not the frame path, and a
 /// value that lived in a `static` would have to be built at startup for a client that may never
 /// connect.
-pub fn definitions() -> Vec<Tool> {
+pub fn headless_definitions() -> Vec<Tool> {
     vec![
         Tool::new(
             TOOL_LIST,
@@ -185,6 +192,31 @@ pub fn definitions() -> Vec<Tool> {
     ]
 }
 
+/// The tool list an attached channel offers: the headless four and the window's own report.
+///
+/// The list is built once per `tools/list`, and the five names are the whole promise: a caller that
+/// reads this list learns the same five tools on either kind of window.
+pub fn attached_definitions() -> Vec<Tool> {
+    let mut tools = headless_definitions();
+    tools.push(Tool::new(
+        TOOL_INSPECT,
+        "Report the window a person is looking at: which scenes are open, which one is in front, its \
+         path, whether it holds unsaved changes and its revision, the armed transform gesture, the \
+         selected nodes and the sentence the status bar shows. Call this before dispatching: a \
+         command lands in the active scene, and this says which one that is.",
+        object_schema::<InspectRequest>(),
+    ));
+    tools
+}
+
+/// The arguments of `ui_inspect`: none.
+///
+/// An empty object rather than no arguments at all, so a client that sends `{}` and one that sends
+/// nothing are the same call, and a missed keystroke is refused instead of ignored.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectRequest {}
+
 /// The JSON Schema of one tool's arguments, as the object the protocol carries.
 fn object_schema<T: JsonSchema>() -> Arc<JsonObject> {
     match schemars::schema_for!(T).to_value() {
@@ -217,35 +249,44 @@ mod tests {
 
     #[test]
     fn every_tool_publishes_a_schema_that_denies_a_key_it_does_not_read() {
-        let tools = definitions();
-        assert_eq!(tools.len(), 4, "the four coarse tools");
-        for tool in &tools {
-            // A tool takes one object, or — `query` — one of the five question objects the engine's
-            // own enum describes. Either way every shape it accepts denies an unknown field, which
-            // is the promise the parser keeps.
-            let schema = Value::Object((*tool.input_schema).clone());
-            let variants: Vec<&Value> = match schema.get("oneOf").and_then(Value::as_array) {
-                Some(variants) => variants.iter().collect(),
-                None => vec![&schema],
-            };
-            assert!(!variants.is_empty(), "{} describes no shape", tool.name);
-            for shape in variants {
-                assert_eq!(shape.get("type").and_then(Value::as_str), Some("object"), "{}", tool.name);
-                assert_eq!(
-                    shape.get("additionalProperties").and_then(Value::as_bool),
-                    Some(false),
-                    "{} refuses a key it does not read",
+        for tools in [headless_definitions(), attached_definitions()] {
+            assert!(tools.len() >= 4, "the four coarse tools");
+            for tool in &tools {
+                // A tool takes one object, or — `query` — one of the five question objects the engine's
+                // own enum describes. Either way every shape it accepts denies an unknown field, which
+                // is the promise the parser keeps.
+                let schema = Value::Object((*tool.input_schema).clone());
+                let variants: Vec<&Value> = match schema.get("oneOf").and_then(Value::as_array) {
+                    Some(variants) => variants.iter().collect(),
+                    None => vec![&schema],
+                };
+                assert!(!variants.is_empty(), "{} describes no shape", tool.name);
+                for shape in variants {
+                    assert_eq!(shape.get("type").and_then(Value::as_str), Some("object"), "{}", tool.name);
+                    assert_eq!(
+                        shape.get("additionalProperties").and_then(Value::as_bool),
+                        Some(false),
+                        "{} refuses a key it does not read",
+                        tool.name
+                    );
+                }
+                assert!(
+                    tool.description.as_ref().is_some_and(|text| !text.trim().is_empty()),
+                    "{} says what it does",
                     tool.name
                 );
             }
-            assert!(
-                tool.description.as_ref().is_some_and(|text| !text.trim().is_empty()),
-                "{} says what it does",
-                tool.name
-            );
         }
-        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+        let headless = headless_definitions();
+        let names: Vec<&str> = headless.iter().map(|tool| tool.name.as_ref()).collect();
         assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY]);
+        let offered = attached_definitions();
+        let attached: Vec<&str> = offered.iter().map(|tool| tool.name.as_ref()).collect();
+        assert_eq!(
+            attached,
+            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_INSPECT],
+            "an attached channel adds the window's own report to the same four"
+        );
     }
 
     #[test]

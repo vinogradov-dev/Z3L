@@ -20,6 +20,9 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# The run token's bytes, and the one line a host writes when the channel cannot be served.
+getrandom = { workspace = true }
+log = { workspace = true }
 
 [dev-dependencies]
 # A client we did not write, over a pipe: the served session is driven the way a foreign client
