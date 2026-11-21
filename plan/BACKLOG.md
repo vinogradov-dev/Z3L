@@ -76,20 +76,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
    `cargo xtask ci` is green.
   `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
-- `[~]` **J6** the local channel attaches an agent to the window a person is looking at
-  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
-   measured: a stdio child edits a saved file, not the document a person is looking at, so
-   without the channel the agent cannot work in the window the product is about.
-  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
-   writes the port and the token into an owner-only file in the settings directory and removes
-   it on exit; the setting is on by default and switches it off; the tools are the headless set
-   plus `ui_inspect`; a request without the token is refused before it is read as a command,
-   and a turn still dispatches at a frame boundary.
-  Done: A test with the token reaches `command_list` and one without is refused; the token file
-   is owner-only and gone after a clean exit; a second instance's file does not take the first
-   one's channel; an unauthenticated request never reaches the dispatcher.
-  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs`
-
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -850,6 +836,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **J6** the local channel attaches an agent to the window a person is looking at
+  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
+   measured: a stdio child edits a saved file, not the document a person is looking at, so
+   without the channel the agent cannot work in the window the product is about.
+  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
+   writes the port and the token into an owner-only file in the settings directory and removes
+   it on exit; the setting is on by default and switches it off; the tools are the headless set
+   plus `ui_inspect`; a request without the token is refused before it is read as a command,
+   and a turn still dispatches at a frame boundary.
+  Done: A test with the token reaches `command_list` and one without is refused; the token file
+   is owner-only and gone after a clean exit; a second instance's file does not take the first
+   one's channel; an unauthenticated request never reaches the dispatcher.
+  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs` — `66e6f83`
 
 - `[x]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
   Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
