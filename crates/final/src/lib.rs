@@ -43,6 +43,7 @@ pub mod gpu;
 pub mod image;
 pub mod job;
 pub mod ray;
+pub mod sampler;
 pub mod soup;
 pub mod view;
 
