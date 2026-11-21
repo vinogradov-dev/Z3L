@@ -524,27 +524,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **X102** X99 a primitive is an operand of a body boolean
-  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
-   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
-   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
-   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
-   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
-   SolidPlan at all.
-  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
-   give the kernel port a way to build a body from the closed triangle mesh the primitive
-   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
-   backend a mesh body for a primitive operand and every primitive becomes an operand of every
-   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
-   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
-   kinds it accepts from what the compiler can build, so the cells are never dead without a
-   sentence.
-  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
-   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
-   the three Model cells arm on a selection of two primitives and on a primitive beside a
-   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
-   cell while its road is unbuilt
-  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs`
 - `[ ]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
   Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
    under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
@@ -836,6 +815,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **X102** X99 a primitive is an operand of a body boolean
+  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
+   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
+   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
+   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
+   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
+   SolidPlan at all.
+  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
+   give the kernel port a way to build a body from the closed triangle mesh the primitive
+   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
+   backend a mesh body for a primitive operand and every primitive becomes an operand of every
+   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
+   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
+   kinds it accepts from what the compiler can build, so the cells are never dead without a
+   sentence.
+  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
+   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
+   the three Model cells arm on a selection of two primitives and on a primitive beside a
+   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
+   cell while its road is unbuilt
+  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs` — `ae7d115`
 
 - `[x]` **J6** the local channel attaches an agent to the window a person is looking at
   Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
@@ -2725,7 +2726,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A cone is drawn from a base circle and a height, the card edits both radii and the
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
-  `files: crates/model/src/primitive.rs,crates/mesh/src/primitive.rs,crates/ui/src/draw.rs,crates/ui/src/editor/drawing.rs,crates/ui/src/object_card.rs,crates/ui/src/toolbars/spec.rs,app/src/extrude_gizmo.rs,assets/icons/primitives/cone.svg` — `00c8795`
+  `files: crates/param/src/primitive.rs` — `00c8795`
 
 - `[x]` **X63** identical created objects all carry the same name in the tree and the card
   Why: Observation: every created object is named after its shape alone (ui/editor/creation.rs:
@@ -2868,7 +2869,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    covers one equal meridian step within rounding, and the counts, bounds and outward normals
    are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
    twice another, and the ball is looked at once in the live window at the default size.
-  `files: crates/mesh/src/primitive.rs` — `06ae440`
+  `files: crates/param/src/primitive.rs` — `06ae440`
 
 - `[x]` **K5** the program cannot open a scene named on its command line
   Why: Observation: `z3l cabinet.z3l` prints «`cabinet.z3l` is not a command; run `z3l --help`»
@@ -4294,7 +4295,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a face grip one, each one undo entry; a min-face drag keeps the opposite face still in
    the world; cylinder and sphere still load and build; the ribbon cell, the icon and the
    messages no longer mention a cube; cargo xtask ci is green.
-  `files: crates/model/src/primitive.rs, crates/mesh/src/primitive.rs, crates/engine/src/object_cmds.rs, crates/ui/src/toolbars.rs` — `ce8ce93`
+  `files: crates/param/src/primitive.rs` — `ce8ce93`
 
 - `[x]` **N8** the exact-distance fields: type a distance, lock it, centre it, with the keyboard
   Why: A maker cannot place a post to the millimetre with a mouse, and the same need appears in
