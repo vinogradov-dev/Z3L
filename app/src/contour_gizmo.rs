@@ -5,9 +5,12 @@
 //! the solid, with the original shape faintly behind it when the draft differs, so the user sees
 //! the change before the single command that applies it.
 //!
-//! The pointer is mapped onto the node's local XY plane through its world placement. An arc corner
-//! is projected onto its own circle first, because an edit may slide an arc corner along the arc but
-//! never change its centre or radius.
+//! The pointer is mapped onto the node's local XY plane through its world placement, and that plane
+//! is the plane the one snap resolver is asked about: a corner of another panel captures the dragged
+//! corner by the workspace's mode — its foot on this plane in 2.5D, itself in 3D — and the marker is
+//! painted where the working copy really put the corner, so the marker and the drop are one place
+//! (U119). An arc corner is projected onto its own circle first, because an edit may slide an arc
+//! corner along the arc but never change its centre or radius.
 //!
 //! A ring names every corner by the segment that starts on it; an open chain has a free end as well,
 //! so a handle is addressed with [`PathCorner`] and the last segment's end is reachable.
@@ -15,7 +18,8 @@
 use eframe::egui::{self, Pos2, Response, Ui};
 use geom::{DVec2, DVec3};
 use model::{
-    Contour, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, PathCorner, Placement, Project,
+    Contour, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, PathCorner, Placement, Project, Sight,
+    SnapKind,
 };
 use scene::Camera;
 use ui::{
@@ -25,7 +29,8 @@ use ui::{
 use units::Length;
 
 use crate::gizmo_math::{
-    ACTIVE_COLOR, distance_to_segment, length_from_millimetres, ray_plane, ray_to, reference_screen, screen_point,
+    ACTIVE_COLOR, SNAP_RADIUS_POINTS, WorkPlane, distance_to_segment, length_from_millimetres, paint_snap_marker,
+    ray_plane, ray_to, reference_screen, screen_point,
 };
 
 /// Radius of an unselected grip handle, in points.
@@ -46,6 +51,34 @@ const BASE_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(150, 15
 const DRAFT_COLOR: egui::Color32 = egui::Color32::from_rgb(120, 200, 255);
 /// Colour of an untouched grip handle.
 const GRIP_COLOR: egui::Color32 = egui::Color32::from_rgb(240, 240, 240);
+
+/// What the workspace's snap set and its mode say to one contour frame (U119).
+///
+/// The two travel together because the resolver reads both at once and the gizmo's signature is
+/// already long: which kinds may capture, and how a candidate above the ring's plane is read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ContourInput {
+    /// Which kinds may capture a dragged corner.
+    pub(crate) kinds: model::SnapKinds,
+    /// The workspace's mode: a candidate above the plane captures by its foot in 2.5D, and only when
+    /// it lies in the plane in 3D.
+    pub(crate) mode: model::SnapMode,
+}
+
+/// One pointer frame of a grip: where the pointer is, which grip it would move and the view it is
+/// seen through.
+///
+/// The three travel together because the resolver needs all of them and the gizmo's own call would
+/// otherwise carry eight arguments (AGENTS §1.5, U119).
+#[derive(Clone, Copy, Debug)]
+struct Ask {
+    /// The camera, its rectangle and the node's world frame.
+    view: Screen,
+    /// The grip the pointer would move.
+    grip: ContourGrip,
+    /// The pointer in viewport points.
+    pointer: Pos2,
+}
 
 /// The view one contour gesture is resolved against: the camera, its rectangle and the node's
 /// world frame.
@@ -144,6 +177,9 @@ pub(crate) struct ContourGizmo {
     numeric: Option<GripField>,
     /// Whether a corner drag runs along the contour instead of freely.
     along: bool,
+    /// The capture the resolver answered with while a corner was dragged or latched: the grip and
+    /// the kind, so the marker is painted at the point the working copy holds (U119).
+    snap: Option<(ContourGrip, SnapKind)>,
 }
 
 impl ContourGizmo {
@@ -155,11 +191,18 @@ impl ContourGizmo {
         self.selected = None;
         self.latch = None;
         self.numeric = None;
+        self.snap = None;
     }
 
     /// Whether a grip drag or its numeric field owns the keyboard right now.
     pub(crate) fn is_dragging(&self) -> bool {
         self.drag.is_some() || self.numeric.is_some()
+    }
+
+    /// The capture the pointer answered with while a corner was dragged or latched: the grip and the
+    /// kind that took it, or `None` when the pointer's own point stands (U119).
+    pub(crate) fn snap(&self) -> Option<(ContourGrip, SnapKind)> {
+        self.snap
     }
 
     /// Whether a latched move is waiting for the click that drops it.
@@ -194,6 +237,7 @@ impl ContourGizmo {
     /// Returns whether there was a latch to abandon, so the caller's Escape ends the mode only
     /// when the move was not the first thing it had to give up.
     pub(crate) fn abandon_latch(&mut self, editor: &mut Editor) -> bool {
+        self.snap = None;
         let Some(latch) = self.latch.take() else {
             return false;
         };
@@ -227,6 +271,7 @@ impl ContourGizmo {
         camera: Camera,
         project: &Project,
         editor: &mut Editor,
+        input: ContourInput,
     ) -> Result<GizmoAction, String> {
         let Some(edit) = editor.contour_edit() else {
             self.reset();
@@ -246,8 +291,14 @@ impl ContourGizmo {
 
         // A latched move owns the pointer until a click drops it; nothing else may grab a grip or
         // split a side meanwhile, or the drop would start an edit of its own.
-        if self.latch.is_some() {
-            let changed = self.follow(Screen { camera, rect, placement }, pointer, editor);
+        if let Some(latched) = self.latch.as_ref().map(|latch| latch.grip) {
+            let view = Screen { camera, rect, placement };
+            let local =
+                pointer.and_then(|pointer| self.snapped(editor, Ask { view, grip: latched, pointer }, project, input));
+            if local.is_none() {
+                self.snap = None;
+            }
+            let changed = self.follow(view, local, editor);
             // A press on one of the move's own plates is the plate's: it focuses or scrubs a number
             // and never drops the corner under it.
             if response.clicked_by(egui::PointerButton::Primary) && !pointer.is_some_and(|at| self.field_contains(at)) {
@@ -290,7 +341,12 @@ impl ContourGizmo {
             } else {
                 if response.dragged_by(egui::PointerButton::Primary)
                     && let Some(pointer) = response.interact_pointer_pos()
-                    && let Some(local) = local_point(pointer, rect, camera, placement)
+                    && let Some(local) = self.snapped(
+                        editor,
+                        Ask { view: Screen { camera, rect, placement }, grip: drag.grip, pointer },
+                        project,
+                        input,
+                    )
                     && let Some(local) = self.dragged_point(&draft, drag, local)
                     && let (Some(x), Some(y)) = (length_from_millimetres(local.x), length_from_millimetres(local.y))
                     && editor.contour_edit_drag_grip(drag.grip, [x, y], drag.motion).is_ok()
@@ -334,6 +390,7 @@ impl ContourGizmo {
                 }
                 if response.drag_stopped_by(egui::PointerButton::Primary) {
                     self.drag = None;
+                    self.snap = None;
                 }
             }
         }
@@ -369,13 +426,81 @@ impl ContourGizmo {
             match grip {
                 Some(grip @ ContourGrip::Corner(_)) if self.selected == Some(grip) => {
                     let motion = self.motion_for(camera, rect, placement, &draft, grip, Some(pointer));
-                    self.latch = self.latch_move(&draft, grip, pointer, Screen { camera, rect, placement }, motion);
+                    let view = Screen { camera, rect, placement };
+                    let local = self.snapped(editor, Ask { view, grip, pointer }, project, input);
+                    self.latch = local.and_then(|local| self.latch_move(&draft, grip, pointer, local, view, motion));
                 }
                 Some(grip @ ContourGrip::Corner(_)) => self.selected = Some(grip),
                 _ => self.selected = None,
             }
         }
         Ok(if changed { GizmoAction::Changed } else { GizmoAction::Idle })
+    }
+
+    /// The point the pointer hands a grip, read through the one snap resolver, and the capture it
+    /// answered with (U119).
+    ///
+    /// The ring's own plane is the plane the tool draws on, so the workspace's mode decides whether a
+    /// candidate above that plane captures by its foot (2.5D) or only when it really lies in the
+    /// plane (3D). The draft's other corners are the figure's own points, offered exactly as a
+    /// running sketch offers the points it already holds; the corner being moved is left out, or it
+    /// would capture itself. There is no previous point in a grip drag, so the constructions that
+    /// need one — the perpendicular and the tangent — do not answer here.
+    fn snapped(&mut self, editor: &mut Editor, ask: Ask, project: &Project, input: ContourInput) -> Option<DVec2> {
+        let sight = editor.flags().sight();
+        let draft = editor.contour_edit()?.draft();
+        let (local, kind) = self.resolved(draft, ask, project, sight, input)?;
+        self.snap = kind.map(|kind| (ask.grip, kind));
+        Some(local)
+    }
+
+    /// The resolver's answer for one pointer position, in the node's own plane coordinates.
+    ///
+    /// The grid is the one kind left out: it rounds wherever the pointer is, which is right for
+    /// placing a new point on the drawing plane and wrong for moving a corner the maker already
+    /// measured — a 60.5 mm side would land on 60 the moment it was dragged. Every other kind, the
+    /// coordinate axes included, says "this place is a real place", and those are the captures an
+    /// edit wants.
+    fn resolved(
+        &self,
+        draft: &ContourDraft,
+        ask: Ask,
+        project: &Project,
+        sight: Sight<'_>,
+        input: ContourInput,
+    ) -> Option<(DVec2, Option<SnapKind>)> {
+        let Ask { view, grip, pointer } = ask;
+        let plane = WorkPlane::from_placement(view.placement)?;
+        let ray = ray_to(pointer, view.rect, view.camera);
+        let hit = plane.ray_point(ray)?;
+        let depth = (hit - view.camera.eye()).dot(view.camera.forward());
+        if !depth.is_finite() {
+            return None;
+        }
+        let reach = view.camera.world_per_point(depth, f64::from(view.rect.height())) * f64::from(SNAP_RADIUS_POINTS);
+        let tolerance = length_from_millimetres(reach)?;
+        let ends = draft
+            .grips()
+            .into_iter()
+            .filter(|other| *other != grip)
+            .filter_map(|other| draft.grip_position(other))
+            .map(|position| plane.world(plane_point(position)))
+            .collect::<Vec<_>>();
+        let request = model::SnapRequest {
+            ray_origin: ray.origin(),
+            ray_direction: ray.direction(),
+            tolerance,
+            tolerance_depth: depth,
+            kinds: model::SnapKinds { grid: false, ..input.kinds },
+            plane: plane.snap_plane(),
+            target: input.mode.target(),
+            anchor: None,
+            ends: &ends,
+            axis_lock: false,
+            face: None,
+        };
+        let answer = project.snap(request, sight)?;
+        Some((plane.local(answer.point), answer.kind))
     }
 
     /// The pointer the gizmo reads: the scene's hover, the drag's own position, and — while a move
@@ -394,12 +519,12 @@ impl ContourGizmo {
         draft: &ContourDraft,
         grip: ContourGrip,
         pointer: Pos2,
+        local: DVec2,
         view: Screen,
         motion: CornerMove,
     ) -> Option<CornerLatch> {
         let start = draft.grip_position(grip)?;
         let anchor = plane_point(start);
-        let local = local_point(pointer, view.rect, view.camera, view.placement).unwrap_or(anchor);
         let live = PointState::moved(anchor, local, None)?;
         let rows = live
             .rows
@@ -418,12 +543,11 @@ impl ContourGizmo {
     ///
     /// A refused placement is the mode's usual silent refusal: the working copy stays at its last
     /// valid shape, so a corner dragged into a self-crossing ring simply stops.
-    fn follow(&mut self, view: Screen, pointer: Option<Pos2>, editor: &mut Editor) -> bool {
+    fn follow(&mut self, view: Screen, local: Option<DVec2>, editor: &mut Editor) -> bool {
         let Some(latch) = self.latch.as_mut() else {
             return false;
         };
-        let Some(local) = pointer.and_then(|pointer| local_point(pointer, view.rect, view.camera, view.placement))
-        else {
+        let Some(local) = local else {
             return false;
         };
         let anchor = plane_point(latch.start);
@@ -451,6 +575,7 @@ impl ContourGizmo {
 
     /// Ends the latched move: a corner that really moved is written, one that did not is dropped.
     fn end_latch(&mut self) -> GizmoAction {
+        self.snap = None;
         let Some(latch) = self.latch.take() else {
             return GizmoAction::Idle;
         };
@@ -532,6 +657,14 @@ impl ContourGizmo {
             if let Some(position) = screen_point(camera, rect, world) {
                 paint_grip(&painter, position, grip, false, true);
             }
+        }
+        // The marker stands where the working copy put the corner, so it names the place the drop
+        // will write and never the candidate it came from (U119).
+        if let Some((grip, kind)) = self.snap()
+            && let Some(local) = edit.draft().grip_position(grip)
+            && let Some(position) = local_screen(Screen { camera, rect, placement }, plane_point(local))
+        {
+            paint_snap_marker(&painter, position, Some(kind), false, ACTIVE_COLOR);
         }
         if let Some(action) = self.paint_latch(ui, Screen { camera, rect, placement }) {
             return Some(action);
@@ -1433,14 +1566,10 @@ mod tests {
         let start = draft.grip_position(corner).expect("the corner");
         let camera = Camera::default();
         let pointer = screen_of(camera, [millimetres(60), millimetres(40)]);
+        let view = Screen { camera, rect: viewport(), placement: Placement::IDENTITY };
+        let local = local_point(pointer, view.rect, view.camera, view.placement).expect("the pointer is on the plane");
         let latch = ContourGizmo::default()
-            .latch_move(
-                &draft,
-                corner,
-                pointer,
-                Screen { camera, rect: viewport(), placement: Placement::IDENTITY },
-                CornerMove::Free,
-            )
+            .latch_move(&draft, corner, pointer, local, view, CornerMove::Free)
             .expect("a latch");
         assert_eq!(latch.start, start, "the latch keeps the old position");
         assert_eq!(latch.grip, corner);

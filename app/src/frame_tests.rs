@@ -4764,6 +4764,11 @@ fn sketching(name: &str) -> (Harness, Id, model::PathCorner) {
     };
     {
         let document = harness.app.tabs.active_mut();
+        // These tests are about the gesture, not about the pointer's captures: the sample scene puts
+        // a candidate a few millimetres from the points they drag to, so a snap would answer instead
+        // of the pointer and the assertions below would measure the resolver, not the gesture (U119).
+        let mode = document.snap_mode();
+        document.set_snaps(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode });
         document.editor.select_node(Some(object));
         assert!(
             document.editor.start_contour_edit(document.session.project(), ui::ContourTarget::Path(object)),
@@ -4773,6 +4778,93 @@ fn sketching(name: &str) -> (Harness, Id, model::PathCorner) {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     (harness, object, corner)
+}
+
+#[test]
+fn a_contour_corner_answers_the_workspace_mode_and_the_marker_stands_on_the_point_it_takes() {
+    // U119: the contour editor asks the one resolver, on the ring's own plane. The sample scene
+    // offers a face centre whose foot on this plane is (60, 40); in 2.5D it captures the dragged
+    // corner and the corner lands on that foot, and in 3D it stands off the plane and captures
+    // nothing, so the corner keeps the pointer's own point. In both modes the marker is painted at
+    // the corner the working copy holds, which is exactly the point the drop writes.
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let name = match mode {
+            model::SnapMode::Foot => "frame-contour-snap-foot",
+            model::SnapMode::Space => "frame-contour-snap-space",
+        };
+        let (mut harness, object, corner) = sketching(name);
+        {
+            let document = harness.app.tabs.active_mut();
+            document.set_snaps(crate::document::SnapChoice { kinds: model::SnapKinds::ALL, mode });
+        }
+        // The candidate is a face centre of the sample scene that stands above the ring's plane, and
+        // the pointer goes to where the eye sees it: the plane is the question, not the screen.
+        let marks = {
+            let document = harness.app.tabs.active();
+            document.session.project().snap_marks(document.editor.flags().sight())
+        };
+        let mark = marks
+            .iter()
+            .find(|mark| mark.kind == model::SnapKind::Centre && mark.point.z > 1.0)
+            .expect("the sample scene has a face centre above the plane")
+            .point;
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), mark).expect("on screen");
+        let from = node_point_mm(&harness, object, [0.0, 0.0]);
+        harness.click(from, egui::PointerButton::Primary);
+        harness.click(from, egui::PointerButton::Primary);
+        harness.hover(at);
+
+        let drafted = drafted_corner(&harness, corner);
+        let capture = harness.app.tabs.active().contour_gizmo.snap().map(|(_, kind)| kind);
+        match mode {
+            model::SnapMode::Foot => {
+                assert!(
+                    same_point(
+                        drafted,
+                        [
+                            Length::from_micrometres((mark.x * 1_000.0).round() as i64),
+                            Length::from_micrometres((mark.y * 1_000.0).round() as i64),
+                        ]
+                    ),
+                    "2.5D lands the corner on the candidate's foot on the ring's plane: {drafted:?} from {mark:?}"
+                );
+                assert!(
+                    capture.is_some_and(|kind| kind != model::SnapKind::Grid),
+                    "and names the scene place that took it: {capture:?}"
+                );
+            }
+            model::SnapMode::Space => {
+                // 3D takes only a candidate that really lies in the ring's plane; the face centre the
+                // pointer points at stands above it, so it never captures, and whatever does capture
+                // is a candidate of the plane itself.
+                let pointer = node_point_under(&harness, object, at);
+                match capture {
+                    None => assert!(
+                        same_point(drafted, pointer),
+                        "nothing captured, so the corner keeps the pointer's point: {drafted:?} against {pointer:?}"
+                    ),
+                    Some(kind) => {
+                        let coplanar = marks.iter().any(|mark| {
+                            mark.point.z.abs() <= 1.0e-3
+                                && same_point(
+                                    drafted,
+                                    [
+                                        Length::from_micrometres((mark.point.x * 1_000.0).round() as i64),
+                                        Length::from_micrometres((mark.point.y * 1_000.0).round() as i64),
+                                    ],
+                                )
+                        });
+                        assert!(coplanar, "3D captures only a candidate in the plane: {drafted:?} ({kind:?})");
+                    }
+                }
+            }
+        }
+
+        // The marker reads the working copy's corner, so the point it draws is the point the drop
+        // writes: one place, and no second decision about where the marker stands.
+        harness.click(at, egui::PointerButton::Primary);
+        assert!(same_point(stored_corner(&harness, object, corner), drafted), "the drop writes the marker's point");
+    }
 }
 
 /// The screen point of one point of a node's own plane, in millimetres.

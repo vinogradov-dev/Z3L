@@ -675,11 +675,13 @@ pub(crate) fn ray_plane(ray: Ray, plane_point: DVec3, normal: DVec3) -> Option<D
 
 /// A right-handed world plane the drawing tools place points on.
 ///
-/// The plane passes through the world origin, so a drawing is stored in world-aligned plane
-/// coordinates. `u` and `v` follow the screen of the view that selected the plane: a shape drawn to
+/// A plane the view picks passes through the world origin, so a drawing is stored in world-aligned
+/// plane coordinates; a plane the document places — a contour ring's own — carries the node's origin
+/// instead (U119). `u` and `v` follow the screen of the view that selected the plane: a shape drawn to
 /// the right and up lands on positive `u` and `v` in both the viewport and the document.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WorkPlane {
+    origin: DVec3,
     normal: DVec3,
     u: DVec3,
     v: DVec3,
@@ -687,7 +689,22 @@ pub(crate) struct WorkPlane {
 
 impl WorkPlane {
     /// World XY: the plane a perspective or axonometric view draws on.
-    pub(crate) const WORLD_XY: Self = Self { normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+    pub(crate) const WORLD_XY: Self = Self { origin: DVec3::ZERO, normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+
+    /// The plane a placement puts its local XY on: a contour ring's own plane, whose zero is the
+    /// node's origin (U119).
+    ///
+    /// The plane of a contour is where its corners are stored, so a ring drawn on a panel's face
+    /// offers its box in the plane of that face and not in the world XY.
+    pub(crate) fn from_placement(placement: Placement) -> Option<Self> {
+        let u = placement.rotation() * DVec3::X;
+        let v = placement.rotation() * DVec3::Y;
+        let normal = u.cross(v);
+        if !u.is_finite() || !v.is_finite() || normal.length() <= 1.0e-9 {
+            return None;
+        }
+        Some(Self { origin: placement.translation(), normal, u, v })
+    }
 
     /// The plane an axis-aligned orthographic view draws on, or world XY for every other view.
     ///
@@ -699,10 +716,10 @@ impl WorkPlane {
         }
         let pitch = camera.pitch();
         if (pitch - MAX_PITCH).abs() <= STANDARD_VIEW_TOLERANCE {
-            return Self { normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+            return Self { origin: DVec3::ZERO, normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
         }
         if (pitch - MIN_PITCH).abs() <= STANDARD_VIEW_TOLERANCE {
-            return Self { normal: -DVec3::Z, u: DVec3::X, v: -DVec3::Y };
+            return Self { origin: DVec3::ZERO, normal: -DVec3::Z, u: DVec3::X, v: -DVec3::Y };
         }
         if pitch.abs() > STANDARD_VIEW_TOLERANCE {
             return Self::WORLD_XY;
@@ -713,10 +730,10 @@ impl WorkPlane {
             return Self::WORLD_XY;
         }
         match (nearest as i64).rem_euclid(4) {
-            0 => Self { normal: DVec3::X, u: DVec3::Y, v: DVec3::Z },
-            1 => Self { normal: DVec3::Y, u: -DVec3::X, v: DVec3::Z },
-            2 => Self { normal: -DVec3::X, u: -DVec3::Y, v: DVec3::Z },
-            _ => Self { normal: -DVec3::Y, u: DVec3::X, v: DVec3::Z },
+            0 => Self { origin: DVec3::ZERO, normal: DVec3::X, u: DVec3::Y, v: DVec3::Z },
+            1 => Self { origin: DVec3::ZERO, normal: DVec3::Y, u: -DVec3::X, v: DVec3::Z },
+            2 => Self { origin: DVec3::ZERO, normal: -DVec3::X, u: -DVec3::Y, v: DVec3::Z },
+            _ => Self { origin: DVec3::ZERO, normal: -DVec3::Y, u: DVec3::X, v: DVec3::Z },
         }
     }
 
@@ -728,19 +745,20 @@ impl WorkPlane {
     /// The world point at plane coordinates `local`.
     #[allow(dead_code, reason = "the commit and snap steps place local points in U13-U17")]
     pub(crate) fn world(self, local: DVec2) -> DVec3 {
-        self.u * local.x + self.v * local.y
+        self.origin + self.u * local.x + self.v * local.y
     }
 
     /// The plane coordinates of a world point on the plane.
     pub(crate) fn local(self, world: DVec3) -> DVec2 {
-        DVec2::new(world.dot(self.u), world.dot(self.v))
+        let offset = world - self.origin;
+        DVec2::new(offset.dot(self.u), offset.dot(self.v))
     }
 
-    /// A placement whose local XY is this plane at the world origin.
+    /// A placement whose local XY is this plane.
     ///
     /// Local X maps to `u`, local Y to `v` and local Z to the normal, so a path stored in plane
-    /// coordinates keeps its orientation in the document. The translation is zero because the plane
-    /// passes through the world origin; a later origin-carrying plane adds it here only.
+    /// coordinates keeps its orientation in the document. The translation is the plane's own zero,
+    /// which is the world origin for a plane the view picked.
     pub(crate) fn placement(self) -> Option<Placement> {
         let basis = DMat4::from_cols(
             self.u.extend(0.0),
@@ -749,7 +767,7 @@ impl WorkPlane {
             DVec3::ZERO.extend(1.0),
         );
         let rotation = DQuat::from_mat4(&basis).normalize();
-        Placement::new(DVec3::ZERO, rotation).ok()
+        Placement::new(self.origin, rotation).ok()
     }
 
     /// A placement whose local origin sits at plane coordinates `local`.
@@ -765,7 +783,7 @@ impl WorkPlane {
     /// The world point where a ray meets the plane, or `None` when it is parallel or behind.
     #[allow(dead_code, reason = "the drawing tools start from these points in U13-U14")]
     pub(crate) fn ray_point(self, ray: Ray) -> Option<DVec3> {
-        ray_plane(ray, DVec3::ZERO, self.normal())
+        ray_plane(ray, self.origin, self.normal())
     }
 
     /// The plane coordinates under a viewport position.
@@ -775,11 +793,8 @@ impl WorkPlane {
     }
 
     /// The plane as the model's snap resolver reads it: the same origin, `u` and `v`.
-    ///
-    /// The work plane passes through the world origin, so the two are the same plane and no
-    /// kilometre of offset travels with it.
     pub(crate) fn snap_plane(self) -> model::SnapPlane {
-        model::SnapPlane::new(DVec3::ZERO, self.u, self.v).unwrap_or_else(model::SnapPlane::world_xy)
+        model::SnapPlane::new(self.origin, self.u, self.v).unwrap_or_else(model::SnapPlane::world_xy)
     }
 
     /// The plane name shown in the strip: `XY`, `XZ` or `YZ`.
