@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=5d054a2 updated=2026-11-21
+STATE: milestone=M7 phase=T task=- state=idle base=6c7f854 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -56,7 +56,7 @@ square around a round body answers nothing (U120).
 
 ## Next
 
-Nothing is scheduled: X102 is next: a primitive is an operand of a body boolean
+Nothing is scheduled: the app work order is empty, and X102 waits at the head of `## Next`.
 
 ## Index
 

@@ -245,32 +245,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
    and no writer was added when P17 landed.
   `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
-- `[ ]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
-  Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
-   answers "`STATE: base=72b7164` is not the tree this plan describes: `AGENTS.md` changed
-   since, and `state=idle` means the plan is written" and prints nothing at all; the render
-   worktree answers the same about `base=229b539` after its first code commit. The rule is
-   right where it was written — in the primary checkout, `base` describes the tree that
-   checkout has — and it cannot be judged from a stream checkout, where the commits after
-   `base` are that stream's own work and the plan is deliberately not written there (§6.2: a
-   stream commits code and never `plan/`). `stream/catalog` and `stream/prototypes` pass today
-   only because their plan copies happen to carry a `base` the rule likes. The cost is exact:
-   `status` prints no clock, no streams and no entry, so a session that opens a stream worktree
-   starts by reading files by hand, and a stream's own `task step` is refused because the gate
-   it runs sees that one violation and the write removes nothing.
-  Shape: Shape: The tool reads the checkout it runs in — `git rev-parse --abbrev-ref HEAD`
-   through the `Git` port — and when that branch is `stream/<key>` for a stream the plan
-   declares, the base-lag rule is not applied: it speaks about the primary checkout's tree, and
-   the primary is where it is judged. The skip is said out loud in the `status` and `plan`
-   blocks ("the base-lag rule is the primary checkout's; this is `stream/render`"), because a
-   silently skipped check is a check nobody trusts. The ancestor check stays everywhere: a
-   `base` that is not a commit or not an ancestor of `HEAD` is wrong in any worktree.
-  Done: Done: A test builds a repository whose branch is `stream/render` with a declared
-   `render=Y,L` and one code commit after `base`: `cargo xtask plan` passes there, while the
-   same tree on `dev` still fails the lag rule; the `status` block carries the sentence that
-   says which checkout the rule belongs to; a stream branch whose stream the plan does not
-   declare keeps the old refusal.
-  `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs`
 - `[ ]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
   Why: Observation: a contour drawing that has been stored once is a dead operand. In
    /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
@@ -858,6 +832,33 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
+  Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
+   answers "`STATE: base=72b7164` is not the tree this plan describes: `AGENTS.md` changed
+   since, and `state=idle` means the plan is written" and prints nothing at all; the render
+   worktree answers the same about `base=229b539` after its first code commit. The rule is
+   right where it was written — in the primary checkout, `base` describes the tree that
+   checkout has — and it cannot be judged from a stream checkout, where the commits after
+   `base` are that stream's own work and the plan is deliberately not written there (§6.2: a
+   stream commits code and never `plan/`). `stream/catalog` and `stream/prototypes` pass today
+   only because their plan copies happen to carry a `base` the rule likes. The cost is exact:
+   `status` prints no clock, no streams and no entry, so a session that opens a stream worktree
+   starts by reading files by hand, and a stream's own `task step` is refused because the gate
+   it runs sees that one violation and the write removes nothing.
+  Shape: Shape: The tool reads the checkout it runs in — `git rev-parse --abbrev-ref HEAD`
+   through the `Git` port — and when that branch is `stream/<key>` for a stream the plan
+   declares, the base-lag rule is not applied: it speaks about the primary checkout's tree, and
+   the primary is where it is judged. The skip is said out loud in the `status` and `plan`
+   blocks ("the base-lag rule is the primary checkout's; this is `stream/render`"), because a
+   silently skipped check is a check nobody trusts. The ancestor check stays everywhere: a
+   `base` that is not a commit or not an ancestor of `HEAD` is wrong in any worktree.
+  Done: Done: A test builds a repository whose branch is `stream/render` with a declared
+   `render=Y,L` and one code commit after `base`: `cargo xtask plan` passes there, while the
+   same tree on `dev` still fails the lag rule; the `status` block carries the sentence that
+   says which checkout the rule belongs to; a stream branch whose stream the plan does not
+   declare keeps the old refusal.
+  `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs` — `6c7f854`
 
 - `[x]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
   Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
