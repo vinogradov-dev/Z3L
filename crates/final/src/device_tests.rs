@@ -573,3 +573,54 @@ fn a_pane_darkens_what_is_behind_it_by_the_tint_and_the_path_it_travels_inside()
         }
     }
 }
+
+#[test]
+fn the_radiance_clamp_is_out_of_reach_and_measurably_biased_when_it_is_not() {
+    // Y2 carries one clamp on what a single sample may bring, and owes its bias measured rather than
+    // felt. The measurement is two renders of the same plate under a lamp of two powers: light is
+    // linear, so the image must scale with the lamp until a sample meets the clamp.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to measure a clamp on");
+        return;
+    };
+    let camera = Camera::new(DVec3::ZERO, 1500.0).expect("a camera looking at the plate");
+    let request = Request::new(16, 16, 8).expect("a tiny render");
+    let plate_of = |power: f32| -> SceneFrame {
+        let mut frame = SceneFrame::default();
+        frame.push(Drawable::new(
+            id(1),
+            plate(-800.0, -800.0, 800.0, 800.0, 0.0),
+            DMat4::IDENTITY,
+            [1.0, 1.0, 1.0, 1.0],
+        ));
+        frame.lighting.key_color = [0.0; 3];
+        frame.lighting.environment = [0.0; 3];
+        // A lamp a hundred millimetres above the plate: its irradiance is `power / (4 PI d^2)`.
+        frame.lighting.points.push(scene::PointLight {
+            position: DVec3::new(0.0, 0.0, 100.0),
+            color: [1.0, 1.0, 1.0],
+            power,
+        });
+        frame
+    };
+    let centre_of = |frame: &SceneFrame| -> f64 {
+        let linear = linear_of(&trace_linear(&device, &queue, frame, camera, request));
+        f64::from(linear.get(8 * 16 + 8).copied().expect("the centre pixel")[0])
+    };
+    // Light is linear, so the picture of a lamp must be the lamp. One watt is far below the clamp.
+    let dim = centre_of(&plate_of(1.0));
+    let brighter = centre_of(&plate_of(2.0));
+    assert!(dim > 0.0, "the plate under a watt is visible");
+    assert!((brighter - 2.0 * dim).abs() < 0.02 * dim, "twice the light, twice the picture: {dim} then {brighter}");
+
+    // A lamp of two terawatts, a hundred millimetres from the plate, puts every sample past the
+    // clamp: the picture stops scaling, and the difference is the bias it costs.
+    let huge = centre_of(&plate_of(2.0e12));
+    let unclamped = 2.0e12 * dim;
+    let lost = (1.0 - huge / unclamped) * 100.0;
+    println!(
+        "the clamp reads {huge} where the unclamped picture would be {unclamped}: {lost:.1}% of the light is gone"
+    );
+    assert!(huge > 0.0, "a clamped picture is a picture, not a hole");
+    assert!(huge < unclamped, "the clamp fires on a lamp this bright");
+}
