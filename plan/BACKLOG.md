@@ -45,6 +45,31 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
+  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
+   decor at its real texel scale, the grain along the direction the piece is cut, the banding
+   in the colour of its own band, the handle as metal. A shader-node material format would put
+   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
+   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
+   whatever the document stores when that question is answered, and this task does not decide
+   the storage.
+  Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
+   texture, a roughness and a metallic pair. A finish record becomes the coat over the decor —
+   one board is matte, the next satin, the next lacquer — and a glass or mirror front is a
+   dielectric pane with the thickness and the tint its record names, because that is what a
+   workshop buys and what a cabinet actually has. The decor map is rotated per face so the
+   grain follows the item's direction on the panel's A and B faces, and an item that names no
+   grain renders the same in both. Banding takes its material's colour on its segments;
+   hardware carries a finish. Exposure and the filmic tone map are settings of the command,
+   never view state, and the viewport keeps its own colours.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
+   banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
+   field darkens the image monotonically; an item that names no decor renders a flat colour
+   rather than black; `cargo xtask ci` is green.
+  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
+
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
@@ -744,30 +769,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the tool schemas, the answers and the refusals - because a released build ships no prose
    (J19); `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
-  why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
-   (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
-   decor at its real texel scale, the grain along the direction the piece is cut, the banding
-   in the colour of its own band, the handle as metal. A shader-node material format would put
-   a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
-   §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
-   whatever the document stores when that question is answered, and this task does not decide
-   the storage.
-  Shape: One mapping from a catalogue item to what the tracer needs: a base colour, a decor
-   texture, a roughness and a metallic pair. A finish record becomes the coat over the decor —
-   one board is matte, the next satin, the next lacquer — and a glass or mirror front is a
-   dielectric pane with the thickness and the tint its record names, because that is what a
-   workshop buys and what a cabinet actually has. The decor map is rotated per face so the
-   grain follows the item's direction on the panel's A and B faces, and an item that names no
-   grain renders the same in both. Banding takes its material's colour on its segments;
-   hardware carries a finish. Exposure and the filmic tone map are settings of the command,
-   never view state, and the viewport keeps its own colours.
-  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them (a pixel test on the rendered image); a banded edge takes its
-   banding's colour and an unbanded one the decor's; a handle renders as metal; the exposure
-   field darkens the image monotonically; an item that names no decor renders a flat colour
-   rather than black; `cargo xtask ci` is green.
-  `files: crates/catalog/src/view.rs,crates/render/src/lib.rs`
 - `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
   Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
    visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
