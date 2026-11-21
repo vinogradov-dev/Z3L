@@ -615,6 +615,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T16** a master cell turns every snap on or off in one click
+  `files: crates/model/src/project/snap.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,crates/text/src/messages.rs,assets/icons/view/snap-all.svg,app/src/document.rs` — `506e188`
+
 - `[x]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
   Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
   the object snaps are what the group waits for; today the drawing and fill tools carry their
