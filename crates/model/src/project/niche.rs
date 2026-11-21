@@ -322,6 +322,13 @@ struct Cell {
     planes: Vec<NichePlane>,
     /// The corners, sorted by their coordinates so the same cell always reports the same list.
     corners: Vec<DVec3>,
+    /// The frame's own ring, and where in [`Cell::planes`] the planes a probe added begin.
+    ///
+    /// The planes the ring seeds are its **chords** (ADR 0201), which is the safe wall for a probe and
+    /// an approximation of a curved edge. A section a board is cut to keeps the ring's own curve, so the
+    /// ring is kept beside those planes and clipped by the walls the probes added — never by the chords
+    /// it seeded. `None` for a rectangular frame, whose planes already are its ring (ADR 0201, N33).
+    ring: Option<(Region, usize)>,
 }
 
 impl Cell {
@@ -335,9 +342,9 @@ impl Cell {
     /// own refusal, and a ring too fine for the plane budget is unrepresentable — never a cell the
     /// walls were quietly dropped from.
     fn footprint(envelope: &Envelope) -> Result<Self, NicheRefusal> {
-        let ring =
+        let outline =
             envelope.footprint().outline(envelope.x(), envelope.y()).map_err(|_| NicheRefusal::Unrepresentable)?;
-        let polygon = seed_polygon(&ring)?;
+        let (ring, polygon) = seed(&outline)?;
         if polygon.len().saturating_add(2) > MAX_CELL_PLANES {
             return Err(NicheRefusal::Unrepresentable);
         }
@@ -353,8 +360,40 @@ impl Cell {
         let height = envelope.z().millimetres_f64();
         planes.push(NichePlane { normal: DVec3::Z, offset: 0.0 });
         planes.push(NichePlane { normal: DVec3::NEG_Z, offset: -height });
-        let mut cell = Self { planes, corners: Vec::new() };
-        cell.rebuild().then_some(cell).ok_or(NicheRefusal::Unrepresentable)
+        let mut cell = Self { planes, corners: Vec::new(), ring: None };
+        if !cell.rebuild() {
+            return Err(NicheRefusal::Unrepresentable);
+        }
+        // A box needs no second reading of its shape: the planes a rectangle seeds are its ring, to the
+        // micrometre, and its cases must answer exactly what they always did (N33).
+        if !envelope.footprint().is_rectangle() {
+            let region = Region::new(ring, Vec::new()).map_err(|_| NicheRefusal::Unrepresentable)?;
+            cell.ring = Some((region, cell.planes.len()));
+        }
+        Ok(cell)
+    }
+
+    /// The exact section the cell keeps from its floor to its ceiling, when its planes are chords.
+    ///
+    /// `None` when the cell has no ring of its own — a rectangular frame, whose section the planes
+    /// already answer exactly. Otherwise the ring is clipped by every plane a probe added: a wall level
+    /// with the section bounds no edge of it, and the height planes are the slab `cell_shape` already
+    /// asked for. The clip is exact (`Region::clip_half_plane`), so a curve of the frame survives it and
+    /// only a wall cuts it — the arc a row of radii draws is never replaced by its chord (N33).
+    fn exact_section(&self) -> Option<Result<Region, NicheRefusal>> {
+        let (ring, probed_at) = self.ring.as_ref()?;
+        let mut section = ring.clone();
+        for plane in self.planes.get(*probed_at..)? {
+            let flat = DVec2::new(plane.normal.x, plane.normal.y);
+            if flat.length() <= SECTION_NORMAL {
+                continue;
+            }
+            match section.clip_half_plane(flat, plane.offset) {
+                Ok(Some(clipped)) => section = clipped,
+                Ok(None) | Err(_) => return Some(Err(NicheRefusal::Unrepresentable)),
+            }
+        }
+        Some(Ok(section))
     }
 
     /// Rebuilds the corners from the planes, answering whether the planes bound a usable cell.
@@ -795,19 +834,18 @@ pub(super) fn surface_corners(surface: SurfaceBox) -> Vec<DVec3> {
     corners
 }
 
-/// The polygon a footprint's ring seeds the cell with, or the refusal that says why it cannot.
+/// The ring a footprint reserves, turned counter-clockwise, with the chord polygon its planes take.
 ///
-/// The cell is planes only (ADR 0106), so an arc is taken by its chord. That is the safe way round: a
-/// convex ring's arc bulges away from the shape it cuts, so its chord lies inside the frame the ring
-/// reserves, and a part cut to the chord stands inside the piece rather than in the material the frame
-/// gave away. A rounded corner is therefore measured as the chamfer its radius spans, which is a
-/// standard panel with one corner feature — the shape a chord draws (ADR 0201).
+/// The two travel together because they are one reading of one shape: the planes the cell is built from
+/// take an arc by its **chord**, which is the safe wall for a probe (a convex ring's arc bulges away from
+/// the shape it cuts, so the chord lies inside the frame), and the ring is the exact curve the section a
+/// board is cut to keeps (ADR 0201, ADR 0202).
 ///
 /// The ring is turned counter-clockwise first, because a drawn ring may run either way; then every
 /// corner it makes must turn left. A ring that turns right somewhere, or one whose arc bulges into its
 /// own shape, is not one convex cell and answers the footprint's refusal rather than a board outside
 /// the case.
-fn seed_polygon(ring: &Ring) -> Result<Vec<DVec2>, NicheRefusal> {
+fn seed(ring: &Ring) -> Result<(Ring, Vec<DVec2>), NicheRefusal> {
     let ring = match ring.is_counter_clockwise() {
         Some(true) => ring.clone(),
         Some(false) => ring.reversed().map_err(|_| NicheRefusal::Unrepresentable)?,
@@ -837,7 +875,7 @@ fn seed_polygon(ring: &Ring) -> Result<Vec<DVec2>, NicheRefusal> {
         }
         polygon.push(start);
     }
-    Ok(polygon)
+    Ok((ring, polygon))
 }
 
 /// The shape a cell answers with: a box, one section, or the sloped cell itself.
@@ -847,6 +885,12 @@ fn cell_shape(cell: &Cell, corners: &[DVec3], low: DVec3, high: DVec3) -> Result
     }
     if !cell.is_prism() {
         return Ok(NicheShape::Sloped);
+    }
+    // A frame whose own ring is more than a box answers the ring itself, arcs and all, so a board cut
+    // to it takes the case's shape rather than the chords of it (N33).
+    if let Some(section) = cell.exact_section() {
+        let region = section?;
+        return document_ring(region.outer()).map(NicheShape::Section).ok_or(NicheRefusal::Unrepresentable);
     }
     let polygon = cut_planes(&cell.planes, 2, low.z, low.z, 0, 1).ok_or(NicheRefusal::Unrepresentable)?;
     ring(polygon).map(NicheShape::Section).ok_or(NicheRefusal::Unrepresentable)
@@ -983,6 +1027,21 @@ fn centre(points: &[DVec2]) -> Option<DVec2> {
     }
     let middle = sum / points.len() as f64;
     middle.is_finite().then_some(middle)
+}
+
+/// The geometry ring as the document ring a panel stores as its outline.
+///
+/// Every segment keeps its curve, so an arc of the frame stays an arc of the part; coordinates round to
+/// the micrometre and angles to the millidegree the document holds. A ring the document cannot close is
+/// no section at all.
+pub(super) fn document_ring(ring: &Ring) -> Option<Contour> {
+    let segments = ring
+        .segments()
+        .iter()
+        .map(|segment| ContourSegment::from_geom(*segment))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Contour::new(segments).ok()
 }
 
 /// The polygon as the document ring a panel stores as its outline.
@@ -1243,10 +1302,11 @@ mod tests {
     }
 
     #[test]
-    fn a_rounded_corner_is_measured_as_the_chord_its_radius_spans() {
-        // The cell is planes only (ADR 0106): an arc is taken by its chord, which lies inside the
-        // frame's ring, so the part stands inside the piece (N29). The chord of an 80 mm radius on a
-        // 600 x 500 case runs from (520, 0) to (600, 80).
+    fn a_rounded_corner_keeps_the_frames_own_radius() {
+        // The cell's planes take an arc by its chord (ADR 0201), and that stays the safe wall a probe
+        // meets; the section a board is cut to keeps the frame's own curve, so the part here takes the
+        // radius instead of the chamfer the chord would draw (N33). The chord of an 80 mm radius on a
+        // 600 x 500 case runs from (520, 0) to (600, 80), inside the arc it spans.
         let mut project = clean_project();
         let envelope = Envelope::with_footprint(
             millimetres(600),
@@ -1259,15 +1319,71 @@ mod tests {
         let niche = project
             .niche(DVec3::new(300.0, 250.0, 300.0), Sight::none(), None)
             .expect("the void inside the rounded case");
-        let corners = niche.section().expect("one section").sampled_points(1.0).expect("straight edges only");
-        let expected = [
-            [millimetres(0), millimetres(0)],
-            [millimetres(520), millimetres(0)],
-            [millimetres(600), millimetres(80)],
-            [millimetres(600), millimetres(500)],
-            [millimetres(0), millimetres(500)],
-        ];
-        assert_eq!(corners, expected, "the chord of the radius, which is inside the arc");
+        let section = niche.section().expect("one section from the floor to the ceiling");
+        assert_eq!(section.segments().len(), 5, "four sides and the corner arc");
+        let arcs: Vec<geom::Arc> = section
+            .segments()
+            .filter_map(|segment| match segment.to_geom() {
+                Ok(geom::Segment::Arc(arc)) => Some(arc),
+                _ => None,
+            })
+            .collect();
+        let [arc] = arcs.as_slice() else {
+            panic!("the corner is one arc, was {arcs:?}");
+        };
+        assert!((arc.radius() - 80.0).abs() < 1.0e-3, "the frame's 80 mm radius, was {}", arc.radius());
+        assert!(
+            (arc.center() - geom::DVec2::new(520.0, 80.0)).length() < 1.0e-3,
+            "and its own centre: {:?}",
+            arc.center()
+        );
+        let region =
+            geom::Region::new(section.to_geometry().expect("the ring draws in the geometry layer"), Vec::new())
+                .expect("a region");
+        assert!(
+            region.contains(geom::DVec2::new(573.0, 27.0)),
+            "the space between the chord and the arc is the part's"
+        );
+        assert!(!region.contains(geom::DVec2::new(597.0, 3.0)), "and the corner outside the arc is not");
+    }
+
+    #[test]
+    fn a_wall_through_a_rounded_corner_cuts_the_arc_and_keeps_its_radius() {
+        // A wall standing across the case at x = 560..578 cuts the frame's 80 mm corner arc, which is
+        // centred at (520, 80): the section keeps the shorter arc, of the same radius, from (520, 0) to
+        // the crossing (560, 80 - sqrt(6400 - 1600)) = (560, 10.72), and closes on the wall's face (N33).
+        let mut project = clean_project();
+        let envelope = Envelope::with_footprint(
+            millimetres(600),
+            millimetres(500),
+            millimetres(720),
+            Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]),
+        )
+        .expect("a rounded case");
+        let piece = shaped(&mut project, envelope, (0, 0, 0));
+        panel(&mut project, piece, (560, 0, 0), (18, 500, 720));
+        let niche =
+            project.niche(DVec3::new(300.0, 250.0, 300.0), Sight::none(), None).expect("the void beside the wall");
+        let section = niche.section().expect("one section");
+        assert_eq!(section.segments().len(), 5, "the wall's face, four pieces of the frame");
+        let arcs: Vec<geom::Arc> = section
+            .segments()
+            .filter_map(|segment| match segment.to_geom() {
+                Ok(geom::Segment::Arc(arc)) => Some(arc),
+                _ => None,
+            })
+            .collect();
+        let [arc] = arcs.as_slice() else {
+            panic!("the corner is still one arc, was {arcs:?}");
+        };
+        assert!((arc.radius() - 80.0).abs() < 1.0e-3, "the frame's own radius survives the cut: {}", arc.radius());
+        assert!((arc.center() - geom::DVec2::new(520.0, 80.0)).length() < 1.0e-3, "{:?}", arc.center());
+        assert!(
+            (arc.end() - geom::DVec2::new(560.0, 10.719_1)).length() < 1.0e-2,
+            "it ends on the wall: {:?}",
+            arc.end()
+        );
+        assert!((section.bounds_micrometres().1[0] - 560_000).abs() <= 1000, "the wall is the new edge");
     }
 
     #[test]

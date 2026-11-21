@@ -104,6 +104,51 @@ impl Region {
         contour_area(&self.outer) - self.holes.iter().map(contour_area).sum::<f64>()
     }
 
+    /// The material of this region on the free side of one line, or `None` when none of it is there.
+    ///
+    /// The line is `normal · point = offset` and the free side is `normal · point >= offset`, the
+    /// convention a niche's wall planes already use. Rings stay exact: a cut line stays a line and an
+    /// arc stays the shorter arc, because the clip is the boundary-of-the-set boolean of
+    /// [`crate::boolean`] against a rectangle that covers the whole region on the free side — never a
+    /// sample. A region entirely on the free side comes back as it went in; one entirely on the other
+    /// side answers `None`.
+    ///
+    /// The outer ring is expected to be **convex**, which is what a wall plane can bound: the clip is
+    /// then one piece or none. A ring that is not convex may be cut into several pieces, and only the
+    /// largest is answered — a caller that can meet one needs the boolean itself.
+    ///
+    /// A zero, non-finite or NaN normal, or a non-finite offset, is `None`.
+    pub fn clip_half_plane(&self, normal: DVec2, offset: f64) -> Result<Option<Self>, RegionError> {
+        if !normal.is_finite() || !offset.is_finite() {
+            return Ok(None);
+        }
+        let length = normal.length();
+        if !length.is_finite() || length <= POINT_EPSILON {
+            return Ok(None);
+        }
+        let unit = normal / length;
+        let offset = offset / length;
+        let Some((low, high)) = self.bounds() else {
+            return Ok(None);
+        };
+        let span = high - low;
+        // The covering piece has to reach the whole region from the line, whatever side it lies on,
+        // so it is taken around the region's own centre projected onto that line.
+        let reach = span.length() * 2.0 + 1.0;
+        let middle = (low + high) * 0.5;
+        let origin = middle - unit * (unit.dot(middle) - offset);
+        let along = DVec2::new(-unit.y, unit.x);
+        let corners = vec![
+            origin + along * reach,
+            origin - along * reach,
+            origin - along * reach + unit * reach,
+            origin + along * reach + unit * reach,
+        ];
+        let free = Region::from_loops(corners, Vec::new())?;
+        let pieces = crate::boolean::intersect_regions(std::slice::from_ref(self), std::slice::from_ref(&free))?;
+        Ok(pieces.into_iter().max_by(|first, second| first.area().total_cmp(&second.area())))
+    }
+
     /// The axis-aligned bounds of every ring, in millimetres.
     ///
     /// Returns `None` only for a region with no rings, which the constructors reject. An arc
@@ -676,6 +721,66 @@ mod tests {
         )
         .expect("open path");
         assert!(matches!(Region::new(open, vec![]), Err(RegionError::OpenRing { kind: RingKind::Outer })));
+    }
+
+    /// The rounded plate's ring as the segments it came in as, for the clip's exactness tests.
+    fn segments_of(region: &Region) -> Vec<Segment> {
+        region.outer().segments().to_vec()
+    }
+
+    #[test]
+    fn a_clip_that_misses_the_region_answers_it_unchanged() {
+        // A wall that does not reach the frame changes nothing: the clip must hand back the very ring,
+        // arcs and all (N33).
+        let plate = rounded_plate();
+        let clipped = plate.clip_half_plane(DVec2::new(1.0, 0.0), -10.0).expect("a clip").expect("the plate is there");
+        assert_eq!(segments_of(&clipped), segments_of(&plate), "no edge moved, no arc became a line");
+        assert!(clipped.outer().is_counter_clockwise() == Some(true));
+        let far = plate.clip_half_plane(DVec2::new(0.0, 1.0), 500.0).expect("a clip");
+        assert!(far.is_none(), "and a wall past the whole frame keeps nothing of it");
+    }
+
+    #[test]
+    fn a_clip_through_an_arc_keeps_the_shorter_arc() {
+        // The line `y = 45` runs through the plate's 20 mm corner arc, which is centred at (80, 30):
+        // the kept part is `y <= 45`, so the arc runs from (100, 30) to the crossing at
+        // (80 + sqrt(400 - 225), 45) = (93.23, 45).
+        let plate = rounded_plate();
+        let clipped =
+            plate.clip_half_plane(DVec2::new(0.0, -1.0), -45.0).expect("a clip").expect("the plate is still there");
+        let segments = segments_of(&clipped);
+        assert_eq!(segments.len(), 5, "a line where the cut runs, and four pieces of the old ring");
+        let arcs: Vec<Arc> = segments
+            .iter()
+            .filter_map(|segment| if let Segment::Arc(arc) = segment { Some(*arc) } else { None })
+            .collect();
+        let [arc] = arcs.as_slice() else {
+            panic!("the corner is still one arc, was {arcs:?}");
+        };
+        assert!((arc.radius() - 20.0).abs() < 1.0e-9, "the frame's own radius, never a chord of it");
+        assert!((arc.center() - DVec2::new(80.0, 30.0)).length() < 1.0e-9, "and its own centre");
+        assert!((arc.start() - DVec2::new(100.0, 30.0)).length() < 1.0e-6, "the arc keeps its own start");
+        assert!((arc.end() - DVec2::new(93.228_756_5, 45.0)).length() < 1.0e-5, "and ends on the cut line");
+        assert!(clipped.area() < plate.area(), "the plate lost the corner above the line");
+        assert!((clipped.bounds().expect("bounds").1.y - 45.0).abs() < 1.0e-6, "the cut is the new top");
+    }
+
+    #[test]
+    fn a_clip_that_leaves_nothing_answers_none() {
+        let plate = rounded_plate();
+        assert!(plate.clip_half_plane(DVec2::new(0.0, 1.0), 500.0).expect("a clip").is_none());
+        assert!(plate.clip_half_plane(DVec2::ZERO, 0.0).expect("a zero normal clips nothing").is_none());
+        assert!(plate.clip_half_plane(DVec2::new(f64::NAN, 1.0), 0.0).expect("a NaN normal clips nothing").is_none());
+    }
+
+    #[test]
+    fn a_clip_of_a_plain_rectangle_is_the_rectangle_beside_the_line() {
+        let region = Region::from_loops(rect(0.0, 0.0, 100.0, 50.0), vec![]).expect("a rectangle");
+        let clipped = region.clip_half_plane(DVec2::new(1.0, 0.0), 60.0).expect("a clip").expect("the right-hand part");
+        let (low, high) = clipped.bounds().expect("bounds");
+        assert!((low - DVec2::new(60.0, 0.0)).length() < 1.0e-6, "the cut is the new left edge: {low:?}");
+        assert!((high - DVec2::new(100.0, 50.0)).length() < 1.0e-6, "{high:?}");
+        assert!((clipped.area() - 40.0 * 50.0).abs() < 1.0e-6, "the area of the kept half: {}", clipped.area());
     }
 
     #[test]

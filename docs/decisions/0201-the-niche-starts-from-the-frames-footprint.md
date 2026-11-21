@@ -1,6 +1,6 @@
 # 0201. The niche starts from the frame's footprint
 
-- Status: Accepted; amends 0106 and the containment rule of 0099
+- Status: Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202
 - Date: 2026-11-21
 
 ## Context
@@ -28,7 +28,7 @@ height face, and a cut corner or a drawn ring answers one plane per edge. Every 
 cell as before, so `Niche::cut` — and therefore both fill modes — answers the frame's own section.
 
 **A curved edge is taken by its chord.** The cell is planes only (0106), so an arc is not a wall it can
-hold. The chord is the safe direction of the two available: a convex ring's arc bulges away from the
+hold — *for the section, 0202 keeps the frame's own curve; the cell's planes keep the chord*. The chord is the safe direction of the two available: a convex ring's arc bulges away from the
 shape it cuts, so its chord lies inside the frame, and a part cut to it stands inside the piece rather
 than in the material the frame kept. A rounded corner is therefore measured as the chamfer its radius
 spans, which `classify_outline` still reads as the standard rectangle with one corner feature.
@@ -48,10 +48,9 @@ dropped. Measured on an empty case: 4 sides 16 µs, 16 sides 43 µs, 24 sides 55
 - A shelf, post or wall created in a cut-corner or drawn-ring case stands inside the frame's own
   shape; `Fit` answers the largest rectangle inside that shape and `Shape` the shape itself, still as
   a standard panel whenever a rectangle with corner features draws it.
-- A rounded corner gives a **chamfer** of the radius' span, not a radius: the part fits and classifies,
-  and its corner is one straight cut where the frame is round. Closing that gap needs a cell that can
-  hold an arc, which is the same change a curved wall needs (the cell, the fill and the bevel are
-  planes only), so it stays one entry in `plan/debt.md` rather than a second approximation.
+- A rounded corner gave a **chamfer** of the radius' span, not a radius: the part fitted and classified,
+  and its corner was one straight cut where the frame is round. 0202 closed that gap without widening
+  the cell — the section keeps the ring's own curve, and the planes keep the chord.
 - A non-convex frame reserves no fillable cell at all until the query can answer several cells. The
   refusal names the frame, so the maker is not told the gap is merely odd.
 - The niche's box is still the footprint's bounds: the size callout and the niche tool's wireframe

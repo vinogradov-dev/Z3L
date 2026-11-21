@@ -28,7 +28,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use geom::{Contact, DQuat, DVec2, DVec3};
 use units::{Degrees, Length};
 
-use super::niche::{signed_area, surface_corners};
+use super::niche::{document_ring, signed_area, surface_corners};
 use super::surface::SurfaceBox;
 use crate::*;
 
@@ -37,6 +37,14 @@ use crate::*;
 /// A plane whose normal lies this close to the board's thickness axis bounds no outline edge, which
 /// is the same threshold the niche's section cut uses to leave such a plane to its hold test.
 const LEVEL_WALL: f64 = 1.0e-3;
+
+/// Chord tolerance of the polygon a plan reports beside the shape it stores, in millimetres.
+///
+/// A plane can describe a straight wall exactly and a curve only by chords, so a shaped part keeps its
+/// curve in the **outline** it stores — the panel's own ring, arcs and all — and reports the polygon the
+/// ghost draws beside it. A quarter of a millimetre is the tolerance the shell already samples a frame's
+/// footprint at, so the ghost and the frame it sits in are cut alike (N17, N33).
+const FILL_SAMPLE_MM: f64 = 0.25;
 
 /// How far a measured corner may sit off the wall line it was cut from, in millimetres.
 ///
@@ -113,8 +121,9 @@ pub struct FillPlan {
     pub niche: Niche,
     /// The plan's base-face polygon in panel-local millimetres, counter-clockwise.
     ///
-    /// It is the shape the ghost draws and the shape the panel occupies: the inscribed rectangle in
-    /// [`FillMode::Fit`], the section itself in [`FillMode::Shape`].
+    /// It is the shape the ghost draws: the inscribed rectangle in [`FillMode::Fit`], the section itself
+    /// in [`FillMode::Shape`] — and where the frame's section carries an arc, the same ring sampled at
+    /// [`FILL_SAMPLE_MM`], because a ghost is a wireframe and the panel keeps the arc.
     pub corners: Vec<DVec2>,
     /// The plan's far-face polygon, in the same frame and the same order as [`FillPlan::corners`].
     ///
@@ -405,7 +414,8 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
             Err(refusal) => return Err(refusal),
         },
     };
-    let (part, anchor) = part_of(&polygon, mode, &stance, &angles, thickness)?;
+    let exact = exact_section(niche, mode, hidden.is_empty(), &stance);
+    let (part, anchor) = part_of(&polygon, mode, &stance, &angles, thickness, exact)?;
     // The panel's zero corner is the outline's own base corner, which the product frame answers from
     // the stance: the lower end of each axis the board runs with and the higher one where it runs
     // against, then the base face along the thickness.
@@ -415,6 +425,20 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     translation[stance.t] = stance.face(value, gap);
     let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
     Ok((part, placement))
+}
+
+/// The frame's own section a part is cut to, when the cell can answer one and nothing trims it.
+///
+/// A cell seeded from a shaped frame keeps that frame's ring exactly (ADR 0201, N33), and a prism's
+/// section is the same at every height, so a shelf takes the ring itself instead of the chords of it.
+/// Three conditions hold it back: the part must be the shape rather than the largest fit, its own plane
+/// must *be* the section plane (a post or a wall stands across the cell, where the section is a
+/// projection of the ring and not the ring), and no hidden body may trim the footprint, because a trim
+/// is a polygon rule.
+fn exact_section<'a>(niche: &'a Niche, mode: FillMode, untrimmed: bool, stance: &Stance) -> Option<&'a Contour> {
+    let flat = stance.u == 0 && stance.v == 1 && stance.t == 2;
+    let square = !stance.against_y && !stance.against_z && !stance.other_face;
+    (mode == FillMode::Shape && untrimmed && flat && square).then(|| niche.section()).flatten()
 }
 
 /// The stance whose base face is the wide one: the face a cut-only bevel can keep as the outline.
@@ -525,6 +549,7 @@ fn part_of(
     stance: &Stance,
     angles: &[Option<Degrees>],
     thickness: Length,
+    exact: Option<&Contour>,
 ) -> Result<(Part, DVec2), FillRefusal> {
     let Some(first) = footprint.first().copied() else {
         return Err(FillRefusal::TooSmall);
@@ -549,6 +574,10 @@ fn part_of(
                 Part { outline, nominal_size, corners: corners.clone(), far_corners: corners, bevels: Vec::new() },
                 corner,
             ))
+        }
+        FillMode::Shape if exact.is_some() => {
+            let ring = exact.ok_or(FillRefusal::TooSmall)?;
+            exact_part(ring, stance)
         }
         FillMode::Shape => {
             let ring = local_ring(footprint, angles, stance, low, high);
@@ -577,6 +606,29 @@ fn part_of(
             Ok((Part { outline, nominal_size, corners: ring.points, far_corners, bevels }, anchor))
         }
     }
+}
+
+/// The part whose outline is the frame's own ring: a curve of the frame stays a curve of the part.
+///
+/// The ring is moved to the panel's own frame once — the mirror the board's stance applies and the move
+/// to the zero corner — as one rigid flat transform, so an arc stays an arc and the classifier can still
+/// read the case's own radius. Nothing here bevels: a cell whose walls all stand plumb has no tilted
+/// wall, so the far face is the base face. The polygon beside the outline is the same ring sampled, which
+/// is the shape the ghost draws; the ring itself is what the panel stores (N33).
+fn exact_part(section: &Contour, stance: &Stance) -> Result<(Part, DVec2), FillRefusal> {
+    let ring = section.to_geometry().map_err(|_| FillRefusal::TooSmall)?;
+    let (low, high) = ring.bounds().ok_or(FillRefusal::TooSmall)?;
+    let anchor = DVec2::new(low.x, if stance.against_y { high.y } else { low.y });
+    let offset = DVec2::new(-anchor.x, if stance.against_y { high.y } else { -anchor.y });
+    let ring = ring.placed(0.0, stance.against_y, offset).map_err(|_| FillRefusal::TooSmall)?;
+    let contour = document_ring(&ring).ok_or(FillRefusal::TooSmall)?;
+    let nominal_size = Panel::contour_size(&contour).map_err(|_| FillRefusal::TooSmall)?;
+    let outline = classify_outline(&contour).unwrap_or(PanelOutline::Contour { contour });
+    let polygon = ring.sample(FILL_SAMPLE_MM).map_err(|_| FillRefusal::TooSmall)?;
+    if polygon.len() < 3 {
+        return Err(FillRefusal::TooSmall);
+    }
+    Ok((Part { outline, nominal_size, corners: polygon.clone(), far_corners: polygon, bevels: Vec::new() }, anchor))
 }
 
 /// A section in the panel's own plane, anchored at its zero corner, with the bevel on each edge.
@@ -1499,10 +1551,9 @@ mod tests {
     }
 
     #[test]
-    fn a_rounded_corner_stands_as_the_chord_inside_its_arc() {
-        // The cell is planes only, so an arc is taken by its chord (N29, ADR 0201): the shelf takes
-        // the case's rounded corner as the chamfer its 80 mm radius spans, and every point of that
-        // chamfer lies inside the radius it was cut to.
+    fn a_rounded_corner_stands_as_the_frames_own_radius() {
+        // The cell's planes take an arc by its chord, but the section a shelf is cut to keeps the frame's
+        // curve (ADR 0201, N33): the part is the case's rounded corner, not the chamfer its chord spans.
         let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
         let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
             .expect("a rounded case");
@@ -1520,15 +1571,46 @@ mod tests {
         };
         assert_eq!(
             feature.feature(),
-            CornerFeatureKind::Chamfer { incoming: millimetres(80), outgoing: millimetres(80) },
-            "the chord of the radius, which the cell can hold"
+            CornerFeatureKind::Radius { radius: millimetres(80) },
+            "the frame's own radius, not its chord"
         );
-        for corner in shaped.corners.iter().chain(shaped.far_corners.iter()) {
-            let local = shaped.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0));
-            assert!(
-                envelope.holds(DVec2::new(local.x, local.y)),
-                "the chord must lie inside the radius the frame reserves, left it at {corner:?}"
-            );
+        assert!(shaped.bevels.is_empty(), "a cell of plumb walls bevels nothing");
+        assert_eq!(shaped.corners, shaped.far_corners, "the far face ends over the base rim");
+
+        // What the click creates carries the radius too, and every point of it stands inside the frame.
+        let id = project
+            .add_panel_with_outline(
+                product,
+                "Shelf",
+                shaped.nominal_size,
+                shaped.outline.clone(),
+                &shaped.bevels,
+                None,
+                thickness,
+                shaped.placement,
+            )
+            .expect("the click creates the part");
+        let panel = project.panel(id).expect("the part is in the tree");
+        let stored = panel.outline().corner_features();
+        assert_eq!(
+            stored.first().map(|feature| feature.feature()),
+            Some(CornerFeatureKind::Radius { radius: millimetres(80) })
+        );
+        let ring = panel
+            .outline()
+            .ring_for(panel.nominal_size())
+            .expect("the stored outline draws its own ring")
+            .sample(0.25)
+            .expect("the ring samples");
+        let gap = thickness.millimetres_f64();
+        for point in &ring {
+            for face in [0.0, gap] {
+                let local = shaped.placement.transform_point(DVec3::new(point.x, point.y, face));
+                assert!(
+                    envelope.holds(DVec2::new(local.x, local.y)),
+                    "the shelf left the frame it was cut to at {point:?}"
+                );
+            }
         }
     }
 
