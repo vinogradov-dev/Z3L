@@ -416,6 +416,21 @@ impl Session {
     /// over both: nothing is installed, so [`BatchReport::effect`] says `Planned` and the report is
     /// what would have landed.
     pub fn batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(None, steps, options)
+    }
+
+    /// Runs a batch as part of an open edit, so the whole edit is one undo entry.
+    ///
+    /// This is what a chat turn needs (ADR 0187): several answers of one message land inside one
+    /// scope, so `undo` takes the whole message back in one step. The scope is a token minted by
+    /// [`Session::edit_scope`]; a scope that is not the open one starts a fresh entry instead of
+    /// merging into history it does not own, exactly as [`Session::dispatch_in`] does.
+    pub fn batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The one batch path, with the scope it may merge into, or `None` for its own entry.
+    fn batch_in_scope(&mut self, scope: Option<EditScope>, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
         let mut trial = self.trial();
         let reports = batch::run(&mut trial, steps);
         let refused = reports.iter().any(|step| step.refusal().is_some());
@@ -433,7 +448,7 @@ impl Session {
         // that ran, so the diff needs no copy of the state before the batch.
         let report = BatchReport::new(effect, reports, &self.project, trial.project());
         if report.landed() && report.content_changed() {
-            self.land(trial.project);
+            self.land(trial.project, scope);
         }
         report
     }
@@ -449,11 +464,30 @@ impl Session {
     /// person's own field would be a mode over the whole editor, and ADR 0190 makes it a switch
     /// over the agent.
     pub fn agent_batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(None, steps, options)
+    }
+
+    /// The same for a turn that lands several answers as one undo entry.
+    ///
+    /// A chat message is one entry (ADR 0187), so the shell mints one scope per turn and hands every
+    /// batch of that turn to this call: the first one pushes the state before the message and the
+    /// rest replace the document inside the same entry.
+    pub fn agent_batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The agent's one batch path, in the person's mode and possibly inside an edit scope.
+    fn agent_batch_in_scope(
+        &mut self,
+        scope: Option<EditScope>,
+        steps: &[BatchStep],
+        options: BatchOptions,
+    ) -> BatchReport {
         let options = match self.agent {
             AgentMode::Build => options,
             AgentMode::Plan => options.dry_run(true),
         };
-        self.batch(steps, options)
+        self.batch_in_scope(scope, steps, options)
     }
 
     /// A copy of this session for a batch to run in before anything lands.
@@ -489,12 +523,22 @@ impl Session {
     ///
     /// A batch is its own entry, so it closes an edit scope that happened to be open, the way a plain
     /// dispatch does: a drag that lands afterwards must not merge into the entry this batch pushed,
-    /// or one undo would take the person's drag and somebody else's batch back together.
-    fn land(&mut self, project: Project) {
-        self.edit = None;
+    /// or one undo would take the person's drag and somebody else's batch back together. A batch that
+    /// was handed a scope which is already open and holds the state before the turn merges into it
+    /// instead, which is how one message stays one entry (ADR 0187).
+    fn land(&mut self, project: Project, scope: Option<EditScope>) {
+        let merged = matches!(
+            (scope, self.edit),
+            (Some(scope), Some(open)) if open.scope == scope && open.snapshot_pushed && !self.undo.is_empty()
+        );
         let previous = std::mem::replace(&mut self.project, project);
-        self.undo.push(previous);
-        self.redo.clear();
+        if !merged {
+            // The entry holds the state before this batch; a scope that was handed in stays open so
+            // the next batch of the same turn merges into it.
+            self.edit = scope.map(|scope| OpenEdit { scope, snapshot_pushed: true });
+            self.undo.push(previous);
+            self.redo.clear();
+        }
         self.dirty = !self.project.same_content(&self.saved_project);
         self.retain_active_product();
     }

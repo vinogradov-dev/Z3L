@@ -37,6 +37,7 @@
 )]
 
 pub mod channel;
+pub mod chat;
 pub mod inspect;
 mod report;
 pub mod server;
@@ -49,6 +50,7 @@ use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, busy, queued};
+pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
 pub use server::{CommandServer, Door, asking, dispatch, listing, serve_session};
 pub use tools::{
