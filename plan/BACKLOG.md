@@ -615,6 +615,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **T17** a snap answers the candidate the eye sees: the near side, scaled to its own depth, marked where it is
+  `files: crates/model/src/project/snap.rs,app/src/draw_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `8fdd8ad`
+
 - `[x]` **T16** a master cell turns every snap on or off in one click
   `files: crates/model/src/project/snap.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,crates/text/src/messages.rs,assets/icons/view/snap-all.svg,app/src/document.rs` — `506e188`
 
