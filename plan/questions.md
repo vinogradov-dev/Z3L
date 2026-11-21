@@ -52,3 +52,21 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
+- The creation menu's build word: the cell says «По форме ниши» / "Niche shape" today, and the owner
+  offers «по форме области» with the name still open. «Ниша» is the workshop's own word for the
+  space a product reserves (`docs/domain/products.md`), but the tool fills any cell parts bound, not
+  only a frame's, so the narrower word may promise less than the build does. Pick one word, and it
+  becomes `Message::FillMethodShape` in both languages.
+- The overlay wall's lap: which of the four edges the lap covers — all of them, or only the ones not
+  against a wall or a part that stands proud of the face — and whether it is one number or four. The
+  task assumes one default out of the project's factory settings and one field per edge, with a lap
+  that would cross a part refused rather than silently cut.
+- The niche cell (`furniture.panels.void`) in a three-cell Panels group: it creates nothing, it is a
+  probe every fill reads (ADR 0118), and it is enabled only inside an open product. Keep it as a
+  fourth cell of the group, move it to the View tab beside the snaps, or let the panel tool toggle it?
+  The task that restructures the group waits for this answer.
+- The panel-by-points finish: the task proposes a method list — «Полигон» (n points, the triangle at
+  three) and «Четырёхугольник по кромке» (three points, the third fixing the width, so three clicks
+  give the standard board) — with «Закончить» in the card and Enter doing the same. That keeps one
+  meaning per click and no modifier. Confirm the shape, or name the finish that should mean the
+  standard board instead.
