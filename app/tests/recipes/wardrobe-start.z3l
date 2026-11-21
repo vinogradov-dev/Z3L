@@ -30,7 +30,7 @@
         {
           "container": {
             "id": 2,
-            "name": "Распашной шкаф 800×460×2200",
+            "name": "\u0420\u0430\u0441\u043f\u0430\u0448\u043d\u043e\u0439 \u0448\u043a\u0430\u0444 800\u00d7460\u00d72200",
             "placement": {
               "translation": [
                 0.0,
@@ -67,5 +67,5 @@
       "properties": {}
     }
   },
-  "generator": "z3l golden"
+  "generator": "z3l wardrobe recipe fixture"
 }
