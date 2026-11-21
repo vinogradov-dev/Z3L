@@ -816,6 +816,8 @@ pub(crate) struct PlaneSnap {
     pub(crate) plane: WorkPlane,
     /// The capture radius, in millimetres, at the depth of that point.
     pub(crate) tolerance: Length,
+    /// The depth that radius was measured at: the pointer's reach scales with depth (U116).
+    pub(crate) depth: f64,
     /// The camera that made the ray, so the answer can be put back on screen.
     pub(crate) camera: Camera,
     /// The viewport the pointer is in.
@@ -830,7 +832,7 @@ impl PlaneSnap {
         let depth = (world - camera.eye()).dot(camera.forward());
         let millimetres = camera.world_per_point(depth, f64::from(rect.height())) * f64::from(SNAP_RADIUS_POINTS);
         let tolerance = length_from_millimetres(millimetres)?;
-        Some(Self { ray, plane, tolerance, camera, rect })
+        Some(Self { ray, plane, tolerance, depth, camera, rect })
     }
 
     /// The request one tool's pointer makes of the resolver.
@@ -846,6 +848,7 @@ impl PlaneSnap {
             ray_origin: self.ray.origin(),
             ray_direction: self.ray.direction(),
             tolerance: self.tolerance,
+            tolerance_depth: self.depth,
             kinds,
             plane: self.plane.snap_plane(),
             anchor,

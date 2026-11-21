@@ -275,6 +275,12 @@ impl DrawGizmo {
         self.hover.and_then(|hover| hover.kind)
     }
 
+    /// Where the last frame's marker drew, for a test that asks what the pointer captured.
+    #[cfg(test)]
+    pub(crate) fn hover_screen(&self) -> Option<Pos2> {
+        self.hover.map(|hover| hover.screen)
+    }
+
     /// Applies the pointer to the live draft.
     ///
     /// A click appends the point the plates place — the snapped pointer with every typed number in
@@ -319,7 +325,14 @@ impl DrawGizmo {
         let draft = self.apply_sides(editor, draft);
         let placed = self.fields.as_ref().and_then(|fields| PointState::placed(&draft, raw, fields));
         let (point, at) = placed.as_ref().map_or((snapped.point, raw), |state| (state.point, state.at));
-        let screen = screen_point(camera, rect, plane.world(at)).unwrap_or(snapped.screen);
+        // The marker stands on the candidate itself — a scene corner above or below the plane draws
+        // where the eye sees it — and only a typed number moves it, because the point is then the
+        // number's place on the plane and no longer the candidate's (U116).
+        let typed = placed.as_ref().is_some_and(|state| state.point != snapped.point);
+        let screen = match typed {
+            true => screen_point(camera, rect, plane.world(at)).unwrap_or(snapped.screen),
+            false => snapped.screen,
+        };
         self.pointer = Some(raw);
         self.state = placed;
         self.hover = Some(SnapOutcome { point, kind: snapped.kind, locked: snapped.locked, screen });

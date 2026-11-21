@@ -2582,6 +2582,67 @@ fn draw_body_profile(harness: &mut Harness, tool: DrawTool) -> Id {
     object
 }
 
+/// A scene with one swept body and one ball, placed apart: the shapes a snap must read.
+fn body_and_ball_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("a root id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let square = model::Path::rectangle([mesh(-100), mesh(-75)], [mesh(100), mesh(75)]).expect("a rectangle");
+    let body = model::Constructive::extrude(square, mesh(300)).expect("a body");
+    project.add_object(root, "Box", model::Placement::IDENTITY, model::Geometry::Constructive(body)).expect("a box");
+    let ball = model::Primitive::sphere(mesh(100), 16, 8).expect("a ball");
+    let placed = model::Placement::new(geom::DVec3::new(600.0, 0.0, 150.0), model::Placement::IDENTITY.rotation())
+        .expect("a place");
+    project.add_object(root, "Ball", placed, model::Geometry::Primitive(ball)).expect("a ball");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
+#[test]
+fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
+    // The owner's report: a drawn cube snapped only to the profile it was drawn from, the marker
+    // stood on the base contour instead of the candidate, and a ball snapped nowhere. Every corner of
+    // the body, the middle of every edge and the middle of every face is a candidate; a ball answers
+    // at its own centre and at its quadrants; the eye's side wins a pair that lines up; and the marker
+    // draws on the candidate itself (U116).
+    let mut harness = Harness::with_session("snap-body", body_and_ball_session());
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    for _ in 0..24 {
+        harness.run(Vec::new());
+    }
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Line);
+    for _ in 0..24 {
+        harness.run(Vec::new());
+    }
+
+    let project = harness.app.tabs.active().session.project();
+    let boxed =
+        project.object(Id::new(2).expect("the box id")).expect("the box").geometry().as_constructive().expect("a body");
+    let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+    let spots = [
+        ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0)),
+        ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0)),
+        ("top edge", geom::DVec3::new(x + 100.0, y, 300.0)),
+        ("vertical edge", geom::DVec3::new(x, y, 150.0)),
+        ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0)),
+        ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0)),
+    ];
+    for (name, world) in spots {
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        let document = harness.app.tabs.active();
+        let kind = document.draw_gizmo.snap_kind();
+        let marker = document.draw_gizmo.hover_screen();
+        assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
+        assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
+        let marker = marker.expect("a marker where the candidate drew");
+        assert!(
+            (marker - at).length() < 24.0,
+            "the {name} answers where the pointer is: {marker:?} against {at:?} ({kind:?})"
+        );
+    }
+}
+
 #[test]
 fn a_box_is_drawn_by_any_rectangle_method_and_swept_on_z() {
     // V4 (ADR 0138): the box cell carries the sketch's four rectangle methods, and the body it

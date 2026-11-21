@@ -42,6 +42,13 @@ const MAX_ARC_SAMPLES: usize = 64;
 /// Tolerance for treating two directions as parallel or two points as one, in millimetres.
 const DEGENERATE: f64 = 1.0e-9;
 
+/// How much nearer two candidates must be to the pointer to count as the same place.
+///
+/// A box's top and bottom corners lie on one line through the eye, so they are equally near the ray;
+/// the maker means the one the eye can see. A tie is broken by depth, and this is the depth equality
+/// that makes two really different candidates two (U116).
+const TIE: f64 = 1.0e-6;
+
 /// What kind of point captured the pointer, in the order a pointer prefers them.
 ///
 /// The variants are declared in priority order and [`SnapKind::ALL`] keeps it, so a resolver walks
@@ -220,6 +227,29 @@ impl Default for SnapKinds {
     }
 }
 
+/// The pointer's reach: a world distance at the depth it was measured at.
+///
+/// A screen radius is what the maker sees, and the world distance it covers grows with depth, so a
+/// candidate on a wall across the shop is not captured by the reach a board beside the hand needs.
+#[derive(Clone, Copy, Debug)]
+struct Reach {
+    /// The reach at [`Reach::depth`], in millimetres.
+    millimetres: f64,
+    /// The depth from the eye the reach was measured at, in millimetres; zero keeps it everywhere.
+    depth: f64,
+}
+
+impl Reach {
+    /// The reach at a candidate `depth` millimetres from the eye.
+    fn at(self, depth: f64) -> f64 {
+        if self.depth <= 0.0 || !depth.is_finite() || depth <= 0.0 {
+            return self.millimetres;
+        }
+        let scaled = self.millimetres * depth / self.depth;
+        if scaled.is_finite() { scaled } else { self.millimetres }
+    }
+}
+
 /// The plane a sketch draws on, in world millimetres.
 ///
 /// `u` and `v` are orthonormal world directions and `origin` is the plane's zero, so a plane point is
@@ -328,8 +358,16 @@ pub struct SnapRequest<'a> {
     pub ray_origin: DVec3,
     /// The pointer's ray, pointing into the scene. It need not be normalised.
     pub ray_direction: DVec3,
-    /// How near a candidate must be to capture, in world millimetres.
+    /// How near a candidate must be to capture, in world millimetres, at the depth the tool measured
+    /// it — the plane the pointer lands on.
     pub tolerance: Length,
+    /// The depth from the eye at which [`SnapRequest::tolerance`] was measured, in millimetres.
+    ///
+    /// The pointer's reach is a screen radius and not a world distance: ten points cover a few
+    /// millimetres on a board beside the hand and tens of metres on a wall across the shop. A
+    /// candidate nearer or farther than that plane is measured by the same pointer, so its reach is
+    /// scaled by its own depth. Zero means the tolerance is the reach everywhere (U116).
+    pub tolerance_depth: f64,
     /// Which kinds may capture.
     pub kinds: SnapKinds,
     /// The plane the tool draws on.
@@ -436,6 +474,7 @@ impl Project {
         free: DVec3,
         tolerance: f64,
     ) -> Option<SnapAnswer> {
+        let reach = Reach { millimetres: tolerance, depth: request.tolerance_depth };
         let kinds = request.kinds;
         let wants_scene = kinds.vertex
             || kinds.intersection
@@ -461,21 +500,21 @@ impl Project {
                         .chain(scene.marks.iter().filter(|mark| mark.kind == kind).map(|mark| mark.point)),
                     request.ray_origin,
                     request.ray_direction,
-                    tolerance,
+                    reach,
                 ),
                 SnapKind::Intersection => intersection(plane, &scene.lines, pointer, tolerance),
                 SnapKind::Midpoint | SnapKind::Centre => nearest_point_to_ray(
                     scene.marks.iter().filter(|mark| mark.kind == kind).map(|mark| mark.point),
                     request.ray_origin,
                     request.ray_direction,
-                    tolerance,
+                    reach,
                 ),
                 SnapKind::Perpendicular => {
                     anchor.and_then(|anchor| perpendicular(plane, &scene.lines, anchor, pointer, tolerance))
                 }
                 SnapKind::Tangent => anchor.and_then(|anchor| tangent(plane, &scene.arcs, anchor, pointer, tolerance)),
-                SnapKind::Edge => nearest_on_lines(&scene.lines, request.ray_origin, request.ray_direction, tolerance)
-                    .or_else(|| nearest_on_arcs(&scene.arcs, request.ray_origin, request.ray_direction, tolerance)),
+                SnapKind::Edge => nearest_on_lines(&scene.lines, request.ray_origin, request.ray_direction, reach)
+                    .or_else(|| nearest_on_arcs(&scene.arcs, request.ray_origin, request.ray_direction, reach)),
                 SnapKind::Face => request.face.filter(|face| face.is_finite()),
                 SnapKind::Axis | SnapKind::Grid => None,
             };
@@ -955,10 +994,10 @@ fn nearest_point_to_ray(
     points: impl Iterator<Item = DVec3>,
     origin: DVec3,
     direction: DVec3,
-    tolerance: f64,
+    reach: Reach,
 ) -> Option<DVec3> {
     let direction = direction.try_normalize()?;
-    let mut best: Option<(f64, DVec3)> = None;
+    let mut best: Option<(f64, f64, DVec3)> = None;
     for point in points {
         if !point.is_finite() {
             continue;
@@ -966,43 +1005,62 @@ fn nearest_point_to_ray(
         let offset = point - origin;
         let along = offset.dot(direction);
         let distance = if along <= 0.0 { offset.length() } else { (offset - direction * along).length() };
-        if distance <= tolerance && best.is_none_or(|(nearest, _)| distance < nearest) {
-            best = Some((distance, point));
+        if distance > reach.at(along) {
+            continue;
+        }
+        // A nearer place wins; an equal one is the same place seen twice — a box's top corner and
+        // its bottom corner on one line through the eye — and the eye can see the front one.
+        if best.is_none_or(|(nearest, nearest_along, _)| {
+            distance < nearest - TIE || (distance <= nearest + TIE && along < nearest_along)
+        }) {
+            best = Some((distance, along, point));
         }
     }
-    best.map(|(_, point)| point)
+    best.map(|(_, _, point)| point)
 }
 
 /// The point of the nearest straight edge to a ray, inside the tolerance.
-fn nearest_on_lines(lines: &[[DVec3; 2]], origin: DVec3, direction: DVec3, tolerance: f64) -> Option<DVec3> {
+fn nearest_on_lines(lines: &[[DVec3; 2]], origin: DVec3, direction: DVec3, reach: Reach) -> Option<DVec3> {
     let direction = direction.try_normalize()?;
-    let mut best: Option<(f64, DVec3)> = None;
+    let mut best: Option<(f64, f64, DVec3)> = None;
     for [start, end] in lines.iter().copied() {
         let Some((distance, point)) = ray_to_segment(origin, direction, start, end) else {
             continue;
         };
-        if distance <= tolerance && best.is_none_or(|(nearest, _)| distance < nearest) {
-            best = Some((distance, point));
+        let along = (point - origin).dot(direction);
+        if distance > reach.at(along) {
+            continue;
+        }
+        if best.is_none_or(|(nearest, nearest_along, _)| {
+            distance < nearest - TIE || (distance <= nearest + TIE && along < nearest_along)
+        }) {
+            best = Some((distance, along, point));
         }
     }
-    best.map(|(_, point)| point)
+    best.map(|(_, _, point)| point)
 }
 
 /// The point of the nearest arc's chain to a ray, inside the tolerance.
-fn nearest_on_arcs(arcs: &[SceneArc], origin: DVec3, direction: DVec3, tolerance: f64) -> Option<DVec3> {
+fn nearest_on_arcs(arcs: &[SceneArc], origin: DVec3, direction: DVec3, reach: Reach) -> Option<DVec3> {
     let direction = direction.try_normalize()?;
-    let mut best: Option<(f64, DVec3)> = None;
+    let mut best: Option<(f64, f64, DVec3)> = None;
     for arc in arcs {
         for pair in arc.points.windows(2) {
             let Some((distance, point)) = ray_to_segment(origin, direction, pair[0], pair[1]) else {
                 continue;
             };
-            if distance <= tolerance && best.is_none_or(|(nearest, _)| distance < nearest) {
-                best = Some((distance, point));
+            let along = (point - origin).dot(direction);
+            if distance > reach.at(along) {
+                continue;
+            }
+            if best.is_none_or(|(nearest, nearest_along, _)| {
+                distance < nearest - TIE || (distance <= nearest + TIE && along < nearest_along)
+            }) {
+                best = Some((distance, along, point));
             }
         }
     }
-    best.map(|(_, point)| point)
+    best.map(|(_, _, point)| point)
 }
 
 /// Which plane axis a locked point follows.
@@ -1085,6 +1143,7 @@ mod tests {
             ray_origin: ray.0,
             ray_direction: ray.1,
             tolerance: millimetres(5),
+            tolerance_depth: 0.0,
             kinds,
             plane: SnapPlane::world_xy(),
             anchor: None,
@@ -1113,7 +1172,8 @@ mod tests {
     fn a_click_near_a_panel_corner_snaps_to_it() {
         let answer = snapped(&shelf(), request(down(698.0, 499.0), SnapKinds::ALL));
         assert_eq!(answer.kind, Some(SnapKind::Vertex), "the corner under the pointer");
-        assert!(close(answer.point, DVec3::new(700.0, 500.0, 0.0)), "{:?}", answer.point);
+        // The eye looks down, so the corner it can see is the one on the upper face.
+        assert!(close(answer.point, DVec3::new(700.0, 500.0, 18.0)), "{:?}", answer.point);
         assert!(!answer.locked);
     }
 
@@ -1122,18 +1182,18 @@ mod tests {
         let project = shelf();
         let midpoint = snapped(&project, request(down(702.0, 251.0), only(SnapKind::Midpoint)));
         assert_eq!(midpoint.kind, Some(SnapKind::Midpoint));
-        assert!(close(midpoint.point, DVec3::new(700.0, 250.0, 0.0)), "{:?}", midpoint.point);
+        assert!(close(midpoint.point, DVec3::new(700.0, 250.0, 18.0)), "{:?}", midpoint.point);
 
         let centre = snapped(&project, request(down(352.0, 251.0), only(SnapKind::Centre)));
         assert_eq!(centre.kind, Some(SnapKind::Centre), "the middle of a face");
-        assert!(close(centre.point, DVec3::new(350.0, 250.0, 0.0)), "{:?}", centre.point);
+        assert!(close(centre.point, DVec3::new(350.0, 250.0, 18.0)), "{:?}", centre.point);
     }
 
     #[test]
     fn a_point_on_an_edge_is_taken_from_the_edge_itself() {
         let answer = snapped(&shelf(), request(down(200.0, 2.0), only(SnapKind::Edge)));
         assert_eq!(answer.kind, Some(SnapKind::Edge));
-        assert!(close(answer.point, DVec3::new(200.0, 0.0, 0.0)), "{:?}", answer.point);
+        assert!(close(answer.point, DVec3::new(200.0, 0.0, 18.0)), "{:?}", answer.point);
     }
 
     #[test]
@@ -1142,7 +1202,20 @@ mod tests {
         // because a maker pointing next to both means the corner.
         let answer = snapped(&shelf(), request(down(697.0, 3.0), SnapKinds::ALL));
         assert_eq!(answer.kind, Some(SnapKind::Vertex));
-        assert!(close(answer.point, DVec3::new(700.0, 0.0, 0.0)), "{:?}", answer.point);
+        assert!(close(answer.point, DVec3::new(700.0, 0.0, 18.0)), "{:?}", answer.point);
+    }
+
+    #[test]
+    fn a_pair_on_one_line_through_the_eye_answers_the_nearer_one() {
+        // A board's upper and lower corners lie on one line through the eye and are equally near the
+        // ray; the maker means the one it can see, so depth breaks the tie and not the order the
+        // document happens to hold (U116). Looking up answers the lower corner, looking down the upper.
+        let from_above = snapped(&shelf(), request(down(698.0, 499.0), only(SnapKind::Vertex)));
+        assert!(close(from_above.point, DVec3::new(700.0, 500.0, 18.0)), "{:?}", from_above.point);
+        let mut below = request((DVec3::new(698.0, 499.0, -500.0), DVec3::Z), only(SnapKind::Vertex));
+        below.tolerance = millimetres(5);
+        let from_below = snapped(&shelf(), below);
+        assert!(close(from_below.point, DVec3::new(700.0, 500.0, 0.0)), "{:?}", from_below.point);
     }
 
     #[test]
@@ -1217,6 +1290,7 @@ mod tests {
     fn the_world_axes_are_lines_of_the_sketch_plane() {
         let answer = snapped(&shelf(), request(down(200.0, 3.0), only(SnapKind::Axis)));
         assert_eq!(answer.kind, Some(SnapKind::Axis));
+        // The axis is a line of the plane, so its point is on the plane and not on a board above it.
         assert!(close(answer.point, DVec3::new(200.0, 0.0, 0.0)), "{:?}", answer.point);
     }
 
