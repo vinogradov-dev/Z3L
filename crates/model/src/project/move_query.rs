@@ -162,6 +162,8 @@ pub enum SnapSurface {
     Frame(Id),
     /// A panel's or a body's own face.
     Face(Id),
+    /// The middle of another part's box: the coordinate its faces do not offer.
+    Centre(Id),
 }
 
 /// The surface a dragged face landed on, and where that surface is.
@@ -223,8 +225,14 @@ impl Stop {
 /// (ADR 0146).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SnapSettings {
-    /// Whether the coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
-    pub planes: bool,
+    /// Which kinds capture: the world axes (the coordinate planes X=0, Y=0 and Z=0, the floor
+    /// included), the face of another part, its centre, and the pointer kinds a drag does not read
+    /// (U116).
+    ///
+    /// A drag answers a distance along one axis, so of the pointer kinds only `centre` adds a
+    /// capture: every corner and edge midpoint of a box stands at one of its own spans, and the
+    /// centre is the one coordinate the faces do not offer.
+    pub kinds: SnapKinds,
     /// Whether another product's envelope captures a drag with its virtual faces.
     pub frames: bool,
     /// How near a surface must be, in millimetres, to capture a drag and make the piece jump.
@@ -244,7 +252,7 @@ impl SnapSettings {
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000) }
+        Self { kinds: SnapKinds::ALL, frames: true, tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000) }
     }
 }
 
@@ -1408,11 +1416,19 @@ fn snap_distance(
                 if !overlap(mover_first, obstacle.span(first)) || !overlap(mover_second, obstacle.span(second)) {
                     continue;
                 }
-                capture(obstacle.span(axis).min, target);
-                capture(obstacle.span(axis).max, target);
+                let span = obstacle.span(axis);
+                capture(span.min, target);
+                capture(span.max, target);
+                // The middle of another product's reserved space is the one coordinate its faces do
+                // not offer: a shelf lands at the mid-height of the cabinet, not on a wall. A body's
+                // own middle is inside the body, where contact keeps a part out, so only a shell
+                // offers it (U116).
+                if obstacle.is_shell() && snaps.kinds.centre {
+                    capture((span.min + span.max) * 0.5, SnapSurface::Centre(obstacle.id));
+                }
             }
         }
-        if snaps.planes {
+        if snaps.kinds.axis {
             // A coordinate plane runs through the whole world, so it captures without a
             // perpendicular test — and the floor is the Z=0 plane like any other.
             capture(0.0, SnapSurface::Plane);
@@ -1708,7 +1724,9 @@ mod tests {
 
     /// A workspace that snaps with the settings this test states, and keeps its floor.
     fn snapping(planes: bool, frames: bool) -> SnapSettings {
-        SnapSettings { planes, frames, ..SnapSettings::default() }
+        let mut kinds = SnapKinds::ALL;
+        kinds.axis = planes;
+        SnapSettings { kinds, frames, ..SnapSettings::default() }
     }
 
     /// The workspace's settings for the tests here: the object move's snaps, and the floor it keeps.
@@ -2702,6 +2720,32 @@ mod tests {
             landed(982.0, 1000.0, SnapSurface::Face(beside)),
             "a neighbouring part face is a snap target too"
         );
+    }
+
+    #[test]
+    fn a_drag_lands_on_the_middle_of_the_space_it_stands_in() {
+        // The middle of a box is the one coordinate its faces do not offer, so the centre kind lands
+        // a shelf at the mid-height of the cabinet's reserved space (U116). A body's own middle is
+        // inside the body, where contact keeps a part out, so only a shell offers it.
+        let mut project = empty_project();
+        let piece = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        // The envelope spans z = 0..720, so its middle stands at 360: the shelf's upper face lands
+        // there, which is a travel of 342 mm.
+        assert_eq!(
+            limit(&project, &[shelf], MoveAxis::Z, 340.6),
+            MoveLimit {
+                distance_mm: 342.0,
+                contact: None,
+                capture: Some(Capture { end: SnapEnd::High, at_mm: 360.0, surface: SnapSurface::Centre(piece) })
+            }
+        );
+
+        // The same drag with the centre kind off lands on the millimetre grid again.
+        let mut kinds = SnapKinds::ALL;
+        kinds.centre = false;
+        let without = rule_with(&project, &[shelf], SnapSettings { kinds, ..SnapSettings::default() });
+        assert_eq!(without.limit(MoveAxis::Z, 340.6), moved(341.0), "the grid rounds the travel");
     }
 
     #[test]

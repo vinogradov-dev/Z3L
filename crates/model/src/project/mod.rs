@@ -24,6 +24,7 @@ mod product_cmds;
 mod property_cmds;
 mod query;
 mod sight;
+mod snap;
 mod surface;
 mod wire;
 
@@ -35,6 +36,10 @@ pub use move_query::{
 };
 pub use niche::{Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit};
 pub use sight::Sight;
+pub use snap::{
+    SceneMark, SnapAnswer, SnapAxis, SnapKind, SnapKinds, SnapPlane, SnapRequest, SNAP_GRID_MM, round_free_coordinate,
+    snap_axis, snap_grid,
+};
 pub use surface::SurfaceKind;
 pub(crate) use wire::ProjectWire;
 

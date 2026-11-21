@@ -422,7 +422,8 @@ impl SnapSettings {
         model::MoveSettings {
             axes: model::MoveAxes::Document,
             snaps: Some(model::SnapSettings {
-                planes: self.planes,
+                // The coordinate planes are the world-axis kind of the snap set (U116).
+                kinds: model::SnapKinds { axis: self.planes, ..model::SnapKinds::ALL },
                 frames: self.frames,
                 tolerance: units::Length::from_micrometres(tolerance * 1000),
             }),
@@ -1224,7 +1225,7 @@ mod tests {
         assert!(settings.floor);
         let Some(snaps) = settings.snaps else { panic!("the object move snaps") };
         assert_eq!(snaps.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
-        assert!(snaps.planes && snaps.frames);
+        assert!(snaps.kinds.axis && snaps.frames);
 
         // A hand-edited file cannot set a tolerance no field offers.
         let json = r#"{"version":1,"snaps":{"planes":false,"frames":false,"tolerance_mm":0}}"#;

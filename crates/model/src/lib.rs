@@ -84,7 +84,8 @@ pub use primitive::{
 pub use project::{
     Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,
     Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError, Resting,
-    RotateLimit, RotateRule, Sight, SnapEnd, SnapSettings, SnapSurface, Stop, SurfaceKind, free_axis,
+    RotateLimit, RotateRule, SNAP_GRID_MM, SceneMark, Sight, SnapAnswer, SnapAxis, SnapEnd, SnapKind, SnapKinds, SnapPlane,
+    SnapRequest, SnapSettings, SnapSurface, Stop, SurfaceKind, free_axis, round_free_coordinate, snap_axis, snap_grid,
 };
 pub use properties::{
     Properties, PropertyChange, PropertyError, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID,
