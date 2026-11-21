@@ -282,6 +282,7 @@ layer is renumbered. The crate, its row in the crate map, the layer table in `xt
 | L3 | `mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh, and a panel to the holes its drilling objects cause; tessellation policy | model, param, kernel, geom, units |
 | L4 | `scene` | Renderer-agnostic frame description: drawables, world transforms, materials, selection highlight, camera, lights, grid | model, mesh, geom |
 | L5 | `render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
+| L5 | `final` | The final render: one still image at print resolution from the camera the viewport shows — the BVH, the sampler, the tracer and the PNG. Borrows the shell's device, reads a frame and never the document | scene, geom, wgpu |
 | L6 | `engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |
 | L7 | `ui` | `egui` panels and viewport widgets: scene tree, inspector, input, gizmos; dispatches commands | engine, model, scene, egui, egui_extras |
 | L8 | `app` | Composition root: `eframe` window, input, `egui` ↔ `wgpu` paint callback, constructs `TruckKernel` and evaluates the sample document | ui, engine, render, scene, model, param, mesh, kernel, kernel-truck, geom, units, eframe |

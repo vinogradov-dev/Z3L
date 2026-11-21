@@ -88,6 +88,10 @@ const CRATES: &[CrateRule] = &[
     CrateRule { name: "export", layer: 3, forbidden: UI_GPU_DEPS },
     CrateRule { name: "mesh", layer: 3, forbidden: UI_GPU_DEPS },
     CrateRule { name: "scene", layer: 4, forbidden: UI_GPU_DEPS },
+    // The final render borrows the shell's device and draws the frame the viewport shows. It sits
+    // beside `render` rather than above it: the tracer owns its own pipelines, and a sibling edge
+    // is what the layer rule refuses.
+    CrateRule { name: "final", layer: 5, forbidden: &["egui", "eframe", "egui-wgpu", "winit", "model"] },
     // The renderer draws the scene; it must stay egui-free (the app owns the
     // paint callback) and must not reach into the document.
     CrateRule { name: "render", layer: 5, forbidden: &["egui", "eframe", "egui-wgpu", "winit", "model"] },

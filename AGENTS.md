@@ -140,6 +140,7 @@ app                    L8  composition root: window, input, egui <-> wgpu, kerne
 crates/ui              L7  egui panels and viewport, dispatches commands
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
+crates/final           L5  the final render: BVH, sampler, tracer, PNG
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
 crates/export          L3  order package: one manifest and flat tables other programs read
 crates/mesh            L3  evaluation cache: revision -> solid, triangle mesh and a panel's derived holes
