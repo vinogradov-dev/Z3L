@@ -35,10 +35,6 @@ use model::{
 use param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
 use thiserror::Error;
 
-mod primitive;
-
-use primitive::build_primitive_mesh;
-
 /// The viewport's chord tolerance when a stored path becomes a line chain, in millimetres.
 ///
 /// It matches the kernel profile tolerance, so the line the user sees follows the curve a later
@@ -93,12 +89,43 @@ pub fn constructive_mesh(constructive: &Constructive) -> Result<MeshData, MeshEr
 ///
 /// This is the one definition of the mesh a primitive's parameters produce: the viewport draws it
 /// and `object.collapse` bakes it, so a collapsed primitive keeps exactly the shape the user saw
-/// ([ADR 0054]). The parameters are document data, so the trigonometry happens here, at the
-/// geometry boundary.
+/// ([ADR 0054]). The parameters are document data, so the trigonometry happens in `param`, at the
+/// geometry boundary — where the compile of a primitive body also needs it.
 ///
 /// [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 pub fn evaluate_primitive(primitive: &Primitive) -> Result<Mesh, MeshError> {
-    build_primitive_mesh(primitive)
+    if !primitive.is_plain() {
+        // A body with a step has no analytic mesh, exactly as a drawn body with a step has none:
+        // answering with the plain shape would bake a body that is not the one on screen.
+        return Err(KernelError::Unsupported(
+            "a primitive with a boolean step is built by the geometry kernel, not from its parameters",
+        )
+        .into());
+    }
+    Ok(param::build_primitive_mesh(primitive)?)
+}
+
+/// Evaluates a primitive body into flat-shaded render triangles, through the kernel when it has steps.
+///
+/// A plain primitive is drawn from its parameters, which costs no kernel step. A body that carries a
+/// boolean step has no analytic mesh at all, so the kernel builds it exactly as it builds a drawn
+/// body with a step (W1, ADR 0197).
+///
+/// [ADR 0197]: ../docs/decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md
+pub fn primitive_mesh_with(
+    primitive: &Primitive,
+    kernel: &mut dyn SolidKernel,
+    options: &TessOptions,
+) -> Result<MeshData, MeshError> {
+    if primitive.is_plain() {
+        return primitive_mesh(primitive);
+    }
+    let handle = param::evaluate_primitive_body(kernel, primitive)?;
+    // The body is released even when tessellation refuses it: a node that cannot be built must not
+    // leave a solid behind in the kernel for the rest of the session (W1).
+    let data = tessellate_panel(&*kernel, handle, options);
+    kernel.clear();
+    data
 }
 
 /// Evaluates a parametric primitive into flat-shaded render triangles.
@@ -791,7 +818,7 @@ impl EvaluationCache {
                 (Payload::Constructive(constructive.clone()), solid_geometry(data))
             }
             model::Geometry::Primitive(primitive) => {
-                let data = primitive_mesh(primitive)?;
+                let data = primitive_mesh_with(primitive, kernel, options)?;
                 (Payload::Primitive(primitive.clone()), solid_geometry(data))
             }
             model::Geometry::Path(path) => (
@@ -1654,7 +1681,8 @@ mod tests {
         .expect("a cutter");
         let cutter_at =
             Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
-        let step = BooleanTool::new("Cutter", cutter.clone(), cutter_at).expect("a tool");
+        let step =
+            BooleanTool::new("Cutter", model::ToolBody::Constructive(cutter.clone()), cutter_at).expect("a tool");
         let root = Container::new(
             Id::new(1).expect("id"),
             "Root",
@@ -1802,7 +1830,7 @@ mod tests {
         let source = project.object(id(4)).expect("the source").geometry().as_constructive().expect("a body");
         let taller = BooleanTool::new(
             "Taller",
-            source.clone(),
+            model::ToolBody::Constructive(source.clone()),
             Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a placement"),
         )
         .expect("a tool");

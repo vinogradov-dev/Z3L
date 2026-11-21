@@ -1220,7 +1220,7 @@ mod tests {
         assert!((max - DVec3::new(50.0, 50.0, 50.0)).length() < 1.0e-9);
 
         let replacement = Primitive::sphere(millimetres(80), 24, 12).expect("sphere");
-        let revision = project.set_object_primitive(id, replacement.clone()).expect("replace the primitive");
+        let revision = project.set_object_primitive(id, replacement.base()).expect("replace the primitive");
         assert_eq!(revision.get(), 2, "creation was revision one");
         assert_eq!(project.object_primitive(id), Ok(&replacement));
         assert_eq!(
@@ -1235,7 +1235,7 @@ mod tests {
         assert_eq!(object.name(), "Ball", "collapse keeps every other field");
         assert_eq!(object.geometry().as_mesh(), Some(&mesh));
         assert!(object.geometry().as_primitive().is_none(), "collapse drops the parameters");
-        assert_eq!(project.set_object_primitive(id, replacement), Err(ProjectError::NotAPrimitiveObject { id }));
+        assert_eq!(project.set_object_primitive(id, replacement.base()), Err(ProjectError::NotAPrimitiveObject { id }));
     }
 
     /// A closed rectangle ring, 100 x 50 mm at the given offset.

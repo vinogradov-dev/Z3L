@@ -2702,23 +2702,84 @@ fn a_body_boolean_cell_arms_the_mode_and_a_second_press_drops_it() {
 }
 
 #[test]
-fn the_three_model_boolean_cells_are_live_and_a_primitive_arms_nothing() {
+fn the_three_model_boolean_cells_arm_on_a_drawn_body_and_on_a_primitive() {
     let (mut project, slab, _cutter) = body_pair();
     let root = project.root().id();
     let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
     let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
     let mut session = Session::with_directory(project, sample_catalog());
+
+    for (target, what) in [(slab, "a drawn body"), (sphere, "a primitive")] {
+        for op in [engine::ContourOp::Union, engine::ContourOp::Subtract, engine::ContourOp::Intersect] {
+            let mut editor = Editor::new();
+            editor.select_node(Some(target));
+            assert!(editor.arm_body_boolean(op, session.project()), "the {op:?} cell arms on {what}");
+            assert_eq!(editor.boolean_arm().map(|arm| arm.base()), Some(target), "the target is the pressed body");
+            editor.cancel_boolean(&mut session);
+        }
+    }
+
+    // A node that is not a solid at all arms nothing: a drawn ring is a sketch, not a body.
+    let mut editor = Editor::new();
+    editor.select_node(Some(session.project().root().id()));
+    assert!(!editor.arm_body_boolean(engine::ContourOp::Union, session.project()), "a container is not a body");
+}
+
+#[test]
+fn a_ball_is_the_target_of_a_body_boolean_and_keeps_its_radius() {
+    // The owner's gesture: select the ball, press *Subtract*, pick the block, Enter. The ball is a
+    // solid, so the step lands on it and its radius is still editable afterwards.
+    let (mut project, slab, cutter) = body_pair();
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a ball");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
 
-    editor.select_node(Some(sphere));
-    assert!(!editor.arm_body_boolean(engine::ContourOp::Union, session.project()), "a primitive is not a body");
+    editor.select_nodes(vec![slab, sphere]);
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()), "a primitive is a target");
+    assert_eq!(editor.boolean_arm().map(|arm| arm.base()), Some(sphere), "the primary pick is the target");
 
-    for op in [engine::ContourOp::Union, engine::ContourOp::Subtract, engine::ContourOp::Intersect] {
-        let mut editor = Editor::new();
-        editor.select_node(Some(slab));
-        assert!(editor.arm_body_boolean(op, session.project()), "the {op:?} cell arms on a constructive body");
-        editor.cancel_boolean(&mut session);
-    }
+    let revision = session.project().revision();
+    editor.select_nodes(vec![slab, sphere]);
+    assert!(editor.update_boolean(&mut session), "the block completes the pair");
+    let arm = editor.boolean_arm().expect("the mode is armed");
+    assert!(arm.is_ready(), "the notch is on screen: {:?}", arm.refusal());
+    assert_eq!(arm.operands(), &[slab]);
+    assert_eq!(session.preview().len(), 1, "the overlay holds the ball with its notch");
+    assert_eq!(session.project().revision(), revision, "a preview writes nothing");
+
+    let edited = editor.commit_boolean(&mut session, crate::Lang::En).expect("the step is stored");
+    assert_eq!(edited, sphere, "the ball keeps its id");
+    let project = session.project();
+    let body = project.object(sphere).expect("the ball").geometry().as_primitive().expect("a primitive");
+    assert_eq!(body.steps().len(), 1, "the ball carries the step");
+    assert_eq!(body.base().kind(), model::PrimitiveKind::Sphere, "and its parameters are still there");
+    assert!(project.object(slab).is_none(), "the block is spent, so one body is left");
+    assert!(project.object(cutter).is_some(), "the other body is untouched");
+}
+
+#[test]
+fn a_primitive_cuts_a_block_as_its_tool() {
+    let (project, slab, _cutter) = body_pair();
+    let mut project = project;
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(10), 16, 8).expect("a ball");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    editor.select_nodes(vec![sphere, slab]);
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()), "a drawn body is the target");
+    assert!(editor.update_boolean(&mut session), "the ball completes the pair");
+    assert!(editor.boolean_arm().is_some_and(BooleanArm::is_ready), "the cut is on screen");
+    editor.commit_boolean(&mut session, crate::Lang::En).expect("the step is stored");
+
+    let project = session.project();
+    let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    let step = body.booleans().next().expect("one step");
+    assert!(matches!(step.tool().body(), model::ToolBody::Primitive(_)), "the step froze the ball");
+    assert!(project.object(sphere).is_none(), "the ball is spent");
 }
 
 #[test]

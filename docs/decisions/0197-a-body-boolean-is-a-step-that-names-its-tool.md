@@ -75,8 +75,9 @@ tool mark.
 - The schema moves to 31 and the golden file carries a step with its frozen shape.
 - The tool mark now has a control (the object card) and a command (`object.tool.set`); it was a
   document field with no surface before.
-- A boolean operand is a constructed body: a pedestrian's sphere, cone or cylinder is a solid but
-  not yet an operand, because the plan compiler can only sweep a ring. Filed as its own task; until
-  then the three cells say what they wait for instead of sitting dead.
+- A boolean operand is a constructed body: a pedestrian's sphere or cone was a solid but not yet an
+  operand, because the plan compiler could only sweep a ring and a primitive had nowhere to keep a
+  step. Closed by ADR 0208: a primitive is a body now, so it is a target and a tool, and the three
+  cells arm on it.
 - Revisit if a maker wants a *live* cut: that is a second kind of step (a reference) and a different
   picture, not a switch on this one.

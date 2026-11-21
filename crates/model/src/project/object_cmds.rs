@@ -252,12 +252,12 @@ impl Project {
         object.geometry().as_primitive().ok_or(ProjectError::NotAPrimitiveObject { id })
     }
 
-    /// Replaces a primitive's parameters and bumps the revision once.
+    /// Replaces a primitive's shape and bumps the revision once, keeping the steps cut from it.
     ///
     /// The id, name, placement, pivot and properties are unchanged. A node that is not a parametric
     /// primitive is [`ProjectError::NotAPrimitiveObject`]; invalid parameters are refused by the
     /// payload constructors before the document changes.
-    pub fn set_object_primitive(&mut self, id: Id, primitive: Primitive) -> Result<Revision, ProjectError> {
+    pub fn set_object_primitive(&mut self, id: Id, shape: PrimitiveShape) -> Result<Revision, ProjectError> {
         let next_revision = self.next_revision()?;
         let Some(node) = find_node_mut(&mut self.root, id) else {
             return Err(ProjectError::NodeNotFound { id });
@@ -268,7 +268,7 @@ impl Project {
         let Some(stored) = object.geometry_mut().as_primitive_mut() else {
             return Err(ProjectError::NotAPrimitiveObject { id });
         };
-        *stored = primitive;
+        stored.set_base(shape);
         self.revision = next_revision;
         Ok(next_revision)
     }

@@ -104,15 +104,37 @@ fn compile_cutter(
     };
     let mut builder = PlanBuilder::new().extrude(profile, frame, height)?;
     for boolean in constructive.booleans() {
-        let tool = boolean.tool();
-        let tool_plan = compile_cutter(tool.body(), frame_of(tool.placement()), depth.saturating_add(1), true)?;
+        let tool_plan = compile_tool(boolean.tool(), frame, depth.saturating_add(1))?;
         builder = builder.boolean(operation(boolean), tool_plan);
     }
     Ok(builder.build()?)
 }
 
+/// Compiles one frozen tool body where the step put it, standing in `parent`, as a cutter.
+///
+/// A step's placement is stored in the frame of the body it cut, so a tool that itself carries steps
+/// hands its own steps a frame composed of both: the placement of a nested tool is expressed in its
+/// parent's frame, never in the frame the whole history happens to be built in.
+pub(crate) fn compile_tool(tool: &model::BooleanTool, parent: Frame, depth: usize) -> Result<SolidPlan, ParamError> {
+    let frame = compose(parent, frame_of(tool.placement()));
+    match tool.body() {
+        model::ToolBody::Constructive(body) => compile_cutter(body, frame, depth, true),
+        model::ToolBody::Primitive(body) => crate::primitive::primitive_plan(body, frame, depth, true),
+    }
+}
+
+/// One frame expressed inside another: the child's origin and axes, read in the parent's parent.
+fn compose(parent: Frame, child: Frame) -> Frame {
+    Frame {
+        origin: parent.origin + parent.x * child.origin.x + parent.y * child.origin.y + parent.z * child.origin.z,
+        x: parent.x * child.x.x + parent.y * child.x.y + parent.z * child.x.z,
+        y: parent.x * child.y.x + parent.y * child.y.y + parent.z * child.y.z,
+        z: parent.x * child.z.x + parent.y * child.z.y + parent.z * child.z.z,
+    }
+}
+
 /// The plan operation one document step means.
-fn operation(boolean: &Boolean) -> BooleanOp {
+pub(crate) fn operation(boolean: &Boolean) -> BooleanOp {
     match boolean.op() {
         model::BooleanOp::Union => BooleanOp::Union,
         model::BooleanOp::Difference => BooleanOp::Difference,
@@ -203,7 +225,9 @@ mod tests {
 
     use kernel::{Profile, SolidKernel};
     use kernel_truck::TruckKernel;
-    use model::{BooleanOp as ModelOp, BooleanTool, Contour, Feature, Id, Panel, PanelNominalSize, Placement};
+    use model::{
+        BooleanOp as ModelOp, BooleanTool, Contour, Feature, Id, Panel, PanelNominalSize, Placement, ToolBody,
+    };
     use testkit::millimetres;
     use units::Length;
 
@@ -362,7 +386,7 @@ mod tests {
     /// inside the base's outline, so the booleans have no coincident faces to resolve.
     fn through_tool() -> BooleanTool {
         let body = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("tool");
-        BooleanTool::new("Cutter", body, placed(25.0, 25.0, -5.0)).expect("a tool")
+        BooleanTool::new("Cutter", ToolBody::Constructive(body), placed(25.0, 25.0, -5.0)).expect("a tool")
     }
 
     #[test]
@@ -390,7 +414,7 @@ mod tests {
         // own micrometre past each end is what keeps the cut resolvable.
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
         let cutter = Constructive::extrude(rectangle(50, 50).into(), millimetres(10)).expect("cutter");
-        let tool = BooleanTool::new("Flush", cutter, placed(25.0, 25.0, 0.0)).expect("a tool");
+        let tool = BooleanTool::new("Flush", ToolBody::Constructive(cutter), placed(25.0, 25.0, 0.0)).expect("a tool");
         base.push_boolean(Boolean::new(ModelOp::Difference, tool)).expect("a step");
 
         let volume = volume_of(&base);
@@ -439,24 +463,28 @@ mod tests {
         // nests, and every frame is expressed in the frame of the body the step froze.
         let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
         let mut middle = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("middle");
-        // The chimney stands inside the middle's outline and sticks out of both of its faces, so the
-        // step has no coincident faces and its own frame is the only thing under test.
+        // The chimney stands in the middle's own frame, so it lands at 65..85 x 65..85 of the base:
+        // it overlaps the middle's corner (65..75) and pokes past it to 85, still inside the base's
+        // outline. Its own frame is what this test is about, so the numbers below name where the
+        // composed frame puts it.
         let chimney = Constructive::extrude(rectangle(20, 20).into(), millimetres(40)).expect("chimney");
         middle
             .push_boolean(Boolean::new(
                 ModelOp::Union,
-                BooleanTool::new("Chimney", chimney, placed(40.0, 40.0, -10.0)).expect("a tool"),
+                BooleanTool::new("Chimney", ToolBody::Constructive(chimney), placed(40.0, 40.0, -10.0))
+                    .expect("a tool"),
             ))
             .expect("its own step");
-        let cutter =
-            BooleanTool::new("Cutter", middle, placed(25.0, 25.0, -5.0)).expect("the cutter stands where it cuts");
+        let cutter = BooleanTool::new("Cutter", ToolBody::Constructive(middle), placed(25.0, 25.0, -5.0))
+            .expect("the cutter stands where it cuts");
         base.push_boolean(Boolean::new(ModelOp::Difference, cutter)).expect("a step");
 
         let volume = volume_of(&base);
 
-        // The middle body removes 50 x 50 x 18 from the base; its chimney stands inside the base's
-        // outline, so the union adds nothing the base does not already cover.
-        let expected = 180_000.0 - 50.0 * 50.0 * 18.0;
+        // The union of the middle and its chimney covers the middle's 50 x 50 plus the 20 x 20 the
+        // chimney adds less the 10 x 10 the two have in common, so it removes 2 800 mm2 through the
+        // base's 18 mm.
+        let expected = 180_000.0 - (50.0 * 50.0 + 20.0 * 20.0 - 10.0 * 10.0) * 18.0;
         assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
     }
 }

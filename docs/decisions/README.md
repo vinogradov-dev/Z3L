@@ -213,6 +213,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
 | [0206](0206-a-boolean-result-is-one-object.md) | A boolean result is one object, a hole is part of one region, and splitting is a command | Accepted; the tree rule the contour boolean, a body boolean and the profile of 0205 read |
 | [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188 |
+| [0208](0208-a-primitive-is-a-body-a-boolean-cuts.md) | A primitive is a body, so a boolean cuts it in both directions | Accepted; closes the consequence of 0197 |
 
 ## Format
 

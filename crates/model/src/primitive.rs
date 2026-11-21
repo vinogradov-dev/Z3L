@@ -448,9 +448,22 @@ impl Primitive {
         }
     }
 
+    /// A plain body of the given shape, with no steps yet.
+    pub const fn from_shape(base: PrimitiveShape) -> Self {
+        Self { base, steps: Vec::new() }
+    }
+
     /// The parameters the shape is built from.
     pub const fn base(&self) -> PrimitiveShape {
         self.base
+    }
+
+    /// Replaces the shape and keeps every step cut from it.
+    ///
+    /// A maker who changes a ball's radius keeps the notch in it: the steps are frozen shapes in the
+    /// body's own frame, and only the surface they start from moves.
+    pub fn set_base(&mut self, base: PrimitiveShape) {
+        self.base = base;
     }
 
     /// The steps cut from the shape, in application order.
