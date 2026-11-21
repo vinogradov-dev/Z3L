@@ -432,22 +432,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    creates a panel inside it without any other step; a test asserts that opening another
    product closes the first, because one product is open.
   `files: crates/engine/src/product_cmds.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs`
-- `[ ]` **X113** the render fit camera reads micrometres as millimetres, so no real scene renders
-  Why: Measured 2026-11-21: `z3l render /tmp/wardrobe.z3l --out /tmp/wardrobe.png --camera fit`
-   fails with `camera distance must be finite and between 10 and 1,000,000 mm, got
-   3585601.197`. A 2.2 m wardrobe fits at about 3.6 m, so the distance is exactly a thousand
-   times too large: `home_camera` (`app/src/scene_build.rs:658`) treats
-   `evaluated.bounds.radius()` as millimetres, and the bounds are micrometres. The run fails
-   even with `--camera scene` and an authored camera in the document, because the fallback is
-   built unconditionally before the choice is read, so no real scene can be rendered at all -
-   including the final render Y1 just landed.
-  Shape: The bounds are converted where the camera is built, so a scene of any size frames; and
-   the fallback is only built for `--camera fit` or a scene with no authored camera, so an
-   authored view is never refused because of a number it does not use.
-  Done: A test renders a scene of the golden size and a wardrobe and asserts the image is not
-   empty; a test asserts `--camera scene` with an authored camera never builds the fallback, by
-   giving it bounds that would be refused.
-  `files: app/src/scene_build.rs,app/src/cli/render.rs,crates/scene/src/camera.rs`
 - `[ ]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
   Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
    "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
@@ -493,6 +477,44 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    landed document; a test asserts a reference to a step that refused or made nothing is a
    readable refusal naming the step; a saved scene after a batch holds no reference, only ids.
   `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs`
+- `[ ]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
+  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
+   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
+   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
+   states in its own module comment ("the only place where placement coordinates meet
+   floating-point millimetres"). The published schema shows `format: double` for the
+   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
+   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
+   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
+   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
+   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
+   numbers back as given.
+  Shape: The unit travels with the value, decided once for every command that takes a
+   placement: either the translation enters the surface as `Length` like every other length and
+   the model converts at its own float boundary (where the module already says the conversion
+   belongs), or the schema states millimetres in the field description and the answer echoes
+   the placement it stored, in the unit the caller sent. Not both, and not silence.
+  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
+   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
+   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
+   authored through the surface and read back agrees on every coordinate.
+  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs`
+- `[ ]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
+  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
+   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
+   answered an empty list for every one of them. docs/domain/products.md §2 promises the
+   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
+   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
+   materials, the core and machining only, so the one check that would have caught a whole
+   build being wrong said nothing, and the mistake survived a full build, a cut list and a
+   hand-written overlap check.
+  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
+   product envelope is one issue naming the node and the axis it leaves by, in the same answer
+   that lists the panel problems; a part flush with a face and a part a millimetre past it are
+   different sentences, and a part inside reports nothing.
+  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
+   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
+  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
