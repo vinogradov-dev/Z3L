@@ -9,10 +9,11 @@ steps:
   [x] the Assistant page, its one switch and its three messages
   [x] the window answers at its frame boundary; `mcp serve --attach` serves a headless session
   [x] ADR 0207, the PROJECT.md sentence, the map row and the research note
-  [ ] the primary closes the entry after the merge: this worktree cannot write `STATE:` (P23)
+  [x] the gate: fmt, clippy, tests, layers, ui-rules, docs, skills — and `plan` after P23 landed
+  [ ] the primary merges this branch into `dev` and closes the entry with the merged hash
 
-now: the task landed on stream/agent, whatever the primary merges
-blocked: P23 — a stream worktree refuses `task step` and `task close`, so the note was written by hand
-run: cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-resume: the primary merges stream/agent into dev and closes J6 with the merged hash
+now: the work is committed on stream/agent; only the merge into `dev` and the close remain
+blocked: nothing
+run: cargo xtask plan && cargo test -p mcp -p app
+resume: in the primary checkout, merge stream/agent into dev and close J6 with the merged hash
 ```
