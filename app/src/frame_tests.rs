@@ -2707,6 +2707,60 @@ fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
 }
 
 #[test]
+fn a_round_body_answers_its_rim_and_its_axis_and_the_air_beside_it_captures_nothing() {
+    // U120: a swept circle used to answer the eight corners of the square around its base, which are
+    // points in the air, while its upper rim and its axis were nowhere. The body now answers its own
+    // rims and axis ends, and the pointer over the corner of that square takes nothing of it.
+    let mut harness = Harness::with_session("snap-round", round_bodies_session());
+    sketch_in_mode(&mut harness, model::SnapMode::Foot);
+    let spots = [
+        ("base rim", geom::DVec3::new(60.0, 0.0, 0.0), Some(SnapKind::Vertex)),
+        ("upper rim", geom::DVec3::new(0.0, 60.0, 200.0), Some(SnapKind::Vertex)),
+        ("axis end", geom::DVec3::new(0.0, 0.0, 200.0), Some(SnapKind::Centre)),
+        ("cone apex", geom::DVec3::new(240.0, 0.0, 160.0), Some(SnapKind::Vertex)),
+        ("box corner", geom::DVec3::new(60.0, 60.0, 200.0), None),
+    ];
+    for (name, world, expected) in spots {
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        let document = harness.app.tabs.active();
+        let kind = document.draw_gizmo.snap_kind();
+        let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
+        match expected {
+            Some(expected) => {
+                assert_eq!(kind, Some(expected), "the {name} captures the pointer: {world:?} at {at:?}");
+                let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
+                assert!(
+                    (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
+                    "the {name} reads its own place by its perpendicular foot: {stored:?} against {world:?}"
+                );
+            }
+            None => assert!(
+                kind.is_none_or(|kind| kind == SnapKind::Grid),
+                "the {name} names no place of the body, so nothing of it may capture: {kind:?}"
+            ),
+        }
+    }
+}
+
+/// A scene with one swept circle and one cone, placed apart: the round bodies a snap must read.
+fn round_bodies_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("a root id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let ring = model::Path::circle([mesh(0), mesh(0)], mesh(60)).expect("a circle");
+    let cylinder = model::Constructive::extrude(ring, mesh(200)).expect("a cylinder");
+    project
+        .add_object(root, "Cylinder", model::Placement::IDENTITY, model::Geometry::Constructive(cylinder))
+        .expect("a cylinder");
+    let cone = model::Primitive::cone(mesh(60), mesh(0), mesh(160), 24).expect("a cone");
+    let placed = model::Placement::new(geom::DVec3::new(240.0, 0.0, 0.0), model::Placement::IDENTITY.rotation())
+        .expect("a place");
+    project.add_object(root, "Cone", placed, model::Geometry::Primitive(cone)).expect("a cone");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
+#[test]
 fn a_box_is_drawn_by_any_rectangle_method_and_swept_on_z() {
     // V4 (ADR 0138): the box cell carries the sketch's four rectangle methods, and the body it
     // builds is the solid the retired cuboid primitive drew — eight corners, six faces, and the
