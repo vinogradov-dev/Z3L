@@ -10,23 +10,8 @@
 //! Changes when: a command gains a field the discovery report must carry.
 
 use engine::{CommandRegistry, CommandSpec};
-use model::Level;
 use serde_json::{Value, json};
 use text::Lang;
-
-/// The word a report uses for a class level.
-///
-/// The model names the levels but spells none of them for a machine, and this report is read by an
-/// agent, so the words are English and stable: they are part of the report's contract, not a
-/// translation. A new level turns the match into a compile error instead of printing a number.
-const fn level_word(level: Level) -> &'static str {
-    match level {
-        Level::Product => "product",
-        Level::Component => "component",
-        Level::Part => "part",
-        Level::Fitting => "fitting",
-    }
-}
 
 /// One command as a report row: its id, its label, the level it creates and its parameter schema.
 fn row(spec: CommandSpec) -> Value {
@@ -35,8 +20,8 @@ fn row(spec: CommandSpec) -> Value {
         "label": spec.label().text(Lang::En),
         "params": spec.params_schema(),
     });
-    if let (Some(level), Some(object)) = (spec.creation_level(), row.as_object_mut()) {
-        object.insert("creates".to_owned(), Value::from(level_word(level)));
+    if let (Some(word), Some(object)) = (spec.creation_word(), row.as_object_mut()) {
+        object.insert("creates".to_owned(), Value::from(word));
     }
     row
 }
@@ -57,8 +42,8 @@ pub fn report(as_json: bool) -> String {
         .iter()
         .map(|spec| {
             let label = spec.label().text(Lang::En);
-            match spec.creation_level() {
-                Some(level) => format!("{:<width$}  {label}  (creates a {})", spec.id(), level_word(level)),
+            match spec.creation_word() {
+                Some(word) => format!("{:<width$}  {label}  (creates a {word})", spec.id()),
                 None => format!("{:<width$}  {label}", spec.id()),
             }
         })

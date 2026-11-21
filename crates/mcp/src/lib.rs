@@ -1,0 +1,112 @@
+//! The editor as a tool server a client we do not ship can drive.
+//!
+//! The tools are a projection of the command registry, never a second list of what the program can
+//! do: `command_list` reads [`engine::CommandRegistry::specs`], `command_run` and `command_batch`
+//! hand their steps to [`engine::Session::batch`] — the same call the command line's recipe and a
+//! chat turn make — and `query` asks [`engine::Session::read`] the questions it already answers. Four
+//! coarse tools rather than two per command id, because a model that spends its budget on transport
+//! never reaches the document (ADR 0185).
+//!
+//! This crate is a protocol adapter and holds no brain: no tool decides anything, and no command is
+//! re-implemented here. It sits beside `ui` at layer 7 and depends on `engine`, `model` and `text`;
+//! it is the only crate allowed to depend on `rmcp` and on `tokio`, and it is forbidden `egui`,
+//! `wgpu` and `eframe` (`cargo xtask layers`, ADR 0186). Nothing in the editor awaits it: the
+//! served session runs on its own current-thread executor, and every tool dispatches synchronously
+//! inside it, so a person's window is never blocked by a client we do not control.
+//!
+//! The wire is the process's own standard input and output. Nothing listens: `z3l mcp serve` speaks
+//! stdio and binds no port, which is what keeps ADR 0028's "the application does not listen" true
+//! while a foreign client can still work headless.
+//!
+//! Changes when: a tool is added, a tool's answer changes shape, or the crate gains a dependency.
+
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unimplemented,
+    clippy::todo,
+    clippy::unreachable
+)]
+
+mod report;
+pub mod server;
+pub mod tools;
+
+use std::fmt;
+
+use model::Project;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+pub use server::{CommandServer, serve_session};
+pub use tools::{
+    BatchRequest, CommandListRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
+};
+
+/// Where a served session writes the document a batch changed.
+///
+/// The crate holds no path and no file I/O: the shell owns `project::SceneFile`, its atomic write
+/// and the sections a newer build left in the file, so it hands the server one implementation and
+/// the server never learns a directory (`AGENTS.md` §4.11, ADR 0185).
+pub trait SceneSink: fmt::Debug + Send + Sync {
+    /// Writes `project`, or the sentence that says why it could not be written.
+    ///
+    /// A caller reads `Err` as: the document changed and the file did not, which the answer a tool
+    /// returns says in as many words instead of claiming a save that failed.
+    fn save(&self, project: &Project) -> Result<(), String>;
+}
+
+/// Why serving stopped: the runtime, the handshake or the transport.
+#[derive(Debug)]
+pub enum ServeError {
+    /// The executor the protocol runs on cannot be started on this machine.
+    Runtime(String),
+    /// The client and the server could not agree to begin.
+    Start(String),
+    /// The connection ended with a failure rather than with the client closing it.
+    End(String),
+}
+
+impl fmt::Display for ServeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Runtime(message) => write!(formatter, "cannot start the protocol runtime: {message}"),
+            Self::Start(message) => write!(formatter, "the client could not begin a session: {message}"),
+            Self::End(message) => write!(formatter, "the session ended: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ServeError {}
+
+/// Serves `server` over one pair of streams until the client closes them.
+///
+/// The pair is what the process's standard input and output are, and what a test hands in to drive
+/// the server without a second process: the protocol is newline-delimited JSON over a byte stream,
+/// so a pipe and a terminal are the same thing to it.
+pub async fn serve<R, W>(server: CommandServer, reader: R, writer: W) -> Result<(), ServeError>
+where
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    let running =
+        rmcp::serve_server(server, (reader, writer)).await.map_err(|error| ServeError::Start(error.to_string()))?;
+    running.waiting().await.map_err(|error| ServeError::End(error.to_string()))?;
+    Ok(())
+}
+
+/// Serves `server` over this process's standard streams and blocks until the client closes them.
+///
+/// This is the one place a runtime is built, and it is a current-thread one: the session is the one
+/// writer of the document, so a second thread would buy nothing but a lock to cross. The function
+/// is synchronous on purpose — the composition root starts it before any window exists and has no
+/// runtime of its own (ADR 0186).
+pub fn serve_stdio(server: CommandServer) -> Result<(), ServeError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| ServeError::Runtime(error.to_string()))?;
+    let (reader, writer) = rmcp::transport::stdio();
+    runtime.block_on(serve(server, reader, writer))
+}

@@ -519,6 +519,7 @@ mod tests {
         PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear,
         PanelRingBandingSet,
     };
+    use text::Lang;
 
     fn sample_session() -> Session {
         Session::with_directory(sample_project(), sample_catalog())
@@ -664,6 +665,34 @@ mod tests {
             })
         ));
         assert!(!session.can_undo(), "a refusal records no history");
+    }
+
+    #[test]
+    fn a_command_that_waits_for_a_product_says_so_without_a_request() {
+        // A discovery surface lists the commands before any request exists: the session's half of
+        // the gate is the only thing it can judge, and it carries the refusal the command itself
+        // would report (ADR 0098, ADR 0185).
+        let registry = CommandRegistry::new();
+        let create = registry.get("panel.create").expect("registered");
+        let contour = registry.get("panel.contour.create").expect("registered");
+        let closed = sample_session();
+        assert_eq!(create.unavailable(&closed), Some(CreationRefusal::NoProductOpen));
+        assert_eq!(contour.unavailable(&closed), Some(CreationRefusal::NoProductOpen));
+        assert_eq!(
+            CreationRefusal::NoProductOpen.message().text(Lang::En),
+            "Create a product first.",
+            "the sentence is the one the refusal already carries"
+        );
+        let open = product_session();
+        assert_eq!(create.unavailable(&open), None, "an open product is no objection");
+        assert_eq!(contour.unavailable(&open), None);
+        // A command that creates nothing gated has no session condition to report.
+        assert_eq!(registry.get("node.rename").expect("registered").unavailable(&closed), None);
+        assert_eq!(
+            registry.get("object.primitive.create").expect("registered").unavailable(&closed),
+            None,
+            "a primitive is a scene object, not furniture"
+        );
     }
 
     #[test]

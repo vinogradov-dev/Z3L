@@ -27,6 +27,7 @@ export = { path = "crates/export" }
 scene = { path = "crates/scene" }
 render = { path = "crates/render" }
 engine = { path = "crates/engine" }
+mcp = { path = "crates/mcp" }
 ui = { path = "crates/ui" }
 testkit = { path = "crates/testkit" }
 
@@ -52,6 +53,13 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # sheet on macOS, the common item dialog on Windows. No GTK, so it is not a second GUI toolkit, and
 # nothing C is compiled: the portal's D-Bus client is loaded at run time (ADR 0182).
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal", "wayland"] }
+# The MCP protocol over the process's own standard streams: Apache-2.0, pure Rust, and the only
+# crate allowed to depend on it and on its runtime. No editor path awaits it: the tools dispatch
+# through `Session::batch`, which is synchronous (ADR 0185, ADR 0186).
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-io"] }
+# The runtime the protocol runs on, in `mcp` alone. `rt` is the whole runtime we need: the served
+# session is one current-thread executor that blocks the headless process (ADR 0186).
+tokio = { version = "1.54", default-features = false, features = ["rt", "io-std", "io-util", "sync"] }
 # The parameter schema a command publishes to a model or a CLI: a derive over the `serde` struct
 # that already validates the parameters, so the description cannot drift from the parser (ADR 0185).
 schemars = { version = "1.2", features = ["derive"] }

@@ -44,6 +44,11 @@ const CONTACT_ADAPTER: &str = "contact-parry";
 /// Crates that only the composition root may wire in as normal dependencies.
 const COMPOSITION_ONLY: &[&str] = &[TRUCK_ADAPTER, CONTACT_ADAPTER];
 
+/// The protocol adapter is the one home of the MCP crate and of the runtime it needs, exactly as the
+/// adapters above own their third-party engines (ADR 0186).
+const MCP_CRATE: &str = "mcp";
+const PROTOCOL_PREFIXES: &[&str] = &["rmcp", "tokio"];
+
 /// Crates that compile or vendor C/C++ sources. OS bindings that only load a
 /// platform library through Rust FFI are not listed here: the rule is about
 /// native code shipped and built with Z3L, not about the operating system.
@@ -98,6 +103,10 @@ const CRATES: &[CrateRule] = &[
     CrateRule { name: "engine", layer: 6, forbidden: UI_GPU_DEPS },
     // The UI owns egui but never the GPU: the shell wires the renderer in.
     CrateRule { name: "ui", layer: 7, forbidden: &["wgpu", "egui-wgpu", "winit"] },
+    // The MCP server sits beside the UI and reaches the document only through the engine. It is the
+    // one crate allowed to depend on the protocol and its runtime (ADR 0186), and it is forbidden the
+    // interface and the GPU the way the engine is.
+    CrateRule { name: MCP_CRATE, layer: 7, forbidden: UI_GPU_DEPS },
     // The native shell is the composition root; layers alone constrain it.
     CrateRule { name: "app", layer: 8, forbidden: &[] },
     // Development-only helpers may use anything; product crates may only reach
@@ -257,6 +266,15 @@ fn collect_violations(rules: &[CrateRule], packages: &[serde_json::Value]) -> Re
             if dependency_name.starts_with(PARRY_PREFIX) && name != CONTACT_ADAPTER {
                 violations.push(format!(
                     "`{name}` must not depend on `{dependency_name}`: only `{CONTACT_ADAPTER}` may use the collision engine"
+                ));
+            }
+
+            // The protocol and its runtime are a detail of the crate that serves the tools. No other
+            // crate — not even in tests — may reach them: `engine` and the shell stay synchronous
+            // (ADR 0186).
+            if PROTOCOL_PREFIXES.iter().any(|prefix| dependency_name.starts_with(prefix)) && name != MCP_CRATE {
+                violations.push(format!(
+                    "`{name}` must not depend on `{dependency_name}`: only `{MCP_CRATE}` may use the MCP protocol and its runtime"
                 ));
             }
 
@@ -553,6 +571,40 @@ mod tests {
 
         let dev = collect(&[package("model", &[("testkit", Some("dev"))])]);
         assert!(dev.is_empty(), "{dev:?}");
+    }
+
+    #[test]
+    fn only_the_protocol_crate_may_use_the_protocol_and_its_runtime() {
+        let leaked = collect(&[package("engine", &[("rmcp", None)])]);
+        assert!(leaked.iter().any(|violation| violation.contains("only `mcp` may use")), "{leaked:?}");
+
+        let runtime = collect(&[package("app", &[("tokio", None)])]);
+        assert!(runtime.iter().any(|violation| violation.contains("only `mcp` may use")), "{runtime:?}");
+
+        let allowed = collect(&[package("mcp", &[("rmcp", None), ("tokio", None), ("engine", None)])]);
+        assert!(allowed.is_empty(), "{allowed:?}");
+    }
+
+    #[test]
+    fn the_protocol_crate_must_not_depend_on_the_interface_or_the_gpu() {
+        for forbidden in ["egui", "wgpu"] {
+            let violations = collect(&[package("mcp", &[(forbidden, None)])]);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(&format!("`mcp` must not depend on `{forbidden}`"))),
+                "{violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_protocol_crate_sits_beside_the_ui_and_not_above_it() {
+        let violations = collect(&[package("mcp", &[("ui", None)])]);
+        assert!(
+            violations.iter().any(|violation| violation.contains("a crate may only depend on lower layers")),
+            "{violations:?}"
+        );
     }
 
     #[test]

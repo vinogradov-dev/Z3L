@@ -245,6 +245,75 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
    and no writer was added when P17 landed.
   `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
+- `[ ]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
+  Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
+   answers "`STATE: base=72b7164` is not the tree this plan describes: `AGENTS.md` changed
+   since, and `state=idle` means the plan is written" and prints nothing at all; the render
+   worktree answers the same about `base=229b539` after its first code commit. The rule is
+   right where it was written — in the primary checkout, `base` describes the tree that
+   checkout has — and it cannot be judged from a stream checkout, where the commits after
+   `base` are that stream's own work and the plan is deliberately not written there (§6.2: a
+   stream commits code and never `plan/`). `stream/catalog` and `stream/prototypes` pass today
+   only because their plan copies happen to carry a `base` the rule likes. The cost is exact:
+   `status` prints no clock, no streams and no entry, so a session that opens a stream worktree
+   starts by reading files by hand, and a stream's own `task step` is refused because the gate
+   it runs sees that one violation and the write removes nothing.
+  Shape: Shape: The tool reads the checkout it runs in — `git rev-parse --abbrev-ref HEAD`
+   through the `Git` port — and when that branch is `stream/<key>` for a stream the plan
+   declares, the base-lag rule is not applied: it speaks about the primary checkout's tree, and
+   the primary is where it is judged. The skip is said out loud in the `status` and `plan`
+   blocks ("the base-lag rule is the primary checkout's; this is `stream/render`"), because a
+   silently skipped check is a check nobody trusts. The ancestor check stays everywhere: a
+   `base` that is not a commit or not an ancestor of `HEAD` is wrong in any worktree.
+  Done: Done: A test builds a repository whose branch is `stream/render` with a declared
+   `render=Y,L` and one code commit after `base`: `cargo xtask plan` passes there, while the
+   same tree on `dev` still fails the lag rule; the `status` block carries the sentence that
+   says which checkout the rule belongs to; a stream branch whose stream the plan does not
+   declare keeps the old refusal.
+  `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs`
+- `[ ]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
+  Why: Observation: a contour drawing that has been stored once is a dead operand. In
+   /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
+   segments miss each other by 4.6, 6.7, 10.1 and 12.4 µm — the rounding
+   `ContourSegment::from_geom` does at storage, which the document accepts on `2 µm + radius ×
+   1.746e-5` (ADR 0072). `contour.boolean.union` over those two rings answers "nothing to
+   create: the rings do not meet, so nothing is left", and `object.area.extrude` answers "the
+   point is not inside any area" for every point, because `partition_regions` starts with
+   `union_regions`. Expectation: a joint the document accepts is a joint to the geometry layer,
+   so a stored drawing combines and its areas are non-empty. Suspected cause, measured:
+   `geom::boolean` welds vertices at `VERTEX_TOLERANCE = 1e-6` mm and never closes a joint gap
+   of a few micrometres, and `model::Contour::to_geometry` builds the ring with
+   `new_with_joint_tolerance` — so the ring is legal for the document and open for the boolean.
+   A control probe with a 3 µm gap reproduces it: the same ring unions fine at 0 µm, loses its
+   disjoint partner at 3 µm and leaves nothing when two such rings are unioned.
+  Shape: One rule for a joint: the gap the document is allowed to store is the gap the boolean
+   welds, so `collect_edges` welds at the operand ring's own joint tolerance instead of one
+   nanometre — or the conversion closes the joint before the ring reaches the geometry layer,
+   and then the boolean keeps its nanometre. The tested round trip decides which: every stored
+   ring the document accepts must be closed for `union_regions`.
+  Done: A test unions two rings whose joints are `2 µm + radius × 1.746e-5` apart and gets both
+   pieces, another unions the two rings of the cross.z3l intersection and gets one object, and
+   `object.area.extrude` on that object reaches both caps; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
+- `[ ]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
+  Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
+   circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
+   a contour set is not a valid ring: a contour needs at least three segments, got 1"; the same
+   happens with two disjoint circles and, from the scene, when a drawing carries a circle
+   beside another ring. Expectation: a union of a circle and a shape is a drawing of two rings,
+   and of two circles is two rings. Suspected cause, measured: `simplify_loop` merges
+   consecutive pieces on one circle, so the four arcs become one 360° arc, and
+   `Contour::assemble` refuses a ring of fewer than three segments — the boolean produces a
+   ring the document cannot store.
+  Shape: Keep a closed ring storable: either `simplify_loop` never merges a ring down to one
+   segment, or a single closed arc is a legal contour. The second is the smaller rule and the
+   one that names the shape honestly; the first keeps every stored ring looking like the figure
+   it was drawn from. The test is the round trip of a stored one-arc ring through the file and
+   the mesh.
+  Done: A test unions a circle with a disjoint rectangle and stores two rings, another
+   round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
+   drawing of two rings; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
@@ -307,25 +376,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J5** a client we did not write drives the editor, headless
-  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
-   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
-   process can call a command except the command line. A client we did not write cannot reach
-   the editor at all.
-  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
-   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
-   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
-   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
-   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
-   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
-   reason beside its predicate: the clause J2 measured and left to the first door that needs
-   both halves.
-  Done: A test drives a served session over stdio through `command_list` and a two-line
-   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
-   sentence that says why a disabled command is disabled, in the command's own words; `cargo
-   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
-   the file the way `z3l run` does.
-  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
 - `[ ]` **J6** the local channel attaches an agent to the window a person is looking at
   Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
    measured: a stdio child edits a saved file, not the document a person is looking at, so
@@ -829,6 +879,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **J5** a client we did not write drives the editor, headless
+  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
+   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
+   process can call a command except the command line. A client we did not write cannot reach
+   the editor at all.
+  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
+   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
+   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
+   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
+   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
+   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
+   reason beside its predicate: the clause J2 measured and left to the first door that needs
+   both halves.
+  Done: A test drives a served session over stdio through `command_list` and a two-line
+   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
+   sentence that says why a disabled command is disabled, in the command's own words; `cargo
+   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
+   the file the way `z3l run` does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs` — `5403358`
 
 - `[x]` **G4** an area between contours is picked and extruded, the SketchUp way
   Why: A drawing made of several contours encloses areas between them and inside their holes,
