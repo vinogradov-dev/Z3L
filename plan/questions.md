@@ -52,3 +52,7 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
+- The room and the props around a product — a window, a curtain, a plant, a rug, pillows — are they
+  imported from an asset library, modelled in Z3L, or does a catalogue image keep the furniture on a
+  studio backdrop? The example the owner points at is about half props, and no tracer draws them
+  without geometry.
