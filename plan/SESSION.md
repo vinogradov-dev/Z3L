@@ -7,8 +7,8 @@ goal: two snap kinds: 2.5D drops the perpendicular onto the tool's plane, 3D giv
 steps:
   [ ] starting the task
 
-now: the resolver answers the point a tool stores; the sketch, its marker and the frame test agree
+now: the mode is a workspace value with a cell and a Settings row, and the sketch reads it; the contour and vertex editors still ask the resolver nothing
 blocked: nothing
 run: cargo xtask task U119
-resume: wire the mode into the workspace settings and the Snaps group, then the contour and vertex editors
+resume: ask the owner for the default mode, the face-under-the-first-click plane and the vertex drag, then wire the contour and vertex editors
 ```

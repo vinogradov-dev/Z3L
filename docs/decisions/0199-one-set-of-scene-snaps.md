@@ -29,8 +29,19 @@ the document") but the document is exactly where a panel's corners live.
   every tab and survives a restart. The grid's own switch moved from the drawing gizmo's view state
   into the same set: a snap the maker turns off is a setting, and `G` is its cell's key.
 - **The plane kinds are the plane's.** Intersections, perpendicular feet and tangent points are
-  solved in the sketch plane, because that is where the maker draws; a scene point off the plane is
-  taken at its footprint, and its marker stands on the candidate itself.
+  solved in the sketch plane, because that is where the maker draws.
+- **Two answers, one point** (U119). A candidate may stand above or below the plane a tool draws on,
+  and the maker wants two readings of it, so `SnapMode` is the workspace's choice and the tool
+  declares what it can do with the answer: `SnapTarget::Foot` (2.5D) takes any candidate as its
+  perpendicular foot on the plane — the shadow a top view lines a board up with — `InPlane` (3D)
+  takes only a candidate that lies in the plane, and `Free` takes the point itself, which is the
+  reading of a tool that stores a point in space, the ruler and a vertex edit. The resolver returns
+  the point the tool stores, so the marker is drawn at the answer and a marker can never name a
+  place the click does not take; a candidate a target refuses is dropped before its kind ranks, so
+  the next corner of that kind still answers.
+- **The mode is a setting, not a tool's habit.** It rides with `SnapKinds` in the workspace file and
+  is drawn by one cell of the Snaps group and one row of Settings, because a reading hidden inside
+  one tool is how the footprint became a default nobody could see.
 - **The face is the tool's reading.** A tool hands in the face it measured under the pointer — the
   ruler steps past a product's reserved box to the board behind it — and the atom only ranks it.
   That face is also the eye's limit: a candidate behind it does not capture, because a marker inside
@@ -48,6 +59,9 @@ the document") but the document is exactly where a panel's corners live.
 - The resolver walks the document once per pointer frame. That costs a tree walk and a few hundred
   candidates for a workshop-sized scene, and it is why the walk skips a hidden subtree and stops at
   the nesting limit; a scene that outgrows it gets a cache keyed by the revision, not a second path.
+- A tool that asks the atom must say what it does with an answer. A tool that keeps deciding the
+  height of a candidate itself is the defect this record closes: the answer and the marker are one
+  value.
 - A disabled kind never captures, and the tolerance decides the rest. The grid is the exception in
   one direction only: it is the plane's quantum and rounds wherever the pointer is.
 - The fill and the niche ghost keep the niche atom's cursor rule (`ui::pointer_point`) instead of the
