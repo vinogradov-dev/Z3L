@@ -339,9 +339,9 @@ nested — how that recipe is written down is still open (§12).
 
 | Code | English / Russian | slug | level | supply | measure | nesting | extent | ops | host | opening | mount | fill |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `10.10` | Vertical panel / «Вертикальная панель» | `vertical-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | h+d |
-| `10.11` | Horizontal panel / «Горизонтальная панель» | `horizontal-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | w+d |
-| `10.12` | Back panel / «Задняя стенка» | `back-panel` | part | sheet | area | member | free | C | `10.01` | — | — | w+h |
+| `10.10` | Upright / «Стойка» | `vertical-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | h+d |
+| `10.11` | Horizontal / «Горизонт» | `horizontal-panel` | part | sheet | area | member | free | C E | `10.01` | — | — | w+d |
+| `10.12` | Back / «Стенка» | `back-panel` | part | sheet | area | member | free | C | `10.01` | — | — | w+h |
 | `10.13` | Drawer box part / «Деталь ящика» | `drawer-box-part` | part | sheet | area | member | free | C E | `10.30` | — | — | — |
 | `10.14` | Glass shelf / «Стеклянная полка» | `glass-shelf` | part | piece | area | never | free | C | `10.01` | — | — | w+d |
 | `10.15` | Tamburat panel / «Плита тамбурат» | `tamburat-panel` | part | shop | count | never | free | C E | `10.01` | — | — | — |

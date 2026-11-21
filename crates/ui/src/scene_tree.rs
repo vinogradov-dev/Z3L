@@ -641,7 +641,7 @@ mod tests {
 
         let (after, _) = draw(&session, &mut ViewFlags::default());
         assert!(
-            after.iter().any(|text| text == "Drawer  [Horizontal panel]"),
+            after.iter().any(|text| text == "Drawer  [Horizontal]"),
             "the badge names the class and keeps the code for the tooltip: {after:?}"
         );
     }

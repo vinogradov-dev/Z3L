@@ -628,7 +628,7 @@ mod tests {
         card.class_picker.start();
         card_frame(&ctx, Vec::new(), &mut session, &mut card, drawer);
         let shapes = card_frame(&ctx, vec![egui::Event::Text("полка".to_owned())], &mut session, &mut card, drawer);
-        let pos = text_center(&shapes, "Горизонтальная панель").expect("the horizontal panel row is drawn");
+        let pos = text_center(&shapes, "Горизонт").expect("the horizontal panel row is drawn");
 
         card_frame(&ctx, vec![egui::Event::PointerMoved(pos)], &mut session, &mut card, drawer);
         let button = |pressed| egui::Event::PointerButton {

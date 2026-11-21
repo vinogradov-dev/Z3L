@@ -65,22 +65,20 @@ impl ClassCode {
     /// one (ADR 0097); a test proves it is the `70.01` registry row with `level = Product`.
     pub const GENERAL_PRODUCT: Self = Self(700_100);
 
-    /// The `vertical panel` row, «вертикальная панель» / vertical panel, the class a post fills a
-    /// niche with (ADR 0099).
+    /// The `vertical panel` row, «стойка» / upright, the class a post fills a niche with (ADR 0099).
     ///
     /// The fill tool is bound to the row, and the row's `fill` trait decides that a post takes the
     /// niche's height and depth. A test proves the constant still names that row.
     pub const VERTICAL_PANEL: Self = Self(101_000);
 
-    /// The `horizontal panel` row, «горизонтальная панель» / horizontal panel, the class a shelf
-    /// fills a niche with (ADR 0099).
+    /// The `horizontal panel` row, «горизонт» / horizontal, the class a shelf fills a niche with
+    /// (ADR 0099).
     ///
     /// A shelf takes the niche's width and depth; the row's `fill` trait is the one statement of
     /// that rule.
     pub const HORIZONTAL_PANEL: Self = Self(101_100);
 
-    /// The `back panel` row, «задняя стенка» / back panel, the class a wall fills a niche with
-    /// (ADR 0200).
+    /// The `back panel` row, «стенка» / back, the class a wall fills a niche with (ADR 0200).
     ///
     /// A wall takes the niche's width and height and stands in the frontal plane, so the row's
     /// `fill` trait is what makes the wall cell a way to fill a void rather than a typed board.
