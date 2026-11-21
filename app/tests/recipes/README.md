@@ -15,6 +15,7 @@ ends**, with 0.5 or 1 mm edge — whichever the workshop stocks.
 
 | file | what it is |
 |---|---|
+| `wardrobe-800x460x2200.prompt.md` | the same job as a person words it: the title, the two sentences the owner gave, and every number read out of them — this is the text an agent is handed |
 | `wardrobe-800x460x2200.jsonl` | the recipe: 38 commands, one per line, one batch and one undo entry |
 | `wardrobe-start.z3l` | the scene it starts from: an empty document with the product frame (id 2) already made |
 | `empty-scene.z3l` | the document `wardrobe-start.z3l` was made from, kept so the frame can be re-made |
