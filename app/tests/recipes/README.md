@@ -16,10 +16,16 @@ ends**, with 0.5 or 1 mm edge — whichever the workshop stocks.
 | file | what it is |
 |---|---|
 | `wardrobe-800x460x2200.prompt.md` | the same job as a person words it: the title, the two sentences the owner gave, and every number read out of them — this is the text an agent is handed |
-| `wardrobe-800x460x2200.jsonl` | the recipe: 38 commands, one per line, one batch and one undo entry |
+| `wardrobe-800x460x2200.jsonl` | the recipe: 38 commands, one per line, one batch and one undo entry, each creating line named so a later line can refer to what it made |
 | `wardrobe-start.z3l` | the scene it starts from: an empty document with the product frame (id 2) already made |
 | `empty-scene.z3l` | the document `wardrobe-start.z3l` was made from, kept so the frame can be re-made |
 | `catalogue/` | the workshop rows the recipe names: an 18 mm board, a 4 mm back sheet and a 1 mm edge |
+
+**A line names what it makes.** Every creating line carries `"as": "<name>"`, and a line that needs
+that id writes `{"$ref": "<name>"}` in its place: `panel.edge_banding.set` bands the panel its own
+line above made. The engine resolves the name while the batch runs (J18, ADR 0213), so the recipe
+holds no document ids and builds into a scene that already holds parts. The one literal id left is
+`"parent": 2`, the product frame: a recipe cannot make its own product (J17).
 
 ## Running it
 
@@ -80,7 +86,9 @@ rule is how the first build came out mirrored (X118).
 
 ## What was measured on 2026-11-21
 
-- 38 steps, one undo entry, one write; the run leaves the document at revision 53.
+- 38 steps, one undo entry, one write; the run leaves the document at revision 53. Re-measured on
+  2026-11-21 after the lines were rewritten to name their nodes: the same ids (parts 3–16, bodies
+  17–21), the same revision, and no diagnostic on any part.
 - 14 panel parts: 3 × `10.10`, 9 × `10.11`, 1 × `10.12`, 2 × `10.20`; plus 5 bodies (4 legs, 1 rail).
 - `query parts` reports the sizes above; `query diagnostics` reports no issue on any of the 14 parts.
 - The world box of every part was computed from the recipe and checked by hand: the furthest
