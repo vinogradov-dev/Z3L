@@ -186,6 +186,8 @@ pub const EDIT_UNDO: &str = "edit.undo";
 pub const EDIT_REDO: &str = "edit.redo";
 /// The id of the command palette.
 pub const PALETTE_OPEN: &str = "palette.open";
+/// The id that opens the assistant panel, where a person talks to an agent (J7).
+pub const ASSISTANT_OPEN: &str = "assistant.open";
 /// The id that hides both side panels, or shows the pair the last press put away.
 pub const PANELS_HIDE: &str = "view.panels.hide";
 /// The id that folds both side panels to strips, or unfolds them again.
@@ -209,6 +211,7 @@ pub const ACTIONS: &[Action] = &[
     Action { id: EDIT_UNDO, words: Message::ShortcutUndo },
     Action { id: EDIT_REDO, words: Message::ShortcutRedo },
     Action { id: PALETTE_OPEN, words: Message::ShortcutPalette },
+    Action { id: ASSISTANT_OPEN, words: Message::ShortcutAssistant },
     Action { id: PANELS_HIDE, words: Message::ShortcutHidePanels },
     Action { id: PANELS_COLLAPSE, words: Message::ShortcutCollapsePanels },
     // The five gestures the viewport offers are one band and five keys (U113, X88). They write no
@@ -235,6 +238,7 @@ pub const KEYS: &[Binding] = &[
     Binding { id: EDIT_UNDO, key: egui::Key::Z, chord: Chord::Ctrl, label: "Ctrl+Z" },
     Binding { id: EDIT_REDO, key: egui::Key::Y, chord: Chord::Ctrl, label: "Ctrl+Y" },
     Binding { id: PALETTE_OPEN, key: egui::Key::K, chord: Chord::Command, label: "Ctrl+K" },
+    Binding { id: ASSISTANT_OPEN, key: egui::Key::J, chord: Chord::Ctrl, label: "Ctrl+J" },
     Binding { id: PANELS_HIDE, key: egui::Key::Num0, chord: Chord::Ctrl, label: "Ctrl+0" },
     Binding { id: PANELS_COLLAPSE, key: egui::Key::Num0, chord: Chord::CtrlShift, label: "Ctrl+Shift+0" },
     Binding { id: "view.layout.maximize", key: egui::Key::W, chord: Chord::Alt, label: "Alt+W" },

@@ -6451,3 +6451,149 @@ fn the_settings_window_offers_the_assistant_switch() {
     assert!(harness.drew(Message::AttachChannelHint.text(Lang::En)), "with the sentence that says what it is");
     assert!(harness.app.settings.assistant.attach, "a fresh workspace leaves the door open");
 }
+
+/// A headless window around one session with a product open and one panel it can rename.
+///
+/// The assistant's turn needs something to change, and a part is born only inside an open product
+/// (ADR 0098), so the fixture builds the product and the panel the way the tool server's own test
+/// does and hands back the panel's id.
+fn chat_fixture(name: &str) -> (Harness, Id) {
+    let (project, product) = testkit::sample_product_project();
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let panel = session
+        .dispatch(
+            "panel.create",
+            &serde_json::json!({
+                "parent": product.get(),
+                "name": "Side",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )
+        .expect("the fixture panel is created")
+        .created_id()
+        .expect("a panel id");
+    (Harness::with_session(name, session), panel)
+}
+
+/// The name the document gives `panel`, or `None` when it is gone.
+fn panel_name(harness: &Harness, panel: Id) -> Option<String> {
+    harness.app.tabs.active().session.project().node(panel).map(|node| node.name().to_owned())
+}
+
+/// One batch step that renames `panel`.
+fn rename_step(panel: Id, name: &str) -> engine::BatchStep {
+    engine::BatchStep::new("node.rename", serde_json::json!({"node": panel.get(), "name": name}))
+}
+
+/// Drives the frame until the panel's turn is over, or `frames` frames have run.
+fn drive_turn(harness: &mut Harness, frames: usize) {
+    for _ in 0..frames {
+        harness.frame();
+        if !harness.app.chat.is_busy() {
+            return;
+        }
+    }
+}
+
+#[test]
+fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
+    // ADR 0187 through the real frame: the answer of one message is one entry, and the panel says so
+    // in its own note line, which is the sentence a person reads instead of reading the history.
+    let (mut harness, panel) = chat_fixture("frame-chat-turn");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the side is renamed"),
+    ])));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the answer landed");
+    assert_eq!(
+        harness.app.chat.conversation.lines().last().map(|line| line.text.as_str()),
+        Some("the side is renamed"),
+        "the model's own words close the turn"
+    );
+    harness.app.tabs.active_mut().session.undo().expect("the whole message is one undo entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"));
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the turn left exactly one entry");
+}
+
+#[test]
+fn the_panel_in_plan_mode_draws_the_plan_and_writes_nothing() {
+    // ADR 0190: the first mode is plan, the answer runs with writing off, and what a person sees is
+    // the same dispatch the command line's dry run measured — not prose the model imagined.
+    let (mut harness, panel) = chat_fixture("frame-chat-plan");
+    harness.app.chat.open = true;
+    harness.app.chat.backend =
+        Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+
+    assert_eq!(harness.app.tabs.active().session.agent_mode(), engine::AgentMode::Plan, "a tab is born in plan");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "plan wrote nothing");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the only entry");
+    assert!(panel_name(&harness, panel).is_none(), "plan added no entry of its own");
+    assert!(harness.drawn.iter().any(|line| line.starts_with("Plan:")), "the panel drew the plan: {:?}", harness.drawn);
+}
+
+#[test]
+fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
+    // The stop is between calls (ADR 0187): the second answer is never asked for, so the document
+    // holds the first answer and one undo entry — never a batch cut in half.
+    let (mut harness, panel) = chat_fixture("frame-chat-stop");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::calling(vec![rename_step(panel, "Right")]),
+    ])));
+
+    harness.app.send_chat("rename twice".to_owned(), Lang::En);
+    // Two frames carry the first answer: one asks the model, one takes the answer and dispatches it.
+    for _ in 0..6 {
+        harness.frame();
+        if panel_name(&harness, panel).as_deref() == Some("Left") {
+            break;
+        }
+    }
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the first answer landed");
+    harness.app.chat.stop();
+    drive_turn(&mut harness, 12);
+
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the stopped answer never ran");
+    assert!(
+        harness.drawn.iter().any(|line| line == Message::AssistantStoppedLine.text(Lang::En)),
+        "the panel says the turn was stopped: {:?}",
+        harness.drawn
+    );
+    harness.app.tabs.active_mut().session.undo().expect("the landed answer is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "and it was all one entry");
+}
+
+#[test]
+fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
+    // The panel is reachable without a ribbon cell: its key is the inventory's row, and the switch a
+    // person turns is drawn with the sentence that stands for it.
+    let (mut harness, _panel) = chat_fixture("frame-chat-panel");
+    harness.settle();
+    assert!(!harness.app.chat.open, "the panel starts closed");
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.chat.open, "Ctrl+J opens it");
+    harness.settle();
+    assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn");
+    assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "and the build segment beside it");
+    assert!(harness.drew(Message::AssistantPlanHint.text(Lang::En)), "with the sentence plan means");
+    assert!(
+        harness.drew(Message::AssistantNotConfigured.text(Lang::En)),
+        "and the sentence that says no model is connected"
+    );
+}
