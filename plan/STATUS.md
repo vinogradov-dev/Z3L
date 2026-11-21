@@ -1,14 +1,11 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U116 state=idle base=5722e72 updated=2026-11-21
+STATE: milestone=M7 phase=T task=X95 state=idle base=15f10f8 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
-
-The carry keeps a hand of its own: the drawn square carries a piece, and a camera gesture can hide
-it and put it back without touching the pointer (ADR 0156, X69).
 
 The command line is the one headless door into the document: `z3l commands` lists every id with the
 schema of the parameters it takes, derived from the struct the command's own parser reads, so the two
@@ -32,10 +29,6 @@ material — its core minus the through cutouts — is clipped in the panel's fr
 panel, its placement and the objects, so a moved hinge leaves the body's mesh alone. Nothing carries
 a drilling object into a scene yet, so the body is drawn undrilled (O10, ADR 0150).
 
-The plan shows a stream: `plan/STATUS.md` declares the three checkouts beside the plan's own, each
-working one `[~]` entry of its phases and keeping its own session note while `STATE:` stays the
-plan's own (P17, ADR 0176).
-
 The status bar is three rectangles of text: each zone draws inside its own and clips to it, and the
 command keeps its floor on the narrowest window while the selection elides into what it leaves, so
 no zone paints under another (X94). It reports and never acts: the five gestures are one band in the
@@ -50,10 +43,16 @@ A boolean between two bodies is a step of the target's own history that names an
 body: the cutter stays in the tree, may cut several bodies and re-derives them when it moves, while
 the Model tab's three cells arm the mode and the object card lists the steps (W1, ADR 0197).
 
+The snaps are one set and one resolver: ten kinds in priority order — a corner, a crossing, a middle, a
+centre, a perpendicular foot, a tangent point, a point on an edge or a face, a world axis and the grid
+— answered by `Project::snap` from the pointer's ray and the sketch plane, so the drawing tool and the
+ruler read one atom and the object move reads the same kinds (U116, ADR 0199). Each kind is a switch of
+the workspace, a cell in the View tab's Snaps group with a drawing of its own, a row in the Settings
+page, a glyph at the snapped point and a word in the status bar's readout.
+
 ## Next
 
-U116 is next: the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular
-and the grid, each with a marker
+X95 is next: the post's icon reads as a leg, not as a vertical panel
 
 ## Index
 

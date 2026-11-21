@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
-  Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
-  the object snaps are what the group waits for; today the drawing and fill tools carry their
-  own 2D snap (draft ends, axis lock, grid) and the move tool carries `SnapSettings` for
-  surfaces, so the same mechanism exists twice and the owner asks for one set of scene snaps
-  every tool reads. Two mechanisms are two copies (ADR 0118).
-  Shape: One atom answers the snapped point and the kind of snap from the pointer's ray: vertex,
-  midpoint, arc or circle centre, a point on an edge or a face, the intersection of two edges,
-  a perpendicular foot and a tangent point in a sketch plane, the grid and the world axes. It
-  reads candidate geometry from `Project` through the existing queries — panel corners, path
-  vertices and segment midpoints, primitive and bounds centres, the probe's face, the frame's
-  corners — and falls back to the ray's own point. Every snapping tool consumes it: the draw
-  gizmo, the fill and niche ghost, the ruler, the move and the box tool. Each kind has a
-  toggle in the View tab's Snaps group (`view.snaps.vertex`, …, beside `view.snaps.grid`) and
-  a row in the Settings page's Snaps section with the N21 tolerance; the marker is one glyph
-  per kind drawn at the snapped point in the theme's ink, and a typed number still outranks
-  the snap. The bar's readout names the kind, and stays after U115.
-  Done: Tests: a click near a panel corner snaps to it and reports the vertex kind; the midpoint,
-  the centre, an edge point, an intersection and a perpendicular foot come from the same
-  resolver; a disabled kind never captures and the tolerance decides; typing a number keeps it
-  and zero returns to the pointer; each kind draws its marker and the toggles survive a restart
-  in the workspace; `cargo xtask ci` is green.
-  `files: app/src/gizmo_math.rs,app/src/draw_gizmo.rs,crates/model/src/project/move_query.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs`
 - `[ ]` **X95** the post's icon reads as a leg, not as a vertical panel
   Why: Observation, from the owner: the icon of the tool that creates a post must read as a
   rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
@@ -637,6 +614,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs`
 
 ## Done
+
+- `[x]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
+  Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
+  the object snaps are what the group waits for; today the drawing and fill tools carry their
+  own 2D snap (draft ends, axis lock, grid) and the move tool carries `SnapSettings` for
+  surfaces, so the same mechanism exists twice and the owner asks for one set of scene snaps
+  every tool reads. Two mechanisms are two copies (ADR 0118).
+  Shape: One atom answers the snapped point and the kind of snap from the pointer's ray: vertex,
+  midpoint, arc or circle centre, a point on an edge or a face, the intersection of two edges,
+  a perpendicular foot and a tangent point in a sketch plane, the grid and the world axes. It
+  reads candidate geometry from `Project` through the existing queries — panel corners, path
+  vertices and segment midpoints, primitive and bounds centres, the probe's face, the frame's
+  corners — and falls back to the ray's own point. Every snapping tool consumes it: the draw
+  gizmo, the fill and niche ghost, the ruler, the move and the box tool. Each kind has a
+  toggle in the View tab's Snaps group (`view.snaps.vertex`, …, beside `view.snaps.grid`) and
+  a row in the Settings page's Snaps section with the N21 tolerance; the marker is one glyph
+  per kind drawn at the snapped point in the theme's ink, and a typed number still outranks
+  the snap. The bar's readout names the kind, and stays after U115.
+  Done: Tests: a click near a panel corner snaps to it and reports the vertex kind; the midpoint,
+  the centre, an edge point, an intersection and a perpendicular foot come from the same
+  resolver; a disabled kind never captures and the tolerance decides; typing a number keeps it
+  and zero returns to the pointer; each kind draws its marker and the toggles survive a restart
+  in the workspace; `cargo xtask ci` is green.
+  `files: app/src/gizmo_math.rs,app/src/draw_gizmo.rs,crates/model/src/project/move_query.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs` — `15f10f8`
 
 - `[x]` **T15** T15 a contour boolean took a body and left a drawing
   Why: The owner subtracted a cylinder from a block and got a contour instead of a body: he
