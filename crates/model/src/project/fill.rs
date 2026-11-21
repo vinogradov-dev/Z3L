@@ -389,8 +389,7 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     };
     let (stance, polygon, angles) = match mode {
         FillMode::Fit => {
-            let footprint =
-                niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
+            let footprint = fit_footprint(niche, &stance, (value, value + gap)).ok_or(FillRefusal::TooSmall)?;
             (stance, trim(footprint, &stance)?, Vec::new())
         }
         FillMode::Shape => match reference_face(niche, value, gap, stance) {
@@ -415,7 +414,16 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
         },
     };
     let exact = exact_section(niche, mode, hidden.is_empty(), &stance);
-    let (part, anchor) = part_of(&polygon, mode, &stance, &angles, thickness, exact)?;
+    let shape = PartShape {
+        footprint: &polygon,
+        mode,
+        stance: &stance,
+        angles: &angles,
+        thickness,
+        exact,
+        pointer: DVec2::new(local[stance.u], local[stance.v]),
+    };
+    let (part, anchor) = part_of(shape)?;
     // The panel's zero corner is the outline's own base corner, which the product frame answers from
     // the stance: the lower end of each axis the board runs with and the higher one where it runs
     // against, then the base face along the thickness.
@@ -425,6 +433,20 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     translation[stance.t] = stance.face(value, gap);
     let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
     Ok((part, placement))
+}
+
+/// The polygon a fit searches: the frame's whole reserved shape when the stance is a shelf's.
+///
+/// A shelf's own plane is the plan, and the plan's free shape is the ring the frame draws, whole
+/// (ADR 0204). The cell's `cut` is the convex piece the planes describe, which is the right reading for
+/// a board standing across the void and a smaller one for a shelf: so a fit takes the section the frame
+/// reserves, and falls back to the cell where the frame is a plain box.
+fn fit_footprint(niche: &Niche, stance: &Stance, slab: (f64, f64)) -> Option<Vec<DVec2>> {
+    let plan = stance.u == 0 && stance.v == 1 && stance.t == 2 && !stance.other_face;
+    if plan && let Some(polygon) = niche.section_polygon() {
+        return Some(polygon);
+    }
+    niche.cut(stance.t, slab, (stance.u, stance.v))
 }
 
 /// The frame's own section a part is cut to, when the cell can answer one and nothing trims it.
@@ -542,15 +564,27 @@ fn wall_bevels(niche: &Niche, section: &[DVec2], face: f64, stance: &Stance) -> 
     bevels
 }
 
-/// The part a footprint becomes in `mode`, with the section point the panel is anchored at.
-fn part_of(
-    footprint: &[DVec2],
+/// One part's own reading of the void: the footprint, the mode, the stance and what the frame adds.
+struct PartShape<'a> {
+    /// The free space in the board's own two axes, in the product frame.
+    footprint: &'a [DVec2],
+    /// How the part takes it.
     mode: FillMode,
-    stance: &Stance,
-    angles: &[Option<Degrees>],
+    /// The axes the board runs with.
+    stance: &'a Stance,
+    /// The bevel each edge of the footprint asks for, when a wall leans.
+    angles: &'a [Option<Degrees>],
+    /// The material's thickness.
     thickness: Length,
-    exact: Option<&Contour>,
-) -> Result<(Part, DVec2), FillRefusal> {
+    /// The frame's own ring, when the part takes the shape rather than the largest fit.
+    exact: Option<&'a Contour>,
+    /// The pointer's own place in the board's two axes: a fit goes where the hand points.
+    pointer: DVec2,
+}
+
+/// The part a footprint becomes in `mode`, with the section point the panel is anchored at.
+fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
+    let PartShape { footprint, mode, stance, angles, thickness, exact, pointer } = shape;
     let Some(first) = footprint.first().copied() else {
         return Err(FillRefusal::TooSmall);
     };
@@ -561,7 +595,9 @@ fn part_of(
     let high = footprint.iter().copied().fold(first, DVec2::max);
     match mode {
         FillMode::Fit => {
-            let (corner, size) = largest_rectangle(footprint).ok_or(FillRefusal::TooSmall)?;
+            let (corner, size) = largest_rectangle_through(footprint, pointer)
+                .or_else(|| largest_rectangle(footprint))
+                .ok_or(FillRefusal::TooSmall)?;
             let nominal_size = PanelNominalSize::new(
                 length_of(size.x).ok_or(FillRefusal::TooSmall)?,
                 length_of(size.y).ok_or(FillRefusal::TooSmall)?,
@@ -779,7 +815,28 @@ fn area2(points: &[DVec2]) -> f64 {
 ///
 /// A polygon that leaves no rectangle at all — a line, a single point, a section thinner than the
 /// document's micrometre — answers `None`.
+/// The largest rectangle that lies inside the footprint **and contains `point`**.
+///
+/// A fit goes where the hand points: the largest rectangle of a shape that is not convex can stand in
+/// another arm of it — an L's largest is a column the pointer may be nowhere near — and a part that
+/// appeared across the case from the click would be a surprise (ADR 0204). `None` when no rectangle
+/// through the point fits, which a caller answers with the search that is free to look anywhere.
+fn largest_rectangle_through(points: &[DVec2], point: DVec2) -> Option<(DVec2, DVec2)> {
+    search_rectangle(points, point.is_finite().then_some(point))
+}
+
+/// The largest rectangle inside the footprint, wherever it stands.
 fn largest_rectangle(points: &[DVec2]) -> Option<(DVec2, DVec2)> {
+    search_rectangle(points, None)
+}
+
+/// The largest axis-aligned rectangle inside a polygon, optionally through a point.
+///
+/// The sides of a largest rectangle lie on the shape's own lines or on the point's, so the candidates
+/// are every pair of vertex x-coordinates: a rectilinear outline is answered exactly, and an arc, which
+/// the ring answers by its chord, to the chord. Every candidate is checked against the whole polygon
+/// ([`rect_inside`]), so a band the shape narrows in the middle can never pass a side.
+fn search_rectangle(points: &[DVec2], through: Option<DVec2>) -> Option<(DVec2, DVec2)> {
     if points.len() < 3 {
         return None;
     }
@@ -789,73 +846,82 @@ fn largest_rectangle(points: &[DVec2]) -> Option<(DVec2, DVec2)> {
     if !(max.x - min.x).is_finite() || !(max.y - min.y).is_finite() {
         return None;
     }
-    let height = |u: f64, v: f64| -> Option<f64> {
-        let (low_u, high_u) = vertical_span(points, u)?;
-        let (low_v, high_v) = vertical_span(points, v)?;
-        let bottom = low_u.max(low_v);
-        let top = high_u.min(high_v);
-        (top - bottom > 0.0).then_some(top - bottom)
-    };
-    let score = |u: f64, v: f64| -> Option<f64> {
-        let width = v - u;
-        let height = height(u, v)?;
-        (width > 0.0).then(|| width.ln() + height.ln())
-    };
-    // The breakpoint pairs are the corners of the piecewise search and a first answer on their own;
-    // the refinement only ever improves it.
-    let mut best: Option<(f64, f64, f64)> = None;
+    let mut xs = breakpoints_x(points);
+    if let Some(point) = through {
+        if point.x < min.x || point.x > max.x || point.y < min.y || point.y > max.y {
+            return None;
+        }
+        xs.push(point.x);
+        xs.sort_by(|first, second| first.partial_cmp(second).unwrap_or(std::cmp::Ordering::Equal));
+        xs.dedup_by(|first, second| (*first - *second).abs() <= 1.0e-9);
+    }
+    let mut best: Option<(f64, DVec2, DVec2)> = None;
     let mut consider = |u: f64, v: f64| {
-        if let Some(value) = score(u, v)
-            && best.is_none_or(|(seen, ..)| value > seen)
+        if let Some(point) = through
+            && (u > point.x + 1.0e-9 || v < point.x - 1.0e-9)
         {
-            best = Some((value, u, v));
+            return;
+        }
+        let Some((bottom, top)) = band_span(points, u, v) else {
+            return;
+        };
+        if let Some(point) = through
+            && (point.y < bottom - 1.0e-9 || point.y > top + 1.0e-9)
+        {
+            return;
+        }
+        let size = DVec2::new(v - u, top - bottom);
+        let corner = DVec2::new(u, bottom);
+        if size.x <= 0.0 || size.y <= 0.0 || !rect_inside(points, corner, size) {
+            return;
+        }
+        let area = size.x * size.y;
+        if best.is_none_or(|(seen, ..)| area > seen) {
+            best = Some((area, corner, size));
         }
     };
-    let breakpoints = breakpoints_x(points);
-    for (index, u) in breakpoints.iter().copied().enumerate() {
-        for v in breakpoints.iter().copied().skip(index.saturating_add(1)) {
+    for (index, u) in xs.iter().copied().enumerate() {
+        for v in xs.iter().copied().skip(index.saturating_add(1)) {
             consider(u, v);
         }
     }
-    // Partial maximisation of a jointly concave function is concave in the other variable, so the
-    // outer search over `u` and the inner one over `v` both converge to the single maximum.
+    // A slanted wall puts the best rectangle's side between two vertices, which no candidate names: the
+    // search is sharpened by thirds on each axis. The objective is concave in the other variable on a
+    // convex shape, and every candidate is validated, so a shape that is not convex only loses the
+    // sharpening and never gains a rectangle that stands in material.
     let mut low_u = min.x;
-    let mut high_u = max.x;
+    let mut high_u = through.map_or(max.x, |point| point.x);
     for _ in 0..REFINE_STEPS {
         let first = low_u + (high_u - low_u) / 3.0;
         let second = high_u - (high_u - low_u) / 3.0;
-        let first_best = best_v(points, first, max.x, &mut consider);
-        let second_best = best_v(points, second, max.x, &mut consider);
+        let first_best = best_v(points, first, through, max.x, &mut consider);
+        let second_best = best_v(points, second, through, max.x, &mut consider);
         if first_best <= second_best {
             low_u = first;
         } else {
             high_u = second;
         }
     }
-    let (_, u, v) = best?;
-    let (low_u, high_u) = vertical_span(points, u)?;
-    let (low_v, high_v) = vertical_span(points, v)?;
-    let bottom = low_u.max(low_v);
-    let top = high_u.min(high_v);
-    Some((DVec2::new(u, bottom), DVec2::new(v - u, top - bottom)))
+    let (_, corner, size) = best?;
+    (size.x > 0.0 && size.y > 0.0).then_some((corner, size))
 }
 
-/// How many times the refinement splits each axis.
+/// How many times the sharpening splits each axis.
 ///
-/// Two thirds per step: forty steps shrink the span by more than ten orders of magnitude, which is
-/// past the document's micrometre and stops before the search is comparing noise.
+/// Two thirds per step: forty steps shrink the span by more than ten orders of magnitude, which is past
+/// the document's micrometre and stops before the search is comparing noise.
 const REFINE_STEPS: usize = 40;
 
 /// The best `v` above `u` for one outer candidate, recording every rectangle it evaluates.
-fn best_v(points: &[DVec2], u: f64, high: f64, consider: &mut impl FnMut(f64, f64)) -> f64 {
+fn best_v(points: &[DVec2], u: f64, through: Option<DVec2>, high: f64, consider: &mut impl FnMut(f64, f64)) -> f64 {
     let mut best = f64::NEG_INFINITY;
-    let mut low = u;
+    let mut low = through.map_or(u, |point| point.x.max(u));
     let mut top = high;
     for _ in 0..REFINE_STEPS {
         let first = low + (top - low) / 3.0;
         let second = top - (top - low) / 3.0;
-        let first_score = span_score(points, u, first);
-        let second_score = span_score(points, u, second);
+        let first_score = span_score(points, u, first, through);
+        let second_score = span_score(points, u, second, through);
         consider(u, first);
         consider(u, second);
         best = best.max(first_score).max(second_score);
@@ -869,12 +935,19 @@ fn best_v(points: &[DVec2], u: f64, high: f64, consider: &mut impl FnMut(f64, f6
 }
 
 /// The log area of the rectangle between `u` and `v`, or negative infinity when there is none.
-fn span_score(points: &[DVec2], u: f64, v: f64) -> f64 {
-    let (Some((low_u, high_u)), Some((low_v, high_v))) = (vertical_span(points, u), vertical_span(points, v)) else {
+///
+/// The search is *steered* by this number, so it carries the whole rule: a band that leaves the point
+/// out is no candidate at all, or the sharpening would walk towards a rectangle the answer may not be.
+fn span_score(points: &[DVec2], u: f64, v: f64, through: Option<DVec2>) -> f64 {
+    let Some((bottom, top)) = band_span(points, u, v) else {
         return f64::NEG_INFINITY;
     };
-    let width = v - u;
-    let height = high_u.min(high_v) - low_u.max(low_v);
+    if let Some(point) = through
+        && (point.y < bottom - 1.0e-9 || point.y > top + 1.0e-9)
+    {
+        return f64::NEG_INFINITY;
+    }
+    let (width, height) = (v - u, top - bottom);
     if width <= 0.0 || height <= 0.0 {
         return f64::NEG_INFINITY;
     }
@@ -887,6 +960,105 @@ fn breakpoints_x(points: &[DVec2]) -> Vec<f64> {
     xs.sort_by(|first, second| first.partial_cmp(second).unwrap_or(std::cmp::Ordering::Equal));
     xs.dedup_by(|first, second| (*first - *second).abs() <= 1.0e-9);
     xs
+}
+
+/// The y-interval the whole band between `u` and `v` leaves inside a polygon.
+///
+/// A rectangle is inside only when **every** x between its sides is: on a convex polygon the two ends
+/// are enough, because the span between them only narrows towards the middle — but a frame drawn as an
+/// L or with an arc is not convex, and the wall that bounds the band can stand anywhere in it. The
+/// candidates are the polygon's own breakpoints, where a vertical span is lowest or highest, plus the
+/// two ends the search hands in.
+fn band_span(points: &[DVec2], u: f64, v: f64) -> Option<(f64, f64)> {
+    if u > v {
+        return None;
+    }
+    let mut bottom = f64::NEG_INFINITY;
+    let mut top = f64::INFINITY;
+    let mut seen = false;
+    let mut consider = |x: f64| {
+        let Some((low, high)) = vertical_span(points, x) else {
+            return;
+        };
+        seen = true;
+        bottom = bottom.max(low);
+        top = top.min(high);
+    };
+    consider(u);
+    consider(v);
+    for x in breakpoints_x(points) {
+        if x > u + 1.0e-9 && x < v - 1.0e-9 {
+            consider(x);
+        }
+    }
+    (seen && top > bottom).then_some((bottom, top))
+}
+
+/// Whether an axis-aligned rectangle lies inside a simple polygon.
+///
+/// A rectangle is inside when its centre is and no edge of the polygon crosses its interior: a
+/// boundary that steps into the rectangle must cross a side, so a crossing test over the ring answers
+/// every notch, however the span at one x reads.
+fn rect_inside(points: &[DVec2], corner: DVec2, size: DVec2) -> bool {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return false;
+    }
+    let (low, high) = (corner, corner + size);
+    let centre = DVec2::new((low.x + high.x) * 0.5, (low.y + high.y) * 0.5);
+    if !polygon_holds(points, centre) {
+        return false;
+    }
+    !(0..points.len()).any(|index| {
+        let (Some(start), Some(end)) = (points.get(index), points.get((index + 1) % points.len())) else {
+            return true;
+        };
+        edge_crosses_rect(*start, *end, low, high)
+    })
+}
+
+/// Whether the point is inside a simple polygon, by the crossing parity of a ray to `+x`.
+fn polygon_holds(points: &[DVec2], point: DVec2) -> bool {
+    let mut inside = false;
+    for (index, start) in points.iter().enumerate() {
+        let Some(end) = points.get((index + 1) % points.len()) else {
+            return false;
+        };
+        if (start.y > point.y) != (end.y > point.y) {
+            let t = (point.y - start.y) / (end.y - start.y);
+            if point.x < start.x + (end.x - start.x) * t {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+/// Whether a segment crosses the open interior of the rectangle `low..high`.
+///
+/// The segment is clipped against the rectangle's own sides (Liang and Barsky): a parameter interval
+/// inside the box that is more than a point is a crossing, which is the only way a ring's boundary can
+/// step into a rectangle while the rectangle's centre is inside the ring.
+fn edge_crosses_rect(start: DVec2, end: DVec2, low: DVec2, high: DVec2) -> bool {
+    let direction = end - start;
+    let mut enter = 0.0f64;
+    let mut exit = 1.0f64;
+    for (origin, step, floor, ceiling) in [(start.x, direction.x, low.x, high.x), (start.y, direction.y, low.y, high.y)]
+    {
+        if step.abs() <= 1.0e-12 {
+            if origin <= floor + 1.0e-9 || origin >= ceiling - 1.0e-9 {
+                return false;
+            }
+            continue;
+        }
+        let first = (floor - origin) / step;
+        let second = (ceiling - origin) / step;
+        enter = enter.max(first.min(second));
+        exit = exit.min(first.max(second));
+        if exit <= enter + 1.0e-9 {
+            return false;
+        }
+    }
+    exit - enter > 1.0e-9
 }
 
 /// The interval a convex polygon leaves on the vertical line at `x`, in millimetres.

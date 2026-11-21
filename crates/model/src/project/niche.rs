@@ -221,6 +221,18 @@ impl Niche {
         }
     }
 
+    /// The free section as the polygon its chords draw, in the product's own frame, millimetres.
+    ///
+    /// A shelf searches its largest rectangle here rather than in the cell's planes: the shape is the
+    /// frame's whole reserved ring and not the arm a pointer happens to stand in (ADR 0204). Each arc
+    /// answers its own start, which is the chord — the wall a rect is measured against, and inside the
+    /// frame wherever the frame's own curve bulges outward (ADR 0201).
+    pub fn section_polygon(&self) -> Option<Vec<DVec2>> {
+        let section = self.section()?.to_geometry().ok()?;
+        let points: Vec<DVec2> = section.segments().iter().map(|segment| segment.start()).collect();
+        (points.len() >= 3).then_some(points)
+    }
+
     /// The free space a board of the given thickness takes, as a convex polygon.
     ///
     /// The cell is cut by the slab between `low` and `high` along the product's `axis` and the cut is
@@ -329,6 +341,11 @@ struct Cell {
     /// ring is kept beside those planes and clipped by the walls the probes added — never by the chords
     /// it seeded. `None` for a rectangular frame, whose planes already are its ring (ADR 0201, N33).
     ring: Option<(Region, usize)>,
+    /// The pointer's own place in the product frame, in millimetres.
+    ///
+    /// Every wall clips the ring **around** this point: a wall standing in one arm of an L bounds the
+    /// part the pointer names and leaves the other arm's space alone (ADR 0204).
+    point: DVec2,
     /// One flag per plane: whether it is the chord over an **arc** of the frame's ring.
     ///
     /// Such a plane is a conservative inner wall of the cell, because a chord lies inside the arc it
@@ -345,20 +362,26 @@ impl Cell {
     /// The seed is the frame's own section and not the box around it (ADR 0159, ADR 0201): a rectangle
     /// answers the six planes it always did, one per side and one per height face, while a cut corner
     /// answers one upright plane per edge, so a part measured against it cannot grow into the corner the
-    /// frame cut away. A ring drawn as any closed shape answers the convex piece its edges leave around
-    /// `point` (ADR 0203); a ring still not convex after that clip is the footprint's own refusal, and so
-    /// is a ring too fine for the plane budget — never a cell the walls were quietly dropped from.
+    /// frame cut away. A ring drawn as any closed shape answers two readings of itself (ADR 0204): the
+    /// **ring** is the space the frame reserves, whole, which is the shape a part takes; the **piece** is
+    /// the convex cell around `point` (ADR 0203), which is what the planes, the corners and every stance
+    /// but a shelf's are cut from. A ring still not convex as a piece is the footprint's own refusal, and
+    /// so is a ring too fine for the plane budget — never a cell the walls were quietly dropped from.
     fn footprint(envelope: &Envelope, point: DVec2) -> Result<Self, NicheRefusal> {
         let outline =
             envelope.footprint().outline(envelope.x(), envelope.y()).map_err(|_| NicheRefusal::Unrepresentable)?;
-        let ring = frame_ring(&outline, point)?;
-        let polygon = chord_polygon(&ring);
+        // Two readings of one frame: the ring is the space it reserves, whole and any shape; the piece
+        // is the convex cell the pointer names, which is what the planes, the corners and every stance
+        // but a shelf's are cut from (ADR 0203, ADR 0204).
+        let whole = frame_ring(&outline)?;
+        let piece = convex_piece(&whole, point)?;
+        let polygon = chord_polygon(&piece);
         if polygon.len().saturating_add(2) > MAX_CELL_PLANES {
             return Err(NicheRefusal::Unrepresentable);
         }
         let mut planes: Vec<NichePlane> = Vec::with_capacity(polygon.len().saturating_add(2));
         let mut arc_chords: Vec<bool> = Vec::with_capacity(polygon.len().saturating_add(2));
-        let segments = ring.segments();
+        let segments = piece.segments();
         for index in 0..polygon.len() {
             let (Some(start), Some(end)) = (polygon.get(index), polygon.get((index + 1) % polygon.len())) else {
                 return Err(NicheRefusal::Unrepresentable);
@@ -373,14 +396,16 @@ impl Cell {
         planes.push(NichePlane { normal: DVec3::NEG_Z, offset: -height });
         arc_chords.push(false);
         arc_chords.push(false);
-        let mut cell = Self { planes, corners: Vec::new(), ring: None, arc_chords };
+        let mut cell = Self { planes, corners: Vec::new(), ring: None, point, arc_chords };
         if !cell.rebuild() {
             return Err(NicheRefusal::Unrepresentable);
         }
         // A box needs no second reading of its shape: the planes a rectangle seeds are its ring, to the
-        // micrometre, and its cases must answer exactly what they always did (N33).
+        // micrometre, and its cases must answer exactly what they always did (N33). Any other frame
+        // reserves the shape it draws, so the ring is kept whole — an L answers an L, not the arm the
+        // pointer happens to stand in (ADR 0204).
         if !envelope.footprint().is_rectangle() {
-            let region = Region::new(ring, Vec::new()).map_err(|_| NicheRefusal::Unrepresentable)?;
+            let region = Region::new(whole, Vec::new()).map_err(|_| NicheRefusal::Unrepresentable)?;
             cell.ring = Some((region, cell.planes.len()));
         }
         Ok(cell)
@@ -401,9 +426,14 @@ impl Cell {
             if flat.length() <= SECTION_NORMAL {
                 continue;
             }
-            match section.clip_half_plane(flat, plane.offset) {
+            // A wall bounds the free space the pointer is in: the clip keeps the piece beside it and
+            // leaves the rest of a shape that is not convex alone (ADR 0204).
+            match section.clip_half_plane_around(flat, plane.offset, self.point) {
                 Ok(Some(clipped)) => section = clipped,
-                Ok(None) | Err(_) => return Some(Err(NicheRefusal::Unrepresentable)),
+                // A wall the piece has already closed over leaves no section to answer: the cell's own
+                // planes are the reading then, not a refusal of a void the pointer stands in.
+                Ok(None) => return None,
+                Err(_) => return Some(Err(NicheRefusal::Unrepresentable)),
             }
         }
         Some(Ok(section))
@@ -440,27 +470,73 @@ impl Cell {
         true
     }
 
-    /// Whether the point lies in every plane, and inside the frame's own ring when it keeps one.
+    /// Whether the point lies in the cell: in its planes, or in the ring it keeps beside them.
     ///
-    /// The planes are the ring's **chords**, so on a curved frame they cut the space between a chord and
-    /// its arc away — the frame's own bulge. The ring says what the planes cannot, so it is asked too: a
-    /// point the frame reserves and its chords do not is still inside the void (N34, ADR 0203).
+    /// A cell that keeps no ring is its planes, to the micrometre. One that keeps a ring is asked its
+    /// ring and its two heights instead, because the planes cannot describe a shape that is not convex:
+    /// they are the chords of the pointer's piece, and a piece is smaller than the frame it came from
+    /// (N34, ADR 0203, ADR 0204).
     fn contains(&self, point: DVec3) -> bool {
-        let outside = self
-            .planes
-            .iter()
-            .zip(&self.arc_chords)
-            .any(|(plane, chord)| !chord && plane.distance_to(point) < -COORDINATE_TOLERANCE);
-        if self.corners.len() < 4 || outside {
+        let Some((ring, _)) = self.ring.as_ref() else {
+            return self.corners.len() >= 4
+                && self.planes.iter().all(|plane| plane.distance_to(point) >= -COORDINATE_TOLERANCE);
+        };
+        let Some((low, high)) = self.heights() else {
+            return false;
+        };
+        if point.z < low - COORDINATE_TOLERANCE || point.z > high + COORDINATE_TOLERANCE {
             return false;
         }
-        match self.ring.as_ref() {
-            None => true,
-            Some((ring, _)) => {
-                let local = DVec2::new(point.x, point.y);
-                ring.contains(local) || ring.boundary_distance(local) <= COORDINATE_TOLERANCE
+        let local = DVec2::new(point.x, point.y);
+        ring.contains(local) || ring.boundary_distance(local) <= COORDINATE_TOLERANCE
+    }
+
+    /// The two heights the cell spans, when every plane is flat or upright.
+    ///
+    /// A slanted wall crosses a height, so a cell that has one answers no pair: its free space is not
+    /// one section and nothing that needs a ring asks it (`Cell::is_prism` is the same test).
+    fn heights(&self) -> Option<(f64, f64)> {
+        let mut low = f64::NEG_INFINITY;
+        let mut high = f64::INFINITY;
+        for plane in &self.planes {
+            let normal = plane.normal;
+            // An upright plane is a wall of the section and bounds no height.
+            if normal.z.abs() <= NORMAL_LEVEL {
+                continue;
+            }
+            // One that leans across a wall and the height is not a prism: no pair of heights describes it.
+            if normal.x.abs() > NORMAL_LEVEL || normal.y.abs() > NORMAL_LEVEL {
+                return None;
+            }
+            if normal.z > 0.0 {
+                low = low.max(plane.offset);
+            } else {
+                high = high.min(-plane.offset);
             }
         }
+        (low.is_finite() && high.is_finite() && high > low).then_some((low, high))
+    }
+
+    /// The box the cell's ring spans, with its two heights: the space the frame reserves, whole.
+    fn region_bounds(&self) -> Option<(DVec2, DVec2, f64, f64)> {
+        let (ring, _) = self.ring.as_ref()?;
+        let (low, high) = ring.bounds()?;
+        let (bottom, top) = self.heights()?;
+        Some((low, high, bottom, top))
+    }
+
+    /// The ring's own corners at the floor and the ceiling: the cell as a tool reads its shape.
+    fn region_corners(&self) -> Option<Vec<DVec3>> {
+        let (ring, _) = self.ring.as_ref()?;
+        let (_, _, bottom, top) = self.region_bounds()?;
+        let mut corners = Vec::new();
+        for segment in ring.outer().segments() {
+            let start = segment.start();
+            for z in [bottom, top] {
+                corners.push(DVec3::new(start.x, start.y, z));
+            }
+        }
+        (!corners.is_empty()).then_some(corners)
     }
 
     /// Whether the cell is one section from its floor to its ceiling, so one ring describes it.
@@ -631,12 +707,24 @@ impl Project {
         if !settled || !cell.contains(local) || self.holds_body(&cell, &surroundings, inverse) {
             return Err(NicheRefusal::Unrepresentable);
         }
-        let corners: Vec<DVec3> = cell.corners.iter().copied().map(quantised_corner).collect();
+        // The box is the space the frame reserves, not the convex piece the planes draw: an L reports
+        // the L's own bounds, so the callout and the ghost measure what a part takes (ADR 0204).
+        let corners: Vec<DVec3> = cell
+            .region_corners()
+            .or_else(|| Some(cell.corners.clone()))
+            .unwrap_or_default()
+            .into_iter()
+            .map(quantised_corner)
+            .collect();
         let Some(first) = corners.first().copied() else {
             return Err(NicheRefusal::Unrepresentable);
         };
-        let low = corners.iter().copied().fold(first, DVec3::min);
-        let high = corners.iter().copied().fold(first, DVec3::max);
+        let (low, high) = match cell.region_bounds() {
+            Some((ring_low, ring_high, bottom, top)) => {
+                (DVec3::new(ring_low.x, ring_low.y, bottom), DVec3::new(ring_high.x, ring_high.y, top))
+            }
+            None => (corners.iter().copied().fold(first, DVec3::min), corners.iter().copied().fold(first, DVec3::max)),
+        };
         let size = high - low;
         let world_min = placement.transform_point(low);
         if !(size.is_finite() && size.min_element() > 0.0) || !world_min.is_finite() {
@@ -866,28 +954,39 @@ pub(super) fn surface_corners(surface: SurfaceBox) -> Vec<DVec3> {
     corners
 }
 
-/// The ring a frame reserves, turned counter-clockwise, as the one convex cell around `point`.
+/// The ring a frame reserves, turned counter-clockwise, whatever shape it is.
 ///
-/// A frame may be drawn as any closed ring, and a cell is one convex cell (ADR 0106), so the ring is
-/// read at the point: **every edge whose free side holds the point clips it**, and what is left is the
-/// convex piece of the frame the pointer names (ADR 0203). An L answers its bar for a point in the bar,
-/// its column for a point in the column, and the square both arms share for a point in the corner —
-/// because the tool cannot know which arm a hand in the corner meant, and the square is the piece both
-/// answer. A ring that is already convex answers itself, with no clip at all, so a rectangle or a
-/// cut-corner frame keeps exactly the cell it had (ADR 0201, ADR 0202).
-///
-/// The clip runs through the exact boolean (`Region::clip_half_plane_around`), so an arc of the frame
-/// stays an arc. A point the ring does not hold is `Outside`, and a ring still not convex after the
-/// clip — an arc bulging into its own shape — is the footprint's own refusal.
-fn frame_ring(outline: &Ring, point: DVec2) -> Result<Ring, NicheRefusal> {
+/// A frame may be drawn as any closed ring (ADR 0159), and the space it reserves is that ring — an L is
+/// reserved in full by the part that drew it, and the check that the pointer stands inside it is the
+/// caller's. The ring is *not* read as one convex cell here: that reading is [`convex_piece`]'s, and it
+/// serves the planes and the stances that cannot answer a shape (ADR 0201, ADR 0203, ADR 0204).
+fn frame_ring(outline: &Ring) -> Result<Ring, NicheRefusal> {
     let ring = match outline.is_counter_clockwise() {
         Some(true) => outline.clone(),
         Some(false) => outline.reversed().map_err(|_| NicheRefusal::Unrepresentable)?,
         None => return Err(NicheRefusal::Unrepresentable),
     };
-    if ring.segments().len() < 3 {
+    if ring.segments().len() < 3 || ring.segments().len().saturating_add(2) > MAX_CELL_PLANES {
         return Err(NicheRefusal::Unrepresentable);
     }
+    Ok(ring)
+}
+
+/// The convex piece of a frame's ring around `point`, which is what the cell's planes describe.
+///
+/// A cell is planes and corners (ADR 0106), and a ring that is not convex has no one such cell, so the
+/// ring is read at the point: **every edge whose free side holds the point clips it**, and what is left
+/// is the convex piece of the frame the pointer names (ADR 0203). An L answers its bar for a point in
+/// the bar, its column for a point in the column, and the square both arms share for a point in the
+/// corner — because the tool cannot know which arm a hand in the corner meant, and the square is the
+/// piece both answer. A ring that is already convex answers itself, with no clip at all, so a rectangle
+/// or a cut-corner frame keeps exactly the cell it had (ADR 0201, ADR 0202).
+///
+/// The clip runs through the exact boolean (`Region::clip_half_plane_around`), so an arc of the frame
+/// stays an arc. A ring still not convex after the clip — an arc bulging into its own shape — is the
+/// footprint's own refusal.
+fn convex_piece(ring: &Ring, point: DVec2) -> Result<Ring, NicheRefusal> {
+    let ring = ring.clone();
     if is_convex(&ring) {
         return Ok(ring);
     }
@@ -914,6 +1013,8 @@ fn frame_ring(outline: &Ring, point: DVec2) -> Result<Ring, NicheRefusal> {
     if is_convex(&ring) { Ok(ring) } else { Err(NicheRefusal::Footprint) }
 }
 
+/// The chord polygon a ring's planes are built from, without the shape the ring reserves.
+///
 /// Whether a counter-clockwise ring is one convex piece: every joint turns left and every arc sweeps left.
 fn is_convex(ring: &Ring) -> bool {
     let segments = ring.segments();
@@ -1486,27 +1587,22 @@ mod tests {
     }
 
     #[test]
-    fn a_notched_frame_builds_the_arm_the_pointer_names() {
-        // A frame may be drawn as any closed ring, and a cell is one convex cell: the ring is read at the
-        // point, every edge whose free side holds the point clips it, and what is left is the arm the
-        // pointer names (N34, ADR 0203). The tool cannot know which arm a hand in the corner meant — a
-        // point in the corner answers the square both arms share, and a hand that wants an arm moves.
+    fn a_notched_frame_reserves_the_whole_shape_it_draws() {
+        // The space a frame reserves is the ring it draws, whole (ADR 0204): every point of the L
+        // answers the same shape — the arm a hand stands in is the cell's own planes' reading, not a
+        // smaller void — and the box a callout draws is the frame's own (N34, N35).
         let mut project = clean_project();
         notched(&mut project);
-        let left =
-            project.niche(DVec3::new(100.0, 200.0, 300.0), Sight::none(), None).expect("the void in the left arm");
-        assert_eq!(left.local_min, DVec3::ZERO);
-        assert_eq!(left.size, DVec3::new(200.0, 400.0, 720.0), "the left arm's own square");
-        let tall = project
-            .niche(DVec3::new(100.0, 520.0, 300.0), Sight::none(), None)
-            .expect("the void above the notch's floor");
-        assert_eq!(tall.size, DVec3::new(200.0, 560.0, 720.0), "a point above the notch's floor keeps the column");
-        let right =
-            project.niche(DVec3::new(450.0, 200.0, 300.0), Sight::none(), None).expect("the void beside the notch");
-        assert_eq!(right.local_min, DVec3::new(300.0, 0.0, 0.0));
-        assert_eq!(right.size, DVec3::new(300.0, 400.0, 720.0), "the arm beside the notch");
+        for point in [DVec3::new(100.0, 200.0, 300.0), DVec3::new(100.0, 520.0, 300.0), DVec3::new(450.0, 200.0, 300.0)]
+        {
+            let niche = project.niche(point, Sight::none(), None).expect("the ring reserves the point");
+            assert_eq!(niche.local_min, DVec3::ZERO, "the notch's own corner is the frame's");
+            assert_eq!(niche.size, DVec3::new(600.0, 560.0, 720.0), "the box is the L's, at {point:?}");
+            let section = niche.section().expect("one section");
+            assert_eq!(section.segments().len(), 8, "the whole L, notch and all, at {point:?}");
+        }
 
-        // The notch itself reserves nothing: a point there is outside the piece, not a cell.
+        // The notch itself reserves nothing: a point there is outside the ring, not a cell.
         assert_eq!(
             project.niche(DVec3::new(250.0, 500.0, 300.0), Sight::none(), None),
             Err(NicheRefusal::Outside),
@@ -1565,11 +1661,11 @@ mod tests {
                 .fold(f64::MIN, f64::max);
             assert!(highest > 650.0, "the section keeps the bulge's own curve at y = {y}, was {highest}");
         }
-        // The chord is still the wall the cell's own planes describe, so its box reports the rectangle
-        // under it; the ring is what says the bulge is reserved (a gap for the niche's callout, N34).
+        // The box is the ring's own bounds, bulge and all: the frame reserves the height the arc adds,
+        // so a callout reporting the chord would understate the space (ADR 0204).
         let plain =
             project.niche(DVec3::new(300.0, 300.0, 300.0), Sight::none(), None).expect("the void under the chord");
-        assert!((plain.size.y - 560.0).abs() < 0.01, "the chord bounds the box: {:?}", plain.size);
+        assert!((plain.size.y - 660.0).abs() < 0.01, "the ring bounds the box: {:?}", plain.size);
     }
 
     #[test]

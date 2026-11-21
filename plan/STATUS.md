@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U120 state=idle base=8fc6dd7 updated=2026-11-21
+STATE: milestone=M7 phase=T task=N35 state=doing base=8fc6dd7 updated=2026-11-21
 STREAMS: agent=J catalog=O prototypes=Q
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,7 +52,7 @@ page, a glyph at the snapped point and a word in the status bar's readout.
 
 ## Next
 
-U120 is next: a round body answers its own places, not the corners of its box
+N35 is next: a niche keeps the whole shape the frame draws
 
 ## Index
 
