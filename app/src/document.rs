@@ -2753,6 +2753,8 @@ impl Document {
                 project: self.session.project(),
                 object,
                 vertices: &mesh_vertices,
+                kinds: self.snaps,
+                sight: self.editor.flags().sight(),
             };
             self.vertex_gizmo.update(ui, &response, rect, target, pointer_over_widget, handle_length)
         } else {
@@ -2775,12 +2777,14 @@ impl Document {
             // A latched move keeps following the pointer over its own plates, which are the one
             // surface that belongs to the move rather than to the scene.
             if contour_editing || self.contour_gizmo.is_latched() {
+                let input = contour_gizmo::ContourInput { kinds: self.snaps, mode: self.snap_mode };
                 let action = match self.contour_gizmo.update(
                     &response,
                     rect,
                     self.scene.camera,
                     self.session.project(),
                     &mut self.editor,
+                    input,
                 ) {
                     Ok(action) => action,
                     Err(error) => {
@@ -3426,6 +3430,8 @@ impl Document {
                 project: self.session.project(),
                 object,
                 vertices: &mesh_vertices,
+                kinds: self.snaps,
+                sight: self.editor.flags().sight(),
             };
             self.vertex_gizmo.paint(ui, rect, target, handle_length);
         } else if pulling {

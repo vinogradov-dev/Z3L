@@ -10,11 +10,14 @@
 
 use eframe::egui::{self, Response, Ui};
 use geom::DVec3;
-use model::{Id, Project};
+use model::{Id, Project, Sight, SnapKind};
 use scene::{Camera, MAX_DISTANCE_MM};
 use units::Length;
 
-use crate::gizmo_math::{Axis, HandleSpec, PreviewKey, editable_axes, hit_axis, paint_axis_handles, ray_to};
+use crate::gizmo_math::{
+    ACTIVE_COLOR, Axis, HandleSpec, PlaneSnap, PreviewKey, WorkPlane, editable_axes, hit_axis, paint_axis_handles,
+    paint_snap_marker, ray_to, screen_point,
+};
 use crate::mesh_pick;
 
 /// One continuous vertex drag.
@@ -74,6 +77,11 @@ pub(crate) struct MeshTarget<'a> {
     pub(crate) object: Id,
     /// The selected vertex indices, in selection order.
     pub(crate) vertices: &'a [u32],
+    /// Which snaps the workspace allows: every kind, because a vertex of a mesh is part of a solid
+    /// and may land on any place the scene offers (U119).
+    pub(crate) kinds: model::SnapKinds,
+    /// The parts a query reads as switched off, so a hidden board answers no snap.
+    pub(crate) sight: Sight<'a>,
 }
 
 /// Persistent state of the vertex gizmo.
@@ -82,6 +90,9 @@ pub(crate) struct VertexGizmo {
     drag: Option<VertexDrag>,
     hover: Option<Axis>,
     consumed_click: bool,
+    /// The capture the resolver answered with while a vertex was dragged: what took the pointer and
+    /// the world point it answers, so the glyph names the place the release writes (U119).
+    snap: Option<(SnapKind, DVec3)>,
 }
 
 impl VertexGizmo {
@@ -100,6 +111,13 @@ impl VertexGizmo {
         self.drag = None;
         self.hover = None;
         self.consumed_click = false;
+        self.snap = None;
+    }
+
+    /// The capture the pointer answered with while a vertex was dragged, for a test and the status
+    /// bar: what took it and where it put the vertex (U119).
+    pub(crate) fn snap(&self) -> Option<(SnapKind, DVec3)> {
+        self.snap
     }
 
     /// The moved vertices the renderer and the markers should preview, if a drag moved them.
@@ -135,7 +153,7 @@ impl VertexGizmo {
         pointer_over_widget: bool,
         handle_length: f32,
     ) -> Result<Option<MeshVertexCommit>, String> {
-        let MeshTarget { camera, project, object, vertices } = target;
+        let MeshTarget { camera, project, object, vertices, .. } = target;
         self.consumed_click = false;
         if let Some(mut drag) = self.drag.take() {
             let (pointer, down, escape) = ui.input(|input| {
@@ -149,15 +167,15 @@ impl VertexGizmo {
                 && let Some(parameter) = ray_to(pointer, viewport, camera)
                     .closest_parameter_on_line(drag.start_origin, drag.axis.direction())
             {
-                let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
-                if scalar.is_finite() {
-                    drag.offset_world = drag.axis.direction() * scalar;
-                    drag.offset_local =
-                        world_offset_to_local(project, drag.object, drag.offset_world).unwrap_or([Length::ZERO; 3]);
-                }
+                let (offset_world, capture) = snapped_offset(&drag, pointer, parameter, &target, viewport);
+                self.snap = capture;
+                drag.offset_world = offset_world;
+                drag.offset_local =
+                    world_offset_to_local(project, drag.object, drag.offset_world).unwrap_or([Length::ZERO; 3]);
             }
             if !down {
                 self.consumed_click = true;
+                self.snap = None;
                 return Ok(drag.moved_positions().map(|moves| MeshVertexCommit { object: drag.object, moves }));
             }
             self.drag = Some(drag);
@@ -210,7 +228,7 @@ impl VertexGizmo {
 
     /// Draws the handles over the viewport.
     pub(crate) fn paint(&self, ui: &Ui, viewport: egui::Rect, target: MeshTarget<'_>, handle_length: f32) {
-        let MeshTarget { camera, project, object, vertices } = target;
+        let MeshTarget { camera, project, object, vertices, .. } = target;
         let origin_world = if let Some(drag) = &self.drag {
             drag.start_origin + drag.offset_world
         } else {
@@ -228,6 +246,49 @@ impl VertexGizmo {
             self.drag.as_ref().map(|drag| drag.axis),
             HandleSpec { axes: editable_axes(project, object), length: handle_length },
         );
+        // The glyph names what took the pointer, and it stands on the point the release writes: the
+        // handles' origin moved to that same place a line above (U119).
+        if let Some((kind, point)) = self.snap()
+            && let Some(at) = screen_point(camera, viewport, point)
+        {
+            paint_snap_marker(ui.painter(), at, Some(kind), false, ACTIVE_COLOR);
+        }
+    }
+}
+
+/// The world offset one drag hands its vertices, and the capture that decided it.
+///
+/// The axis's own offset is the answer until a candidate of the scene captures the pointer: a vertex
+/// of a mesh is part of a solid, so a maker lines it up with another part's corner, edge or face, and
+/// that is a place in space rather than a distance along one handle (U119). Every kind may capture —
+/// the grid aside, which rounds wherever the pointer is and belongs to a drawing plane, not to a
+/// solid — and the tool asks for the point itself ([`model::SnapTarget::Free`]), because a vertex
+/// works in space and the workspace's 2.5D/3D mode does not apply to it.
+fn snapped_offset(
+    drag: &VertexDrag,
+    pointer: egui::Pos2,
+    parameter: f64,
+    target: &MeshTarget<'_>,
+    viewport: egui::Rect,
+) -> (DVec3, Option<(SnapKind, DVec3)>) {
+    let MeshTarget { camera, project, kinds, sight, .. } = *target;
+    let scalar = (parameter - drag.start_parameter).clamp(-MAX_DISTANCE_MM, MAX_DISTANCE_MM);
+    let axis_offset = drag.axis.direction() * scalar;
+    if !scalar.is_finite() {
+        return (DVec3::ZERO, None);
+    }
+    // The plane is the one the drag works at — through the point it carries, facing the eye — so the
+    // kinds that live in a plane (a crossing, a world axis, the pointer's own point) have somewhere
+    // to be measured, and a scene point stands off it rather than being dropped.
+    let plane = WorkPlane::from_camera(camera).through(drag.start_origin);
+    let answer = PlaneSnap::at(camera, viewport, pointer, plane).and_then(|aim| {
+        let request =
+            aim.request(model::SnapKinds { grid: false, ..kinds }, model::SnapTarget::Free, None, &[], false, None);
+        project.snap(request, sight)
+    });
+    match answer.and_then(|answer| answer.kind.map(|kind| (kind, answer.point))) {
+        Some((kind, point)) => (point - drag.start_origin, Some((kind, point))),
+        None => (axis_offset, None),
     }
 }
 
@@ -352,6 +413,51 @@ mod tests {
         let offset = world_offset_to_local(&project, cube, DVec3::new(10.0, 0.0, 0.0)).expect("offset");
         assert_eq!(offset, [Length::ZERO, millimetres(-10), Length::ZERO]);
         assert!(world_offset_to_local(&project, cube, DVec3::new(f64::NAN, 0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn a_vertex_drag_lands_on_the_candidate_the_pointer_names() {
+        // U119: the vertex editor asks the one resolver with every kind, and the point it stores is
+        // the candidate itself — a mesh vertex is part of a solid, so it lines up with another
+        // part's corner, edge or face. The tool declares `Free`, so the workspace's 2.5D/3D mode
+        // does not apply to it: there is no plane in the request's answer, only a place in space.
+        let (project, cube) = cube_project();
+        let (placement, mesh) = mesh_pick::vertex_frame(&project, cube).expect("mesh");
+        let start_origin = mesh_pick::to_world(placement, mesh.positions()[0]);
+        let drag = VertexDrag {
+            object: cube,
+            vertices: vec![0],
+            starts: vec![mesh.positions()[0]],
+            axis: Axis::X,
+            start_origin,
+            start_parameter: 0.0,
+            offset_world: DVec3::ZERO,
+            offset_local: [Length::ZERO; 3],
+        };
+        let camera = Camera::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let sight = Sight::none();
+        let marks = project.snap_marks(sight);
+        let mark = marks
+            .iter()
+            .find(|mark| (mark.point - start_origin).length() > 50.0)
+            .expect("the sample scene offers a place away from the cube");
+        let pointer = crate::gizmo_math::screen_point(camera, viewport, mark.point).expect("the mark is on screen");
+        let target =
+            MeshTarget { camera, project: &project, object: cube, vertices: &[0], kinds: model::SnapKinds::ALL, sight };
+        let (offset, capture) = snapped_offset(&drag, pointer, 0.0, &target, viewport);
+        assert_eq!(capture.map(|(kind, _)| kind), Some(mark.kind), "the capture names the kind that took the pointer");
+        assert!(
+            (offset - (mark.point - start_origin)).length() < 1.0e-9,
+            "the dragged point lands on the candidate itself: {offset:?} against {:?}",
+            mark.point
+        );
+
+        // With nothing to capture, the axis still rules: the handle's own distance is the offset.
+        let quiet = MeshTarget { kinds: model::SnapKinds::none(), ..target };
+        let (offset, capture) = snapped_offset(&drag, pointer, 25.0, &quiet, viewport);
+        assert_eq!(capture, None, "no kind may capture");
+        assert!((offset - Axis::X.direction() * 25.0).length() < 1.0e-9, "the axis offset stands: {offset:?}");
     }
 
     #[test]

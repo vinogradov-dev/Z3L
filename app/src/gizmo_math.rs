@@ -742,6 +742,14 @@ impl WorkPlane {
         self.normal
     }
 
+    /// The same plane moved to pass through `origin`.
+    ///
+    /// A tool with no drawing plane of its own — a vertex drag — still needs a plane to measure the
+    /// pointer against: the one it works at is the plane through the point it carries (U119).
+    pub(crate) const fn through(self, origin: DVec3) -> Self {
+        Self { origin, ..self }
+    }
+
     /// The world point at plane coordinates `local`.
     #[allow(dead_code, reason = "the commit and snap steps place local points in U13-U17")]
     pub(crate) fn world(self, local: DVec2) -> DVec3 {
