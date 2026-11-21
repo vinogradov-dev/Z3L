@@ -45,49 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **N35** a niche keeps the whole shape the frame draws
-  why: Why: The owner, on the saved scene /home/alx/skaf.z3l and the screenshot `Screenshot
-   from 2026-11-21 14-43-28.png`: «Простая панель не все места определяет. Со стороны радиуса
-   вообще не определяется ниша. Фигурная панель не заливает всю форму каркаса. При частичной
-   заливки вместо радиуса скос. Я ожидаю, что фигурная панель сможет заливать всю форму ниши с
-   неважно каким каркасом.» Measured on that file, whose product reserves an L 2244 x 4423 x
-   3885 with a 1746 mm arc on its long side: (a) `ui::pointer_face` entered the product's
-   **box**, so a ray over the corner the arc cut away named a point outside the ring and
-   `Project::niche` answered `Outside` — «со стороны радиуса не определяется ниша»; (b) the
-   cell was seeded from the **convex piece around the pointer** (N34, ADR 0203), so the Shape
-   mode filled one arm of the L and never the frame — 1654 x 2688 in the left arm; (c) a fit
-   searched that piece, so the rectangle was 1654 x 2688 where the frame holds 2087 x 2703 and
-   in a bulge it stood away from the pointer; (d) any fill with a hidden body or a post fell
-   back to the chord polygon and the arc became a chamfer. The owner's expectation is stated:
-   the shape mode takes the whole form of the frame, whatever the frame is.
-  shape: Shape: The niche keeps **two readings of one frame** (ADR 0204). The **ring** is the
-   space the frame reserves, whole and of any form: `frame_ring` stops at turning a drawn ring
-   counter-clockwise, and the pointer only has to be inside it, so every point of an L answers
-   the same cell, its box is the L's own bounds, and the section — the ring clipped by the
-   walls the probes met, around the pointer — is what a `Shape` part takes, arcs and all. The
-   **piece** is the convex cell around the pointer that N34 read, and it keeps its job: the
-   planes, the corners, the probes and every stance that is not a shelf's are cut from it
-   because they are plane algorithms. `ui::pointer_face` enters the **reserved prism** — the
-   ray's spans inside the footprint ring intersected with the floor-to-ceiling band, from
-   `Region::line_intervals` — instead of the envelope's box, so the cursor finds the space
-   behind a corner the frame never gave away. A fit searches the whole section
-   (`Niche::section_polygon`) and is the largest rectangle **through the pointer**
-   (`search_rectangle` with a point), because the largest rectangle of an L stands in the arm
-   the hand may be nowhere near; every candidate is validated against the whole outline
-   (`band_span` over the outline's breakpoints, `rect_inside` by a Liang-Barsky crossing test),
-   so a band the outline narrows can never pass.
-  done: Done: `ui::pointer_face` names the point where the ray enters the ring extruded from
-   floor to ceiling, and a test proves a ray over a notch's corner finds the arm behind it
-   while the box's own entry answers `Outside`. On `/home/alx/skaf.z3l` every point of the L
-   answers a niche whose box is 2244 x 4423 and whose `Shape` plan is the whole six-segment
-   ring with its arc, `Fit` and `Shape` both with no outline point outside the frame.
-   `a_notched_frame_reserves_the_whole_shape_it_draws` and
-   `a_point_in_a_bowed_frames_bulge_is_inside_the_void` pin the ring's whole shape and its box;
-   `the_pointer_enters_the_space_the_frame_reserves_and_not_the_box_around_it` pins the entry.
-   A saved panel created before this change keeps the chord it was made with: re-creating it in
-   the Shape mode gives the arc (N33).
-  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs`
-
 - `[ ]` **U120** a round body answers its own places, not the corners of its box
   Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
    the ones that come later. Today Scene::object files a bound box for every geometry and a
@@ -834,6 +791,49 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    green.
   `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 ## Done
+
+- `[x]` **N35** a niche keeps the whole shape the frame draws
+  why: Why: The owner, on the saved scene /home/alx/skaf.z3l and the screenshot `Screenshot
+   from 2026-11-21 14-43-28.png`: «Простая панель не все места определяет. Со стороны радиуса
+   вообще не определяется ниша. Фигурная панель не заливает всю форму каркаса. При частичной
+   заливки вместо радиуса скос. Я ожидаю, что фигурная панель сможет заливать всю форму ниши с
+   неважно каким каркасом.» Measured on that file, whose product reserves an L 2244 x 4423 x
+   3885 with a 1746 mm arc on its long side: (a) `ui::pointer_face` entered the product's
+   **box**, so a ray over the corner the arc cut away named a point outside the ring and
+   `Project::niche` answered `Outside` — «со стороны радиуса не определяется ниша»; (b) the
+   cell was seeded from the **convex piece around the pointer** (N34, ADR 0203), so the Shape
+   mode filled one arm of the L and never the frame — 1654 x 2688 in the left arm; (c) a fit
+   searched that piece, so the rectangle was 1654 x 2688 where the frame holds 2087 x 2703 and
+   in a bulge it stood away from the pointer; (d) any fill with a hidden body or a post fell
+   back to the chord polygon and the arc became a chamfer. The owner's expectation is stated:
+   the shape mode takes the whole form of the frame, whatever the frame is.
+  shape: Shape: The niche keeps **two readings of one frame** (ADR 0204). The **ring** is the
+   space the frame reserves, whole and of any form: `frame_ring` stops at turning a drawn ring
+   counter-clockwise, and the pointer only has to be inside it, so every point of an L answers
+   the same cell, its box is the L's own bounds, and the section — the ring clipped by the
+   walls the probes met, around the pointer — is what a `Shape` part takes, arcs and all. The
+   **piece** is the convex cell around the pointer that N34 read, and it keeps its job: the
+   planes, the corners, the probes and every stance that is not a shelf's are cut from it
+   because they are plane algorithms. `ui::pointer_face` enters the **reserved prism** — the
+   ray's spans inside the footprint ring intersected with the floor-to-ceiling band, from
+   `Region::line_intervals` — instead of the envelope's box, so the cursor finds the space
+   behind a corner the frame never gave away. A fit searches the whole section
+   (`Niche::section_polygon`) and is the largest rectangle **through the pointer**
+   (`search_rectangle` with a point), because the largest rectangle of an L stands in the arm
+   the hand may be nowhere near; every candidate is validated against the whole outline
+   (`band_span` over the outline's breakpoints, `rect_inside` by a Liang-Barsky crossing test),
+   so a band the outline narrows can never pass.
+  done: Done: `ui::pointer_face` names the point where the ray enters the ring extruded from
+   floor to ceiling, and a test proves a ray over a notch's corner finds the arm behind it
+   while the box's own entry answers `Outside`. On `/home/alx/skaf.z3l` every point of the L
+   answers a niche whose box is 2244 x 4423 and whose `Shape` plan is the whole six-segment
+   ring with its arc, `Fit` and `Shape` both with no outline point outside the frame.
+   `a_notched_frame_reserves_the_whole_shape_it_draws` and
+   `a_point_in_a_bowed_frames_bulge_is_inside_the_void` pin the ring's whole shape and its box;
+   `the_pointer_enters_the_space_the_frame_reserves_and_not_the_box_around_it` pins the entry.
+   A saved panel created before this change keeps the chord it was made with: re-creating it in
+   the Shape mode gives the arc (N33).
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs` — `223e2b1`
 
 - `[x]` **N34** a frame drawn as a contour builds a part, in the convex piece around the pointer
   Why: The owner, on the saved scene /home/alx/skaf.z3l whose frame is drawn from a contour:

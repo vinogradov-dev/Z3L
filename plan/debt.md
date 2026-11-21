@@ -10,6 +10,13 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[release]` a gate that has to run before the first release, `[vendor]`.
 
+- `[object]` A fit is the largest rectangle **through the pointer**, searched in the section's own chord
+  polygon. A pointer standing in an arc's outward bulge is outside that polygon, so no rectangle of it
+  contains the hand and the plan falls back to the largest rectangle of the shape, which puts the part
+  somewhere else: on `/home/alx/skaf.z3l` 97 of 884 sampled points of the L were such (the arc's sliver,
+  up to 274 mm deep). The shape mode is exact there; the fit needs the search to run on the ring's arcs
+  rather than their chords (N35, ADR 0204).
+
 - `[gizmo]` A frame that keeps a ring answers its section exactly, but the niche's **box**, its corner
   list and the void tool's wireframe are the box of the ring's *chords*, so a frame with a deep bulge —
   the owner's arc is 274 mm deep — reports a smaller void than it reserves and the overlay leaves the
