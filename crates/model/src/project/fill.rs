@@ -1724,11 +1724,13 @@ mod tests {
 
     #[test]
     fn the_part_a_shaped_case_creates_stands_inside_its_footprint() {
-        let (mut project, product) = corner_cabinet();
         let thickness = millimetres(18);
-        let envelope = envelope_of(&project, product);
         for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             for mode in [FillMode::Fit, FillMode::Shape] {
+                // One case per part: a part left standing is material, and the next part would be
+                // measured against it rather than against the frame (N36).
+                let (mut project, product) = corner_cabinet();
+                let envelope = envelope_of(&project, product);
                 let plan = plan(&project, product, fill, mode, thickness).expect("a plan inside the cut case");
                 let id = project
                     .add_panel_with_outline(
@@ -2200,6 +2202,56 @@ mod tests {
         // Shown again, the post is a wall of the void and the same point is inside a niche.
         let shown = project.fill_plan(product, request(300.0), Sight::none(), None);
         assert!(shown.is_ok(), "the post's own faces bound the void when it is shown: {shown:?}");
+    }
+
+    #[test]
+    fn a_part_never_runs_through_a_post_the_pointer_never_pointed_at() {
+        // «В одном случае полка прошила стенку» — the owner, on a cabinet whose post stands in the far
+        // arm of an L. The probes start at the pointer, so none of them met the post, and the ring the
+        // part took ran through it. A body standing in the frame's own space is material of the void's
+        // height, so the ring is clipped at its face (N36).
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let ring = Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(600), Length::ZERO],
+                [millimetres(600), millimetres(300)],
+                [millimetres(300), millimetres(300)],
+                [millimetres(300), millimetres(560)],
+                [Length::ZERO, millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a notched product");
+        // A post from the floor to the ceiling at x = 450, beyond the notch the pointer stands in.
+        let nominal = PanelNominalSize::new(millimetres(720), millimetres(250)).expect("a post size");
+        let placement =
+            Placement::new(DVec3::new(450.0, 0.0, 720.0), DQuat::from_rotation_y(FRAC_PI_2)).expect("a post placement");
+        project.add_panel(product, "Post", nominal, None, millimetres(18), placement).expect("add a post");
+
+        // The pointer stands left of the post and past its far end, so no ray of its own meets the post
+        // while the frame's own space runs right through it.
+        let point = DVec3::new(400.0, 280.0, 300.0);
+        let niche = project.niche(point, Sight::none(), None).expect("the void left of the post");
+        assert!(niche.size.x <= 450.0 + 1.0e-3, "the post bounds the frame's own space: {:?}", niche.size);
+        let plan = FillRequest::new(point, Fill::WidthAndDepth, FillMode::Shape, millimetres(18), None);
+        let shaped = project.fill_plan(product, plan, Sight::none(), None).expect("a shelf beside the post");
+        let ring = shaped.outline.ring_for(shaped.nominal_size).expect("the shelf's own ring");
+        let reach = ring
+            .sample(0.5)
+            .expect("the ring samples")
+            .iter()
+            .map(|corner| shaped.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0)).x)
+            .fold(f64::MIN, f64::max);
+        assert!(reach <= 450.0 + 1.0e-3, "no point of the shelf is inside the post: {reach}");
     }
 
     #[test]

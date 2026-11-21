@@ -46,6 +46,13 @@ carried from the floor to the ceiling (`Region::line_intervals` for the plan, on
 height) instead of the envelope's box, so a ray passes the corner the frame never gave away and finds the
 space behind it.
 
+**A body standing in the ring bounds the part, whether or not a ray met it.** Every probe starts at the
+pointer, so a wall none of its rays meet — a post in the far arm of an L, a divider the hand is not
+looking at — is invisible to the cell while the part it draws would run through it. A surface of the
+surroundings that stands in the ring and spans the cell's own height is such a wall: the ring is clipped
+at its face, by the rule a hidden body already trims by (0175). A body that stands inside without spanning
+the height leaves a void no one ring describes, and that is refused as before.
+
 **A fit goes where the hand is.** The largest rectangle of a shape that is not convex can stand in
 another arm — an L's largest is a column the pointer may be nowhere near — so the fit is the largest
 rectangle **through the pointer**, searched over the whole section and validated against it: `band_span`
@@ -64,8 +71,9 @@ candidate whose interior a boundary crosses (Liang–Barsky).
 - The cell's planes stay the piece's, so the stances that are not a shelf's (a post across the void, a
   divider) are still cut from the convex piece. A vertical fill in a shaped frame therefore answers the
   piece's box, not the frame's shape — the shelf is the case the ring is written for.
-- A body standing inside the region is still a refusal (`holds_body`) rather than a hole: cutting a shape
-  around it needs several regions, which is the same work as the corners of a non-convex cell.
+- A body standing inside the region is a wall only while it spans the cell's height, and it bounds the
+  part at one face: a shape cut *around* it — a post in the middle of a shelf with material on both sides
+  — needs a ring with a hole and the corners of a non-convex cell, and is not written.
 
 ## Related
 

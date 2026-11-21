@@ -704,7 +704,14 @@ impl Project {
                 break;
             }
         }
-        if !settled || !cell.contains(local) || self.holds_body(&cell, &surroundings, inverse) {
+        if !settled || !cell.contains(local) {
+            return Err(NicheRefusal::Unrepresentable);
+        }
+        // A body standing in the space the frame reserves bounds the part, whether or not a ray from the
+        // pointer ever met it (N36).
+        if cell.ring.is_some() {
+            self.clip_bodies(&mut cell, &surroundings, inverse, local)?;
+        } else if self.holds_body(&cell, &surroundings, inverse) {
             return Err(NicheRefusal::Unrepresentable);
         }
         // The box is the space the frame reserves, not the convex piece the planes draw: an L reports
@@ -732,6 +739,65 @@ impl Project {
         }
         let shape = cell_shape(&cell, &corners, low, high)?;
         Ok(Niche { product, local_min: low, size, min: world_min, shape, planes: cell.planes, corners })
+    }
+
+    /// Clips the frame's ring at every body standing in it, and refuses a void that is not one cell.
+    ///
+    /// The probes start at the pointer, so a wall none of its rays meets is invisible to the cell while
+    /// the part it draws would run through it: a post in the far arm of an L, a divider the hand is not
+    /// looking at, a side wall behind the corner it points past. Such a body is material of the void's
+    /// own height — it spans the cell from floor to ceiling — so the ring is clipped at the face the
+    /// pointer stands behind, which is the rule a hidden body already trims by (ADR 0175, ADR 0204).
+    /// A body that stands inside the cell without spanning its height leaves a void no one ring
+    /// describes, and that is refused rather than silently sliced.
+    fn clip_bodies(
+        &self,
+        cell: &mut Cell,
+        surroundings: &Surroundings<'_>,
+        inverse: Placement,
+        point: DVec3,
+    ) -> Result<(), NicheRefusal> {
+        let Some((bottom, top)) = cell.heights() else {
+            return Ok(());
+        };
+        let pointer = DVec2::new(point.x, point.y);
+        for _round in 0..MAX_CELL_ROUNDS {
+            let mut added = false;
+            for surface in &surroundings.surfaces {
+                // The frame's own envelope is the wall the ring already is: its faces are the bounds the
+                // ring was seeded from, and clipping by them would answer a sliver of the frame.
+                if surface.box_.kind == SurfaceKind::Envelope {
+                    continue;
+                }
+                let Some((min, max)) = local_box(surface.box_, inverse) else {
+                    continue;
+                };
+                // A body that only reaches one of the cell's faces — the floor, the ceiling, the far side
+                // of a wall the probes already cut — is no wall of the plan.
+                if max.z <= bottom + COORDINATE_TOLERANCE || min.z >= top - COORDINATE_TOLERANCE {
+                    continue;
+                }
+                let Some((ring, _)) = cell.ring.clone() else {
+                    return Ok(());
+                };
+                let (low, high) = (DVec2::new(min.x, min.y), DVec2::new(max.x, max.y));
+                if !ring_meets_rect(&ring, low, high) {
+                    continue;
+                }
+                if min.z > bottom + COORDINATE_TOLERANCE || max.z < top - COORDINATE_TOLERANCE {
+                    return Err(NicheRefusal::Unrepresentable);
+                }
+                let Some(cut) = trimmed_ring(&ring, low, high, pointer) else {
+                    continue;
+                };
+                cell.ring = Some((cut, cell.ring.as_ref().map_or(0, |(_, at)| *at)));
+                added = true;
+            }
+            if !added {
+                return Ok(());
+            }
+        }
+        Err(NicheRefusal::Unrepresentable)
     }
 
     /// Whether a surface the cell did not cut against stands inside it.
@@ -934,6 +1000,93 @@ impl Project {
             }
         }
         best.map(|(surface, face)| (unit, surface, face))
+    }
+}
+
+/// One surface's own box in the product's frame, or `None` when it does not bound anything.
+fn local_box(surface: SurfaceBox, inverse: Placement) -> Option<(DVec3, DVec3)> {
+    let mut min = DVec3::splat(f64::INFINITY);
+    let mut max = DVec3::splat(f64::NEG_INFINITY);
+    for corner in surface_corners(surface) {
+        let local = inverse.transform_point(corner);
+        if !local.is_finite() {
+            return None;
+        }
+        min = min.min(local);
+        max = max.max(local);
+    }
+    (0..3).all(|axis| min[axis] < max[axis]).then_some((min, max))
+}
+
+/// Whether a body's own footprint shares any area with the ring a frame reserves.
+///
+/// The test is the plan's: a body whose box the ring holds at one of its corners, or which a corner of
+/// the ring stands in, is a wall of the part. Nothing here is exact — a body a ring crosses without a
+/// corner of either landing inside the other is left to the probes, which is where it was measured
+/// before the ring kept the whole shape.
+fn ring_meets_rect(ring: &Region, low: DVec2, high: DVec2) -> bool {
+    let middle = DVec2::new((low.x + high.x) * 0.5, (low.y + high.y) * 0.5);
+    let probes = [
+        middle,
+        DVec2::new(low.x, low.y),
+        DVec2::new(high.x, low.y),
+        DVec2::new(high.x, high.y),
+        DVec2::new(low.x, high.y),
+        DVec2::new(middle.x, low.y),
+        DVec2::new(middle.x, high.y),
+        DVec2::new(low.x, middle.y),
+        DVec2::new(high.x, middle.y),
+    ];
+    if probes.iter().any(|point| ring.contains(*point)) {
+        return true;
+    }
+    ring.outer().segments().iter().any(|segment| {
+        let start = segment.start();
+        start.x > low.x && start.x < high.x && start.y > low.y && start.y < high.y
+    })
+}
+
+/// The ring clipped at the face of a body the pointer stands behind, or `None` when it cuts nothing.
+///
+/// The rule is the one a hidden body trims a part by (ADR 0175): of the body's four faces, the side the
+/// pointer stands on wins, and where the pointer is inside the body's own footprint the cut that keeps
+/// the most of the frame takes it — a wall the hand points at leaves the larger side rather than an
+/// empty plan.
+fn trimmed_ring(ring: &Region, low: DVec2, high: DVec2, pointer: DVec2) -> Option<Region> {
+    // A hand inside the body's own footprint names no side of it, so the faces are read over the whole
+    // ring and the cut that keeps the most of the frame takes it; one outside the footprint stands on a
+    // side, and the ring is clipped around it so a wall in another arm of an L bounds nothing there.
+    let holds =
+        |value: f64, from: f64, to: f64| value >= from - COORDINATE_TOLERANCE && value <= to + COORDINATE_TOLERANCE;
+    let inside = holds(pointer.x, low.x, high.x) && holds(pointer.y, low.y, high.y);
+    let mut best: Option<(bool, f64, Region)> = None;
+    for (axis, (from, to)) in [(0, (low.x, high.x)), (1, (low.y, high.y))] {
+        for (face, side) in [(from, -1.0), (to, 1.0)] {
+            let mut normal = DVec2::ZERO;
+            normal[axis] = side;
+            let cut = if inside {
+                ring.clip_half_plane(normal, side * face)
+            } else {
+                ring.clip_half_plane_around(normal, side * face, pointer)
+            };
+            let Ok(Some(kept)) = cut else {
+                continue;
+            };
+            let stands = side * (pointer[axis] - face) > COORDINATE_TOLERANCE;
+            let score = (stands, kept.area());
+            if best.as_ref().is_none_or(|(seen_stands, seen_area, _)| score > (*seen_stands, *seen_area)) {
+                best = Some((score.0, score.1, kept));
+            }
+        }
+    }
+    match best {
+        // A cut that keeps everything is no cut: the body stands clear of the free space it was tested
+        // against, and nothing asks the part to change. A body with no face that keeps anything is not a
+        // wall of this part either — its faces lie outside the ring, which is a slab the pointer stands
+        // on rather than a post it stands beside.
+        Some((_, area, _)) if (area - ring.area()).abs() <= SECTION_TOLERANCE => None,
+        Some((_, _, kept)) => Some(kept),
+        None => None,
     }
 }
 
