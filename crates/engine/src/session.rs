@@ -678,6 +678,26 @@ mod tests {
         }
     }
 
+    /// A reference to what the step named `side` made.
+    fn side_reference() -> Value {
+        serde_json::json!({ "$ref": "side" })
+    }
+
+    /// The banding request that bands the bottom edge of some panel: a typed request, because the
+    /// only thing a reference changes is the id the `panel` field holds.
+    fn banding_request(panel: Value) -> Value {
+        let mut request = json_params(&PanelEdgeBandingSet {
+            panel: Id::new(1).expect("a placeholder id"),
+            edge: RectEdge::Bottom.id(),
+            material: sample_edge_material_id(),
+            included_in_size: true,
+        });
+        if let Some(object) = request.as_object_mut() {
+            object.insert("panel".to_owned(), panel);
+        }
+        request
+    }
+
     fn cutout_request(panel: Id, shape: CutoutShape, depth: CutoutDepth, entry: FaceSide) -> PanelMachiningAdd {
         PanelMachiningAdd {
             panel,
@@ -1551,6 +1571,84 @@ mod tests {
         assert_eq!(container.children().len(), 0, "one undo removes both panels");
         assert_eq!(container.name(), "Cabinet", "and takes the rename back");
         assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_batch_bands_the_panel_an_earlier_step_made() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let banding = banding_request(side_reference());
+        let steps =
+            [BatchStep::new("panel.create", create).named("side"), BatchStep::new("panel.edge_banding.set", banding)];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.refusal().is_none());
+        assert_eq!(report.steps().len(), 2, "both steps ran, so one build is one call");
+        let panel = report.created().first().copied().expect("the batch created the panel");
+        assert_eq!(report.created(), [panel]);
+        assert!(report.changed().is_empty(), "the panel is new, so the report names it created, not changed");
+        let stored = session.project().panel(panel).expect("the panel is in the document");
+        assert_eq!(stored.edge_banding().len(), 1, "the band landed on the node the name meant");
+
+        // Nothing of the reference reaches the document: a saved scene holds ids and no placeholder.
+        let scene = serde_json::to_string(session.project()).expect("the document serializes");
+        assert!(!scene.contains(crate::batch::REFERENCE_KEY), "a saved scene holds no reference");
+
+        // One undo takes the whole build back, the band first and the panel with it.
+        session.undo().expect("one undo restores the document");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+        assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_reference_the_batch_cannot_resolve_refuses_and_names_the_step() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+
+        // A step that ran and created no node can be named, and cannot be referred to.
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let made_nothing = [
+            BatchStep::new("node.rename", rename).named("frame"),
+            BatchStep::new("panel.edge_banding.set", banding_request(serde_json::json!({ "$ref": "frame" }))),
+        ];
+        let report = session.batch(&made_nothing, BatchOptions::default());
+        assert_eq!(report.effect(), BatchEffect::RolledBack, "the refusal takes the rename back");
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        assert_eq!(report.steps().len(), 2, "the referring step is the one that refused");
+        let sentence = error.to_string();
+        assert!(sentence.contains("`frame`"), "the refusal names the name: {sentence}");
+        assert!(sentence.contains("step 1"), "and the step that made nothing: {sentence}");
+        assert!(session.project().same_content(&before), "a refused batch writes nothing");
+
+        // A name no step gave, and a name a later step would have given: both are refusals here.
+        let unknown = [
+            BatchStep::new("panel.edge_banding.set", banding_request(serde_json::json!({ "$ref": "ghost" }))),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))).named("ghost"),
+        ];
+        let report = session.batch(&unknown, BatchOptions::default());
+        let (number, error) = report.refusal().expect("the first step refused");
+        assert_eq!(number, 1);
+        let sentence = error.to_string();
+        assert!(sentence.contains("`ghost`"), "the refusal names the name: {sentence}");
+        assert!(sentence.contains("not a name any earlier step"), "and says what a reference needs: {sentence}");
+        assert!(session.project().same_content(&before));
+
+        // A name is claimed once, so a second step may not shadow the first.
+        let duplicate = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))).named("side"),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Shelf"))).named("side"),
+        ];
+        let report = session.batch(&duplicate, BatchOptions::default());
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        let sentence = error.to_string();
+        assert!(sentence.contains("step 1 already named `side`"), "a name is claimed once: {sentence}");
+        assert!(session.project().same_content(&before));
     }
 
     #[test]

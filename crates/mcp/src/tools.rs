@@ -67,7 +67,7 @@ impl RunRequest {
     /// could report a different undo entry than a batch of one (ADR 0185, ADR 0198).
     pub fn batch(&self) -> BatchRequest {
         BatchRequest {
-            steps: vec![StepRequest { command: self.command.clone(), params: self.params.clone() }],
+            steps: vec![StepRequest::new(self.command.clone(), self.params.clone())],
             product: self.product,
             atomic: true,
             dry_run: self.dry_run,
@@ -102,7 +102,8 @@ pub struct BatchRequest {
     pub dry_run: bool,
 }
 
-/// One step of a batch: a command id and the parameters it takes.
+/// One step of a batch: a command id, the parameters it takes, and the name a later step calls what
+/// it made.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepRequest {
@@ -111,6 +112,27 @@ pub struct StepRequest {
     /// The parameters the command takes; an empty object when it takes none.
     #[serde(default = "empty_params")]
     pub params: Value,
+    /// The name this step gives the node it creates, so a later step of the same batch can refer to
+    /// it as `{"$ref": "<name>"}` in place of an id it cannot know yet.
+    ///
+    /// A name belongs to the batch, not to the document: it is resolved as the batch runs and never
+    /// serialized. A step that creates no node may be named and cannot be referred to, and a name a
+    /// second step takes is refused rather than shadowing the first.
+    #[serde(rename = "as", default)]
+    pub name: Option<String>,
+}
+
+impl StepRequest {
+    /// A step that dispatches `command` with `params` and names nothing.
+    pub fn new(command: impl Into<String>, params: Value) -> Self {
+        Self { command: command.into(), params, name: None }
+    }
+
+    /// The same step under `name`, which a later step of the batch refers to.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
 }
 
 /// The empty parameter object a step with no parameters carries.
@@ -197,13 +219,15 @@ pub fn headless_definitions() -> Vec<Tool> {
         Tool::new(
             TOOL_BATCH,
             "Dispatch a list of commands as one operation: in order, and by default all or nothing, \
-             so a refusal takes back every step before it and the whole list is one undo entry. The \
-             answer reports which nodes the batch created, changed and removed, what a file write \
-             did, and the `open_product` it ran in. With `product` the batch works in that product, \
-             and naming it opens the product first: a furniture part is born only inside the open \
-             product, and opening is a view operation rather than a step. With `dry_run` every step \
-             runs and nothing is written. A session in plan mode answers every batch this way \
-             whatever the request says; `command_list` names the mode.",
+             so a refusal takes back every step before it and the whole list is one undo entry. A step \
+             may name what it creates with `as`, and a later step may refer to that name as \
+             {\"$ref\": \"<name>\"} wherever the command's schema wants an id, so one build is one \
+             call and one undo entry. The answer reports which nodes the batch created, changed and \
+             removed, what a file write did, and the `open_product` it ran in. With `product` the \
+             batch works in that product, and naming it opens the product first: a furniture part is \
+             born only inside the open product, and opening is a view operation rather than a step. \
+             With `dry_run` every step runs and nothing is written. A session in plan mode answers \
+             every batch this way whatever the request says; `command_list` names the mode.",
             object_schema::<BatchRequest>(),
         ),
         Tool::new(
@@ -310,6 +334,25 @@ mod tests {
             attached,
             vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_INSPECT],
             "an attached channel adds the window's own report to the same four"
+        );
+    }
+
+    #[test]
+    fn a_step_names_what_it_creates_and_a_later_step_refers_to_the_name() {
+        let arguments: JsonObject = serde_json::from_value(json!({
+            "steps": [
+                {"command": "panel.create", "as": "side", "params": {"parent": 2}},
+                {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "side"}}},
+            ]
+        }))
+        .expect("an object of arguments");
+        let request: BatchRequest = parse(TOOL_BATCH, Some(arguments)).expect("two steps");
+        assert_eq!(request.steps.first().and_then(|step| step.name.as_deref()), Some("side"));
+        assert_eq!(request.steps.get(1).and_then(|step| step.name.as_deref()), None);
+        assert_eq!(
+            request.steps.get(1).map(|step| step.params.clone()),
+            Some(json!({"panel": {"$ref": "side"}})),
+            "a reference is a value of the parameters, and the tool hands it on untouched"
         );
     }
 

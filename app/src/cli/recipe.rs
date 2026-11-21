@@ -2,7 +2,10 @@
 //!
 //! A recipe is JSON Lines — one object per line, `{"command": <id>, "params": {...}}` — because a
 //! line is a step and a diff of two recipes reads as a diff of two runs (the same argument the order
-//! package makes for its tables, ADR 0095). Nothing here mutates a document directly: every line is
+//! package makes for its tables, ADR 0095). A line may also name what its command creates, with
+//! `"as": <name>`, and a later line may then write `{"$ref": <name>}` where a command wants an id:
+//! the reference is resolved as the batch runs, so a recipe that bands the panel it just made needs
+//! no knowledge of the document's ids (J18). Nothing here mutates a document directly: every line is
 //! a [`engine::BatchStep`] and the whole list is one [`engine::Session::batch`], so undo, the class
 //! guard and the command's own validation stay the only door (`docs/domain/prototypes.md` §8). The
 //! batch is the same operation a tool over the same commands calls, so the two answers cannot
@@ -33,12 +36,18 @@ struct Step {
     command: String,
     /// The parameters it hands that command; an empty object when the line omits them.
     params: Value,
+    /// The name this line gives the node it creates, for a later line to refer to.
+    name: Option<String>,
 }
 
 impl Step {
     /// The engine step this line dispatches into the batch.
     fn batch(&self) -> BatchStep {
-        BatchStep::new(self.command.clone(), self.params.clone())
+        let step = BatchStep::new(self.command.clone(), self.params.clone());
+        match &self.name {
+            Some(name) => step.named(name.clone()),
+            None => step,
+        }
     }
 }
 
@@ -147,8 +156,8 @@ fn read(path: &Path) -> Result<String, CliError> {
 /// Reads every step of a recipe, naming the line that is not one.
 ///
 /// A blank line is skipped so a recipe can be laid out in groups. Every other line is one JSON
-/// object with `command` and, optionally, `params`; any other key is refused rather than ignored,
-/// because a misspelt `param` would otherwise run the command with no parameters at all.
+/// object with `command` and, optionally, `params` and `as`; any other key is refused rather than
+/// ignored, because a misspelt `param` would otherwise run the command with no parameters at all.
 fn parse(text: &str) -> Result<Vec<Step>, CliError> {
     let mut steps = Vec::new();
     for (index, line) in text.lines().enumerate() {
@@ -170,9 +179,9 @@ fn parse(text: &str) -> Result<Vec<Step>, CliError> {
 /// Reads one step out of the object a line held.
 fn step(number: usize, object: Map<String, Value>) -> Result<Step, CliError> {
     for key in object.keys() {
-        if key != "command" && key != "params" {
+        if key != "command" && key != "params" && key != "as" {
             return Err(CliError::Recipe(format!(
-                "line {number}: `{key}` is not a step key; a step names `command` and `params`"
+                "line {number}: `{key}` is not a step key; a step names `command`, `params` and `as`"
             )));
         }
     }
@@ -190,7 +199,17 @@ fn step(number: usize, object: Map<String, Value>) -> Result<Step, CliError> {
             return Err(CliError::Recipe(format!("line {number}: `params` is one JSON object, not {}", kind(other))));
         }
     };
-    Ok(Step { line: number, command, params })
+    let name = match object.get("as") {
+        None => None,
+        Some(Value::String(name)) if !name.trim().is_empty() => Some(name.clone()),
+        Some(Value::String(_)) => {
+            return Err(CliError::Recipe(format!("line {number}: `as` names nothing: the name is blank")));
+        }
+        Some(other) => {
+            return Err(CliError::Recipe(format!("line {number}: `as` is a step's name, not {}", kind(other))));
+        }
+    };
+    Ok(Step { line: number, command, params, name })
 }
 
 /// What a JSON value is, for a sentence that says what was written instead.
@@ -216,15 +235,26 @@ mod tests {
 
     /// One recipe line that creates a panel under `parent`.
     fn panel_line(parent: Id, name: &str) -> String {
-        format!(
-            concat!(
-                r#"{{"command":"panel.create","params":{{"parent":{},"name":"{}","#,
-                r#""nominal_size":{{"length":700000,"width":500000}},"material":"1-1","#,
-                r#""placement":{{"translation":[0,0,0],"rotation":[0,0,0,1]}}}}}}"#
-            ),
-            parent.get(),
-            name
-        )
+        serde_json::json!({
+            "command": "panel.create",
+            "params": {
+                "parent": parent.get(),
+                "name": name,
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }
+        })
+        .to_string()
+    }
+
+    /// The same line under the name a later line refers to what it creates by.
+    fn named_panel_line(parent: Id, name: &str, alias: &str) -> String {
+        let mut line: serde_json::Value = serde_json::from_str(&panel_line(parent, name)).expect("a step object");
+        if let Some(object) = line.as_object_mut() {
+            object.insert("as".to_owned(), serde_json::json!(alias));
+        }
+        line.to_string()
     }
 
     /// One recipe line that renames a node without creating anything.
@@ -384,12 +414,48 @@ mod tests {
     }
 
     #[test]
+    fn a_recipe_bands_the_panel_an_earlier_line_named() {
+        let directory = scratch_dir("cli-recipe-reference");
+        let (path, _root, product) = saved(&directory);
+        let recipe_path = directory.join("build.jsonl");
+        let banding = concat!(
+            r#"{"command":"panel.edge_banding.set","params":{"panel":{"$ref":"side"},"#,
+            r#""edge":1,"material":"1-101","included_in_size":true}}"#
+        );
+        std::fs::write(&recipe_path, format!("{}\n{banding}\n", named_panel_line(product, "Side", "side")))
+            .expect("the recipe is written");
+        let args = RunArgs { scene: path.clone(), commands: recipe_path, out: None, product: None, dry_run: false };
+        let lines = perform(&args).expect("the recipe runs");
+        assert!(
+            lines.first().is_some_and(|line| line.starts_with("1: panel.create created")),
+            "the first line names the id it created: {lines:?}"
+        );
+        assert!(lines.get(1).is_some_and(|line| line == "2: panel.edge_banding.set ok"), "{lines:?}");
+
+        let written = SceneFile::read(&path).expect("the scene is written back");
+        let project = written.document();
+        let panel = project
+            .container(product)
+            .and_then(|container| container.children().first().map(model::Node::id))
+            .expect("the line created one panel under the product");
+        assert_eq!(
+            project.panel(panel).map(|panel| panel.edge_banding().len()),
+            Some(1),
+            "the band landed on the panel the name stood for"
+        );
+        let saved = std::fs::read_to_string(&path).expect("the scene still reads");
+        assert!(!saved.contains("$ref"), "a saved scene holds ids, not references");
+    }
+
+    #[test]
     fn a_line_that_is_not_a_step_names_its_line() {
         for (text, expected) in [
             (r#"{"param":{}}"#, "is not a step key"),
             (r#"{"command":"node.rename","param":{}}"#, "is not a step key"),
             (r#"{"command":7}"#, "`command` is a command id"),
             (r#"{"command":"node.rename","params":[]}"#, "`params` is one JSON object"),
+            (r#"{"command":"node.rename","as":7}"#, "`as` is a step's name"),
+            (r#"{"command":"node.rename","as":"  "}"#, "`as` names nothing"),
             ("[]", "a step is one JSON object"),
             ("not json", "not JSON"),
         ] {

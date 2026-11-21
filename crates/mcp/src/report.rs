@@ -81,11 +81,18 @@ pub fn batch(
             if let (Some(error), Some(object)) = (report.refusal(), row.as_object_mut()) {
                 object.insert("refusal".to_owned(), json!(error.to_string()));
             }
+            if let (Some(name), Some(object)) = (step.name(), row.as_object_mut()) {
+                // The name a step gave its node, beside the id the step reported, so a reader can map
+                // a later step's reference to the node it resolved to without re-reading the request.
+                object.insert("as".to_owned(), json!(name));
+            }
             if step.params() != &Value::Object(serde_json::Map::new())
                 && let Some(object) = row.as_object_mut()
             {
                 // The parameters are echoed so a reader can tell two identical ids apart; a step
-                // without parameters says nothing rather than an empty object per row.
+                // without parameters says nothing rather than an empty object per row. A reference
+                // is echoed as the caller wrote it: the id it resolved to is the created id of the
+                // step that named it, in that step's own row.
                 object.insert("params".to_owned(), step.params().clone());
             }
             row
