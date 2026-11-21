@@ -719,6 +719,18 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Object),
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
+    // The area pull is the same Extrude cell on another payload: a drawing of several rings has no
+    // one profile to sweep, so the cell arms the pointer and the click names an area of the drawing
+    // (G4). The command creates a body, and the drawing stays where it was. The row carries no
+    // artwork of its own: the cell draws the extrude glyph, and a second drawing for one gesture
+    // would say the two are different tools.
+    Row {
+        id: "object.area.extrude",
+        label: Message::CmdExtrudeArea,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
     // The contour booleans take a base ring and one or more rings beside it, so they act on a
     // selection rather than on the node under the pointer; the ribbon's three cells arm them and
     // the registered command behind each cell stores the result (G3, ADR 0194).

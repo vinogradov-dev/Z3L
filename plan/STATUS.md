@@ -1,7 +1,7 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U120 state=idle base=72b7164 updated=2026-11-21
-STREAMS: agent=J catalog=O prototypes=Q
+STATE: milestone=M7 phase=T task=- state=idle base=229b539 updated=2026-11-21
+STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
@@ -48,11 +48,14 @@ centre, a perpendicular foot, a tangent point, a point on an edge or a face, a w
 — answered by `Project::snap` from the pointer's ray and the sketch plane, so the drawing tool and the
 ruler read one atom and the object move reads the same kinds (U116, ADR 0199). Each kind is a switch of
 the workspace, a cell in the View tab's Snaps group with a drawing of its own, a row in the Settings
-page, a glyph at the snapped point and a word in the status bar's readout.
+page, a glyph at the snapped point and a word in the status bar's readout. Each payload files its
+own places rather than the box around it, so a cylinder answers its two rims and the two ends of its
+axis, a cone its rims and its apex, a ball its poles and equator quadrants, and the corner of the
+square around a round body answers nothing (U120).
 
 ## Next
 
-U120 is next: a round body answers its own places, not the corners of its box
+Nothing is scheduled: 42 open tasks wait in `## Next`.
 
 ## Index
 

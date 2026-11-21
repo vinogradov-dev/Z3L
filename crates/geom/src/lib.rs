@@ -21,7 +21,7 @@ pub mod ring;
 pub mod segment;
 pub mod triangulate;
 
-pub use boolean::{intersect_regions, subtract_regions, union_regions};
+pub use boolean::{MAX_PARTITION_FACES, intersect_regions, partition_regions, subtract_regions, union_regions};
 pub use contact::{
     Contact, Impact, MAX_CONVEX_POINTS, MAX_MESH_TRIANGLES, MAX_MESH_VERTICES, Penetration, Pose, Shape, ShapeError,
     Shared, Solid, overlap,

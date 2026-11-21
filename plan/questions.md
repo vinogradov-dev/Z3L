@@ -56,3 +56,11 @@ this file only when a task touches the question.
   imported from an asset library, modelled in Z3L, or does a catalogue image keep the furniture on a
   studio backdrop? The example the owner points at is about half props, and no tracer draws them
   without geometry.
+- The area pull's target (G4): the Extrude cell arms it on the *selected* drawing, because that is
+  where the cell was pressed. SketchUp's push/pull needs no selection — the pointer names the face of
+  whatever drawing it is over. Reading the pointer's drawing instead is a mode whose target is not the
+  selection, and it changes what the cell means for every other payload; confirm the narrower reading
+  or ask for the pointer-driven one.
+- A face with a hole cannot become a body yet (G5 stores the profile with holes). Until G5 lands,
+  should such a face be pulled as several bodies — one per piece the hole leaves — or stay refused
+  with a sentence? One click, one body is what shipped.

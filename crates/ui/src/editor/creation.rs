@@ -204,6 +204,10 @@ impl Editor {
         // with the arm: a report row never names a space the pointer left (ADR 0118).
         self.void_armed = false;
         self.void.clear();
+        // The area under the pointer belongs to the pull that armed it, so a mode that no longer
+        // owns the pointer drops the highlighted face too (G4).
+        self.area_pull = None;
+        self.area.clear();
         self.box_draft = None;
         self.boolean = None;
     }

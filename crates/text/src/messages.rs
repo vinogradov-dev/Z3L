@@ -1046,6 +1046,13 @@ messages! {
     ExtrudeSelectedPath = ["Extrude the selected path", "Выдавить выбранный путь"],
     ExtrudePathOpen = ["The selected path is open; close it first", "Выбранный путь разомкнут; сначала замкните его"],
     ExtrudeNotPath = ["The selected object is not a path", "Выбранный объект не является путём"],
+    ExtrudeSelectedDrawing = ["Pull an area of the selected drawing", "Вытянуть область выбранного контура"],
+    AreaOutside = ["Point at an area of the drawing", "Укажите область на контуре"],
+    AreaHole = [
+        "The area under the pointer has a hole, and a body carries one ring yet",
+        "Область под курсором имеет отверстие, а тело пока несёт один контур"
+    ],
+    AreaBodyName = ["{} area", "{} — область"],
     PrimitiveDrawBase = ["{}: draw its base on the work plane", "{}: начертите основание на рабочей плоскости"],
     PrimitiveDrawRound = ["{}: draw the round it is built around", "{}: начертите окружность, вокруг которой он строится"],
     BodyProfileOpen = ["A body is swept from a closed profile", "Тело выдавливается из замкнутого профиля"],
@@ -1340,6 +1347,7 @@ messages! {
     CmdCreateExtrusion = ["Create extrusion", "Создать выдавливание"],
     CmdReplaceContour = ["Replace contour", "Заменить контур"],
     CmdExtrudePath = ["Extrude path", "Выдавить путь"],
+    CmdExtrudeArea = ["Extrude area", "Выдавить область"],
     CmdSetExtrusionHeight = ["Set extrusion height", "Задать высоту выдавливания"],
     CmdCreatePath = ["Create path", "Создать путь"],
     CmdReplacePath = ["Replace path", "Заменить путь"],

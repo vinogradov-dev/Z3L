@@ -443,6 +443,13 @@ pub enum RegionError {
         /// The largest pair count one boolean accepts.
         max: usize,
     },
+    /// A partition would leave more faces than one drawing may carry.
+    TooManyFaces {
+        /// The number of faces the rings divide the drawing into.
+        count: usize,
+        /// The largest face count one partition accepts.
+        max: usize,
+    },
     /// A boolean result ring could not be built.
     ResultRing {
         /// Why the ring was refused.
@@ -467,6 +474,9 @@ impl fmt::Display for RegionError {
                 formatter,
                 "a boolean over {segments} segments needs more than the {max} edge pairs it may examine"
             ),
+            Self::TooManyFaces { count, max } => {
+                write!(formatter, "the drawing's rings divide it into {count} areas, more than the {max} it may carry")
+            }
             Self::ResultRing { error } => write!(formatter, "a boolean result ring is invalid: {error}"),
         }
     }

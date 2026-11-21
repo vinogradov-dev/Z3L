@@ -50,6 +50,8 @@ struct StatusInfo {
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
     void: Option<Result<[Length; 3], VoidRefusal>>,
+    /// The armed area pull: what the next click takes, or the reason the pointer names no pullable area.
+    area: Option<Message>,
     /// Whether the object move is carrying a piece the pointer moves with no button held.
     holding: bool,
     /// Whether the drawing plane's grid snap is on.
@@ -300,6 +302,12 @@ fn status_command_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) {
             MeasureStage::Second => Message::MeasureSecondPoint,
             MeasureStage::Measured => Message::MeasureAgain,
         };
+        hint(ui, words.text(lang), center);
+        return;
+    }
+    if let Some(words) = info.area {
+        // The pull is a read with one click: the left zone says what the pointer rests on, so a face
+        // that cannot be pulled says so before the click instead of after it (G4).
         hint(ui, words.text(lang), center);
         return;
     }
@@ -611,6 +619,10 @@ impl Document {
             measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
             // The report row reads the same atom the fill ghost and the part are built from, never a
             // second measurement of the space under the pointer (ADR 0118).
+            area: self
+                .editor
+                .area_pull()
+                .map(|_| self.editor.area_refusal().unwrap_or(Message::ExtrudeSelectedDrawing)),
             void: self.editor.void_armed().then(|| {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),
@@ -652,6 +664,7 @@ mod tests {
             preview_error: None,
             measure: None,
             void: None,
+            area: None,
             holding: false,
             grid: true,
             snap: None,

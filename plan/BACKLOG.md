@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **U120** a round body answers its own places, not the corners of its box
-  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
-   the ones that come later. Today Scene::object files a bound box for every geometry and a
-   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
-   eight corners of the square around its base, which are points in the air, and its upper rim
-   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
-   sphere answers the box face centres — six points on the surface, but chosen by the world
-   axes rather than by the body. A marker on the corner of a box around a round body names a
-   place no maker can work at, in either snap mode.
-  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
-   payload files what its parameters describe. A sphere files its centre, its two poles and the
-   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
-   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
-   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
-   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
-   error until it answers its places, and each round answer ships with a test that the point is
-   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
-   rather than in the air around it.
-  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
-   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
-   radius; the pointer over the empty air beside a round body captures nothing of it; a future
-   PrimitiveKind cannot be added without its arm.
-  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs`
 - `[~]` **J5** a client we did not write drives the editor, headless
   Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
    own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
@@ -87,6 +64,37 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
    the file the way `z3l run` does.
   `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs`
+- `[~]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
+  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
+   from the camera the viewport already shows. The reference project was measured before the
+   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
+   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
+   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
+   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
+   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
+   which must bump together (§5), and it would hand the quality tuning to a project with one
+   maintainer. The reason for our own is ownership, not the licence.
+  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
+   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
+   final-render code lives; it borrows the `wgpu` device the shell already made instead of
+   opening one. Input: the frame's triangles from `mesh` at the current revision, the
+   document's light objects in watts with inverse-square falloff (ADR 0039), the session
+   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
+   a compute pass that traces one primary ray per sample and estimates light from the
+   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
+   through the `image` crate. One command `render.final` carries progress and cancel. Every
+   technique is implemented from its published source, named in the note and in the ADR: the
+   reference project is measured and read for its approach, never copied as text, so no file,
+   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
+   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
+   volumes, no hair, no displacement, no requirement for hardware ray tracing.
+  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
+   the viewport's to within a pixel at a known point; a second run on an unchanged revision
+   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
+   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
+   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
+   `cargo xtask ci` is green.
+  `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
 
 ## Bugs
 - `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
@@ -256,6 +264,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
    and no writer was added when P17 landed.
   `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
+- `[ ]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
+  Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
+   answers "`STATE: base=72b7164` is not the tree this plan describes: `AGENTS.md` changed
+   since, and `state=idle` means the plan is written" and prints nothing at all; the render
+   worktree answers the same about `base=229b539` after its first code commit. The rule is
+   right where it was written — in the primary checkout, `base` describes the tree that
+   checkout has — and it cannot be judged from a stream checkout, where the commits after
+   `base` are that stream's own work and the plan is deliberately not written there (§6.2: a
+   stream commits code and never `plan/`). `stream/catalog` and `stream/prototypes` pass today
+   only because their plan copies happen to carry a `base` the rule likes. The cost is exact:
+   `status` prints no clock, no streams and no entry, so a session that opens a stream worktree
+   starts by reading files by hand, and a stream's own `task step` is refused because the gate
+   it runs sees that one violation and the write removes nothing.
+  Shape: Shape: The tool reads the checkout it runs in — `git rev-parse --abbrev-ref HEAD`
+   through the `Git` port — and when that branch is `stream/<key>` for a stream the plan
+   declares, the base-lag rule is not applied: it speaks about the primary checkout's tree, and
+   the primary is where it is judged. The skip is said out loud in the `status` and `plan`
+   blocks ("the base-lag rule is the primary checkout's; this is `stream/render`"), because a
+   silently skipped check is a check nobody trusts. The ancestor check stays everywhere: a
+   `base` that is not a commit or not an ancestor of `HEAD` is wrong in any worktree.
+  Done: Done: A test builds a repository whose branch is `stream/render` with a declared
+   `render=Y,L` and one code commit after `base`: `cargo xtask plan` passes there, while the
+   same tree on `dev` still fails the lag rule; the `status` block carries the sentence that
+   says which checkout the rule belongs to; a stream branch whose stream the plan does not
+   declare keeps the old refusal.
+  `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
@@ -422,37 +456,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    calls and that `undo` restores the document the scenario started from; the scripted model
    needs no network and no key; `cargo xtask ci` is green.
   `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-- `[ ]` **P20** the tool files a task where work is collected, and an interjection still takes the order
-  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
-   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
-   worktree that was working through it. The plan has one writer precisely so that one session
-   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
-   it serves.
-  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
-   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
-   owner-directed interjection, which now implies `## Now` because a task at the top of `##
-   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
-   `state-contract/README.md` say the same thing.
-  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
-   asserts a section named beside `--at end` receives the task; the interjection test passes
-   with no `--section`; `cargo xtask ci` is green.
-  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md`
-- `[ ]` **G4** an area between contours is picked and extruded, the SketchUp way
-  Why: A drawing made of several contours encloses areas between them and inside their holes,
-   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
-   rings, so a maker who drew a frame cannot extrude the opening it leaves.
-  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
-   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
-   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
-   tool measures its cell. The hover highlights that region through the session overlay (ADR
-   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
-   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
-   has, so an area is a query result and not a document field.
-  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
-   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
-   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
-   revision. The area is derived on read and cached by the set, its revision and its placement.
-  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs`
 - `[ ]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
   Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
    that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
@@ -474,37 +477,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
    green.
   `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs`
-- `[ ]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
-  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
-   from the camera the viewport already shows. The reference project was measured before the
-   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
-   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
-   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
-   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
-   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
-   which must bump together (§5), and it would hand the quality tuning to a project with one
-   maintainer. The reason for our own is ownership, not the licence.
-  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
-   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
-   final-render code lives; it borrows the `wgpu` device the shell already made instead of
-   opening one. Input: the frame's triangles from `mesh` at the current revision, the
-   document's light objects in watts with inverse-square falloff (ADR 0039), the session
-   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
-   a compute pass that traces one primary ray per sample and estimates light from the
-   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
-   through the `image` crate. One command `render.final` carries progress and cancel. Every
-   technique is implemented from its published source, named in the note and in the ADR: the
-   reference project is measured and read for its approach, never copied as text, so no file,
-   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
-   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
-   volumes, no hair, no displacement, no requirement for hardware ray tracing.
-  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
-   the viewport's to within a pixel at a known point; a second run on an unchanged revision
-   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
-   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
-   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
-   `cargo xtask ci` is green.
-  `files: crates/render/src/lib.rs,crates/mesh/src/lib.rs,crates/scene/src/lib.rs,xtask/src/main.rs`
 - `[ ]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
   Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
    the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
@@ -868,8 +840,78 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
    green.
   `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
+- `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
+  Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
+   features }` cannot store a profile with holes, although the kernel Profile and a panel core
+   already do. A maker who pulls the frame between two nested rings is told the area has a hole
+   and cannot become a part.
+  Shape: The profile becomes outer plus holes: the payload's wire form, its validation, the
+   extrusion compiler, the mesh and the golden file change together, with schema 30 and no
+   migration (ADR 0096). The area command stops refusing and hands the face's holes to the body
+   it creates.
+  Done: A test extrudes an annulus into one body whose profile carries the hole, the golden
+   file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
+   `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
 
 ## Done
+
+- `[x]` **G4** an area between contours is picked and extruded, the SketchUp way
+  Why: A drawing made of several contours encloses areas between them and inside their holes,
+   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
+   rings, so a maker who drew a frame cannot extrude the opening it leaves.
+  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
+   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
+   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
+   tool measures its cell. The hover highlights that region through the session overlay (ADR
+   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
+   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
+   has, so an area is a query result and not a document field.
+  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
+   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
+   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
+   revision. The area is derived on read and cached by the set, its revision and its placement.
+  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs` — `229b539`
+
+- `[x]` **P20** the tool files a task where work is collected, and an interjection still takes the order
+  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
+   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
+   worktree that was working through it. The plan has one writer precisely so that one session
+   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
+   it serves.
+  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
+   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
+   owner-directed interjection, which now implies `## Now` because a task at the top of `##
+   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
+   `state-contract/README.md` say the same thing.
+  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
+   asserts a section named beside `--at end` receives the task; the interjection test passes
+   with no `--section`; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md` — `02b2dc4`
+
+- `[x]` **U120** a round body answers its own places, not the corners of its box
+  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
+   the ones that come later. Today Scene::object files a bound box for every geometry and a
+   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
+   eight corners of the square around its base, which are points in the air, and its upper rim
+   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
+   sphere answers the box face centres — six points on the surface, but chosen by the world
+   axes rather than by the body. A marker on the corner of a box around a round body names a
+   place no maker can work at, in either snap mode.
+  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
+   payload files what its parameters describe. A sphere files its centre, its two poles and the
+   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
+   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
+   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
+   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
+   error until it answers its places, and each round answer ships with a test that the point is
+   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
+   rather than in the air around it.
+  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
+   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
+   radius; the pointer over the empty air beside a round body captures nothing of it; a future
+   PrimitiveKind cannot be added without its arm.
+  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs` — `b56d0bc`
 
 - `[x]` **N36** a part never runs through a post the pointer never pointed at
   why: Why: The owner, on the same cabinet at `/home/alx/skaf.z3l`: «уже очень хорошо, но
