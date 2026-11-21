@@ -358,6 +358,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A test builds a body, a panel and a product and asserts the box each one answers,
    including a turned node; a node with no geometry is a refusal the reader can act on.
   `files: crates/mcp/src/server.rs,crates/model/src/project/query.rs`
+- `[ ]` **P25** two plan writers in one checkout race, and the gate calls the result correct
+  Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one
+   checkout both read the same backlog, both computed the next free id (X107) and the last one
+   to write replaced the other entry; the plan gate then reported `plan: ok` because nothing
+   was duplicated or missing by its rules, and the lost entry had to be filed again by hand.
+   The tool takes no lock inside a checkout, so its read-modify-write cycle is two steps the
+   shell cannot see.
+  Shape: One writer per checkout enforced by the tool, not by the rule text: a lock file beside
+   the plan that a write takes for its read-modify-write cycle and releases, and a second
+   writer that waits or refuses with a sentence naming the lock.
+  Done: A test starts two writes on one root and asserts that both land (or one is refused with
+   the lock named) and that neither entry is lost; a test asserts the lock is gone after a
+   normal write and after a refused one.
+  `files: state-contract/src/cli/write.rs,plan/BACKLOG.md`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
