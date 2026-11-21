@@ -201,10 +201,14 @@ pub fn headless_definitions() -> Vec<Tool> {
     vec![
         Tool::new(
             TOOL_LIST,
-            "List every command this build can dispatch: the stable id, the English label, what it \
-             creates, the JSON Schema of the parameters it takes, and whether the command can run in \
-             this session — with the sentence that says why not when it cannot. Call this first: the \
-             ids and the schemas a caller needs come from here.",
+            "List every command this build can dispatch: the stable id, the English label, the world \
+             it serves (`furniture`, `geometry`, `tree`, `scene`), what it creates, the JSON Schema of \
+             the parameters it takes, and whether the command can run in this session — with the \
+             sentence that says why not when it cannot. The same answer carries `domain`: the guide a \
+             caller reads before it composes anything, with the two worlds of the program, the order of \
+             a build from scratch, the shapes a product frame takes, the stances of a panel, the \
+             semantic classes with the words a person types for them, the units and the sides. Call \
+             this first: the ids, the schemas and the domain come from here.",
             object_schema::<CommandListRequest>(),
         ),
         Tool::new(

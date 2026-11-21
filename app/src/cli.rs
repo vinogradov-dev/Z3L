@@ -21,6 +21,7 @@
 //! a failed write like any other, and the only exit is the caller's `std::process::exit`.
 
 mod commands;
+mod guide;
 mod query;
 mod recipe;
 mod render;
@@ -55,6 +56,7 @@ usage: z3l                 open the editor
                     [--price-max-age <days>]
        z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
                     [--studio <percent>] [--camera scene|fit]
+       z3l guide           print the domain guide a caller reads before it builds
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
@@ -82,6 +84,12 @@ render draws the final image of a saved scene and writes it as a PNG, with no wi
                      viewport shows; `fit` is the framing the viewport opens a scene with, which
                      is what a scene without a camera, or one whose camera looks elsewhere, needs
   The document is read and never written.
+
+guide prints the domain this build works in as one JSON value: the two worlds of the program,
+the order of a build from scratch, the shapes a product frame takes, the three stances of a
+panel, the semantic classes with the words a person types for them, the units and the sides.
+A caller reads it before it composes anything; the same value travels in the tool server's
+`command_list` answer.
 
 commands lists what this build can dispatch: one id, its label and what it creates.
   --json             print one JSON array instead of one line per command; each row carries the
@@ -144,6 +152,8 @@ pub enum Command {
     Export(ExportArgs),
     /// Draw the final image of a saved scene and exit.
     Render(RenderArgs),
+    /// Print the domain guide a caller reads before it builds and exit.
+    Guide,
     /// List the commands this build can dispatch and exit.
     Commands {
         /// Print one JSON array instead of one line per command.
@@ -329,6 +339,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         None => Ok(Command::Window),
         Some("-h" | "--help" | "help") => Ok(Command::Help(USAGE)),
         Some("export") => export_args(&args[1..]),
+        Some("guide") => guide_args(&args[1..]),
         Some("commands") => commands_args(&args[1..]),
         Some("run") => run_args(&args[1..]),
         Some("mcp") => mcp_args(&args[1..]),
@@ -465,6 +476,15 @@ fn days(text: &str) -> Result<u32, CliError> {
 /// The value that follows a flag.
 fn value<'a>(words: &mut std::slice::Iter<'a, String>, flag: &str) -> Result<&'a str, CliError> {
     words.next().map(String::as_str).ok_or_else(|| CliError::Usage(format!("`{flag}` needs a value")))
+}
+
+/// Reads the words after `guide`: nothing but the help flag.
+fn guide_args(args: &[String]) -> Result<Command, CliError> {
+    match args.first().map(String::as_str) {
+        None => Ok(Command::Guide),
+        Some("-h" | "--help") => Ok(Command::Help(USAGE)),
+        Some(other) => Err(CliError::Usage(format!("`{other}` is not an option of `guide`; run `z3l --help`"))),
+    }
 }
 
 /// Reads the words after `commands`: nothing, or `--json`.
@@ -683,6 +703,7 @@ pub fn run(command: &Command) -> Option<i32> {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
+        Command::Guide => Some(print_stdout(&(guide::report() + "\n"))),
         Command::Commands { json } => Some(print_stdout(&(commands::report(*json) + "\n"))),
         Command::Run(args) => Some(match recipe::perform(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),

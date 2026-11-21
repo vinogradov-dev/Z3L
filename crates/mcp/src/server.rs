@@ -156,8 +156,9 @@ impl fmt::Debug for Door<'_> {
     }
 }
 
-/// The `command_list` answer: every command this build dispatches, what it takes, and whether it can
-/// run in `session`.
+/// The `command_list` answer: every command this build dispatches, what it takes, which world it
+/// serves, whether it can run in `session` — and the domain guide, so the first call a client makes
+/// teaches it the program and not only the ids.
 ///
 /// It is a free function because two doors ask it — the headless server and the attached window —
 /// and a second copy of the projection is the second registry ADR 0185 forbids.
@@ -168,6 +169,7 @@ pub fn listing(session: &Session) -> Value {
         "revision": session.project().revision().get(),
         "open_product": session.active_product().map(|id| id.get()),
         "mode": session.agent_mode().word(),
+        "domain": engine::guide(),
         "commands": commands,
     })
 }
@@ -259,6 +261,7 @@ fn command_row(session: &Session, spec: engine::CommandSpec) -> Value {
         "id": spec.id(),
         "label": spec.label().text(Lang::En),
         "params": spec.params_schema(),
+        "family": engine::Family::of(spec.id()).map(engine::Family::word),
         "enabled": unavailable.is_none(),
     });
     let Some(object) = row.as_object_mut() else {
