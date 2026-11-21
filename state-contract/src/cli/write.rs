@@ -682,10 +682,17 @@ fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let backlog = read(root, "plan/BACKLOG.md")?;
     let backlog = edit::remove_entry(&backlog, &id)?;
     let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
-    // A session note about a task that no longer exists would be refused by the gate as a leftover.
+    // A session note about a task that no longer exists would be refused by the gate as a leftover,
+    // so the note of the dropped task's stream goes with it — but only when the note is *about* that
+    // task. A live note always names the task its stream works, and dropping any other entry of the
+    // same stream used to take the running session with it, which the gate then read as a doing
+    // plan without a note (U119).
     if let Ok(stream) = stream_of(root, &id) {
         let session_note = stream.note_path();
-        if root.join(&session_note).exists() {
+        let about = std::fs::read_to_string(root.join(&session_note))
+            .ok()
+            .is_some_and(|note| crate::parse::session_field(&note, "task").is_some_and(|task| task == id));
+        if about {
             changes = changes.removed(&session_note);
         }
     }
@@ -1733,6 +1740,22 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         assert_eq!(snapshot(&root), before);
         run(&root, &["drop", "S14"]).expect("S14 is not current");
         assert!(!text(&root, "plan/BACKLOG.md").contains("S14"), "the entry is gone");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_drop_keeps_the_running_sessions_note() {
+        // A live note names the task its stream works. Dropping another entry of the same stream is
+        // not dropping that task, so the note stays: removing it left the gate reading a doing plan
+        // with no session note, and refused a write that had nothing to do with the running task
+        // (U119).
+        let running = STATUS.replace("state=idle", "state=doing");
+        let backlog = BACKLOG.replace("- `[ ]` **P6**", "- `[~]` **P6**");
+        let root = project("drop-running", &running, &backlog, Some(NOTE));
+        run(&root, &["drop", "S14"]).expect("another entry of the stream is dropped");
+        assert!(!text(&root, "plan/BACKLOG.md").contains("S14"), "the entry is gone");
+        assert!(text(&root, "plan/SESSION.md").contains("task: P6"), "the running session keeps its note");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
         let _ = std::fs::remove_dir_all(&root);
     }
 
