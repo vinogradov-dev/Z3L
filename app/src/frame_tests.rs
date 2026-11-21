@@ -4044,6 +4044,32 @@ fn the_ruler_snaps_to_the_board_under_the_pointer() {
 }
 
 #[test]
+fn the_ruler_answers_the_candidate_the_eye_sees_in_either_snap_mode() {
+    // U119: the ruler stores a point in space, so it declares `Free` and the workspace's mode makes
+    // no difference to it. A surface is not above or below a plane the tool draws on — it is the
+    // place the click takes — so the same click answers the same point in 2.5D and in 3D.
+    let mut answers = Vec::new();
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let mut harness = Harness::new("frame-measure-mode");
+        harness.settle();
+        harness.app.tabs.active_mut().frame_all();
+        harness.settle();
+        {
+            let document = harness.app.tabs.active_mut();
+            let kinds = document.snaps();
+            document.set_snaps(crate::document::SnapChoice { kinds, mode });
+        }
+        let node = *harness.selected().first().expect("the demo selects its first panel");
+        let at = harness.node_point(node);
+        harness.press(egui::Key::M, egui::Modifiers::NONE);
+        harness.hover(at);
+        let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
+        answers.push((hover.point, hover.kind));
+    }
+    assert_eq!(answers[0], answers[1], "one point in both modes: the ruler has no plane to drop a foot onto");
+}
+
+#[test]
 fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
     // The reserved box is a probe surface (ADR 0103) and the first thing the ray meets from
     // outside, so the ruler steps past its near face: the person points at the board inside.

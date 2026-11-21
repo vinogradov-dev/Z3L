@@ -498,6 +498,124 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     println!("the box tool is in {}", path.display());
 }
 
+/// Draws the sketch overlay while a corner above the work plane captures the pointer.
+///
+/// The picture is the one the owner's report could not be answered from rectangles: the marker of a
+/// snap and the end of the preview edge must be the same pixel, because the click stores exactly the
+/// point the marker names (U119). The mode is the workspace's 2.5D reading, so the answer is the
+/// candidate's foot on the drawing plane and the preview runs from the first point to that foot.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/snap-marker.png"]
+fn the_snap_marker_is_painted_on_the_end_of_the_preview() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("snap-workspace.json");
+    // A block hanging above the drawing plane, so the two readings of a candidate are far apart on
+    // screen: the picture is about that distance, and a floor panel's 18 mm is a few pixels.
+    let mut project = testkit::sample_project();
+    let root = project.root().id();
+    let raised = model::Placement::new(geom::DVec3::new(420.0, -320.0, 320.0), model::Placement::IDENTITY.rotation())
+        .expect("a place above the plane");
+    project
+        .add_object(root, "Raised", raised, model::Geometry::Mesh(testkit::cube_mesh(testkit::millimetres(120))))
+        .expect("a block above the plane");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the application builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    // A corner of that block, above the drawing plane, and the plane point the first click of the
+    // sketch takes. The pointer goes where the eye sees the corner.
+    let (first, candidate) = {
+        let document = app.tabs.active_mut();
+        document.editor.start_drawing(ui::DrawTool::Line);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        let camera = document.camera();
+        let project = document.session.project();
+        let sight = document.editor.flags().sight();
+        let candidate = project
+            .snap_marks(sight)
+            .into_iter()
+            .find(|mark| mark.point.z > 250.0)
+            .expect("the sample scene has a corner above the plane");
+        let first = crate::gizmo_math::screen_point(camera, rect, geom::DVec3::new(140.0, -320.0, 0.0))
+            .expect("the work plane is on screen");
+        let at = crate::gizmo_math::screen_point(camera, rect, candidate.point).expect("the corner is on screen");
+        (first, at)
+    };
+    let click = |pointer: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let frames = vec![
+        vec![egui::Event::PointerMoved(first), click(first, true), click(first, false)],
+        vec![egui::Event::PointerMoved(candidate)],
+        vec![egui::Event::PointerMoved(candidate)],
+        vec![egui::Event::PointerMoved(candidate)],
+    ];
+    let mut jobs = Vec::new();
+    for events in frames {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+
+    // The marker is drawn at the point the draft stores, so the overlay's own value answers both:
+    // the place the click takes and the end of the preview edge the picture shows.
+    {
+        let document = app.tabs.active();
+        let placed = document.draw_gizmo.hover_point().expect("the pointer places a point");
+        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let stored = geom::DVec3::new(placed[0].millimetres_f64(), placed[1].millimetres_f64(), 0.0);
+        let drawn = crate::gizmo_math::screen_point(document.camera(), rect, stored).expect("the point is on screen");
+        assert!(
+            (marker - drawn).length() < 0.5,
+            "the marker stands on the point the click stores: {marker:?} against {drawn:?}"
+        );
+        assert_ne!(
+            document.draw_gizmo.snap_kind(),
+            Some(model::SnapKind::Grid),
+            "a corner of the scene took the pointer"
+        );
+    }
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("snap-marker.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the snap marker is in {}", path.display());
+}
+
 /// Draws the product card in both theme variants: its number column and its folded class tree.
 ///
 /// The picture answers the two questions a rectangle cannot: whether the three fields start on one
