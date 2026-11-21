@@ -1103,16 +1103,16 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 ## Done
 
 - `[x]` **J20** the agent is taught the domain and the tool families before it builds
-  Why: Measured 2026-11-21: a caller sees five tools and a command_list of 51 ids with labels
-   and schemas, and nothing says which world a request belongs to. A nut, a carcass and a scene
-   light look alike to a model, the guide a person carries is only in docs/, and the wardrobe
-   built by hand in app/tests/recipes came out in millimetres where the document wanted
-   micrometres (X115). ADR 0192 answered with Rust recipes (carcass.box, wardrobe.hinged),
-   which the owner rejected on 2026-11-21: a construction must not be hardcoded; the model
-   composes commands and the program teaches it the domain. Nothing in the tree states how a
-   build starts (a product frame), which shapes the frame takes (Footprint: rectangle, cut
-   corners, a drawn ring), which roles the parts play (model::class::registry(), 70 rows with
-   aliases like «стойка») or that a rod has a class row (20.06) and no creation command.
+  Why: Measured 2026-11-21: a caller sees five tools and a command_list of 64 ids with labels
+     and schemas, and nothing says which world a request belongs to. A nut, a carcass and a scene
+     light look alike to a model, the guide a person carries is only in docs/, and the wardrobe
+     built by hand in app/tests/recipes came out in millimetres where the document wanted
+     micrometres (X115). ADR 0192 answered with Rust recipes (carcass.box, wardrobe.hinged),
+     which the owner rejected on 2026-11-21: a construction must not be hardcoded; the model
+     composes commands and the program teaches it the domain. Nothing in the tree states how a
+     build starts (a product frame), which shapes the frame takes (Footprint: rectangle, cut
+     corners, a drawn ring), which roles the parts play (model::class::registry(), 78 rows with
+     aliases like «стойка») or that a rod has a class row (20.06) and no creation command.
   Shape: One guide the model reads before its first command: engine::guide() returns one JSON
    value — the two worlds (furniture: the product frame and the parts inside it; geometry: free
    bodies), the order of a build from scratch, the frame shapes with a worked radius-corner
