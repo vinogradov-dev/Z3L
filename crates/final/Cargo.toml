@@ -10,4 +10,10 @@ workspace = true
 
 [dependencies]
 geom = { workspace = true }
+scene = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# The tests build a frame, and a drawable carries the document id it came from; already in the tree
+# through `scene`.
+model = { workspace = true }

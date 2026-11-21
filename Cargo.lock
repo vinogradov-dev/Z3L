@@ -1304,6 +1304,8 @@ name = "final"
 version = "0.1.0"
 dependencies = [
  "geom",
+ "model",
+ "scene",
  "thiserror 2.0.21",
 ]
 

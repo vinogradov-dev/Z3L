@@ -37,9 +37,12 @@
 
 pub mod bvh;
 pub mod ray;
+pub mod soup;
+pub mod view;
 
 pub use bvh::Bvh;
 pub use ray::{Hit, Ray, Triangle};
+pub use soup::{MAX_TRIANGLES, triangles_of};
 
 /// The smallest side of a final image, in pixels.
 ///
@@ -171,6 +174,20 @@ pub enum FinalError {
         samples: u32,
         /// The most samples the crate accepts.
         max: u32,
+    },
+    /// A frame with more triangles than one render accepts.
+    #[error("a final render holds at most {max} triangles, and this frame has {count}")]
+    TooManyTriangles {
+        /// The triangle count the frame carried.
+        count: usize,
+        /// The most triangles the crate accepts.
+        max: usize,
+    },
+    /// A mesh the tracer cannot read: a triangle index past its vertices, or half a triangle.
+    #[error("a mesh names the triangle index {index}, which it does not have; a final render refuses it")]
+    MalformedMesh {
+        /// The index that is not a whole triangle of the mesh.
+        index: usize,
     },
 }
 
