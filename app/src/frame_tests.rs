@@ -6416,3 +6416,24 @@ fn a_closed_window_removes_the_token_it_published() {
     }
     assert!(!file.exists(), "a window that closes removes its own token file");
 }
+
+#[test]
+fn the_assistant_switch_closes_and_reopens_the_channel() {
+    // The settings page is the door: the switch pressed on one frame closes or opens the channel,
+    // so the token file always describes the window that is there (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-switch");
+    let file = mcp::Channel::file(&testkit::scratch_dir("frame-channel-switch"));
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace offers the channel");
+
+    harness.app.apply_channel();
+    assert!(file.exists(), "the channel publishes its token while the switch is on");
+
+    harness.app.settings.assistant.attach = false;
+    harness.app.apply_channel();
+    assert!(harness.app.channel.is_none(), "the switch closes the door");
+    assert!(!file.exists(), "and the token goes with it");
+
+    harness.app.settings.assistant.attach = true;
+    harness.app.apply_channel();
+    assert!(file.exists(), "turning it back on publishes a new token");
+}
