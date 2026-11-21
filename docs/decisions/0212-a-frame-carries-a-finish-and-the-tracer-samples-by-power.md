@@ -26,9 +26,13 @@ waits for is decided by the sampler, which Y1 left as white noise.
   It is the tracer's vocabulary, not the document's: `catalog`'s record is mapped onto it by the render
   that reads it (Y3), and `ui` and `render` ignore it.
 - **`scene::Lighting` carries an `environment`**: one linear radiance, zero by default, which is what a
-  ray sees where the frame has no geometry. It is scene data and never the viewport's background
-  colour, which is view state (ADR 0029). Zero means every frame renders as it did, and the value that
-  fills it is a later decision — a studio backdrop is not a view setting and not yet a document object.
+  ray sees where the frame has no geometry. It is never the viewport's background colour, which is
+  view state (ADR 0029), and it is not document data either: the owner's decision while this record was
+  written is that **the studio belongs to the render's own settings**. `render.final`'s `Settings` takes
+  it (`with_environment`), writes it over the frame's value on the copy the tracer reads, and never
+  into the frame a viewport shares; the Render place offers it as one field in percent of a white room
+  and `z3l render --studio <percent>` carries the same number headless. Zero is the default, so a
+  render that asks for nothing keeps the black background every frame had.
 - **The final render samples its light, not its lights' count**: the key light is traced at every
   vertex, and one point light is drawn by emitted power through an alias table (`crates/final/src/
   light.rs`). A light sample is weighted by Veach's power heuristic, which is one for a delta emitter
@@ -43,7 +47,8 @@ waits for is decided by the sampler, which Y1 left as white noise.
   that knows both is the one that reads the record.
 - The viewport does not change: it keeps shading by colour and style, and the finish is invisible to
   it. A future viewport preview of a finish is a new decision, not a consequence of this one.
-- A picture without an environment still shows black where there is nothing, which is the limit Y1
-  recorded; the mechanism to close it exists and no surface authors it yet.
+- A render that names no studio still shows black where there is nothing, which is the limit Y1
+  recorded; the two surfaces that can name one are the Render place's field and the command line, and a
+  document object that claims the studio is a new decision, not a consequence of this one.
 - Y3's mapping is a fill of `Surface`, not a change to it. If the catalogue needs a field this struct
   does not carry, that is a change to this record and to the tracer together.
