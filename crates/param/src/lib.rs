@@ -795,6 +795,10 @@ mod tests {
             Ok(target)
         }
 
+        fn mesh(&mut self, _body: &kernel::MeshBody) -> kernel::Result<BodyId> {
+            Err(KernelError::Unsupported("recording kernel does not build mesh bodies"))
+        }
+
         fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> kernel::Result<geom::MeshData> {
             Err(KernelError::Unsupported("recording kernel does not implement tessellation"))
         }

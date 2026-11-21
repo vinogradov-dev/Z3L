@@ -947,6 +947,10 @@ mod tests {
             Err(KernelError::Unsupported("static kernel does not implement booleans"))
         }
 
+        fn mesh(&mut self, _body: &kernel::MeshBody) -> kernel::Result<BodyId> {
+            Err(KernelError::Unsupported("static kernel does not build mesh bodies"))
+        }
+
         fn tessellate(&self, _body: BodyId, _options: &TessOptions) -> kernel::Result<MeshData> {
             self.mesh.clone().ok_or(KernelError::Unsupported("static kernel has no mesh"))
         }
