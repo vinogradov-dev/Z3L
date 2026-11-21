@@ -122,28 +122,31 @@ impl Project {
         Ok(next_revision)
     }
 
-    /// Appends a boolean step to a constructive object and bumps the revision once.
+    /// Appends a boolean step to a solid body and bumps the revision once.
     ///
     /// The step carries the shape it cuts with, so the document resolves nothing: the caller — the
     /// command, which had the tree in front of it — froze the cutter's body and its placement into
     /// the step first. `consume` names the cutter's node to remove in the same revision, which is
     /// how a boolean leaves one body: the tool is spent unless it was marked a tool ([`Object::is_tool`]).
     ///
-    /// A node that is not a constructive object is [`ProjectError::NotConstructiveObject`], and a
-    /// node that is not in the tree is [`ProjectError::NodeNotFound`]; neither has happened by the
-    /// time the step is stored, because the shape is already a value.
+    /// A solid body is a drawn body — a ring swept on Z and its history — or a parametric primitive,
+    /// which a step cuts exactly as readily (a block turns a ball into a ball with a rectangular
+    /// notch). A node that is neither is [`ProjectError::NotASolidBody`], and a node that is not in
+    /// the tree is [`ProjectError::NodeNotFound`]; neither has happened by the time the step is
+    /// stored, because the shape is already a value.
     pub fn apply_boolean(&mut self, id: Id, boolean: Boolean, consume: Option<Id>) -> Result<Revision, ProjectError> {
         let next_revision = self.next_revision()?;
         let Some(node) = find_node_mut(&mut self.root, id) else {
             return Err(ProjectError::NodeNotFound { id });
         };
         let Some(object) = node.as_object_mut() else {
-            return Err(ProjectError::NotConstructiveObject { id });
+            return Err(ProjectError::NotASolidBody { id });
         };
-        let Some(constructive) = object.geometry_mut().as_constructive_mut() else {
-            return Err(ProjectError::NotConstructiveObject { id });
-        };
-        constructive.push_boolean(boolean)?;
+        match object.geometry_mut() {
+            Geometry::Constructive(body) => body.push_boolean(boolean)?,
+            Geometry::Primitive(body) => body.push_boolean(boolean)?,
+            _ => return Err(ProjectError::NotASolidBody { id }),
+        }
         if let Some(tool) = consume {
             // The cutter is spent by the operation, so it leaves the tree in the same revision and
             // the same undo entry: one command, one body. A cutter the maker marked as a tool is
@@ -162,27 +165,32 @@ impl Project {
         Ok(next_revision)
     }
 
-    /// Removes one boolean step from a constructive object and bumps the revision once.
+    /// Removes one boolean step from a solid body and bumps the revision once.
     ///
-    /// The index names a position in the feature history; index zero is the body's own extrusion,
-    /// which cannot be removed, and an index outside the history is
-    /// [`ProjectError::NoSuchBoolean`]. Removing a step does not bring its cutter back: the shape
-    /// was frozen into the step and the node was spent when the step was applied (ADR 0197).
+    /// The index names a position in the body's steps; on a drawn body index zero is the extrusion
+    /// the body grew from, which cannot be removed, and an index outside the list is
+    /// [`ProjectError::NoSuchBoolean`]. Removing a step does not bring its cutter back: the shape was
+    /// frozen into the step and the node was spent when the step was applied (ADR 0197).
     pub fn remove_object_boolean(&mut self, id: Id, index: usize) -> Result<Revision, ProjectError> {
         let next_revision = self.next_revision()?;
         let Some(node) = find_node_mut(&mut self.root, id) else {
             return Err(ProjectError::NodeNotFound { id });
         };
         let Some(object) = node.as_object_mut() else {
-            return Err(ProjectError::NotConstructiveObject { id });
+            return Err(ProjectError::NotASolidBody { id });
         };
-        let Some(constructive) = object.geometry_mut().as_constructive_mut() else {
-            return Err(ProjectError::NotConstructiveObject { id });
-        };
-        if !matches!(constructive.features().get(index), Some(Feature::Boolean(_))) {
-            return Err(ProjectError::NoSuchBoolean { id, index });
+        match object.geometry_mut() {
+            Geometry::Constructive(constructive) => {
+                if !matches!(constructive.features().get(index), Some(Feature::Boolean(_))) {
+                    return Err(ProjectError::NoSuchBoolean { id, index });
+                }
+                constructive.remove_feature(index).map_err(|_| ProjectError::NoSuchBoolean { id, index })?;
+            }
+            Geometry::Primitive(primitive) => {
+                primitive.remove_step(index).map_err(|_| ProjectError::NoSuchBoolean { id, index })?;
+            }
+            _ => return Err(ProjectError::NotASolidBody { id }),
         }
-        constructive.remove_feature(index).map_err(|_| ProjectError::NoSuchBoolean { id, index })?;
         self.revision = next_revision;
         Ok(next_revision)
     }

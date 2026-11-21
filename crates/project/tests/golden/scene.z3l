@@ -2,8 +2,8 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 31,
-    "revision": 8,
+    "schema_version": 32,
+    "revision": 10,
     "next_id": 14,
     "root": {
       "id": 1,
@@ -208,6 +208,7 @@
                   "tool": {
                     "name": "Cutter",
                     "body": {
+                      "kind": "constructive",
                       "path": {
                         "segments": [
                           {
@@ -269,6 +270,36 @@
                           "height": 40000
                         }
                       ]
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "boolean",
+                  "op": "difference",
+                  "tool": {
+                    "name": "Ball cutter",
+                    "body": {
+                      "kind": "primitive",
+                      "base": {
+                        "shape": "sphere",
+                        "radius": 20000,
+                        "segments": 24,
+                        "bands": 12
+                      },
+                      "steps": []
                     },
                     "placement": {
                       "translation": [
@@ -502,10 +533,97 @@
             "tool": false,
             "geometry": {
               "kind": "primitive",
-              "shape": "sphere",
-              "radius": 50000,
-              "segments": 32,
-              "bands": 16
+              "base": {
+                "shape": "sphere",
+                "radius": 50000,
+                "segments": 32,
+                "bands": 16
+              },
+              "steps": [
+                {
+                  "op": "difference",
+                  "tool": {
+                    "name": "Block",
+                    "body": {
+                      "kind": "constructive",
+                      "path": {
+                        "segments": [
+                          {
+                            "kind": "line",
+                            "id": 1,
+                            "start": [
+                              -40000,
+                              -40000
+                            ],
+                            "end": [
+                              40000,
+                              -40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 2,
+                            "start": [
+                              40000,
+                              -40000
+                            ],
+                            "end": [
+                              40000,
+                              40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 3,
+                            "start": [
+                              40000,
+                              40000
+                            ],
+                            "end": [
+                              -40000,
+                              40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 4,
+                            "start": [
+                              -40000,
+                              40000
+                            ],
+                            "end": [
+                              -40000,
+                              -40000
+                            ]
+                          }
+                        ],
+                        "next_segment_id": 5,
+                        "closed": true,
+                        "shape": "rectangle"
+                      },
+                      "features": [
+                        {
+                          "kind": "extrude",
+                          "height": 40000
+                        }
+                      ]
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
+                  }
+                }
+              ]
             }
           }
         },

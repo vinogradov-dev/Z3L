@@ -65,7 +65,7 @@ pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshE
 pub use node::Node;
 pub use object::{
     AreaError, Boolean, BooleanError, BooleanOp, BooleanTool, Constructive, ConstructiveError, Contours, ContoursError,
-    Extrude, Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object,
+    Extrude, Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object, ToolBody,
 };
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,
@@ -79,7 +79,7 @@ pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
     Cone, DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,
-    MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, Sphere,
+    MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, PrimitiveShape, Sphere,
 };
 pub use project::{
     Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,

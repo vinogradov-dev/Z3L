@@ -23,7 +23,7 @@
 //! answers must not move by the port's rounding (X92, ADR 0181).
 use geom::{DVec3, MAX_CONVEX_POINTS, MAX_MESH_TRIANGLES, MAX_MESH_VERTICES, Shape};
 
-use crate::{Geometry, Id, Mesh, Primitive, Project};
+use crate::{Geometry, Id, Mesh, Primitive, PrimitiveShape, Project};
 
 /// Slack on comparing a point of a body's own surface with the box the document keeps for it, in
 /// millimetres.
@@ -266,9 +266,11 @@ fn convex(vertices: &[DVec3], triangles: &[[u32; 3]]) -> bool {
 /// that does not depend on how finely either is drawn: a ball is the points of the sphere it names, and
 /// a cone the two circles it names.
 fn primitive_shape(primitive: &Primitive) -> Option<Shape> {
-    let points = match primitive {
-        Primitive::Sphere(sphere) => ball_points(sphere.radius().millimetres_f64(), sphere.segments(), sphere.bands()),
-        Primitive::Cone(cone) => cone_points(
+    let points = match primitive.base() {
+        PrimitiveShape::Sphere(sphere) => {
+            ball_points(sphere.radius().millimetres_f64(), sphere.segments(), sphere.bands())
+        }
+        PrimitiveShape::Cone(cone) => cone_points(
             cone.base_radius().millimetres_f64(),
             cone.top_radius().millimetres_f64(),
             cone.height().millimetres_f64(),

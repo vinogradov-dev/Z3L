@@ -1,4 +1,4 @@
-//! Parametric primitives: the shape parameters a mesh is derived from.
+//! Parametric primitives: the shape parameters a mesh is derived from, and the steps cut from them.
 //!
 //! A primitive stores what the user can still change — a radius, the number of sides and latitude
 //! bands — and never the mesh. The mesh is derived for the viewport and for `object.collapse`, so
@@ -9,15 +9,24 @@
 //! ([ADR 0139]). The cone stays one for the same reason — a turned body is not a ring swept on Z —
 //! and is placed by drawing its base circle on the work plane ([ADR 0141]).
 //!
+//! A primitive is a **body**, so a boolean can cut it as readily as it can be cut with: a block
+//! subtracted from a ball leaves a rectangular notch, and the ball keeps its radius. The step is
+//! frozen into the body exactly as on a drawn body ([ADR 0197]); the difference is only what the
+//! steps start from — the shape's own parameters instead of a swept ring.
+//!
 //! [ADR 0054]: ../docs/decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md
 //! [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
 //! [ADR 0139]: ../docs/decisions/0139-a-sphere-is-drawn-around-its-centre.md
 //! [ADR 0141]: ../docs/decisions/0141-a-cone-is-drawn-by-its-base-circle.md
+//! [ADR 0197]: ../docs/decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
+
+use crate::MAX_OBJECT_FEATURES;
+use crate::object::{Boolean, MAX_BOOLEAN_DEPTH};
 
 /// Largest accepted primitive dimension: 1000 m, the same bound the panel rules use.
 pub const MAX_PRIMITIVE_SIZE: Length = Length::from_micrometres(1_000_000_000);
@@ -121,6 +130,28 @@ pub enum PrimitiveError {
         min: Length,
         /// The largest accepted length.
         max: Length,
+    },
+    /// A boolean step's frozen shape carries a body that nests too deeply.
+    #[error("a body's boolean steps nest deeper than {max} levels")]
+    TooDeepBooleans {
+        /// The accepted maximum.
+        max: usize,
+    },
+    /// The body already carries as many boolean steps as it may.
+    #[error("a body accepts at most {max} boolean steps, got {count}")]
+    StepCount {
+        /// The supplied step count.
+        count: usize,
+        /// The accepted maximum.
+        max: usize,
+    },
+    /// The step index names no step of this body.
+    #[error("step {index} is outside a body of {count} steps")]
+    StepIndex {
+        /// The rejected index.
+        index: usize,
+        /// The number of steps the body carries.
+        count: usize,
     },
 }
 
@@ -284,52 +315,24 @@ impl TryFrom<ConeWire> for Cone {
     }
 }
 
-/// A parametric primitive: the shape and the parameters that build its mesh.
+/// The parameters one primitive shape is built from.
 ///
 /// The inner tag is `shape`, because the outer [`Geometry`](crate::Geometry) payload already uses
-/// `kind`. Parameters are the source of truth; the mesh is never stored beside them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// `kind`. The parameters are the source of truth; the mesh is never stored beside them.
+///
+/// This is also what the creation commands carry: a maker starts a shape, never a history, so the
+/// parameters travel alone and the steps arrive afterwards through `object.boolean.set`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "shape", rename_all = "snake_case")]
-pub enum Primitive {
+pub enum PrimitiveShape {
     /// A sphere built from latitude bands.
     Sphere(Sphere),
     /// A cone or a truncated cone built from two circles and a height.
     Cone(Cone),
 }
 
-impl Primitive {
-    /// A sphere with the given radius, side count and latitude bands.
-    pub fn sphere(radius: Length, segments: u32, bands: u32) -> Result<Self, PrimitiveError> {
-        Ok(Self::Sphere(Sphere::new(radius, segments, bands)?))
-    }
-
-    /// A cone or a truncated cone with the given base, top, height and side count.
-    pub fn cone(
-        base_radius: Length,
-        top_radius: Length,
-        height: Length,
-        segments: u32,
-    ) -> Result<Self, PrimitiveError> {
-        Ok(Self::Cone(Cone::new(base_radius, top_radius, height, segments)?))
-    }
-
-    /// Builds the default primitive of one kind from the creation size.
-    ///
-    /// The size is the full extent, which for the sphere is its diameter; the sphere uses the
-    /// default tessellation. A drawn sphere bypasses this constructor: its radius is the circle the
-    /// maker drew, so [`Primitive::sphere`] takes the number directly (ADR 0139).
-    pub fn from_kind(kind: PrimitiveKind, size: Length) -> Result<Self, PrimitiveError> {
-        validate_length(size)?;
-        let radius = Length::from_micrometres(size.micrometres() / 2);
-        match kind {
-            PrimitiveKind::Sphere => Self::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
-            // A cone's size is its base diameter and its height at once; the drawn gesture supplies
-            // both numbers itself, so this is the typed shortcut no surface builds.
-            PrimitiveKind::Cone => Self::cone(radius, Length::ZERO, size, DEFAULT_SEGMENTS),
-        }
-    }
-
-    /// Which shape this primitive is.
+impl PrimitiveShape {
+    /// Which shape this is.
     pub const fn kind(&self) -> PrimitiveKind {
         match self {
             Self::Sphere(_) => PrimitiveKind::Sphere,
@@ -365,12 +368,7 @@ impl Primitive {
         }
     }
 
-    /// The vertex and face counts of the derived mesh.
-    pub const fn mesh_counts(&self) -> (usize, usize) {
-        (self.vertex_count(), self.face_count())
-    }
-
-    /// The local bounding box of the derived mesh, in micrometres.
+    /// The local bounding box of the derived surface, in micrometres.
     ///
     /// It is analytic, so the tree and the pivot do not need the evaluated mesh. A sphere is centred
     /// on the local zero; a cone stands on its base circle, so it reaches from `z = 0` to its height
@@ -391,6 +389,155 @@ impl Primitive {
     }
 }
 
+/// Serialized form of [`Primitive`]; validation happens in its `TryFrom` implementation.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrimitiveWire {
+    base: PrimitiveShape,
+    #[serde(default)]
+    steps: Vec<Boolean>,
+}
+
+/// A parametric primitive **body**: the parameters its shape is built from and the steps cut from it.
+///
+/// A primitive is a solid, so it is an operand of a body boolean in both directions: a block
+/// subtracted from a ball leaves a rectangular notch, and two balls leave a spherical scoop
+/// ([ADR 0197]). The steps are frozen shapes, exactly as they are on a drawn body, and a body whose
+/// step list is empty is built from its parameters alone — the analytic mesh the viewport draws.
+///
+/// [ADR 0197]: ../docs/decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "PrimitiveWire")]
+pub struct Primitive {
+    base: PrimitiveShape,
+    steps: Vec<Boolean>,
+}
+
+impl Primitive {
+    /// A sphere with the given radius, side count and latitude bands, and no steps yet.
+    pub fn sphere(radius: Length, segments: u32, bands: u32) -> Result<Self, PrimitiveError> {
+        Ok(Self { base: PrimitiveShape::Sphere(Sphere::new(radius, segments, bands)?), steps: Vec::new() })
+    }
+
+    /// A cone or a truncated cone with the given base, top, height and side count, and no steps yet.
+    pub fn cone(
+        base_radius: Length,
+        top_radius: Length,
+        height: Length,
+        segments: u32,
+    ) -> Result<Self, PrimitiveError> {
+        Ok(Self {
+            base: PrimitiveShape::Cone(Cone::new(base_radius, top_radius, height, segments)?),
+            steps: Vec::new(),
+        })
+    }
+
+    /// Builds the default primitive of one kind from the creation size.
+    ///
+    /// The size is the full extent, which for the sphere is its diameter; the sphere uses the
+    /// default tessellation. A drawn sphere bypasses this constructor: its radius is the circle the
+    /// maker drew, so [`Primitive::sphere`] takes the number directly (ADR 0139).
+    pub fn from_kind(kind: PrimitiveKind, size: Length) -> Result<Self, PrimitiveError> {
+        validate_length(size)?;
+        let radius = Length::from_micrometres(size.micrometres() / 2);
+        match kind {
+            PrimitiveKind::Sphere => Self::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
+            // A cone's size is its base diameter and its height at once; the drawn gesture supplies
+            // both numbers itself, so this is the typed shortcut no surface builds.
+            PrimitiveKind::Cone => Self::cone(radius, Length::ZERO, size, DEFAULT_SEGMENTS),
+        }
+    }
+
+    /// The parameters the shape is built from.
+    pub const fn base(&self) -> PrimitiveShape {
+        self.base
+    }
+
+    /// The steps cut from the shape, in application order.
+    pub fn steps(&self) -> &[Boolean] {
+        &self.steps
+    }
+
+    /// Whether the body is still the plain shape, so its mesh comes from its parameters alone.
+    pub fn is_plain(&self) -> bool {
+        self.steps.is_empty()
+    }
+
+    /// Appends a boolean step after the shape built so far.
+    ///
+    /// The step carries the shape it cuts with, so nothing is resolved here and no node can be
+    /// named that a later load could not find (ADR 0197). The step list and the nesting are bounded
+    /// where the steps are stored, so a hostile file cannot make every walk over a document recurse
+    /// without a limit.
+    pub fn push_boolean(&mut self, boolean: Boolean) -> Result<(), PrimitiveError> {
+        if self.steps.len() >= MAX_OBJECT_FEATURES {
+            return Err(PrimitiveError::StepCount { count: self.steps.len(), max: MAX_OBJECT_FEATURES });
+        }
+        let depth = 1usize.saturating_add(boolean.tool().body().boolean_depth());
+        if depth > MAX_BOOLEAN_DEPTH {
+            return Err(PrimitiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH });
+        }
+        self.steps.push(boolean);
+        Ok(())
+    }
+
+    /// Removes the step at `index` and returns it.
+    pub fn remove_step(&mut self, index: usize) -> Result<Boolean, PrimitiveError> {
+        if index >= self.steps.len() {
+            return Err(PrimitiveError::StepIndex { index, count: self.steps.len() });
+        }
+        Ok(self.steps.remove(index))
+    }
+
+    /// Which shape this primitive is.
+    pub const fn kind(&self) -> PrimitiveKind {
+        self.base.kind()
+    }
+
+    /// The lower-case shape name used in the scene tree.
+    pub const fn shape_name(&self) -> &'static str {
+        self.base.shape_name()
+    }
+
+    /// The number of polygon faces the plain shape's derived mesh has.
+    ///
+    /// A body with steps is built by the geometry kernel, so its face count is what the kernel
+    /// answers; this describes the shape the steps start from.
+    pub const fn face_count(&self) -> usize {
+        self.base.face_count()
+    }
+
+    /// The number of vertices the plain shape's derived mesh has.
+    pub const fn vertex_count(&self) -> usize {
+        self.base.vertex_count()
+    }
+
+    /// The vertex and face counts of the plain shape's derived mesh.
+    pub const fn mesh_counts(&self) -> (usize, usize) {
+        (self.vertex_count(), self.face_count())
+    }
+
+    /// The local bounding box of the derived body, in micrometres.
+    ///
+    /// A sphere is centred on the local zero; a cone stands on its base circle. A body with steps
+    /// keeps the shape's box: a cut can only remove material from it.
+    pub const fn bounds_micrometres(&self) -> ([i64; 3], [i64; 3]) {
+        self.base.bounds_micrometres()
+    }
+}
+
+impl TryFrom<PrimitiveWire> for Primitive {
+    type Error = PrimitiveError;
+
+    fn try_from(wire: PrimitiveWire) -> Result<Self, Self::Error> {
+        let mut primitive = Primitive { base: wire.base, steps: Vec::new() };
+        for boolean in wire.steps {
+            primitive.push_boolean(boolean)?;
+        }
+        Ok(primitive)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::testing::millimetres;
@@ -401,7 +548,7 @@ mod tests {
     fn the_creation_size_builds_the_default_sphere() {
         let size = millimetres(100);
         let built = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("sphere");
-        let Primitive::Sphere(sphere) = built else {
+        let PrimitiveShape::Sphere(sphere) = built.base() else {
             panic!("a sphere");
         };
         assert_eq!(sphere.radius(), millimetres(50), "the diameter is the creation size");
@@ -445,7 +592,7 @@ mod tests {
     #[test]
     fn a_cone_keeps_its_two_circles_and_its_height() {
         let cone = Primitive::cone(millimetres(40), millimetres(20), millimetres(100), 24).expect("cone");
-        let Primitive::Cone(stored) = cone else {
+        let PrimitiveShape::Cone(stored) = cone.base() else {
             panic!("a cone");
         };
         assert_eq!(stored.base_radius(), millimetres(40));
@@ -460,7 +607,7 @@ mod tests {
     #[test]
     fn a_zero_top_radius_is_the_sharp_cone() {
         let cone = Primitive::cone(millimetres(40), Length::ZERO, millimetres(100), 32).expect("a sharp cone");
-        let Primitive::Cone(stored) = cone else {
+        let PrimitiveShape::Cone(stored) = cone.base() else {
             panic!("a cone");
         };
         assert!(stored.is_sharp());
@@ -526,17 +673,80 @@ mod tests {
     fn a_retired_box_or_cylinder_shape_is_not_a_primitive() {
         // A box and a cylinder are drawn profiles now (ADR 0138), so schema 25 refuses the shapes
         // the retired parameters used to build instead of converting them silently (ADR 0096).
-        let box_text = r#"{"shape":"cuboid","width":600000,"depth":400000,"height":720000}"#;
-        assert!(serde_json::from_str::<Primitive>(box_text).is_err(), "there is no cuboid primitive");
-        let cylinder_text = r#"{"shape":"cylinder","radius":50000,"height":100000,"segments":32}"#;
-        assert!(serde_json::from_str::<Primitive>(cylinder_text).is_err(), "there is no cylinder primitive");
-        let cube_text = r#"{"shape":"cube","edge":100000}"#;
-        assert!(serde_json::from_str::<Primitive>(cube_text).is_err(), "the cube shape is gone with schema 22");
+        for text in [
+            r#"{"shape":"cuboid","width":600000,"depth":400000,"height":720000}"#,
+            r#"{"shape":"cylinder","radius":50000,"height":100000,"segments":32}"#,
+            r#"{"shape":"cube","edge":100000}"#,
+        ] {
+            assert!(serde_json::from_str::<Primitive>(text).is_err(), "a retired shape is not a primitive");
+        }
     }
 
     #[test]
     fn an_unknown_field_is_rejected() {
-        let text = r#"{"shape":"sphere","radius":100000,"segments":32,"bands":16,"thickness":1}"#;
-        assert!(serde_json::from_str::<Primitive>(text).is_err(), "an unknown parameter is an error");
+        let text = r#"{"base":{"shape":"sphere","radius":100000,"segments":32,"bands":16},"steps":[]}"#;
+        assert!(serde_json::from_str::<Primitive>(text).is_ok(), "the current layout still loads");
+        let unknown =
+            r#"{"base":{"shape":"sphere","radius":100000,"segments":32,"bands":16,"thickness":1},"steps":[]}"#;
+        assert!(serde_json::from_str::<Primitive>(unknown).is_err(), "an unknown parameter is an error");
+    }
+
+    /// A step that cuts with a drawn body, standing at one placement.
+    fn step(name: &str) -> Boolean {
+        let body = drawn_body();
+        Boolean::new(
+            crate::BooleanOp::Difference,
+            crate::BooleanTool::new(name, crate::ToolBody::Constructive(body), crate::Placement::IDENTITY)
+                .expect("a tool"),
+        )
+    }
+
+    /// A 10 x 10 ring swept 20 mm: a drawn body a step can cut with.
+    fn drawn_body() -> crate::Constructive {
+        let ring =
+            crate::Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)]).expect("a ring");
+        crate::Constructive::extrude(ring, millimetres(20)).expect("a body")
+    }
+
+    #[test]
+    fn a_primitive_carries_the_steps_cut_from_it() {
+        let mut ball = Primitive::sphere(millimetres(30), 16, 8).expect("ball");
+        assert!(ball.is_plain(), "a new primitive is the plain shape");
+        ball.push_boolean(step("Block")).expect("a step");
+        assert_eq!(ball.steps().len(), 1);
+        assert!(!ball.is_plain());
+
+        let text = serde_json::to_string(&ball).expect("serialize");
+        let mut decoded: Primitive = serde_json::from_str(&text).expect("load");
+        assert_eq!(decoded, ball, "the steps travel with the shape");
+        assert_eq!(decoded.base().kind(), PrimitiveKind::Sphere, "and the parameters are still the base");
+
+        let removed = decoded.remove_step(0).expect("the step");
+        assert_eq!(removed.tool().name(), "Block");
+        assert!(decoded.is_plain(), "a body is plain again once its last step is gone");
+        assert_eq!(decoded.remove_step(0), Err(PrimitiveError::StepIndex { index: 0, count: 0 }));
+    }
+
+    #[test]
+    fn a_primitive_refuses_a_step_that_nests_too_deep() {
+        // A chain of drawn bodies, each cutting with the previous one, reaches the document's limit;
+        // a ball that cut with it would stand one level past it.
+        let mut nested = drawn_body();
+        for _ in 1..MAX_BOOLEAN_DEPTH {
+            let inner =
+                crate::BooleanTool::new("Inner", crate::ToolBody::Constructive(nested), crate::Placement::IDENTITY)
+                    .expect("a tool");
+            let mut outer = drawn_body();
+            outer.push_boolean(Boolean::new(crate::BooleanOp::Difference, inner)).expect("a level inside the limit");
+            nested = outer;
+        }
+        let tool = crate::BooleanTool::new("Outer", crate::ToolBody::Constructive(nested), crate::Placement::IDENTITY)
+            .expect("a tool");
+        let mut ball = Primitive::sphere(millimetres(30), 8, 4).expect("ball");
+        assert_eq!(
+            ball.push_boolean(Boolean::new(crate::BooleanOp::Difference, tool)),
+            Err(PrimitiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH })
+        );
+        assert!(ball.is_plain(), "a refused step leaves the body untouched");
     }
 }
