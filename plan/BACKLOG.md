@@ -45,29 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
-  Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
-  must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
-  a footprint (ADR 0159: a rectangle, cut corners, or a drawn ring), but `Project::niche` seeds
-  its cell from the envelope's six planes
-  (`Cell::envelope(envelope.local_max - envelope.local_min)`), so the cut-away corner or the
-  drawn ring is not a wall: a fill in such a case grows its board into space the frame does not
-  reserve, and `FillMode::Fit` answers a rectangle that is not inside the case. N10's Done
-  never covered a non-box frame.
-  Shape: The cell starts from the frame's own section, not its box: the footprint's ring
-  (`Footprint::outline`) becomes the seed polygon, its edges are planes, and every probe keeps
-  clipping. `Niche::section()` then answers the footprint's section intersected with the walls,
-  so `FillMode::Shape` gives the case's own outline — a cut corner, a rounded corner, a drawn
-  ring — and `Fit` the largest rectangle inside it; `classify_outline` already turns a chamfer
-  or a radius into a standard panel, so a corner cabinet keeps `Rect` with one corner feature.
-  A footprint whose ring is not convex is refused for a fill with a sentence, because the niche
-  is one convex cell (ADR 0106); `NicheShape` gains a case only if a cut whose section varies
-  with height needs one, measured first and recorded in `plan/notes/N29.md`.
-  Done: Tests: a case with one 45-degree cut gives a niche whose section is the cut ring and a Fit
-  rectangle inside it; a drawn-ring case gives the ring; the created panel's world points lie
-  inside the footprint; a non-convex footprint is a readable refusal and never a board outside
-  the case; the box case keeps today's answers; `cargo xtask ci` is green.
-  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs`
 - `[ ]` **U120** a round body answers its own places, not the corners of its box
   Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
    the ones that come later. Today Scene::object files a bound box for every geometry and a
@@ -815,6 +792,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 
 ## Done
+
+- `[x]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
+  Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
+  must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
+  a footprint (ADR 0159: a rectangle, cut corners, or a drawn ring), but `Project::niche` seeds
+  its cell from the envelope's six planes
+  (`Cell::envelope(envelope.local_max - envelope.local_min)`), so the cut-away corner or the
+  drawn ring is not a wall: a fill in such a case grows its board into space the frame does not
+  reserve, and `FillMode::Fit` answers a rectangle that is not inside the case. N10's Done
+  never covered a non-box frame.
+  Shape: The cell starts from the frame's own section, not its box: the footprint's ring
+  (`Footprint::outline`) becomes the seed polygon, its edges are planes, and every probe keeps
+  clipping. `Niche::section()` then answers the footprint's section intersected with the walls,
+  so `FillMode::Shape` gives the case's own outline — a cut corner, a rounded corner, a drawn
+  ring — and `Fit` the largest rectangle inside it; `classify_outline` already turns a chamfer
+  or a radius into a standard panel, so a corner cabinet keeps `Rect` with one corner feature.
+  A footprint whose ring is not convex is refused for a fill with a sentence, because the niche
+  is one convex cell (ADR 0106); `NicheShape` gains a case only if a cut whose section varies
+  with height needs one, measured first and recorded in `plan/notes/N29.md`.
+  Done: Tests: a case with one 45-degree cut gives a niche whose section is the cut ring and a Fit
+  rectangle inside it; a drawn-ring case gives the ring; the created panel's world points lie
+  inside the footprint; a non-convex footprint is a readable refusal and never a board outside
+  the case; the box case keeps today's answers; `cargo xtask ci` is green.
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs` — `797d740`
 
 - `[x]` **U127** the three panel classes are named with the shop's own words
   Why: The owner asks whether the panel classes carry shared names and, if not, to hoist them

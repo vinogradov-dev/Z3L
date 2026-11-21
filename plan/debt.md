@@ -10,6 +10,17 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[release]` a gate that has to run before the first release, `[vendor]`.
 
+- `[gizmo]` A curved edge of a frame's footprint is measured as its chord, because the cell is planes
+  only (ADR 0106, ADR 0201): a fill in a case with a rounded corner takes the chamfer the radius spans,
+  which fits inside the frame and classifies as a standard panel, but it is a straight cut where the
+  frame is round. An exact section needs a cell that can hold arcs, which is the change the curved-wall
+  entry below (N9, N12) asks for (N29).
+
+- `[gizmo]` The niche tool draws the cell's **box**, so in a cut-corner or drawn-ring frame its
+  wireframe reaches into the space the frame does not reserve and the callout prints the bounds of the
+  shape rather than the shape (N29, ADR 0201). Draw the cell's own prism ring when a maker needs the
+  niche tool to read the space the fill does.
+
 - `[design]` `app` is a binary root without a library, so a second binary cannot share the shell's
   rules: `z3l directory` is a mode of the one program, because a second `[[bin]]` would write the rule
   for where `nomenclature/` lives (`settings_store::config_dir`) a second time. Split `app` into
