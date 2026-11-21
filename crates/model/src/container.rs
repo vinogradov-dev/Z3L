@@ -9,11 +9,19 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
 
+use geom::{DVec2, Region};
+
 use crate::footprint::{FootprintError, anchored_ring};
 use crate::{
     ClassCode, Contour, Footprint, Id, Node, PivotLocal, Placement, Properties, PropertyError, PropertyValue,
     SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID, SYSTEM_PROTOTYPE_PARAMETERS, SYSTEM_PROTOTYPE_VERSION,
 };
+
+/// How far outside the sides a point may sit and still belong to the reserved space, in millimetres.
+///
+/// One micrometre: the document's own step, so a point stored on a face belongs to the piece on both
+/// sides of it.
+const SPACE_TOLERANCE: f64 = 1.0e-3;
 
 /// The authored box of a product: its width, depth, height and the shape its base is cut to.
 ///
@@ -99,6 +107,38 @@ impl Envelope {
     /// The shape the base rectangle is cut to.
     pub const fn footprint(&self) -> &Footprint {
         &self.footprint
+    }
+
+    /// Whether a point in the product's own frame lies inside the space the envelope reserves.
+    ///
+    /// The reserved space is the footprint's section from the floor to the ceiling, not the box around
+    /// it: `[0..x] × [0..y]` bounds the shape and a cut corner or a drawn ring then takes its own part
+    /// of that rectangle away (ADR 0159). A point outside the section is outside the piece, which is
+    /// what the picking rule and the niche probe both ask. The ring is read by its own curve, so an arc
+    /// answers for the material it removes and never for its chord.
+    pub fn holds(&self, local: DVec2) -> bool {
+        let width = self.x.millimetres_f64();
+        let depth = self.y.millimetres_f64();
+        if !local.is_finite()
+            || local.x < -SPACE_TOLERANCE
+            || local.y < -SPACE_TOLERANCE
+            || local.x > width + SPACE_TOLERANCE
+            || local.y > depth + SPACE_TOLERANCE
+        {
+            return false;
+        }
+        if self.footprint.is_rectangle() {
+            return true;
+        }
+        // A stored footprint has already been drawn once by `with_footprint`, so a ring that no longer
+        // generates is a broken value rather than a point outside the piece.
+        let Ok(ring) = self.footprint.outline(self.x, self.y) else {
+            return false;
+        };
+        // A point stored on the boundary belongs to the piece on both sides of it, as the micrometre
+        // of slack above says: the containment test reads the inside and the distance reads the edge.
+        Region::new(ring, Vec::new())
+            .is_ok_and(|region| region.contains(local) || region.boundary_distance(local) <= SPACE_TOLERANCE)
     }
 }
 
@@ -355,5 +395,78 @@ impl Container {
     /// Removes one property; returns whether it was present.
     pub fn clear_property(&mut self, key: &str) -> bool {
         self.properties.remove(key).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use crate::{CornerFeatureKind, Path};
+
+    fn millimetres(value: i64) -> Length {
+        Length::from_millimetres(value).expect("whole millimetres fit a length")
+    }
+
+    #[test]
+    fn a_plain_box_holds_every_point_of_its_sides() {
+        let envelope = Envelope::new(millimetres(600), millimetres(500), millimetres(720)).expect("a box");
+        assert!(envelope.holds(DVec2::new(300.0, 250.0)));
+        assert!(envelope.holds(DVec2::ZERO), "the zero corner is the piece's own");
+        assert!(envelope.holds(DVec2::new(600.0, 500.0)), "and so is the far one");
+        assert!(!envelope.holds(DVec2::new(600.5, 250.0)), "nothing lies beside the box");
+        assert!(!envelope.holds(DVec2::new(300.0, -0.5)));
+        assert!(!envelope.holds(DVec2::new(f64::NAN, 0.0)));
+    }
+
+    #[test]
+    fn a_cut_corner_is_not_part_of_the_reserved_space() {
+        // The cut runs from (500, 0) to (600, 100): the free side of it is `y >= x - 500`.
+        let footprint = Footprint::cut([
+            None,
+            Some(CornerFeatureKind::Chamfer { incoming: millimetres(100), outgoing: millimetres(100) }),
+            None,
+            None,
+        ]);
+        let envelope =
+            Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint).expect("a cut");
+        assert!(envelope.holds(DVec2::new(400.0, 10.0)), "the floor beside the cut is reserved");
+        assert!(envelope.holds(DVec2::new(550.0, 60.0)), "and so is the space in front of the cut face");
+        assert!(envelope.holds(DVec2::new(550.0, 50.0)), "the cut face itself belongs to the piece");
+        assert!(!envelope.holds(DVec2::new(590.0, 10.0)), "the corner the frame gave away is not reserved");
+        assert!(!envelope.holds(DVec2::new(550.0, 40.0)));
+    }
+
+    #[test]
+    fn a_drawn_ring_is_read_by_its_own_curve_and_not_by_its_chords() {
+        // An 80 mm radius on the bottom-right corner of a 600 x 500 case: the arc is centred at
+        // (520, 80), so the point 75 mm from that centre is inside the frame while the chord between
+        // the two tangency points leaves it outside.
+        let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a radius");
+        assert!(envelope.holds(DVec2::new(573.0, 27.0)), "between the chord and the arc, the frame still reserves it");
+        assert!(!envelope.holds(DVec2::new(597.0, 3.0)), "and the corner outside the arc it does not");
+    }
+
+    #[test]
+    fn a_drawn_ring_holds_the_space_inside_it() {
+        let ring = Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(600), Length::ZERO],
+                [millimetres(600), millimetres(560)],
+                [millimetres(0), millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a drawn frame");
+        assert!(envelope.footprint().is_ring());
+        assert!(envelope.holds(DVec2::new(300.0, 280.0)));
+        assert!(!envelope.holds(DVec2::new(700.0, 280.0)), "the box beside the ring is not the piece");
     }
 }

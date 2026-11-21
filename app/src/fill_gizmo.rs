@@ -281,6 +281,7 @@ pub(crate) fn plan(
     let niche = project.niche(point, sight, None).map_err(|refusal| match refusal {
         model::NicheRefusal::Outside => refusal_sentence(FillRefusal::Outside),
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
+        model::NicheRefusal::Footprint => refusal_sentence(FillRefusal::Footprint),
     })?;
     plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None, sight)
 }
@@ -360,6 +361,7 @@ fn refusal_sentence(refusal: FillRefusal) -> String {
         FillRefusal::Unrepresentable => {
             "The empty space here is not one straight shape; point at a plainer gap.".to_owned()
         }
+        FillRefusal::Footprint => "The open piece's frame is not convex, so no one part takes its shape.".to_owned(),
         FillRefusal::OtherProduct => "The void belongs to another product; open it to fill it.".to_owned(),
         FillRefusal::NoFrame => "The open product has no frame.".to_owned(),
         FillRefusal::TooThin => "The void is thinner than the material.".to_owned(),

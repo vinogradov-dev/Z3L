@@ -307,6 +307,7 @@ const fn refusal_word(refusal: NicheRefusal) -> &'static str {
     match refusal {
         NicheRefusal::Outside => "the point is outside every product",
         NicheRefusal::Unrepresentable => "the free space is not one convex cell",
+        NicheRefusal::Footprint => "the frame's footprint is not one convex ring",
     }
 }
 

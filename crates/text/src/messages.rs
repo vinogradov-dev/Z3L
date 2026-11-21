@@ -169,6 +169,10 @@ messages! {
         "The empty space here is not one straight shape; point at a plainer gap",
         "Пустое место здесь не одна прямая форма; укажите на более простой зазор"
     ],
+    VoidFootprint = [
+        "The open piece's frame is not convex; point at a plainer gap",
+        "Контур открытого изделия невыпуклый; укажите на более простой зазор"
+    ],
     NavigationStatus = ["Navigation · {}", "Навигация · {}"],
     GestureOrbit = ["Drag in the viewport to orbit  ·  Esc done", "Перетаскивайте в области просмотра для облёта  ·  Esc готово"],
     GesturePan = ["Drag in the viewport to pan  ·  Esc done", "Перетаскивайте в области просмотра для панорамы  ·  Esc готово"],

@@ -139,6 +139,8 @@ pub enum FillRefusal {
     Outside,
     /// The free space around the point is not one convex cell.
     Unrepresentable,
+    /// The open product's own footprint is not a convex ring, so the space it reserves is not one cell.
+    Footprint,
     /// The void belongs to another product than the one that is open.
     OtherProduct,
     /// Neither the product nor the measured point has a usable frame.
@@ -177,6 +179,7 @@ impl Project {
         let niche = self.niche(request.point, sight, contact).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
             NicheRefusal::Unrepresentable => FillRefusal::Unrepresentable,
+            NicheRefusal::Footprint => FillRefusal::Footprint,
         })?;
         self.fill_plan_in(&niche, product, request, sight)
     }
@@ -1389,6 +1392,179 @@ mod tests {
             ((point.x - low.x).abs() <= 1.0e-6 || (point.x - high.x).abs() <= 1.0e-6)
                 && ((point.y - low.y).abs() <= 1.0e-6 || (point.y - high.y).abs() <= 1.0e-6)
         })
+    }
+
+    /// A corner cabinet: 600 wide, 500 deep, 720 tall, one 45-degree corner cut 100 mm along each edge.
+    fn corner_cabinet() -> (Project, Id) {
+        let footprint = Footprint::cut([
+            None,
+            Some(CornerFeatureKind::Chamfer { incoming: millimetres(100), outgoing: millimetres(100) }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a corner cabinet");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Corner", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a corner cabinet");
+        (project, product)
+    }
+
+    /// The envelope of the open product, for the footprint tests.
+    fn envelope_of(project: &Project, product: Id) -> Envelope {
+        project.container(product).and_then(|product| product.envelope()).cloned().expect("a product has an envelope")
+    }
+
+    #[test]
+    fn a_cut_corner_case_fits_the_largest_rectangle_inside_its_cut() {
+        // The niche starts from the frame's footprint, so the cut face is a wall of the cell: the fit
+        // rectangle is 500 x 500 (the full depth, one setback narrower) and not the 600 x 400 the box
+        // around the cut would allow (N29, ADR 0201).
+        let (project, product) = corner_cabinet();
+        let thickness = millimetres(18);
+        let fitted = plan(&project, product, Fill::WidthAndDepth, FillMode::Fit, thickness).expect("a fit plan");
+        assert_eq!(fitted.nominal_size, PanelNominalSize::new(millimetres(500), millimetres(500)).expect("a size"));
+        assert!(matches!(fitted.outline, PanelOutline::Rect { .. }), "a fit keeps the standard panel");
+        assert!(inside(&fitted, thickness), "the rectangle lies inside every wall of the cell");
+        let envelope = envelope_of(&project, product);
+        for corner in &fitted.corners {
+            let local = fitted.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0));
+            assert!(
+                envelope.holds(DVec2::new(local.x, local.y)),
+                "the fitted rectangle left the footprint at {corner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cut_corner_case_takes_its_own_outline_in_the_shape_mode() {
+        let (project, product) = corner_cabinet();
+        let shaped =
+            plan(&project, product, Fill::WidthAndDepth, FillMode::Shape, millimetres(18)).expect("a shape plan");
+        let features = shaped.outline.corner_features();
+        let [feature] = features else {
+            panic!("the cut is one corner feature, was {features:?}");
+        };
+        assert_eq!(
+            feature.feature(),
+            CornerFeatureKind::Chamfer { incoming: millimetres(100), outgoing: millimetres(100) },
+            "the cut face is the case's own 45-degree corner"
+        );
+        assert_eq!(feature.corner(), VertexId::new(2).expect("the bottom-right corner"), "the cut belongs to it");
+        assert_eq!(shaped.corners.len(), 5, "the shaped shelf is the pentagon the walls leave");
+    }
+
+    #[test]
+    fn the_part_a_shaped_case_creates_stands_inside_its_footprint() {
+        let (mut project, product) = corner_cabinet();
+        let thickness = millimetres(18);
+        let envelope = envelope_of(&project, product);
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
+            for mode in [FillMode::Fit, FillMode::Shape] {
+                let plan = plan(&project, product, fill, mode, thickness).expect("a plan inside the cut case");
+                let id = project
+                    .add_panel_with_outline(
+                        product,
+                        "Part",
+                        plan.nominal_size,
+                        plan.outline.clone(),
+                        &plan.bevels,
+                        None,
+                        thickness,
+                        plan.placement,
+                    )
+                    .expect("the click creates the part");
+                let panel = project.panel(id).expect("the part is in the tree");
+                let ring = panel
+                    .outline()
+                    .ring_for(panel.nominal_size())
+                    .expect("the stored outline draws its own ring")
+                    .sample(0.25)
+                    .expect("the ring samples");
+                let gap = thickness.millimetres_f64();
+                for point in &ring {
+                    for face in [0.0, gap] {
+                        let local = plan.placement.transform_point(DVec3::new(point.x, point.y, face));
+                        assert!(
+                            envelope.holds(DVec2::new(local.x, local.y)),
+                            "{fill:?} in {mode:?} put a point of the part outside the frame: {point:?} at {face}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_rounded_corner_stands_as_the_chord_inside_its_arc() {
+        // The cell is planes only, so an arc is taken by its chord (N29, ADR 0201): the shelf takes
+        // the case's rounded corner as the chamfer its 80 mm radius spans, and every point of that
+        // chamfer lies inside the radius it was cut to.
+        let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a rounded case");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Rounded", ClassCode::GENERAL_PRODUCT, envelope.clone(), Placement::IDENTITY)
+            .expect("a rounded case");
+        let thickness = millimetres(18);
+        let shaped = plan(&project, product, Fill::WidthAndDepth, FillMode::Shape, thickness).expect("a shape plan");
+        let features = shaped.outline.corner_features();
+        let [feature] = features else {
+            panic!("the rounded corner is one corner feature, was {features:?}");
+        };
+        assert_eq!(
+            feature.feature(),
+            CornerFeatureKind::Chamfer { incoming: millimetres(80), outgoing: millimetres(80) },
+            "the chord of the radius, which the cell can hold"
+        );
+        for corner in shaped.corners.iter().chain(shaped.far_corners.iter()) {
+            let local = shaped.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0));
+            assert!(
+                envelope.holds(DVec2::new(local.x, local.y)),
+                "the chord must lie inside the radius the frame reserves, left it at {corner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_whose_ring_turns_right_is_refused_and_builds_no_part() {
+        let ring = Path::polyline(
+            vec![
+                [millimetres(0), millimetres(0)],
+                [millimetres(600), millimetres(0)],
+                [millimetres(600), millimetres(560)],
+                [millimetres(300), millimetres(560)],
+                [millimetres(300), millimetres(400)],
+                [millimetres(200), millimetres(400)],
+                [millimetres(200), millimetres(560)],
+                [millimetres(0), millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a notched frame");
+        let thickness = millimetres(18);
+        for mode in [FillMode::Fit, FillMode::Shape] {
+            assert_eq!(
+                plan(&project, product, Fill::WidthAndDepth, mode, thickness),
+                Err(FillRefusal::Footprint),
+                "a frame that reserves no one cell answers no part ({mode:?})"
+            );
+        }
     }
 
     #[test]

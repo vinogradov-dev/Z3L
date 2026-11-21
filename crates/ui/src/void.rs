@@ -53,6 +53,8 @@ pub enum VoidRefusal {
     /// The free space around the point is not one convex cell: it holds something, or a wall does
     /// not reach the face the cell would need.
     Unrepresentable,
+    /// The open product's frame is not convex, so the space it reserves is not one cell either.
+    Footprint,
 }
 
 impl VoidRefusal {
@@ -61,6 +63,7 @@ impl VoidRefusal {
         match refusal {
             NicheRefusal::Outside => VoidRefusal::Outside,
             NicheRefusal::Unrepresentable => VoidRefusal::Unrepresentable,
+            NicheRefusal::Footprint => VoidRefusal::Footprint,
         }
     }
 
@@ -69,6 +72,7 @@ impl VoidRefusal {
         match self {
             VoidRefusal::Outside => Message::VoidOutside,
             VoidRefusal::Unrepresentable => Message::VoidUnrepresentable,
+            VoidRefusal::Footprint => Message::VoidFootprint,
         }
     }
 }
@@ -419,6 +423,40 @@ mod tests {
         atom.measure(&project, point, Sight::of(&hidden), None);
         let through = atom.niche().expect("the hidden sheet is no wall").clone();
         assert_eq!(through.size, DVec3::new(600.0, 560.0, 720.0), "the cell spans the case it cannot see");
+    }
+
+    #[test]
+    fn a_frame_whose_ring_turns_right_says_so_of_itself() {
+        // The model refuses a frame that reserves no one convex cell by its own name (ADR 0201), and
+        // the atom carries the reason through so every surface prints the same sentence (N29).
+        let mut project = clean_project();
+        let ring = model::Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(600), Length::ZERO],
+                [millimetres(600), millimetres(560)],
+                [millimetres(300), millimetres(560)],
+                [millimetres(300), millimetres(400)],
+                [millimetres(200), millimetres(400)],
+                [millimetres(200), millimetres(560)],
+                [Length::ZERO, millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = project.root().id();
+        project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a notched product");
+        let mut atom = Void::new();
+        atom.measure(&project, DVec3::new(100.0, 200.0, 300.0), Sight::none(), None);
+        let refusal = atom.refusal().expect("a frame that reserves no cell names no void");
+        assert_eq!(refusal, VoidRefusal::Footprint);
+        assert_eq!(refusal.words(), Message::VoidFootprint, "the sentence every surface prints");
+        assert_eq!(atom.niche(), None);
     }
 
     #[test]
