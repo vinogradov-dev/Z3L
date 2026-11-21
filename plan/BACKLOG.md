@@ -628,26 +628,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    class costs a delete and a redraw, and the two builds and a repeat count have no home of
    their own (ADR 0110 put the build in the cell, the count does not exist).
   Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
-   furniture.panels.points. The panel cell has one method list: Fill in the niche, the
-   empty-space fill whose class picks the section pair, and Rectangle, a plain board drawn on
-   the work plane and then sized in the card. The contour cell does not change; the by-points
-   cell lands with its own task. The post, shelf and wall cells, the FILL_POST_SHAPE,
-   FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and a
-   ribbon.pinned_variants entry naming a retired id loads as no pin. What a panel becomes is
-   one creation menu: the class (Post, Shelf, Wall and, from its own task, Overlay wall), the
-   build (largest fit or the area shape) and the count (evenly, from its own task). Before the
-   click the keys are the tool card's rows (ADR 0119); after it the same keys are the node
-   context menu through one new command panel.build.set, which rewrites class and mode from the
-   same niche in one undo entry and refuses a node that is not a panel. The niche cell keeps
-   its place until the owner answers plan/questions.md. ADR 0110 is superseded by one record
-   that says the cell is the object and the build is its property.
-  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall
-   cell; the retired ids are gone from the ribbon map, the inventory, the pinned-variant table
-   and the tests that walk the method lists; the card offers the class and the build before the
-   click and the context menu offers them after it; panel.build.set is one undo entry,
-   re-derives the outline from the niche and refuses a non-panel; a stale pin is dropped on
-   load; the context menu is one Popup declared in the module that owns it; cargo xtask ci is
-   green.
+   furniture.panels.points, whose method list carries three points and n points from its own
+   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
+   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
+   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
+   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
+   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
+   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
+   query over the void's shape and coordinates that gives the interface nothing, so the
+   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
+   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
+   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
+   Overlay wall), the build (largest fit or the niche shape — the word stays niche) and the
+   count (evenly, from its own task). The class a new part is born with is the role its plane
+   implies, from the rule of its own task, and a key of the menu overrides it, as the class
+   picker writes a class on a node. Before the click the keys are the tool card's rows (ADR
+   0119); after it the same keys are the node context menu through one new command
+   panel.build.set, which rewrites class and mode from the same niche in one undo entry and
+   refuses a node that is not a panel. ADR 0110 is superseded by one record that says the cell
+   is the object and the build is its property.
+  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
+   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
+   pinned-variant table and the tests that walk the method lists; the niche still answers from
+   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
+   class, the build and the count before the click and the context menu offers them after it; a
+   new part is born with the role its plane implies and a menu key overrides it;
+   panel.build.set is one undo entry, re-derives the outline from the niche and refuses a
+   non-panel; a stale pin is dropped on load; the context menu is one Popup declared in the
+   module that owns it; cargo xtask ci is green.
   `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs`
 - `[ ]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
   Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
@@ -659,21 +667,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
    position, and the outline is the section itself.
   Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
-   overlay, which grows the frontal section by a lap on each of its four edges, places the
-   board one thickness off the niche's start point along the normal so it covers the frame's
-   face instead of filling the opening, and stores the four laps on the panel so the card can
-   edit them. The lap default is a project value, not a workspace one: the settings section of
-   the scene file (crates/project/src/lib.rs) carries the factory's numbers, whose home is O2's
-   standards file, and until that file lands the build falls back to 14 mm and plan/debt.md
-   records the flip. The fill grows a FillRequest mount field and one test that names the plane
-   it places on, because the owner's rule — start minus the thickness — is one sentence and the
-   sign is only settled by the assertion. The card gains a mounting row and one lap field per
-   edge; the ADR says the lap is document data and the default is the project's.
+   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
+   answer: all four), clips the grown section by whatever stands proud of the face so the lap
+   runs over the frame's edge and never over a part that is in the way, places the board one
+   thickness off the niche's start point along the normal so it covers the frame's face instead
+   of filling the opening, and stores the four laps on the panel so the card can edit them. The
+   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
+   edge rather than being buried in it, and a begun board whose section the clip empties is
+   refused with a sentence. The lap default is a project value, not a workspace one: the
+   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
+   numbers, whose home is O2's standards file, and until that file lands the build falls back
+   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
+   test that names the plane it places on, because the owner's rule — start minus the thickness
+   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
+   row and one lap field per edge; the ADR says the lap is document data and the default is the
+   project's.
   Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
    inner face lies on the niche's start plane and whose body stands proud of the frame's face;
-   one click is one panel.create and one undo entry; the four laps are stored on the part and
-   the card edits them; a project file without the setting answers 14 mm and says so in
-   plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is green.
+   a part standing in front of that face clips the lap to the part's own edge and the board is
+   never buried in it; one click is one panel.create and one undo entry; the four laps are
+   stored on the part and the card edits them; a project file without the setting answers 14 mm
+   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
+   green.
   `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
   Why: The owner: with the cursor moving along the panel plane's normal in the positive
@@ -704,37 +719,42 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs`
 - `[ ]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
   Why: The owner: a point tool that names points in space, the first three fixing the plane, as
-   many points as the maker wants, the ring finished by a checkbox; and the question it raises
-   — three points should be able to give the standard four-corner board without losing the
-   triangular panel. Today a board is born from a niche or drawn as a ring on a work plane
-   (furniture.panels.contour), so a board lying on a leaned face, or between three points taken
-   on different faces, cannot be drawn at all: the work plane is chosen before the first point,
-   which is the wrong order for this tool.
-  Shape: One cell, furniture.panels.points, with two methods — the program's own way to give
-   one tool two input methods, as the circle has five and the polygon three. Polygon: the first
-   point starts the ring, the second gives the direction, the third fixes the plane, and every
-   later point is projected onto it; the card carries the Finish checkbox the owner asks for
-   and Enter does the same, closing the ring as it stands, so three points give the triangular
-   contour panel and n points give the n-gon. Rectangle from an edge: the first two points are
-   one edge and the third fixes the width, its perpendicular distance from that edge in the
-   plane, so three clicks give a true rectangle — a standard panel, no skew, and the fourth
-   corner is computed and drawn as a ghost from the third click; this is the sketch's own edge
-   method and needs no new idea. The points come from the snap resolver, not from a plane, so
-   the first click may stand on a face, an edge or a corner; the plane is the one the first
-   three points span and is refused when they are collinear, which is the sentence the card
-   shows. Commit is one panel.create carrying the ring and the class the tool carries, one undo
-   entry. Ruled out and recorded in the ADR: a modifier (Enter for four corners, Shift+Enter
-   for three) makes the same three clicks mean two things and hides one meaning behind a key,
-   and a guessed finish has the tool deciding what the maker wanted; a method row says it out
-   loud and the cell's pinned method remembers it (U74). The class keys of the creation menu
-   apply to the created board as they do to every panel.
-  Done: The tool arms from the Furniture tab, takes points anywhere through the snap resolver,
-   fixes the plane on the third point and keeps every later point in it; the rectangle method
-   turns three points into a rectangle whose fourth corner is the ghost and the created panel
-   is standard (classify_outline says so); the polygon method closes three points into a
-   triangular contour panel and n points into an n-gon; Finish and Enter commit, Escape drops
-   the ring and leaves no node and no revision; collinear points are refused with a message,
-   not a panic; one click chain is one undo entry; cargo xtask ci is green.
+   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
+   rather than one — a board by three points, which builds the standard four-corner panel, and
+   a board by n points, which is finished by the checkbox, so a count above four only ever
+   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
+   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
+   different faces, cannot be drawn at all: the work plane is chosen before the first point,
+   which is the wrong order for this tool. The class the board takes is the role its plane
+   implies, because there is no niche here to name it.
+  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
+   asked for. Three points: the first two are one edge and the third fixes the width, its
+   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
+   as a ghost from the third click and the board commits on the third click — a true rectangle,
+   which classify_outline calls a standard panel, and the only way the program makes a standard
+   board out of a plane it was given. N points: the first point starts the ring, the second
+   gives the direction, the third fixes the plane, every later point is projected onto it, and
+   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
+   triangular contour panel and n points an n-gon; more than four points only ever commit
+   through it, which is the owner's simplification. The points come from the snap resolver, not
+   from a work plane, so the first click may stand on a face, an edge or a corner, and the
+   plane is the one the first three points span — collinear points are refused with the
+   sentence the card shows, never a plane guessed from the first two. The class a created board
+   carries is the role its plane implies, from the rule of its own task, and a menu key
+   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
+   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
+   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
+   mean two things and hides one meaning behind a key; one tool with an optional finish on the
+   third point asks the maker to guess which commit they are in; a method row says it out loud
+   and the cell's pinned method remembers it (U74).
+  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
+   resolver, the plane fixing on the third point; the three-point method turns three clicks
+   into a rectangle whose fourth corner is the ghost and whose classification is a standard
+   panel; the n-point method closes three points into a triangular contour panel and n points
+   into an n-gon, and a fifth point never commits without Finish; the created board carries the
+   role its plane implies and a menu key overrides it; collinear points are refused with a
+   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
+   node and no revision; cargo xtask ci is green.
   `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs`
 - `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
@@ -764,6 +784,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    size; the overlay wall reads its lap through the same field; the schema version moved and no
    migration code exists; cargo xtask ci is green.
   `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
+- `[ ]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
+  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
+   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
+   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
+   degrees against the frontal position is a wall. Today a class is a creation parameter and
+   nothing derives one: panel.create takes a class, no command writes it after the click, so a
+   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
+   ring has no role to carry and a maker would have to type one.
+  Shape: One function in model beside classify_outline — the role a plane implies: take the
+   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
+   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
+   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
+   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
+   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
+   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
+   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
+   derived class into panel.create; the niche fill keeps naming its class, because the class is
+   what picks the section pair (ADR 0099); the card shows the role the part carries and the
+   class picker overrides it through node.property.set, which already owns the reserved class
+   key. One record carries the rule, the frame it is measured in and the two ties, because the
+   tie-breaks are a decision and not a rounding.
+  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
+   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
+   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
+   the frontal answers wall; a board drawn by three points on a leaned face is born with the
+   class its plane implies and the card shows it; an explicit class passed to panel.create
+   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
+   green.
+  `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 
 ## Done
 
