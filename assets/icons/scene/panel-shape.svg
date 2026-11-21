@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="butt" stroke-linejoin="miter">
+  <path d="M11.97 5.3L17.43 8.45L15.18 9.75L9.72 6.6 Z" fill="#55C7A4" fill-opacity="0.12"/>
+  <path d="M17.43 8.45L17.43 16.65L15.18 17.95L15.18 9.75 Z" fill="#55C7A4" fill-opacity="0.12"/>
+  <path d="M9.72 6.6L6.95 8.2L9.2 6.9L11.97 5.3 Z" fill="#55C7A4" fill-opacity="0.12"/>
+  <path d="M15.18 17.95A3.43 1.98 60 0 1 12.75 19.35L15 18.05A3.43 1.98 60 0 0 17.43 16.65 Z" fill="#55C7A4" fill-opacity="0.12"/>
+  <path d="M9.72 6.6L15.18 9.75L15.18 17.95A3.43 1.98 60 0 1 12.75 19.35L6.95 16L6.95 8.2 Z" fill="#55C7A4" fill-opacity="0.45"/>
+  <path d="M11.97 5.3L17.43 8.45L17.43 16.65A3.43 1.98 60 0 1 15 18.05L12.75 19.35L6.95 16L6.95 8.2L9.72 6.6L9.2 6.9 Z" fill="none" stroke="#55C7A4" stroke-width="1.5"/>
+  <path d="M9.72 6.6L15.18 9.75M15.18 9.75L17.43 8.45M9.72 6.6L11.97 5.3M9.72 6.6L6.95 8.2M6.95 8.2L9.2 6.9M15.18 9.75L15.18 17.95M15.18 17.95A3.43 1.98 60 0 1 12.75 19.35M15.18 17.95L17.43 16.65M12.75 19.35L15 18.05" fill="none" stroke="#55C7A4" stroke-width="1.5"/>
+</svg>

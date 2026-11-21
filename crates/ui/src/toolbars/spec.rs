@@ -156,12 +156,14 @@ impl Method {
 ///
 /// A fill cell draws as one split cell rather than two cells a maker has to tell apart: the method
 /// list is the choice between fitting and taking the shape, and the pinned method is the one the
-/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and each row
-/// carries its own glyph so the shape is not a blank line (U84).
+/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and the shape
+/// row carries the niche-fit board — one corner cut, the opposite rounded — so the list offers a
+/// build a maker can see (U84, U117). The three fill cells share that glyph, because the build is
+/// one and the class is what differs.
 const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.post.shape",
     label: Message::FillMethodShape,
-    icon: Some(icons::contour::POLYGON),
+    icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
 }];
 
@@ -169,7 +171,7 @@ const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
 const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.shelf.shape",
     label: Message::FillMethodShape,
-    icon: Some(icons::contour::POLYGON),
+    icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape }),
 }];
 
@@ -177,7 +179,7 @@ const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
 const FILL_WALL_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.wall.shape",
     label: Message::FillMethodShape,
-    icon: Some(icons::contour::POLYGON),
+    icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
 }];
 
