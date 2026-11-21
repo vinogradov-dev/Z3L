@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use model::{Container, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind};
+use model::{
+    Container, CutoutDepth, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
+};
 use project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
 use units::{Degrees, Length};
 
@@ -70,6 +72,12 @@ fn the_golden_file_carries_every_node_kind() {
 
     let panel = document.panel(id(2)).expect("the shelf loads");
     assert_eq!(panel.machining().len(), 1, "the shelf carries one machining record");
+    let cutout = panel.machining().first().and_then(|record| record.cutout()).expect("the shelf's cutout");
+    assert_eq!(
+        cutout.depth(),
+        CutoutDepth::Blind { depth: Length::from_millimetres(8).expect("a depth") },
+        "the golden keeps a blind cutout, which the split rule never touches"
+    );
     assert_eq!(panel.edge_banding().len(), 1, "the shelf carries one banding strip");
     assert_eq!(panel.bevels().len(), 1, "the shelf carries one end bevel");
     assert_eq!(
