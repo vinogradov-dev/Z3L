@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use engine::Query;
+use model::Id;
 use rmcp::model::{JsonObject, Tool};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -48,6 +49,12 @@ pub struct RunRequest {
     /// The parameters the command takes; an empty object when the command takes none.
     #[serde(default = "empty_params")]
     pub params: Value,
+    /// The product the command works in; the open one when it is absent.
+    ///
+    /// A furniture part is born only inside the open product (ADR 0098), and opening one is session
+    /// view state: it moves no revision and leaves no undo entry, so naming a product is not a step.
+    #[serde(default)]
+    pub product: Option<Id>,
     /// Dispatch the command and write nothing, reporting what would have landed.
     #[serde(default)]
     pub dry_run: bool,
@@ -61,6 +68,7 @@ impl RunRequest {
     pub fn batch(&self) -> BatchRequest {
         BatchRequest {
             steps: vec![StepRequest { command: self.command.clone(), params: self.params.clone() }],
+            product: self.product,
             atomic: true,
             dry_run: self.dry_run,
         }
@@ -73,6 +81,15 @@ impl RunRequest {
 pub struct BatchRequest {
     /// The steps, dispatched in order.
     pub steps: Vec<StepRequest>,
+    /// The product the batch works in; the open one when it is absent.
+    ///
+    /// A furniture part is born only inside the open product (ADR 0098), and opening one is session
+    /// view state: it moves no revision and leaves no undo entry, so naming a product is not a step
+    /// of the batch and a refusal does not take it back. A scene with two products and none named
+    /// leaves the workspace as it was, and the first step that needs a product refuses in its own
+    /// words.
+    #[serde(default)]
+    pub product: Option<Id>,
     /// Keep the batch whole: a refusal takes back every step before it.
     ///
     /// The default is the command line's recipe and a chat turn's promise, one operation or none.
@@ -171,17 +188,22 @@ pub fn headless_definitions() -> Vec<Tool> {
         Tool::new(
             TOOL_RUN,
             "Dispatch exactly one command by its stable id. The document change is one undo entry. \
-             With `dry_run` the command runs and nothing is written, so the answer is the plan.",
+             With `product` the command works in that product, and naming it opens the product first: \
+             a furniture part is born only inside the open product. Opening is a view operation, not \
+             an undo entry. With `dry_run` the command runs and nothing is written, so the answer is \
+             the plan.",
             object_schema::<RunRequest>(),
         ),
         Tool::new(
             TOOL_BATCH,
             "Dispatch a list of commands as one operation: in order, and by default all or nothing, \
              so a refusal takes back every step before it and the whole list is one undo entry. The \
-             answer reports which nodes the batch created, changed and removed, and what a file \
-             write did. With `dry_run` every step runs and nothing is written. A session in plan \
-             mode answers every batch this way whatever the request says; `command_list` names the \
-             mode.",
+             answer reports which nodes the batch created, changed and removed, what a file write \
+             did, and the `open_product` it ran in. With `product` the batch works in that product, \
+             and naming it opens the product first: a furniture part is born only inside the open \
+             product, and opening is a view operation rather than a step. With `dry_run` every step \
+             runs and nothing is written. A session in plan mode answers every batch this way \
+             whatever the request says; `command_list` names the mode.",
             object_schema::<BatchRequest>(),
         ),
         Tool::new(
@@ -316,11 +338,14 @@ mod tests {
 
     #[test]
     fn a_run_is_a_batch_of_one_step() {
-        let request = RunRequest { command: "node.rename".to_owned(), params: json!({"node": 1}), dry_run: true };
+        let product = Id::new(2);
+        let request =
+            RunRequest { command: "node.rename".to_owned(), params: json!({"node": 1}), product, dry_run: true };
         let batch = request.batch();
         assert_eq!(batch.steps.len(), 1);
         assert_eq!(batch.steps.first().map(|step| step.command.as_str()), Some("node.rename"));
         assert!(batch.atomic, "one step is whole by definition");
         assert!(batch.dry_run, "the run's own flag travels with it");
+        assert_eq!(batch.product, product, "the product the run named travels with it");
     }
 }

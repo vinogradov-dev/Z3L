@@ -221,7 +221,9 @@ desktop assistant, a script, an agent process — reaches the same tools over MC
 - Faber acts as a person does: every action is a command, a query or a session view operation,
   dispatched by the same ids the UI uses. It has no private mutation path (ADR 0028). The tool list is
   a projection of `CommandRegistry::specs()`, never a second registry, and a tool that is unavailable
-  says why (ADR 0185).
+  says why (ADR 0185). A call that builds a part names the product it works in — `product` on the run
+  and on the batch — and naming it opens the product without an undo entry, because a part is born
+  only inside the open product (ADR 0098, ADR 0212).
 - It runs with a window, where the user watches it work, and headless, where it processes jobs
   without a viewport. The core is deterministic and model-agnostic; the language model is an injected
   adapter that may be local or remote, reached through one OpenAI-compatible client whose endpoint and

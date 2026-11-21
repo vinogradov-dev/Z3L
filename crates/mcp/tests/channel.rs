@@ -168,6 +168,7 @@ async fn a_window_batch_lands_in_the_document_and_says_the_file_is_the_persons()
             .iter()
             .map(|step| mcp::StepRequest { command: step.command().to_owned(), params: step.params().clone() })
             .collect(),
+        product: None,
         atomic: true,
         dry_run: false,
     };

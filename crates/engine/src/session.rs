@@ -7,6 +7,7 @@ use geom::Contact;
 use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
 use param::EdgeBandProfile;
 use serde_json::Value;
+use thiserror::Error;
 
 use crate::batch::{self, BatchEffect, BatchOptions, BatchReport, BatchStep};
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
@@ -23,6 +24,17 @@ use crate::resolve;
 /// hand touched it instead of the frame before the last one (ADR 0092).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EditScope(u64);
+
+/// Why the product a caller named cannot be opened.
+///
+/// A refusal here writes nothing: opening is session view state, so an id that is not a product is
+/// the only way the act fails, and the sentence is the one both doors print.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("no product has id {id}; name a product of the scene")]
+pub struct OpenProductError {
+    /// The id that is not a product of the document.
+    pub id: Id,
+}
 
 /// The edit scope that is open right now, and whether it already owns an undo entry.
 #[derive(Clone, Copy, Debug)]
@@ -162,6 +174,16 @@ impl Session {
         }
         self.active_product = Some(id);
         true
+    }
+
+    /// Opens the product a caller named, or says why the id is not one.
+    ///
+    /// A door that is not the window — the command line's `--product` and the tool surface's
+    /// `product` field — has no double click to point at, so it names an id and needs one sentence
+    /// when the id is not a product. The rule stays [`Session::open_product`]'s: one product is
+    /// open, opening replaces the previous one, and nothing of the document moves (ADR 0098).
+    pub fn open_named_product(&mut self, id: Id) -> Result<(), OpenProductError> {
+        if self.open_product(id) { Ok(()) } else { Err(OpenProductError { id }) }
     }
 
     /// Closes the open product, so no product is being worked in.
@@ -3718,7 +3740,7 @@ mod product_tests {
     use testkit::{millimetres, sample_catalog, sample_project};
 
     use crate::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
-    use crate::session::Session;
+    use crate::session::{OpenProductError, Session};
 
     fn json_params<T: serde::Serialize>(value: &T) -> serde_json::Value {
         serde_json::to_value(value).expect("params serialize")
@@ -3774,6 +3796,24 @@ mod product_tests {
 
         assert_eq!(session.project().revision(), revision, "opening moves no revision");
         assert_eq!(session.can_undo(), undo_depth, "opening is not an undo entry");
+    }
+
+    #[test]
+    fn a_named_product_opens_or_names_the_id_that_is_not_one() {
+        // The doors that have no pointer — the command line's `--product` and the tool surface's
+        // `product` field — get one sentence for an id that is not a product (ADR 0212).
+        let (mut session, first, second) = session_with_two_products();
+        let root = session.project().root().id();
+
+        assert_eq!(session.open_named_product(first), Ok(()));
+        assert_eq!(session.active_product(), Some(first));
+        assert_eq!(session.open_named_product(second), Ok(()), "another product replaces the first");
+        assert_eq!(session.active_product(), Some(second));
+
+        let refusal = session.open_named_product(root).expect_err("the root is not a product");
+        assert_eq!(refusal, OpenProductError { id: root });
+        assert_eq!(refusal.to_string(), format!("no product has id {root}; name a product of the scene"));
+        assert_eq!(session.active_product(), Some(second), "a refusal leaves the open product alone");
     }
 
     #[test]

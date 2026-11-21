@@ -90,7 +90,9 @@ pub(super) fn session_of(document: model::Project) -> Result<Session, CliError> 
 /// state, not a command: the window opens what the person double-clicks. A headless run has no
 /// person, so `--product` names one and a scene with exactly one product opens it — one product is
 /// no guess. A scene with several and no flag leaves the workspace closed, and the command's own
-/// refusal says so.
+/// refusal says so. The open itself is [`Session::open_named_product`], the same call the tool
+/// surface makes for its `product` field, so both doors refuse an id that is not a product in one
+/// sentence (ADR 0212).
 pub(super) fn open_product(session: &mut Session, product: Option<model::Id>) -> Result<(), CliError> {
     let chosen = match product {
         Some(id) => Some(id),
@@ -100,8 +102,7 @@ pub(super) fn open_product(session: &mut Session, product: Option<model::Id>) ->
         },
     };
     match chosen {
-        Some(id) if session.open_product(id) => Ok(()),
-        Some(id) => Err(CliError::Recipe(format!("no product has id {id}; `--product` names a product of the scene"))),
+        Some(id) => session.open_named_product(id).map_err(|refusal| CliError::Recipe(refusal.to_string())),
         None => Ok(()),
     }
 }
@@ -257,6 +258,28 @@ mod tests {
     /// The panels a container holds.
     fn children(project: &model::Project, container: Id) -> usize {
         project.container(container).map_or(0, |container| container.children().len())
+    }
+
+    #[test]
+    fn an_id_that_is_not_a_product_is_refused_in_one_sentence() {
+        // The headless door names a product with a flag and the tool surface with a field; both
+        // print the engine's one sentence when the id is not a product (ADR 0098, ADR 0212).
+        let directory = scratch_dir("cli-recipe-no-product");
+        let (_path, root, product) = saved(&directory);
+        let scene = SceneFile::read(&directory.join("cabinet.z3l")).expect("the fixture reads");
+        let mut session = session_of(scene.into_document()).expect("a session");
+
+        let refusal = open_product(&mut session, Some(root)).expect_err("the root is not a product");
+        assert!(
+            refusal.to_string().contains(&format!("no product has id {root}; name a product of the scene")),
+            "the sentence names the id: {refusal}"
+        );
+        assert_eq!(session.active_product(), None, "a refusal opens nothing");
+
+        open_product(&mut session, Some(product)).expect("the fixture holds its product");
+        assert_eq!(session.active_product(), Some(product));
+        open_product(&mut session, None).expect("a scene with one product opens it without the flag");
+        assert_eq!(session.active_product(), Some(product));
     }
 
     #[test]
