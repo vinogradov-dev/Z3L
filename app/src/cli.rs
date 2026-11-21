@@ -1,5 +1,6 @@
 //! The command line: `z3l export` writes an order package without a window, `z3l run` dispatches a
-//! recipe, `z3l query` answers a question about the scene, `z3l <scene>` opens one.
+//! recipe, `z3l query` answers a question about the scene, `z3l mcp serve` serves the tools over the
+//! standard streams, `z3l <scene>` opens one.
 //!
 //! A package is useless if producing it needs a window and a person, so the subcommand is read and
 //! performed in [`main`](crate::main) before eframe creates a surface: a headless job over saved
@@ -22,6 +23,7 @@
 mod commands;
 mod query;
 mod recipe;
+mod served;
 
 pub use query::Ask;
 
@@ -52,6 +54,7 @@ usage: z3l                 open the editor
                     [--price-max-age <days>]
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
+       z3l mcp serve [<scene.z3l>] [--product <node>]
        z3l query --resources
        z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
        z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
@@ -76,6 +79,12 @@ commands run in order, and the result is written once, at the end -- or not at a
   --product <node>   the product the recipe works in; a scene with exactly one product opens it
                      by itself, and a part can only be created inside an open one
   --dry-run          dispatch every command and write nothing, so the recipe can be checked first
+
+mcp serve speaks the Model Context Protocol over standard input and output, so a client we do not
+ship can list the commands and dispatch them. It binds no port and prints no report: those streams
+are the protocol's. A scene named on the line is written back when a batch lands; without one the
+document lives in memory and every answer says nothing was written.
+  --product <node>   the product the tools work in; a scene with exactly one product opens it
 
 query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
@@ -120,6 +129,8 @@ pub enum Command {
     },
     /// Dispatch a recipe into one session and save the result once.
     Run(RunArgs),
+    /// Serve the tools over the standard streams and exit when the client closes them.
+    Mcp(McpArgs),
     /// Read the scene and print one JSON report.
     Query(QueryArgs),
 }
@@ -137,6 +148,15 @@ pub struct RunArgs {
     pub product: Option<Id>,
     /// Whether the recipe runs without writing anything.
     pub dry_run: bool,
+}
+
+/// One `mcp serve` request, already checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpArgs {
+    /// The saved scene to serve; absent serves a new document that is never written.
+    pub scene: Option<PathBuf>,
+    /// The product the tools work in; the document's only product when it is absent.
+    pub product: Option<Id>,
 }
 
 /// One `query` request, already checked.
@@ -211,6 +231,8 @@ pub enum CliError {
     },
     /// A query cannot answer what it was asked.
     Query(String),
+    /// The tool server cannot start, or stopped with a failure.
+    Mcp(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -223,6 +245,7 @@ impl std::fmt::Display for CliError {
             Self::Recipe(message) => formatter.write_str(message),
             Self::Dispatch { line, command, error } => write!(formatter, "line {line} `{command}`: {error}"),
             Self::Query(message) => formatter.write_str(message),
+            Self::Mcp(message) => formatter.write_str(message),
         }
     }
 }
@@ -240,6 +263,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         Some("export") => export_args(&args[1..]),
         Some("commands") => commands_args(&args[1..]),
         Some("run") => run_args(&args[1..]),
+        Some("mcp") => mcp_args(&args[1..]),
         Some("query") => query_args(&args[1..]),
         Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
@@ -364,6 +388,40 @@ fn run_args(args: &[String]) -> Result<Command, CliError> {
     let commands =
         commands.ok_or_else(|| CliError::Usage("run needs `--commands <path>` to know what to dispatch".to_owned()))?;
     Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
+}
+
+/// Reads the words after `mcp`: the one subcommand `serve`, an optional scene and the product.
+///
+/// One subcommand is the whole surface today, and `serve` is spelled out rather than implied so a
+/// later `mcp client` or `mcp attach` cannot silently change what a line does.
+fn mcp_args(args: &[String]) -> Result<Command, CliError> {
+    let mut words = args.iter();
+    match words.next().map(String::as_str) {
+        Some("-h" | "--help") => return Ok(Command::Help(USAGE)),
+        Some("serve") => {}
+        Some(other) => {
+            return Err(CliError::Usage(format!(
+                "`mcp {other}` is not a subcommand; run `z3l mcp serve [<scene.z3l>]`"
+            )));
+        }
+        None => return Err(CliError::Usage("`mcp` needs a subcommand: `z3l mcp serve [<scene.z3l>]`".to_owned())),
+    }
+    let mut scene: Option<PathBuf> = None;
+    let mut product: Option<Id> = None;
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not an option of `mcp serve`; run `z3l --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("`mcp serve` reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    Ok(Command::Mcp(McpArgs { scene, product }))
 }
 
 /// Reads the words after `query`: the resource table, or one scene and one report.
@@ -506,6 +564,10 @@ pub fn run(command: &Command) -> Option<i32> {
         }),
         Command::Query(args) => Some(match query::report(args) {
             Ok(report) => print_stdout(&(report + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Mcp(args) => Some(match served::perform(args) {
+            Ok(()) => EXIT_OK,
             Err(error) => fail(&error, EXIT_FAILED),
         }),
     }

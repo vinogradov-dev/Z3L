@@ -151,11 +151,44 @@ impl CommandSpec {
         }
     }
 
+    /// The word a report prints for what this command creates, or `None` when it creates nothing.
+    ///
+    /// The four words are English because they are a wire contract read by a machine, not a
+    /// sentence the interface translates — the same reading [`CommandError`]'s display takes. The
+    /// command line's discovery report and the tool list a model reads print this one word, so the
+    /// two cannot name one level differently.
+    pub const fn creation_word(self) -> Option<&'static str> {
+        match self.creation_level() {
+            Some(Level::Product) => Some("product"),
+            Some(Level::Component) => Some("component"),
+            Some(Level::Part) => Some("part"),
+            Some(Level::Fitting) => Some("fitting"),
+            None => None,
+        }
+    }
+
     /// Whether the command applies to this session and these parameters.
     ///
     /// This is a pure check for menus, toolbars and enabled state. It never mutates the document.
     pub fn enabled(self, session: &Session, params: &Value) -> bool {
         (self.enabled_fn)(session, params)
+    }
+
+    /// Why this command cannot run in this session at all, whatever parameters it is handed.
+    ///
+    /// This is the session's half of [`CommandSpec::enabled`]: a part or a fitting is born only
+    /// inside the open product (ADR 0098), and whether one is open depends on the session rather
+    /// than on the request. A discovery surface lists the commands without a request to judge —
+    /// that is what a caller reads the parameter schema for — so this is the answer it can give,
+    /// and the sentence is the one the command's own refusal carries. A command that creates
+    /// nothing gated has no such condition, and a request that names another parent is left to the
+    /// command's parser and its `enabled` check.
+    pub fn unavailable(self, session: &Session) -> Option<CreationRefusal> {
+        let creation = self.creation?;
+        if !class_rules::is_furniture(creation.level()) {
+            return None;
+        }
+        class_rules::open_product(session.active_product()).err()
     }
 
     /// Why the command may not create its node in this session, or `Ok` when it creates nothing

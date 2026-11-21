@@ -284,6 +284,7 @@ layer is renumbered. The crate, its row in the crate map, the layer table in `xt
 | L5 | `render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
 | L6 | `engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |
 | L7 | `ui` | `egui` panels and viewport widgets: scene tree, inspector, input, gizmos; dispatches commands | engine, model, scene, egui, egui_extras |
+| L7 | `mcp` | The editor as a tool server: the projection of the command registry into four coarse MCP tools and the protocol over stdio. No brain, no file I/O, no `egui`; the only crate allowed to depend on `rmcp` and `tokio` (ADR 0185, ADR 0186) | engine, model, text, rmcp, tokio, schemars, serde, serde_json, thiserror |
 | L8 | `app` | Composition root: `eframe` window, input, `egui` ↔ `wgpu` paint callback, constructs `TruckKernel` and evaluates the sample document | ui, engine, render, scene, model, param, mesh, kernel, kernel-truck, geom, units, eframe |
 | dev | `testkit` | Fixtures and helpers for tests; re-exports `millimetres`, `open_path` and `sample_project` from `model`'s `testing` feature, where they are defined once (ADR 0084) | model, units |
 | tool | `xtask` | The host's rules only: layering, the C-vendoring check and the `ci` step list, registered into the plan tool's command table (`cargo xtask help`) | serde_json, state-contract |

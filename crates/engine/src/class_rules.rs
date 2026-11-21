@@ -142,13 +142,20 @@ impl std::error::Error for CreationRefusal {}
 /// another product and a group of another piece are not. Openness is session state, so the caller
 /// passes `open` instead of this function reading a document field (ADR 0098, ADR 0029).
 pub fn allow_creation(project: &Project, parent: Id, open: Option<Id>) -> Result<(), CreationRefusal> {
-    let Some(open) = open else {
-        return Err(CreationRefusal::NoProductOpen);
-    };
+    let open = open_product(open)?;
     match project.product_of(parent) {
         Some(product) if product == open => Ok(()),
         _ => Err(CreationRefusal::ProductClosed),
     }
+}
+
+/// The half of [`allow_creation`] that no parameter decides: whether a product is open at all.
+///
+/// A caller with no request to judge — a discovery surface listing what it could dispatch — asks
+/// this one, so the sentence a closed workspace earns is the one the command's own refusal carries.
+/// Both readings go through this function, so neither can drift.
+pub fn open_product(open: Option<Id>) -> Result<Id, CreationRefusal> {
+    open.ok_or(CreationRefusal::NoProductOpen)
 }
 
 /// The rules a node's class imposes on the editor.

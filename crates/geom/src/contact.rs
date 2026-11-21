@@ -256,7 +256,11 @@ pub fn overlap(a: &dyn Solid, b: &dyn Solid, slack_mm: f64) -> bool {
 /// One implementation exists — `contact-parry` — and the shell constructs it once. A rule asks it for
 /// every body it will measure when the rule is built, and never again: the expensive conversion
 /// happens once per gesture, and a stub answers contact in a test without a collision engine.
-pub trait Contact: fmt::Debug {
+///
+/// An adapter is shared, so it is `Send + Sync`: a session may be served from a thread that is not
+/// the one that built it — a headless door, a control channel — and the port is what a move rule
+/// holds across frames. An adapter that kept a thread-bound cache would fail that bound here.
+pub trait Contact: fmt::Debug + Send + Sync {
     /// A handle to this adapter, for a caller that keeps a rule across frames.
     ///
     /// A [`MoveRule`](../../model) outlives the call that built it and prepares a body only when a

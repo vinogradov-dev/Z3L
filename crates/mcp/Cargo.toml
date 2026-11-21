@@ -1,0 +1,29 @@
+[package]
+name = "mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+engine = { workspace = true }
+model = { workspace = true }
+text = { workspace = true }
+# The protocol and the runtime it needs: this crate is the only one in the tree allowed to depend
+# on either (ADR 0186), so `engine`, `ui` and the shell stay synchronous.
+rmcp = { workspace = true }
+tokio = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# A client we did not write, over a pipe: the served session is driven the way a foreign client
+# drives it, and the four tools answer with what the registry holds.
+rmcp = { workspace = true, features = ["client"] }
+tokio = { workspace = true, features = ["macros"] }
+testkit = { workspace = true }

@@ -24,6 +24,8 @@ geom = { workspace = true }
 kernel = { workspace = true }
 kernel-truck = { workspace = true }
 contact-parry = { workspace = true }
+# The tool server's protocol adapter: `z3l mcp serve` builds a session and hands it over (ADR 0186).
+mcp = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
 catalog = { workspace = true }

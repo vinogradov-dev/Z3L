@@ -137,6 +137,7 @@ their tests is not started until the first link compiles. This is what prevents 
 ```text
 app                    L8  composition root: window, input, egui <-> wgpu, kernel adapter
 crates/ui              L7  egui panels and viewport, dispatches commands
+crates/mcp             L7  the editor as a tool server: the command registry projected into four MCP tools over stdio
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
@@ -162,6 +163,9 @@ xtask                  the host's rules and the ci gate; no plan logic
 - `model` holds serializable data and its invariants only: no `wgpu`, no `egui`, no window, no file I/O, no geometry kernels.
 - `kernel` is our port: `model` and `param` never see a third-party kernel type. `kernel-truck` is the only crate allowed to depend on `truck`; the app constructs it and injects it into the session.
 - `engine` must not depend on `wgpu` or `egui`: that is what keeps "everything is a command" honest.
+- `mcp` sits beside `ui` and the two do not depend on each other: it reaches the document only through
+  `engine`, it is forbidden `egui`, `eframe` and `wgpu` the way `engine` is, and it is the only crate
+  allowed to depend on `rmcp` and `tokio` (ADR 0186). No editor path awaits it.
 - `render` must not depend on `egui`: the renderer is a library, the shell wires it into `egui_wgpu`. Symmetrically, `ui` must not depend on `wgpu`, and `testkit` is reachable only through `[dev-dependencies]`. `cargo xtask layers` enforces all three.
 - `ui` never mutates the document directly: it dispatches commands and renders session state.
 - `scene` is data about a frame (what to draw), `render` is the driver that draws it. The document stores placements; cameras and viewports belong to the session or the shell.

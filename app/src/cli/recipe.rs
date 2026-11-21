@@ -91,7 +91,7 @@ pub(super) fn session_of(document: model::Project) -> Result<Session, CliError> 
 /// person, so `--product` names one and a scene with exactly one product opens it — one product is
 /// no guess. A scene with several and no flag leaves the workspace closed, and the command's own
 /// refusal says so.
-fn open_product(session: &mut Session, product: Option<model::Id>) -> Result<(), CliError> {
+pub(super) fn open_product(session: &mut Session, product: Option<model::Id>) -> Result<(), CliError> {
     let chosen = match product {
         Some(id) => Some(id),
         None => match session.project().products().as_slice() {
