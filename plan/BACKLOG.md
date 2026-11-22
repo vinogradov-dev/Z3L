@@ -105,20 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **P25** two plan writers in one checkout race, and the gate calls the result correct
-  Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one
-   checkout both read the same backlog, both computed the next free id (X107) and the last one
-   to write replaced the other entry; the plan gate then reported `plan: ok` because nothing
-   was duplicated or missing by its rules, and the lost entry had to be filed again by hand.
-   The tool takes no lock inside a checkout, so its read-modify-write cycle is two steps the
-   shell cannot see.
-  Shape: One writer per checkout enforced by the tool, not by the rule text: a lock file beside
-   the plan that a write takes for its read-modify-write cycle and releases, and a second
-   writer that waits or refuses with a sentence naming the lock.
-  Done: A test starts two writes on one root and asserts that both land (or one is refused with
-   the lock named) and that neither entry is lost; a test asserts the lock is gone after a
-   normal write and after a refused one.
-  `files: state-contract/src/cli/write.rs,plan/BACKLOG.md`
 - `[ ]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
   Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing
    appeared; the cube showed up only when the pointer was moved onto the window. The document
@@ -867,6 +853,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **P25** two plan writers in one checkout race, and the gate calls the result correct
+  Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one
+   checkout both read the same backlog, both computed the next free id (X107) and the last one
+   to write replaced the other entry; the plan gate then reported `plan: ok` because nothing
+   was duplicated or missing by its rules, and the lost entry had to be filed again by hand.
+   The tool did take `plan/.lock`, but only inside `apply`, after the verb had read the backlog
+   and computed its id: the lock serialised the two renames and nothing before them, and the
+   cycle a writer owns is read, splice, validate, write.
+  Shape: One writer per checkout enforced by the tool, not by the rule text: a lock file beside
+   the plan that a write takes for its read-modify-write cycle and releases, and a second
+   writer that waits or refuses with a sentence naming the lock.
+  Done: A test starts two writes on one root and asserts that both land (or one is refused with
+   the lock named) and that neither entry is lost; a test asserts the lock is gone after a
+   normal write and after a refused one.
+  `files: state-contract/src/cli/write.rs,plan/BACKLOG.md` — `bc65ddc`
 
 - `[x]` **X110** nothing answers what a body is, so a caller cannot check what it built
   Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
