@@ -104,7 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-
 ## Bugs
 - `[ ]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
   Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
@@ -774,24 +773,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
-  Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
-   under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
-   world XY (z = 0) for every view but an axis-aligned orthographic one, so a 3D sketch can
-   capture only a candidate exactly on that plane; plan/debt.md records that the drawing tools
-   hand the resolver no face at all (V5, U116).
-  Shape: The draft asks the probe for the surface under the pointer while it is armed and, in
-   the 3D mode, takes that face's plane as its plane; the first click freezes it, exactly as
-   the camera plane is frozen today. The preview edge and the marker stand on the frozen plane,
-   the plane is drawn as a faint guide while the draft is open, and a click on empty space
-   keeps the camera plane. The face is the one the ruler already measures (it steps past a
-   product's reserved box). The 2.5D mode keeps today's reading: the plane is where it is, and
-   a candidate above it answers with its foot.
-  Done: Tests: a sketch started on a board's top face stores its points in that face's plane;
-   its own corners capture in 3D; a sketch started on empty space keeps the camera's plane; the
-   frozen plane does not follow the camera mid-draft; one offscreen shot of the guide and the
-   marker on the face plane; cargo xtask ci is green.
-  `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs`
 - `[ ]` **U122** the creation menu has artwork for every key it offers
   Why: The class and build menu the owner asks for is a list of six keys — Post, Shelf, Wall,
    Overlay wall, Evenly, By the area shape — and a menu row without a glyph is a placeholder
@@ -1157,6 +1138,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
+  Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
+   under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
+   world XY (z = 0) for every view but an axis-aligned orthographic one, so a 3D sketch can
+   capture only a candidate exactly on that plane; plan/debt.md records that the drawing tools
+   hand the resolver no face at all (V5, U116).
+  Shape: The draft asks the probe for the surface under the pointer while it is armed and, in
+   the 3D mode, takes that face's plane as its plane; the first click freezes it, exactly as
+   the camera plane is frozen today. The preview edge and the marker stand on the frozen plane,
+   the plane is drawn as a faint guide while the draft is open, and a click on empty space
+   keeps the camera plane. The face is the one the ruler already measures (it steps past a
+   product's reserved box). The 2.5D mode keeps today's reading: the plane is where it is, and
+   a candidate above it answers with its foot.
+  Done: Tests: a sketch started on a board's top face stores its points in that face's plane;
+   its own corners capture in 3D; a sketch started on empty space keeps the camera's plane; the
+   frozen plane does not follow the camera mid-draft; one offscreen shot of the guide and the
+   marker on the face plane; cargo xtask ci is green.
+  `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs` — `b0c2980`
 
 - `[x]` **P19** the plan still sends a session to take the rename that already landed
   Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is

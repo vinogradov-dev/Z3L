@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=c4cbca5 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=b0c2980 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,8 +35,8 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-Nothing is scheduled: P19 landed — the rename file is its own record. The next agent step is J9,
-which runs in the agent checkout; this checkout's order resumes at U121.
+Nothing is scheduled: The 3D sketch has its plane. The next app step is U122, the creation menu's
+artwork.
 
 ## Index
 
