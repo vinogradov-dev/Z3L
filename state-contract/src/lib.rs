@@ -244,6 +244,22 @@ pub fn check(root: &Path) -> Result<Summary, Vec<String>> {
     check_with(root, &ProcessGit::new(root))
 }
 
+/// The stream a checkout serves, when its branch is a declared one beside the plan's own.
+///
+/// The branch names the checkout — a worktree of `stream/<key>` — and the `STREAMS:` line of
+/// `plan/STATUS.md` names the key. A branch that neither starts with `stream/` nor is declared — the
+/// primary on `dev`, a detached `HEAD`, a plan read outside a repository — answers `None`, which
+/// leaves every rule that asks about a stream exactly as it was. The tool's version of the rule is
+/// AGENTS.md §6.2: `plan/` has one writer, and a stream checkout owns only its own session note and
+/// its research notes (P26).
+pub fn stream_checkout(root: &Path, git: &dyn Git) -> Option<String> {
+    let branch = git.branch()?;
+    let key = branch.trim().strip_prefix("stream/")?;
+    let status = std::fs::read_to_string(root.join("plan/STATUS.md")).ok()?;
+    let streams = Streams::parse(&status).ok()?;
+    streams.iter().find(|stream| !stream.is_primary() && stream.key == key).map(|stream| stream.key.clone())
+}
+
 /// [`check`] with the git facts supplied by `git`, so tests need no repository.
 pub fn check_with(root: &Path, git: &dyn Git) -> Result<Summary, Vec<String>> {
     let status = read(&root.join("plan/STATUS.md"), "plan/STATUS.md")?;

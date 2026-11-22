@@ -15,6 +15,25 @@ pub fn check(root: &Path) -> Result<usize, Vec<String>> {
 
 /// [`check`] with the decisions directory named by the caller.
 pub fn check_in(root: &Path, relative: &Path) -> Result<usize, Vec<String>> {
+    let (count, unlisted) = scan(root, relative, false)?;
+    debug_assert!(unlisted.is_empty(), "a strict scan reports the unlisted records as violations");
+    Ok(count)
+}
+
+/// [`check_in`] from a checkout beside the plan's own: a record the primary has not indexed yet is a
+/// row that checkout adds after the merge, so it is counted and named instead of refused.
+///
+/// The index is one table in one file, so `README.md` has one writer — the primary checkout, like
+/// every other shared file (P26). A stream that writes a decision on its own branch cannot add the
+/// row without meeting `dev` in the same hunk, and refusing the record would leave the stream unable
+/// to run the gate at all; it names the rows waiting instead, and the primary's own run is strict.
+pub fn check_in_stream(root: &Path, relative: &Path) -> Result<(usize, Vec<String>), Vec<String>> {
+    scan(root, relative, true)
+}
+
+/// The count of records and the ones the index does not list; `pending_ok` turns the second into a
+/// sentence instead of a value.
+fn scan(root: &Path, relative: &Path, pending_ok: bool) -> Result<(usize, Vec<String>), Vec<String>> {
     let directory = root.join(relative);
     let shown = relative.display();
     let entries = std::fs::read_dir(&directory).map_err(|error| vec![format!("cannot read `{shown}/`: {error}")])?;
@@ -46,9 +65,14 @@ pub fn check_in(root: &Path, relative: &Path) -> Result<usize, Vec<String>> {
             targets.join(", ")
         ));
     }
+    let mut unlisted: Vec<String> = Vec::new();
     for (number, name) in &files {
         if !listed.iter().any(|(listed, _)| listed == number) {
-            violations.push(format!("`{shown}/` has {name}, but `README.md` has no row for it"));
+            if pending_ok {
+                unlisted.push(name.clone());
+            } else {
+                violations.push(format!("`{shown}/` has {name}, but `README.md` has no row for it"));
+            }
         }
     }
     let mut reported: Vec<&str> = Vec::new();
@@ -58,7 +82,7 @@ pub fn check_in(root: &Path, relative: &Path) -> Result<usize, Vec<String>> {
             violations.push(format!("`{shown}/README.md` lists {number}, but no file carries that number"));
         }
     }
-    if violations.is_empty() { Ok(files.len()) } else { Err(violations) }
+    if violations.is_empty() { Ok((files.len(), unlisted)) } else { Err(violations) }
 }
 
 /// The number and the link target of every index row, in the order the table carries them.
@@ -155,6 +179,20 @@ mod tests {
         let root = project("twice", &["0180-a-decision.md"], &["0180", "0180"]);
         let violations = check(&root).expect_err("a number is listed once");
         assert!(violations.iter().any(|v| v.contains("0180") && v.contains("twice")), "{violations:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stream_checkout_waits_for_the_primary_to_index_a_record() {
+        let root = project("stream", &["0001-a-decision.md", "0002-a-decision.md"], &["0001"]);
+        let (count, unlisted) =
+            check_in_stream(&root, Path::new("docs/decisions")).expect("the record is a row to come");
+        assert_eq!(count, 2, "the record is counted");
+        assert_eq!(unlisted, vec!["0002-a-decision.md".to_owned()], "the missing row is named");
+        // A row that points at no file stays a violation: the stream did not add that row.
+        std::fs::write(root.join("docs/decisions/README.md"), "| [0003](0003-nothing.md) | a decision | Accepted |\n")
+            .expect("the index is writable");
+        check_in_stream(&root, Path::new("docs/decisions")).expect_err("a row with no record is still rot");
         let _ = std::fs::remove_dir_all(&root);
     }
 

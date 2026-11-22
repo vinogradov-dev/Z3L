@@ -381,7 +381,32 @@ fn run_dashboard(global: &Global, _config: &Config, args: &[String]) -> Result<(
 }
 
 /// `docs`: the ADR index against the files it indexes.
-fn run_docs(global: &Global, config: &Config) -> Result<(), String> {
+/// `docs`: the decision index is the primary checkout's file, so a stream names the rows it leaves
+/// for the merge instead of failing the gate on them.
+pub fn run_docs(global: &Global, config: &Config) -> Result<(), String> {
+    let git = ProcessGit::new(&global.root);
+    if let Some(key) = crate::stream_checkout(&global.root, &git) {
+        return match docs::check_in_stream(&global.root, &config.decisions) {
+            Ok((count, waiting)) => {
+                println!("docs: {count} decisions indexed");
+                if !waiting.is_empty() {
+                    println!(
+                        "docs: {} row(s) wait for the primary checkout, which owns `README.md`: {}",
+                        waiting.len(),
+                        waiting.join(", ")
+                    );
+                }
+                println!("docs: ok (this is the `{key}` stream)");
+                Ok(())
+            }
+            Err(violations) => {
+                for violation in &violations {
+                    eprintln!("error: {violation}");
+                }
+                Err(format!("the index has {} violation(s)", violations.len()))
+            }
+        };
+    }
     match docs::check_in(&global.root, &config.decisions) {
         Ok(count) => {
             println!("docs: {count} decisions indexed");

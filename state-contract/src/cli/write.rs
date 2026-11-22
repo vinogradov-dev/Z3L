@@ -98,6 +98,9 @@ fn read_stdin() -> Result<String, String> {
 
 /// `task add`, `start`, `set`, `step`, `note`, `close`, `reopen`, `take`, `defer`, `drop` and `phase`,
 /// plus `state set`.
+///
+/// A checkout on a declared `stream/<key>` branch writes only its own two files — `task step` and
+/// `task note` for a task of its own stream — and every other verb here refuses with the rule.
 pub fn run(root: &Path, args: &[String]) -> Result<(), String> {
     run_with(root, args, &ProcessGit::new(root))
 }
@@ -107,6 +110,13 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
     let Some(verb) = args.first().map(String::as_str) else {
         return Err("usage: cargo xtask task <add|start|set|step|note|close|reopen|take|defer|drop|phase> …".to_owned());
     };
+    if matches!(verb, "step" | "note") {
+        if let Some(id) = args.get(1) {
+            own_task_refusal(root, git, &format!("task {verb}"), id)?;
+        }
+    } else {
+        shared_plan_refusal(root, git, &format!("task {verb}"))?;
+    }
     let rest = &args[1..];
     match verb {
         "add" => add(root, rest, git),
@@ -707,6 +717,40 @@ fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses a write to a shared plan file from a stream's checkout, naming the two files it does own.
+///
+/// `plan/` has one writer, the primary checkout (AGENTS.md §6.2): `plan/BACKLOG.md` carries every
+/// stream's entries, and `plan/map.md`, `plan/debt.md` and the state line carry every stream's prose,
+/// so a second writer turns every merge into the same files on both sides (P26). The stream's own two
+/// files are `plan/SESSION.<key>.md` and `plan/notes/<ID>.md`, which no other checkout writes.
+fn shared_plan_refusal(root: &Path, git: &dyn Git, verb: &str) -> Result<(), String> {
+    let Some(key) = crate::stream_checkout(root, git) else { return Ok(()) };
+    Err(format!(
+        "`{verb}` writes the shared plan files, and `plan/` has one writer: the primary checkout, not a \
+         `stream/` worktree. This one is `stream/{key}`, whose own files are `plan/SESSION.{key}.md` \
+         (`task step`) and `plan/notes/<ID>.md` (`task note`); run `{verb}` from the primary checkout, \
+         and the code here travels with the merge (AGENTS.md §6.2)"
+    ))
+}
+
+/// Refuses a note for a task of another stream: each stream's note is written by its own checkout.
+///
+/// `task step` and `task note` stay open in a stream checkout because they write one task's own file;
+/// the same verb for a task another stream owns would write that stream's file from here, which is the
+/// second writer the rule above refuses.
+fn own_task_refusal(root: &Path, git: &dyn Git, verb: &str, id: &str) -> Result<(), String> {
+    let Some(key) = crate::stream_checkout(root, git) else { return Ok(()) };
+    let owner = stream_of(root, id)?;
+    if owner.key == key {
+        return Ok(());
+    }
+    Err(format!(
+        "task {id} belongs to the `{}` stream, so `{verb}` for it runs in that stream's checkout; this one \
+         is `stream/{key}`",
+        owner.key
+    ))
+}
+
 /// The stream a task belongs to, read from the plan the way the gate reads it.
 fn stream_of(root: &Path, id: &str) -> Result<crate::Stream, String> {
     let status = read(root, "plan/STATUS.md")?;
@@ -1020,6 +1064,8 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
 /// `base` points at, so a session that sets `base=HEAD` can say what changed in the same command.
 pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body", "task"])?;
+    let verb = format!("state {}", options.words.first().map(String::as_str).unwrap_or("set"));
+    shared_plan_refusal(root, git, &verb)?;
     match options.words.first().map(String::as_str) {
         Some("next") => {
             let body = options.body("body")?;
@@ -1085,6 +1131,7 @@ const REFERENCE_FILES: &[&str] = &[
 /// splices preserve.
 pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body"])?;
+    shared_plan_refusal(root, git, "file")?;
     let path = options.words.first().ok_or("`file` needs the path of a reference file")?;
     if !REFERENCE_FILES.contains(&path.as_str()) {
         // The three plan files `file` refuses are the ones a `task` or `state` verb splices line by
@@ -1520,6 +1567,110 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         std::fs::write(root.join("plan/SESSION.agent.md"), note).expect("the stream's note is writable");
         let error = run(&root, &["start", "J2"]).expect_err("the agent stream already works J1");
         assert!(error.contains("still works the `agent` stream"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The same facts, in a checkout on `branch`: the plan beside the primary is one of these.
+    struct BranchGit<'a> {
+        facts: &'a FakeGit,
+        branch: &'static str,
+    }
+
+    impl Git for BranchGit<'_> {
+        fn head(&self) -> Option<String> {
+            self.facts.head()
+        }
+
+        fn commit_exists(&self, hash: &str) -> bool {
+            self.facts.commit_exists(hash)
+        }
+
+        fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+            self.facts.is_ancestor(ancestor, descendant)
+        }
+
+        fn commit_date(&self, hash: &str) -> Option<String> {
+            self.facts.commit_date(hash)
+        }
+
+        fn short(&self, hash: &str) -> Option<String> {
+            self.facts.short(hash)
+        }
+
+        fn subject(&self, hash: &str) -> Option<String> {
+            self.facts.subject(hash)
+        }
+
+        fn branch(&self) -> Option<String> {
+            Some(self.branch.to_owned())
+        }
+    }
+
+    fn run_on(root: &Path, branch: &'static str, args: &[&str]) -> Result<(), String> {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        let git = BranchGit { facts: &FakeGit, branch };
+        run_with(root, &args, &git)
+    }
+
+    #[test]
+    fn a_stream_checkout_writes_no_shared_plan_file() {
+        let root = project("stream-shared", STREAM_STATUS, STREAM_BACKLOG, None);
+        let before = snapshot(&root);
+        let cases: &[(&str, &[&str])] = &[
+            ("task start", &["start", "J2"]),
+            ("task close", &["close", "J2", "--commit", "abc1234"]),
+            ("task add", &["add", "--phase", "J", "--files", "src/a.rs", "a thing"]),
+            ("task set", &["set", "J2", "--field", "Why", "--body", "because"]),
+            ("task take", &["take", "J2"]),
+            ("state set", &["state", "set", "updated=2026-11-10"]),
+            ("file", &["file", "plan/map.md", "--body", "| a | b |"]),
+        ];
+        for (verb, args) in cases {
+            let error = run_on(&root, "stream/agent", args).expect_err(verb);
+            assert!(error.contains("`stream/agent`"), "{verb} names the checkout: {error}");
+            assert!(error.contains("primary checkout"), "{verb} names the writer: {error}");
+            assert!(error.contains("plan/SESSION.agent.md"), "{verb} names the stream's own file: {error}");
+        }
+        assert_eq!(snapshot(&root), before, "not one byte of the plan is written");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stream_checkout_keeps_its_own_note_and_refuses_another_streams() {
+        // The stream's own task runs, its note and its research note are the two files it writes.
+        let backlog = STREAM_BACKLOG
+            .replace("## Now\n\n", "## Now\n\n- `[~]` **J2** the report\n  `files: src/b.rs`\n\n")
+            .replace("- `[ ]` **J2** the report\n  `files: src/b.rs`\n\n## Done\n", "## Done\n");
+        let status = STREAM_STATUS.replace("STREAMS: agent=J", "STREAMS: agent=J render=Y");
+        let note = "task: J2\ngoal: the report\n\nsteps:\n  [ ] the report\n\nnow: the report\nblocked: nothing\n\
+                    run: cargo test\nresume: src/b.rs\n";
+        let root = project("stream-own", &status, &backlog, None);
+        std::fs::write(root.join("plan/SESSION.agent.md"), note).expect("the stream's note is writable");
+        let order = text(&root, "plan/BACKLOG.md");
+
+        run_on(&root, "stream/agent", &["step", "J2", "--now", "the table"]).expect("its own step lands");
+        assert!(text(&root, "plan/SESSION.agent.md").contains("now: the table"), "the step is in the note");
+        assert_eq!(text(&root, "plan/BACKLOG.md"), order, "the shared order is untouched");
+        run_on(&root, "stream/agent", &["note", "J2", "--body", "what the renderer measured"])
+            .expect("its own research note lands");
+        assert!(text(&root, "plan/notes/J2.md").contains("what the renderer measured"));
+
+        let error = run_on(&root, "stream/agent", &["step", "Y1", "--now", "someone else's step"])
+            .expect_err("Y1 is the render stream's task");
+        assert!(error.contains("`render` stream"), "{error}");
+        assert!(error.contains("`stream/agent`"), "{error}");
+        run_on(&root, "stream/agent", &["note", "Y1", "--body", "not mine"]).expect_err("not this stream's note");
+        assert!(!root.join("plan/notes/Y1.md").exists(), "another stream's note is not written");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_primary_checkout_writes_the_shared_files_it_always_did() {
+        // `dev` is the plan's own branch: no `stream/` prefix, which is what the rule reads.
+        let root = project("primary-writes", STREAM_STATUS, STREAM_BACKLOG, None);
+        run_on(&root, "dev", &["start", "J2"]).expect("the primary starts a stream's task");
+        assert!(text(&root, "plan/BACKLOG.md").contains("- `[~]` **J2**"), "the marker moved");
+        assert!(!text(&root, "plan/STATUS.md").contains("task=J2"), "a stream's entry leaves the state line alone");
         let _ = std::fs::remove_dir_all(&root);
     }
 

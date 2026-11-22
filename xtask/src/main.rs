@@ -461,18 +461,7 @@ fn run_ci(global: &Global, config: &Config) -> Result<(), String> {
             return Err(format!("plan: FAILED ({} violation(s))", violations.len()));
         }
     }
-    match state_contract::cli::docs::check_in(&global.root, &config.decisions) {
-        Ok(count) => {
-            println!("docs: {count} decisions indexed");
-            println!("docs: ok");
-        }
-        Err(violations) => {
-            for violation in &violations {
-                eprintln!("error: {violation}");
-            }
-            return Err(format!("docs: FAILED ({} violation(s))", violations.len()));
-        }
-    }
+    state_contract::cli::run_docs(global, config).map_err(|message| format!("docs: FAILED: {message}"))?;
     run_skills(global)?;
     println!("ci: ok");
     Ok(())
