@@ -370,6 +370,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    every schema that takes a side spells the frame; a test asserts the refusal for a side that
    cannot exist names the axis.
   `files: crates/mcp/src/server.rs,crates/model/src/side.rs,crates/model/src/class.rs`
+- `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
+  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
+   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
+   `App::gesture_in_flight()` is false in the same frame. `App::assistant`
+   (`app/src/main.rs:926`) passes `gesture_in_flight()` as the `busy` the panel reads,
+   `Chat::field` picks the Stop button from that flag, and `Chat::body` draws the working line
+   from `is_busy()`, so the two halves of the panel disagree about what is happening. The row
+   says Send exactly while the turn runs, and pressing it does nothing because `Chat::begin`
+   refuses a second turn, while Stop appears only while a piece is carried or a question waits,
+   which is when `serve_chat` has already paused the turn. ADR 0187 puts the stop between calls
+   and the module comment says Stop stands where Send was while the agent works; the screen
+   shows neither.
+  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was and
+   disables the field while a turn is in flight, so the panel has one meaning at a time. A
+   gesture still pauses the turn at the frame boundary, but it no longer decides what the row
+   offers.
+  Done: A frame test holds a backend that never answers so the turn stays in flight, asserts
+   the panel draws Stop and not Send and that the field is disabled, presses Stop and asserts
+   the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
+   no turn in flight, which still draws Send.
+  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
 
 ## Next
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
