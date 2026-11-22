@@ -105,24 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X101** an older scene file answers the schema sentence, not a field error
-  Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
-   missing field `tool` at line 117', not the schema sentence: the schema check lives in
-   `ProjectWire::try_from`, but the tree is deserialized before it runs, so a file from an
-   older layout fails on a field that did not exist yet and the one readable sentence ADR 0096
-   promises never appears. Every schema bump makes this worse: 29 added a required field, so
-   every older scene dies with a parse error.
-  Shape: The schema number is read before the body is parsed: the document is deserialized into
-   a value, `schema_version` is checked against the current one, and only then is the tree read
-   into the typed document. A file with any other number answers 'unsupported schema version N;
-   this build supports M' whatever its layout, and the same check guards the top-level
-   envelope's `format` and `format_version`. The reader keeps one parse pass over the value, so
-   the cost is one JSON tree, not two parses.
-  Done: Tests: a document body with no fields at all but an older `schema_version` is refused
-   with the schema sentence and not with a field error; the same file with the current number
-   is refused with the field error, because the layout is genuinely broken; every existing
-   scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
-  `files: crates/model/src/project/wire.rs,crates/project/tests/scene_file.rs,crates/model/src/project/mod.rs`
 - `[ ]` **P22** a fifth stream has no way to be declared, so its worktree cannot mark its task
   Why: Observation, from a session opening the render worktree: the project gives every plan
    file a verb — `task`, `state`, `file` — but the `STREAMS:` line of `plan/STATUS.md` has
@@ -1010,6 +992,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X101** an older scene file answers the schema sentence, not a field error
+  Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
+   missing field `tool` at line 117', not the schema sentence: the schema check lives in
+   `ProjectWire::try_from`, but the tree is deserialized before it runs, so a file from an
+   older layout fails on a field that did not exist yet and the one readable sentence ADR 0096
+   promises never appears. Every schema bump makes this worse: 29 added a required field, so
+   every older scene dies with a parse error.
+  Shape: The schema number is read before the body is parsed: the document is deserialized into
+   a value, `schema_version` is checked against the current one, and only then is the tree read
+   into the typed document. A file with any other number answers 'unsupported schema version N;
+   this build supports M' whatever its layout, and the same check guards the top-level
+   envelope's `format` and `format_version`. The reader keeps one parse pass over the value, so
+   the cost is one JSON tree, not two parses.
+  Done: Tests: a document body with no fields at all but an older `schema_version` is refused
+   with the schema sentence and not with a field error; the same file with the current number
+   is refused with the field error, because the layout is genuinely broken; every existing
+   scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
+  `files: crates/model/src/project/wire.rs,crates/model/src/project/mod.rs,crates/model/src/project/error.rs,crates/model/src/project/panel_cmds.rs,crates/project/src/lib.rs,crates/project/tests/scene_file.rs,docs/domain/scene-file.md` — `79795cf`
 
 - `[x]` **X100** a contour set is extruded one body per ring
   Why: An intersection of three rings can leave two separate pieces, which the operation stores
