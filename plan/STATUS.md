@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=e689433 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=47af686 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -41,8 +41,9 @@ own settings, which the Render place offers as a percentage of a white room and 
 
 ## Next
 
-Nothing is scheduled: the three fill cells have no command, so only the window can make a post, a
-shelf or a wall — N37 is that gap, filed under `## Bugs` with X112 and X114 behind it.
+Nothing is scheduled, and the bug order holds X112 next: a created frame is closed, and X114 behind
+it. The fill command N37 added no longer makes a closed frame a wall for a caller, so X112 should be
+re-read before it is taken
 
 ## Index
 

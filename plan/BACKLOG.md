@@ -105,23 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
-  Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
-   (`crates/ui/src/toolbars/spec.rs:936`) are `ToolKind::Fill { class: VERTICAL_PANEL |
-   HORIZONTAL_PANEL | BACK_PANEL, mode: Fit }`: the gesture measures the niche under the
-   pointer (`Project::niche`) and dispatches one `panel.create` with the outline, the size, the
-   placement and the class. The registry holds no fill id, so a caller that is not the window
-   has to rebuild the measurement itself and hand-write a placement with a quaternion for every
-   part, which is the arithmetic the three cells exist to remove; a copy of that arithmetic can
-   also disagree with the ribbon about the class axis pair.
-  Shape: One fill command that the three cells and any other caller share: the point, the class
-   and the mode in, and on a dry run the panel it would create, otherwise the panel. The niche
-   measurement stays where it is in `model`, so the ghost, the report row and the command read
-   one void.
-  Done: A test fills a niche with a post, a shelf and a wall and asserts the class, the
-   orientation and the size of each; a dry run answers the part without writing it; a point
-   outside every product is the refusal the query already gives.
-  `files: crates/engine/src/panel_cmds,app/src/fill_gizmo.rs,crates/ui/src/toolbars/spec.rs`
 - `[ ]` **X112** a created frame is closed, so the first part after it is refused
   Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say
    so twice. Measured: `product.create` created node 3 of an empty scene and the very next
@@ -836,6 +819,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
+  Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
+   (`crates/ui/src/toolbars/spec.rs:936`) are `ToolKind::Fill { class: VERTICAL_PANEL |
+   HORIZONTAL_PANEL | BACK_PANEL, mode: Fit }`: the gesture measures the niche under the
+   pointer (`Project::niche`) and dispatches one `panel.create` with the outline, the size, the
+   placement and the class. The registry holds no fill id, so a caller that is not the window
+   has to rebuild the measurement itself and hand-write a placement with a quaternion for every
+   part, which is the arithmetic the three cells exist to remove; a copy of that arithmetic can
+   also disagree with the ribbon about the class axis pair.
+  Shape: one fill command for a caller: the parent, the point, the class and the mode in, and
+   the measured part out; the niche measurement stays where it is in `model`, so the ghost, the
+   report row and the command read one void. Session notes: the command is a caller's door, not
+   the ribbon's — the three cells keep their gesture and write its ghost through
+   `panel.create`, because the ghost is planned through the person's sight while a command
+   measures every part in the way (the reason is in `plan/debt.md`). The open product moved
+   from the command to the interface (ADR 0226), which is what lets a caller write into a
+   closed frame at all, so X112's premise is gone. The dry run is the session's own, not a
+   command parameter.
+  Done: a test fills an empty cabinet with a post, a shelf and a wall through `panel.fill` and
+   asserts each class, the documented stance and the void's own size; a second test pins the
+   free place and shows the class's word made unique; a dry run names the part it would make
+   and writes nothing, and the same step then makes that part; a point outside every product is
+   the query's own sentence; a void of another product, a class whose traits carry no fill pair
+   and a workshop with no board are each refused and record no history.
+  `files: crates/engine/src/panel_cmds,app/src/fill_gizmo.rs,crates/ui/src/toolbars/spec.rs` — `47af686`
 
 - `[x]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
   Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing

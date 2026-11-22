@@ -340,6 +340,14 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   path that exists. It is declared `Api` in `crates/ui/src/inventory.rs` today; either a surface takes
   it or the command goes, and deleting it is the smaller change (U94).
 
+- `[engine]` `panel.fill` is the one command over the niche measurement, and no surface runs it: the
+  three fill cells stay the empty-space gesture, which paints a ghost through the parts the person has
+  switched off (`Sight`, ADR 0175) and writes that ghost through `panel.create`. The command measures
+  every part in the way, because a caller has no sight to hand in, so routing the gesture through it
+  would make the click create a part the ghost did not show when a hidden part is inside the void. One
+  path for both needs the hidden set in the command's parameters, which is view state in a write
+  (ADR 0226); a caller that wants the command's answer asks `query niche` first (N37).
+
 - `[engine]` `object.cuboid.create` names the box by the word the ribbon prints, and no surface runs
   it: the box cell is the rectangle gesture (ADR 0138), so the cell cannot dispatch three typed
   sides, and the palette has no field to ask for them. The command line and the assistant are its
