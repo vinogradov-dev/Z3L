@@ -476,3 +476,27 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   with a gap at each side of its arc loses every piece, which is how the owner's `cross.z3l` answered
   "the rings do not meet". The boolean should refuse an open operand with a sentence instead of
   repairing one gap and dropping the rest.
+
+- `[assistant]` The inspector's `shelf_fit` has no bearing check: ADR 0191's "bearing under 30 mm"
+  is a fact about the shelf's support — a pin, a cleat, a groove — and the document has no hardware
+  entity to measure it against. The width fit and the loose warning ship now; the clause joins the
+  set when the hardware catalogue does (J9, M8).
+
+- `[assistant]` `sheet_fit` allows both quarter turns of a part because grain is not document data
+  (ADR 0216): a material's grain arrives with the decor the shell decides, not with the panel. The
+  day grain is stored the rule reads it and drops the turn the grain forbids (J9).
+
+- `[types]` The hanging rail's row `20.06` names `10.02` as its host, and `10.02` is not a class of
+  the registry (the cornice's row `20.03` names it too), so `node.property.set` refuses to class a
+  rail in a cabinet. The inspector reads a rail a loaded scene already carries, and the fixture sets
+  the class on the document directly; fixing the row's host is a registry change and an owner
+  decision (`plan/questions.md`, J9).
+
+- `[assistant]` A front's mounting form — overlay, inset or half-overlay — is carried by the hinge
+  class and not by the door, so `door_gap` reads the opening as the product's width and a pair's
+  outer edges as flush. An inset front in a case can draw a false warning until the form is document
+  data (`plan/questions.md`, J9).
+
+- `[assistant]` The assistant panel lists six findings and an "and N more" line; a row selects no
+  node and a suggested fix is not a button. The tool answer carries every finding and every command,
+  so the model can act on the list a person cannot yet click (J9).

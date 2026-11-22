@@ -321,20 +321,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J9** the inspector finds the seven mistakes, and the model explains them
-  Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
-   that does not fit, a rail through a door and a part longer than the sheet — and a model
-   cannot be trusted to see them. A rule can, and a rule can be tested with a fixture that
-   fails before it passes.
-  Shape: One pass returning `Finding { code, severity, nodes, text, suggested_commands }` for
-   `envelope_out`, `body_overlap`, `shelf_fit`, `rail_place`, `edge_band`, `door_gap` and
-   `sheet_fit`, every number read from the workshop profile and each rule reusing the
-   derivation that owns its answer. It is exposed as `inspect` on the tool surface and as a
-   list the panel shows; the model explains it and never computes it.
-  Done: Seven fixture pairs — one scene that finds each code and one that does not — pass;
-   every finding names document ids and carries a command list; changing one profile value
-   changes that rule's verdict and no other.
-  `files: crates/model/src/project,crates/engine/src/session.rs,crates/param/src`
 - `[ ]` **J10** a preview shows what the agent built, without a device on the client
   Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
    of the assistant unless a person asks for one; nothing renders without a device today, so a
@@ -746,6 +732,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J9** the inspector finds the seven mistakes, and the model explains them
+  Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
+   that does not fit, a rail through a door and a part longer than the sheet — and a model
+   cannot be trusted to see them. A rule can, and a rule can be tested with a fixture that
+   fails before it passes.
+  Shape: One pass returning `Finding { code, severity, nodes, text, suggested_commands }` for
+   `envelope_out`, `body_overlap`, `shelf_fit`, `rail_place`, `edge_band`, `door_gap` and
+   `sheet_fit`, every number read from the workshop profile and each rule reusing the
+   derivation that owns its answer. It is exposed as `inspect` on the tool surface and as a
+   list the panel shows; the model explains it and never computes it.
+  Done: Seven fixture pairs — one scene that finds each code and one that does not — pass;
+   every finding names document ids and carries a command list; changing one profile value
+   changes that rule's verdict and no other.
+  `files: crates/model/src/project,crates/engine/src/session.rs,crates/param/src` — `f842b17`
 
 - `[x]` **J19** the tool surface carries the words a released agent has: the sides, the units and the class names, because no README ships with the binary
   Why: The owner, 2026-11-21: "как будет решать задачу понимания агентом о чём речь, когда

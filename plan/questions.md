@@ -61,3 +61,13 @@ this file only when a task touches the question.
   whatever drawing it is over. Reading the pointer's drawing instead is a mode whose target is not the
   selection, and it changes what the cell means for every other payload; confirm the narrower reading
   or ask for the pointer-driven one.
+
+- The hanging rail's registry row `20.06` names `10.02` as its host, and `10.02` is not a class of
+  the registry (the cornice row `20.03` names it too), so `node.property.set` refuses to class a
+  rail in a cabinet. Confirm the fix: give `20.06` and `20.03` the cabinet family `10.01` as their
+  host, or add the `10.02` row the registry expects (J9).
+
+- A front's mounting form — overlay, inset, half-overlay — is not document data: the hinge class
+  carries it and the door does not, so the inspector cannot tell a flush overlay door from an inset
+  one and `door_gap` reads every front as an overlay. Confirm whether the mounting form belongs on
+  the door (a reserved property or a class variant) before the rule stops guessing (J9).

@@ -1,11 +1,19 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=ceb9119 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=f842b17 updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
+
+An inspector reads the seven mistakes ADR 0191 names in one pass and returns one list in severity
+order — each finding names the document ids it blames, says what a person would see and carries the
+commands a fix would dispatch. The rules reuse the derivation that owns each answer and read the
+workshop's numbers from `model::WorkshopProfile`; `inspect` is the fifth coarse tool, `z3l inspect
+<scene>` is the same list on the command line, and the assistant panel re-reads it once per revision
+so the model explains the mistake and never computes it. The reference wardrobe reports nothing
+(J9, ADR 0191, ADR 0193).
 
 The command line and the tool server are two doors to one document, and a run, a batch and a
 served call are one operation of the session: `z3l run` reads a recipe as JSON Lines and
