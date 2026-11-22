@@ -6744,6 +6744,7 @@ fn a_refused_batch_answers_the_command_sentence_and_no_created_ids() {
         product: None,
         atomic: true,
         dry_run: false,
+        save: false,
     };
     let (pending, answering) = mcp::queued(mcp::Call::Dispatch(request));
     harness.app.queued.push(pending);
@@ -6774,7 +6775,112 @@ fn shelf_request(product: Id) -> mcp::BatchRequest {
         product: None,
         atomic: true,
         dry_run: false,
+        save: false,
     }
+}
+
+/// The scene file a harness's active tab was saved to, written once, as a person's *Save* would.
+fn saved_tab(harness: &mut Harness, folder: &std::path::Path) -> std::path::PathBuf {
+    let path = folder.join("cabinet.z3l");
+    harness.app.tabs.active_mut().save(&path).expect("the fixture scene is written once");
+    assert!(!harness.app.tabs.active().is_dirty(), "the save leaves the scene clean");
+    path
+}
+
+/// Answers one dispatched batch in the frame after it was queued, as the window's frame does.
+fn answered(harness: &mut Harness, request: mcp::BatchRequest) -> mcp::Answer {
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(request));
+    harness.app.queued.push(pending);
+    harness.frame();
+    answering.take().expect("the frame answered the call")
+}
+
+#[test]
+fn a_save_a_caller_asks_for_writes_the_scene_and_marks_the_tab_saved() {
+    // X114: an agent that built a wardrobe owned nothing it made, because the document lived in one
+    // dirty tab and the person's own *Save* was the only write. A caller may now ask for the save,
+    // which goes to the file the scene came from and is the person's *Save* performed for them.
+    let folder = testkit::scratch_dir("frame-channel-save");
+    let (mut harness, _panel) = chat_fixture("frame-channel-save-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let path = saved_tab(&mut harness, &folder);
+    let saved = project::SceneFile::read(&path).expect("the fixture scene reads back");
+    let saved_revision = saved.document().revision().get();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let mut request = shelf_request(product);
+    request.save = true;
+    let answer = answered(&mut harness, request);
+    assert!(!answer.failed(), "the batch landed and the save reached the file: {:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("written"), "{:?}", answer.body());
+    assert_eq!(answer.body()["written"], serde_json::json!(true), "{:?}", answer.body());
+    let reported = answer.body()["revision"].as_u64().expect("the answer names the revision it left");
+    assert_ne!(reported, saved_revision, "the batch moved the document the file now holds");
+    assert!(!harness.app.tabs.active().is_dirty(), "the file holds the document, so the tab is no longer dirty");
+
+    let written = project::SceneFile::read(&path).expect("the file is a scene");
+    assert_eq!(written.document().revision().get(), reported, "the file reads back with the revision the answer named");
+}
+
+#[test]
+fn a_save_a_scene_with_no_path_cannot_take_is_refused_and_writes_no_file() {
+    // The other half: a caller never chooses a path (ADR 0188), so a scene that was never saved
+    // answers with the sentence that names the person's act — and nothing is written into a file
+    // nobody asked for.
+    let folder = testkit::scratch_dir("frame-channel-save-nopath");
+    let (mut harness, _panel) = chat_fixture("frame-channel-save-nopath-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    assert_eq!(harness.app.tabs.active().path(), None, "the fixture scene was never saved");
+    let before = harness.revision();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let mut request = shelf_request(product);
+    request.save = true;
+    let answer = answered(&mut harness, request);
+    assert!(answer.failed(), "the ask was not honoured: {:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("landed"), "{:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("no_path"), "{:?}", answer.body());
+    let sentence = answer.body()["write_error"].as_str().expect("the answer says what a person can do");
+    assert!(sentence.contains("Save as"), "it names the person's own act: {sentence}");
+    assert_ne!(harness.revision(), before, "the document moved and no file holds it");
+    assert!(harness.app.tabs.active().is_dirty(), "which is exactly what a dirty tab means");
+
+    let scenes: Vec<std::path::PathBuf> = std::fs::read_dir(&folder)
+        .expect("the folder the channel published into")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == project::EXTENSION))
+        .collect();
+    assert!(scenes.is_empty(), "no scene was written into a path nobody chose: {scenes:?}");
+}
+
+#[test]
+fn a_batch_that_did_not_ask_for_the_save_leaves_the_file_alone() {
+    // The window's rule survives the new one: the tab is a person's, and a landed batch that nobody
+    // asked to keep is in the document and not on disk.
+    let folder = testkit::scratch_dir("frame-channel-unsaved");
+    let (mut harness, _panel) = chat_fixture("frame-channel-unsaved-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let path = saved_tab(&mut harness, &folder);
+    let saved = project::SceneFile::read(&path).expect("the fixture scene reads back");
+    let saved_revision = saved.document().revision().get();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let answer = answered(&mut harness, shelf_request(product));
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("window"), "{:?}", answer.body());
+    assert_eq!(answer.body()["written"], serde_json::json!(false), "{:?}", answer.body());
+    assert!(harness.app.tabs.active().is_dirty(), "the change is in the document and not on disk");
+
+    let written = project::SceneFile::read(&path).expect("the file is a scene");
+    assert_eq!(written.document().revision().get(), saved_revision, "the file still holds what was saved");
+    assert_ne!(harness.revision().get(), saved_revision, "and the document moved past it");
 }
 
 #[test]

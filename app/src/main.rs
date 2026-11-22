@@ -52,6 +52,7 @@ mod render_place;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;
+mod scene_writer;
 mod settings_store;
 mod shortcuts;
 mod side_panels;
@@ -909,8 +910,17 @@ impl App {
                 Err(error) => mcp::Answer::refused(format!("the window cannot be reported: {error}")),
             },
             mcp::Call::Dispatch(request) => {
-                let session = &mut self.tabs.active_mut().session;
-                mcp::dispatch(session, request, mcp::Door::Window)
+                let document = self.tabs.active_mut();
+                // The save a caller asks for is the person's *Save* performed on their document, so
+                // it goes through the same writer and to the same file (X114). A scene that was
+                // never saved has no file yet, and the door says so instead of choosing a path.
+                let writer = document.save_sink();
+                let sink = writer.as_ref().map(|writer| writer as &dyn mcp::SceneSink);
+                let answer = mcp::dispatch(&mut document.session, request, mcp::Door::Window { sink });
+                if answer.written() {
+                    document.mark_saved();
+                }
+                answer
             }
         }
     }

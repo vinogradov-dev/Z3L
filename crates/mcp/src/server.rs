@@ -6,8 +6,11 @@
 //! that calls two tools at once is serialized here instead of the document growing a second writer.
 //!
 //! A batch that lands is written through the [`SceneSink`] the shell installed, once, after the
-//! engine installed it — the same order `z3l run` keeps. A write that fails is reported as a
-//! failure and never as success: the next client must not believe the file holds what it does not.
+//! engine installed it — the same order `z3l run` keeps. A headless session writes every landed
+//! batch; the document a person is looking at is written only when the call asks with `save`, because
+//! the tab is theirs and its dirty marker is the truth until they say otherwise. A write that fails,
+//! and a save a scene with no path cannot take, are reported as failures and never as success: the
+//! next client must not believe the file holds what it does not (ADR 0005, ADR 0188, X114).
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -44,7 +47,9 @@ creates with `as` and a later step refers to that name as `{\"$ref\": \"<name>\"
 the machining on it are one call. A furniture part is born only inside the open product, so name one with `product` when the scene holds several: opening it \
 is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
 the scene with `query` and never guess a number: a length on the wire is millimetres, an angle is \
-degrees and intrinsic XYZ Euler angles.";
+degrees and intrinsic XYZ Euler angles. A window's scene is written to the file it came from only \
+when a call asks with `save`, and a scene that was never saved refuses that ask: the person names \
+the file once, and every later save reaches it.";
 
 /// The one session a served process dispatches into, and where its document is written.
 #[derive(Clone)]
@@ -133,25 +138,33 @@ impl CommandServer {
 /// differently.
 ///
 /// A headless session may write the scene it was handed, so a landed batch reaches the file. The
-/// window never writes: the tab is dirty on purpose, the path may not exist yet, and the person's
-/// *Save* is the write. The report says which of the two happened instead of leaving a caller to
-/// guess (ADR 0005, ADR 0188).
+/// window writes only the save a caller asked for: the tab is dirty on purpose, the path may not
+/// exist yet, and a file nobody asked for could overwrite work the person has not saved. The report
+/// says which of the three happened instead of leaving a caller to guess (ADR 0005, ADR 0188, X114).
 #[derive(Clone, Copy)]
 pub enum Door<'a> {
     /// A session a process serves, with the writer the shell handed in, if it handed one in.
+    ///
+    /// Every landed batch that changed the document is written without asking again: naming the
+    /// scene on `z3l mcp serve <scene>` was that ask, made once when the process started.
     Headless {
         /// Where a landed batch is written; `None` serves a document that lives in memory.
         sink: Option<&'a dyn SceneSink>,
     },
-    /// The document a person is looking at: changed in the window, written by its own *Save*.
-    Window,
+    /// The document a person is looking at: written when the caller asked with `save`, and never
+    /// otherwise.
+    Window {
+        /// The file a save the caller asked for is written to: the one the scene was opened from or
+        /// last saved to. `None` while the scene has no path, which refuses the ask.
+        sink: Option<&'a dyn SceneSink>,
+    },
 }
 
 impl fmt::Debug for Door<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Headless { sink } => formatter.debug_tuple("Headless").field(&sink.is_some()).finish(),
-            Self::Window => formatter.write_str("Window"),
+            Self::Window { sink } => formatter.debug_tuple("Window").field(&sink.is_some()).finish(),
         }
     }
 }
@@ -179,7 +192,8 @@ pub fn listing(session: &Session) -> Value {
 /// The batch goes through [`Session::agent_batch`], so the mode a person left the session in decides
 /// what a call may do: `plan` runs the same steps with writing off and answers with the plan, and no
 /// request field can talk it into writing (ADR 0190). The answer names the mode, so a model that was
-/// answered a plan reads why nothing moved instead of guessing.
+/// answered a plan reads why nothing moved instead of guessing. Whether the file received the batch
+/// is the door's rule and not the request's: see [`Door`].
 pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -> Answer {
     if request.steps.is_empty() {
         return Answer::refused("a batch names at least one step; nothing was dispatched");
@@ -196,9 +210,9 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
     let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
     let report = session.agent_batch(&steps, options);
     let write = match door {
-        Door::Headless { sink: Some(sink) } => sink_write(sink, session, &report),
+        Door::Headless { sink: Some(sink) } => write_landed(sink, session, &report),
         Door::Headless { sink: None } => Write::NoFile,
-        Door::Window => Write::Window,
+        Door::Window { sink } => write_asked(sink, session, &report, request.save),
     };
     let body = report::batch(
         &report,
@@ -232,11 +246,36 @@ pub fn asking(session: &Session, query: Query) -> Answer {
     }
 }
 
-/// Writes a landed batch through `sink` and says what that came to.
-fn sink_write(sink: &dyn SceneSink, session: &Session, report: &engine::BatchReport) -> Write {
-    if !report.landed() || !report.content_changed() {
-        return Write::Nothing;
+/// Writes a headless session's landed batch through `sink` and says what that came to.
+///
+/// A batch that left the document exactly as it was has nothing new to write, and a batch that did
+/// not land — refused, rolled back, or planned — has nothing to write either.
+fn write_landed(sink: &dyn SceneSink, session: &Session, report: &engine::BatchReport) -> Write {
+    match report.landed() && report.content_changed() {
+        true => write_through(sink, session),
+        false => Write::Nothing,
     }
+}
+
+/// Writes the window's document when the caller asked, and refuses the ask when there is no path.
+///
+/// The tab is the person's, so a landed batch that nobody asked to save stays dirty: the answer says
+/// `window` rather than writing a file behind their back (ADR 0005, X114). A caller that did ask is
+/// answered with the file's own words, and a scene that was never saved is where the ask ends — a
+/// caller cannot name a path, so the sentence names the person's act instead of a silent new file
+/// (ADR 0188). A batch that landed and changed nothing still writes, because the document the
+/// person is looking at may hold earlier work the caller is asking to keep.
+fn write_asked(sink: Option<&dyn SceneSink>, session: &Session, report: &engine::BatchReport, asked: bool) -> Write {
+    match (asked, report.landed(), sink) {
+        (false, ..) => Write::Window,
+        (true, false, _) => Write::Nothing,
+        (true, true, None) => Write::NoPath,
+        (true, true, Some(sink)) => write_through(sink, session),
+    }
+}
+
+/// Hands the document to `sink` and says what the write came to.
+fn write_through(sink: &dyn SceneSink, session: &Session) -> Write {
     match sink.save(session.project()) {
         Ok(()) => Write::Written,
         Err(message) => Write::Failed(message),

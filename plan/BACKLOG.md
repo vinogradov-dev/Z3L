@@ -104,8 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-## Bugs
-- `[ ]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
+- `[~]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
   Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
    "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
    and the persons Save is the write. An agent that built a wardrobe therefore owns nothing it
@@ -119,6 +118,8 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the answer named; a test asserts a scene with no path refuses the save with a sentence that
    says what to do; a test asserts no batch writes a file unless the caller asked for the save.
   `files: crates/mcp/src/server.rs,app/src/main.rs,crates/mcp/src/tools.rs`
+
+## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
    (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`

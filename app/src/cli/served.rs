@@ -13,16 +13,13 @@
 //! The report of a run never reaches standard output: that stream is the protocol's, and a stray
 //! line would be a broken frame. What a person needs to read goes to the log sink on stderr.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use model::Project;
 use project::SceneFile;
-use serde_json::Value;
 
 use super::{CliError, McpArgs};
+use crate::scene_writer::SceneWriter;
 
 /// Opens the session a served run works in, with the writer that saves its scene.
 ///
@@ -34,7 +31,7 @@ pub(super) fn open(args: &McpArgs) -> Result<(engine::Session, Option<Arc<dyn mc
             let scene = SceneFile::read(path).map_err(CliError::Scene)?;
             let extra = scene.extra().clone();
             let session = super::recipe::session_of(scene.into_document())?;
-            let writer = SceneWriter { path: path.clone(), extra };
+            let writer = SceneWriter::new(path.clone(), extra);
             (session, Some(Arc::new(writer) as Arc<dyn mcp::SceneSink>))
         }
         None => (
@@ -139,27 +136,11 @@ const NO_WINDOW: &str = "this process serves a document without a window: `ui_in
 /// the parent's way to stop the channel — is noticed (X111).
 const IDLE_WAIT: Duration = Duration::from_millis(50);
 
-/// The scene a served session writes, and the sections this build must give back.
-#[derive(Debug)]
-struct SceneWriter {
-    /// The file the scene was read from, written again when a batch lands.
-    path: PathBuf,
-    /// The top-level sections a newer build left in the file, carried back on every write.
-    extra: BTreeMap<String, Value>,
-}
-
-impl mcp::SceneSink for SceneWriter {
-    fn save(&self, project: &Project) -> Result<(), String> {
-        SceneFile::new(project.clone())
-            .with_extra(self.extra.clone())
-            .write(&self.path)
-            .map_err(|error| error.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
+
+    use std::path::PathBuf;
 
     use model::{ClassCode, Envelope, Id, Placement};
     use serde_json::json;

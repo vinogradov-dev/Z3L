@@ -58,6 +58,12 @@ pub struct RunRequest {
     /// Dispatch the command and write nothing, reporting what would have landed.
     #[serde(default)]
     pub dry_run: bool,
+    /// Write the scene after the command lands, so the file holds what it did.
+    ///
+    /// The field a batch carries, said once here so a run and a batch of one are the same call
+    /// (ADR 0185, ADR 0198).
+    #[serde(default)]
+    pub save: bool,
 }
 
 impl RunRequest {
@@ -71,6 +77,7 @@ impl RunRequest {
             product: self.product,
             atomic: true,
             dry_run: self.dry_run,
+            save: self.save,
         }
     }
 }
@@ -100,6 +107,18 @@ pub struct BatchRequest {
     /// Dispatch every step and write nothing, reporting what would have landed.
     #[serde(default)]
     pub dry_run: bool,
+    /// Write the scene after the batch lands, so the file holds what the batch did.
+    ///
+    /// The document a person is looking at is written only when the caller asks: a landed batch
+    /// leaves the tab dirty and the person's own *Save* is the write, because a file nobody asked
+    /// for could overwrite work they have not saved yet (ADR 0005, X114). The save goes to the file
+    /// the scene was opened from or last saved to, and a scene that has none refuses with the
+    /// sentence that names the person's act — a caller never chooses a path (ADR 0188).
+    ///
+    /// A headless session (`z3l mcp serve <scene>`) is written on every landed batch whether this is
+    /// set or not: naming the file when the process started is the same ask, made once.
+    #[serde(default)]
+    pub save: bool,
 }
 
 /// One step of a batch: a command id, the parameters it takes, and the name a later step calls what
@@ -185,6 +204,15 @@ impl Answer {
     pub const fn failed(&self) -> bool {
         self.failed
     }
+
+    /// Whether the answer says the file holds the batch it reports.
+    ///
+    /// The wire's own word, read back where the file was written for the person: a save a caller
+    /// asked for is their *Save*, performed on the document in front of them, so the shell clears
+    /// the dirty marker on this answer and on nothing else (X114).
+    pub fn written(&self) -> bool {
+        self.body.get("written").and_then(Value::as_bool).unwrap_or(false)
+    }
 }
 
 /// The tool list a headless session offers: the four coarse tools and no window report.
@@ -217,7 +245,9 @@ pub fn headless_definitions() -> Vec<Tool> {
              With `product` the command works in that product, and naming it opens the product first: \
              a furniture part is born only inside the open product. Opening is a view operation, not \
              an undo entry. With `dry_run` the command runs and nothing is written, so the answer is \
-             the plan.",
+             the plan. With `save` the scene is written to the file it was opened from once the \
+             command lands; without it the window's document is left unsaved, and a scene that has no \
+             path yet refuses the save instead of writing a new file.",
             object_schema::<RunRequest>(),
         ),
         Tool::new(
@@ -233,7 +263,11 @@ pub fn headless_definitions() -> Vec<Tool> {
              With `dry_run` every step runs and nothing is written. A session in plan mode answers \
              every batch this way whatever the request says; `command_list` names the mode. Plan and \
              build are a person's switch, held by the session: no tool changes it, and a plan answer \
-             carries the sentence that names the panel and the key in its `mode_note`.",
+             carries the sentence that names the panel and the key in its `mode_note`. With `save` \
+             the scene is written to the file it was opened from once the batch lands, which is how \
+             an agent's build survives the window closing; without it the window's document stays \
+             unsaved and its own Save is the write. A scene that has no path yet refuses the save \
+             with the sentence that names the person's act, because a caller never chooses a path.",
             object_schema::<BatchRequest>(),
         ),
         Tool::new(
@@ -388,13 +422,19 @@ mod tests {
     #[test]
     fn a_run_is_a_batch_of_one_step() {
         let product = Id::new(2);
-        let request =
-            RunRequest { command: "node.rename".to_owned(), params: json!({"node": 1}), product, dry_run: true };
+        let request = RunRequest {
+            command: "node.rename".to_owned(),
+            params: json!({"node": 1}),
+            product,
+            dry_run: true,
+            save: true,
+        };
         let batch = request.batch();
         assert_eq!(batch.steps.len(), 1);
         assert_eq!(batch.steps.first().map(|step| step.command.as_str()), Some("node.rename"));
         assert!(batch.atomic, "one step is whole by definition");
         assert!(batch.dry_run, "the run's own flag travels with it");
+        assert!(batch.save, "and so does the save it asked for");
         assert_eq!(batch.product, product, "the product the run named travels with it");
     }
 }

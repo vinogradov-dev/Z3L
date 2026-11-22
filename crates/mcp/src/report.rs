@@ -8,6 +8,14 @@
 use engine::{AgentMode, BatchEffect, BatchReport, BatchStep, StepOutcome};
 use serde_json::{Value, json};
 
+/// The sentence a save the caller asked for answers with while the scene has no path.
+///
+/// It names the person's own act, because a caller never chooses a path (ADR 0188) and a silent
+/// write into a new file would put a document where nobody looks for it (X114).
+pub const NO_PATH_NOTE: &str = "The scene has no path yet, so there is no file to write: a caller \
+     never chooses one, and the person saves the scene once with Save as — after that `save` reaches \
+     the file that names.";
+
 /// What writing the document did after a batch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Write {
@@ -17,12 +25,17 @@ pub enum Write {
     Written,
     /// The session has no scene: it was served without one, so its document lives in memory only.
     NoFile,
-    /// The document is the one a person is looking at, so the window's own *Save* is the write.
+    /// The document is the one a person is looking at, and the caller did not ask for a save.
     ///
     /// A batch that lands in an attached window is in the document and not on disk, and saying so
     /// is the whole point: the tab is dirty on purpose, and a file write nobody asked for could
-    /// overwrite work the person has not saved yet.
+    /// overwrite work the person has not saved yet (ADR 0005, X114).
     Window,
+    /// The caller asked for a save while the scene has no path: the person's *Save as* names one.
+    ///
+    /// The document moved and no file holds it, exactly as a failed write, and the sentence that
+    /// says what to do about it travels with the answer ([`NO_PATH_NOTE`]).
+    NoPath,
     /// The write was attempted and failed, with the sentence that says why.
     Failed(String),
 }
@@ -32,14 +45,28 @@ impl Write {
     ///
     /// A landed batch whose file could not be written is a failure a client has to see: the
     /// document moved and the file did not, and only the person in front of the client can decide
-    /// what to do about it.
+    /// what to do about it. A save the caller asked for on a scene with no path is the same failure
+    /// one step earlier: the ask was honoured by the answer and not by the disk.
     pub const fn failed(&self) -> bool {
-        matches!(self, Self::Failed(_))
+        matches!(self, Self::Failed(_) | Self::NoPath)
     }
 
     /// Whether the file holds the batch.
     pub const fn written(&self) -> bool {
         matches!(self, Self::Written)
+    }
+
+    /// The sentence a caller must read when the file does not hold the batch, if there is one.
+    ///
+    /// An I/O failure carries the writer's own words and a save with no path carries the one that
+    /// names the person's act; neither is summarised here, because both are sentences a caller can
+    /// act on (ADR 0198).
+    pub const fn sentence(&self) -> Option<&str> {
+        match self {
+            Self::Failed(message) => Some(message.as_str()),
+            Self::NoPath => Some(NO_PATH_NOTE),
+            Self::Nothing | Self::Written | Self::NoFile | Self::Window => None,
+        }
     }
 }
 
@@ -136,8 +163,8 @@ pub fn batch(
             object
                 .insert("refusal".to_owned(), json!({"step": number, "command": command, "error": error.to_string()}));
         }
-        if let Write::Failed(message) = write {
-            object.insert("write_error".to_owned(), json!(message));
+        if let Some(sentence) = write.sentence() {
+            object.insert("write_error".to_owned(), json!(sentence));
         }
     }
     body
@@ -145,15 +172,16 @@ pub fn batch(
 
 /// The one word that says what happened to the file.
 ///
-/// It is the answer to "does the file hold what the document holds", and the five words are the
-/// five honest answers: nothing landed, it was written, there is no file to write, the document is a
-/// window's and its own *Save* writes it, the write failed.
+/// It is the answer to "does the file hold what the document holds", and the six words are the six
+/// honest answers: nothing landed, it was written, there is no file to write, the document is a
+/// window's and the caller did not ask, the scene has no path to save to, the write failed.
 fn write_word(write: &Write) -> Value {
     json!(match write {
         Write::Nothing => "nothing",
         Write::Written => "written",
         Write::NoFile => "no_file",
         Write::Window => "window",
+        Write::NoPath => "no_path",
         Write::Failed(_) => "failed",
     })
 }

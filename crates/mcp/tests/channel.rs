@@ -68,7 +68,7 @@ fn session() -> Session {
 fn answer(session: &mut Session, call: &Call) -> Answer {
     match call {
         Call::List => Answer::ok(listing(session)),
-        Call::Dispatch(request) => dispatch(session, request, Door::Window),
+        Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None }),
         Call::Ask(query) => mcp::asking(session, *query),
         Call::Inspect => Answer::ok(json!(mcp::Window::default())),
     }
@@ -222,12 +222,36 @@ async fn a_window_batch_lands_in_the_document_and_says_the_file_is_the_persons()
         product: None,
         atomic: true,
         dry_run: false,
+        save: false,
     };
-    let answer = dispatch(&mut session, &request, Door::Window);
+    let answer = dispatch(&mut session, &request, Door::Window { sink: None });
     let body = answer.body();
     assert_eq!(body["effect"], json!("landed"), "{body}");
     assert_eq!(body["written"], json!(false), "a window writes nothing behind the person's back");
     assert_eq!(body["write"], json!("window"), "and says why: {body}");
     let read = mcp::asking(&session, Query::Tree { node: None });
     assert!(read.body()["answer"].is_object(), "the document holds what the batch did");
+}
+
+#[tokio::test]
+async fn a_save_a_scene_with_no_path_cannot_take_is_a_refusal_that_names_the_persons_act() {
+    // X114: a caller may ask for the save, and a scene that was never written has nowhere to put
+    // it. A caller never chooses a path (ADR 0188), so the answer is a failure with the sentence
+    // that names the person's act — never a silent write into a new file.
+    let mut session = session();
+    let request = mcp::BatchRequest {
+        steps: vec![mcp::StepRequest::new("node.rename", json!({"node": 1, "name": "Renamed"}))],
+        product: None,
+        atomic: true,
+        dry_run: false,
+        save: true,
+    };
+    let answer = dispatch(&mut session, &request, Door::Window { sink: None });
+    let body = answer.body();
+    assert!(answer.failed(), "the ask was not honoured: {body}");
+    assert_eq!(body["effect"], json!("landed"), "the document still moved: {body}");
+    assert_eq!(body["write"], json!("no_path"), "{body}");
+    assert_eq!(body["written"], json!(false), "{body}");
+    let sentence = body["write_error"].as_str().expect("a sentence that says what to do");
+    assert!(sentence.contains("Save as"), "it names the person's own act: {sentence}");
 }

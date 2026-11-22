@@ -58,6 +58,7 @@ use crate::osd;
 use crate::rotate_gizmo::RotateGizmo;
 use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
 use crate::scene_gizmo;
+use crate::scene_writer::SceneWriter;
 use crate::shortcuts::{DraftKey, Shortcuts, drawing_key, take_drawing_shortcut};
 use crate::side_panels::Chrome;
 use crate::strip::{strip_area, view_region};
@@ -568,13 +569,29 @@ impl Document {
 
     /// Writes the scene and marks the document as saved.
     pub(crate) fn save(&mut self, path: &Path) -> Result<(), String> {
-        SceneFile::new(self.session.project().clone())
-            .with_extra(self.extra.clone())
-            .write(path)
-            .map_err(|error| error.to_string())?;
+        SceneWriter::new(path, self.extra.clone()).write(self.session.project())?;
         self.session.mark_saved();
         self.file.set_path(Some(path.to_owned()));
         Ok(())
+    }
+
+    /// The writer a save a caller asked for goes through, or `None` while the scene has no path.
+    ///
+    /// It is the same writer, the same file and the same sections as [`Self::save`]; the channel
+    /// cannot borrow the document itself (the batch holds the session), so it takes the path and the
+    /// sections and writes exactly what the person's *Save* would (X114). A scene that was never
+    /// saved has no file to write, and the caller is told that instead of being given one.
+    pub(crate) fn save_sink(&self) -> Option<SceneWriter> {
+        let path = self.file.path()?;
+        Some(SceneWriter::new(path, self.extra.clone()))
+    }
+
+    /// Marks the document as saved, which is what a file that holds it means.
+    ///
+    /// The path does not move: a save a caller asked for goes to the file the scene already came
+    /// from, and the dirty marker is the one fact the person's tab row and the close question read.
+    pub(crate) fn mark_saved(&mut self) {
+        self.session.mark_saved();
     }
 
     /// The file the scene came from, if it has one.
