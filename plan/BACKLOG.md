@@ -104,21 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
-  Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
-   "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
-   and the persons Save is the write. An agent that built a wardrobe therefore owns nothing it
-   made: the document lives in one dirty tab, and a closed window loses it. The owner asked for
-   an agent that works without a person, and saving is the one step only a person can take
-   today.
-  Shape: The channel can save the scene it changed, through the same writer the headless server
-   already uses (`SceneSink`), with the persons act where a path is not decided yet: a save to
-   the open path, or a refusal naming why it cannot, and never a silent write into a new file.
-  Done: A test saves a scene over the channel and asserts the file reads back with the revision
-   the answer named; a test asserts a scene with no path refuses the save with a sentence that
-   says what to do; a test asserts no batch writes a file unless the caller asked for the save.
-  `files: crates/mcp/src/server.rs,app/src/main.rs,crates/mcp/src/tools.rs`
-
 ## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
@@ -805,6 +790,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
+  Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
+   "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
+   and the persons Save is the write. An agent that built a wardrobe therefore owns nothing it
+   made: the document lives in one dirty tab, and a closed window loses it. The owner asked for
+   an agent that works without a person, and saving is the one step only a person can take
+   today.
+  Shape: The channel can save the scene it changed, through the same writer the headless server
+   already uses (`SceneSink`), with the persons act where a path is not decided yet: a save to
+   the open path, or a refusal naming why it cannot, and never a silent write into a new file.
+  Done: A test saves a scene over the channel and asserts the file reads back with the revision
+   the answer named; a test asserts a scene with no path refuses the save with a sentence that
+   says what to do; a test asserts no batch writes a file unless the caller asked for the save.
+  `files: crates/mcp/src/server.rs,app/src/main.rs,crates/mcp/src/tools.rs` — `067bb27`
 
 - `[x]` **X112** a created frame is closed, so the first part after it is refused
   Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say

@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X114 state=doing base=5253024 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=067bb27 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -41,8 +41,7 @@ own settings, which the Render place offers as a percentage of a white room and 
 
 ## Next
 
-X114 is next: a caller over the channel cannot save the scene it changed, so an agents work lives
-only in a dirty tab
+Nothing is scheduled: 36 open tasks wait in `## Next`.
 
 ## Index
 
