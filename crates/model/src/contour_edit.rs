@@ -23,7 +23,7 @@
 //!
 //! Changes when: a corner move, a trim, a split, a removal or a close changes.
 
-use geom::{Arc, ContourError as GeomError, DVec2, Segment};
+use geom::{Arc, ContourError as GeomError, DVec2, Segment, SegmentEnd};
 use thiserror::Error;
 use units::{Degrees, Length};
 
@@ -80,6 +80,18 @@ pub enum ContourEditError {
     SegmentTooShort {
         /// The segment the corner was sliding along.
         segment: ContourSegmentId,
+    },
+    /// A typed along-contour length is outside what the segment can hold.
+    #[error("contour segment {segment} takes a length from {min} to {max} from its far end, and {typed} is outside it")]
+    AlongLengthOutOfRange {
+        /// The segment the corner was sliding along.
+        segment: ContourSegmentId,
+        /// The shortest length it takes: zero, the collapse.
+        min: Length,
+        /// The longest length it holds before the curve outgrows the document.
+        max: Length,
+        /// The number the caller asked for.
+        typed: Length,
     },
     /// A segment is not a valid curve.
     #[error(transparent)]
@@ -186,8 +198,9 @@ impl Path {
             },
             CornerMove::Along(segment) => {
                 let point = self.nearest_on_support(segment, point)?;
-                // Clamp on the motion segment so the corner cannot pass the opposite node.
-                let point = self.clamp_to_segment(segment, point)?;
+                // Hold the corner clear of the node it must not reach. The end it occupies is free, so
+                // the same drag shortens and lengthens the segment.
+                let point = self.clamp_to_segment(segment, self.corner_at(corner)?, point)?;
                 let mut result = self.move_corner_on_support(corner, point)?;
                 // An along-contour edit can turn a rectangle into a parallelogram; drop the tag
                 // when the figure no longer fits the shape that was recorded.
@@ -204,8 +217,10 @@ impl Path {
     /// Moves one corner along a segment so the distance from `far_end` equals `distance`.
     ///
     /// `far_end` must be one of the segment's two endpoints; the corner moves along the support
-    /// from that end. For a line the distance is straight, for an arc it is arc length. This is
-    /// the action a typed length in along-contour mode dispatches.
+    /// from that end. For a line the distance is straight, for an arc it is arc length. A distance
+    /// longer than the segment itself is what grows it, and one of zero is the collapse the Apply
+    /// step removes; only a number outside what the segment can hold is refused. This is the action a
+    /// typed length in along-contour mode dispatches.
     pub fn move_corner_to_distance_from(
         &self,
         corner: PathCorner,
@@ -214,15 +229,39 @@ impl Path {
         distance: Length,
     ) -> Result<Self, ContourEditError> {
         let curve = self.segment(motion_segment).ok_or(ContourEditError::UnknownSegment { segment: motion_segment })?;
+        let (min, max) = along_length_range(curve)?;
+        if distance < min || distance > max {
+            return Err(ContourEditError::AlongLengthOutOfRange { segment: motion_segment, min, max, typed: distance });
+        }
         let requested = curve.point_at_distance_from(far_end, distance)?;
         self.move_corner_on_support(corner, requested)
     }
 
-    /// Clamps a point to lie on the segment between its two endpoints, so the corner cannot pass
-    /// the opposite node when moving along the contour.
-    fn clamp_to_segment(&self, segment: ContourSegmentId, point: [Length; 2]) -> Result<[Length; 2], ContourEditError> {
+    /// The stored point of `corner`.
+    pub(crate) fn corner_at(&self, corner: PathCorner) -> Result<[Length; 2], ContourEditError> {
+        let segment = corner.segment();
+        let stored = self.segment(segment).ok_or(ContourEditError::UnknownSegment { segment })?;
+        Ok(if corner.is_end() { stored.end()? } else { stored.start()? })
+    }
+
+    /// The range a typed along-contour length takes on `motion_segment`, measured from its far end.
+    ///
+    /// The low end is zero, the collapse; the high end is what the segment can still hold once it has
+    /// grown, so a field and a command refuse the same numbers.
+    pub fn along_length_range(&self, motion_segment: ContourSegmentId) -> Option<(Length, Length)> {
+        along_length_range(self.segment(motion_segment)?).ok()
+    }
+
+    /// Clamps `point` to `segment`'s extent, held [`CLAMP_MARGIN_MM`] short of the node the corner
+    /// must not reach.
+    fn clamp_to_segment(
+        &self,
+        segment: ContourSegmentId,
+        corner: [Length; 2],
+        point: [Length; 2],
+    ) -> Result<[Length; 2], ContourEditError> {
         let curve = self.segment(segment).ok_or(ContourEditError::UnknownSegment { segment })?;
-        clamp_to_extent(segment, curve, point)
+        clamp_to_extent(segment, curve, corner, point)
     }
 
     /// The point of `segment`'s own line or circle nearest to `point`.
@@ -489,6 +528,14 @@ impl Contour {
         Ok(self.rebuild(edited)?)
     }
 
+    /// The range a typed along-contour length takes on `segment`, measured from its far end.
+    ///
+    /// The low end is zero, the collapse; the high end is what the segment can still hold once it has
+    /// grown, so a field and a command refuse the same numbers. A ring and a chain answer alike.
+    pub fn along_length_range(&self, segment: ContourSegmentId) -> Option<(Length, Length)> {
+        along_length_range(self.segment(segment)?).ok()
+    }
+
     /// Moves the corner that starts `segment`, following `motion`.
     ///
     /// [`CornerMove::Along`] projects the point onto that segment's own line or circle and keeps the
@@ -506,8 +553,10 @@ impl Contour {
                 let curve = self.segment(target).ok_or(ContourEditError::UnknownSegment { segment: target })?;
                 let nearest = curve.to_geom()?.nearest_on_support(requested).ok_or(ContourEditError::InvalidValue)?;
                 let nearest = crate::contour::point_to_document(nearest)?;
-                // Clamp on the motion segment so the corner cannot pass the opposite node.
-                let clamped = clamp_to_extent(target, curve, nearest)?;
+                // Hold the corner clear of the node it must not reach; the end it occupies is free, so
+                // the same drag shortens and lengthens the segment.
+                let corner = self.segment(segment).ok_or(ContourEditError::UnknownSegment { segment })?.start()?;
+                let clamped = clamp_to_extent(target, curve, corner, nearest)?;
                 self.move_corner(segment, clamped)
             }
             CornerMove::Free => self.move_corner_free(segment, point),
@@ -721,24 +770,63 @@ pub(crate) fn with_corner(
     }
 }
 
-/// Clamps a document point to the segment's own extent, held [`CLAMP_MARGIN_MM`] short of each end.
+/// Clamps a document point to `curve`'s extent, held [`CLAMP_MARGIN_MM`] short of the node the corner
+/// must not reach.
 ///
-/// A corner sliding along the contour must not pass the opposite node: the point is projected onto
-/// the segment and pulled back by the margin, so the draft stays a legal segment. The collapse to
-/// zero is recorded separately and happens on Apply. A segment shorter than twice the margin has no
-/// range to slide in; the edit is refused with [`ContourEditError::SegmentTooShort`] instead of
-/// clamping to swapped bounds.
+/// The corner occupies one end of the segment and slides along it, so the opposite node is the wall
+/// and the end the corner sits on is free: a corner that travels past its own end lengthens the
+/// segment, which is the direction the along-contour gesture grows in, and reaching the wall is what
+/// the collapse is. A segment shorter than twice the margin has no room to hold a corner at either
+/// side of the wall; the edit is refused with [`ContourEditError::SegmentTooShort`].
 fn clamp_to_extent(
     segment: ContourSegmentId,
     curve: ContourSegment,
+    corner: [Length; 2],
     point: [Length; 2],
 ) -> Result<[Length; 2], ContourEditError> {
-    let clamped =
-        curve.to_geom()?.clamp_to_extent(point_to_geometry(point)?, CLAMP_MARGIN_MM).map_err(|error| match error {
+    let wall = wall_of(curve, corner)?;
+    let clamped = curve.to_geom()?.clamp_to_extent(point_to_geometry(point)?, CLAMP_MARGIN_MM, wall).map_err(
+        |error| match error {
             GeomError::TooShortForMargin => ContourEditError::SegmentTooShort { segment },
             _ => ContourEditError::InvalidValue,
-        })?;
+        },
+    )?;
     Ok(crate::contour::point_to_document(clamped)?)
+}
+
+/// The end of `curve` a sliding corner must not reach, given the end it occupies.
+fn wall_of(curve: ContourSegment, corner: [Length; 2]) -> Result<SegmentEnd, ContourEditError> {
+    let start = curve.start()?;
+    let end = curve.end()?;
+    Ok(if gap_squared(start, corner) <= gap_squared(end, corner) { SegmentEnd::End } else { SegmentEnd::Start })
+}
+
+/// The squared distance between two document points, in micrometres squared.
+fn gap_squared(first: [Length; 2], second: [Length; 2]) -> i128 {
+    let dx = i128::from(first[0].micrometres()) - i128::from(second[0].micrometres());
+    let dy = i128::from(first[1].micrometres()) - i128::from(second[1].micrometres());
+    dx * dx + dy * dy
+}
+
+/// The range a typed along-contour length takes on `curve`, measured from the far end.
+///
+/// The low end is zero, which is the collapse: the corner reaches the far end and Apply removes the
+/// segment. The high end is what the segment can still hold — its own length plus the
+/// [`geom::MAX_ARC_EXTENSION`] of sweep an arc may grow by, never a full turn, because the arc reaches
+/// a corner by extending its sweep. A line has no drawn ceiling of its own, so the whole coordinate
+/// box the document stores is its limit.
+pub(crate) fn along_length_range(curve: ContourSegment) -> Result<(Length, Length), ContourEditError> {
+    let max = match curve {
+        ContourSegment::Line { .. } => {
+            Length::from_micrometres(crate::contour::MAX_CONTOUR_COORDINATE.micrometres().saturating_mul(2))
+        }
+        ContourSegment::Arc { radius, sweep, .. } => {
+            let sweep = sweep.radians_f64().abs();
+            let extension = geom::MAX_ARC_EXTENSION.min(std::f64::consts::TAU - sweep).max(0.0);
+            crate::contour::length_to_document((sweep + extension) * radius.millimetres_f64())?
+        }
+    };
+    Ok((Length::ZERO, max))
 }
 
 /// Moves the shared corner of two segments, reconciling a rounded arc endpoint.
@@ -1760,16 +1848,88 @@ mod tests {
     }
 
     #[test]
-    fn an_along_contour_drag_cannot_pass_the_opposite_node() {
+    fn an_along_contour_drag_holds_a_margin_short_of_the_far_end() {
         let path = open_path(vec![point(0, 0), point(100, 0), point(100, 60)]);
-        // Drag the shared corner far past the far end of the first segment.
+        // The corner sits on the segment's end; the far end is its start, and the drag toward it must
+        // stop one margin short instead of collapsing the segment.
         let moved = path
-            .move_corner_at(PathCorner::End(id(1)), point(250, 0), CornerMove::Along(id(1)))
+            .move_corner_at(PathCorner::End(id(1)), point(-50, 0), CornerMove::Along(id(1)))
             .expect("clamped at the opposite node");
         let end = moved.segment(id(1)).expect("first").end().expect("end");
         // The corner must stay inside the segment, short of the far end by the 1 µm margin.
-        assert!(end[0].micrometres() <= 100_000, "the corner did not pass the far end: {end:?}");
-        assert!(end[0].micrometres() >= 99_000, "the corner reached the far end: {end:?}");
+        assert!(end[0].micrometres() >= 0, "the corner passed the far end: {end:?}");
+        assert!(end[0].micrometres() <= 1, "the corner reached the far end: {end:?}");
+    }
+
+    #[test]
+    fn an_along_contour_drag_grows_the_segment_past_its_own_end() {
+        let path = open_path(vec![point(0, 0), point(100, 0), point(100, 60)]);
+        // The corner sits on the segment's end, so pulling it further out lengthens the segment and
+        // the neighbour that shares the corner follows it.
+        let moved = path
+            .move_corner_at(PathCorner::End(id(1)), point(250, 0), CornerMove::Along(id(1)))
+            .expect("the corner grows its segment");
+        let first = moved.segment(id(1)).expect("first");
+        assert_eq!(first.end().expect("end"), point(250, 0), "the bottom grew to 250 mm");
+        assert_eq!(first.start().expect("start"), point(0, 0), "the far end did not move");
+        assert_eq!(
+            moved.segment(id(2)).expect("second").start().expect("start"),
+            point(250, 0),
+            "the neighbour follows the corner"
+        );
+    }
+
+    #[test]
+    fn a_ring_along_contour_drag_grows_its_side() {
+        let ring = rectangle();
+        // The corner at the start of the right side travels past the bottom's own end.
+        let moved = ring.move_corner_with(id(2), point(150, 0), CornerMove::Along(id(1))).expect("the bottom grows");
+        assert_eq!(moved.segment(id(1)).expect("bottom").end().expect("end"), point(150, 0), "the bottom grew");
+        assert_eq!(
+            moved.segment(id(2)).expect("right").start().expect("start"),
+            point(150, 0),
+            "the ring stays closed"
+        );
+    }
+
+    #[test]
+    fn an_along_contour_drag_grows_an_arc_past_its_own_end() {
+        let path = line_and_arc();
+        // The corner sits on the arc's start; a point behind it extends the sweep by 30 degrees.
+        let behind = point(80, 5);
+        let moved =
+            path.move_corner_at(PathCorner::End(id(1)), behind, CornerMove::Along(id(2))).expect("the arc grows");
+        let corner = moved.segment(id(1)).expect("line").end().expect("end");
+        assert_eq!(moved.segment(id(2)).expect("arc").start().expect("start"), corner, "the chain stays joined");
+        assert!(corner[0] < point(100, 0)[0], "the corner left the sweep: {corner:?}");
+        assert!(corner[1] > point(100, 0)[1], "the corner left the sweep: {corner:?}");
+    }
+
+    #[test]
+    fn a_typed_length_past_the_own_end_grows_the_segment() {
+        let path = open_path(vec![point(0, 0), point(100, 0), point(100, 60)]);
+        // The number is measured from the far start, so 130 mm is a 130 mm segment, not a clamp at 100.
+        let moved = path
+            .move_corner_to_distance_from(PathCorner::End(id(1)), id(1), point(0, 0), millimetres(130))
+            .expect("grow to 130 mm");
+        assert_eq!(moved.segment(id(1)).expect("first").end().expect("end"), point(130, 0));
+    }
+
+    #[test]
+    fn a_typed_length_outside_what_the_segment_holds_is_refused() {
+        let path = line_and_arc();
+        // The arc is 40 mm of radius and a quarter of sweep, so it can hold 40 · (π/2 + π/2) ≈ 125.7 mm;
+        // 200 mm is past the 90 degree extension and is a sentence, not a silent clamp.
+        let error = path
+            .move_corner_to_distance_from(PathCorner::End(id(1)), id(2), point(140, 40), millimetres(200))
+            .expect_err("200 mm outgrows the arc");
+        assert!(matches!(error, ContourEditError::AlongLengthOutOfRange { .. }), "{error}");
+        assert!(error.to_string().contains("from its far end"), "the refusal names the number: {error}");
+        // A negative number is not a shortening: the field's own range refuses it, and so does the model.
+        let error = path
+            .move_corner_to_distance_from(PathCorner::End(id(1)), id(1), point(0, 0), millimetres(-10))
+            .expect_err("a negative length is refused");
+        assert!(matches!(error, ContourEditError::AlongLengthOutOfRange { .. }), "{error}");
     }
 
     #[test]

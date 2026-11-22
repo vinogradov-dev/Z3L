@@ -4962,6 +4962,48 @@ fn one_sketch_path() -> (engine::Session, Id) {
     (engine::Session::with_directory(project, testkit::sample_catalog()), object)
 }
 
+#[test]
+fn an_along_contour_drag_grows_the_side_across_frames() {
+    // X96: with the card's *Along contour* switch on, a corner travels both ways along its segment.
+    // It used to stop one micrometre inside its own end, so a ring could be shortened and never
+    // lengthened; the pointer now walks past the corner along the segment's own line and the side
+    // grows frame by frame.
+    let (mut harness, object, corner) = sketching("frame-contour-along-grow");
+    let ctx = harness.ctx.clone();
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .apply_tool_outcome(&ctx, ui::ToolOutcome { toggle: true, ..ui::ToolOutcome::default() });
+    let start = node_point_mm(&harness, object, [0.0, 0.0]);
+    let far = node_point_mm(&harness, object, [120.0, 0.0]);
+    // The screen direction that leaves the corner away from the far end, so the side can only grow.
+    let outward = (start - far).normalized();
+    let first_frame = drafted_corner(&harness, corner);
+
+    harness.press_at(start, egui::PointerButton::Primary);
+    let mut corners = Vec::new();
+    for step in 1..=6 {
+        // The hand walks away along the side's own line and a little off it, so a free move would
+        // carry the corner off that line and an along move cannot.
+        let at = start + outward * (24.0 * step as f32) + egui::vec2(0.0, 6.0 * step as f32);
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        corners.push(drafted_corner(&harness, corner));
+    }
+    harness.release_at(start + outward * 144.0 + egui::vec2(0.0, 36.0), egui::PointerButton::Primary);
+    harness.settle();
+
+    let grown = drafted_corner(&harness, corner);
+    assert_eq!(grown[1], Length::ZERO, "the corner stays on its segment's line: {grown:?}");
+    assert!(grown[0] < Length::ZERO, "the corner passed its own end: {grown:?}");
+    assert!(
+        corners.windows(2).all(|pair| pair[1][0] <= pair[0][0]),
+        "the side grows frame after frame instead of stopping: {corners:?}"
+    );
+    assert!(first_frame[0] >= Length::ZERO, "the corner starts at its own end: {first_frame:?}");
+    assert!(corners.last().is_some_and(|last| last[0] < Length::ZERO), "the last frame is past the start: {corners:?}");
+}
+
 /// A headless frame in contour edit mode on the open chain, framed so its corners are grabbable.
 ///
 /// The mode is entered the way the inspector card enters it, and the chain's first corner is the one

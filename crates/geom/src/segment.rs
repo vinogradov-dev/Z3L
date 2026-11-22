@@ -30,6 +30,18 @@ pub const MAX_ARC_EXTENSION: f64 = FRAC_PI_2;
 /// Tolerance for treating a point as lying on a supporting line or circle, in millimetres.
 const SUPPORT_TOLERANCE: f64 = 1.0e-6;
 
+/// One end of a segment, named by the wall a sliding corner must keep clear of.
+///
+/// A corner slides along a segment from the end it occupies, so the node it must not reach is the
+/// other end: the caller names that wall, and every other direction is free.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentEnd {
+    /// The start point.
+    Start,
+    /// The end point.
+    End,
+}
+
 /// A directed straight segment.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Line {
@@ -146,14 +158,15 @@ impl Line {
         Ok((Self::new(self.start, point)?, Self::new(point, self.end)?))
     }
 
-    /// The point of the line nearest to `point`, held `margin` millimetres short of each end.
+    /// The point of the line nearest to `point`, held `margin` millimetres short of `wall`.
     ///
     /// A corner sliding along a contour must not reach the opposite node, so the projection
-    /// parameter is clamped to `margin / length .. 1 - margin / length`. `margin` is a linear
-    /// distance in millimetres; the line must be longer than twice it, otherwise the range is empty
-    /// and the call returns [`ContourError::TooShortForMargin`] rather than clamping to swapped
-    /// bounds.
-    pub(crate) fn clamp_to_extent(self, point: DVec2, margin: f64) -> Result<DVec2, ContourError> {
+    /// parameter is clamped `margin / length` short of `wall` and is free on the other side: a corner
+    /// that travels past its own end lengthens the segment, which is the direction a growing drag
+    /// needs. `margin` is a linear distance in millimetres; the line must be longer than twice it,
+    /// otherwise there is no range to hold the wall in and the call returns
+    /// [`ContourError::TooShortForMargin`].
+    pub(crate) fn clamp_to_extent(self, point: DVec2, margin: f64, wall: SegmentEnd) -> Result<DVec2, ContourError> {
         if !point.is_finite() {
             return Err(ContourError::InvalidInput("the clamped point must be finite"));
         }
@@ -170,8 +183,12 @@ impl Line {
             return Err(ContourError::TooShortForMargin);
         }
         let fraction = margin / length;
-        let parameter = ((point - self.start).dot(direction) / length_squared).clamp(fraction, 1.0 - fraction);
-        Ok(self.start + direction * parameter)
+        let parameter = (point - self.start).dot(direction) / length_squared;
+        let kept = match wall {
+            SegmentEnd::End => parameter.min(1.0 - fraction),
+            SegmentEnd::Start => parameter.max(fraction),
+        };
+        Ok(self.start + direction * kept)
     }
 
     /// The unit tangent at the start.
@@ -618,15 +635,16 @@ impl Arc {
         self.with_radius_through(start, end, radius, tolerance)
     }
 
-    /// The point of the arc nearest to `point`, held `margin` millimetres short of each end.
+    /// The point of the arc nearest to `point`, held `margin` millimetres short of `wall`.
     ///
-    /// The point is taken at its own angle around the centre, and the travel along the sweep is
-    /// clamped to `margin / arc_length` at both ends, so a corner sliding along the arc cannot
-    /// reach the opposite node. `margin` is a linear distance in millimetres; the arc must be
-    /// longer than twice it, otherwise the range is empty and the call returns
-    /// [`ContourError::TooShortForMargin`] rather than clamping to swapped bounds. A point in the
-    /// centre, where every point of the circle is equally near, is returned unchanged.
-    pub(crate) fn clamp_to_extent(self, point: DVec2, margin: f64) -> Result<DVec2, ContourError> {
+    /// The point is taken at its own angle around the centre, and the travel toward `wall` is clamped
+    /// `margin / radius` of angle short of it. Travel away from the wall is free: a corner that leaves
+    /// the sweep at its own end extends the arc, and how far it may extend is
+    /// [`Arc::with_start_point`]'s and [`Arc::with_end_point`]'s rule ([`MAX_ARC_EXTENSION`], and a
+    /// sweep that stays short of a full turn), so this clamp does not repeat it. The arc must be
+    /// longer than twice `margin`, otherwise the call returns [`ContourError::TooShortForMargin`].
+    /// A point in the centre, where every point of the circle is equally near, is returned unchanged.
+    pub(crate) fn clamp_to_extent(self, point: DVec2, margin: f64, wall: SegmentEnd) -> Result<DVec2, ContourError> {
         if !point.is_finite() {
             return Err(ContourError::InvalidInput("the clamped point must be finite"));
         }
@@ -650,12 +668,25 @@ impl Arc {
         } else {
             -((-angle + self.start_angle).rem_euclid(TAU))
         };
-        let fraction = margin / arc_length;
-        let slack = fraction * self.sweep_angle.abs();
-        let low = 0.0_f64.min(self.sweep_angle);
-        let high = 0.0_f64.max(self.sweep_angle);
-        let clamped = travel.clamp(low + slack, high - slack);
-        Ok(self.point_at_angle(self.start_angle + clamped))
+        let sign = self.sweep_angle.signum();
+        // Travel from the start in the direction of the sweep, as a positive angle.
+        let ahead = travel * sign;
+        let sweep = self.sweep_angle.abs();
+        let slack = margin / self.radius;
+        let kept = match wall {
+            // The corner sits on the start, so the far end is `sweep` ahead of it. A point behind the
+            // start reads as travel near a full turn; that is the arc growing, not the wall.
+            SegmentEnd::End => {
+                if ahead <= sweep - slack || ahead > sweep {
+                    ahead
+                } else {
+                    sweep - slack
+                }
+            }
+            // The corner sits on the end: the wall is the start, and every larger travel grows it.
+            SegmentEnd::Start => ahead.max(slack),
+        };
+        Ok(self.point_at_angle(self.start_angle + sign * kept))
     }
 
     /// The signed sweep from the start to `point`, in radians, in the direction of travel.
@@ -778,20 +809,18 @@ impl Segment {
         Ok(nearest)
     }
 
-    /// The point of the segment's own extent nearest to `point`, held `margin` millimetres short of
-    /// each end.
+    /// The point of the segment nearest to `point`, held `margin` millimetres short of `wall`.
     ///
-    /// A corner sliding along a contour must not pass the opposite node, so the point is projected
-    /// onto the segment rather than its supporting line and pulled back by `margin` at both ends.
-    /// `margin` is a linear distance in millimetres; the segment must be longer than twice it,
-    /// otherwise the call returns [`ContourError::TooShortForMargin`].
-    pub fn clamp_to_extent(self, point: DVec2, margin: f64) -> Result<DVec2, ContourError> {
+    /// A corner sliding along a contour must not pass the opposite node, so the point is clamped a
+    /// margin short of the end named by `wall`; the end the corner occupies is free, which is what
+    /// lets the same gesture shorten and lengthen the segment.
+    pub fn clamp_to_extent(self, point: DVec2, margin: f64, wall: SegmentEnd) -> Result<DVec2, ContourError> {
         if !margin.is_finite() || margin < 0.0 {
             return Err(ContourError::InvalidInput("the clamp margin must be a finite distance"));
         }
         match self {
-            Self::Line(line) => line.clamp_to_extent(point, margin),
-            Self::Arc(arc) => arc.clamp_to_extent(point, margin),
+            Self::Line(line) => line.clamp_to_extent(point, margin, wall),
+            Self::Arc(arc) => arc.clamp_to_extent(point, margin, wall),
         }
     }
 
@@ -917,33 +946,68 @@ mod tests {
     #[test]
     fn a_clamp_on_a_short_line_is_refused() {
         // One micrometre of length leaves no room for the 1 µm margin at each end.
-        let result = line(DVec2::ZERO, DVec2::new(0.001, 0.0)).clamp_to_extent(DVec2::new(0.001, 0.0), 0.001);
+        let result =
+            line(DVec2::ZERO, DVec2::new(0.001, 0.0)).clamp_to_extent(DVec2::new(0.001, 0.0), 0.001, SegmentEnd::End);
         assert_eq!(result, Err(ContourError::TooShortForMargin));
     }
 
     #[test]
     fn a_clamp_on_a_short_arc_is_refused() {
         // A quarter arc of radius 1 µm is about 1.57 µm long, shorter than two margins.
-        let result = quarter_arc(0.001).clamp_to_extent(DVec2::new(0.0, 0.001), 0.001);
+        let result = quarter_arc(0.001).clamp_to_extent(DVec2::new(0.0, 0.001), 0.001, SegmentEnd::End);
         assert_eq!(result, Err(ContourError::TooShortForMargin));
     }
 
     #[test]
-    fn a_clamp_stops_a_margin_short_of_the_far_end() {
-        let clamped = line(DVec2::ZERO, DVec2::new(100.0, 0.0))
-            .clamp_to_extent(DVec2::new(250.0, 40.0), 0.001)
-            .expect("a clamp on a long line");
+    fn a_clamp_stops_a_margin_short_of_the_wall_and_is_free_on_the_other_side() {
+        let line = line(DVec2::ZERO, DVec2::new(100.0, 0.0));
+        let clamped =
+            line.clamp_to_extent(DVec2::new(250.0, 40.0), 0.001, SegmentEnd::End).expect("a clamp on a long line");
         assert!((clamped.x - 99.999).abs() < 1.0e-9, "the clamp stops 1 µm short: {clamped:?}");
+        assert!(clamped.y.abs() < 1.0e-9, "the clamp stays on the line: {clamped:?}");
+        // The same line seen from its other end: the wall is the start, and the corner may pass the
+        // end freely, which is the lengthening direction.
+        let grown =
+            line.clamp_to_extent(DVec2::new(140.0, 0.0), 0.001, SegmentEnd::Start).expect("a clamp on a long line");
+        assert!((grown.x - 140.0).abs() < 1.0e-9, "the corner passes its own end: {grown:?}");
+    }
+
+    #[test]
+    fn a_line_clamp_lets_the_corner_travel_behind_its_own_end() {
+        let clamped = line(DVec2::ZERO, DVec2::new(100.0, 0.0))
+            .clamp_to_extent(DVec2::new(-40.0, 3.0), 0.001, SegmentEnd::End)
+            .expect("a clamp on a long line");
+        assert!((clamped.x + 40.0).abs() < 1.0e-9, "the corner travels past the start: {clamped:?}");
         assert!(clamped.y.abs() < 1.0e-9, "the clamp stays on the line: {clamped:?}");
     }
 
     #[test]
-    fn a_clamp_holds_the_margin_at_both_ends_of_an_arc() {
-        let clamped = quarter_arc(10.0).clamp_to_extent(DVec2::new(0.0, 20.0), 0.001).expect("a clamp on a long arc");
+    fn a_clamp_holds_the_margin_at_the_wall_of_an_arc() {
+        let clamped = quarter_arc(10.0)
+            .clamp_to_extent(DVec2::new(0.0, 20.0), 0.001, SegmentEnd::End)
+            .expect("a clamp on a long arc");
         // The quarter arc runs from angle 0 to π/2; the far end is π/2 · 10 mm ≈ 15.7 mm of travel.
         let angle = clamped.y.atan2(clamped.x);
         let travel = angle * 10.0;
         assert!(travel <= 10.0 * FRAC_PI_2 - 0.001 + 1.0e-9, "the clamp stops 1 µm short: {travel}");
         assert!(travel >= 10.0 * FRAC_PI_2 - 0.001 - 1.0e-9, "the clamp reaches the margin: {travel}");
+    }
+
+    #[test]
+    fn an_arc_clamp_lets_the_corner_grow_the_sweep_at_either_end() {
+        // The corner sits on the start, so a point behind it is the arc growing; the wall ahead of it
+        // is the far end and is held a margin short.
+        let arc = quarter_arc(10.0);
+        let behind = arc
+            .clamp_to_extent(DVec2::new(0.2_f64.cos(), 0.2_f64.sin()) * 10.0, 0.001, SegmentEnd::End)
+            .expect("a clamp on a long arc");
+        let angle = behind.y.atan2(behind.x);
+        assert!((angle - 0.2).abs() < 1.0e-6, "the corner grows behind the start: {angle}");
+        // Seen from the other end: the corner may pass the end, and the wall behind it is the start.
+        let grown = arc
+            .clamp_to_extent(DVec2::new(2.0_f64.cos(), 2.0_f64.sin()) * 10.0, 0.001, SegmentEnd::Start)
+            .expect("a clamp on a long arc");
+        let angle = grown.y.atan2(grown.x);
+        assert!((angle - 2.0).abs() < 1.0e-6, "the corner passes its own end: {angle}");
     }
 }

@@ -125,6 +125,11 @@ impl Editor {
         let start = edit.base().grip_position(grip).ok_or(ContourEditError::InvalidValue)?;
         let far_end = edit.base().motion_far_end(segment, start).ok_or(ContourEditError::InvalidValue)?;
         let curve = edit.draft().segment(segment).ok_or(ContourEditError::UnknownSegment { segment })?;
+        let (min, max) =
+            edit.draft().along_length_range(segment).ok_or(ContourEditError::UnknownSegment { segment })?;
+        if length < min || length > max {
+            return Err(ContourEditError::AlongLengthOutOfRange { segment, min, max, typed: length });
+        }
         let target = curve.point_at_distance_from(far_end, length)?;
         edit.move_corner_at(corner, target, CornerMove::Along(segment))?;
         // A typed length of zero (or within the collapse threshold) records a collapse.

@@ -359,7 +359,8 @@ impl ContourGizmo {
                             .contour_edit()
                             .and_then(|edit| {
                                 let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
-                                edit.draft().along_contour_length(segment, corner, start)
+                                let far_end = edit.base().motion_far_end(segment, start)?;
+                                edit.draft().along_contour_length(segment, corner, far_end)
                             })
                             .is_some_and(|length| length.micrometres() <= 2);
                         if collapsed {
@@ -379,7 +380,8 @@ impl ContourGizmo {
                     {
                         editor.contour_edit().and_then(|edit| {
                             let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
-                            edit.draft().along_contour_length(segment, corner, start).map(GripValue::Length)
+                            let far_end = edit.base().motion_far_end(segment, start)?;
+                            edit.draft().along_contour_length(segment, corner, far_end).map(GripValue::Length)
                         })
                     } else {
                         editor.contour_edit().and_then(|edit| edit.grip_value(field.grip))
@@ -749,13 +751,20 @@ impl ContourGizmo {
 
 /// The number a grip opens, when it takes a number at all.
 fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Option<CornerMove>) -> Option<GripField> {
+    let mut along_range = None;
     let (kind, value, label, motion) = if let Some(motion @ CornerMove::Along(segment)) = motion
         && let ContourGrip::Corner(corner) = grip
     {
         // Along-contour mode: show the length from the far end of the motion segment. At the
-        // moment the drag starts the corner is still at its base position.
+        // moment the drag starts the corner is still at its base position, so the draft answers the
+        // far end the whole drag keeps.
         let start = draft.grip_position(grip)?;
-        let length = draft.along_contour_length(segment, corner, start)?;
+        let far_end = draft.motion_far_end(segment, start)?;
+        let length = draft.along_contour_length(segment, corner, far_end)?;
+        // The number's two ends are the segment's own: zero is the collapse, and the top is what the
+        // segment still holds once it has grown, so the field cannot offer a number the command refuses.
+        let (min, max) = draft.along_length_range(segment)?;
+        along_range = Some(min.millimetres_f64()..=max.millimetres_f64());
         (GripNumber::Length, GripValue::Length(length), "L", Some(motion))
     } else {
         let kind = draft.grip_number(grip)?;
@@ -766,7 +775,7 @@ fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Op
     // No unit: the grip's symbol (`L`, `W`, `H`, `R`, `∠`) already says what the number is, and a
     // field that floats over the figure stays as small as the number it holds.
     let (param, unit, range) = match value {
-        GripValue::Length(_) => (FieldParam::Length, "", 0.0..=1_000_000.0),
+        GripValue::Length(_) => (FieldParam::Length, "", along_range.unwrap_or(0.0..=1_000_000.0)),
         GripValue::Angle(_) => (FieldParam::Angle, "", -360.0..=360.0),
     };
     let row = FieldRow::new(param, Some(FieldLabel::Symbol(label)), number_of(value), unit, range, 1, pointer);

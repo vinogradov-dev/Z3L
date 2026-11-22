@@ -160,8 +160,10 @@ impl ContourSegment {
     /// The point on this segment at `distance` from `far_end`, measured along the curve.
     ///
     /// `far_end` must be one of the segment's own endpoints. A line measures a straight distance,
-    /// an arc measures its arc length. The distance is clamped to the segment's own extent, so a
-    /// caller can pass a typed length without checking it first.
+    /// an arc measures its arc length. A distance longer than the segment is what grows it: the point
+    /// lands past the near end along the same support, which is the direction a growing drag needs. A
+    /// caller bounds the number before it gets here — `along_length_range` in the edit module owns
+    /// what the segment can hold.
     pub fn point_at_distance_from(
         self,
         far_end: [Length; 2],
@@ -178,7 +180,7 @@ impl ContourSegment {
                     return Err(ContourSegmentError::ZeroLength);
                 }
                 let unit = direction / length;
-                let distance = distance.millimetres_f64().clamp(0.0, length);
+                let distance = distance.millimetres_f64();
                 // Travel from the far end toward the other endpoint.
                 let toward = if (far - start).length() <= (far - end).length() { unit } else { -unit };
                 point_to_document(far + toward * distance)
@@ -193,7 +195,7 @@ impl ContourSegment {
                 if !arc_len.is_finite() || arc_len <= 0.0 || radius_mm <= 0.0 {
                     return Err(ContourSegmentError::InvalidSweep);
                 }
-                let distance = distance.millimetres_f64().clamp(0.0, arc_len);
+                let distance = distance.millimetres_f64();
                 let far_angle = (far - center).y.atan2((far - center).x);
                 let start_point = DVec2::new(start_r.cos(), start_r.sin()) * radius_mm;
                 let at_start = (far - (center + start_point)).length() < 1.0e-3;
