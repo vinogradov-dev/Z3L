@@ -927,6 +927,7 @@ appears in a toolbar does not become a geometry icon.
 | settings | gear, 6–8 teeth | |
 | search | magnifier, handle at 45° | |
 | command palette | a prompt field: a frame with `>` and a caret | opens the command list |
+| assistant panel | a speech bubble with two lines | opens the conversation with the agent |
 | visible / hidden | eye / eye with a slash | |
 | lock / unlock | padlock, shackle closed / open | |
 | pin | pushpin, head over a needle | keeps one method of a tool as the click default |
@@ -956,9 +957,9 @@ units and solid shapes, §7.3). They are not shrunken toolbar drawings.
 
 `assets/icons/actions/<name>.svg`, kebab-case: `confirm`, `dismiss`, `cancel`, `undo`, `redo`,
 `delete`, `add`, `remove`, `duplicate`, `rename`, `copy`, `paste`, `file-new`, `file-open`,
-`file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `visible`,
-`hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`, `error`,
-`info`, `help`, `pin`.
+`file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `assistant`,
+`visible`, `hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`,
+`error`, `info`, `help`, `pin`.
 
 A theme owns its icons: `contour/close` closes a ring, `actions/dismiss` dismisses a surface. They are
 different actions with different glyphs; never rename a geometry action to free a name.

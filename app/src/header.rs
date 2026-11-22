@@ -7,13 +7,15 @@
 //! minimize or maximize button: its right edge closes with the settings gear.
 //!
 //! The right cluster is where the window's own modes live: the five transform gestures as one band
-//! (ADR 0113), the ribbon fold, the two panel switches and the settings gear. The band is always
-//! visible — a gesture is one press away in every state of every tool — and it left the status bar
-//! because a 28 point row of readouts cannot share its width with five cells (U115).
+//! (ADR 0113), the ribbon fold, the two panel switches, the assistant's panel and the settings gear.
+//! The band is always visible — a gesture is one press away in every state of every tool — and it
+//! left the status bar because a 28 point row of readouts cannot share its width with five cells
+//! (U115).
 //!
-//! Every divider on this row separates a meaning group — identity, file, history, tabs, settings —
-//! and comes from [`theme::divider_of_height`], as tall as the controls it separates, so the header
-//! and the ribbon share one rhythm and no hairline stops halfway down a button.
+//! Every divider on this row separates a meaning group — identity, file, history, tabs, the two
+//! windows the right edge opens, layout and gestures — and comes from
+//! [`theme::divider_of_height`], as tall as the controls it separates, so the header and the ribbon
+//! share one rhythm and no hairline stops halfway down a button.
 //!
 //! The tab row holds one tab per open scene (U45): its body activates that scene, its cross asks to
 //! close it, the marker says whether it has unsaved changes, and the plus beside the row opens a new
@@ -60,6 +62,9 @@ pub enum HeaderAction {
     Save,
     /// Open the application settings.
     Settings,
+    /// Open or close the assistant's panel: a conversation with an agent that may only propose
+    /// until the person switches it to build (ADR 0190, ADR 0209, ADR 0222).
+    Assistant,
     /// Open a new, empty scene in a new tab.
     NewTab,
     /// Fold both side panels to strips, or unfold the pair the last press folded.
@@ -111,6 +116,8 @@ pub struct HeaderState {
     pub mode: TransformMode,
     /// Whether the render place is the surface the workspace shows.
     pub render_open: bool,
+    /// Whether the assistant's panel is up, so the cell offers to close it.
+    pub assistant_open: bool,
 }
 
 /// Draws the header row and returns the one action it asked for, if any.
@@ -203,15 +210,24 @@ pub fn show(ui: &mut Ui, state: &HeaderState, file_menu: impl FnOnce(&mut Ui)) -
     action
 }
 
-/// The right cluster: the settings gear, the ribbon fold, the two panel switches and the mode band.
+/// The right cluster: the settings gear, the assistant's cell, the ribbon fold, the two panel
+/// switches and the mode band.
 ///
 /// The order is the one a right-to-left layout draws from the window's edge inwards, so the gear is
-/// the row's last control and the band stands beside the tab row (U115).
+/// the row's last control, the assistant's panel stands beside it and the band stands beside the tab
+/// row (U115, X106).
 fn cluster(ui: &mut Ui, state: &HeaderState) -> Option<HeaderAction> {
     let lang = ui::language(ui.ctx());
     let mut action = None;
     if icon_button(ui, icons::actions::SETTINGS, Message::SettingsTitle.text(lang), true, false).clicked() {
         action = Some(HeaderAction::Settings);
+    }
+    // The two surfaces that open over the scene stand together at the row's edge: Settings and the
+    // assistant's panel. The key is the inventory's binding, so the hint prints the same spelling the
+    // Settings page lists (X106, ADR 0222).
+    let assistant_hint = keyed_hint(Message::ShortcutAssistant, ui::inventory::ASSISTANT_OPEN, lang);
+    if icon_button(ui, icons::actions::ASSISTANT, &assistant_hint, true, state.assistant_open).clicked() {
+        action = Some(HeaderAction::Assistant);
     }
     theme::divider_of_height(ui, theme::HEADER_CONTROL_HEIGHT);
     let (ribbon_icon, ribbon_hint) = if state.ribbon_open {
@@ -482,16 +498,16 @@ fn active_tab_fill(ui: &Ui) -> egui::Color32 {
 /// The button is one header control — [`theme::HEADER_CONTROL_HEIGHT`] tall, square — so it lines up
 /// with the `File` text button beside it instead of standing a few points taller. The icon itself is
 /// 18 pt inside that cell, which is the optical size the header needs.
+fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selected: bool) -> egui::Response {
+    icons::icon_button_sized(ui, icon, theme::HEADER_CONTROL_HEIGHT, 18.0, label, enabled, selected)
+}
+
 /// A header button's hint: the action's words and the key the inventory binds to it.
 ///
 /// The key is data, so the header never spells `Ctrl+S` itself: a remapped binding reads correctly
 /// here without a second edit (U96).
 fn keyed_hint(words: Message, id: &str, lang: text::Lang) -> String {
     icons::tool_hint(words.text(lang), ui::inventory::key_label(id))
-}
-
-fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selected: bool) -> egui::Response {
-    icons::icon_button_sized(ui, icon, theme::HEADER_CONTROL_HEIGHT, 18.0, label, enabled, selected)
 }
 
 #[cfg(test)]
@@ -516,6 +532,7 @@ mod tests {
             panels_collapsed: false,
             mode: TransformMode::Select,
             render_open: false,
+            assistant_open: false,
         }
     }
 
@@ -979,6 +996,20 @@ mod tests {
             .unwrap_or_default();
         output.drop_without_applying_deltas();
         labels
+    }
+
+    #[test]
+    fn the_assistant_cell_names_its_panel_and_its_key() {
+        // X106: the panel used to live on `Ctrl+J` alone, so a person had to find the key by
+        // accident. The cell stands beside the gear and prints the inventory's spelling of the key,
+        // so the hover, the shortcut reference and the wire's plan note cannot drift from it.
+        let header = state(vec![tab(0, "cabinet.z3l", false, true)], false);
+        let key = ui::inventory::key_label(ui::inventory::ASSISTANT_OPEN).expect("the panel has a key");
+        for lang in [text::Lang::En, text::Lang::Ru] {
+            let labels = labels_in(&header, lang);
+            let hint = icons::tool_hint(Message::ShortcutAssistant.text(lang), Some(key));
+            assert!(labels.contains(&hint), "the assistant's cell prints `{hint}` in {lang:?}: {labels:?}");
+        }
     }
 
     #[test]

@@ -6796,8 +6796,8 @@ fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
 
 #[test]
 fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
-    // The panel is reachable without a ribbon cell: its key is the inventory's row, and the switch a
-    // person turns is drawn with the sentence that stands for it.
+    // The panel's key is the inventory's row, and the switch a person turns is drawn with the
+    // sentence that stands for it.
     let (mut harness, _panel) = chat_fixture("frame-chat-panel");
     harness.settle();
     assert!(!harness.app.chat.open, "the panel starts closed");
@@ -6812,4 +6812,50 @@ fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
         harness.drew(Message::AssistantNotConfigured.text(Lang::En)),
         "and the sentence that says no model is connected"
     );
+}
+
+/// The header hint that names the assistant's cell: the panel's word and the inventory's key.
+///
+/// The test reads the spelling from the tables instead of writing `Ctrl+J` a second time, so a
+/// remapped key moves the cell and the test with it.
+fn assistant_cell_hint() -> String {
+    let key = ui::inventory::key_label(ui::inventory::ASSISTANT_OPEN).expect("the panel has a key");
+    crate::icons::tool_hint(Message::ShortcutAssistant.text(Lang::En), Some(key))
+}
+
+#[test]
+fn the_plan_answer_names_the_key_the_header_cell_prints() {
+    // The wire's sentence is English and lives in `mcp`, which may not read `ui`'s key table, so the
+    // spelling of the key is asserted here — the one crate that sees both — and a remapped binding
+    // fails a test instead of leaving a model to tell a person about a key that no longer exists
+    // (ADR 0186, X106).
+    let key = ui::inventory::key_label(ui::inventory::ASSISTANT_OPEN).expect("the panel has a key");
+    assert!(mcp::PLAN_NOTE.contains(key), "the plan note names `{key}`: {}", mcp::PLAN_NOTE);
+    assert!(mcp::PLAN_NOTE.contains("a person"), "and says the switch is a person's: {}", mcp::PLAN_NOTE);
+}
+
+#[test]
+fn the_header_cell_opens_the_assistant_and_the_panel_draws_its_two_modes() {
+    // X106: the owner could not find the plan/build switch, because the panel that holds it had no
+    // entry in the interface. The header's cell is that entry: a person presses it where the window's
+    // own surfaces are, and the switch is inside the panel it opens (ADR 0209, ADR 0222).
+    let (mut harness, _panel) = chat_fixture("frame-chat-header-cell");
+    harness.settle();
+    assert!(!harness.app.chat.open, "the panel starts closed");
+
+    let at = harness.face(&assistant_cell_hint()).unwrap_or_else(|| {
+        panic!(
+            "the header draws the assistant's cell: {:?}",
+            harness.faces.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        )
+    });
+    harness.click(at, egui::PointerButton::Primary);
+    assert!(harness.app.chat.open, "the header's cell opens the panel");
+    assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "the build segment is beside it");
+    assert!(harness.drew(Message::AssistantPlanHint.text(Lang::En)), "and the sentence plan means");
+
+    // The same cell closes it, so one press is one toggle whichever door asked for it.
+    harness.click(at, egui::PointerButton::Primary);
+    assert!(!harness.app.chat.open, "a second press closes the panel");
 }

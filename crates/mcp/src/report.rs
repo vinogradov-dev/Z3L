@@ -53,12 +53,27 @@ const fn effect_word(effect: BatchEffect) -> &'static str {
     }
 }
 
+/// The sentence a plan answer carries: nothing was written, and the switch that would write is a
+/// person's.
+///
+/// `mode: plan` alone leaves a caller to guess what it is looking at — a tool it has not learned, or
+/// a door a person closed — and a client that guesses asks for the write harder. The sentence names
+/// the place the switch lives and the key that opens it, so a caller can tell the person instead of
+/// retrying (ADR 0190, X106).
+///
+/// The words are the wire's, not the interface's: the panel draws its own from `text::Message`. The
+/// key is the inventory's binding, and the app asserts the spelling below against it, because `mcp`
+/// sits beside `ui` and may not read the key table itself (ADR 0186).
+pub const PLAN_NOTE: &str = "Nothing was written: plan and build are the switch a person turns in \
+     the assistant panel, which the header's assistant button opens (Ctrl+J); no tool can change it.";
+
 /// The report of one batch: its steps, the nodes it created, changed and removed, its refusal, the
 /// mode that decided what it could do, what the file holds, and the product it ran in.
 ///
 /// `open_product` is the session's view state read after the batch, so the answer says which product
 /// the steps worked inside rather than leaving a caller to assume the one it named or the one the
-/// person had open (ADR 0098, ADR 0212).
+/// person had open (ADR 0098, ADR 0212). A plan answer also carries [`PLAN_NOTE`], so the mode is
+/// read as the person's switch and not as a tool the caller has yet to discover.
 pub fn batch(
     report: &BatchReport,
     steps: &[BatchStep],
@@ -111,6 +126,11 @@ pub fn batch(
     });
     if let Some(object) = body.as_object_mut() {
         object.insert("write".to_owned(), write_word(write));
+        // The mode is the person's, and only a plan needs the sentence: a build answer carries the
+        // document's own revision, which is what a caller acts on.
+        if mode == AgentMode::Plan {
+            object.insert("mode_note".to_owned(), json!(PLAN_NOTE));
+        }
         if let Some((number, error)) = report.refusal() {
             let command = report.steps().get(number.saturating_sub(1)).map_or("", |step| step.command());
             object

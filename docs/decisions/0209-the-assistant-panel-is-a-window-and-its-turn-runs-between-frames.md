@@ -1,6 +1,6 @@
 # 0209. The assistant's panel is a window, and its turn is driven between frames
 
-- Status: Accepted
+- Status: Accepted; the panel's place in the chrome extended by 0222
 - Date: 2026-11-21
 
 ## Context

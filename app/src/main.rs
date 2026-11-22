@@ -558,6 +558,9 @@ impl App {
                 self.settings_open = true;
                 self.settings_notice = None;
             }
+            // The assistant's cell and its key are one act: the panel is the shell's, and the mode
+            // switch inside it is the person's (ADR 0190, ADR 0222).
+            HeaderAction::Assistant => self.chat.toggle(),
             HeaderAction::CollapsePanels => self.shell.panels.toggle_collapse_all(),
             HeaderAction::HidePanels => self.shell.panels.toggle_hide_all(),
             HeaderAction::ToggleRibbon => {
@@ -1432,7 +1435,7 @@ impl App {
                 self.palette.open();
             }
             if shortcuts.assistant {
-                self.chat.open = !self.chat.open;
+                self.chat.toggle();
             }
             let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
@@ -1493,6 +1496,7 @@ impl App {
                 panels_collapsed: self.shell.panels.all_collapsed(),
                 mode: self.shell.mode,
                 render_open: self.render_open,
+                assistant_open: self.chat.open,
             }
         };
         let mut header_action = None;

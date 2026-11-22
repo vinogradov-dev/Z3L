@@ -231,7 +231,9 @@ pub fn headless_definitions() -> Vec<Tool> {
              batch works in that product, and naming it opens the product first: a furniture part is \
              born only inside the open product, and opening is a view operation rather than a step. \
              With `dry_run` every step runs and nothing is written. A session in plan mode answers \
-             every batch this way whatever the request says; `command_list` names the mode.",
+             every batch this way whatever the request says; `command_list` names the mode. Plan and \
+             build are a person's switch, held by the session: no tool changes it, and a plan answer \
+             carries the sentence that names the panel and the key in its `mode_note`.",
             object_schema::<BatchRequest>(),
         ),
         Tool::new(

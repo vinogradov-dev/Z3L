@@ -94,6 +94,15 @@ impl Chat {
         self.turn.is_some()
     }
 
+    /// Opens the panel, or closes it without touching the turn's document.
+    ///
+    /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
+    /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
+    /// (X106, ADR 0222). Closing keeps the conversation and the mode, which are the tab's.
+    pub(crate) fn toggle(&mut self) {
+        self.open = !self.open;
+    }
+
     /// Starts a turn on `text`, or says why it cannot.
     ///
     /// A message with no model behind it leaves a note in the conversation rather than an empty

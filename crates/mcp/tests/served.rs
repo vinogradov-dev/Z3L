@@ -339,6 +339,12 @@ async fn a_session_in_plan_mode_answers_every_call_with_a_plan_and_writes_nothin
     assert_eq!(plan["mode"], json!("plan"), "{plan}");
     assert_eq!(plan["created"].as_array().map(Vec::len), Some(1), "the plan names what would be created");
     assert_eq!(plan["written"], json!(false), "a plan writes no file");
+    // X106: a caller that reads only the answer learns that the switch is a person's and where the
+    // key is, so a refused write is told to the person instead of being retried by the model.
+    let note = plan["mode_note"].as_str().unwrap_or_else(|| panic!("a plan carries its note: {plan}"));
+    assert!(note.contains("Ctrl+J"), "the note names the key that opens the panel: {note}");
+    assert!(note.contains("a person"), "and says the switch is a person's, not a tool's: {note}");
+    assert!(note.contains(mcp::PLAN_NOTE), "the note is the published sentence: {note}");
     assert_eq!(sink.writes(), 0);
     {
         let session = session.lock().expect("the server did not poison the session");
@@ -355,6 +361,7 @@ async fn a_session_in_plan_mode_answers_every_call_with_a_plan_and_writes_nothin
     let report = body(&answered);
     assert_eq!(report["effect"], json!("landed"), "{report}");
     assert_eq!(report["mode"], json!("build"));
+    assert_eq!(report.get("mode_note"), None, "a landed batch needs no sentence about a switch: {report}");
     assert_eq!(sink.writes(), 1);
     {
         let session = session.lock().expect("the server did not poison the session");

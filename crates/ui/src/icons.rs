@@ -470,6 +470,7 @@ icons!(Actions, "actions", View, actions {
     SETTINGS => "settings",
     SEARCH => "search",
     COMMAND => "command",
+    ASSISTANT => "assistant",
     VISIBLE => "visible": Modify,
     HIDDEN => "hidden": Modify,
     LOCK => "lock": Modify,
@@ -1271,7 +1272,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 139);
+        assert_eq!(seen.len(), 140);
     }
 
     #[test]
