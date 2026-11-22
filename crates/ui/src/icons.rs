@@ -392,6 +392,10 @@ icons!(Scene, "scene", Scene, scene {
     PRODUCT => "product",
     PANEL => "panel",
     PANEL_SHAPE => "panel-shape",
+    BOARD => "board",
+    OVERLAY => "overlay",
+    ROW => "row",
+    FIT => "fit",
     POST => "post",
     SHELF => "shelf",
     WALL => "wall",
@@ -1266,7 +1270,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 134);
+        assert_eq!(seen.len(), 138);
     }
 
     #[test]
