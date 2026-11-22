@@ -175,26 +175,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the part; a test asserts a placement whose origin is not on the base face is refused with a
    sentence naming the anchor rule; the wardrobe fixture has every origin at the bottom.
   `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
-- `[ ]` **X118** a side has no name on the tool surface, so a caller maps "left" onto its own axes and the piece comes out mirrored
-  Why: Owner report 2026-11-21: the wardrobe came out mirrored against the description -
-   "говоря левая стойка это лево по отношению взора". Measured: `crates/model/src/side.rs:45`
-   says `Side::Left => DVec3::X` with the comment "left is +X, seen from the front", and
-   `docs/domain/products.md` §2.1 repeats it, but the build put the left side at `x 0..18`,
-   which is the viewer right. The reason is not a missing convention but a missing word on the
-   surface: no command, schema or answer names a side - `Side`, `OpeningView` and the four side
-   names live in the model and the docs, while a caller writes coordinates, so it maps a person
-   words onto its own mental picture (screen axes) and is wrong half the time. The model states
-   the rule and a test in the interface holds `Side::Left` to it, so nothing failed: the caller
-   was never told.
-  Shape: The side is a word the surface can carry, like `class` already is: the product answer
-   names its four sides with the axis and the face each one is (`left: +X, face at x = 800`),
-   and a part can be placed by side where a side is what the caller means. A recipe then says
-   "стойка на стороне left" and no coordinate is guessed, so the words of a description and the
-   document cannot disagree.
-  Done: A test reads the four sides of a product from the answer and asserts left is +X with
-   the face it names; a test places a part by side and asserts its world box; the wardrobe
-   recipe names its sides rather than the coordinates they happen to be.
-  `files: crates/model/src/side.rs,crates/mcp/src/server.rs,docs/domain/products.md`
 - `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
   Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
    смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
