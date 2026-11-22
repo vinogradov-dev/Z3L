@@ -105,21 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
-  Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
-   could not find one. Measured: the assistant panel is opened only by `shortcuts.assistant`
-   (`app/src/main.rs:1435`), bound to `Ctrl+J` (`crates/ui/src/inventory.rs:241`), and no menu,
-   ribbon or palette row draws `assistant.open`. The registry answer carries `mode: plan` and
-   the batch report leaves a caller to tell the person where the switch is; the owner found it
-   alone, by accident.
-  Shape: One row draws `assistant.open` where a person looks for a panel (menu entry, label,
-   key and icon per place-capability), and the plan-mode answer states in one sentence that
-   nothing was written and where the switch is; the switch itself stays the person act (ADR
-   0190).
-  Done: A frame test opens the assistant from the entry it belongs to and finds the two
-   segments; a plan-mode answer carries the sentence naming the place and the key; a caller
-   reading only the answer can tell a switch a person operates from a tool.
-  `files: crates/ui/src/inventory.rs,app/src/main.rs,crates/mcp/src/report.rs`
 - `[ ]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
   Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the
    tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
@@ -901,6 +886,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
+  Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
+   could not find one. Measured: the assistant panel is opened only by `shortcuts.assistant`
+   (`app/src/main.rs:1435`), bound to `Ctrl+J` (`crates/ui/src/inventory.rs:241`), and no menu,
+   ribbon or palette row draws `assistant.open`. The registry answer carries `mode: plan` and
+   the batch report leaves a caller to tell the person where the switch is; the owner found it
+   alone, by accident.
+  Shape: One row draws `assistant.open` where a person looks for a panel (menu entry, label,
+   key and icon per place-capability), and the plan-mode answer states in one sentence that
+   nothing was written and where the switch is; the switch itself stays the person act (ADR
+   0190).
+  Done: A frame test opens the assistant from the entry it belongs to and finds the two
+   segments; a plan-mode answer carries the sentence naming the place and the key; a caller
+   reading only the answer can tell a switch a person operates from a tool.
+  `files: crates/ui/src/inventory.rs,app/src/main.rs,crates/mcp/src/report.rs` — `a7b81ad`
 
 - `[x]` **X105** the parallelepiped is a ribbon gesture, and no command names it
   Why: Measured 2026-11-21: `model.primitives.cuboid` (`crates/ui/src/toolbars/spec.rs:731`) is
