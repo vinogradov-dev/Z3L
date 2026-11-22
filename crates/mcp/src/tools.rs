@@ -1,4 +1,4 @@
-//! The four tools: what a client calls, what each takes, and what an answer is.
+//! The five tools: what a client calls, what each takes, and what an answer is.
 //!
 //! A tool's arguments are typed structs that derive `serde` and `schemars`, and the schema a client
 //! reads is derived from the struct the tool parses, so the two cannot drift apart — the same rule a
@@ -29,8 +29,18 @@ pub const TOOL_RUN: &str = "command_run";
 pub const TOOL_BATCH: &str = "command_batch";
 /// The tool that asks the scene a question and writes nothing.
 pub const TOOL_QUERY: &str = "query";
+/// The tool that reports the mistakes the rules can prove, and writes nothing.
+pub const TOOL_FINDINGS: &str = "inspect";
 /// The tool that reports the window's own state, which only an attached channel can answer.
 pub const TOOL_INSPECT: &str = "ui_inspect";
+
+/// The arguments of `inspect`: none.
+///
+/// The rules read the document, the catalogue and the profile the session already holds, so a
+/// caller has nothing to pass and a mistyped key is refused instead of ignored.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindingsRequest {}
 
 /// The arguments of `command_list`: none.
 ///
@@ -215,12 +225,12 @@ impl Answer {
     }
 }
 
-/// The tool list a headless session offers: the four coarse tools and no window report.
+/// The tool list a headless session offers: the five coarse tools and no window report.
 pub fn definitions() -> Vec<Tool> {
     headless_definitions()
 }
 
-/// The four coarse tools, with the schema each one's own argument type publishes.
+/// The five coarse tools, with the schema each one's own argument type publishes.
 ///
 /// A schema is built per call, the way a command's own is: discovery is not the frame path, and a
 /// value that lived in a `static` would have to be built at startup for a client that may never
@@ -277,10 +287,23 @@ pub fn headless_definitions() -> Vec<Tool> {
              and the window cannot disagree about the document.",
             object_schema::<Query>(),
         ),
+        Tool::new(
+            TOOL_FINDINGS,
+            "Inspect the scene for the seven mistakes the rules can prove: a part that leaves its \
+             product's envelope, two bodies that share volume, a shelf that does not fit the opening \
+             between its uprights, a hanging rail in the wrong place, a visible edge with no banding \
+             or a hidden one that carries it, a front whose gap or width is wrong, and a part larger \
+             than the sheet it is cut from. The answer is one list ordered by severity then code: \
+             every finding names the document ids it blames, says in one sentence what a person \
+             would see, and carries the commands a fix would dispatch (an empty list when the fix is \
+             a decision rather than a command). The pass writes nothing and moves no revision. Read \
+             this before explaining a scene: the rules find the mistake and the model explains it.",
+            object_schema::<FindingsRequest>(),
+        ),
     ]
 }
 
-/// The tool list an attached channel offers: the headless four and the window's own report.
+/// The tool list an attached channel offers: the headless five and the window's own report.
 ///
 /// The list is built once per `tools/list`, and the five names are the whole promise: a caller that
 /// reads this list learns the same five tools on either kind of window.
@@ -338,7 +361,7 @@ mod tests {
     #[test]
     fn every_tool_publishes_a_schema_that_denies_a_key_it_does_not_read() {
         for tools in [headless_definitions(), attached_definitions()] {
-            assert!(tools.len() >= 4, "the four coarse tools");
+            assert!(tools.len() >= 5, "the five coarse tools");
             for tool in &tools {
                 // A tool takes one object, or — `query` — one of the question objects the engine's
                 // own enum describes. Either way every shape it accepts denies an unknown field, which
@@ -367,13 +390,13 @@ mod tests {
         }
         let headless = headless_definitions();
         let names: Vec<&str> = headless.iter().map(|tool| tool.name.as_ref()).collect();
-        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY]);
+        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS]);
         let offered = attached_definitions();
         let attached: Vec<&str> = offered.iter().map(|tool| tool.name.as_ref()).collect();
         assert_eq!(
             attached,
-            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_INSPECT],
-            "an attached channel adds the window's own report to the same four"
+            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_INSPECT],
+            "an attached channel adds the window's own report to the same five"
         );
     }
 

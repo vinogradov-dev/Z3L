@@ -112,6 +112,7 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
             let answer = match pending.call() {
                 mcp::Call::List => mcp::Answer::ok(mcp::listing(&session)),
                 mcp::Call::Ask(query) => mcp::asking(&session, *query),
+                mcp::Call::Findings => mcp::Answer::ok(mcp::findings(&session)),
                 mcp::Call::Dispatch(request) => {
                     mcp::dispatch(&mut session, request, mcp::Door::Headless { sink: sink.as_deref() })
                 }

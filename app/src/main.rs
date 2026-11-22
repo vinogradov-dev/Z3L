@@ -903,6 +903,7 @@ impl App {
         match call {
             mcp::Call::List => mcp::Answer::ok(mcp::listing(&self.tabs.active().session)),
             mcp::Call::Ask(query) => mcp::asking(&self.tabs.active().session, *query),
+            mcp::Call::Findings => mcp::Answer::ok(mcp::findings(&self.tabs.active().session)),
             mcp::Call::Inspect => match serde_json::to_value(self.window_state()) {
                 Ok(value) => mcp::Answer::ok(value),
                 // A window state is plain data by construction; a caller that reaches this arm is
@@ -952,12 +953,15 @@ impl App {
     ///
     /// The mode switch is the session's, so it survives a panel close and dies with the tab; leaving
     /// build ends a running turn at its next call boundary, because an answer that started while the
-    /// agent could write must not keep writing after the person dropped to plan (ADR 0190).
+    /// agent could write must not keep writing after the person dropped to plan (ADR 0190). The
+    /// rules' findings are re-read when the document moves, never per frame: the list is derived and
+    /// the pass walks the tree (ADR 0191).
     fn assistant(&mut self, ctx: &egui::Context) {
         if !self.chat.open {
             return;
         }
         let lang = ui::language(ctx);
+        self.chat.refresh_findings(&self.tabs.active().session);
         let mode = self.tabs.active().session.agent_mode();
         let busy = self.gesture_in_flight();
         match self.chat.show(ctx, mode, lang, busy) {

@@ -434,6 +434,33 @@ impl Project {
         None
     }
 
+    /// Whether two nodes share volume, by the same reading the write refuses (ADR 0162, ADR 0178).
+    ///
+    /// A body inside a shell is a piece inside a case and stays legal; two boxes that only touch
+    /// share no volume, so a face is contact and never an overlap; a body the contact port can
+    /// describe is measured by its own faces and a furniture piece by the world box it has always
+    /// been measured by ([`Self::resting_conflict`]). The inspector asks this of every pair of parts
+    /// in a product, which is why it is public: a second reading of "two bodies intersect" would be
+    /// a rule the write and the report could disagree about.
+    pub fn parts_overlap(&self, first: Id, second: Id, contact: Option<&dyn Contact>) -> bool {
+        if first == second {
+            return false;
+        }
+        let (Some(first_box), Some(second_box)) = (self.mover_box(first), self.mover_box(second)) else {
+            return false;
+        };
+        if nested(first_box, second_box, self.product_of(first))
+            || nested(second_box, first_box, self.product_of(second))
+        {
+            return false;
+        }
+        let measure = |id: Id, box_: SurfaceBox| {
+            let faces = !self.is_furniture(id);
+            Measured::new(box_, faces.then(|| self.solid_of(box_, contact)).flatten())
+        };
+        measure(first, first_box).meets(&measure(second, second_box))
+    }
+
     /// The obstacles a move or a turn of `targets` must respect.
     ///
     /// A body the maker marked as a **tool** passes through parts: it has to, because a cutter that

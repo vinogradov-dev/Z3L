@@ -550,6 +550,60 @@ messages! {
     ],
     SegmentWithArc = ["Segment {} (arc)", "Сегмент {} (дуга)"],
     SegmentWith = ["Segment {}", "Сегмент {}"],
+
+    // ── The inspector's findings ────────────────────────────────────────────
+    FindingEnvelopeOut = [
+        "{} leaves the product envelope by {} mm on {}.",
+        "{} выходит за габарит изделия на {} мм по {}."
+    ],
+    FindingBodyOverlap = [
+        "{} and {} share volume.",
+        "{} и {} занимают один объём."
+    ],
+    FindingShelfWide = [
+        "{} is {} mm wider than its {} mm opening.",
+        "{} шире своего проёма на {} мм (проём {} мм)."
+    ],
+    FindingShelfLoose = [
+        "{} is {} mm narrower than its {} mm opening allows and sits loose.",
+        "{} уже своего проёма на {} мм и сидит свободно (проём {} мм)."
+    ],
+    FindingRailOutside = [
+        "{} stands outside its compartment or the product envelope.",
+        "{} стоит вне своей секции или габарита изделия."
+    ],
+    FindingRailDrop = [
+        "{} hangs {} mm below the top, not the {} mm the workshop uses.",
+        "{} висит на {} мм ниже верха, а мастерская вешает на {} мм."
+    ],
+    FindingRailClearance = [
+        "{} is {} mm from a shelf; the workshop keeps {} mm.",
+        "От {} до полки {} мм; мастерская держит {} мм."
+    ],
+    FindingEdgeMissing = [
+        "{} has no banding on the visible edge {}.",
+        "У {} не окромлён видимый торец {}."
+    ],
+    FindingEdgeHidden = [
+        "{} carries banding on the hidden edge {}.",
+        "У {} окромлён скрытый торец {}."
+    ],
+    FindingDoorGap = [
+        "The gap between {} and {} is {} mm, not {} mm.",
+        "Зазор между {} и {} — {} мм, а не {} мм."
+    ],
+    FindingDoorSize = [
+        "{} is {} mm wide; its opening wants {} mm.",
+        "Ширина {} — {} мм, а проём требует {} мм."
+    ],
+    FindingDoorOverlap = [
+        "{} and {} overlap by volume.",
+        "{} и {} пересекаются по объёму."
+    ],
+    FindingSheet = [
+        "{} is {} x {} mm and does not fit the {} x {} mm sheet.",
+        "{} — {} x {} мм и не помещается на лист {} x {} мм."
+    ],
     CornerGeneric = ["Corner", "Угол"],
     CornerRadiusSuffix = [" (radius)", " (радиус)"],
     CornerChamferSuffix = [" (chamfer)", " (фаска)"],
@@ -1365,6 +1419,12 @@ messages! {
         "Модель ещё не подключена, отвечать некому. Редактор работает и без неё."
     ],
     AssistantChecklist = ["Checklist", "План работы"],
+    AssistantFindings = ["Findings", "Замечания"],
+    AssistantFindingsNone = ["No rule has a finding.", "Правила замечаний не нашли."],
+    AssistantFindingsMore = ["and {} more", "и ещё {}"],
+    FindingSeverityError = ["Error", "Ошибка"],
+    FindingSeverityWarning = ["Warning", "Предупреждение"],
+    FindingSeverityInfo = ["Info", "Сведения"],
     AssistantPlanLine = [
         "Plan: {} would be created, {} changed, {} removed. Nothing is written.",
         "План: создать {}, изменить {}, удалить {}. Ничего не записано."

@@ -37,6 +37,7 @@ mod panel;
 mod panel_features;
 mod placement;
 mod primitive;
+mod profile;
 mod project;
 mod properties;
 mod query;
@@ -81,6 +82,7 @@ pub use primitive::{
     Cone, DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,
     MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, PrimitiveShape, Sphere,
 };
+pub use profile::{Sheet, WorkshopProfile};
 pub use project::{
     Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,
     Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError, Resting,
