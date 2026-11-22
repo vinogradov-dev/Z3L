@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=7da482a updated=2026-11-22
+STATE: milestone=M7 phase=T task=X97 state=doing base=7da482a updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,8 +35,7 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-Nothing is scheduled: The order resumes at U123, the Panels group and its three cells, whose four
-glyphs U122 drew.
+X97 is next: the contour edit's old shape and its working copy are almost one colour
 
 ## Index
 

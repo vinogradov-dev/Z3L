@@ -222,6 +222,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0215](0215-the-domain-is-taught-and-a-construction-is-composed.md) | The program teaches its domain, and a construction is composed | Accepted; supersedes the recipe of 0192 |
 | [0216](0216-a-decor-is-the-boards-picture-its-size-and-its-grain.md) | A decor is the board's picture, the size it covers and its grain | Accepted; the render half of the material library (Y3) |
 | [0217](0217-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
+| [0218](0218-an-overlays-pair-of-inks-is-the-themes.md) | An overlay's pair of inks is the theme's, and its quiet half is a neutral | Accepted; pays part of the overlay leftover of 0087 `[gizmo]` |
 
 ## Format
 

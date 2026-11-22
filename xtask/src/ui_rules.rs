@@ -43,6 +43,26 @@ const COLOUR_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/icons.rs", owns: "the six semantic role inks an icon master writes (ADR 0090)" },
 ];
 
+/// The shell modules that still carry a hand-picked ink, and what each one owes.
+///
+/// A colour belongs to the palette wherever it is drawn, and the shell's overlays over the scene
+/// are no exception: they sat outside the rule in one lump until X97 gave the contour overlay a
+/// pair of theme inks and a casing. A module leaves this list when its inks become theme
+/// functions, so the list only ever shrinks; the debt it stands for is the `[gizmo]` entry of
+/// `plan/debt.md`, which says what each one still owes. Every other shell module is read the way
+/// `crates/ui` is, so a new ink there is caught on the commit that adds it rather than in a later
+/// review.
+const SHELL_INK_DEBT: &[&str] = &[
+    "app/src/box_gizmo.rs",
+    "app/src/document.rs",
+    "app/src/draw_gizmo.rs",
+    "app/src/extrude_gizmo.rs",
+    "app/src/gizmo.rs",
+    "app/src/gizmo_math.rs",
+    "app/src/rotate_gizmo.rs",
+    "app/src/scene_gizmo.rs",
+];
+
 /// The modules that may create an `egui` host, and the surface each one owns.
 ///
 /// Every entry is one floating surface or one band of the window skeleton. A new surface adds a row
@@ -82,6 +102,15 @@ const MAX_DEPTH: usize = 16;
 ///
 /// `root` is the repository root, the same path the other host checks take.
 pub fn check(root: &Path) -> Result<usize, Vec<String>> {
+    check_with(root, SHELL_INK_DEBT)
+}
+
+/// [`check`] with the shell modules that still owe their inks named by the caller.
+///
+/// The gate passes [`SHELL_INK_DEBT`]; a test passes a list of its own, so both branches of the
+/// rule — a shell module is read, a module that owes its inks is not — are checked by the same code
+/// the gate runs.
+fn check_with(root: &Path, debt: &[&str]) -> Result<usize, Vec<String>> {
     let test_only = test_only_files(root);
     let mut violations = Vec::new();
     let mut checked = 0usize;
@@ -99,7 +128,7 @@ pub fn check(root: &Path) -> Result<usize, Vec<String>> {
                 continue;
             }
             checked = checked.saturating_add(1);
-            check_file(&shown, &file, &mut violations);
+            check_file(&shown, &file, debt, &mut violations);
         }
     }
 
@@ -110,7 +139,7 @@ pub fn check(root: &Path) -> Result<usize, Vec<String>> {
     if violations.is_empty() { Ok(checked) } else { Err(violations) }
 }
 
-fn check_file(shown: &str, path: &Path, violations: &mut Vec<String>) {
+fn check_file(shown: &str, path: &Path, debt: &[&str], violations: &mut Vec<String>) {
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) => {
@@ -128,9 +157,9 @@ fn check_file(shown: &str, path: &Path, violations: &mut Vec<String>) {
     let mut scan = Scan {
         shown,
         imports: Imports::collect(&file),
-        // The palette belongs to `crates/ui`; the shell's gizmo inks are a known debt and are not
-        // this rule's claim until that debt is paid.
-        colour: shown.starts_with("crates/ui/") && !owned(COLOUR_OWNERS, shown),
+        // The palette belongs to `crates/ui`, and the shell is held to the same rule: a module that
+        // still owes its inks is named in `SHELL_INK_DEBT`, and paying one takes it out of there.
+        colour: !owned(COLOUR_OWNERS, shown) && !debt.contains(&shown),
         host: !owned(HOST_OWNERS, shown),
         violations,
     };
@@ -568,6 +597,30 @@ mod tests {
             violations.iter().any(|violation| violation.contains("`crates/ui/src/panel_card.rs:4`")
                 && violation.contains("Color32 { .. }")),
             "{violations:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_shell_is_read_like_the_palette_is_and_a_debtor_is_not() {
+        // X97: the colour rule covered `crates/ui` and left the whole shell out of it in one lump,
+        // so the gizmos kept hand-picked inks. A shell module is read now; a module that owes its
+        // inks is named once, and paying it is what removes the name.
+        let mut files = healthy();
+        files[1] = ("app/src/main.rs", "use egui::Color32;\npub fn chrome() -> Color32 {\n    Color32::LIGHT_RED\n}\n");
+        let root = project("shell-colour", &files);
+        let violations = violations_of(&root);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("`app/src/main.rs:3`") && violation.contains("Color32::LIGHT_RED")),
+            "{violations:?}"
+        );
+        let debt = ["app/src/main.rs"];
+        assert!(
+            check_with(&root, &debt).is_ok(),
+            "a module named as owing its inks is not read for them: {:?}",
+            check_with(&root, &debt).err()
         );
         let _ = std::fs::remove_dir_all(&root);
     }

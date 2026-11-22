@@ -148,11 +148,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[gizmo]` The orientation widget is hidden in a viewport smaller than 124 pt wide plus margins
   (148 pt), or 148 pt tall plus margins; there is no menu fallback for the six views or the roll
   ring yet.
-- `[gizmo]` The screen-space overlays over the viewport — the contour grips, the drawing draft and
-  the size label — still carry fixed dark-theme colours, so on the light workspace a near-white grip
-  and the pale draft line read weakly against the paper. They are `egui` paint, not frame ink, so
-  they are the leftover of X8 (ADR 0087). `cargo xtask ui-rules` reads `crates/ui/src` only, so the
-  shell's gizmo inks are outside it until this entry is paid; the rule then covers them too.
+- `[gizmo]` The screen-space overlays over the viewport that this entry still owns — the drawing
+  draft, its preview and its phantom, the box tool's size label and its backing panel — carry fixed
+  dark-theme colours, so on the light workspace the pale draft line and the near-white size label
+  read weakly against the paper. They are `egui` paint, not frame ink, so they are the leftover of
+  X8 (ADR 0087). The contour overlay is paid: its four inks are theme functions (ADR 0218), and the
+  colour rule now reads the shell, with the modules that still owe an ink named one by one in
+  `SHELL_INK_DEBT` in `xtask/src/ui_rules.rs` — `box_gizmo`, `document`, `draw_gizmo`,
+  `extrude_gizmo`, `gizmo`, `gizmo_math`, `rotate_gizmo` and `scene_gizmo`, all under `app/src/`.
+  Paying one takes its name out of that list, and the list cannot grow.
 - `[gizmo]` An extrusion pull previews its new height as a wireframe prism, not a shaded solid. A
   solid preview needs the evaluation cache to accept a previewed height without a document write.
 - `[panel]` The core outline at a line-arc or arc-arc joint still joins per-segment offsets with a

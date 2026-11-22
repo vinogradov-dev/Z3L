@@ -104,8 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-## Bugs
-- `[ ]` **X97** the contour edit's old shape and its working copy are almost one colour
+- `[~]` **X97** the contour edit's old shape and its working copy are almost one colour
   Why: The owner, in contour edit mode: the shape the edit started from and the working copy
    are almost one colour, so a change cannot be read at a glance. Measured: `BASE_COLOR` is
    `from_rgba_premultiplied(150, 150, 150, 160)`, which is a near-white grey (about 239 on 255)
@@ -131,7 +130,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    `SELECTION_LINE_COLOR`; an offscreen render in the dark and the light theme over a light and
    a dark material shows the base reading as behind the working copy; `cargo xtask ui-rules` is
    green with the contour module no longer an exception, and `cargo xtask ci` is green.
-  `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,plan/debt.md`
+  `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,xtask/src/ui_rules.rs,app/src/ui_shots.rs,docs/decisions,plan/debt.md`
+
+## Bugs
 - `[ ]` **X99** an armed boolean shows which ring is the base
   Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
    screen says which ring that is: a plain click on the second ring replaces the selection, so

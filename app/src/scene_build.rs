@@ -34,10 +34,11 @@ use units::Length;
 
 /// A panel's surface colour, taken in tree order, in linear RGB: v1 has no per-panel material
 /// colour and the three tones keep neighbouring parts readable.
-const PANEL_COLORS: [[f32; 4]; 3] = [[0.62, 0.42, 0.22, 1.0], [0.50, 0.34, 0.20, 1.0], [0.45, 0.47, 0.50, 1.0]];
+pub(crate) const PANEL_COLORS: [[f32; 4]; 3] =
+    [[0.62, 0.42, 0.22, 1.0], [0.50, 0.34, 0.20, 1.0], [0.45, 0.47, 0.50, 1.0]];
 
 /// A common debug colour for every band on a panel.
-const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
+pub(crate) const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
 
 /// The default surface colour of a geometry object; v1 has no per-object material.
 const OBJECT_COLOR: [f32; 4] = [0.58, 0.60, 0.64, 1.0];
