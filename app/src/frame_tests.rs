@@ -6970,3 +6970,37 @@ fn the_header_cell_opens_the_assistant_and_the_panel_draws_its_two_modes() {
     harness.click(at, egui::PointerButton::Primary);
     assert!(!harness.app.chat.open, "a second press closes the panel");
 }
+
+#[test]
+fn the_assistant_panel_keeps_the_size_it_opens_at() {
+    // X108: a person saw the panel widen by itself, a little every frame, until it filled the
+    // screen. Measured: the field row left its button a guessed `available - 72` points, and the
+    // Russian «Отправить» is wider than that, so the row asked the window for 9.4 more points on
+    // every frame — 420, 476, 486 … 1289 on a 1280-point screen, in both modes and for any content.
+    // The row now measures the button and gives the field the rest, so the width it opens at is the
+    // width it keeps, in either language.
+    for lang in [ui::settings::Language::English, ui::settings::Language::Russian] {
+        let (mut harness, _panel) = chat_fixture("frame-chat-size");
+        harness.settle();
+        harness.app.settings.appearance.language = lang;
+        harness.app.chat.open = true;
+        harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![])));
+        harness.app.chat.conversation.push(
+            mcp::Speaker::Agent,
+            "an answer long enough to wrap over several lines, which is what the transcript is for ".repeat(3),
+        );
+        harness.app.chat.input =
+            "a message the person is typing that is longer than the field that holds it ".repeat(3);
+        let id = egui::Id::unique("assistant_panel");
+        let mut first = None;
+        let mut last = None;
+        for _ in 0..100 {
+            harness.frame();
+            let rect = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+            first.get_or_insert(rect);
+            last = Some(rect);
+        }
+        let (first, last) = (first.expect("the panel drew"), last.expect("the panel drew"));
+        assert_eq!(first, last, "{lang:?}: the panel kept the size it opened at, first {first:?}, last {last:?}");
+    }
+}

@@ -255,33 +255,45 @@ impl Chat {
     }
 
     /// The one field and its one button: Enter and Send are the same gesture.
+    ///
+    /// The button holds the right end of the row and the field takes what is left, so the row is
+    /// measured from the button outwards. A field that leaves a guessed width for its button asks
+    /// the window for more room whenever the button is wider than the guess — «Отправить» is — and
+    /// the panel then widens by itself, a little every frame (X108). The row is the height
+    /// `ui.horizontal` takes, so the panel's rows keep one rhythm.
     fn field(&mut self, ui: &mut Ui, lang: Lang, busy: bool, action: &mut ChatAction) {
         let enabled = self.backend.is_some() && !busy;
-        let mut send = false;
-        ui.horizontal(|ui| {
-            let room = (ui.available_width() - 72.0).max(80.0);
-            let response = ui.add_enabled(
-                enabled,
-                egui::TextEdit::singleline(&mut self.input)
-                    .hint_text(Message::AssistantPlaceholder.text(lang))
-                    .desired_width(room),
-            );
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                send = true;
-            }
-            if busy {
-                // The button that was Send is Stop while the agent works: one place, one meaning.
-                if ui.add(egui::Button::new(Message::AssistantStop.text(lang))).clicked() {
-                    *action = ChatAction::Stop;
-                }
-            } else {
-                let ready = enabled && !self.input.trim().is_empty();
-                if ui.add_enabled(ready, egui::Button::new(Message::AssistantSend.text(lang))).clicked() {
-                    send = true;
-                }
-            }
-        });
-        if send && enabled && !self.input.trim().is_empty() {
+        let ready = enabled && !self.input.trim().is_empty();
+        let (entered, asked) = ui
+            .allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    let asked = if busy {
+                        // The button that was Send is Stop while the agent works: one place, one meaning.
+                        ui.add(egui::Button::new(Message::AssistantStop.text(lang)))
+                            .clicked()
+                            .then_some(ChatAction::Stop)
+                    } else {
+                        ui.add_enabled(ready, egui::Button::new(Message::AssistantSend.text(lang)))
+                            .clicked()
+                            .then_some(ChatAction::Send)
+                    };
+                    let response = ui.add_enabled(
+                        enabled,
+                        egui::TextEdit::singleline(&mut self.input)
+                            .hint_text(Message::AssistantPlaceholder.text(lang))
+                            .desired_width(ui.available_width()),
+                    );
+                    let entered = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    (entered, asked)
+                },
+            )
+            .inner;
+        if let Some(asked) = asked {
+            *action = asked;
+        }
+        if entered && ready {
             *action = ChatAction::Send;
         }
     }
