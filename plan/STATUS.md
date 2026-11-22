@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=067bb27 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=ceb9119 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -21,9 +21,15 @@ The guide is what a model reads before its first command: `engine::guide()` retu
 a request can belong to — a product frame with the parts inside it, or a free body — and the two
 that serve neither, the order of a build from scratch, the shapes a frame takes with a real
 `Envelope` as the radius-corner example, the three stances of ADR 0105, the class registry grouped
-by family with the words a person types, the units and the four sides, all of it generated from the
-registries so a name cannot drift; every command carries the one family word it serves, so
-`command_list` and `z3l guide` teach the same world from one function (J20, ADR 0215).
+by family with the words a person types and the axis pair each one fills, the units and the frame a
+description is read from, all of it generated from the registries so a name cannot drift; every
+command carries the one family word it serves, so `command_list` and `z3l guide` teach the same
+world from one function (J20, ADR 0215). A released build ships no prose, so the surface is the
+dictionary: every schema annotates the unit of each field whose type carries one, from one table of
+types, and the sides are the caller's reading rather than the program's vocabulary — the guide
+states the frame, that the person in front of the piece sees their left at `+X`, and that the caller
+says its reading back, because a command that took a side would bake one reader's meaning of
+«слева» into the document (J19, ADR 0227).
 
 A drawing becomes bodies in one press: `object.path.extrude` takes a closed path or a contour set,
 so a path becomes one body in place and a set becomes one body per ring, the node keeping the first
