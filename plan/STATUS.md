@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=79795cf updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=47085b2 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -41,9 +41,7 @@ own settings, which the Render place offers as a percentage of a white room and 
 
 ## Next
 
-Nothing is scheduled: the open defects stay in `## Bugs`, and X103 is the next of them — a joint the
-document accepts must be a joint to the geometry layer, so a stored drawing with a joint gap
-combines and its areas are non-empty.
+Nothing is scheduled: 48 open tasks wait in `## Next`.
 
 ## Index
 

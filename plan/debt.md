@@ -442,3 +442,13 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   `Commits` field, which a later `task set --field Done` rewrote on its own line (P21 measured this). A
   re-wrap by the writer can produce the same split by landing a label word on a line break, so the entry
   format and the parser do not agree about what a label is.
+
+- `[mesh]` The arrangement welds at a nanometre (`VERTEX_TOLERANCE = 1e-6` mm) while the document's
+  joint rule allows tens of micrometres (ADR 0072), and `Contour::to_geometry` now closes the
+  difference for every stored ring. A caller that hands `geom::union_regions` a ring built directly
+  in the geometry layer with a joint gap is still outside the contract, and what it gets is not even
+  a consistent refusal: a single gap is bridged when the neighbouring edge's supporting line crosses
+  the arc's circle (measured on X103: a 600 mm sector with a 10 µm gap unions correctly), and a ring
+  with a gap at each side of its arc loses every piece, which is how the owner's `cross.z3l` answered
+  "the rings do not meet". The boolean should refuse an open operand with a sentence instead of
+  repairing one gap and dropping the rest.

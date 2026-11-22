@@ -118,30 +118,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
    and no writer was added when P17 landed.
   `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
-- `[ ]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
-  Why: Observation: a contour drawing that has been stored once is a dead operand. In
-   /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
-   segments miss each other by 4.6, 6.7, 10.1 and 12.4 µm — the rounding
-   `ContourSegment::from_geom` does at storage, which the document accepts on `2 µm + radius ×
-   1.746e-5` (ADR 0072). `contour.boolean.union` over those two rings answers "nothing to
-   create: the rings do not meet, so nothing is left", and `object.area.extrude` answers "the
-   point is not inside any area" for every point, because `partition_regions` starts with
-   `union_regions`. Expectation: a joint the document accepts is a joint to the geometry layer,
-   so a stored drawing combines and its areas are non-empty. Suspected cause, measured:
-   `geom::boolean` welds vertices at `VERTEX_TOLERANCE = 1e-6` mm and never closes a joint gap
-   of a few micrometres, and `model::Contour::to_geometry` builds the ring with
-   `new_with_joint_tolerance` — so the ring is legal for the document and open for the boolean.
-   A control probe with a 3 µm gap reproduces it: the same ring unions fine at 0 µm, loses its
-   disjoint partner at 3 µm and leaves nothing when two such rings are unioned.
-  Shape: One rule for a joint: the gap the document is allowed to store is the gap the boolean
-   welds, so `collect_edges` welds at the operand ring's own joint tolerance instead of one
-   nanometre — or the conversion closes the joint before the ring reaches the geometry layer,
-   and then the boolean keeps its nanometre. The tested round trip decides which: every stored
-   ring the document accepts must be closed for `union_regions`.
-  Done: A test unions two rings whose joints are `2 µm + radius × 1.746e-5` apart and gets both
-   pieces, another unions the two rings of the cross.z3l intersection and gets one object, and
-   `object.area.extrude` on that object reaches both caps; `cargo xtask ci` is green.
-  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
 - `[ ]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
   Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
    circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
@@ -992,6 +968,31 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
+  Why: Observation: a contour drawing that has been stored once is a dead operand. In
+   /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
+   segments miss each other by 4.6, 6.7, 10.1 and 12.4 µm — the rounding
+   `ContourSegment::from_geom` does at storage, which the document accepts on `2 µm + radius ×
+   1.746e-5` (ADR 0072). `contour.boolean.union` over those two rings answers "nothing to
+   create: the rings do not meet, so nothing is left", and `object.area.extrude` answers "the
+   point is not inside any area" for every point, because `partition_regions` starts with
+   `union_regions`. Expectation: a joint the document accepts is a joint to the geometry layer,
+   so a stored drawing combines and its areas are non-empty. Suspected cause, measured:
+   `geom::boolean` welds vertices at `VERTEX_TOLERANCE = 1e-6` mm and never closes a joint gap
+   of a few micrometres, and `model::Contour::to_geometry` builds the ring with
+   `new_with_joint_tolerance` — so the ring is legal for the document and open for the boolean.
+   A control probe with a 3 µm gap reproduces it: the same ring unions fine at 0 µm, loses its
+   disjoint partner at 3 µm and leaves nothing when two such rings are unioned.
+  Shape: One rule for a joint: the gap the document is allowed to store is the gap the boolean
+   welds, so `collect_edges` welds at the operand ring's own joint tolerance instead of one
+   nanometre — or the conversion closes the joint before the ring reaches the geometry layer,
+   and then the boolean keeps its nanometre. The tested round trip decides which: every stored
+   ring the document accepts must be closed for `union_regions`.
+  Done: A test unions two rings whose joints are `2 µm + radius × 1.746e-5` apart and gets both
+   pieces, another unions the two rings of the cross.z3l intersection and gets one object, and
+   `object.area.extrude` on that object reaches both caps; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs` — `47085b2`
 
 - `[x]` **X101** an older scene file answers the schema sentence, not a field error
   Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
