@@ -37,7 +37,7 @@ this file only when a task touches the question.
   one module and the UI to one card, at the cost of rewriting every command or keeping the stable ids
   as thin wrappers over the change values. Decide before M8 puts hardware commands on the same pattern.
 - How a workshop-made part is decomposed for production. `10.15` tamburat and `10.16` bent panels
-  (ADR 0104) are classes because the shop assembles them, and `supply = shop` keeps them counted once
+  (ADR 0217) are classes because the shop assembles them, and `supply = shop` keeps them counted once
   and out of the cutting list. Whether their components travel as a recipe on the object — the two
   8 mm skins and the rails, expanded by the exporter — or as ordinary sheet parts in the tree is not
   decided. The class rows do not change either way; the production mechanism does. The owner left it

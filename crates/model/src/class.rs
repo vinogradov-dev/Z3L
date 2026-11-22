@@ -283,7 +283,7 @@ impl<'de> Deserialize<'de> for ClassCode {
 }
 
 /// Where an object comes from: a nesting plan, a length cut, a purchase order, or the workshop's own
-/// assembly (ADR 0104).
+/// assembly (ADR 0217).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Supply {
     /// Cut from a sheet and nested.

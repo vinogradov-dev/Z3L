@@ -93,7 +93,7 @@ thing is made of.
 
 | Trait | Values | Semantics | First consumer |
 |---|---|---|---|
-| `supply` | `MadeFromSheet`, `MadeFromLinear`, `BuyPiece`, `MadeInShop` | where the object comes from: a nesting plan, a length cut, a purchase order, or the workshop's own assembly (0104) | reports, cutting list |
+| `supply` | `MadeFromSheet`, `MadeFromLinear`, `BuyPiece`, `MadeInShop` | where the object comes from: a nesting plan, a length cut, a purchase order, or the workshop's own assembly (0217) | reports, cutting list |
 | `measure` | `Area`, `Length`, `Count` | the unit of a report line; derived from `supply` unless a class overrides it with a reason | reports |
 | `nesting` | `Member`, `Never` | whether a cutting plan owns the object; derived from `supply` | cutting list |
 | `extent` | `Free`, `LengthOnly`, `None` | which dimensions a gizmo may change and which resize commands are offered | gizmos, `enabled` |
@@ -122,7 +122,7 @@ Rules for the vocabulary:
 6. **The product traits arrived with their consumers** (0097): `mount` is read by the object move
    tool and by the product card, `fill` by the empty-space tool. `mount` applies to `level = Product` rows only; `fill` to
    `level = Part` rows only, and a class may carry neither.
-7. **`MadeInShop` marks an assembled object, not a stock item** (0104): a product, or a part built
+7. **`MadeInShop` marks an assembled object, not a stock item** (0217): a product, or a part built
    from a recipe such as a tamburat panel. It derives to a count and to no nesting, because what is
    nested is its components, not it.
 
@@ -291,7 +291,7 @@ this way.*
 | Column | Values |
 |---|---|
 | `level` | `product`, `component`, `part`, `fitting` (§4) |
-| `supply` | `sheet` (MadeFromSheet), `linear` (MadeFromLinear), `piece` (BuyPiece), `shop` (MadeInShop, 0104) |
+| `supply` | `sheet` (MadeFromSheet), `linear` (MadeFromLinear), `piece` (BuyPiece), `shop` (MadeInShop, 0217) |
 | `measure` | `area`, `length`, `count` |
 | `nesting` | `member`, `never` |
 | `extent` | `free` (every size), `length` (length only), `none` |

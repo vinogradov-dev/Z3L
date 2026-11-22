@@ -1,8 +1,10 @@
-//! The decision index: `<decisions>/README.md` must list every record and nothing else.
+//! The decision index: `<decisions>/README.md` must list every record once and nothing else.
 //!
 //! The index is how a session finds a decision it did not know it needed; a record that is not in the
-//! table is invisible, and a row that points at a missing file sends the reader nowhere. Both are the
-//! same rot the plan gate rejects for `plan/map.md`, so they are checked the same way.
+//! table is invisible, a row that points at a missing file sends the reader nowhere, and two records
+//! sharing one number make every "ADR NNNN" in the tree ambiguous — a decision is cited by its number,
+//! so a number names exactly one record. All three are the same rot the plan gate rejects for
+//! `plan/map.md`, so they are checked the same way.
 
 use std::path::Path;
 
@@ -16,36 +18,80 @@ pub fn check_in(root: &Path, relative: &Path) -> Result<usize, Vec<String>> {
     let directory = root.join(relative);
     let shown = relative.display();
     let entries = std::fs::read_dir(&directory).map_err(|error| vec![format!("cannot read `{shown}/`: {error}")])?;
-    let mut files: Vec<String> = entries
+    // The file name travels beside its number, so a mismatch or a clash names the record it means.
+    let mut files: Vec<(String, String)> = entries
         .flatten()
         .filter(|entry| entry.path().is_file())
-        .filter_map(|entry| number(&entry.file_name().to_string_lossy()))
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            number(&name).map(|number| (number, name))
+        })
         .collect();
     files.sort();
     let index = std::fs::read_to_string(directory.join("README.md"))
         .map_err(|error| vec![format!("cannot read `{shown}/README.md`: {error}")])?;
-    let mut listed: Vec<String> = Vec::new();
-    for (offset, _) in index.match_indices("](") {
-        let rest = index.get(offset.saturating_add(2)..).unwrap_or_default();
-        let target = rest.split([')', ' ']).next().unwrap_or_default();
-        if let Some(number) = number(target)
-            && !listed.contains(&number)
-        {
-            listed.push(number);
-        }
-    }
+    let listed = rows(&index);
     let mut violations = Vec::new();
-    for file in &files {
-        if !listed.contains(file) {
-            violations.push(format!("`{shown}/` has {file}, but `README.md` has no row for it"));
+    for (number, names) in shared(&files) {
+        violations.push(format!(
+            "`{shown}/` has {} records numbered {number}, so a reference to it names no one record: {}",
+            names.len(),
+            names.join(", ")
+        ));
+    }
+    for (number, targets) in shared(&listed) {
+        let times = if targets.len() == 2 { "twice".to_owned() } else { format!("{} times", targets.len()) };
+        violations.push(format!(
+            "`{shown}/README.md` lists {number} {times}, so a reference to it names no one record: {}",
+            targets.join(", ")
+        ));
+    }
+    for (number, name) in &files {
+        if !listed.iter().any(|(listed, _)| listed == number) {
+            violations.push(format!("`{shown}/` has {name}, but `README.md` has no row for it"));
         }
     }
-    for row in &listed {
-        if !files.contains(row) {
-            violations.push(format!("`{shown}/README.md` lists {row}, but no file carries that number"));
+    let mut reported: Vec<&str> = Vec::new();
+    for (number, _) in &listed {
+        if !files.iter().any(|(file, _)| file == number) && !reported.contains(&number.as_str()) {
+            reported.push(number);
+            violations.push(format!("`{shown}/README.md` lists {number}, but no file carries that number"));
         }
     }
     if violations.is_empty() { Ok(files.len()) } else { Err(violations) }
+}
+
+/// The number and the link target of every index row, in the order the table carries them.
+fn rows(index: &str) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    for (offset, _) in index.match_indices("](") {
+        let rest = index.get(offset.saturating_add(2)..).unwrap_or_default();
+        let target = rest.split([')', ' ']).next().unwrap_or_default();
+        if let Some(number) = number(target) {
+            rows.push((number, target.to_owned()));
+        }
+    }
+    rows
+}
+
+/// The numbers more than one of the `(number, name)` pairs carries, with the names carrying each.
+///
+/// A decision is cited by its number alone, so two files — or two rows — under one number leave a
+/// reader unable to say which record was meant; the gate names both, and the record that keeps the
+/// number is the one every reference already pointed at.
+fn shared(pairs: &[(String, String)]) -> Vec<(String, Vec<String>)> {
+    let mut numbers: Vec<&str> = pairs.iter().map(|(number, _)| number.as_str()).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    let mut shared = Vec::new();
+    for number in numbers {
+        let names: Vec<String> =
+            pairs.iter().filter(|(carried, _)| carried == number).map(|(_, name)| name.clone()).collect();
+        if names.len() > 1 {
+            shared.push((number.to_owned(), names));
+        }
+    }
+    shared
 }
 
 /// The four-digit number a decision file or a link starts with.
@@ -88,6 +134,27 @@ mod tests {
         let violations = check(&root).expect_err("the index disagrees with the directory");
         assert!(violations.iter().any(|v| v.contains("0007") && v.contains("no row")), "{violations:?}");
         assert!(violations.iter().any(|v| v.contains("0009") && v.contains("no file")), "{violations:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn two_records_under_one_number_are_both_named() {
+        let root = project("clash", &["0180-a-decision.md", "0180-another-decision.md"], &["0180"]);
+        let violations = check(&root).expect_err("one number names one record");
+        assert!(
+            violations.iter().any(|v| v.contains("0180")
+                && v.contains("0180-a-decision.md")
+                && v.contains("0180-another-decision.md")),
+            "{violations:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_number_listed_twice_is_reported() {
+        let root = project("twice", &["0180-a-decision.md"], &["0180", "0180"]);
+        let violations = check(&root).expect_err("a number is listed once");
+        assert!(violations.iter().any(|v| v.contains("0180") && v.contains("twice")), "{violations:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

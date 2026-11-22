@@ -69,7 +69,7 @@ never a number. The registry's rows live in [`docs/domain/classes.md`](docs/doma
 the trait semantics and the rules that keep the table alive; the previous registry in
 [`furntypes.md`](docs/domain/furntypes.md) is kept only as history. See
 [ADR 0094](docs/decisions/0094-a-class-registry-gives-the-machine-its-semantics.md) and
-[0104](docs/decisions/0104-supply-names-four-sources.md). Material, finish, dimensions and price are
+[0217](docs/decisions/0217-supply-names-four-sources.md). Material, finish, dimensions and price are
 separate properties, never encoded in the code.
 
 ### `Geometry` object

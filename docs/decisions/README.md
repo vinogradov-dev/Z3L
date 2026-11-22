@@ -109,7 +109,6 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0102](0102-a-furniture-entity-is-a-surface.md) | A furniture entity is a surface; a frame is a shell | Accepted; amends the probe and collision clauses of 0099 and 0097 |
 | [0103](0103-one-probe-serves-the-niche-the-distances-and-the-move.md) | One probe serves the niche, the distances and the move | Accepted; refines 0099 and 0102 |
 | [0104](0104-a-ghost-of-a-missing-node-is-shell-paint.md) | A ghost of a missing node is shell paint, not the overlay | Accepted; narrows 0093 |
-| [0104](0104-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
 | [0105](0105-a-panel-stance-is-the-flat-frame-turned.md) | A panel stance is the flat frame turned, never mirrored | Accepted |
 | [0106](0106-a-niche-is-a-convex-cell-of-wall-planes.md) | A niche is a convex cell of wall planes | Accepted; refines 0099 and 0103; coverage clause superseded by 0109 |
 | [0107](0107-an-end-bevel-is-an-angle-about-its-edge.md) | An end bevel is an angle about its outline edge | Accepted |
@@ -222,6 +221,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0214](0214-a-batch-step-names-what-it-made.md) | A batch step names what it made, and a later step refers to the name | Accepted; the hole 0198 leaves a recipe with |
 | [0215](0215-the-domain-is-taught-and-a-construction-is-composed.md) | The program teaches its domain, and a construction is composed | Accepted; supersedes the recipe of 0192 |
 | [0216](0216-a-decor-is-the-boards-picture-its-size-and-its-grain.md) | A decor is the board's picture, the size it covers and its grain | Accepted; the render half of the material library (Y3) |
+| [0217](0217-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
 
 ## Format
 

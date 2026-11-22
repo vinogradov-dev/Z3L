@@ -1,4 +1,4 @@
-# 0104. Supply names four sources, and a product is assembled
+# 0217. Supply names four sources, and a product is assembled
 
 - Status: Accepted; amends the trait list of 0094
 - Date: 2026-11-13
