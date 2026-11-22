@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=283bac5 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=8e5e5cb updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -25,17 +25,24 @@ by family with the words a person types, the units and the four sides, all of it
 registries so a name cannot drift; every command carries the one family word it serves, so
 `command_list` and `z3l guide` teach the same world from one function (J20, ADR 0215).
 
-The final render is a path tracer, and the studio it draws a scene in is a setting of the render
-rather than the document: three lobes — a matte board, a GGX conductor completed with its multiple
-scattering and a refractive pane — direct light sampled by emitted power through an alias table,
-Owen-scrambled Sobol for the samples and Russian roulette past three bounces, all of it written and
-tested in Rust with the WGSL as its transcription (Y2, ADR 0213). The frame carries a `Surface` on
-every drawable and a `Lighting::environment`; `render.final` fills the latter from its own settings,
-which the Render place offers as a percentage of a white room and the command line as `--studio`.
+A drawing becomes bodies in one press: `object.path.extrude` takes a closed path or a contour set,
+so a path becomes one body in place and a set becomes one body per ring, the node keeping the first
+ring and the rest landing beside it in the drawing's own frame, one revision and one undo entry. The
+Extrude cell is a split cell — its main face extrudes the whole drawing and its list offers the area
+pull, which names one face the pointer rests on and leaves the drawing where it is (X100, ADR 0205,
+ADR 0220). The final render is a path tracer, and the studio it draws a scene in is a setting of the
+render rather than the document: three lobes — a matte board, a GGX conductor completed with its
+multiple scattering and a refractive pane — direct light sampled by emitted power through an alias
+table, Owen-scrambled Sobol for the samples and Russian roulette past three bounces, all of it
+written and tested in Rust with the WGSL as its transcription (Y2, ADR 0213). The frame carries a
+`Surface` on every drawable and a `Lighting::environment`; `render.final` fills the latter from its
+own settings, which the Render place offers as a percentage of a white room and the command line as
+`--studio`.
 
 ## Next
 
-Nothing is scheduled: 51 open tasks wait in `## Next`.
+Nothing is scheduled. The bug list is next: X101 — an older scene file answers the schema sentence,
+not a field error — is its first entry, and 27 defects wait there beside the 51 tasks of `## Next`.
 
 ## Index
 

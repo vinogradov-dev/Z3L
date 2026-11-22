@@ -105,26 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X100** a contour set is extruded one body per ring
-  Why: An intersection of three rings can leave two separate pieces, which the operation stores
-   as a contour set, and nothing extrudes one: `object.path.extrude` takes a `Path`, so the
-   Extrude cell goes off for a contour set and a maker who has just built a shape out of three
-   drawings cannot turn it into a body. The same wall stops a union that leaves two pieces and
-   any set a file carries.
-  Shape: A set is extruded one ring at a time, into one body per ring, all in one command and
-   one undo entry: the profile each body owns is that ring, its height is the typed height, and
-   the created bodies land beside the set in its frame. The set itself is consumed like any
-   other source; a set is never a single body with two profiles, because the kernel's extrusion
-   takes one ring and a solid of two disconnected pieces is not a part a shop cuts. The cell
-   enables on a set as it does on a ring, and the extrude's height stays the session's typed
-   default. The alternative — refusing forever and waiting for G4's areas — leaves a result
-   nobody can use.
-  Done: Tests: an extrusion of a two-ring set creates two constructive bodies, each owning its
-   ring and the typed height, in one revision and one undo entry; the set is consumed; a ring
-   and a set behave the same in the ribbon's readiness; a set whose ring is too detailed for a
-   mesh cap is refused with the ring's own sentence; the panel path is untouched. `cargo xtask
-   ci` is green.
-  `files: crates/engine/src/object_cmds.rs,crates/param/src/solid.rs,crates/model/src/contour.rs`
 - `[ ]` **X101** an older scene file answers the schema sentence, not a field error
   Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
    missing field `tool` at line 117', not the schema sentence: the schema check lives in
@@ -1030,6 +1010,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X100** a contour set is extruded one body per ring
+  Why: An intersection of three rings can leave two separate pieces, which the operation stores
+   as a contour set, and nothing extrudes one: `object.path.extrude` takes a `Path`, so the
+   Extrude cell goes off for a contour set and a maker who has just built a shape out of three
+   drawings cannot turn it into a body. The same wall stops a union that leaves two pieces and
+   any set a file carries.
+  Shape: A set is extruded one ring at a time, into one body per ring, all in one command and
+   one undo entry: the profile each body owns is that ring, its height is the typed height, and
+   the created bodies land beside the set in its frame. The set itself is consumed like any
+   other source; a set is never a single body with two profiles, because the kernel's extrusion
+   takes one ring and a solid of two disconnected pieces is not a part a shop cuts. The cell
+   enables on a set as it does on a ring, and the extrude's height stays the session's typed
+   default. The alternative — refusing forever and waiting for G4's areas — leaves a result
+   nobody can use.
+  Done: Tests: an extrusion of a two-ring set creates two constructive bodies, each owning its
+   ring and the typed height, in one revision and one undo entry; the set is consumed; a ring
+   and a set behave the same in the ribbon's readiness; a set whose ring is too detailed for a
+   mesh cap is refused with the ring's own sentence; the panel path is untouched. `cargo xtask
+   ci` is green.
+  `files: crates/engine/src/object_cmds.rs,crates/param/src/solid.rs,crates/model/src/contour.rs` — `8e5e5cb`
 
 - `[x]` **X99** an armed boolean shows which ring is the base
   Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
