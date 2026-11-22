@@ -105,21 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
-  Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the
-   tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
-   `the window did not answer: it is busy with a gesture no assistant may interrupt`. Nothing
-   in the answer says the edit landed, so a caller that retries builds a second body, and a
-   caller that trusts the refusal reports a failure that did not happen. The wait behind that
-   sentence is the one X111 names: the window repaints on input, so a call from the channel
-   waits for a pointer event, and the call gives up before the person brings one.
-  Shape: The answer separates what landed from what is unknown: a call that changed the
-   document reports the ids it created even when the window UI thread was busy with a gesture,
-   and a call that moved nothing says so with the window own sentence and no created ids.
-  Done: A test drives a served session whose door is busy and asserts the answer names what
-   landed and what the caller must not repeat; a test asserts a refusal with no content change
-   carries no created ids.
-  `files: crates/mcp/src/server.rs,app/src/main.rs`
 - `[ ]` **X108** the assistant window grows by itself while it is open
   Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
    with no drag and no resize. `Chat::show` sets `default_size`, `min_width(WIDTH)` and
@@ -886,6 +871,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
+  Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the
+   tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
+   `the window did not answer: it is busy with a gesture no assistant may interrupt`. Nothing
+   in the answer says the edit landed, so a caller that retries builds a second body, and a
+   caller that trusts the refusal reports a failure that did not happen. The wait behind that
+   sentence is the one X111 names: the window repaints on input, so a call from the channel
+   waits for a pointer event, and the call gives up before the person brings one.
+  Shape: The answer separates what landed from what is unknown: a call that changed the
+   document reports the ids it created even when the window UI thread was busy with a gesture,
+   and a call that moved nothing says so with the window own sentence and no created ids.
+  Done: A test drives a served session whose door is busy and asserts the answer names what
+   landed and what the caller must not repeat; a test asserts a refusal with no content change
+   carries no created ids.
+  `files: crates/mcp/src/server.rs,app/src/main.rs` — `b9c06f5`
 
 - `[x]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
   Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
