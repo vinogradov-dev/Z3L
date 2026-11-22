@@ -104,19 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **P21** a field label typed in another case lands as written, and the gate reads it as correct
-  Why: Observation, from a session filing a task: `cargo xtask task set Y1 --field shape --body
-   …` wrote ` shape: …` into plan/BACKLOG.md, with the label in the case it was typed, and
-   `cargo xtask plan` answered `plan: ok` over it. The entry format writes `Shape:`, so the
-   file now carries a label the format does not use, and only a reader notices. Expectation:
-   the label is written in the spelling the format declares, or the write is refused; the gate
-   does not accept a label in a case the entry format never writes. Suspected cause:
-   `edit::set_field` (state-contract/src/edit.rs:204) hands the argument as typed to
-   `field_lines`, while `known_label` (state-contract/src/edit.rs:219) and `parse::label_of`
-   (state-contract/src/parse.rs:139) compare case-insensitively, so every check agrees with
-   every spelling.
-  `files: state-contract/src/edit.rs,state-contract/src/parse.rs`
-
 ## Bugs
 - `[ ]` **X97** the contour edit's old shape and its working copy are almost one colour
   Why: The owner, in contour edit mode: the shape the edit started from and the working copy
@@ -1089,6 +1076,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **P21** a field label typed in another case lands as written, and the gate reads it as correct
+  Why: Observation, from a session filing a task: `cargo xtask task set Y1 --field shape --body
+   …` wrote ` shape: …` into plan/BACKLOG.md, with the label in the case it was typed, and
+   `cargo xtask plan` answered `plan: ok` over it. The entry format writes `Shape:`, so the
+   file now carries a label the format does not use, and only a reader notices. Expectation:
+   the label is written in the spelling the format declares, or the write is refused; the gate
+   does not accept a label in a case the entry format never writes. Suspected cause:
+   `edit::set_field` (state-contract/src/edit.rs:204) hands the argument as typed to
+   `field_lines`, while `known_label` (state-contract/src/edit.rs:219) and `parse::label_of`
+   (state-contract/src/parse.rs:139) compare case-insensitively, so every check agrees with
+   every spelling.
+  `files: state-contract/src/edit.rs,state-contract/src/parse.rs` — `7da482a`
 
 - `[x]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
   Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
