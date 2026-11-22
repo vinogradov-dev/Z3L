@@ -49,7 +49,7 @@ use model::Project;
 use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, busy, queued};
+pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, queued};
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
 pub use report::PLAN_NOTE;

@@ -5,7 +5,9 @@
 //! session could never serve it. Instead the channel owns the socket, the token and the handshake,
 //! and every tool call becomes a [`Call`] queued to the host, which answers at a frame boundary from
 //! its own thread (`AGENTS.md` §4.11, ADR 0187). [`Pending::answer`] hides the `oneshot` behind it,
-//! so the shell never names the runtime.
+//! so the shell never names the runtime. A call that moves the document waits for the first frame
+//! that has the window to itself — a gesture in hand delays it instead of refusing it — and a call
+//! whose caller has gone before that is dropped instead of performed (ADR 0223).
 //!
 //! Three things bound the exposure, and each has a test (ADR 0188): the socket binds `127.0.0.1` on
 //! an ephemeral port and nothing else, a connection that does not present the run token is refused
@@ -70,8 +72,20 @@ const REFUSED: &[u8] = b"refused\n";
 /// The sentence a call answers with when the host has gone away between the queue and the answer.
 const GONE: &str = "the window is gone: the channel outlived the document it served";
 
-/// The sentence a call answers with when the host did not answer in time.
-const SILENT: &str = "the window did not answer: it is busy with a gesture no assistant may interrupt";
+/// The answer a call gives when the host did not answer before [`ANSWER_DEADLINE`].
+///
+/// It says what is *unknown* and never what the window was doing: the sentence that used to stand
+/// here named a gesture, so a caller that had timed out while the window was merely idle read a
+/// refusal for a call the window later performed — a change nobody could see, and a retry that built
+/// a second body (X107). The deadline is the only fact the channel has, so it states that fact and
+/// tells the caller what it must do before repeating the call.
+fn silent() -> Answer {
+    Answer::refused(format!(
+        "the window did not answer within {} s: the call may or may not have landed, so read the \
+         scene before repeating it — an answer that arrives after the deadline reaches nobody",
+        ANSWER_DEADLINE.as_secs()
+    ))
+}
 
 /// One request the host answers, at a frame boundary.
 #[derive(Clone, Debug)]
@@ -99,6 +113,16 @@ impl Pending {
     /// What the host is asked to do.
     pub const fn call(&self) -> &Call {
         &self.call
+    }
+
+    /// Whether the client that asked has gone, so an answer would be written into nothing.
+    ///
+    /// A caller gives up at the channel's own [`ANSWER_DEADLINE`], and the host may still hold the
+    /// call: performing it then would change the person's document for a caller that will never hear
+    /// about it — the change a retry then builds twice (X107). The host reads this immediately before
+    /// a call that can move the document and drops the call instead.
+    pub fn abandoned(&self) -> bool {
+        self.reply.is_closed()
     }
 
     /// Hands the answer to the client, or drops it when the client has already gone.
@@ -170,15 +194,6 @@ impl Answering {
     pub fn take(self) -> Option<Answer> {
         self.0.blocking_recv().ok()
     }
-}
-
-/// The answer a host gives while a gesture holds the window.
-///
-/// A piece in hand and a question waiting for an answer are the two gestures that outlive a frame;
-/// a command landing in the middle of one would move the document under the hand that is holding it
-/// (ADR 0188, ADR 0187).
-pub fn busy() -> Answer {
-    Answer::refused(SILENT)
 }
 
 /// Why the channel could not be opened.
@@ -538,7 +553,7 @@ impl ServerHandler for AttachedServer {
                 Ok(answered) => match timeout(ANSWER_DEADLINE, answered).await {
                     Ok(Ok(answer)) => answer,
                     Ok(Err(_)) => Answer::refused(GONE),
-                    Err(_) => Answer::refused(SILENT),
+                    Err(_) => silent(),
                 },
             };
             Ok(CallToolResponse::from(result(answer)))

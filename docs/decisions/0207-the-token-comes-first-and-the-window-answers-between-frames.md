@@ -1,6 +1,7 @@
 # 0207. The token comes first, and the window answers between frames
 
-- Status: Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188
+- Status: Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188 — the `busy`
+  answer a gesture gave a call is superseded by [0223](0223-a-call-waits-for-the-frame-that-has-the-window.md)
 - Date: 2026-11-21
 
 ## Context

@@ -829,18 +829,49 @@ impl App {
     ///
     /// The queue is taken before anything this frame derives from it, so a command lands between
     /// frames and never inside a gesture, and the scene the person sees on this frame is the scene
-    /// the agent left (ADR 0187).
-    fn serve_channel(&mut self) {
+    /// the agent left (ADR 0187). Two rules keep the answer honest (X107, ADR 0223):
+    ///
+    /// * a call that moves the document waits for the first frame that has the window to itself — a
+    ///   piece in hand or a question waiting for the person delays the call instead of refusing it,
+    ///   because a refusal says nothing about the edit that a late frame would perform;
+    /// * a call whose caller has gone is dropped before anything reads it, so no change lands for a
+    ///   caller that gave up at the channel's deadline and will never hear about it.
+    ///
+    /// Reads are answered whatever the window is doing: a question about the document moves nothing.
+    fn serve_channel(&mut self, ctx: &egui::Context) {
         if let Some(mailbox) = self.mailbox.as_mut() {
             self.queued.extend(mailbox.drain());
         }
+        let mut held = Vec::new();
         for pending in std::mem::take(&mut self.queued) {
+            if pending.abandoned() {
+                log::info!(
+                    target: "z3l::shell",
+                    "a call was dropped: the client gave up before the window reached it"
+                );
+                continue;
+            }
+            if self.gesture_in_flight() && matches!(pending.call(), mcp::Call::Dispatch(_)) {
+                held.push(pending);
+                continue;
+            }
             let answer = self.answer_channel(pending.call());
             pending.answer(answer);
+        }
+        self.queued = held;
+        if !self.queued.is_empty() {
+            // A held call is answered by a frame, and the window paints on input: asking for the
+            // frame itself is what keeps an agent's call from waiting for a pointer that may never
+            // come. The clause covers the calls this frame holds; the wait behind the rest of the
+            // window repainting is X111's.
+            ctx.request_repaint();
         }
     }
 
     /// Answers one call against the document a person is looking at.
+    ///
+    /// [`Self::serve_channel`] decides what may be answered in this frame: a dispatch is only handed
+    /// here by a frame that has the window to itself (ADR 0187, ADR 0223).
     fn answer_channel(&mut self, call: &mcp::Call) -> mcp::Answer {
         match call {
             mcp::Call::List => mcp::Answer::ok(mcp::listing(&self.tabs.active().session)),
@@ -852,9 +883,6 @@ impl App {
                 Err(error) => mcp::Answer::refused(format!("the window cannot be reported: {error}")),
             },
             mcp::Call::Dispatch(request) => {
-                if self.gesture_in_flight() {
-                    return mcp::busy();
-                }
                 let session = &mut self.tabs.active_mut().session;
                 mcp::dispatch(session, request, mcp::Door::Window)
             }
@@ -1378,7 +1406,7 @@ impl App {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
         // An agent's call is answered here, between frames, before anything this frame derives: a
         // command lands in the active document and the scene is built from what it left (ADR 0187).
-        self.serve_channel();
+        self.serve_channel(ui.ctx());
         // A chat turn takes the same boundary: one answer per frame, so the person's stop lands
         // between two calls and the scene this frame draws is what the agent left (ADR 0187).
         self.serve_chat(ui::language(ui.ctx()));

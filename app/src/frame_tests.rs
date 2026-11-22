@@ -6594,16 +6594,105 @@ fn a_channel_call_is_answered_at_the_frame_boundary() {
 }
 
 #[test]
-fn an_agent_cannot_move_the_document_under_a_question() {
-    // The two gestures that outlive a frame answer "busy" instead of moving the document: a question
-    // waiting for the person's answer is one of them (ADR 0187).
-    let mut harness = Harness::new("frame-channel-busy");
+fn a_call_waits_for_the_gesture_and_then_lands_with_the_ids_it_created() {
+    // A call that moves the document is not refused because a gesture holds the window: it waits for
+    // the first frame that has the window to itself and answers with the report of what landed. A
+    // refusal here would say nothing about the edit a late frame performs — the answer a caller read
+    // as "nothing landed" while the document held the node (X107, ADR 0223). Reads are answered in
+    // the busy frame, because a question about the document moves nothing.
+    let (mut harness, _panel) = chat_fixture("frame-channel-holds");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    // Plan mode is the state a window's document is born in, and this test is about what a call that
+    // is allowed to write answers, so the person has turned the switch to build (ADR 0190).
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     harness.settle();
+    let before = harness.revision();
+
     harness.app.pending_question =
         Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(1, Lang::En) });
+    let (dispatched, answered) = mcp::queued(mcp::Call::Dispatch(shelf_request(product)));
+    let (listed, listing_answer) = mcp::queued(mcp::Call::List);
+    harness.app.queued.push(dispatched);
+    harness.app.queued.push(listed);
+    harness.frame();
+
+    assert!(
+        !listing_answer.take().expect("a read is answered in the busy frame").failed(),
+        "a question about the document is not held back by a gesture in hand"
+    );
+    assert_eq!(harness.app.queued.len(), 1, "the dispatch waits for a frame that has the window");
+    assert_eq!(harness.revision(), before, "and nothing moves under the hand that holds the window");
+    assert_eq!(harness.app.tabs.active().session.active_product(), Some(product));
+
+    // The person answers the question: the next frame has the window to itself.
+    harness.app.pending_question = None;
+    harness.frame();
+
+    let answer = answered.take().expect("the frame that had the window answered the call");
+    assert!(harness.app.queued.is_empty(), "nothing is left waiting");
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("landed"), "{:?}", answer.body());
+    let created: Vec<u64> = answer.body()["created"]
+        .as_array()
+        .expect("the answer lists what it created")
+        .iter()
+        .filter_map(serde_json::Value::as_u64)
+        .collect();
+    assert_eq!(created.len(), 1, "the answer names the shelf it created: {:?}", answer.body());
+    let shelf = Id::new(created.first().copied().expect("one created id")).expect("an id is never zero");
+    let project = harness.app.tabs.active().session.project();
+    assert!(project.panel(shelf).is_some(), "the panel the answer named is in the document");
+    assert_ne!(harness.revision(), before, "the frame that landed it moved the revision");
+}
+
+#[test]
+fn a_call_whose_caller_gave_up_is_never_performed() {
+    // A caller stops waiting at the channel's deadline. Performing the call then would change the
+    // person's document for a caller that will never hear of it, and the retry that follows builds
+    // the part twice (X107).
+    let (mut harness, _panel) = chat_fixture("frame-channel-abandoned");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
     let before = harness.revision();
+    let nodes = geometry_count(&harness);
+
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(shelf_request(product)));
+    drop(answering);
+    harness.app.queued.push(pending);
+    harness.frame();
+
+    assert!(harness.app.queued.is_empty(), "the dropped call leaves nothing waiting");
+    assert_eq!(harness.revision(), before, "a caller that is gone moves nothing");
+    assert_eq!(geometry_count(&harness), nodes, "and adds no node to the document");
+}
+
+/// How many geometry nodes the active document holds, so a test can tell a part was added.
+fn geometry_count(harness: &Harness) -> usize {
+    let project = harness.app.tabs.active().session.project();
+    project.geometry_ids_under(project.root().id()).map(|ids| ids.len()).unwrap_or_default()
+}
+
+#[test]
+fn a_refused_batch_answers_the_command_sentence_and_no_created_ids() {
+    // The other half of the same promise: a call that moved nothing says so with the command's own
+    // sentence and names no node, so an empty answer is never read as a landed batch (X107).
+    let mut harness = Harness::new("frame-channel-refused");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let before = harness.revision();
+    // A panel is born only inside an open product (ADR 0098), and this session has none open.
     let request = mcp::BatchRequest {
-        steps: vec![mcp::StepRequest::new("node.rename", serde_json::json!({"node": 1, "name": "Renamed"}))],
+        steps: vec![mcp::StepRequest::new(
+            "panel.create",
+            serde_json::json!({
+                "parent": 1,
+                "name": "Shelf",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )],
         product: None,
         atomic: true,
         dry_run: false,
@@ -6613,9 +6702,31 @@ fn an_agent_cannot_move_the_document_under_a_question() {
     harness.frame();
 
     let answer = answering.take().expect("the frame answered the call");
-    assert!(answer.failed(), "a gesture in hand is a refusal: {:?}", answer.body());
-    assert!(answer.body()["error"].as_str().is_some_and(|reason| reason.contains("busy")), "{:?}", answer.body());
+    assert!(answer.failed(), "the command refused: {:?}", answer.body());
+    assert_eq!(answer.body()["created"], serde_json::json!([]), "{:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("rolled_back"), "{:?}", answer.body());
+    let refusal = answer.body()["refusal"]["error"].as_str().expect("the command's own sentence");
+    assert!(!refusal.trim().is_empty(), "a refusal says why");
     assert_eq!(harness.revision(), before, "and the document did not move");
+}
+
+/// One batch that creates a shelf inside `product`, as an agent would send it.
+fn shelf_request(product: Id) -> mcp::BatchRequest {
+    mcp::BatchRequest {
+        steps: vec![mcp::StepRequest::new(
+            "panel.create",
+            serde_json::json!({
+                "parent": product.get(),
+                "name": "Shelf",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )],
+        product: None,
+        atomic: true,
+        dry_run: false,
+    }
 }
 
 #[test]

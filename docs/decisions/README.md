@@ -211,7 +211,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0204](0204-a-niche-keeps-the-whole-shape-the-frame-draws.md) | A niche keeps the whole shape the frame draws | Accepted; supersedes the piece-only seed of 0203 for the section and the box; amends the chord rule of 0201 for a shelf's section |
 | [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
 | [0206](0206-a-boolean-result-is-one-object.md) | A boolean result is one object, a hole is part of one region, and splitting is a command | Accepted; the tree rule the contour boolean, a body boolean and the profile of 0205 read |
-| [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188 |
+| [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188; its `busy` answer is amended by 0223 |
 | [0208](0208-a-primitive-is-a-body-a-boolean-cuts.md) | A primitive is a body, so a boolean cuts it in both directions | Accepted; closes the consequence of 0197 |
 | [0209](0209-the-assistant-panel-is-a-window-and-its-turn-runs-between-frames.md) | The assistant's panel is a window, and its turn is driven between frames | Accepted; places the panel 0186 and 0187 asked for; its chrome place extended by 0222 |
 | [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
@@ -227,6 +227,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0220](0220-a-drawing-becomes-a-body-per-ring.md) | A drawing becomes a body per ring, and the area pull is the Extrude cell's second method | Accepted; the Extrude cell's gesture of 0205 becomes its second method |
 | [0221](0221-a-ring-is-one-closed-chain-not-three-segments.md) | A ring is one closed chain, not three segments | Accepted; corrects the minimum the domain stated for a contour |
 | [0222](0222-the-assistants-panel-has-one-header-cell.md) | The assistant's panel has one header cell | Accepted; extends the place 0209 left to the key |
+| [0223](0223-a-call-waits-for-the-frame-that-has-the-window.md) | A call waits for the frame that has the window, and a caller that has gone is not performed | Accepted; amends the `busy` answer of 0207 |
 
 ## Format
 
