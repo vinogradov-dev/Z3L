@@ -105,19 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **P22** a fifth stream has no way to be declared, so its worktree cannot mark its task
-  Why: Observation, from a session opening the render worktree: the project gives every plan
-   file a verb — `task`, `state`, `file` — but the `STREAMS:` line of `plan/STATUS.md` has
-   none. `cargo xtask state set streams=render` answers that `STATE:` carries `streams=`, which
-   nobody reads, and `cargo xtask file plan/STATUS.md` refuses because `REFERENCE_FILES`
-   (state-contract/src/cli/write.rs:1062) does not carry `plan/STATUS.md`. Without a declared
-   stream, `task start Y1` run in that worktree writes `plan/SESSION.md` and the `STATE:` line
-   — the plan's own checkout's files — which is the collision the one-writer rule exists to
-   prevent (ADR 0176). Expectation: a stream is declared with a verb, so a worktree marks its
-   entry as in progress and writes its own `plan/SESSION.<key>.md` while leaving `STATE:`
-   alone. Suspected cause: `Streams::parse` (state-contract/src/streams.rs:140) reads the line
-   and no writer was added when P17 landed.
-  `files: state-contract/src/streams.rs,state-contract/src/cli/write.rs`
 - `[ ]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
   Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
    circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
