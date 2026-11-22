@@ -105,23 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
-  Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing
-   appeared; the cube showed up only when the pointer was moved onto the window. The document
-   had already changed — the tree reported node 2, the revision had moved to 1 and the tab was
-   dirty — so the frame the person saw was the old one. The same wait explains the measurements
-   filed before: a dry run took 83 s and 53 s, the landing call 196 s, while the queries
-   answered in about a second, and the answer to the landing call was `the window did not
-   answer: it is busy with a gesture no assistant may interrupt`. The window repaints on input,
-   so a call from the channel waits for a pointer event that only the person brings.
-  Shape: A batch that lands from the channel asks for a frame in the same call instead of
-   waiting for the next input, and the answer comes from the frame that landed it; the request
-   path states which frame answered it. A headless session has no pointer at all, so the wait
-   must not exist there either.
-  Done: A frame test dispatches a command with no input event and asserts the scene was rebuilt
-   and a repaint was requested in the frame the call returned; a timing test asserts a served
-   call answers without any pointer event and inside a budget written beside it.
-  `files: app/src/main.rs,crates/mcp/src/server.rs,crates/mcp/src/chat.rs`
 - `[ ]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
   Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
    (`crates/ui/src/toolbars/spec.rs:936`) are `ToolKind::Fill { class: VERTICAL_PANEL |
@@ -853,6 +836,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
+  Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing
+   appeared; the cube showed up only when the pointer was moved onto the window. The document
+   had already changed — the tree reported node 2, the revision had moved to 1 and the tab was
+   dirty — so the frame the person saw was the old one. The same wait explains the measurements
+   filed before: a dry run took 83 s and 53 s, the landing call 196 s, while the queries
+   answered in about a second, and the answer to the landing call was `the window did not
+   answer: it is busy with a gesture no assistant may interrupt`. The window repaints on input,
+   so a call from the channel waits for a pointer event that only the person brings.
+  Shape: A batch that lands from the channel asks for a frame in the same call instead of
+   waiting for the next input, and the answer comes from the frame that landed it; the request
+   path states which frame answered it. A headless session has no pointer at all, so the wait
+   must not exist there either.
+  Done: A frame test dispatches a command with no input event and asserts the scene was rebuilt
+   and a repaint was requested in the frame the call returned; a timing test asserts a served
+   call answers without any pointer event and inside a budget written beside it.
+  `files: app/src/main.rs,crates/mcp/src/server.rs,crates/mcp/src/chat.rs` — `e689433`
 
 - `[x]` **P25** two plan writers in one checkout race, and the gate calls the result correct
   Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one

@@ -10,6 +10,16 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[vendor]`.
 
+- `[assistant]` A turn of the assistant panel advances one step per frame but asks for no frame of
+  its own (`Chat::is_busy`, `App::serve_chat`), so a turn that is not stopped from outside still waits
+  for the pointer between two calls: the channel was given its ring in X111, and the panel's own turn
+  was not (X122, ADR 0225). Ask for the next frame while a turn is in flight, the way a landed call
+  does.
+
+- `[plan]` The first two lines of `plan/map.md` are `148` and `p` — the stray tail of a pipeline
+  that wrote the file in an older session, left above the preamble. They are not part of any row and
+  the gate does not read this file (X111).
+
 - `[object]` A fit is the largest rectangle **through the pointer**, searched in the section's own chord
   polygon. A pointer standing in an arc's outward bulge is outside that polygon, so no rectangle of it
   contains the hand and the plan falls back to the largest rectangle of the shape, which puts the part
