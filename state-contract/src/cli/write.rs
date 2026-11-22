@@ -10,10 +10,16 @@
 //! a write through when it strictly shrinks the set of violations — it removes at least one and adds
 //! none — so the plan can be brought back with the commands instead of by hand.
 //!
-//! `--dry-run` prints the diff and stops. `plan/.lock` keeps two writers apart.
+//! `--dry-run` prints the diff and stops. `plan/.lock` keeps two writers apart, and it covers the whole
+//! read-modify-write cycle rather than the bytes: a verb reads the plan, splices the lines it owns and
+//! validates the result, so two writers that both read the same backlog compute the same next id and
+//! the later write replaces the earlier entry (P25). The lock is taken at a verb's entrance, a second
+//! writer waits for it and then refuses with the file named, and a `--dry-run` holds it too, because a
+//! preview of a write nobody else can land under is the only honest one.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::{Git, ProcessGit, TaskStatus, edit};
 
@@ -110,6 +116,9 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
     let Some(verb) = args.first().map(String::as_str) else {
         return Err("usage: cargo xtask task <add|start|set|step|note|close|reopen|take|defer|drop|phase> …".to_owned());
     };
+    // Before any plan file is read, because the read is half of the cycle the lock guards: a verb
+    // that waits reads the backlog the writer in front of it left. Every refusal below releases it.
+    let lock = Lock::acquire(root)?;
     if matches!(verb, "step" | "note") {
         if let Some(id) = args.get(1) {
             own_task_refusal(root, git, &format!("task {verb}"), id)?;
@@ -119,17 +128,17 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
     }
     let rest = &args[1..];
     match verb {
-        "add" => add(root, rest, git),
-        "start" => start(root, rest, git),
-        "set" => set(root, rest, git),
-        "step" => step(root, rest, git),
-        "note" => note(root, rest, git),
-        "close" => close(root, rest, git),
-        "reopen" => reopen(root, rest, git),
-        "drop" => drop(root, rest, git),
-        "take" => take(root, rest, git),
-        "defer" => defer(root, rest, git),
-        "phase" => phase(root, rest, git),
+        "add" => add(root, rest, git, &lock),
+        "start" => start(root, rest, git, &lock),
+        "set" => set(root, rest, git, &lock),
+        "step" => step(root, rest, git, &lock),
+        "note" => note(root, rest, git, &lock),
+        "close" => close(root, rest, git, &lock),
+        "reopen" => reopen(root, rest, git, &lock),
+        "drop" => drop(root, rest, git, &lock),
+        "take" => take(root, rest, git, &lock),
+        "defer" => defer(root, rest, git, &lock),
+        "phase" => phase(root, rest, git, &lock),
         other => Err(format!("unknown verb `{other}`")),
     }
 }
@@ -151,7 +160,7 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
 /// so the first task of a new phase does not need a second command. Without a name the phase must
 /// already be declared: a file whose ids use a letter its legend does not explain is the drift this
 /// gate reports.
-fn add(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn add(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options =
         Options::parse(args, &["phase", "phase-name", "section", "files", "why", "shape", "done", "at", "next"])?;
     let phase = options.required("phase")?.to_uppercase();
@@ -218,7 +227,7 @@ fn add(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
             changes = changes.with("plan/STATUS.md", status);
         }
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} added to `## {section}`");
     }
@@ -232,7 +241,7 @@ fn add(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// the file uses. Several letters may travel in one call because a file whose legend is still prose
 /// has to gain every letter its ids use at once: the gate refuses a plan whose ids name a phase the
 /// legend does not declare, so a one-letter-at-a-time migration could not land.
-fn phase(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn phase(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["name", "declare"])?;
     let mut declares: Vec<(char, String)> = Vec::new();
     for (key, value) in &options.values {
@@ -251,7 +260,7 @@ fn phase(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let backlog = read(root, "plan/BACKLOG.md")?;
     let backlog = edit::set_phases(&backlog, &declares)?;
     let changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("the phase legend changed");
     }
@@ -278,7 +287,7 @@ fn one_letter(text: &str) -> Result<char, String> {
 /// a plan whose `STATE:` names nothing in between, and three sessions in the reviewed period paid for
 /// that sequence with a minute each. A task behind another open task, or in `## Bugs`, is still
 /// `take`'s business: starting it would jump a work order that has a head.
-fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn start(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["goal", "now", "run", "resume"])?;
     let id = options.words.first().ok_or("task start needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
@@ -347,7 +356,7 @@ fn start(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         changes = changes.with("plan/STATUS.md", status);
     }
     changes = changes.with(&note_path, session);
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} started; `{note_path}` holds the note");
     }
@@ -367,7 +376,7 @@ fn session_note(id: &str, task: &crate::Task, options: &Options) -> String {
 }
 
 /// `task set <ID> --field <Label> (--body <text>|--stdin) [--files <paths>]`
-fn set(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn set(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["field", "body", "files"])?;
     let id = options.words.first().ok_or("task set needs a task id")?.clone();
     let typed = options.required("field")?;
@@ -385,7 +394,7 @@ fn set(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         backlog = edit::set_field(&backlog, &id, &field, &body)?;
         changes = changes.with("plan/BACKLOG.md", backlog);
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id}: `{field}` updated");
     }
@@ -398,7 +407,7 @@ fn set(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// not keep its own resume hint true before this: `task set --field now` writes the backlog entry and
 /// `task start` refuses a task that is already running, so a dead session was left believing a step
 /// that was already taken (the `[plan]` debt entry that named this).
-fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn step(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["add", "now", "run", "resume"])?;
     let id = options.words.first().ok_or("task step needs a task id")?.clone();
     let fields: Vec<(&str, String)> = edit::SESSION_FIELDS
@@ -418,7 +427,7 @@ fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         session = edit::set_session_field(&session, key, &value)?;
     }
     let changes = Changes::new(root).with(&note_path, session);
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id}: `{note_path}` changed");
     }
@@ -426,7 +435,7 @@ fn step(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 }
 
 /// `task note <ID> (--body <text>|--stdin)`: appends to the research note, never rewrites it.
-fn note(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn note(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["body"])?;
     let id = options.words.first().ok_or("task note needs a task id")?.clone();
     let body = options.body("body")?;
@@ -440,7 +449,7 @@ fn note(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         format!("{}\n{}\n", existing.trim_end(), body.trim())
     };
     let changes = Changes::new(root).with(&path, text);
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id}: `{path}` appended");
     }
@@ -454,7 +463,7 @@ fn first_line(body: &str) -> String {
 }
 
 /// `task close <ID> [--commit <hash|HEAD>] [--next <text>]`
-fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn close(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["commit", "next"])?;
     let id = options.words.first().ok_or("task close needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
@@ -510,7 +519,7 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     if root.join(&note_path).exists() {
         changes = changes.removed(&note_path);
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         match next {
             Some(task) => println!("task {id} closed into `## Done` at `{hash}`; `{}` is next", task.id),
@@ -529,7 +538,7 @@ fn close(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// top, and into an empty order, the taken task becomes current and `## Next` says so, because the
 /// gate requires the paragraph to name the task `STATE:` does. The top is how an owner-directed
 /// defect jumps the order, which is why it writes the state line rather than refusing.
-fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn take(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["at", "next"])?;
     let id = options.words.first().ok_or("task take needs a task id")?.clone();
     let at = match options.value("at") {
@@ -582,7 +591,7 @@ fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         };
         changes = changes.with("plan/STATUS.md", status);
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} taken into `## Now`");
     }
@@ -597,7 +606,7 @@ fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// takes it back. The order must keep a head, so deferring the current task points `STATE:` at the
 /// next open entry and names it in `## Next` in the same write; deferring a later entry leaves the
 /// state alone. A running task is not deferred: its session note is the record of the step in hand.
-fn defer(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn defer(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["next"])?;
     let id = options.words.first().ok_or("task defer needs a task id")?.clone();
     let backlog_text = read(root, "plan/BACKLOG.md")?;
@@ -637,7 +646,7 @@ fn defer(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         };
         changes = changes.with("plan/STATUS.md", status);
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} deferred to `## Next`");
     }
@@ -645,7 +654,7 @@ fn defer(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 }
 
 /// `task reopen <ID> [--next <text>]`
-fn reopen(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn reopen(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &["next"])?;
     let id = options.words.first().ok_or("task reopen needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
@@ -677,7 +686,7 @@ fn reopen(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
         None => status,
     };
     let changes = Changes::new(root).with("plan/BACKLOG.md", backlog).with("plan/STATUS.md", status);
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} reopened at the top of `## Now`");
     }
@@ -685,7 +694,7 @@ fn reopen(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 }
 
 /// `task drop <ID> [--keep-note]`
-fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
+fn drop(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
     let options = Options::parse(args, &[])?;
     let id = options.words.first().ok_or("task drop needs a task id")?.clone();
     let summary = crate::check_with(root, git).map_err(violations)?;
@@ -713,7 +722,7 @@ fn drop(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     if !options.flag("keep-note") && root.join(&note).exists() {
         changes = changes.removed(&note);
     }
-    apply(root, changes, &options, git)?;
+    apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} dropped");
     }
@@ -842,12 +851,13 @@ impl Changes {
 }
 
 /// Validates the plan as it would be, then lands the change — or prints why it refused and writes
-/// nothing.
+/// nothing. The caller holds the writer [`Lock`] from before it read the plan, so the whole cycle is
+/// one writer's.
 ///
 /// A plan that is already broken cannot be repaired one verb at a time, because every verb is refused
 /// while the other violations stand: `--repair` lets a write through when it strictly shrinks the set
 /// of violations, so `plan/BACKLOG.md` and `plan/STATUS.md` can be brought back with commands.
-fn apply(root: &Path, changes: Changes, options: &Options, git: &dyn Git) -> Result<(), String> {
+fn apply(root: &Path, changes: Changes, options: &Options, git: &dyn Git, _lock: &Lock) -> Result<(), String> {
     if changes.is_empty() {
         return Err("nothing to change".to_owned());
     }
@@ -894,7 +904,6 @@ fn apply(root: &Path, changes: Changes, options: &Options, git: &dyn Git) -> Res
         return Ok(());
     }
 
-    let _lock = Lock::acquire(root)?;
     for (path, _, text) in &changed {
         write_atomic(&root.join(path), text)?;
     }
@@ -943,20 +952,51 @@ fn notes_after(root: &Path, changes: &Changes) -> Result<Vec<(String, String)>, 
 }
 
 /// The one-writer lock: `plan/.lock`, created exclusively and removed when the verb ends.
+///
+/// It is taken before a verb reads the plan and released after the bytes land, because the read is
+/// half of the cycle: two writers that both read the backlog compute the same next free id, and the
+/// later write replaces the earlier entry while the gate sees nothing wrong (P25). `create_new` is
+/// the test-and-set, so no reader can see a half-taken lock; a second writer waits for [`PATIENCE`]
+/// and then refuses with the file named, because a lock that outlives a verb is a stale file.
+#[derive(Debug)]
 struct Lock {
     path: PathBuf,
 }
 
+/// How long a second writer waits for the one in front of it. A verb's cycle is tens of milliseconds
+/// on a plan of any size, so a lock that outlives this is a session that died or a stale file.
+const PATIENCE: Duration = Duration::from_secs(2);
+
+/// How often the waiting writer tries again: short enough that a verb's own cycle is not delayed.
+const POLL: Duration = Duration::from_millis(10);
+
 impl Lock {
+    /// Takes the lock, waiting for the writer ahead of this one and refusing once it has waited long
+    /// enough to call the file stale.
     fn acquire(root: &Path) -> Result<Self, String> {
+        Self::acquire_within(root, PATIENCE)
+    }
+
+    /// [`Lock::acquire`] with the wait named, so a test proves the refusal without spending it.
+    fn acquire_within(root: &Path, patience: Duration) -> Result<Self, String> {
         let path = root.join("plan/.lock");
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(_) => Ok(Self { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err("`plan/.lock` exists: another session is writing the plan; delete it only if no session runs"
-                    .to_owned())
+        let started = Instant::now();
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if started.elapsed() >= patience {
+                        return Err(format!(
+                            "`plan/.lock` is taken: another session is writing the plan, and this verb waited {} \
+                             ms for it and wrote nothing; run it again once that session ends, and delete the \
+                             file only if no session runs",
+                            patience.as_millis()
+                        ));
+                    }
+                    std::thread::sleep(POLL.min(patience));
+                }
+                Err(error) => return Err(format!("cannot create `plan/.lock`: {error}")),
             }
-            Err(error) => Err(format!("cannot create `plan/.lock`: {error}")),
         }
     }
 }
@@ -1068,6 +1108,7 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
 pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body", "task"])?;
     let verb = format!("state {}", options.words.first().map(String::as_str).unwrap_or("set"));
+    let lock = Lock::acquire(root)?;
     shared_plan_refusal(root, git, &verb)?;
     match options.words.first().map(String::as_str) {
         Some("next") => {
@@ -1078,13 +1119,13 @@ pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> 
                 Some(task) => edit::set_state(&status, &[("task".to_owned(), task.to_owned())])?,
                 None => status,
             };
-            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git);
+            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git, &lock);
         }
         Some("where") => {
             let body = options.body("body")?;
             let status = read(root, "plan/STATUS.md")?;
             let status = edit::set_section(&status, "Where we are", &body)?;
-            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git);
+            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git, &lock);
         }
         // `state streams agent=J catalog=O` declares the checkouts beside this one; no pairs puts the
         // plan back on its single stream.
@@ -1092,7 +1133,7 @@ pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> 
             let pairs: Vec<String> = options.words.iter().skip(1).cloned().collect();
             let status = read(root, "plan/STATUS.md")?;
             let status = edit::set_streams(&status, &pairs)?;
-            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git);
+            return apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git, &lock);
         }
         Some("set") => {}
         _ => {
@@ -1112,7 +1153,7 @@ pub fn state(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> 
     }
     let status = read(root, "plan/STATUS.md")?;
     let status = edit::set_state(&status, &values)?;
-    apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git)
+    apply(root, Changes::new(root).with("plan/STATUS.md", status), &options, git, &lock)
 }
 
 /// The reference files a command owns: the plan's data lives here too, and a session that edits one
@@ -1134,6 +1175,7 @@ const REFERENCE_FILES: &[&str] = &[
 /// splices preserve.
 pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body"])?;
+    let lock = Lock::acquire(root)?;
     shared_plan_refusal(root, git, "file")?;
     let path = options.words.first().ok_or("`file` needs the path of a reference file")?;
     if !REFERENCE_FILES.contains(&path.as_str()) {
@@ -1158,7 +1200,7 @@ pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     }
     let mut text = body.trim_end().to_owned();
     text.push('\n');
-    apply(root, Changes::new(root).with(path, text), &options, git)
+    apply(root, Changes::new(root).with(path, text), &options, git, &lock)
 }
 
 #[cfg(test)]
@@ -2271,6 +2313,71 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
             .expect_err("the gate requires a hint");
         assert!(error.contains("--files is required"), "{error}");
         assert_eq!(snapshot(&root), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn two_writers_in_one_checkout_both_land() {
+        // Measured 2026-11-21: two `task add` runs in one checkout both read the backlog, both
+        // computed X107, and the later write replaced the earlier entry while the gate stayed green.
+        let root = project("writers-race", STATUS, BACKLOG, None);
+        let start = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let writers: Vec<std::thread::JoinHandle<Result<(), String>>> = (0..4)
+            .map(|index| {
+                let root = root.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    let lead = format!("entry {index}");
+                    let args: Vec<String> = ["add", "--phase", "S", "--files", "src/a.rs", lead.as_str()]
+                        .iter()
+                        .map(|arg| (*arg).to_owned())
+                        .collect();
+                    start.wait();
+                    run_with(&root, &args, &FakeGit)
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("the writer thread ends").expect("each write either lands or waits, never loses");
+        }
+        let backlog = text(&root, "plan/BACKLOG.md");
+        for index in 0..4 {
+            let lead = format!("entry {index}");
+            assert_eq!(backlog.matches(lead.as_str()).count(), 1, "`{lead}` landed once: {backlog}");
+        }
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_writer_lock_covers_the_cycle_and_is_released_afterwards() {
+        let root = project("writers-lock", STATUS, BACKLOG, None);
+        let held = Lock::acquire_within(&root, Duration::ZERO).expect("the lock is free");
+        let error = Lock::acquire_within(&root, Duration::ZERO).expect_err("a second writer refuses");
+        assert!(error.contains("plan/.lock"), "the refusal names the lock: {error}");
+        assert!(root.join("plan/.lock").exists(), "the refusal leaves the holder's file alone");
+
+        // A verb that arrives behind a held lock waits for it and lands on the text the writer in
+        // front of it produced, instead of computing its id from the text that writer read.
+        let waiting = {
+            let root = root.clone();
+            std::thread::spawn(move || run(&root, &["add", "--phase", "S", "--files", "src/a.rs", "a waiting entry"]))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!text(&root, "plan/BACKLOG.md").contains("a waiting entry"), "the verb waits, it does not race");
+        std::mem::drop(held);
+        waiting.join().expect("the writer thread ends").expect("it lands once the lock is free");
+        assert!(text(&root, "plan/BACKLOG.md").contains("a waiting entry"), "the entry landed");
+        assert!(!root.join("plan/.lock").exists(), "a finished verb releases the lock");
+
+        // A refusal releases it too, and a dry run takes it for its reading and writes nothing.
+        let error = run(&root, &["add", "--phase", "S", "a task with no hint"]).expect_err("the gate refuses it");
+        assert!(error.contains("--files is required"), "{error}");
+        assert!(!root.join("plan/.lock").exists(), "a refused verb releases the lock too");
+        run(&root, &["add", "--phase", "S", "--files", "src/a.rs", "--dry-run", "a preview"])
+            .expect("a dry run answers");
+        assert!(!root.join("plan/.lock").exists(), "a dry run releases the lock");
+        assert!(!text(&root, "plan/BACKLOG.md").contains("a preview"), "a dry run writes nothing");
         let _ = std::fs::remove_dir_all(&root);
     }
 

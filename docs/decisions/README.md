@@ -228,6 +228,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0221](0221-a-ring-is-one-closed-chain-not-three-segments.md) | A ring is one closed chain, not three segments | Accepted; corrects the minimum the domain stated for a contour |
 | [0222](0222-the-assistants-panel-has-one-header-cell.md) | The assistant's panel has one header cell | Accepted; extends the place 0209 left to the key |
 | [0223](0223-a-call-waits-for-the-frame-that-has-the-window.md) | A call waits for the frame that has the window, and a caller that has gone is not performed | Accepted; amends the `busy` answer of 0207 |
+| [0224](0224-two-plan-writers-in-one-checkout-are-one-at-a-time.md) | Two plan writers in one checkout are one at a time | Accepted; amends the `plan/.lock` consequence of 0085 |
 
 ## Format
 
