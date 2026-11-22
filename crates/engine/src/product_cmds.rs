@@ -3,8 +3,9 @@
 //! A product is an ordinary container whose class carries `level = Product` and which stores an
 //! authored [`Envelope`] (ADR 0097); the model refuses either half without the other. `product.create`
 //! is the one creation path and always leaves a class, using the registry's general-product
-//! placeholder when the caller names none. `product.envelope.set` edits the box and never a child
-//! size: the content bounds of the parts are derived when asked and never stored.
+//! placeholder when the caller names none; the session opens the piece the command made, so creating
+//! a frame and opening it are one act for every door (ADR 0100). `product.envelope.set` edits the box
+//! and never a child size: the content bounds of the parts are derived when asked and never stored.
 
 use catalog::Directory;
 use geom::Contact;

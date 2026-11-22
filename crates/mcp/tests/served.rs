@@ -473,6 +473,52 @@ async fn naming_a_product_opens_it_with_no_revision_and_no_undo_entry() {
 }
 
 #[tokio::test]
+async fn a_frame_a_call_creates_is_open_and_the_first_part_needs_no_second_step() {
+    // X112: ADR 0100 words a frame as created, opened and drawn in one act, and a caller that is
+    // not the window had no second act to take, so the part after it was refused.
+    let (session, _products) = session_with(0);
+    let root = session.project().root().id();
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    let frame = json!({"command": "product.create", "params": {
+        "parent": root.get(),
+        "name": "Wardrobe",
+        "envelope": {"x": 800_000, "y": 460_000, "z": 2_200_000},
+        "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    }});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_RUN).with_arguments(arguments(frame)))
+        .await
+        .expect("the frame is created");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    let product = report["created"][0].as_u64().expect("the answer names the frame it made");
+    assert_eq!(report["open_product"], json!(product), "the frame the call made is the open one: {report}");
+
+    // The first part lands in it with no other step: the caller names the piece, and the piece is
+    // the one the answer said was open.
+    let product = Id::new(product).expect("a document id");
+    let steps = json!({"steps": [{"command": "panel.create", "params": panel(product, "Side")}]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
+        .await
+        .expect("the part lands in the piece the call made");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_eq!(report["open_product"], json!(product.get()), "the piece stays open while it is built: {report}");
+    assert_eq!(report["created"].as_array().map(Vec::len), Some(1), "one part landed: {report}");
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert_eq!(session.active_product(), Some(product), "the session works in the frame the call made");
+        assert_eq!(session.project().container(product).map(|container| container.children().len()), Some(1));
+    }
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
 async fn a_client_reads_back_the_box_of_the_body_it_just_built() {
     // X110: a caller has no screen, so the box of what it built is a question it has to be able to
     // ask. The batch builds a 200 x 300 x 600 body and the next call measures it.

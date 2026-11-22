@@ -470,7 +470,13 @@ impl Session {
         // that ran, so the diff needs no copy of the state before the batch.
         let report = BatchReport::new(effect, reports, &self.project, trial.project());
         if report.landed() && report.content_changed() {
+            // A step that made a piece left it open on the copy, exactly as one dispatch does
+            // (X112); the report carries the document, so the session takes the view state back
+            // from the trial along with it.
+            let open_product = trial.active_product;
             self.land(trial.project, scope);
+            self.active_product = open_product;
+            self.retain_active_product();
         }
         report
     }
@@ -570,13 +576,33 @@ impl Session {
     /// Returns the command's outcome and the document as it was before it, which is what the history
     /// keeps; a failed command leaves the current document untouched. The command's own `run` is the
     /// only gate: whether a piece is open is the interface's question, asked by the surfaces that
-    /// offer the command, so a caller that names a product may write in it (ADR 0226).
+    /// offer the command, so a caller that names a product may write in it (ADR 0226). A command
+    /// that creates a product leaves it open, because making a frame is one act with opening it
+    /// (ADR 0100, X112).
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
         let outcome = spec.run(&mut working, &self.directory, params, &*self.contact)?;
         let previous = std::mem::replace(&mut self.project, working);
+        self.follow_created_product(&outcome);
         Ok((outcome, previous))
+    }
+
+    /// Points the session at the product a command just created, in the same act (ADR 0100).
+    ///
+    /// A frame is created, opened and drawn as one step (ADR 0100), and a door that is not the
+    /// window has no second act to take: a caller that made a piece over the command line or the
+    /// tool surface could not open it, so the first part after it was refused although the answer
+    /// held everything it needed (X112). The document is asked whether the node the command made is
+    /// a product rather than a list of the commands that create one, so a creation path that
+    /// arrives later follows the same rule.
+    fn follow_created_product(&mut self, outcome: &CommandOutcome) {
+        let Some(id) = outcome.created_id() else {
+            return;
+        };
+        if self.project.container(id).is_some_and(|container| container.is_product()) {
+            self.active_product = Some(id);
+        }
     }
 
     /// Pushes the state before a command and drops the redo branch it invalidates.
@@ -3811,7 +3837,7 @@ mod tests {
 mod product_tests {
     #![allow(clippy::expect_used)]
 
-    use model::{ClassCode, Envelope};
+    use model::{ClassCode, Envelope, Placement};
     use testkit::{millimetres, sample_catalog, sample_project};
 
     use crate::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
@@ -3848,7 +3874,7 @@ mod product_tests {
     #[test]
     fn a_product_is_opened_and_replaced_by_the_next_one_opened() {
         let (mut session, first, second) = session_with_two_products();
-        assert_eq!(session.active_product(), None, "a fresh session works in no product");
+        assert_eq!(session.active_product(), Some(second), "the last piece a command made is the open one");
 
         assert!(session.open_product(first));
         assert_eq!(session.active_product(), Some(first));
@@ -3857,6 +3883,24 @@ mod product_tests {
 
         session.close_product();
         assert_eq!(session.active_product(), None, "closing leaves no product open");
+    }
+
+    #[test]
+    fn a_product_a_command_creates_is_open_in_the_same_act() {
+        // X112: a frame is created, opened and drawn as one step (ADR 0100), so a caller that is
+        // not the window has nothing more to do before the first part.
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let root = session.project().root().id();
+        let params = json_params(&ProductCreate {
+            parent: root,
+            name: "Base cabinet".to_owned(),
+            class: Some(ClassCode::GENERAL_PRODUCT),
+            envelope: box_(),
+            placement: Placement::IDENTITY,
+        });
+
+        let created = session.dispatch(PRODUCT_CREATE_ID, &params).expect("create product").created_id();
+        assert_eq!(created, session.active_product(), "the frame the command made is the open one");
     }
 
     #[test]

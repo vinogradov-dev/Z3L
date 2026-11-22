@@ -178,6 +178,10 @@ opening another closes the previous one. Openness is session state per tab, neve
 (ADR 0029). An open piece exposes its parts the way an open group does, so a click inside it selects
 the part under the pointer and a double click enters one level further.
 
+**A created frame is open in every door.** The session opens the piece `product.create` made, in the
+same act, so a caller over the command line or the channel reads it from `open_product` in the answer
+and writes the first part with no second step (ADR 0100, X112).
+
 **Leaving is Escape**, exactly as it leaves a group: with a part of the open piece selected and no
 open container above it, the key closes the product and selects the piece again. Escape first drops
 the creation arm and then the levels, so it never skips a step.

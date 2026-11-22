@@ -113,7 +113,9 @@ fn steps() -> Value {
             "step": "frame",
             "command": PRODUCT_CREATE_ID,
             "says": "A piece begins as a product frame: three authored sides and a footprint on its \
-                     base plane. The frame never resizes with its parts (ADR 0098).",
+                     base plane. The frame never resizes with its parts (ADR 0098), and creating it \
+                     opens it, so the first part lands inside it without a second step: every answer \
+                     names `open_product` (ADR 0100).",
         },
         {
             "order": 2,
@@ -583,6 +585,10 @@ mod tests {
         assert!(
             guide["steps"][1]["says"].as_str().is_some_and(|says| says.contains("ADR 0226")),
             "the build's order says who decides the piece"
+        );
+        assert!(
+            guide["steps"][0]["says"].as_str().is_some_and(|says| says.contains("open_product")),
+            "the frame a caller makes is open, so the part after it needs no second step (X112)"
         );
     }
 

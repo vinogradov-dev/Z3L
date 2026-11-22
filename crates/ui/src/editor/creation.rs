@@ -166,11 +166,12 @@ impl Editor {
 
     /// Creates the product frame the card describes and opens it, in one user action.
     ///
-    /// The command is `product.create`; opening the new frame is a session view operation that
-    /// follows it (ADR 0098, ADR 0100). The frame lands at the deterministic product placement —
-    /// the origin in an empty scene, else beside the nearest piece and clear of every envelope —
-    /// and the container is armed, so the next part is born inside it without another gesture.
-    /// A frame is a top-level piece, so its parent is the scene root.
+    /// The command is `product.create`, and the session opens the frame it makes in the same act
+    /// (ADR 0100, X112), so this method arms and selects it and nothing here opens a product. The
+    /// frame lands at the deterministic product placement — the origin in an empty scene, else
+    /// beside the nearest piece and clear of every envelope — and the container is armed, so the
+    /// next part is born inside it without another gesture. A frame is a top-level piece, so its
+    /// parent is the scene root.
     pub fn create_product(&mut self, session: &mut Session, draft: ProductDraft, lang: Lang) -> Result<(), String> {
         let project = session.project();
         let root = project.root().id();
@@ -183,7 +184,6 @@ impl Editor {
         let Some(id) = outcome.created_id() else {
             return Ok(());
         };
-        session.open_product(id);
         self.arm_creation(session.project(), id);
         self.selection.replace(id);
         self.initialized = true;
@@ -263,8 +263,8 @@ impl Editor {
     /// The class is the registry's general-product placeholder, because a drawn gesture names no
     /// type; the card is the entry that does. The name is that class's label in the current
     /// language, the same name the card gives when its class is left alone, so the card and the
-    /// gesture produce the same document. Opening the new frame is a session view operation that
-    /// follows the command, exactly as it does from the card (ADR 0098, ADR 0100).
+    /// gesture produce the same document. The command opens the frame it makes, in the same act
+    /// (ADR 0100, X112), as it does from the card.
     fn create_drawn_product(
         &mut self,
         session: &mut Session,
@@ -280,7 +280,6 @@ impl Editor {
         let Some(id) = outcome.created_id() else {
             return Ok(());
         };
-        session.open_product(id);
         self.arm_creation(session.project(), id);
         self.selection.replace(id);
         self.initialized = true;

@@ -1,6 +1,8 @@
 # 0226. A command names the piece it writes in, and the interface keeps it open
 
-- Status: Accepted; amends the command-vs-button clause of 0098 and the `enabled` column of 0185
+- Status: Accepted; amends the command-vs-button clause of 0098 and the `enabled` column of 0185;
+  its context's "`product.create` writes a frame closed" is fixed by X112, so a created piece is the
+  open one again (0100)
 - Date: 2026-11-22
 
 ## Context
@@ -51,6 +53,10 @@ surface that says "no" about a request the engine accepts is worse than no colum
 - A part can be written into a closed piece, and a caller that names no product can write one at the
   root. Nothing in the document says which is right: an orphan is a report's business, not a gate's,
   and the tree already shows the parent of every node.
+- The premise this record was measured on retired with X112: `product.create` no longer leaves the
+  frame closed, because the session opens the piece a command made (0100). A caller that makes a
+  frame still names the piece for its parts, and the answer says which one is open rather than
+  leaving it to be assumed.
 - `z3l run` and the tool surface no longer need a product to be opened before a build works; `--product`
   and the `product` field still open it, because a person reads the answer's `open_product` to know
   where the work is.
