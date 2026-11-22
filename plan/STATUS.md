@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=487bb25 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=0fd84bf updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,9 +35,8 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-Nothing is scheduled: P18 landed: no number names two decisions. The next agent step is J9 — the
-inspector finds the seven mistakes and the model explains them — and P19, the plan still pointing at
-the rename that already landed, is the plan-side gap beside it.
+Nothing is scheduled: P26 landed: a stream checkout writes only its own two plan files. The next
+agent step is J9, and P19 is the plan-side gap beside it.
 
 ## Index
 

@@ -1173,6 +1173,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **P26** a stream checkout writes only its own two plan files
+  Why: A stream worktree writes plan/BACKLOG.md, plan/map.md and the rest of the shared plan
+   files today, so every stream merge meets the same files on both sides: BACKLOG was touched
+   by both sides in twelve of the last twenty-five merges, docs/decisions/README in nine,
+   plan/map.md in six. AGENTS.md §6.2 says plan/ has one writer, the primary checkout on dev;
+   the tool does not enforce it.
+  Shape: The task and state and file verbs refuse a write to a shared plan file when the
+   checkout is a declared stream worktree, and keep task step and task note for the stream's
+   own two files (plan/SESSION.<key>.md and plan/notes/<ID>.md), refusing a step or a note for
+   another stream's task. The branch comes from Git::branch and the declaration from the
+   STREAMS: line; the refusal names the stream, the two files it does own and the primary rule.
+  Done: A write of a shared plan file from a stream/ checkout is refused with a sentence naming
+   the stream and its own two files; step and note still work there for its own task and are
+   refused for another stream's; the primary checkout is unchanged; tests cover all of it and
+   the plan gate stays green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md` — `0fd84bf`
+
 - `[x]` **P18** two decisions carry the number 0104, and the index cannot see it
   Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
    `0104-supply-names-four-sources.md`, and `docs/decisions/README.md` lists both rows under
