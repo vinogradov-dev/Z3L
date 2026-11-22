@@ -383,8 +383,9 @@ impl SnapPlane {
 /// The default is the 2.5D reading, because it is the one a furniture maker works in: a top view
 /// lines a board up with the shadow it casts on the drawing plane, and the drawing plane is the world
 /// XY for every view but an axis-aligned orthographic one — so a 3D snap there would capture nothing
-/// of the furniture standing above it. The 3D reading is the switch, and it becomes the useful one
-/// once a sketch can take the plane of the face under its first click (U121).
+/// of the furniture standing above it. The 3D reading is the switch, and it is the useful one
+/// because a sketch takes the plane of the face under its first click (U121): the corners of the
+/// board it is drawn on then lie in the sketch plane and capture it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapMode {

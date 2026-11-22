@@ -669,6 +669,122 @@ fn the_snap_marker_is_painted_on_the_end_of_the_preview() {
     println!("the snap marker is in {}", path.display());
 }
 
+/// Draws a 3D sketch started on a board's top face: the plane guide and the marker on that face.
+///
+/// The picture is the one the 3D mode's switch cannot be answered from rectangles: the plane a sketch
+/// is stored on is the face under its first click, so the guide's cross and the marker stand on the
+/// board and not on the floor, and the preview edge runs in that face (U121). The mode is the
+/// workspace's 3D reading; a click on the board's top face starts the draft and the pointer then
+/// moves to its other corner.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/work-plane.png"]
+fn the_sketch_on_a_face_plane_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("plane-workspace.json");
+    // A block standing 320 mm above the floor: its top face is far enough from the world XY for the
+    // picture to show which plane the sketch took.
+    let mut project = testkit::sample_project();
+    let root = project.root().id();
+    let raised = model::Placement::new(geom::DVec3::new(420.0, -320.0, 320.0), model::Placement::IDENTITY.rotation())
+        .expect("a place above the floor");
+    project
+        .add_object(root, "Raised", raised, model::Geometry::Mesh(testkit::cube_mesh(testkit::millimetres(120))))
+        .expect("a block above the floor");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut settings = Settings::default();
+    settings.snaps.mode = model::SnapMode::Space;
+    let mut app =
+        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    // The middle of the block's top face, its corners 60 mm either way, and the pointer beside one of
+    // them so the sketch's own corner captures it in the 3D reading.
+    let top = geom::DVec3::new(420.0, -320.0, 380.0);
+    let (first, beside) = {
+        let document = app.tabs.active_mut();
+        document.editor.start_drawing(ui::DrawTool::Line);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        let camera = document.camera();
+        let first = crate::gizmo_math::screen_point(camera, rect, top).expect("the face is on screen");
+        (first, first + egui::vec2(24.0, 0.0))
+    };
+    let click = |pointer: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let frames = vec![
+        vec![egui::Event::PointerMoved(first)],
+        vec![egui::Event::PointerMoved(first), click(first, true), click(first, false)],
+        vec![egui::Event::PointerMoved(beside)],
+        vec![egui::Event::PointerMoved(beside)],
+    ];
+    let mut jobs = Vec::new();
+    for events in frames {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+
+    // The click on the face froze that face's plane, and the pointer beside the first point still
+    // stores a point of it: the plane is not the floor, and the draft is not the camera's.
+    {
+        let document = app.tabs.active();
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let plane = document.draw_gizmo.plane(camera);
+        assert!(
+            (plane.normal() - geom::DVec3::Z).length() < 1.0e-6,
+            "the plane of the block's top face is horizontal: {:?}",
+            plane.normal()
+        );
+        let plane_local = document.draw_gizmo.hover_point().expect("the pointer stores a point of the plane");
+        let stored = plane.world(geom::DVec2::new(plane_local[0].millimetres_f64(), plane_local[1].millimetres_f64()));
+        assert!((stored.z - top.z).abs() < 0.5, "the sketch is stored on the face, not on the floor: {stored:?}");
+        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+        let drawn = crate::gizmo_math::screen_point(camera, rect, stored).expect("the point is on screen");
+        assert!(
+            (marker - drawn).length() < 0.5,
+            "the marker stands on the point the click stores: {marker:?} against {drawn:?}"
+        );
+    }
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("work-plane.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the sketch on the face plane is in {}", path.display());
+}
+
 /// Draws the product card in both theme variants: its number column and its folded class tree.
 ///
 /// The picture answers the two questions a rectangle cannot: whether the three fields start on one

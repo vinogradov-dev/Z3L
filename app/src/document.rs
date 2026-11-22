@@ -2884,7 +2884,13 @@ impl Document {
                 axis_lock: ui.input(|input| input.modifiers.shift),
                 ignore_snaps: ui.input(|input| input.modifiers.alt),
             };
-            let input = DrawInput { kinds: self.snaps, mode: self.snap_mode, pointer_over_widget, modifiers };
+            let input = DrawInput {
+                kinds: self.snaps,
+                mode: self.snap_mode,
+                contact: self.session.contact(),
+                pointer_over_widget,
+                modifiers,
+            };
             let action = match self.draw_gizmo.update(
                 &response,
                 rect,

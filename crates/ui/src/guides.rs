@@ -1,4 +1,4 @@
-//! The two guides a sketch draws over the model: the construction line and the reference line.
+//! The guides a sketch draws over the model: the construction line, the reference line and the plane.
 //!
 //! A drawing operation measures one of two things and both need to be seen before the click. The
 //! **construction line** is the chord that is being measured — an arc's start to its end, a node's
@@ -9,6 +9,10 @@
 //! dark — because it lies over an arbitrary board and no themed colour reads on all of them
 //! (ADR 0127); the dot is large enough to find, because the reference is the only thing a sketch
 //! shows before its first click (ADR 0133).
+//!
+//! The **plane** is where a sketch is stored: its two axes, crossed at the middle of the view, in
+//! the guide ink faded until the model reads through them. A 3D sketch started on a face draws on
+//! that face and not on the floor, and the cross is what says so before the first click does (U121).
 //!
 //! The module takes screen points: the tool maps its work plane and camera to the screen, so the
 //! guides never see a camera, a plane or a document, and a stroke is a rule in points rather than a
@@ -27,6 +31,12 @@ const CONSTRUCTION_DASH: f32 = 6.0;
 /// The gap after one dash of a construction line, in points.
 const CONSTRUCTION_GAP: f32 = 4.0;
 
+/// How much of the guide ink the plane's own cross keeps, in percent.
+///
+/// The plane runs under the whole figure and over the model, so it is read through the boards: a
+/// third of the ink says where the sketch is stored without competing with the chain drawn on it.
+const PLANE_OPACITY: u32 = 34;
+
 /// Paints the construction line between two screen points: the chord being measured.
 ///
 /// The line is the guide amber and dashed, so it reads as the program's own help rather than as a
@@ -34,6 +44,21 @@ const CONSTRUCTION_GAP: f32 = 4.0;
 pub fn construction(ui: &Ui, painter: &Painter, from: Pos2, to: Pos2) {
     let stroke = Stroke::new(theme::HELPER_STROKE, theme::helper(ui));
     painter.extend(Shape::dashed_line(&[from, to], stroke, CONSTRUCTION_DASH, CONSTRUCTION_GAP));
+}
+
+/// Paints the plane a sketch is stored on: its two axes, crossed at the middle of the view.
+///
+/// Both spans are the plane's own axes already projected by the caller, so a plane seen at an angle
+/// draws as the ellipse-wide cross it really is rather than as screen-horizontal and screen-vertical
+/// lines. The ink is the guide amber faded, because the plane lies under the whole figure and over
+/// the model; the dashes are the construction line's, so it reads as the program's own help (U121).
+pub fn work_plane(ui: &Ui, painter: &Painter, axis: [Pos2; 2], sweep: [Pos2; 2]) {
+    let stroke = Stroke::new(theme::HELPER_CROSSHAIR_STROKE, theme::at_opacity(theme::helper(ui), PLANE_OPACITY));
+    for line in [axis, sweep] {
+        if line.iter().all(|point| point.x.is_finite() && point.y.is_finite()) {
+            painter.extend(Shape::dashed_line(&line, stroke, CONSTRUCTION_DASH, CONSTRUCTION_GAP));
+        }
+    }
 }
 
 /// Paints the reference line: the axis from the anchor and the sweep that shows the angle.
@@ -183,5 +208,68 @@ mod tests {
         assert!(strokes > 1, "a dashed line is several strokes, not one: {strokes}");
         assert!(!colours.is_empty(), "the dashes were painted");
         assert!(colours.iter().all(|colour| *colour == ink), "every dash is the guide ink");
+    }
+
+    /// Every line segment a frame painted, with its two ends and its colour.
+    fn segments(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Pos2, Pos2, Color32)> {
+        fn collect(shape: &Shape, out: &mut Vec<(Pos2, Pos2, Color32)>) {
+            match shape {
+                Shape::LineSegment { points, stroke } => out.push((points[0], points[1], stroke.color)),
+                Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            collect(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn the_plane_guide_draws_both_axes_faintly() {
+        // The plane a sketch is stored on draws its own two axes, so a 3D sketch says where it lands
+        // before its first click does. The ink is the guide's, faded, because the cross runs under
+        // the figure and over the model (U121).
+        let ctx = egui::Context::default();
+        let axis = [pos2(0.0, 300.0), pos2(800.0, 300.0)];
+        let sweep = [pos2(400.0, 0.0), pos2(400.0, 600.0)];
+        let mut ink = Color32::TRANSPARENT;
+        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
+            work_plane(ui, ui.painter(), axis, sweep);
+            ink = theme::helper(ui);
+        });
+        let dashes = segments(&output.shapes);
+        output.drop_without_applying_deltas();
+
+        assert!(dashes.len() > 4, "both axes are dashed, not one stroke: {}", dashes.len());
+        let faint = theme::at_opacity(ink, PLANE_OPACITY);
+        assert!(dashes.iter().all(|(_, _, colour)| *colour == faint), "every dash is the faded guide ink");
+        assert_ne!(faint, ink, "the plane is fainter than the line a number is measured on");
+        // A dash of each span: the guide is both axes or it is not the plane.
+        for span in [axis, sweep] {
+            let along = span[1] - span[0];
+            let aside =
+                |point: Pos2| (point - span[0] - along * ((point - span[0]).dot(along) / along.length_sq())).length();
+            assert!(
+                dashes.iter().any(|(from, to, _)| aside(*from) < 0.5 && aside(*to) < 0.5),
+                "the span {span:?} carries its dashes"
+            );
+        }
+
+        let broken = ctx.run_ui(egui::RawInput { screen_rect: Some(VIEWPORT), ..Default::default() }, |ui| {
+            work_plane(
+                ui,
+                ui.painter(),
+                [pos2(0.0, 0.0), pos2(f32::NAN, 0.0)],
+                [pos2(0.0, 0.0), pos2(0.0, f32::INFINITY)],
+            );
+        });
+        assert!(segments(&broken.shapes).is_empty(), "a span a camera could not place draws nothing");
+        broken.drop_without_applying_deltas();
     }
 }

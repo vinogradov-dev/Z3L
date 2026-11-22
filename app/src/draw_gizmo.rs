@@ -14,16 +14,24 @@
 //! cannot become a path keeps the last valid one, so a chain never blinks out; the reason is on
 //! [`DrawGizmo::preview_error`]. The dummy document is never touched here; the commit is a separate
 //! step, so Escape costs nothing.
+//!
+//! The plane is the one the pointer names until the draft places its first point: in the 3D snap mode
+//! that is the face under the pointer — the face the ruler's own probe measures — so a sketch started
+//! on a board's top face is stored in that face's plane, and in the 2.5D mode or over empty space it
+//! is the camera's plane (U121). The first placed point freezes the choice, so orbiting the view
+//! mid-draft reinterprets nothing, and the plane draws itself as a faint cross of its own axes while
+//! the draft is open.
 
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui};
-use geom::{DVec2, DVec3};
+use geom::{Contact, DVec2, DVec3};
 use model::{MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, Path, Project, Sight};
 use scene::Camera;
 use ui::{DrawDraft, DrawTool, Editor, FieldParam, FieldSet, PointState, field_row, guides, theme};
 use units::Length;
 
 use crate::gizmo_math::{
-    PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, reference_screen, screen_point,
+    Aim, PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, reference_screen, screen_point,
+    surface_under,
 };
 
 /// Radius of a placed draft point marker, in points.
@@ -32,6 +40,11 @@ const POINT_RADIUS: f32 = 3.5;
 const PREVIEW_TOLERANCE_MM: f64 = 0.25;
 /// How many segments each meridian of the sphere phantom is sampled into.
 const PHANTOM_STEPS: usize = 48;
+/// How long the plane guide's first world step is, in points at the plane's depth.
+///
+/// The span is then extended in screen space, so this only has to be long enough for the projected
+/// direction to be well-conditioned.
+const PLANE_GUIDE_STEP_POINTS: f64 = 8.0;
 
 /// Colour of the points already placed.
 const DRAFT_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
@@ -84,15 +97,19 @@ pub(crate) enum DrawAction {
 
 /// Everything one pointer frame of the drawing tool carries besides the camera and the draft.
 ///
-/// The workspace's snap kinds, the chrome under the pointer and the keyboard travel together
-/// because a frame reads all three once and the frame's own signature is already at clippy's
+/// The workspace's snap kinds, the mode that reads a candidate above the plane, the contact adapter
+/// the probe measures bodies with, the chrome under the pointer and the keyboard travel together
+/// because a frame reads all of them once and the frame's own signature is already at clippy's
 /// argument threshold (AGENTS §1.5, U116).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct DrawInput {
+pub(crate) struct DrawInput<'a> {
     /// Which snaps the workspace allows.
     pub(crate) kinds: model::SnapKinds,
     /// How the workspace reads a candidate above the plane: the point itself, or its foot (U119).
     pub(crate) mode: model::SnapMode,
+    /// The adapter the probe measures the bodies the boxes cannot describe with, so the face under
+    /// the pointer is the one the ruler would find (U121).
+    pub(crate) contact: &'a dyn Contact,
     /// Whether the chrome owns the pointer this frame.
     pub(crate) pointer_over_widget: bool,
     /// The keyboard state a click carries.
@@ -103,10 +120,10 @@ pub(crate) struct DrawInput {
 #[derive(Debug)]
 pub(crate) struct DrawGizmo {
     hover: Option<SnapOutcome>,
-    /// The plane the draft started on, frozen while the tool runs.
+    /// The plane the live draft draws on, kept for as long as the draft holds a point.
     ///
     /// Orbiting the view mid-drawing must not reinterpret the points already placed, so the plane
-    /// is chosen once and kept until the tool ends.
+    /// is chosen while the draft is empty and kept from its first point until the tool ends (U121).
     plane: Option<WorkPlane>,
     /// The last preview that became a path, kept while the pointer sits on a hostile point.
     preview: Option<Path>,
@@ -247,6 +264,31 @@ impl DrawGizmo {
         self.plane.unwrap_or_else(|| WorkPlane::from_camera(camera))
     }
 
+    /// The plane this frame draws on, and the one the draft keeps.
+    ///
+    /// A draft with no point follows the plane under the pointer, so a sketch started on a board's
+    /// top face stores its points in that face's plane and a sketch started over empty space keeps
+    /// the camera's one ([`live_plane`]). The first placed point freezes that plane: the question is
+    /// answered once per draft, which is what lets the hand orbit the view without reinterpreting
+    /// the points already placed (U121).
+    fn plane_for(
+        &mut self,
+        draft: &DrawDraft,
+        aim: Aim,
+        project: &Project,
+        input: DrawInput<'_>,
+        sight: Sight<'_>,
+    ) -> WorkPlane {
+        if !draft.is_empty()
+            && let Some(plane) = self.plane
+        {
+            return plane;
+        }
+        let plane = live_plane(aim, project, input, sight);
+        self.plane = Some(plane);
+        plane
+    }
+
     /// Writes a typed side count into the running draft and returns the draft the frame must read.
     ///
     /// The side count is the figure's own number rather than the point's, so the plate edits the draft
@@ -305,23 +347,27 @@ impl DrawGizmo {
         camera: Camera,
         project: &Project,
         editor: &mut Editor,
-        input: DrawInput,
+        input: DrawInput<'_>,
     ) -> Result<DrawAction, String> {
         let Some(draft) = editor.drawing().cloned() else {
             self.reset();
             return Ok(DrawAction::Nothing);
         };
-        let plane = *self.plane.get_or_insert_with(|| WorkPlane::from_camera(camera));
         let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
         let Some(pointer) = pointer else {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
-        let Some(aim) = PlaneSnap::at(camera, rect, pointer, plane) else {
+        let sight = editor.flags().sight();
+        let hand = Aim { camera, rect, pointer };
+        // The plane is the one the pointer names while the draft is empty and the one its first point
+        // froze afterwards, so the face under the first click is where the whole sketch is stored
+        // (U121).
+        let plane = self.plane_for(&draft, hand, project, input, sight);
+        let Some(aim) = PlaneSnap::at(hand.camera, hand.rect, hand.pointer, plane) else {
             self.hover = None;
             return Ok(DrawAction::Nothing);
         };
-        let sight = editor.flags().sight();
         let Some(snapped) = snap_cursor(&draft, aim, project, sight, input.kinds, input.mode, input.modifiers) else {
             self.hover = None;
             return Ok(DrawAction::Nothing);
@@ -437,10 +483,17 @@ impl DrawGizmo {
         apply_click(editor, &draft, state.point).map(Some)
     }
 
-    /// Paints the placed chain, the preview, the points, the snap marker and the two guides.
+    /// Paints the plane guide, the placed chain, the preview, the points, the snap marker and the
+    /// two guides of the point being placed.
     pub(crate) fn paint(&self, ui: &Ui, rect: egui::Rect, camera: Camera, draft: &DrawDraft) {
         let plane = self.plane(camera);
         let painter = ui.painter().with_clip_rect(rect);
+
+        // The plane the sketch is stored on draws itself as a faint cross of its own axes, so a 3D
+        // sketch on the side of a board says so before the first click does (U121).
+        if let Some((axis, sweep)) = plane_axes(camera, rect, plane) {
+            guides::work_plane(ui, &painter, axis, sweep);
+        }
 
         match draft.to_path() {
             Ok(path) => paint_path(&painter, camera, rect, plane, &path, Stroke::new(2.0, DRAFT_COLOR)),
@@ -540,6 +593,53 @@ fn paint_guides(
     };
     let (axis, sweep) = reference_screen(reference, project);
     guides::reference(painter, &axis, &sweep);
+}
+
+/// The plane a draft with no point draws on: the face under the pointer, or the camera's plane.
+///
+/// The 3D mode takes the plane of the face the probe finds — the one reading the ruler measures, so
+/// a sketch started on a board's top face stores its points in that face's plane — and keeps the
+/// camera's plane when the pointer names no surface. The 2.5D mode keeps the reading it has always
+/// had: the plane is where the view put it, and a candidate above it answers with its foot (U121).
+fn live_plane(aim: Aim, project: &Project, input: DrawInput<'_>, sight: Sight<'_>) -> WorkPlane {
+    let camera_plane = WorkPlane::from_camera(aim.camera);
+    if input.mode == model::SnapMode::Foot {
+        return camera_plane;
+    }
+    let ray = aim.ray();
+    surface_under(project, input.contact, ray.origin(), ray.direction(), sight)
+        .and_then(|probe| WorkPlane::from_face(probe.face.point, probe.face.normal))
+        .unwrap_or(camera_plane)
+}
+
+/// The plane's own two axes on screen, for the guide that says where a sketch is stored.
+///
+/// Both spans run through the plane's point at the middle of the view and are then extended across
+/// the whole view, so the cross reads as the plane rather than as a mark at one point of it. The
+/// extension happens in screen space because a straight world line projects to a straight screen
+/// line: extending the world span instead would run one end of it behind the eye in a wide view and
+/// lose the whole guide. A plane the view looks along has no point at its middle and draws nothing;
+/// one seen nearly edge-on draws a span almost collapsed, which is the truth about that view.
+fn plane_axes(camera: Camera, rect: egui::Rect, plane: WorkPlane) -> Option<([Pos2; 2], [Pos2; 2])> {
+    let centre = plane.pointer_point(camera, rect, rect.center())?;
+    let origin = plane.world(centre);
+    let depth = (origin - camera.eye()).dot(camera.forward());
+    let step = camera.world_per_point(depth, f64::from(rect.height())) * PLANE_GUIDE_STEP_POINTS;
+    if !step.is_finite() || step <= 0.0 {
+        return None;
+    }
+    let span = |axis: DVec2| {
+        let base = screen_point(camera, rect, origin)?;
+        let next = screen_point(camera, rect, plane.world(centre + axis * step))?;
+        let direction = next - base;
+        let length = direction.length();
+        if !length.is_finite() || length <= f32::EPSILON {
+            return None;
+        }
+        let reach = direction / length * (rect.width() + rect.height());
+        Some([base - reach, base + reach])
+    };
+    Some((span(DVec2::X)?, span(DVec2::Y)?))
 }
 
 /// The snapped cursor point, in document units and on screen.
@@ -768,6 +868,147 @@ mod tests {
             draft.push([millimetres(*x), millimetres(*y)]).expect("a fresh point");
         }
         draft
+    }
+
+    /// The viewport the plane tests draw in, in points.
+    const VIEWPORT: egui::Rect = egui::Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(800.0, 600.0) };
+
+    /// A pointer frame of the workspace: every kind but the vertex off, so a capture is the sketch's
+    /// own corner and nothing else.
+    fn input<'a>(mode: model::SnapMode, contact: &'a dyn Contact) -> DrawInput<'a> {
+        let mut kinds = model::SnapKinds::none();
+        kinds.set(model::SnapKind::Vertex, true);
+        DrawInput { kinds, mode, contact, pointer_over_widget: false, modifiers: DrawModifiers::default() }
+    }
+
+    /// A project with nothing in it, so a pointer can point at the empty space above the floor.
+    fn empty_project() -> Project {
+        let root = model::Container::new(
+            model::Id::new(1).expect("a non-zero id"),
+            "Root",
+            model::Placement::IDENTITY,
+            Vec::new(),
+        );
+        Project::new(root).expect("an empty project")
+    }
+
+    #[test]
+    fn a_sketch_started_on_a_board_takes_that_face_as_its_plane() {
+        // U121: a 3D sketch on a board's top face is stored in that face's plane, so its own corners
+        // lie in the sketch plane and capture it in the 3D reading.
+        let project = testkit::sample_project();
+        let camera = Camera::default();
+        let contact = contact_parry::Parry;
+        // The middle of the sample shelf's top face, 18 mm above the world plane.
+        let on_face = DVec3::new(350.0, 250.0, 18.0);
+        let pointer = screen_point(camera, VIEWPORT, on_face).expect("the face is on screen");
+        let aim = Aim { camera, rect: VIEWPORT, pointer };
+        let sight = Sight::none();
+
+        let mut gizmo = DrawGizmo::new();
+        let empty = DrawDraft::new(DrawTool::Line);
+        let plane = gizmo.plane_for(&empty, aim, &project, input(model::SnapMode::Space, &contact), sight);
+        let origin = plane.world(DVec2::ZERO);
+        assert!((plane.normal() - DVec3::Z).length() < 1.0e-6, "the face's plane is horizontal: {:?}", plane.normal());
+        assert!((origin - on_face).length() < 0.01, "the plane runs through the face: {origin:?} against {on_face:?}");
+
+        // The same pointer in the 2.5D reading keeps the camera's plane: the mode is the switch, not
+        // the scene (U119, U121).
+        let mut flat = DrawGizmo::new();
+        let two_and_a_half = flat.plane_for(&empty, aim, &project, input(model::SnapMode::Foot, &contact), sight);
+        assert_eq!(two_and_a_half, WorkPlane::from_camera(camera), "the 2.5D mode draws where the view says");
+
+        // A chain whose corners lie in that face captures its own corner in the 3D mode: the pointer
+        // sits a few points beside the first point, and the answer is that point exactly.
+        let mut chain = DrawDraft::new(DrawTool::Line);
+        chain.push([Length::ZERO, Length::ZERO]).expect("the first corner of the face");
+        chain.push([millimetres(200), Length::ZERO]).expect("the second corner");
+        let beside = screen_point(camera, VIEWPORT, origin).expect("the corner is on screen") + egui::vec2(3.0, 0.0);
+        let factors = DrawModifiers::default();
+        let snapped = PlaneSnap::at(camera, VIEWPORT, beside, plane).expect("the pointer meets the plane");
+        let answer = snap_cursor(
+            &chain,
+            snapped,
+            &project,
+            sight,
+            input(model::SnapMode::Space, &contact).kinds,
+            model::SnapMode::Space,
+            factors,
+        )
+        .expect("the sketch's own corner answers");
+        assert_eq!(answer.point, [Length::ZERO, Length::ZERO], "the corner the chain stores");
+        assert_eq!(answer.kind, Some(model::SnapKind::Vertex), "a corner of the figure, not the scene");
+    }
+
+    #[test]
+    fn a_sketch_started_over_empty_space_keeps_the_camera_plane() {
+        let project = empty_project();
+        let contact = contact_parry::Parry;
+        for camera in [Camera::default(), Camera::default()] {
+            let pointer = VIEWPORT.center();
+            let aim = Aim { camera, rect: VIEWPORT, pointer };
+            let mut gizmo = DrawGizmo::new();
+            let empty = DrawDraft::new(DrawTool::Line);
+            let plane = gizmo.plane_for(&empty, aim, &project, input(model::SnapMode::Space, &contact), Sight::none());
+            assert_eq!(plane, WorkPlane::from_camera(camera), "a pointer over nothing draws on the camera's plane");
+        }
+    }
+
+    #[test]
+    fn the_plane_a_draft_started_on_does_not_follow_the_camera() {
+        // The plane is answered once per draft: orbiting the view and moving the hand over another
+        // face mid-draft leaves the points already placed where they were (U121).
+        let project = testkit::sample_project();
+        let contact = contact_parry::Parry;
+        let first_camera = Camera::default();
+        let on_face = DVec3::new(350.0, 250.0, 18.0);
+        let pointer = screen_point(first_camera, VIEWPORT, on_face).expect("the face is on screen");
+        let aim = Aim { camera: first_camera, rect: VIEWPORT, pointer };
+        let mut gizmo = DrawGizmo::new();
+        let empty = DrawDraft::new(DrawTool::Line);
+        let started = gizmo.plane_for(&empty, aim, &project, input(model::SnapMode::Space, &contact), Sight::none());
+
+        let mut orbited = first_camera;
+        orbited.orbit(0.6, -0.4);
+        let ceiling = DVec3::new(200.0, 150.0, 400.0);
+        let pointer = screen_point(orbited, VIEWPORT, ceiling).unwrap_or_else(|| VIEWPORT.center());
+        let elsewhere = Aim { camera: orbited, rect: VIEWPORT, pointer };
+        let mut started_draft = DrawDraft::new(DrawTool::Line);
+        started_draft.push([Length::ZERO, Length::ZERO]).expect("the point the first click placed");
+        let kept = gizmo.plane_for(
+            &started_draft,
+            elsewhere,
+            &project,
+            input(model::SnapMode::Space, &contact),
+            Sight::none(),
+        );
+        assert_eq!(kept, started, "the plane stays where the first point was placed");
+        assert_eq!(gizmo.plane(orbited), started, "and painting reads the same plane");
+    }
+
+    #[test]
+    fn the_plane_guide_crosses_the_middle_of_the_view() {
+        // The guide says where the sketch is stored: the plane's own two axes, both through the
+        // plane's point at the middle of the view, so the cross covers the view at any zoom (U121).
+        let camera = Camera::default();
+        let plane = WorkPlane::from_face(DVec3::new(0.0, 0.0, 350.0), DVec3::Z).expect("a face plane");
+        let (axis, sweep) = plane_axes(camera, VIEWPORT, plane).expect("a face seen from above draws its cross");
+        let centre = VIEWPORT.center();
+        for span in [axis, sweep] {
+            let along = span[1] - span[0];
+            let aside =
+                |point: Pos2| (point - span[0] - along * ((point - span[0]).dot(along) / along.length_sq())).length();
+            assert!(aside(centre) < 0.5, "the cross runs through the middle of the view: {span:?}");
+            assert!(
+                (span[1] - span[0]).length() > VIEWPORT.width().min(VIEWPORT.height()),
+                "a span reaches across the view: {span:?}"
+            );
+        }
+
+        // A plane the view looks along — the ray at the middle of the view runs in it — has no point
+        // at its middle and draws nothing rather than a line the person would read as other plane.
+        let edge_on = WorkPlane::from_face(DVec3::ZERO, camera.forward().cross(DVec3::Z)).expect("a plane");
+        assert_eq!(plane_axes(camera, VIEWPORT, edge_on), None);
     }
 
     #[test]

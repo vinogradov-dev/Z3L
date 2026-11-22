@@ -12,8 +12,8 @@ use std::f64::consts::FRAC_PI_2;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
-use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, MoveSettings, Placement, Project};
+use geom::{Contact, DMat4, DQuat, DVec2, DVec3};
+use model::{Id, MoveAxis, MoveSettings, Placement, Project, Sight};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use ui::TransformMode;
 use units::Length;
@@ -660,6 +660,28 @@ pub(crate) fn distance_to_segment(point: Pos2, start: Pos2, end: Pos2) -> Option
     Some((point - (start + segment * along)).length())
 }
 
+/// Where the hand is: the camera, the viewport it draws in and the pointer on it.
+///
+/// The three travel together because one resolver reads them as one place — the pixel and the two
+/// values that turn it into a ray (AGENTS §1.5) — so the plane a tool draws on, the surface under the
+/// pointer and the snap question all take one value instead of three.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Aim {
+    /// The camera the tool reads the scene through.
+    pub(crate) camera: Camera,
+    /// The rectangle the viewport draws in.
+    pub(crate) rect: egui::Rect,
+    /// The pointer inside that rectangle, in points.
+    pub(crate) pointer: Pos2,
+}
+
+impl Aim {
+    /// The pointer's ray, pointing into the scene.
+    pub(crate) fn ray(self) -> Ray {
+        ray_to(self.pointer, self.rect, self.camera)
+    }
+}
+
 /// The point where a ray meets a plane, or `None` when they are parallel or the plane is behind.
 pub(crate) fn ray_plane(ray: Ray, plane_point: DVec3, normal: DVec3) -> Option<DVec3> {
     let denominator = ray.direction().dot(normal);
@@ -676,9 +698,10 @@ pub(crate) fn ray_plane(ray: Ray, plane_point: DVec3, normal: DVec3) -> Option<D
 /// A right-handed world plane the drawing tools place points on.
 ///
 /// A plane the view picks passes through the world origin, so a drawing is stored in world-aligned
-/// plane coordinates; a plane the document places — a contour ring's own — carries the node's origin
-/// instead (U119). `u` and `v` follow the screen of the view that selected the plane: a shape drawn to
-/// the right and up lands on positive `u` and `v` in both the viewport and the document.
+/// plane coordinates; a plane the document places — a contour ring's own, or the face a 3D sketch
+/// started on — carries that node's or that face's origin instead (U119, U121). `u` and `v` follow the
+/// screen of the view that selected the plane: a shape drawn to the right and up lands on positive
+/// `u` and `v` in both the viewport and the document.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WorkPlane {
     origin: DVec3,
@@ -704,6 +727,27 @@ impl WorkPlane {
             return None;
         }
         Some(Self { origin: placement.translation(), normal, u, v })
+    }
+
+    /// The plane of the face under the first click of a 3D sketch, whose zero is the point the ray
+    /// met (U121).
+    ///
+    /// A sketch in the 3D mode stores its points in the plane it started on, so a figure drawn on a
+    /// board's top face is that face's plane and not the floor's: the corners of the board then lie
+    /// in the sketch's plane and capture it. `u` takes the world axis least aligned with the face, so
+    /// a face square to an axis lands on round world coordinates, and `v` completes the right-handed
+    /// frame. A degenerate normal names no plane.
+    pub(crate) fn from_face(point: DVec3, normal: DVec3) -> Option<Self> {
+        let length = normal.length();
+        if !point.is_finite() || !normal.is_finite() || length <= 1.0e-9 {
+            return None;
+        }
+        let normal = normal / length;
+        let axis = [DVec3::X, DVec3::Y, DVec3::Z]
+            .into_iter()
+            .min_by(|a, b| a.dot(normal).abs().total_cmp(&b.dot(normal).abs()))?;
+        let u = (axis - normal * axis.dot(normal)).try_normalize()?;
+        Some(Self { origin: point, normal, u, v: normal.cross(u) })
     }
 
     /// The plane an axis-aligned orthographic view draws on, or world XY for every other view.
@@ -795,7 +839,6 @@ impl WorkPlane {
     }
 
     /// The plane coordinates under a viewport position.
-    #[allow(dead_code, reason = "the drawing tools consume the mapping in U13-U14")]
     pub(crate) fn pointer_point(self, camera: Camera, viewport: egui::Rect, pointer: Pos2) -> Option<DVec2> {
         self.ray_point(ray_to(pointer, viewport, camera)).map(|world| self.local(world))
     }
@@ -886,6 +929,47 @@ impl PlaneSnap {
             face,
         }
     }
+}
+
+/// How far inside a product's shell the ray restarts, in millimetres.
+///
+/// The reserved box around a product is a surface of the probe (ADR 0103), but the maker points at
+/// the boards inside it, not at the near face of the box. A step of a micrometre is enough to leave
+/// the face and small enough to keep every real surface in front of the point.
+const SHELL_INSET_MM: f64 = 1.0e-3;
+
+/// The product envelopes one ray may step through before the surface under it is taken as empty.
+///
+/// Nested products are the awkward case; the bound keeps a pathological document from spinning.
+const MAX_SHELLS: usize = 4;
+
+/// The first surface the ray really meets, stepping past the near face of a product's reserved box.
+///
+/// A product envelope is a probe surface (ADR 0103), but from outside the piece it is the first
+/// thing the ray meets, so a tool that took it would report the front of the reserved box while the
+/// person points at a shelf behind it. The ray restarts a micrometre inside the envelope and looks
+/// again, at most [`MAX_SHELLS`] times, so the boards inside win. Every other surface — a panel, a
+/// body, the far envelope face of the product the point is now in — is the answer, with the face's
+/// own normal pointing back along the ray.
+///
+/// Two tools read it: the ruler measures the point of the face, and a 3D sketch takes the plane of
+/// it (U121). It is one reading, so the two can never disagree about which surface the hand is on.
+pub(crate) fn surface_under(
+    project: &Project,
+    contact: &dyn Contact,
+    origin: DVec3,
+    direction: DVec3,
+    sight: Sight<'_>,
+) -> Option<model::Probe> {
+    let mut from = origin;
+    for _ in 0..=MAX_SHELLS {
+        let probe = project.probe(from, direction, sight, Some(contact))?;
+        if probe.hit.kind != model::SurfaceKind::Shell {
+            return Some(probe);
+        }
+        from = probe.face.point + direction * SHELL_INSET_MM;
+    }
+    None
 }
 
 /// The marker that says what captured the pointer: one glyph per kind, in one ink.
@@ -1721,6 +1805,34 @@ mod tests {
         let mut tilted = orthographic_view(DVec3::X);
         tilted.orbit(0.0, 0.2);
         assert_eq!(WorkPlane::from_camera(tilted), WorkPlane::WORLD_XY);
+    }
+
+    #[test]
+    fn the_plane_of_a_face_carries_that_face_and_its_own_axes() {
+        // A sketch in the 3D mode is stored on the face its first click named, so the plane's zero is
+        // the point the ray met and its normal is the face's, pointing back at the eye (U121).
+        let point = DVec3::new(350.0, 250.0, 18.0);
+        let plane = WorkPlane::from_face(point, DVec3::Z).expect("a top face names a plane");
+        assert_vector(plane.world(DVec2::ZERO), point, "the plane runs through the face's point");
+        assert_vector(plane.normal(), DVec3::Z, "the normal is the face's");
+        assert_vector(plane.u, DVec3::X, "a face square to Z keeps the world X");
+        assert_vector(plane.v, DVec3::Y, "and the world Y");
+
+        // A turned face takes the world axis it agrees with least, so a face square to an axis keeps
+        // round world numbers, and the frame stays right-handed whatever the normal is.
+        for normal in [DVec3::X, -DVec3::X, DVec3::Y, -DVec3::Y, DVec3::Z, -DVec3::Z, DVec3::new(1.0, 2.0, 3.0)] {
+            let normal = normal.normalize();
+            let plane = WorkPlane::from_face(point, normal).expect("a face names a plane");
+            assert_vector(plane.normal(), normal, "the face's own normal");
+            assert_vector(plane.u.cross(plane.v), normal, "a right-handed basis");
+            assert!((plane.u.length() - 1.0).abs() < 1.0e-9, "u is a unit vector");
+            assert!(plane.u.dot(normal).abs() < 1.0e-9, "u lies in the plane");
+            assert!(plane.v.dot(normal).abs() < 1.0e-9, "v lies in the plane");
+            assert!(plane.local(point).length() < 1.0e-9, "the face's point is the plane's zero");
+        }
+
+        assert!(WorkPlane::from_face(point, DVec3::ZERO).is_none(), "no normal names no plane");
+        assert!(WorkPlane::from_face(DVec3::splat(f64::NAN), DVec3::Z).is_none(), "no point names no plane");
     }
 
     #[test]

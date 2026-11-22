@@ -18,28 +18,20 @@
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
-use model::{Project, Sight, SurfaceKind};
+use model::{Project, Sight};
 use scene::Camera;
 use ui::{Measure, MeasureStage, theme};
 use units::Length;
 
-use crate::gizmo_math::{PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, screen_point};
+use crate::gizmo_math::{
+    Aim, PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, screen_point, surface_under,
+};
 /// Radius of a placed measurement point, in points.
 const POINT_RADIUS: f32 = 3.0;
 /// Gap between the pointer and the length label, in points.
 const LABEL_OFFSET: egui::Vec2 = egui::vec2(14.0, 10.0);
 /// Padding inside the length label, in points.
 const LABEL_PADDING: egui::Vec2 = egui::vec2(5.0, 3.0);
-/// How far inside a product's shell the ray restarts, in millimetres.
-///
-/// The reserved box around a product is a surface of the probe (ADR 0103), but the maker points at
-/// the boards inside it, not at the near face of the box. A step of a micrometre is enough to leave
-/// the face and small enough to keep every real surface in front of the point.
-const SHELL_INSET_MM: f64 = 1.0e-3;
-/// The product envelopes one ray may step through before the point is taken as it is.
-///
-/// Nested products are the awkward case; the bound keeps a pathological document from spinning.
-const MAX_SHELLS: usize = 4;
 
 /// Everything one pointer frame of the ruler carries besides the document and the pointer response.
 ///
@@ -203,7 +195,7 @@ fn resolve(
         None
     } else {
         PlaneSnap::at(camera, rect, pointer, plane)
-            .and_then(|snap| surface_under(project, contact, snap.ray.origin(), snap.ray.direction(), sight))
+            .and_then(|snap| face_under(project, contact, snap.ray.origin(), snap.ray.direction(), sight))
     };
     let Some(snap) = PlaneSnap::at(camera, rect, pointer, plane) else {
         return face.and_then(|point| measure_point(point, camera, rect, Some(model::SnapKind::Face), false));
@@ -218,41 +210,21 @@ fn resolve(
     measure_point(answer.point, camera, rect, answer.kind, answer.locked)
 }
 
-/// Where the hand is: the camera, the viewport it draws in and the pointer on it.
-///
-/// The three travel together because one resolver reads them as one place — the pixel and the two
-/// values that turn it into a ray (AGENTS §1.5), so the sight and the modifier set stay the only
-/// other inputs a resolution has.
-#[derive(Clone, Copy, Debug)]
-struct Aim {
-    camera: Camera,
-    rect: Rect,
-    pointer: Pos2,
-}
-
 /// The first surface the ray really meets, stepping past the near face of a product's reserved box.
 ///
 /// A product envelope is a probe surface (ADR 0103), but from outside the piece it is the first
 /// thing the ray meets, so a ruler that took it would report the front of the reserved box while
-/// the person points at a shelf behind it. The ray restarts a micrometre inside the envelope and
-/// looks again, at most [`MAX_SHELLS`] times, so the boards inside win. Every other surface — a
-/// panel, a body, the far envelope face of the product the point is now in — is the answer.
-fn surface_under(
+/// the person points at a shelf behind it. [`surface_under`] steps past it and answers the point of
+/// the face, which is the place this ruler measures.
+fn face_under(
     project: &Project,
     contact: Option<&dyn geom::Contact>,
     origin: DVec3,
     direction: DVec3,
     sight: Sight<'_>,
 ) -> Option<DVec3> {
-    let mut from = origin;
-    for _ in 0..=MAX_SHELLS {
-        let probe = project.probe(from, direction, sight, contact)?;
-        if probe.hit.kind != SurfaceKind::Shell {
-            return Some(probe.face.point);
-        }
-        from = probe.face.point + direction * SHELL_INSET_MM;
-    }
-    None
+    let contact = contact?;
+    surface_under(project, contact, origin, direction, sight).map(|probe| probe.face.point)
 }
 
 /// One world point in document units and on screen, or nothing when it is not representable.

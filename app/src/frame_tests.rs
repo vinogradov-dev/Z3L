@@ -2678,9 +2678,12 @@ fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
     // at its own centre and at its quadrants.
     //
     // The table is walked in both modes, because the mode is what decides what the answer *is*
-    // (U119): in 2.5D the click stores the candidate's foot on the drawing plane, and in 3D a
-    // candidate above that plane is not a place the sketch can store at all, so only the plane's own
-    // grid answers. In both modes the marker stands on the point the click stores.
+    // (U119, U121). In 2.5D the sketch draws where the view says, so the click stores the candidate's
+    // foot on that plane. In 3D the sketch takes the plane of the face under the pointer: a candidate
+    // lying on that face — the middle of the face, the middle of one of its edges — is in the sketch
+    // plane and captures where it is, while a place off the face the hand is on, the far corner
+    // hidden behind the body or anything of a ball, is not a place the sketch can store and the grid
+    // answers instead. In both modes the marker stands on the point the click stores.
     for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
         let mut harness = Harness::with_session("snap-body", body_and_ball_session());
         sketch_in_mode(&mut harness, mode);
@@ -2693,26 +2696,37 @@ fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
             .as_constructive()
             .expect("a body");
         let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+        // Each place, and whether the sketch's plane must be the face the hand points at: the middle
+        // of a visible face is where the plane is answered; the middle of an edge draws no plane of
+        // its own — a ray exactly along it stops at nothing — the far vertical edge is behind the
+        // body, and a ball's surface names the plane that touches it, which holds no place of the
+        // ball.
         let spots = [
-            ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0)),
-            ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0)),
-            ("top edge", geom::DVec3::new(x + 100.0, y, 300.0)),
-            ("vertical edge", geom::DVec3::new(x, y, 150.0)),
-            ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0)),
-            ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0)),
+            ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0), true),
+            ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0), true),
+            ("top edge", geom::DVec3::new(x + 100.0, y, 300.0), false),
+            ("vertical edge", geom::DVec3::new(x, y, 150.0), false),
+            ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0), false),
+            ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0), false),
         ];
-        for (name, world) in spots {
+        for (name, world, on_the_face) in spots {
             let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
             harness.run(vec![egui::Event::PointerMoved(at)]);
             let document = harness.app.tabs.active();
             let kind = document.draw_gizmo.snap_kind();
             let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
             let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+            let plane = document.draw_gizmo.plane(harness.camera());
+            let stored = plane.world(geom::DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
             match mode {
                 model::SnapMode::Foot => {
+                    assert_eq!(
+                        plane,
+                        gizmo_math::WorkPlane::from_camera(harness.camera()),
+                        "2.5D draws where the view says"
+                    );
                     assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
                     assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
-                    let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
                     assert!(
                         (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
                         "the {name} reads a candidate above the plane by its perpendicular foot: {stored:?} \
@@ -2720,13 +2734,28 @@ fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
                     );
                 }
                 model::SnapMode::Space => {
-                    assert!(
-                        kind.is_none_or(|kind| kind == SnapKind::Grid),
-                        "the {name} stands off the sketch plane, so 3D captures nothing of it: {kind:?}"
-                    );
+                    if on_the_face {
+                        assert_ne!(
+                            plane,
+                            gizmo_math::WorkPlane::from_camera(harness.camera()),
+                            "the {name} gives the sketch the plane of the face under the pointer"
+                        );
+                    }
+                    // A place of the plane the pointer named captures it and is stored where it is,
+                    // because in 3D the sketch takes no candidate that stands off its plane.
+                    let foot = plane.world(plane.local(world));
+                    if (world - foot).length() <= 1.0e-3 {
+                        assert!(
+                            kind.is_some_and(|kind| kind != SnapKind::Grid),
+                            "the {name} is a place of the sketch plane: {kind:?}"
+                        );
+                        assert!(
+                            (stored - world).length() < 0.01,
+                            "the {name} is stored where it is: {stored:?} against {world:?}"
+                        );
+                    }
                 }
             }
-            let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
             let drawn =
                 gizmo_math::screen_point(harness.camera(), harness.scene(), stored).expect("the point is on screen");
             assert!(
