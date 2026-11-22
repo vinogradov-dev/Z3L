@@ -125,6 +125,16 @@ impl Harness {
         self.run(Vec::new())
     }
 
+    /// How many repaint requests the shell's own code made in the frame before the last one.
+    ///
+    /// `egui` names a frame's causes one pass later, and its own widgets ask for frames of their own
+    /// (a scroll area that follows its content, a fading hover), so a delay is no evidence: the
+    /// file that asked is. The shell's own file is where a frame asks for the frame after it, and a
+    /// call that landed is the reason it does (X111).
+    fn shell_requests(&self) -> usize {
+        self.ctx.repaint_causes().iter().filter(|cause| cause.file.ends_with("app/src/main.rs")).count()
+    }
+
     /// Draws idle frames until the scene rectangle stops moving.
     ///
     /// A gesture leaves work for the frame after it: the side panels narrow over
@@ -6594,6 +6604,43 @@ fn a_channel_call_is_answered_at_the_frame_boundary() {
 }
 
 #[test]
+fn a_call_that_lands_answers_in_the_frame_it_asks_for_with_no_input_at_all() {
+    // The window paints on input, so a call from the channel used to wait for a pointer only a
+    // person brings: the document moved, the tab was dirty, and the frame the person saw was the old
+    // one (X111, ADR 0225). A call now rings the window the moment it is queued — the mailbox the
+    // window watches is told what to do — and the frame that lands it asks for the frame that shows
+    // it. Nothing in this test touches the pointer or a key.
+    let folder = testkit::scratch_dir("frame-channel-landed");
+    let (mut harness, _panel) = chat_fixture("frame-channel-landed-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+    assert_eq!(harness.shell_requests(), 0, "an idle window asks for no frame of its own");
+
+    let before = harness.revision();
+    let mailbox = harness.app.mailbox.as_ref().expect("the mailbox comes with the channel");
+    let answering = mailbox.post(mcp::Call::Dispatch(shelf_request(product))).expect("the call queues");
+    assert_eq!(harness.revision(), before, "a queued call has not been answered yet: it waits for a frame");
+
+    harness.frame();
+    let answer = answering.take().expect("the frame answered the call");
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_ne!(harness.revision(), before, "the frame that answered the call landed it, and the window is awake");
+    let created = answer.body()["created"][0].as_u64().expect("the answer names the part it created");
+    let shelf = Id::new(created).expect("an id is never zero");
+    assert!(
+        harness.app.tabs.active().frame().drawables().iter().any(|drawable| drawable.id == shelf),
+        "the scene was rebuilt in the frame the call returned, so the part is in it"
+    );
+
+    // `egui` names a frame's causes one pass later, so the request the call's own frame made is read
+    // here: one ask, from the shell, with no pointer behind it.
+    harness.frame();
+    assert_eq!(harness.shell_requests(), 1, "the frame that landed the call asked for the frame that shows it");
+}
+
+#[test]
 fn a_call_waits_for_the_gesture_and_then_lands_with_the_ids_it_created() {
     // A call that moves the document is not refused because a gesture holds the window: it waits for
     // the first frame that has the window to itself and answers with the report of what landed. A
@@ -6737,7 +6784,7 @@ fn a_closed_window_removes_the_token_it_published() {
     let file = mcp::Channel::file(&folder);
     {
         let mut harness = Harness::new("frame-channel-window");
-        assert!(harness.app.attach_channel(&folder), "the channel opens in a folder of its own");
+        assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
         assert!(file.exists(), "the port and the token are published");
         harness.frame();
     }
@@ -6752,16 +6799,16 @@ fn the_assistant_switch_closes_and_reopens_the_channel() {
     let file = mcp::Channel::file(&testkit::scratch_dir("frame-channel-switch"));
     assert!(harness.app.settings.assistant.attach, "a fresh workspace offers the channel");
 
-    harness.app.apply_channel();
+    harness.app.apply_channel(&harness.ctx);
     assert!(file.exists(), "the channel publishes its token while the switch is on");
 
     harness.app.settings.assistant.attach = false;
-    harness.app.apply_channel();
+    harness.app.apply_channel(&harness.ctx);
     assert!(harness.app.channel.is_none(), "the switch closes the door");
     assert!(!file.exists(), "and the token goes with it");
 
     harness.app.settings.assistant.attach = true;
-    harness.app.apply_channel();
+    harness.app.apply_channel(&harness.ctx);
     assert!(file.exists(), "turning it back on publishes a new token");
 }
 

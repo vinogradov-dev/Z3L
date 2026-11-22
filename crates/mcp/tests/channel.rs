@@ -10,7 +10,8 @@
 #![allow(clippy::expect_used)]
 
 use std::path::Path;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use engine::{BatchStep, Query, Session};
 use mcp::channel::{Call, Channel, FILE_NAME};
@@ -26,6 +27,12 @@ use tokio::net::TcpStream;
 
 /// How long a step of the test may take before it counts as a failure.
 const DEADLINE: Duration = Duration::from_secs(10);
+
+/// The budget a served call answers in when the host is asleep and waiting for the bell.
+///
+/// It covers the socket, the ring and the answer and nothing else: a host that waited for a pointer
+/// event, or for a clock, would need a person or a timer this test never provides (X111).
+const ANSWER_BUDGET: Duration = Duration::from_millis(500);
 
 /// The port and the token the channel published, as any client reads them.
 fn published(directory: &Path) -> (u16, String) {
@@ -130,6 +137,53 @@ async fn a_token_reaches_the_commands_and_a_request_without_one_never_does() {
     let _ = client.close().await;
     channel.shutdown();
     assert!(!directory.join(FILE_NAME).exists(), "a clean exit removes the token file");
+}
+
+#[tokio::test]
+async fn a_served_call_rings_the_host_and_answers_inside_the_budget() {
+    // X111: a window repaints on input, so a call that arrived while the person was not touching it
+    // waited in the queue for a pointer event only the person could bring. The host of this test is
+    // asleep until the channel rings it, so an answer here is the bell's own evidence: nothing in
+    // this test polls the mailbox, moves a pointer or waits on a clock.
+    let directory = testkit::scratch_dir("channel-budget");
+    let (channel, mut mailbox) = Channel::open(&directory).expect("the channel opens");
+    let rung = Arc::new(tokio::sync::Notify::new());
+    mailbox.watch({
+        let rung = Arc::clone(&rung);
+        Arc::new(move || rung.notify_one())
+    });
+    let mut session = session();
+    let mut client = client(&directory).await;
+
+    let started = Instant::now();
+    let answered = {
+        let call = client.call_tool(CallToolRequestParams::new(TOOL_LIST));
+        tokio::pin!(call);
+        // The call is polled while the host sleeps, because that is what writes its frame to the
+        // socket: no answer may arrive before the ring, and nothing polls the mailbox (X111).
+        tokio::time::timeout(ANSWER_BUDGET, async {
+            tokio::select! {
+                answered = &mut call => panic!("the call answered before the host was rung: {answered:?}"),
+                () = rung.notified() => {}
+            }
+        })
+        .await
+        .expect("the call rings the host");
+        let pending = mailbox.take().expect("the ring names a call that is waiting");
+        let asked = answer(&mut session, pending.call());
+        pending.answer(asked);
+        let answered = tokio::time::timeout(ANSWER_BUDGET, &mut call).await.expect("the answer arrives");
+        answered.expect("the call answers")
+    };
+    assert!(answered.structured_content.is_some(), "the host's answer reached the client");
+    assert!(
+        started.elapsed() <= ANSWER_BUDGET,
+        "a served call answers in {:?}, inside the budget written beside it",
+        started.elapsed()
+    );
+
+    let _ = client.close().await;
+    channel.shutdown();
 }
 
 #[tokio::test]

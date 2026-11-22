@@ -9,18 +9,26 @@
 //! that has the window to itself — a gesture in hand delays it instead of refusing it — and a call
 //! whose caller has gone before that is dropped instead of performed (ADR 0223).
 //!
+//! A queued call rings the host: a window paints on input, so a call that arrived while nothing
+//! else happened used to wait in the queue for a pointer only a person can bring (X111). The host
+//! hands in one wake (`Mailbox::watch`) — a window's `Context::request_repaint`, since this crate
+//! knows no `egui` — and the socket rings it the moment a call is queued (ADR 0225).
+//!
 //! Three things bound the exposure, and each has a test (ADR 0188): the socket binds `127.0.0.1` on
 //! an ephemeral port and nothing else, a connection that does not present the run token is refused
 //! before a single byte is read as a command, and the token is written only into an owner-only file
 //! in the settings directory, from which a client learns the port. The file is removed on a clean
 //! exit: a reader that cannot connect reads "no window is open here", never "the window is broken".
 //!
-//! Changes when: the handshake, the token file or the set of calls a host answers changes.
+//! Changes when: the handshake, the token file, the wake a host installs or the set of calls a host
+//! answers changes.
 
 use std::fmt;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use engine::Query;
@@ -100,6 +108,88 @@ pub enum Call {
     Inspect,
 }
 
+impl Call {
+    /// The word a log line names this call by: what a caller asked for, in the protocol's own words.
+    pub const fn word(&self) -> &'static str {
+        match self {
+            Self::List => "listing",
+            Self::Dispatch(_) => "batch",
+            Self::Ask(_) => "query",
+            Self::Inspect => "window report",
+        }
+    }
+}
+
+/// What a host wants done when a call arrives, so its own frame can answer it.
+///
+/// This crate is forbidden `egui` (ADR 0186) and owns no window, so a host hands in one closure that
+/// asks its frame for another one from any thread — a window passes
+/// `Context::request_repaint`, which is what wakes a `winit` loop that has nothing to do.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// The host's bell: rung by the socket when a call is queued, and watched once by the host.
+///
+/// A window paints on input, so a call that arrived while nothing else happened used to wait for a
+/// pointer only a person can bring: the queue filled and no frame drained it (X111). The bell is the
+/// one thing that turns "a call arrived" into "a frame is coming".
+#[derive(Default)]
+struct Bell {
+    /// The host's wake, once it has told the mailbox where to ring.
+    wake: Mutex<Option<Wake>>,
+    /// A call was queued while no host was watching, so installing the wake rings at once: a window
+    /// is never left asleep with a call waiting behind it.
+    early: AtomicBool,
+}
+
+impl Bell {
+    /// Queues `call` and rings the host, which is the one thing the socket and a test do.
+    fn queue(&self, calls: &mpsc::UnboundedSender<Pending>, call: Call) -> Result<oneshot::Receiver<Answer>, Answer> {
+        let (reply, answered) = oneshot::channel();
+        calls.send(Pending { call, reply }).map_err(|_| Answer::refused(GONE))?;
+        self.ring();
+        Ok(answered)
+    }
+
+    /// Installs the host's wake, ringing it when a call arrived before anybody was watching.
+    fn watch(&self, wake: Wake) {
+        {
+            let mut held = match self.wake.lock() {
+                Ok(held) => held,
+                // The panic that poisoned the lock belongs to the wake this replaces; the slot is
+                // still the host's, so it is written as it would have been.
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *held = Some(wake);
+        }
+        if self.early.swap(false, Ordering::SeqCst) {
+            self.ring();
+        }
+    }
+
+    /// Tells the host that a frame is needed, or remembers that it will be once it watches.
+    fn ring(&self) {
+        let wake = match self.wake.lock() {
+            Ok(held) => held.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        match wake {
+            Some(wake) => wake(),
+            None => self.early.store(true, Ordering::SeqCst),
+        }
+    }
+}
+
+impl fmt::Debug for Bell {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The wake is a closure, so the only fact worth printing is whether a host is watching.
+        let watched = match self.wake.lock() {
+            Ok(held) => held.is_some(),
+            Err(poisoned) => poisoned.into_inner().is_some(),
+        };
+        formatter.debug_struct("Bell").field("watched", &watched).finish()
+    }
+}
+
 /// A request waiting for the host, and the reply it is waiting on.
 ///
 /// The host reads [`Self::call`], performs it against the document in front of the person, and
@@ -145,12 +235,35 @@ impl fmt::Debug for Pending {
 #[derive(Debug)]
 pub struct Mailbox {
     pending: mpsc::UnboundedReceiver<Pending>,
+    /// The same queue, held so a host can reach it with no client — [`Self::post`] — and so the
+    /// socket's end is never the only writer of the mailbox's own channel.
+    sends: mpsc::UnboundedSender<Pending>,
+    /// Rung when a call is queued: the difference between a window that paints and one that sleeps.
+    bell: Arc<Bell>,
 }
 
 impl Mailbox {
     /// The next request waiting, without blocking.
     pub fn take(&mut self) -> Option<Pending> {
         self.pending.try_recv().ok()
+    }
+
+    /// Tells the mailbox what to do when a call arrives, which is how a window asks for a frame.
+    ///
+    /// A host sets it once, where it opens the channel, and the closure is called from the channel's
+    /// own thread: the window's `Context::request_repaint` is what a live window passes (ADR 0225).
+    pub fn watch(&self, wake: Wake) {
+        self.bell.watch(wake);
+    }
+
+    /// Queues one call the way the socket queues it, and hands back what the host will answer.
+    ///
+    /// The seam a host's own test arrives through: a frame test drives the real mailbox and the real
+    /// bell with no client, no socket and no runtime, so "a call woke the window" is asserted rather
+    /// than hoped for (X111).
+    #[doc(hidden)]
+    pub fn post(&self, call: Call) -> Result<Answering, Answer> {
+        self.bell.queue(&self.sends, call).map(Answering)
     }
 
     /// The next request, as a future: what a host with no frame to reach waits on.
@@ -264,14 +377,18 @@ impl Channel {
         listener.set_nonblocking(true).map_err(|error| reason("make the socket non-blocking", &error))?;
         let token = mint()?;
         let (calls, mailbox) = mpsc::unbounded_channel();
+        let bell = Arc::new(Bell::default());
         publish(&file, port, &token)?;
         let served = token.clone();
+        let rung = Arc::clone(&bell);
+        let queued = calls.clone();
         let (stop, stopped) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("z3l-channel".to_owned())
-            .spawn(move || serve_loop(listener, served, calls, stopped))
+            .spawn(move || serve_loop(listener, served, calls, rung, stopped))
             .map_err(|error| reason("start the channel thread", &error))?;
-        Ok((Self { port, token, stop: Some(stop), thread: Some(thread), file }, Mailbox { pending: mailbox }))
+        let mailbox = Mailbox { pending: mailbox, sends: queued, bell };
+        Ok((Self { port, token, stop: Some(stop), thread: Some(thread), file }, mailbox))
     }
 
     /// The loopback port the channel answers on.
@@ -426,6 +543,7 @@ fn serve_loop(
     listener: TcpListener,
     token: String,
     calls: mpsc::UnboundedSender<Pending>,
+    bell: Arc<Bell>,
     mut stop: oneshot::Receiver<()>,
 ) {
     let runtime = match crate::make_runtime() {
@@ -450,8 +568,9 @@ fn serve_loop(
                     let Ok((stream, _peer)) = accepted else { continue };
                     let token = token.clone();
                     let calls = calls.clone();
+                    let bell = Arc::clone(&bell);
                     tokio::spawn(async move {
-                        if let Err(error) = connection(stream, &token, calls).await {
+                        if let Err(error) = connection(stream, &token, calls, &bell).await {
                             log::debug!("a control channel connection ended: {error}");
                         }
                     });
@@ -466,6 +585,7 @@ async fn connection(
     stream: tokio::net::TcpStream,
     token: &str,
     calls: mpsc::UnboundedSender<Pending>,
+    bell: &Arc<Bell>,
 ) -> Result<(), ServeError> {
     let (mut reader, mut writer) = stream.into_split();
     let presented = match timeout(HANDSHAKE_DEADLINE, read_line(&mut reader)).await {
@@ -480,7 +600,7 @@ async fn connection(
         return Ok(());
     }
     writer.write_all(ACCEPTED).await.map_err(|error| ServeError::Start(error.to_string()))?;
-    crate::serve(AttachedServer { calls }, reader, writer).await
+    crate::serve(AttachedServer { calls, bell: Arc::clone(bell) }, reader, writer).await
 }
 
 /// Reads one line of at most [`HANDSHAKE_CAP`] bytes, one byte at a time.
@@ -507,14 +627,14 @@ async fn read_line<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<String> {
 /// The served window: every tool becomes a call the host answers between frames.
 struct AttachedServer {
     calls: mpsc::UnboundedSender<Pending>,
+    /// Rung after every queued call, so the host paints the frame that answers it (X111).
+    bell: Arc<Bell>,
 }
 
 impl AttachedServer {
-    /// Queues one call and hands back the reply it will be answered with.
+    /// Queues one call, rings the host, and hands back the reply it will be answered with.
     fn queue(&self, call: Call) -> Result<oneshot::Receiver<Answer>, Answer> {
-        let (reply, answered) = oneshot::channel();
-        self.calls.send(Pending { call, reply }).map_err(|_| Answer::refused(GONE))?;
-        Ok(answered)
+        self.bell.queue(&self.calls, call)
     }
 }
 
@@ -645,6 +765,32 @@ mod tests {
             std::fs::write(&file, text).expect("a file");
             assert!(read_published(&file).is_none(), "{text:?} is not a channel");
         }
+    }
+
+    #[test]
+    fn a_queued_call_rings_the_host_which_is_what_asks_a_window_for_a_frame() {
+        // The window paints on input, so a call that arrives while nothing else happens must ring it:
+        // otherwise the queue fills and no frame drains it (X111, ADR 0225). A call that arrives in
+        // the moment between publishing the port and installing the wake is the same case one step
+        // earlier, so installing the wake rings for it.
+        let directory = testkit::scratch_dir("channel-ring");
+        let (channel, mailbox) = Channel::open(&directory).expect("the channel opens");
+        let rung = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting = |clock: &std::sync::Arc<std::sync::atomic::AtomicUsize>| {
+            let clock = std::sync::Arc::clone(clock);
+            std::sync::Arc::new(move || {
+                clock.fetch_add(1, Ordering::SeqCst);
+            }) as Wake
+        };
+
+        let _answered = mailbox.post(Call::List).expect("the mailbox holds its own queue");
+        assert_eq!(rung.load(Ordering::SeqCst), 0, "a call before the host watches has nobody to ring");
+        mailbox.watch(counting(&rung));
+        assert_eq!(rung.load(Ordering::SeqCst), 1, "the host is woken for the call it slept through");
+
+        let _answered = mailbox.post(Call::Inspect).expect("a second call queues");
+        assert_eq!(rung.load(Ordering::SeqCst), 2, "and every call after that rings at once");
+        channel.shutdown();
     }
 
     #[cfg(unix)]

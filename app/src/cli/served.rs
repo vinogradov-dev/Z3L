@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use model::Project;
 use project::SceneFile;
@@ -81,6 +82,13 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
     let folder = crate::settings_store::config_dir()
         .ok_or_else(|| CliError::Mcp("the settings folder is not known, so no token can be published".to_owned()))?;
     let (channel, mut mailbox) = mcp::Channel::open(&folder).map_err(|error| CliError::Mcp(error.to_string()))?;
+    // The host wakes when a call arrives, which is the only thing that ends the wait below: a call
+    // that lands here must answer at once and never wait for a frame that does not exist.
+    let (ring, rung) = std::sync::mpsc::channel::<()>();
+    mailbox.watch(std::sync::Arc::new(move || {
+        // A dropped receiver means this loop is gone, and nobody is left to wake.
+        let _ = ring.send(());
+    }));
     log::info!(
         target: "z3l::shell",
         "serving the control channel on 127.0.0.1:{}; the token is in {}",
@@ -114,7 +122,9 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
             };
             pending.answer(answer);
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        // A call rings the bell, so this host sleeps until one arrives instead of polling a clock: a
+        // process with no window has no pointer to wait for either (X111).
+        let _ = rung.recv_timeout(IDLE_WAIT);
     }
     channel.shutdown();
     Ok(())
@@ -122,6 +132,12 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
 
 /// The sentence `ui_inspect` answers with in a process that has no window.
 const NO_WINDOW: &str = "this process serves a document without a window: `ui_inspect` reports the window a person is looking at, and there is none here";
+
+/// How long the headless host waits for the next call before it looks at its own stop flag again.
+///
+/// A call rings the bell and ends the wait at once; the timeout is only how a closed standard input —
+/// the parent's way to stop the channel — is noticed (X111).
+const IDLE_WAIT: Duration = Duration::from_millis(50);
 
 /// The scene a served session writes, and the sections this build must give back.
 #[derive(Debug)]

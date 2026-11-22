@@ -323,6 +323,12 @@ struct App {
     /// A frame owns the list while it answers it, because an answer borrows the document the call is
     /// about; the queue itself is the channel's.
     queued: Vec<mcp::Pending>,
+    /// The number of the frame the window is drawing, counted from one.
+    ///
+    /// The request path names it when it answers a call, so a person reading the log can tell which
+    /// frame landed what an agent asked for — the frame a call waits for is the one that shows it
+    /// (X111).
+    frames: u64,
     /// The assistant panel: the conversation, the person's mode switch and the turn in flight.
     ///
     /// The panel is window state, not document state: it is never serialised and it cannot write the
@@ -363,7 +369,7 @@ impl App {
         let watch = directory_watch::Watch::start(root, start.revision);
         let session = empty_session_with(start.directory)?;
         let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
-        app.apply_channel();
+        app.apply_channel(ctx);
         if let Some(refusal) = start.refusal {
             log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
             app.failed(refusal);
@@ -454,6 +460,7 @@ impl App {
             channel: None,
             mailbox: None,
             queued: Vec::new(),
+            frames: 0,
             chat: Chat::new(),
         })
     }
@@ -780,8 +787,9 @@ impl App {
     ///
     /// The channel listens only while the window is open and only while the workspace allows it: a
     /// switch pressed in the Settings window takes effect on that frame, and a closed window removes
-    /// the token file a client would have read.
-    fn apply_channel(&mut self) {
+    /// the token file a client would have read. The context is the one thing a channel cannot know
+    /// (`mcp` is forbidden `egui`), so the frame hands it in as the wake a queued call rings (X111).
+    fn apply_channel(&mut self, ctx: &egui::Context) {
         if !self.settings.assistant.attach {
             if let Some(channel) = self.channel.take() {
                 log::info!(target: "z3l::shell", "the control channel on port {} is closed", channel.port());
@@ -797,7 +805,7 @@ impl App {
             log::info!(target: "z3l::shell", "no settings folder is known, so no agent can reach this window");
             return;
         };
-        self.attach_channel(&folder);
+        self.attach_channel(&folder, ctx);
     }
 
     /// Opens the channel in `folder`, keeping the window when it cannot be opened.
@@ -805,7 +813,11 @@ impl App {
     /// A second window is the ordinary case, not an error a person has to solve: the first window's
     /// channel is the one a client reaches, and this one stays without a door and says so in the log
     /// (ADR 0188).
-    fn attach_channel(&mut self, folder: &Path) -> bool {
+    ///
+    /// The mailbox is told what to do the moment a call arrives: ask this window for a frame. A
+    /// window paints on input, so a call that lands while the person is not touching it would
+    /// otherwise wait for a pointer that may never come (X111, ADR 0225).
+    fn attach_channel(&mut self, folder: &Path, ctx: &egui::Context) -> bool {
         match mcp::Channel::open(folder) {
             Ok((channel, mailbox)) => {
                 log::info!(
@@ -814,6 +826,8 @@ impl App {
                     channel.port(),
                     channel.published_at().display()
                 );
+                let window = ctx.clone();
+                mailbox.watch(std::sync::Arc::new(move || window.request_repaint()));
                 self.channel = Some(channel);
                 self.mailbox = Some(mailbox);
                 true
@@ -835,7 +849,10 @@ impl App {
     ///   piece in hand or a question waiting for the person delays the call instead of refusing it,
     ///   because a refusal says nothing about the edit that a late frame would perform;
     /// * a call whose caller has gone is dropped before anything reads it, so no change lands for a
-    ///   caller that gave up at the channel's deadline and will never hear about it.
+    ///   caller that gave up at the channel's deadline and will never hear about it;
+    /// * the frame that answers asks for the frame after it, and the call rings the window the
+    ///   moment it is queued (`Mailbox::watch`), so nothing here waits for a pointer a person has to
+    ///   bring (X111, ADR 0225).
     ///
     /// Reads are answered whatever the window is doing: a question about the document moves nothing.
     fn serve_channel(&mut self, ctx: &egui::Context) {
@@ -843,6 +860,7 @@ impl App {
             self.queued.extend(mailbox.drain());
         }
         let mut held = Vec::new();
+        let mut moved = false;
         for pending in std::mem::take(&mut self.queued) {
             if pending.abandoned() {
                 log::info!(
@@ -855,15 +873,23 @@ impl App {
                 held.push(pending);
                 continue;
             }
+            moved |= matches!(pending.call(), mcp::Call::Dispatch(_));
             let answer = self.answer_channel(pending.call());
+            // The answer reaches the caller inside the frame and before the frame is painted, so
+            // the frame it names is the one that landed the change (X111).
+            log::info!(
+                target: "z3l::shell",
+                "the window answered a {} in frame {}",
+                pending.call().word(),
+                self.frames
+            );
             pending.answer(answer);
         }
         self.queued = held;
-        if !self.queued.is_empty() {
-            // A held call is answered by a frame, and the window paints on input: asking for the
-            // frame itself is what keeps an agent's call from waiting for a pointer that may never
-            // come. The clause covers the calls this frame holds; the wait behind the rest of the
-            // window repainting is X111's.
+        if moved || !self.queued.is_empty() {
+            // A call that landed asks for the frame that shows it, and a held one asks for the frame
+            // that can answer it: asking here is what keeps an agent's call from waiting for a
+            // pointer that may never come (ADR 0223, X111).
             ctx.request_repaint();
         }
     }
@@ -1214,7 +1240,7 @@ impl App {
         // The assistant section is the channel's door: a switch pressed here closes or opens it on
         // this frame, so the file a client reads describes the window that is actually there.
         if self.settings.assistant != before.assistant {
-            self.apply_channel();
+            self.apply_channel(ctx);
         }
         if self.settings.snaps.kinds() != before.snaps.kinds() || self.settings.snaps.mode != before.snaps.mode {
             let choice = SnapChoice { kinds: self.settings.snaps.kinds(), mode: self.settings.snaps.mode };
@@ -1401,6 +1427,9 @@ impl App {
     }
 
     fn frame(&mut self, ui: &mut egui::Ui) -> Chrome {
+        // The frame the request path names when it answers an agent's call: a frame that landed one
+        // is the frame the person sees it in (X111).
+        self.frames = self.frames.saturating_add(1);
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
