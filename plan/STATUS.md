@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=eb01de7 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=93288fa updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,8 +35,8 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-Nothing is scheduled: the app stream's next step is U123, the Panels group and the creation menu
-whose four glyphs U122 drew.
+Nothing is scheduled: The order resumes at U123, the Panels group and its three cells, whose four
+glyphs U122 drew.
 
 ## Index
 

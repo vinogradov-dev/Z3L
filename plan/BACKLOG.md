@@ -105,33 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
-  Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
-   only slide toward the far end of its segment, so a ring can be shortened but never
-   lengthened — the drag stops at the opposite node and the typed length has one direction. The
-   expectation is that an along move travels both ways: the corner passes its segment's end,
-   the segment grows, and the neighbour that shares the corner follows. The clamp is measured:
-   `ContourEdit::move_corner_with(Along)` calls `clamp_to_extent`, and `geom`'s
-   `Line::clamp_to_extent` pins the parameter to `[margin/length, 1 - margin/length]` while the
-   arc variant pins the sweep to the sweep it already has, so a corner can never leave its
-   segment; `app/src/contour_gizmo.rs` treats reaching the far end as a collapse, which is what
-   a shortening drag was built for.
-  Shape: Separate the two rules the one clamp carries: the corner slides on the segment's
-   supporting line or circle with no bound, the segment takes the new end, and the joint
-   reconciles the neighbour it shares the corner with — a line keeps a non-zero length and an
-   arc keeps a representable sweep, and a corner that would put either past what the document
-   can hold is refused the way `join_corner` already refuses a mismatch. The collapse of a
-   segment to nothing stays what a typed `0` and a drag to the far end mean. The typed length
-   needs a direction: either a sign (`-40` shortens, `40` lengthens) or the field's own two
-   sides, decided by the design-operation procedure rather than by hand, and the card's switch
-   stays the only control. Decide the two end points of the number before the drag is touched:
-   the shortest legal segment and the longest sweep of an arc.
-  Done: A model test moves a corner past its segment's far end on a ring and on an open chain,
-   on a line and on an arc, and the segment grows while the ring stays valid; a headless frame
-   test drags a corner outward with the along switch on and the ring grows across frames; a
-   typed negative length shortens and a positive one lengthens the same corner; the shortening
-   drag and its collapse still behave; `cargo xtask ci` is green.
-  `files: crates/geom/src/segment.rs,crates/model/src/contour_edit.rs,crates/ui/src/contour_grips.rs,crates/ui/src/contour_edit.rs,app/src/contour_gizmo.rs`
 - `[ ]` **X97** the contour edit's old shape and its working copy are almost one colour
   Why: The owner, in contour edit mode: the shape the edit started from and the working copy
    are almost one colour, so a change cannot be read at a glance. Measured: `BASE_COLOR` is
@@ -1115,6 +1088,37 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
+  Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
+   only slide toward the far end of its segment, so a ring can be shortened but never
+   lengthened — the drag stops at the opposite node and the typed length has one direction. The
+   expectation is that an along move travels both ways: the corner passes its segment's end,
+   the segment grows, and the neighbour that shares the corner follows. The clamp is measured:
+   `ContourEdit::move_corner_with(Along)` calls `clamp_to_extent`, and `geom`'s
+   `Line::clamp_to_extent` pins the parameter to `[margin/length, 1 - margin/length]` while the
+   arc variant pins the sweep to the sweep it already has, so a corner can never leave its
+   segment; `app/src/contour_gizmo.rs` treats reaching the far end as a collapse, which is what
+   a shortening drag was built for.
+  Shape: Separate the two rules the one clamp carries: the corner slides on the segment's
+   supporting line or circle with no bound, the segment takes the new end, and the joint
+   reconciles the neighbour it shares the corner with — a line keeps a non-zero length and an
+   arc keeps a representable sweep, and a corner that would put either past what the document
+   can hold is refused the way `join_corner` already refuses a mismatch. The collapse of a
+   segment to nothing stays what a typed `0` and a drag to the far end mean. The typed number
+   keeps the one meaning it already has — the distance from the fixed far end — so a smaller
+   number shortens and a larger one lengthens the same corner, and its two ends are the
+   segment's own: zero is the collapse, and the top is the arc's sweep plus
+   `MAX_ARC_EXTENSION`, never a full turn, while a line's ceiling is the coordinate box the
+   document stores. The card's switch stays the only control.
+  Done: Tests: a model test moves a corner past its own end on a ring and on an open chain, on
+   a line and on an arc, and the segment grows while the ring stays valid; the drag toward the
+   far end still stops one margin short and a typed zero still records the collapse; a headless
+   frame test drags a corner outward with the along switch on and the side grows frame after
+   frame; the typed number is the distance from the fixed far end, so a smaller one shortens
+   and a larger one lengthens the same corner, and a number past what the segment holds is a
+   sentence naming both ends; `cargo xtask ci` is green.
+  `files: crates/geom/src/segment.rs,crates/model/src/contour_edit.rs,crates/ui/src/contour_grips.rs,crates/ui/src/contour_edit.rs,app/src/contour_gizmo.rs,app/src/frame_tests.rs` — `93288fa`
 
 - `[x]` **U122** the creation menu has artwork for every key it offers
   Why: The class and build menu the owner asks for is a list of six keys — Post, Shelf, Wall,
