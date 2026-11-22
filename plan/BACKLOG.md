@@ -105,25 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
-  Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
-   circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
-   a contour set is not a valid ring: a contour needs at least three segments, got 1"; the same
-   happens with two disjoint circles and, from the scene, when a drawing carries a circle
-   beside another ring. Expectation: a union of a circle and a shape is a drawing of two rings,
-   and of two circles is two rings. Suspected cause, measured: `simplify_loop` merges
-   consecutive pieces on one circle, so the four arcs become one 360° arc, and
-   `Contour::assemble` refuses a ring of fewer than three segments — the boolean produces a
-   ring the document cannot store.
-  Shape: Keep a closed ring storable: either `simplify_loop` never merges a ring down to one
-   segment, or a single closed arc is a legal contour. The second is the smaller rule and the
-   one that names the shape honestly; the first keeps every stored ring looking like the figure
-   it was drawn from. The test is the round trip of a stored one-arc ring through the file and
-   the mesh.
-  Done: A test unions a circle with a disjoint rectangle and stores two rings, another
-   round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
-   drawing of two rings; `cargo xtask ci` is green.
-  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs`
 - `[ ]` **P24** the status block says `## Now` is empty while a stream works in it
   Why: Why: The session-start block says `-> Nothing is scheduled: `## Now` is empty, the
    backlog keeps the work` while a declared stream's own task sits in `## Now`. Measured in
@@ -955,6 +936,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
+  Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
+   circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
+   a contour set is not a valid ring: a contour needs at least three segments, got 1"; the same
+   happens with two disjoint circles and, from the scene, when a drawing carries a circle
+   beside another ring. Expectation: a union of a circle and a shape is a drawing of two rings,
+   and of two circles is two rings. Suspected cause, measured: `simplify_loop` merges
+   consecutive pieces on one circle, so the four arcs become one 360° arc, and
+   `Contour::assemble` refuses a ring of fewer than three segments — the boolean produces a
+   ring the document cannot store.
+  Shape: Keep a closed ring storable: either `simplify_loop` never merges a ring down to one
+   segment, or a single closed arc is a legal contour. The second is the smaller rule and the
+   one that names the shape honestly; the first keeps every stored ring looking like the figure
+   it was drawn from. The test is the round trip of a stored one-arc ring through the file and
+   the mesh.
+  Done: A test unions a circle with a disjoint rectangle and stores two rings, another
+   round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
+   drawing of two rings; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs` — `5d9d89d`
 
 - `[x]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
   Why: Observation: a contour drawing that has been stored once is a dead operand. In
