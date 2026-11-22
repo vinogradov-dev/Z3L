@@ -104,26 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **X99** an armed boolean shows which ring is the base
-  Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
-   screen says which ring that is: a plain click on the second ring replaces the selection, so
-   the first loses its highlight while it is still an operand, and a Shift-click makes the
-   last-picked ring the primary and the brightest. The maker sees two rings that look like one
-   selection and cannot tell which one the subtraction cuts into.
-  Shape: While a boolean is armed the base ring draws in an ink of its own — a second accent
-   that means 'this is the frame' rather than 'this is selected' — and every operand keeps the
-   ordinary selection ink. The scene frame carries the two inks per shape (the shell knows the
-   arm and the base), the theme owns both colours and their contrast values (the icon role inks
-   are the second owner, ADR 0090), and the status bar or the card names the base by its object
-   name so the words and the picture agree. The base keeps its ink while the pointer hovers it,
-   and the pair reads the same in the tree row.
-  Done: Tests: an armed boolean draws the base ring in the base ink and its operands in the
-   selection ink, and the ink is asserted headlessly on the frame's own shape list; dropping
-   the mode returns every ring to the selection ink; the base ink has a measured contrast
-   against the viewport's background in every theme; the base's name is on the card. `cargo
-   xtask ci` is green.
-  `files: crates/ui/src/theme.rs,crates/ui/src/editor/boolean.rs,app/src/document.rs,app/src/scene_build.rs`
-
 ## Bugs
 - `[ ]` **X100** a contour set is extruded one body per ring
   Why: An intersection of three rings can leave two separate pieces, which the operation stores
@@ -1050,6 +1030,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X99** an armed boolean shows which ring is the base
+  Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
+   screen says which ring that is: a plain click on the second ring replaces the selection, so
+   the first loses its highlight while it is still an operand, and a Shift-click makes the
+   last-picked ring the primary and the brightest. The maker sees two rings that look like one
+   selection and cannot tell which one the subtraction cuts into.
+  Shape: While a boolean is armed the base ring draws in an ink of its own — a second accent
+   that means 'this is the frame' rather than 'this is selected' — and every operand keeps the
+   ordinary selection ink. The scene frame carries the two inks per shape (the shell knows the
+   arm and the base), the theme owns both colours and their contrast values (the icon role inks
+   are the second owner, ADR 0090), and the status bar or the card names the base by its object
+   name so the words and the picture agree. The base keeps its ink while the pointer hovers it,
+   and the pair reads the same in the tree row.
+  Done: Tests: an armed boolean draws the base ring in the base ink and its operands in the
+   selection ink, and the ink is asserted headlessly on the frame's own shape list; dropping
+   the mode returns every ring to the selection ink; the base ink has a measured contrast
+   against the viewport's background in every theme; the base's name is on the card. `cargo
+   xtask ci` is green.
+  `files: crates/ui/src/theme.rs,crates/ui/src/editor/boolean.rs,app/src/document.rs,app/src/scene_build.rs` — `283bac5`
 
 - `[x]` **X97** the contour edit's old shape and its working copy are almost one colour
   Why: The owner, in contour edit mode: the shape the edit started from and the working copy

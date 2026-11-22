@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X99 state=doing base=01eff80 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=283bac5 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,7 +35,7 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-X99 is next: an armed boolean shows which ring is the base
+Nothing is scheduled: 51 open tasks wait in `## Next`.
 
 ## Index
 
