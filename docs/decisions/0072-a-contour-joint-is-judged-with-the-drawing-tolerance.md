@@ -1,6 +1,6 @@
 # 0072. A contour joint is judged with the drawing tolerance
 
-- Status: Accepted; its slack corrected to a whole millidegree (G3)
+- Status: Accepted; its slack corrected to a whole millidegree (G3), and its converters close the joints they accept (X103)
 - Date: 2026-11-08
 
 ## Context
@@ -48,6 +48,18 @@ arc_slack = 2 µm + radius × 1.746e-5   (0 for a line)
 The tolerance is not a licence for a sloppy chain: on a 100 mm arc it is 4 µm, and a 20 µm gap is
 still a gap. On a 600 mm arc it is 14 µm, which is two stored units plus the rounding of the arc
 itself.
+
+**A converter closes the joint it accepts.** Judging a joint by this rule and handing it on as it
+stands are not the same thing: the arrangement a boolean traces welds its own vertices at
+`VERTEX_TOLERANCE = 1e-6` mm (ADR 0043), three orders of magnitude below the document's tolerance,
+so a ring that is closed for the document and open for the arrangement is a dead operand — a union
+answers "the rings do not meet, so nothing is left" and `partition_regions` finds no area of the
+drawing at all (X103, the owner's `cross.z3l`). `Contour::to_geometry` therefore welds the ring
+after the rule has passed it, with `geom::Contour::welded`: the line side of a joint moves onto the
+arc's derived end, the curve that cannot move stays where it is, and the result is exactly closed.
+This is the repair ADR 0203 makes for a frame's ring, done once for every stored ring instead of at
+each reader, and it moves nothing further than the tolerance this record already allows. A ring the
+rule cannot close is handed on as it came, so nothing that loaded before stops loading.
 
 ## Consequences
 A ring the user drew with an arc assembles, converts to geometry and extrudes; the closing click of

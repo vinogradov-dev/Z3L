@@ -3,7 +3,7 @@
 //! Development-only: nothing in the product may depend on this crate.
 //!
 //! A helper lives here when more than one crate's tests need it. `millimetres`, `open_path`,
-//! `cube_mesh`, `sample_project` and `sample_product_project` are defined in
+//! `cube_mesh`, `sample_project`, `sample_product_project` and `cross_rings` are defined in
 //! `model::testing` and re-exported here, because that is the only crate that can define
 //! them for both itself and everyone else (C7).
 #![forbid(unsafe_code)]
@@ -26,7 +26,7 @@ use units::Length;
 /// The fixtures every crate's tests start from, defined once in `model::testing`
 /// (C7): a crate cannot re-export them back into `model`, because the dev-dependency
 /// cycle would compile the model twice and its types would not match.
-pub use model::testing::{cube_mesh, millimetres, open_path, sample_product_project, sample_project};
+pub use model::testing::{cross_rings, cube_mesh, millimetres, open_path, sample_product_project, sample_project};
 
 /// A unique, empty scratch directory under the session temp root.
 ///

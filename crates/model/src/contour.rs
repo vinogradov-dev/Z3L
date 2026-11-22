@@ -692,6 +692,61 @@ mod tests {
         assert_eq!(ring, Err(ContourError::NotClosed { index: 0 }));
     }
 
+    /// A joint the document allowed is a joint the geometry layer sees closed: the exact readers
+    /// — the boolean, the area partition, a half-plane cut — assume one boundary and weld at a
+    /// nanometre of their own (ADR 0043), while the document allows a few micrometres at an arc's
+    /// derived end (ADR 0072). A ring handed on with its gaps intact is a dead operand (X103).
+    #[test]
+    fn the_geometry_ring_of_a_stored_ring_is_closed_at_every_joint() {
+        // A 600 mm arc's derived end misses the drawn point by `2 µm + radius × 1.746e-5`, which is
+        // 12 µm, so ten micrometres is a joint the document accepts.
+        let arc = ContourSegment::arc(
+            [Length::ZERO, Length::ZERO],
+            millimetres(600),
+            Degrees::ZERO,
+            Degrees::from_millidegrees(60_000),
+        )
+        .expect("a 60 degree arc of 600 mm");
+        let end = arc.end().expect("a derived end");
+        let gap = [Length::from_micrometres(end[0].micrometres() + 10), end[1]];
+        let ring = Contour::new(vec![
+            arc,
+            ContourSegment::line(gap, [Length::ZERO, Length::ZERO]).expect("the chord"),
+            ContourSegment::line([Length::ZERO, Length::ZERO], [millimetres(600), Length::ZERO]).expect("the base"),
+        ])
+        .expect("ten micrometres are inside the slack of a 600 mm arc");
+
+        let geometry = ring.to_geometry().expect("the stored ring converts");
+        let segments = geometry.segments();
+        for (index, pair) in segments.iter().zip(segments.iter().cycle().skip(1)).take(segments.len()).enumerate() {
+            let miss = (pair.0.end() - pair.1.start()).length();
+            assert!(miss < 1.0e-9, "joint {index} of the converted ring misses by {miss} mm");
+        }
+        assert_eq!(segments.len(), 3, "closing a joint moves it, it does not add a segment");
+    }
+
+    /// The two rings of the owner's `cross.z3l` intersection are a drawing the document accepted
+    /// and the boolean dropped: their arcs end 4.6, 6.7, 10.1 and 12.4 µm off the lines they meet,
+    /// which the document's joint rule covers and a nanometre weld does not (X103).
+    #[test]
+    fn the_two_rings_of_the_cross_drawing_both_survive_a_union() {
+        let [lower, upper] = crate::testing::cross_rings();
+        // The stored arc end is derived from a rounded centre, radius and angles, so it is not the
+        // point the stored line starts at: the document's rule, not equality, is what closes it.
+        let segments: Vec<ContourSegment> = lower.segments().collect();
+        let arc_end = segments.get(2).expect("the arc").end().expect("an end");
+        let line_start = segments.get(3).expect("the line").start().expect("a start");
+        assert_ne!(arc_end, line_start, "the fixture stores the rounding of a converted arc");
+
+        let regions = [lower, upper].map(|ring| {
+            let geometry = ring.to_geometry().expect("the stored ring converts");
+            geom::Region::new(geometry, Vec::new()).expect("a region")
+        });
+        let merged = geom::union_regions(&regions).expect("the two rings union");
+
+        assert_eq!(merged.len(), 2, "the cross is two separate pieces and both survive the union");
+    }
+
     #[test]
     fn a_clockwise_ring_is_stored_counter_clockwise_exactly() {
         let clockwise = Contour::from_polygon(vec![
@@ -1974,17 +2029,26 @@ impl Contour {
         self.entries.iter().map(|entry| entry.segment())
     }
 
-    /// Converts the whole ring to the geometry layer, in millimetres.
+    /// Converts the whole ring to the geometry layer, in millimetres, with every joint closed.
     ///
     /// Every segment keeps its curve, so an arc stays an arc until the geometry boundary samples
     /// it. The ids stay with the document ring; the geometry layer only needs the shape.
+    ///
+    /// The ring leaves the document closed: a joint the document judged by its own rule (ADR 0072)
+    /// is welded onto the end of the arc beside it, the line side moving and the arc's derived
+    /// endpoint standing. The exact readers — the boolean, the area partition, a half-plane cut —
+    /// assume one boundary and weld at a nanometre of their own (ADR 0043), so a ring that is legal
+    /// in the document and open in the geometry layer would be a dead operand (X103). A ring the
+    /// rule cannot close is handed on as it came, so nothing that loaded before stops loading.
     pub fn to_geometry(&self) -> Result<geom::Contour, ContourError> {
         let segments = self
             .entries
             .iter()
             .map(|entry| entry.segment().to_geom())
             .collect::<Result<Vec<_>, ContourSegmentError>>()?;
-        Ok(geom::Contour::new_with_joint_tolerance(segments, true, |first, next| joint_tolerance_mm(*first, *next))?)
+        let tolerance = |first: &geom::Segment, next: &geom::Segment| joint_tolerance_mm(*first, *next);
+        let ring = geom::Contour::new_with_joint_tolerance(segments, true, tolerance)?;
+        Ok(ring.welded(tolerance).unwrap_or(ring))
     }
 
     /// The segment with this id.

@@ -430,10 +430,11 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use model::{Geometry, Id, Path, Placement, Project};
-    use testkit::{millimetres, sample_catalog, sample_project};
+    use testkit::{cross_rings, millimetres, sample_catalog, sample_project};
     use units::Length;
 
     use crate::CommandRegistry;
+    use crate::area_cmds::{OBJECT_AREA_EXTRUDE_ID, ObjectAreaExtrude};
 
     use super::*;
 
@@ -520,6 +521,65 @@ mod tests {
             session.project().object(id).expect("the new object").geometry().as_path().expect("one ring").clone();
         assert_eq!(path.bounds_micrometres(), ([50_000, 25_000], [100_000, 50_000]));
         assert!((ring_area(&path) - 50.0 * 25.0).abs() < 0.01, "only the shared corner is material");
+    }
+
+    /// The two rings of the owner's `cross.z3l` intersection miss each other by 4.6, 6.7, 10.1 and
+    /// 12.4 µm at their arc joints — the rounding a converted arc carries in the document. The
+    /// document accepted the drawing, the boolean answered "the rings do not meet" and the area
+    /// pull found no area, so a stored drawing was a dead operand (X103).
+    #[test]
+    fn the_two_rings_of_the_cross_drawing_union_into_one_object_whose_caps_pull() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let mut bars = Vec::new();
+        for (index, ring) in cross_rings().into_iter().enumerate() {
+            let path = Path::from(ring);
+            bars.push(
+                project
+                    .add_object(root, format!("Bar {index}"), Placement::IDENTITY, Geometry::Path(path))
+                    .expect("a drawn ring"),
+            );
+        }
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let outcome = session.dispatch(CONTOUR_UNION_ID, &params("Cross", bars[0], &[bars[1]])).expect("the union");
+        let id = outcome.created_id().expect("the command returns the new object");
+        let pieces = session
+            .project()
+            .object(id)
+            .expect("the new object")
+            .geometry()
+            .as_contours()
+            .expect("two separate pieces are one contour set")
+            .paths()
+            .len();
+        assert_eq!(pieces, 2, "both bars are pieces of the union");
+
+        // Each cap is an area of the drawing, so a pull from inside either of them reaches it.
+        let mut pulled = Vec::new();
+        for (x, y) in [(0, -400), (0, 400)] {
+            let pull = serde_json::to_value(ObjectAreaExtrude {
+                object: id,
+                area: [millimetres(x), millimetres(y)],
+                height: millimetres(18),
+                name: "Cap".to_owned(),
+            })
+            .expect("params serialize");
+            let outcome = session.dispatch(OBJECT_AREA_EXTRUDE_ID, &pull).expect("the cap has an area");
+            let body = session.project().object(outcome.created_id().expect("the command returns a body"));
+            let bounds = body
+                .expect("the new body")
+                .geometry()
+                .profile()
+                .expect("a body draws its profile")
+                .bounds_micrometres();
+            pulled.push(bounds);
+        }
+        let (lower, upper) = (pulled[0], pulled[1]);
+        assert_eq!(lower.0[1], -670_708, "the lower body starts on the bar's stored bottom edge");
+        assert!(lower.1[1] > -300_000, "the lower cap's rounded end is part of the body: {lower:?}");
+        assert_eq!(upper.1[1], 670_708, "the upper body ends on the bar's stored top edge");
+        assert!(upper.0[1] < 300_000, "the upper cap's rounded end is part of the body: {upper:?}");
     }
 
     #[test]
