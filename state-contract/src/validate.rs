@@ -36,6 +36,7 @@ pub fn analyze(status: &str, backlog: &str, sessions: &[(String, String)]) -> Re
             violations.extend(parse_violations(status, backlog, &tasks));
             violations.extend(unparsed_task_lines(backlog));
             violations.extend(legend_violations(backlog, &tasks));
+            violations.extend(label_case_violations(backlog));
             return Err(violations);
         }
     };
@@ -44,6 +45,7 @@ pub fn analyze(status: &str, backlog: &str, sessions: &[(String, String)]) -> Re
     violations.extend(budget_violations(status, sessions));
     violations.extend(unparsed_task_lines(backlog));
     violations.extend(legend_violations(backlog, &tasks));
+    violations.extend(label_case_violations(backlog));
 
     if let Some(violation) = updated_format_violation(&state.updated) {
         violations.push(violation);
@@ -497,6 +499,28 @@ fn unparsed_task_lines(backlog: &str) -> Vec<String> {
         .collect()
 }
 
+/// Field labels written in another case than the format declares.
+///
+/// Reading ignores case — `shape:` is still the `Shape` field, so a plan that carried one was read
+/// and gated as correct — and writing does not: the writer lands `Shape:` however a session typed
+/// `--field`. A label in another case is therefore a hand edit the format never produces, and the
+/// sentence names the label the file should carry (P21).
+fn label_case_violations(backlog: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (index, line) in backlog.lines().enumerate() {
+        let body = line.trim_start().trim_start_matches('`');
+        let Some((typed, _)) = body.split_once(':') else { continue };
+        let Some(declared) = crate::parse::canonical_label(typed).filter(|declared| *declared != typed) else {
+            continue;
+        };
+        violations.push(format!(
+            "`plan/BACKLOG.md` line {} writes `{typed}:`, and the entry format declares `{declared}:`",
+            index.saturating_add(1)
+        ));
+    }
+    violations
+}
+
 /// The phase legend: every id prefix must be a letter the legend explains.
 ///
 /// A plan without a legend is not a violation — a project may not name its phases — but once the
@@ -931,6 +955,31 @@ mod tests {
         let error =
             analyze(&HEADER.replace("task=A3", "task=A9"), backlog(), &[]).expect_err("an unknown task id must fail");
         assert!(error.iter().any(|violation| violation.contains("not a task in `plan/BACKLOG.md`")), "{error:?}");
+    }
+
+    #[test]
+    fn a_label_written_in_another_case_is_a_violation() {
+        // P21: the body was read as the field, so the plan answered `ok` over a label the format
+        // never writes.
+        let backlog = "## Now\n\n\
+                       - `[ ]` **A3** arcs in the card\n  \
+                       shape: the arc arm\n  \
+                       `files: crates/ui/src/object_card.rs`\n\n\
+                       ## Done\n";
+        let error = analyze(HEADER, backlog, &[]).expect_err("`shape:` is not the declared spelling");
+        let sentence =
+            error.iter().find(|violation| violation.contains("`shape:`")).unwrap_or_else(|| panic!("{error:?}"));
+        assert!(
+            sentence.contains("declares `Shape:`"),
+            "the sentence names the label the file should carry: {sentence}"
+        );
+
+        let backlog = "## Now\n\n\
+                       - `[ ]` **A3** arcs in the card\n  \
+                       Shape: the arc arm\n  \
+                       `files: crates/ui/src/object_card.rs`\n\n\
+                       ## Done\n";
+        analyze(HEADER, backlog, &[]).expect("the declared spelling is the one the format writes");
     }
 
     #[test]

@@ -136,7 +136,8 @@ impl Layout {
 fn label_of(line: &str) -> Option<String> {
     let body = line.trim_start().trim_start_matches('`');
     let (label, _) = body.split_once(':')?;
-    let known = crate::parse::ENTRY_LABELS.iter().any(|known| known.eq_ignore_ascii_case(label)) || label == "files";
+    let known = crate::parse::ENTRY_LABELS.iter().any(|known| known.eq_ignore_ascii_case(label))
+        || label.eq_ignore_ascii_case(crate::parse::FILES_LABEL);
     known.then(|| label.to_owned())
 }
 
@@ -190,14 +191,16 @@ fn hint_tail(line: &str) -> &str {
 ///
 /// The label is one the entry format knows, or `files`: a label the gate does not read would be
 /// written as a new line and no later `set` could remove it, so an invented one is refused here
-/// instead of landing in the plan (the `[plan]` debt entry that named this).
+/// instead of landing in the plan (the `[plan]` debt entry that named this). A label typed in
+/// another case is accepted and written in the declared spelling, so `--field shape` lands
+/// `Shape:` and never a second spelling of the same field (P21).
 pub fn set_field(backlog: &str, id: &str, label: &str, body: &str) -> Result<String, String> {
-    if !known_label(label) {
+    let Some(label) = crate::parse::canonical_label(label) else {
         return Err(format!(
             "`{label}` is not a field of an entry; the labels are {} and `files`",
             crate::parse::ENTRY_LABELS.join(", ")
         ));
-    }
+    };
     let mut layout = Layout::parse(backlog);
     let entry = layout.entry(id)?.clone();
     let body = body.trim();
@@ -213,12 +216,6 @@ pub fn set_field(backlog: &str, id: &str, label: &str, body: &str) -> Result<Str
     let at = layout.field_range(&entry, "files").map_or(entry.end, |range| range.0);
     layout.lines.splice(at..at, replacement);
     Ok(layout.render())
-}
-
-/// Whether a label is one the entry format or the gate reads.
-fn known_label(label: &str) -> bool {
-    crate::parse::ENTRY_LABELS.iter().any(|known| known.eq_ignore_ascii_case(label))
-        || label.eq_ignore_ascii_case("files")
 }
 
 /// Replaces one `key: value` line of a session note.
@@ -796,6 +793,18 @@ mod tests {
         assert!(!text.contains("1143 lines"), "the old body is gone: {text}");
         assert!(text.contains("  `files: crates/engine/src/panel_cmds.rs`"), "the next field survives: {text}");
         assert_eq!(text.lines().count(), BACKLOG.lines().count() - 1, "two body lines became one");
+    }
+
+    #[test]
+    fn a_label_typed_in_another_case_lands_in_the_declared_spelling() {
+        // P21: `--field shape` was written as typed, and every check then read `shape:` as the field.
+        let text = set_field(BACKLOG, "S14", "why", "measured again").expect("S14 is in the file");
+        assert!(text.contains("  Why: measured again\n"), "the declared spelling, not the typed one: {text}");
+        assert!(!text.contains("why:"), "no second spelling of the same field: {text}");
+        assert!(text.contains("  `files: crates/engine/src/panel_cmds.rs`"), "the hint survives: {text}");
+
+        let text = set_field(BACKLOG, "S15", "shape", "one body").expect("S15 is in the file");
+        assert!(text.contains("  Shape: one body\n"), "a new field takes the declared spelling too: {text}");
     }
 
     #[test]

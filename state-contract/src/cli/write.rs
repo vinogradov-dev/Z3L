@@ -370,14 +370,17 @@ fn session_note(id: &str, task: &crate::Task, options: &Options) -> String {
 fn set(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["field", "body", "files"])?;
     let id = options.words.first().ok_or("task set needs a task id")?.clone();
-    let field = options.required("field")?.to_owned();
+    let typed = options.required("field")?;
+    // The declared spelling, so `--field FILES` takes the `files:` branch and the message names the
+    // label the file carries; an invented one is left as typed for `set_field` to refuse (P21).
+    let field = crate::parse::canonical_label(typed).unwrap_or(typed).to_owned();
     let mut backlog = read(root, "plan/BACKLOG.md")?;
     let mut changes = Changes::new(root);
     if let Some(files) = options.value("files") {
         backlog = edit::set_files(&backlog, &id, files)?;
         changes = changes.with("plan/BACKLOG.md", backlog.clone());
     }
-    if field != "files" {
+    if field != crate::parse::FILES_LABEL {
         let body = options.body("body")?;
         backlog = edit::set_field(&backlog, &id, &field, &body)?;
         changes = changes.with("plan/BACKLOG.md", backlog);
@@ -1470,6 +1473,21 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         let backlog = text(&root, "plan/BACKLOG.md");
         assert!(backlog.contains("  Done: a test per refusal"), "{backlog}");
         assert!(backlog.contains("  `files: src/a.rs, src/b.rs`"), "{backlog}");
+        crate::check_with(&root, &FakeGit).expect("the plan is still valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_field_label_typed_in_another_case_lands_in_the_declared_spelling() {
+        // P21: the label was written as typed, and the gate then read `shape:` as the field.
+        let root = project("set-case", STATUS, BACKLOG, None);
+        run(&root, &["set", "P6", "--field", "shape", "--body", "one body"]).expect("the field is set");
+        run(&root, &["set", "P6", "--field", "FILES", "--files", "src/b.rs"]).expect("the hint is set");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        assert!(backlog.contains("  Shape: one body"), "the declared spelling: {backlog}");
+        assert!(!backlog.contains("shape:"), "no second spelling of the same field: {backlog}");
+        assert!(backlog.contains("  `files: src/b.rs`"), "`--field FILES` edits the hint: {backlog}");
+        assert!(!backlog.contains("FILES:"), "and never writes a second hint: {backlog}");
         crate::check_with(&root, &FakeGit).expect("the plan is still valid");
         let _ = std::fs::remove_dir_all(&root);
     }
