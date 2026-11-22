@@ -105,17 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X110** nothing answers what a body is, so a caller cannot check what it built
-  Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
-   a product; box reports the box a product reserves`, and no other query reports the bounds,
-   the size or the mesh of an object. An agent that has just built a 200x300x600 body cannot
-   read back what it built; only the screen shows it, and the agent has no screen.
-  Shape: One query answers a node own box in the frame the answer names: a panel, a body, a
-   product and a container alike. `box` keeps its product meaning and the new answer is not a
-   second spelling of it.
-  Done: A test builds a body, a panel and a product and asserts the box each one answers,
-   including a turned node; a node with no geometry is a refusal the reader can act on.
-  `files: crates/mcp/src/server.rs,crates/model/src/project/query.rs`
 - `[ ]` **P25** two plan writers in one checkout race, and the gate calls the result correct
   Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one
    checkout both read the same backlog, both computed the next free id (X107) and the last one
@@ -878,6 +867,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X110** nothing answers what a body is, so a caller cannot check what it built
+  Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
+   a product; box reports the box a product reserves`, and no other query reports the bounds,
+   the size or the mesh of an object. An agent that has just built a 200x300x600 body cannot
+   read back what it built; only the screen shows it, and the agent has no screen.
+  Shape: One query answers a node own box in the frame the answer names: a panel, a body, a
+   product and a container alike. `box` keeps its product meaning and the new answer is not a
+   second spelling of it.
+  Done: A test builds a body, a panel and a product and asserts the box each one answers,
+   including a turned node; a node with no geometry is a refusal the reader can act on.
+  `files: crates/mcp/src/server.rs,crates/model/src/project/query.rs` — `645ef9c`
 
 - `[x]` **X108** the assistant window grows by itself while it is open
   Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
