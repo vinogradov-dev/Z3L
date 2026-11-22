@@ -105,23 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X105** the parallelepiped is a ribbon gesture, and no command names it
-  Why: Measured 2026-11-21: `model.primitives.cuboid` (`crates/ui/src/toolbars/spec.rs:731`) is
-   a ribbon cell that arms `ToolKind::Body(DrawTool::Rectangle)`, and the registry has no box:
-   `PrimitiveShape` (`crates/model/src/primitive.rs:327`) is `Sphere | Cone`, so
-   `object.primitive.create` cannot make one. The closest command, `object.extrude.create`,
-   takes a closed `Contour` of four segments with stable ids plus a height. A session asked for
-   a 200x300x600 body found nothing by that name, read `panel.create` disabled (no open
-   product), and built the wrong entity before it found the extrusion.
-  Shape: Give the shape one name in the registry: either a `Cuboid` variant of `PrimitiveShape`
-   carrying width, depth and height and accepted by `object.primitive.create`, or
-   `object.cuboid.create` that builds the same body from three lengths. The ribbon cell then
-   draws the command it arms (place-capability), so the word on the button and the id in the
-   registry are one thing.
-  Done: Tests: a cuboid built by command with three different sizes is one body with the
-   expected bounds and one undo entry; a size outside the range is a typed refusal;
-   `command_list` names the shape a maker reads on the cell.
-  `files: crates/model/src/primitive.rs,crates/engine/src/object_cmds.rs,crates/ui/src/toolbars/spec.rs`
 - `[ ]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
   Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
    could not find one. Measured: the assistant panel is opened only by `shortcuts.assistant`
@@ -918,6 +901,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X105** the parallelepiped is a ribbon gesture, and no command names it
+  Why: Measured 2026-11-21: `model.primitives.cuboid` (`crates/ui/src/toolbars/spec.rs:731`) is
+   a ribbon cell that arms `ToolKind::Body(DrawTool::Rectangle)`, and the registry has no box:
+   `PrimitiveShape` (`crates/model/src/primitive.rs:327`) is `Sphere | Cone`, so
+   `object.primitive.create` cannot make one. The closest command, `object.extrude.create`,
+   takes a closed `Contour` of four segments with stable ids plus a height. A session asked for
+   a 200x300x600 body found nothing by that name, read `panel.create` disabled (no open
+   product), and built the wrong entity before it found the extrusion.
+  Shape: Give the shape one name in the registry: either a `Cuboid` variant of `PrimitiveShape`
+   carrying width, depth and height and accepted by `object.primitive.create`, or
+   `object.cuboid.create` that builds the same body from three lengths. The ribbon cell then
+   draws the command it arms (place-capability), so the word on the button and the id in the
+   registry are one thing.
+  Done: Tests: a cuboid built by command with three different sizes is one body with the
+   expected bounds and one undo entry; a size outside the range is a typed refusal;
+   `command_list` names the shape a maker reads on the cell.
+  `files: crates/model/src/primitive.rs,crates/engine/src/object_cmds.rs,crates/ui/src/toolbars/spec.rs` — `400aac0`
 
 - `[x]` **P24** the status block says `## Now` is empty while a stream works in it
   Why: Why: The session-start block says `-> Nothing is scheduled: `## Now` is empty, the

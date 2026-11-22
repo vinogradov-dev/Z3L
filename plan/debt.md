@@ -330,6 +330,12 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   path that exists. It is declared `Api` in `crates/ui/src/inventory.rs` today; either a surface takes
   it or the command goes, and deleting it is the smaller change (U94).
 
+- `[engine]` `object.cuboid.create` names the box by the word the ribbon prints, and no surface runs
+  it: the box cell is the rectangle gesture (ADR 0138), so the cell cannot dispatch three typed
+  sides, and the palette has no field to ask for them. The command line and the assistant are its
+  doors, which is the caller the cell could not serve; a ribbon face that types the three sides
+  would be a dialog the ribbon does not have yet (X105).
+
 - `[ui]` A key is data (`KEYS` in `crates/ui/src/inventory.rs`) but a *person* cannot yet reassign
   one: the table is a const, so the Settings page reads the defaults and draws no field. Remapping
   needs the table to become a value the workspace settings carry — a per-id override merged over the
