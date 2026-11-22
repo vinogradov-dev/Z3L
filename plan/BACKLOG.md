@@ -105,21 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X112** a created frame is closed, so the first part after it is refused
-  Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say
-   so twice. Measured: `product.create` created node 3 of an empty scene and the very next
-   question answered `open_product: null`, so `query niche` refused with `the point is outside
-   every product` and `panel.create` stayed disabled - a part is born only inside the open
-   product (ADR 0098). ADR 0100 says a frame is created, opened and drawn, so the create step
-   and the open step are one act for a person and two for a caller. A caller has to ask whether
-   the frame it just made is open, and the answer is no.
-  Shape: Creating a product leaves it open, in one act, as ADR 0100 words it: the frame is
-   made, opened and ready for the first part, so a sequence of commands works without a person
-   in between. A caller still reads the open product from the answer rather than assuming it.
-  Done: A test creates a product over the channel and asserts `open_product` names it, then
-   creates a panel inside it without any other step; a test asserts that opening another
-   product closes the first, because one product is open.
-  `files: crates/engine/src/product_cmds.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs`
 - `[ ]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
   Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
    "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
@@ -819,6 +804,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X112** a created frame is closed, so the first part after it is refused
+  Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say
+   so twice. Measured: `product.create` created node 3 of an empty scene and the very next
+   question answered `open_product: null`, so `query niche` refused with `the point is outside
+   every product` and `panel.create` stayed disabled - a part is born only inside the open
+   product (ADR 0098). ADR 0100 says a frame is created, opened and drawn, so the create step
+   and the open step are one act for a person and two for a caller. A caller has to ask whether
+   the frame it just made is open, and the answer is no.
+  Shape: Creating a product leaves it open, in one act, as ADR 0100 words it: the frame is
+   made, opened and ready for the first part, so a sequence of commands works without a person
+   in between. A caller still reads the open product from the answer rather than assuming it.
+  Done: A test creates a product over the channel and asserts `open_product` names it, then
+   creates a panel inside it without any other step; a test asserts that opening another
+   product closes the first, because one product is open.
+  `files: crates/engine/src/product_cmds.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs` — `5253024`
 
 - `[x]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
   Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
