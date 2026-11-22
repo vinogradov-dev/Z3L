@@ -773,29 +773,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **U122** the creation menu has artwork for every key it offers
-  Why: The class and build menu the owner asks for is a list of six keys — Post, Shelf, Wall,
-   Overlay wall, Evenly, By the area shape — and a menu row without a glyph is a placeholder
-   among glyphs, the finding U84 and U117 both came from. crates/ui/src/icons.rs carries post,
-   shelf, wall and void, the wavy contour panel and the cut shape panel (U117); a plain board,
-   an overlay board, a row of boards and the largest rectangle inside a section have no drawing
-   at all, and the plain Panel cell needs the plain isometric plate that panel.svg carried
-   before U117 turned that file into the contour panel.
-  Shape: Four masters under assets/icons/scene/. board.svg is the plain isometric plate on the
-   canonical basis, drawn anew rather than copied back: face in the result tone, two passive
-   thickness bands, the same plate the post and the shelf are. overlay.svg is the frontal board
-   lying over the frame's face with one lap edge emphasised and the frame's edge passive behind
-   it, so a lap reads as a lap and not as a second board. row.svg is three boards in a row with
-   two equal gaps, both gaps the same width so the row says evenly. fit.svg is the shaped
-   section in the passive tone with the largest rectangle inside it in the result tone. Each
-   follows assets/README.md — the 24 grid, the one scene ink, fill-opacity in the two bands, no
-   element outside the allowed list — and each gains its name in the scene row of the theme
-   table and its constant in the icons! list.
-  Done: The four files load and rasterise at 16, 22 and 26 px; the theme-table test and the uri
-   count agree with the icons! list; every drawn icon holds the 2.25..21.75 footprint and the
-   10..40 % coverage band; the glyphs read beside post, shelf, wall and void at 16 and 26 px;
-   cargo xtask ci is green.
-  `files: assets/icons/scene/,assets/README.md,crates/ui/src/icons.rs`
 - `[ ]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
   Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
    and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
@@ -1138,6 +1115,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **U122** the creation menu has artwork for every key it offers
+  Why: The class and build menu the owner asks for is a list of six keys — Post, Shelf, Wall,
+   Overlay wall, Evenly, By the area shape — and a menu row without a glyph is a placeholder
+   among glyphs, the finding U84 and U117 both came from. crates/ui/src/icons.rs carries post,
+   shelf, wall and void, the wavy contour panel and the cut shape panel (U117); a plain board,
+   an overlay board, a row of boards and the largest rectangle inside a section have no drawing
+   at all, and the plain Panel cell needs the plain isometric plate that panel.svg carried
+   before U117 turned that file into the contour panel.
+  Shape: Four masters under assets/icons/scene/. board.svg is the plain isometric plate on the
+   canonical basis, drawn anew rather than copied back: face in the result tone, two passive
+   thickness bands, the same plate the post and the shelf are. overlay.svg is the frontal board
+   lying over the frame's face with one lap edge emphasised and the frame's edge passive behind
+   it, so a lap reads as a lap and not as a second board. row.svg is three boards in a row with
+   two equal gaps, both gaps the same width so the row says evenly. fit.svg is the shaped
+   section in the passive tone with the largest rectangle inside it in the result tone. Each
+   follows assets/README.md — the 24 grid, the one scene ink, fill-opacity in the two bands, no
+   element outside the allowed list — and each gains its name in the scene row of the theme
+   table and its constant in the icons! list.
+  Done: The four files load and rasterise at 16, 22 and 26 px; the theme-table test and the uri
+   count agree with the icons! list; every drawn icon holds the 2.25..21.75 footprint and the
+   10..40 % coverage band; the glyphs read beside post, shelf, wall and void at 16 and 26 px;
+   cargo xtask ci is green.
+  `files: assets/icons/scene/,assets/README.md,crates/ui/src/icons.rs` — `eb01de7`
 
 - `[x]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
   Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
