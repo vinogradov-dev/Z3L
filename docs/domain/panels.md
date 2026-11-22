@@ -382,7 +382,7 @@ cutout removes a volume from the panel body:
 
 - `CutoutShape::Rectangle` is a rectangle in the panel plane.
 - `CutoutShape::Contour` is a closed ring of directed lines and arcs, with the same ring rules as any
-  contour: at least three segments, closed, non-zero area and not self-intersecting. The contour
+  contour: non-empty, closed, non-zero area and not self-intersecting. The contour
   variant moved the schema to 14, and anchored machining records moved it to 16; an older file with
   the legacy `{"cutout": {…}}` entries loads unchanged and is rewritten in the record form.
 - The ring becomes a solid by sampling it into the kernel profile at the shared contour tolerance; the
@@ -504,8 +504,8 @@ A panel owns its cutouts, banding and machining; the scene tree never splits it 
 An outline command is closed over its variant. A contour panel rejects `panel.resize`, `panel.corner.*`,
 `panel.bow.*`, `panel.edge_banding.*` and `panel.corner_banding.*`; a rectangle panel rejects
 `panel.outline.set` and `panel.ring_banding.*`. `panel.contour.create` validates the source object and
-the ring before it allocates an id. `panel.outline.set` runs the full ring validation — closed, at
-least three segments, non-zero area, no self-intersection, a usable panel size — and refuses an edit
+the ring before it allocates an id. `panel.outline.set` runs the full ring validation — closed,
+non-empty, non-zero area, no self-intersection, a usable panel size — and refuses an edit
 that would drop a ring segment carrying banding, so no band is lost silently. A failed outline command
 leaves the document, its revision and the id counter unchanged.
 

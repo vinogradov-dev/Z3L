@@ -546,7 +546,7 @@ mod tests {
     fn a_contour_rejects_every_shape_error_at_construction_and_load() {
         assert_eq!(
             Contour::from_polygon(vec![[millimetres(0), millimetres(0)], [millimetres(1), millimetres(0)]]),
-            Err(ContourError::TooFewSegments { count: 2 })
+            Err(ContourError::TooFewCorners { count: 2 })
         );
         assert_eq!(
             Contour::from_polygon(vec![
@@ -745,6 +745,36 @@ mod tests {
         let merged = geom::union_regions(&regions).expect("the two rings union");
 
         assert_eq!(merged.len(), 2, "the cross is two separate pieces and both survive the union");
+    }
+
+    /// A ring of one full arc is a circle, and the file holds it: a union that meets a whole circle
+    /// simplifies its four quarter arcs into one 360° arc, so a document that refuses it cannot
+    /// store the drawing the boolean produced (X104).
+    #[test]
+    fn a_ring_of_one_full_arc_round_trips_through_the_file() {
+        let center = [millimetres(50), millimetres(20)];
+        let circle = ContourSegment::arc(
+            center,
+            millimetres(40),
+            Degrees::from_millidegrees(15_000),
+            Degrees::from_millidegrees(360_000),
+        )
+        .expect("a full turn is a sweep an arc may carry");
+        let ring = Contour::new(vec![circle]).expect("one full arc is a ring");
+        assert_eq!(ring.entries().len(), 1, "the whole circle is one segment");
+        let stored = ring.segments().next().expect("the arc");
+        assert!(stored.end_meets(stored).expect("the arc's own ends"), "a full arc closes on itself");
+
+        let wire = serde_json::to_string(&ring).expect("a ring serializes");
+        assert_eq!(serde_json::from_str::<Contour>(&wire).expect("the ring loads"), ring, "the file keeps it");
+
+        let geometry = ring.to_geometry().expect("the geometry layer takes a one-arc ring");
+        assert!(geometry.is_closed());
+        let area = geometry.signed_area().expect("a circle encloses an area");
+        let expected = std::f64::consts::PI * 40.0 * 40.0;
+        assert!((area - expected).abs() < 0.01, "the ring encloses the circle: {area} against {expected}");
+
+        assert!(Contour::new(Vec::new()).is_err(), "a ring of no segments is still refused");
     }
 
     #[test]
@@ -1911,10 +1941,14 @@ impl Contour {
     /// `n + 1`. A clockwise ring is turned around after numbering, so its ids are not in stored
     /// travel order; they are labels, and [`Contour::index_of`] is what maps one to a position. A
     /// ring rebuilt from existing entries keeps its ids through [`Contour::rebuild`] instead.
+    ///
+    /// A ring needs one segment, not three: a full circle is one arc and a half circle closed by its
+    /// diameter is two (ADR 0221). What a ring must be is closed, non-empty of area and
+    /// non-self-intersecting, and those rules are checked here whatever the count.
     pub fn new(segments: Vec<ContourSegment>) -> Result<Self, ContourError> {
         let count = segments.len();
-        if count < 3 {
-            return Err(ContourError::TooFewSegments { count });
+        if count == 0 {
+            return Err(ContourError::Empty);
         }
         if count > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count, max: MAX_CONTOUR_SEGMENTS });
@@ -1955,7 +1989,7 @@ impl Contour {
     /// Builds a line-only ring from polygon corner points, in travel order.
     pub fn from_polygon(points: Vec<[Length; 2]>) -> Result<Self, ContourError> {
         if points.len() < 3 {
-            return Err(ContourError::TooFewSegments { count: points.len() });
+            return Err(ContourError::TooFewCorners { count: points.len() });
         }
         if points.len() > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count: points.len(), max: MAX_CONTOUR_SEGMENTS });
@@ -1976,8 +2010,8 @@ impl Contour {
     /// and the counter are checked before the ring is sampled or its area is summed.
     fn assemble(entries: Vec<ContourSegmentEntry>, next_segment_id: ContourSegmentId) -> Result<Self, ContourError> {
         let count = entries.len();
-        if count < 3 {
-            return Err(ContourError::TooFewSegments { count });
+        if count == 0 {
+            return Err(ContourError::Empty);
         }
         if count > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count, max: MAX_CONTOUR_SEGMENTS });
@@ -2131,7 +2165,7 @@ impl Contour {
             }
         }
         if points.len() < 3 {
-            return Err(ContourError::TooFewSegments { count: points.len() });
+            return Err(ContourError::TooFewSamples { count: points.len() });
         }
         Ok(points)
     }
@@ -3541,10 +3575,19 @@ pub enum ContourError {
     /// The geometry layer rejected the whole ring despite valid segments.
     #[error(transparent)]
     Geometry(#[from] geom::ContourError),
-    /// The contour has fewer than three segments.
-    #[error("a contour needs at least three segments, got {count}")]
-    TooFewSegments {
-        /// The supplied segment count.
+    /// The ring has no segments at all.
+    #[error("a ring needs at least one segment")]
+    Empty,
+    /// A polygon has fewer than three corners, so it cannot bound an area.
+    #[error("a polygon needs at least three corners, got {count}")]
+    TooFewCorners {
+        /// The supplied corner count.
+        count: usize,
+    },
+    /// Sampling the ring left too few points to be a profile.
+    #[error("the ring samples to {count} points, and a profile needs at least three")]
+    TooFewSamples {
+        /// The sampled point count.
         count: usize,
     },
     /// The contour has more segments than the limit allows.

@@ -108,6 +108,12 @@ pub enum ContourEditError {
     /// A path with one segment has no neighbour to join after a removal.
     #[error("the only segment of a path cannot be removed")]
     OnlySegment,
+    /// An edit refuses to leave a ring of fewer than three segments.
+    #[error("an edit keeps a ring of at least three segments, and this one would leave {count}")]
+    TooFewSegments {
+        /// The segment count the edit would leave.
+        count: usize,
+    },
     /// The path is not the figure this edit needs.
     #[error("the path is not a {shape:?} figure")]
     NotShaped {
@@ -646,12 +652,14 @@ impl Contour {
     /// Removes `segment` from the ring and joins its two neighbours.
     ///
     /// A collapsed along-contour drag leaves a near-zero segment; removing it joins the previous
-    /// segment's end to the next segment's start at one corner. A ring keeps at least three
-    /// segments, so removing one from a triangle is refused.
+    /// segment's end to the next segment's start at one corner. The document stores a ring of one
+    /// segment — a full circle, or a half-circle with its diameter is two (ADR 0221) — but an edit
+    /// keeps three, because what is left of a smaller ring has no corner to join: it of a triangle
+    /// is refused.
     pub fn remove_segment(&self, segment: ContourSegmentId) -> Result<Self, ContourEditError> {
         let (index, count) = self.position(segment)?;
         if count <= 3 {
-            return Err(ContourEditError::Ring(ContourError::TooFewSegments { count: count.saturating_sub(1) }));
+            return Err(ContourEditError::TooFewSegments { count: count.saturating_sub(1) });
         }
         let entries = self.entries();
         let previous = (index + count - 1) % count;

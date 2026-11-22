@@ -83,9 +83,11 @@ primitive is described in section 5.
   before the document changes. Extruding a path object converts that node into the body in place and
   keeps its id, name, placement, pivot_local and properties, so the drawing is not left behind as a
   separate object ([0074](../decisions/0074-an-extrusion-owns-the-path-it-grew-from.md)).
-- A contour is a ring of directed **segments**, at least three. A segment is a straight line between
-  two points or a circular arc with a centre, a positive radius, a start angle and a non-zero sweep
-  of at most one turn. Every value is stored in document units: micrometres and millidegrees.
+- A contour is a ring of directed **segments**, at least one: a full circle is one arc and a half
+  circle with its diameter is two ([0221](../decisions/0221-a-ring-is-one-closed-chain-not-three-segments.md)).
+  A segment is a straight line between two points or a circular arc with a centre, a positive
+  radius, a start angle and a non-zero sweep of at most one turn. Every value is stored in document
+  units: micrometres and millidegrees.
 - Every segment carries a stable id, unique inside its ring and never reused. An edit keeps the id of
   every segment it does not touch, so a command names a segment instead of an index; a fresh ring
   numbers its segments from one and keeps a counter for the next id.
@@ -247,9 +249,9 @@ in one viewport mode. Its state is view state, not document data
   edited segment's id; `split_segment` keeps the first part's id and mints the second part from the
   ring counter. A ring rebuilt this way never reuses an id, so a band or a selection keyed by a
   segment id survives the edit.
-- Each intermediate draft must be a valid ring: closed, at least three segments, non-zero area,
-  inside the coordinate limit and not self-intersecting. A gesture that would break the ring is
-  rejected and leaves the last valid draft in place, so a corner simply stops at the boundary.
+- Each intermediate draft must be a valid ring: closed, non-empty, with a non-zero area, inside the
+  coordinate limit and not self-intersecting. A gesture that would break the ring is rejected and
+  leaves the last valid draft in place, so a corner simply stops at the boundary.
 - **Apply** dispatches exactly one command — `panel.outline.set` for a panel outline,
   `object.contour.replace` for the path inside a constructive body, `object.path.replace` for a path
   and `panel.machining.update` for a cutout ring — and one undo entry is the whole edit. A cutout

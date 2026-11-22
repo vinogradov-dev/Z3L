@@ -2050,6 +2050,30 @@ mod tests {
     }
 
     #[test]
+    fn a_ring_of_one_full_arc_samples_as_its_circle() {
+        // A union that meets a whole circle leaves one 360° arc, and the viewport draws it as the
+        // circle it is rather than refusing the path (X104).
+        use model::{Contour, ContourSegment, Path};
+        use units::Degrees;
+
+        let circle = ContourSegment::arc(
+            [millimetres(50), Length::ZERO],
+            millimetres(40),
+            Degrees::ZERO,
+            Degrees::from_millidegrees(360_000),
+        )
+        .expect("a full turn is a sweep an arc may carry");
+        let path = Path::from(Contour::new(vec![circle]).expect("one full arc is a ring"));
+        let points = path_points(&path).expect("the circle samples as a chain");
+        assert!(points.len() > 3, "the arc is sampled into the chain");
+        for point in &points {
+            let radial = (*point - DVec3::new(50.0, 0.0, 0.0)).length();
+            assert!((radial - 40.0).abs() < 0.1, "every sample lies on the circle: {radial}");
+            assert!(point.z.abs() < f64::EPSILON, "a drawing is flat");
+        }
+    }
+
+    #[test]
     fn the_cache_reports_an_empty_state() {
         let cache = EvaluationCache::new();
         assert!(cache.is_empty());

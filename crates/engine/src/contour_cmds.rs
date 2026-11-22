@@ -445,6 +445,12 @@ mod tests {
         project.add_object(parent, name, Placement::IDENTITY, Geometry::Path(path)).expect("a path object")
     }
 
+    /// A drawn circle of 50 mm radius at `(x, 0)` in millimetres, as a path object at `parent`.
+    fn circle(project: &mut Project, parent: Id, name: &str, x: i64) -> Id {
+        let path = Path::circle([millimetres(x), millimetres(0)], millimetres(50)).expect("a circle");
+        project.add_object(parent, name, Placement::IDENTITY, Geometry::Path(path)).expect("a circle object")
+    }
+
     /// A session whose root holds one rectangle ring per tuple, in the order given.
     fn rings(rects: &[(i64, i64, i64, i64)]) -> (Session, Vec<Id>) {
         let mut project = sample_project();
@@ -459,6 +465,12 @@ mod tests {
     fn params(op_name: &str, base: Id, operands: &[Id]) -> Value {
         serde_json::to_value(ContourBoolean { base, operands: operands.to_vec(), name: op_name.to_owned() })
             .expect("params serialize")
+    }
+
+    /// The segment count of every ring a contour set holds, in the order the overlay stored them.
+    fn segment_counts(project: &Project, id: Id) -> Vec<usize> {
+        let set = project.object(id).expect("the new object").geometry().as_contours().expect("a contour set");
+        set.paths().iter().map(|path| path.entries().len()).collect()
     }
 
     /// The area of a stored ring, in square millimetres, through the geometry layer.
@@ -580,6 +592,34 @@ mod tests {
         assert!(lower.1[1] > -300_000, "the lower cap's rounded end is part of the body: {lower:?}");
         assert_eq!(upper.1[1], 670_708, "the upper body ends on the bar's stored top edge");
         assert!(upper.0[1] < 300_000, "the upper cap's rounded end is part of the body: {upper:?}");
+    }
+
+    /// A union that meets a whole circle leaves it as one 360° arc, and the document refused that
+    /// ring, so the drawing the boolean produced could not be stored at all: "a contour needs at
+    /// least three segments, got 1" (X104). A circle beside another figure is a circle, not a
+    /// three-segment ring invented to satisfy a count.
+    #[test]
+    fn a_union_that_meets_a_whole_circle_stores_one_ring_per_piece() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let first = circle(&mut project, root, "Circle", 0);
+        let rectangle = ring(&mut project, root, "Rectangle", 200, -50, 300, 50);
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let outcome = session.dispatch(CONTOUR_UNION_ID, &params("Both", first, &[rectangle])).expect("the union");
+        let id = outcome.created_id().expect("the command returns one object");
+        let counts = segment_counts(session.project(), id);
+        assert_eq!(counts, vec![1, 4], "the circle is one full arc and the rectangle its four lines");
+
+        // Two circles are two rings, one arc each.
+        let mut project = sample_project();
+        let root = project.root().id();
+        let first = circle(&mut project, root, "First", 0);
+        let second = circle(&mut project, root, "Second", 200);
+        let mut session = Session::with_directory(project, sample_catalog());
+        let outcome = session.dispatch(CONTOUR_UNION_ID, &params("Both", first, &[second])).expect("the union");
+        let id = outcome.created_id().expect("the command returns one object");
+        assert_eq!(segment_counts(session.project(), id), vec![1, 1], "each circle is one full arc");
     }
 
     #[test]
