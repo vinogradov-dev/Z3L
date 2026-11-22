@@ -114,10 +114,10 @@ requires it to name the current task: `edit::set_section` replaces a whole secti
 that changes the current task takes the new paragraph with it.
 
 An empty work order is a legal state: `STATE: task=-` says no task is scheduled, `## Now` holds
-none, and `## Next` opens with `Nothing is scheduled`. `close` and `defer` that empty the order write
-that line and that sentence in the same validated write, `take` puts a parked entry back and restores
-`task=`, and `status`, `next` and `task` render the empty order instead of looking up a task called
-`-`.
+none of the plan's own tasks (a declared stream may still be working one), and `## Next` opens with
+`Nothing is scheduled`. `close` and `defer` that empty the order write that line and that sentence
+in the same validated write, `take` puts a parked entry back and restores `task=`, and `status`,
+`next` and `task` render the empty order instead of looking up a task called `-`.
 
 The phase legend is the intro paragraph of `plan/BACKLOG.md` that says what each id prefix means. A
 project may leave it out; once it is there the gate holds the file to it — every clause in the form

@@ -482,3 +482,26 @@ fn a_reference_file_may_not_carry_plan_state() {
     check_with(&root, &FakeGit::repository()).expect("a reference file passes the gate");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// P24, measured in a stream checkout at `0d77dce`: a declared stream's `[~]` task sits in `## Now`
+/// while the plan's own state line is idle, and the empty-order sentence said the section was empty.
+#[test]
+fn the_block_does_not_call_now_empty_while_a_stream_works_in_it() {
+    let status = "STATE: milestone=M7 phase=A task=- state=idle base=abc1234 updated=2026-01-01\n\
+                  STREAMS: agent=J\n\n## Next\n\n\
+                  Nothing is scheduled: the plan's own order is empty.\n";
+    let backlog = "## Now\n\n- `[~]` **J1** the recipe runner\n  `files: src/lib.rs`\n\n## Done\n";
+    let root = plan_dir("stream-in-now", status, backlog);
+    fs::write(
+        root.join("plan/SESSION.agent.md"),
+        "task: J1\ngoal: the recipe runner\nnow: the parser arm\nrun: cargo test -p state-contract\n",
+    )
+    .expect("the stream's note is writable");
+
+    let text = status_with(&root, &FakeGit::repository()).expect("a stream working beside an idle plan renders");
+    assert!(text.contains("-> Nothing is scheduled: no `app` task is in `## Now`"), "{text}");
+    assert!(!text.contains("`## Now` is empty"), "the agent's task is in `## Now`: {text}");
+    assert!(text.contains("   [~] J1 · the recipe runner"), "the work in hand is listed without the arrow: {text}");
+    assert!(text.contains("  stream agent · J1 · doing"), "and its row says who works it: {text}");
+    let _ = fs::remove_dir_all(&root);
+}

@@ -166,7 +166,8 @@ pub struct State {
 pub const NO_TASK: &str = "-";
 
 /// What `## Next` must say while no task is scheduled, so a fresh session reads the empty order
-/// instead of looking for a task id that is not there.
+/// instead of looking for a task id that is not there. The session-start block opens with the same
+/// sentence ([`render`]), so the two cannot drift apart.
 pub const NOTHING_SCHEDULED: &str = "Nothing is scheduled";
 
 impl State {
