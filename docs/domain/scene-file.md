@@ -95,7 +95,9 @@ A scene file is UTF-8 JSON with the extension `.z3l`:
 1. Read the bytes and parse the envelope.
 2. Reject a missing or different `format`, and a `format_version` newer than this build, with a
    readable error.
-3. Refuse a document `schema` that is not the current one (section 7).
+3. Refuse a document `schema` that is not the current one (section 7). The document's own reader
+   makes this check before it parses a single field, so the envelope and any other door into a
+   document answer with the same sentence.
 4. Validate the document: ids, placements, `pivot_local` offsets, finite values, mesh and feature limits.
 5. Resolve materials and banding against the catalogue; a missing material is a diagnostic, never a
    load failure ([document.md](document.md) §4–5).
@@ -140,6 +142,11 @@ one loader, one golden, one error.
   framing changes.
 - A `schema` that is not the current one — older or newer — is one readable error that names both
   numbers. It is never a partial load and never a second code path.
+- The number is read before the body is parsed: the document is read into a value, the number is
+  checked, and only then is the tree typed. Read afterwards, a body from an older layout fails
+  inside the first field that moved — `missing field 'tool'` names neither the file's build nor its
+  version — and every schema bump makes that answer worse. A body that carries the current number
+  and is still broken answers with the field that is missing, because its layout is genuinely wrong.
 - One golden file per current schema proves that the writer and the reader agree with each other. A
   schema move regenerates it and deletes the previous one; older goldens are not kept.
 - Unknown top-level sections survive a load and save cycle, so a newer build's extra data is not

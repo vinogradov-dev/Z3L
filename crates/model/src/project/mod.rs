@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 mod camera_light_cmds;
 mod contact_shape;
@@ -41,7 +41,6 @@ pub use snap::{
     round_free_coordinate, snap_axis, snap_grid,
 };
 pub use surface::SurfaceKind;
-pub(crate) use wire::ProjectWire;
 
 use crate::*;
 use panel_cmds::validate_panel_banding;
@@ -50,15 +49,14 @@ use panel_cmds::validate_panel_banding;
 ///
 /// The material catalogue, dimensions and settings arrive with later M1 steps. Loading validates
 /// the schema version and the tree invariants; an unsupported version or a duplicate id is a
-/// readable error, never a reinterpretation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "ProjectWire")]
+/// readable error, never a reinterpretation. The reader itself lives in `wire`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Project {
     schema_version: u32,
     revision: Revision,
     next_id: Id,
     root: Container,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     active_camera: Option<Id>,
 }
 

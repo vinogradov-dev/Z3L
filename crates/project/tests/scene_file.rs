@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use model::{
     Container, CutoutDepth, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
 };
-use project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
+use project::{FORMAT, FORMAT_VERSION, MAX_SCENE_BYTES, SceneFile, SceneFileError};
 use units::{Degrees, Length};
 
 const GOLDEN: &str = include_str!("golden/scene.z3l");
@@ -47,6 +47,11 @@ impl Drop for TempDir {
 /// An id that the golden scene uses.
 fn id(value: u64) -> Id {
     Id::new(value).expect("a non-zero id")
+}
+
+/// A scene text whose document is the body given, so a test names nothing but the body.
+fn envelope_with(body: String) -> String {
+    format!("{{\"format\": \"{FORMAT}\", \"format_version\": {FORMAT_VERSION}, \"document\": {body}}}\n")
 }
 
 #[test]
@@ -163,6 +168,24 @@ fn a_document_from_another_build_names_its_schema_before_its_fields() {
     let error = SceneFile::parse(&older).expect_err("another schema is refused");
     assert!(matches!(error, SceneFileError::UnsupportedSchemaVersion { .. }), "error was {error}");
     assert!(error.to_string().contains(&(current - 1).to_string()), "the error names the version found");
+}
+
+#[test]
+fn an_empty_document_body_answers_with_its_schema_and_never_with_a_field() {
+    // A body from another layout may name a field this build never had, so the number is the only
+    // answer a person can act on; it is read before the tree is parsed at all (ADR 0096).
+    let older = envelope_with(format!("{{\"schema_version\": {}}}", Project::CURRENT_SCHEMA_VERSION - 1));
+    let error = SceneFile::parse(&older).expect_err("another schema is refused");
+    assert!(matches!(error, SceneFileError::UnsupportedSchemaVersion { .. }), "error was {error}");
+    assert!(error.to_string().contains(&(Project::CURRENT_SCHEMA_VERSION - 1).to_string()));
+    assert!(!error.to_string().contains("missing field"), "the tree is not read: {error}");
+
+    // The same empty body at the current number is a different answer: the layout is genuinely
+    // broken, and the field that is missing is the one a person has to add.
+    let current = envelope_with(format!("{{\"schema_version\": {}}}", Project::CURRENT_SCHEMA_VERSION));
+    let error = SceneFile::parse(&current).expect_err("the body is empty");
+    assert!(matches!(error, SceneFileError::Json(_)), "error was {error}");
+    assert!(error.to_string().contains("missing field"), "error was {error}");
 }
 
 #[test]

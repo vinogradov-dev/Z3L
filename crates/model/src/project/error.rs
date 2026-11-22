@@ -11,10 +11,14 @@ use crate::*;
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ProjectError {
     /// The file was written by a newer or otherwise unsupported schema.
+    ///
+    /// The number is carried as the file spells it, because the number is a sentence a person reads
+    /// and not a key: a value that is not a whole number names itself, and an absent one reads as
+    /// `missing` instead of a type error.
     #[error("unsupported schema version {found}; this build supports {supported}")]
     UnsupportedSchemaVersion {
-        /// The version found in the document.
-        found: u32,
+        /// The version found in the document, or the word saying there is none.
+        found: String,
         /// The version supported by this build.
         supported: u32,
     },

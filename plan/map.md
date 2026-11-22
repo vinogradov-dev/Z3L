@@ -55,7 +55,7 @@ The plan gate does not check this file; a stale row is a defect the reader fixes
 | Panel machining commands | `crates/engine/src/panel_cmds/machining.rs` (`panel.machining.*`) | whole file; add, update, remove and reorder the anchored records |
 | Model panel | `crates/model/src/panel/` (`Panel`, `geometry.rs`, `banding.rs`, `machining.rs`, `contour.rs`) | whole files |
 | Model project | `crates/model/src/project/mod.rs` (`Project`, ids, revision, `scan_tree`) | whole file |
-| Project envelope | `crates/model/src/project/wire.rs` (`ProjectWire`, `TryFrom`, migrations) | whole file |
+| Project envelope | `crates/model/src/project/wire.rs` (`ProjectWire`, `TryFrom`, `Project::from_value`, `check_schema`, `SCHEMA_FIELD`) | whole file; the schema number is read from the value before the tree is typed, so a body from another build answers with its version and not with the field that moved (ADR 0096) |
 | Project commands | `crates/model/src/project/{panel,object,node,camera_light,property}_cmds.rs` | whole files |
 | Project queries and errors | `crates/model/src/project/query.rs`, `crates/model/src/project/error.rs` | whole files |
 | Object commands | `crates/engine/src/object_cmds.rs` (`object.*`) | small |

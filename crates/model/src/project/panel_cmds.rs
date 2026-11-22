@@ -567,7 +567,7 @@ impl Project {
     pub fn validate(&self) -> Result<(), ProjectError> {
         if self.schema_version != Self::CURRENT_SCHEMA_VERSION {
             return Err(ProjectError::UnsupportedSchemaVersion {
-                found: self.schema_version,
+                found: self.schema_version.to_string(),
                 supported: Self::CURRENT_SCHEMA_VERSION,
             });
         }

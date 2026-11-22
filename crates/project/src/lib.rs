@@ -178,7 +178,9 @@ impl SceneFile {
         }
         // A document from another build says which build wrote it: the schema number is read
         // before the tree, so an older layout names its version instead of failing inside the first
-        // field that moved (ADR 0096).
+        // field that moved (ADR 0096). The document's own reader refuses the same number, so every
+        // door into a document answers this one sentence; here it also keeps the envelope's own
+        // error, which does not read as broken JSON.
         let found = envelope.document.get("schema_version").and_then(Value::as_u64);
         if found != Some(u64::from(Project::CURRENT_SCHEMA_VERSION)) {
             return Err(SceneFileError::UnsupportedSchemaVersion {
@@ -186,7 +188,7 @@ impl SceneFile {
                 supported: Project::CURRENT_SCHEMA_VERSION,
             });
         }
-        Ok(Self { document: serde_json::from_value(envelope.document)?, extra: envelope.extra })
+        Ok(Self { document: Project::from_value(envelope.document)?, extra: envelope.extra })
     }
 
     /// Reads and parses a scene file from disk.
