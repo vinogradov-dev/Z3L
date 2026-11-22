@@ -45,6 +45,31 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **J19** the tool surface carries the words a released agent has: the sides, the units and the class names, because no README ships with the binary
+  Why: The owner, 2026-11-21: "как будет решать задачу понимания агентом о чём речь, когда
+   человек говорит о левой и правой стороне? когда выйдет релиз, у него не будет readme и
+   других инструкций". Measured: the four tools carry every word an agent gets at release -
+   `command_list` publishes a JSON Schema built from the types and their doc comments, and
+   `command_run`, `command_batch`, `query` and `ui_inspect` publish answers and refusals - and
+   none of them names a side: `Side` and `OpeningView` live in `crates/model/src/side.rs`, the
+   class rows with their names and fill axis pairs live in `crates/model/src/class.rs`, and
+   both reach a caller only through this repository. A session with the binary alone therefore
+   has coordinates and nothing else, which is how the first wardrobe came out mirrored (X118),
+   built at a thousand times its size (X115) and standing on the wrong end (X117).
+  Shape: The surface is the dictionary, because a released build ships no prose: every word a
+   caller must know to be correct travels with the tool that needs it. The sides are one answer
+   about the document - front +Y, up +Z, left +X with the face each one is, for the open
+   product - the class rows answer with their names and axis pair so a shelf and a post are
+   10.11 and 10.10 and a door 10.20, units are stated on every length field, and a refusal that
+   sees a caller put a part on the wrong side says which axis the side is. A command that means
+   a side takes the side, not a coordinate.
+  Done: A test plays a scripted caller that reads only the tool schemas and the answers - no
+   file of this repository - and resolves "слева пять полок, справа штанга" into parts on the
+   sides the model names; a test asserts every schema that takes a length states its unit and
+   every schema that takes a side spells the frame; a test asserts the refusal for a side that
+   cannot exist names the axis.
+  `files: crates/mcp/src/server.rs,crates/model/src/side.rs,crates/model/src/class.rs`
+
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -258,30 +283,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    asserts a view the person framed by hand keeps its size through a preset; a test asserts
    orbiting after a preset keeps the new target.
   `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs`
-- `[ ]` **J19** the tool surface carries the words a released agent has: the sides, the units and the class names, because no README ships with the binary
-  Why: The owner, 2026-11-21: "как будет решать задачу понимания агентом о чём речь, когда
-   человек говорит о левой и правой стороне? когда выйдет релиз, у него не будет readme и
-   других инструкций". Measured: the four tools carry every word an agent gets at release -
-   `command_list` publishes a JSON Schema built from the types and their doc comments, and
-   `command_run`, `command_batch`, `query` and `ui_inspect` publish answers and refusals - and
-   none of them names a side: `Side` and `OpeningView` live in `crates/model/src/side.rs`, the
-   class rows with their names and fill axis pairs live in `crates/model/src/class.rs`, and
-   both reach a caller only through this repository. A session with the binary alone therefore
-   has coordinates and nothing else, which is how the first wardrobe came out mirrored (X118),
-   built at a thousand times its size (X115) and standing on the wrong end (X117).
-  Shape: The surface is the dictionary, because a released build ships no prose: every word a
-   caller must know to be correct travels with the tool that needs it. The sides are one answer
-   about the document - front +Y, up +Z, left +X with the face each one is, for the open
-   product - the class rows answer with their names and axis pair so a shelf and a post are
-   10.11 and 10.10 and a door 10.20, units are stated on every length field, and a refusal that
-   sees a caller put a part on the wrong side says which axis the side is. A command that means
-   a side takes the side, not a coordinate.
-  Done: A test plays a scripted caller that reads only the tool schemas and the answers - no
-   file of this repository - and resolves "слева пять полок, справа штанга" into parts on the
-   sides the model names; a test asserts every schema that takes a length states its unit and
-   every schema that takes a side spells the frame; a test asserts the refusal for a side that
-   cannot exist names the axis.
-  `files: crates/mcp/src/server.rs,crates/model/src/side.rs,crates/model/src/class.rs`
 - `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
   Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
    frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
