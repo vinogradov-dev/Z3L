@@ -39,7 +39,7 @@ z3l directory [folder]           # edit a nomenclature folder
 z3l run scene.z3l --commands steps.jsonl [--out result.z3l] [--dry-run]
 z3l export scene.z3l --out package/
 z3l render scene.z3l --out plate.png [--size 1920x1080] [--samples 256] [--studio 60]
-z3l query scene.z3l tree|box|parts|diagnostics [--id <node>]
+z3l query scene.z3l tree|box|bounds|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
 z3l guide | z3l commands        # the domain guide, the command list
 z3l mcp serve [scene.z3l]        # the tool server on stdin/stdout
 ```

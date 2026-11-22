@@ -288,27 +288,34 @@ impl Project {
         Some(self.world_placement(id)?.transform_point(local))
     }
 
-    /// The centre of the node's local axis-aligned bounding box, in its own frame.
+    /// The axis-aligned box a node occupies, `(min, max)` in millimetres in its own frame.
     ///
-    /// A panel's box is its nominal rectangle times its last known thickness. A container's box is
-    /// the union of the nominal panel boxes below it, each transformed by its placement relative to
-    /// the container. A container with no panels has no bounds and returns `None`.
-    pub fn bounds_center_local(&self, id: Id) -> Option<DVec3> {
+    /// A panel's box is its nominal rectangle times its last known thickness, a body's is the bounds
+    /// of its own geometry, and a container's — the root and a product included — is the union of
+    /// the boxes below it, each transformed by its placement relative to the container. A camera, a
+    /// light and a container with no geometry below it occupy no box and answer `None`.
+    pub fn bounds_local(&self, id: Id) -> Option<(DVec3, DVec3)> {
         if let Some(panel) = self.panel(id) {
             let size = panel.nominal_size();
-            let half = DVec3::new(
+            let max = DVec3::new(
                 size.length().millimetres_f64(),
                 size.width().millimetres_f64(),
                 panel.last_known_thickness().millimetres_f64(),
-            ) * 0.5;
-            return Some(half);
+            );
+            return Some((DVec3::ZERO, max));
         }
         if let Some(object) = self.object(id) {
-            let (min, max) = object_bounds_mm(object.geometry())?;
-            return Some((min + max) * 0.5);
+            return object_bounds_mm(object.geometry());
         }
         let (_, container) = find_container(&self.root, id, 0)?;
-        let (min, max) = panel_bounds(container.children(), Placement::IDENTITY, 0)?;
+        panel_bounds(container.children(), Placement::IDENTITY, 0)
+    }
+
+    /// The centre of the node's local axis-aligned bounding box, in its own frame.
+    ///
+    /// The centre of [`Self::bounds_local`], so the two cannot disagree about where a node stands.
+    pub fn bounds_center_local(&self, id: Id) -> Option<DVec3> {
+        let (min, max) = self.bounds_local(id)?;
         Some((min + max) * 0.5)
     }
 
@@ -734,6 +741,53 @@ mod tests {
         product(&mut project, "Far away", 600, 560, 720, 5000);
         let placement = project.product_placement(box_(600, 560, 720));
         assert_eq!(placement.translation(), DVec3::new(1100.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_node_answers_the_box_it_occupies_in_its_own_frame() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let shelf = Id::new(2).expect("shelf id");
+        assert_eq!(
+            project.bounds_local(shelf),
+            Some((DVec3::ZERO, DVec3::new(700.0, 500.0, 18.0))),
+            "a panel's box is its rectangle times its thickness"
+        );
+
+        // The drawer is a container of one panel, so its box is the union below it — the same box,
+        // because the panel stands at the container's zero.
+        let drawer = Id::new(3).expect("drawer id");
+        assert_eq!(project.bounds_local(drawer), Some((DVec3::ZERO, DVec3::new(700.0, 500.0, 18.0))));
+        assert_eq!(
+            project.bounds_center_local(drawer),
+            Some(DVec3::new(350.0, 250.0, 9.0)),
+            "the centre is the box's own centre"
+        );
+
+        // A body beside the panels is measured by its own geometry, through its own placement.
+        let body = project
+            .add_object(
+                root,
+                "Body",
+                Placement::new(DVec3::new(1000.0, 0.0, 0.0), DQuat::IDENTITY).expect("a placement"),
+                Geometry::Mesh(box_mesh()),
+            )
+            .expect("a body joins the root");
+        assert_eq!(project.bounds_local(body), Some((DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0))));
+        assert_eq!(
+            project.bounds_local(root),
+            Some((DVec3::ZERO, DVec3::new(1010.0, 500.0, 18.0))),
+            "a container's box is the union of what it holds, the body included"
+        );
+
+        // A light is no geometry, and neither is a container that holds none.
+        let light = project
+            .add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0)
+            .expect("a light joins the root");
+        assert_eq!(project.bounds_local(light), None, "a light occupies no box");
+        let empty = project.add_component(root, "Empty", Placement::IDENTITY).expect("an empty component");
+        assert_eq!(project.bounds_local(empty), None, "a container with no geometry occupies nothing");
+        assert_eq!(project.bounds_local(Id::new(9_999).expect("an id")), None, "an unknown id has no box");
     }
 
     #[test]

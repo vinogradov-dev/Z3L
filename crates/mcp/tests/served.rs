@@ -496,3 +496,68 @@ async fn naming_a_product_opens_it_with_no_revision_and_no_undo_entry() {
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
 }
+
+#[tokio::test]
+async fn a_client_reads_back_the_box_of_the_body_it_just_built() {
+    // X110: a caller has no screen, so the box of what it built is a question it has to be able to
+    // ask. The batch builds a 200 x 300 x 600 body and the next call measures it.
+    let (mut session, products) = session_with(1);
+    let product = *products.first().expect("one product");
+    assert!(session.open_product(product), "the fixture opens the one product");
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    // A cuboid anchors at the centre of its base face, so its local box is 100 mm each way in X and
+    // Y and 600 mm up: the answer a caller has to be able to check.
+    let run = json!({"command": "object.cuboid.create", "params": {
+        "parent": product.get(),
+        "name": "Body",
+        "width": 200_000,
+        "depth": 300_000,
+        "height": 600_000,
+        "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    }});
+    let built = client
+        .call_tool(CallToolRequestParams::new(TOOL_RUN).with_arguments(arguments(run)))
+        .await
+        .expect("the body is built");
+    let report = body(&built);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    let created = report["created"][0].as_u64().expect("the answer names the node it made");
+
+    let asked = client
+        .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+            "kind": "bounds",
+            "node": created,
+        }))))
+        .await
+        .expect("the box is answered");
+    let answer = body(&asked);
+    assert_eq!(answer["answer"]["node_id"], json!(created), "{answer}");
+    assert_eq!(answer["answer"]["kind"], json!("object"));
+    assert_eq!(answer["answer"]["local_size_mm"], json!([200.0, 300.0, 600.0]), "{answer}");
+    assert_eq!(answer["answer"]["local_min_mm"], json!([-100.0, -150.0, 0.0]), "{answer}");
+    assert_eq!(answer["answer"]["local_max_mm"], json!([100.0, 150.0, 600.0]), "{answer}");
+
+    // The product's measured box is the body it holds, which is a different number from the
+    // envelope it reserves.
+    let measured = client
+        .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+            "kind": "bounds",
+            "node": product.get(),
+        }))))
+        .await
+        .expect("the product's measured box is answered");
+    assert_eq!(body(&measured)["answer"]["local_size_mm"], json!([200.0, 300.0, 600.0]));
+    let reserved = client
+        .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+            "kind": "box",
+            "node": product.get(),
+        }))))
+        .await
+        .expect("the reserved box is answered");
+    assert_eq!(body(&reserved)["answer"][0]["size_um"]["x"], json!(600_000), "`box` still answers the envelope");
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}

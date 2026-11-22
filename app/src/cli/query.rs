@@ -81,7 +81,7 @@ pub const RESOURCES: [Resource; 4] = [
 pub enum Ask {
     /// Print the resource table, which needs no scene.
     Resources,
-    /// One of the five questions, by the name the word form uses.
+    /// One of the questions, by the name the word form uses.
     Question(&'static str),
     /// One resource, by the URI a client reads it at.
     Resource(&'static Resource),
@@ -156,10 +156,17 @@ fn query_of(args: &QueryArgs, project: &Project) -> Result<Query, CliError> {
         Ask::Resources => Err(CliError::Usage("the resource list needs no scene".to_owned())),
         Ask::Question("tree") => Ok(Query::Tree { node: args.id }),
         Ask::Question("box") => Ok(Query::Box { node: args.id }),
+        Ask::Question("bounds") => Ok(Query::Bounds { node: args.id.ok_or_else(bounds_needs_a_node)? }),
         Ask::Question("parts") => Ok(Query::Parts),
         Ask::Question("diagnostics") => Ok(Query::Diagnostics),
-        Ask::Question(_) => Ok(Query::Niche { at: point_of(args, project)? }),
+        Ask::Question("niche") => Ok(Query::Niche { at: point_of(args, project)? }),
+        Ask::Question(other) => Err(CliError::Usage(format!("`{other}` is not a question this door reads"))),
     }
+}
+
+/// The refusal a `bounds` line without a node reads.
+fn bounds_needs_a_node() -> CliError {
+    CliError::Usage("`bounds` measures one node: name it with `--id <node>`".to_owned())
 }
 
 /// The point `niche` measures: the one the line names, or the origin of the node it names.
@@ -190,9 +197,12 @@ pub fn check(args: &QueryArgs) -> Result<(), CliError> {
     }
     let (takes_node, takes_point) = match args.ask {
         Ask::Question("niche") => (true, true),
-        Ask::Question("tree" | "box") => (true, false),
+        Ask::Question("tree" | "box" | "bounds") => (true, false),
         _ => (false, false),
     };
+    if args.ask == Ask::Question("bounds") && args.id.is_none() {
+        return Err(bounds_needs_a_node());
+    }
     if !takes_node && let Some(id) = args.id {
         return Err(CliError::Usage(format!("`--id {id}` has no place: {}", what(args.ask))));
     }
@@ -330,6 +340,7 @@ mod tests {
         for (line, expected) in [
             (vec!["query", &scene, "tree"], "tree"),
             (vec!["query", &scene, "box"], "box"),
+            (vec!["query", &scene, "bounds", "--id", "2"], "bounds"),
             (vec!["query", &scene, "parts"], "parts"),
             (vec!["query", &scene, "diagnostics"], "diagnostics"),
             (vec!["query", &scene, "niche", "--at", "300,280,360"], "niche"),
@@ -338,6 +349,19 @@ mod tests {
             assert_eq!(answer["query"], expected, "`{expected}` is answered by its own name");
             assert!(answer["rows"].is_array() || answer["rows"].is_object(), "{answer}");
         }
+    }
+
+    #[test]
+    fn a_bounds_answer_measures_the_node_the_line_names() {
+        let directory = scratch_dir("cli-query-bounds");
+        let path = saved(&directory);
+        let scene = path.display().to_string();
+        let answer = report_of(&["query", &scene, "bounds", "--id", "2"]);
+        assert_eq!(answer["rows"]["kind"], "panel");
+        assert_eq!(answer["rows"]["local_size_mm"], json!([700.0, 500.0, 18.0]));
+
+        let error = crate::cli::parse(&words(&["query", &scene, "bounds"])).expect_err("a box is the box of one node");
+        assert!(error.to_string().contains("--id"), "the refusal names the flag: {error}");
     }
 
     #[test]
@@ -417,6 +441,7 @@ mod tests {
 
         for (line, expected) in [
             (vec!["query", "scene.z3l", "tree", "--at", "1,2,3"], "`--at` is a point"),
+            (vec!["query", "scene.z3l", "bounds", "--id", "2", "--at", "1,2,3"], "`--at` is a point"),
             (vec!["query", "scene.z3l", "parts", "--id", "5"], "`--id 5` has no place"),
             (vec!["query", "scene.z3l", "diagnostics", "--id", "5"], "`--id 5` has no place"),
             (vec!["query", "scene.z3l", "z3l://scene/tree", "--id", "5"], "takes no `--id` or `--at`"),

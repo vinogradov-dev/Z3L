@@ -238,9 +238,9 @@ pub fn headless_definitions() -> Vec<Tool> {
         ),
         Tool::new(
             TOOL_QUERY,
-            "Ask the scene one question and write nothing: `tree`, `box`, `parts`, `diagnostics` or \
-             `niche`. The answer is the report the command line prints, so a caller and the window \
-             cannot disagree about the document.",
+            "Ask the scene one question and write nothing: `tree`, `box`, `bounds`, `parts`, \
+             `diagnostics` or `niche`. The answer is the report the command line prints, so a caller \
+             and the window cannot disagree about the document.",
             object_schema::<Query>(),
         ),
     ]
@@ -306,7 +306,7 @@ mod tests {
         for tools in [headless_definitions(), attached_definitions()] {
             assert!(tools.len() >= 4, "the four coarse tools");
             for tool in &tools {
-                // A tool takes one object, or — `query` — one of the five question objects the engine's
+                // A tool takes one object, or — `query` — one of the question objects the engine's
                 // own enum describes. Either way every shape it accepts denies an unknown field, which
                 // is the promise the parser keeps.
                 let schema = Value::Object((*tool.input_schema).clone());

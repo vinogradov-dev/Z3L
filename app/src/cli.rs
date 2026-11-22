@@ -61,7 +61,7 @@ usage: z3l                 open the editor
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
        z3l query --resources
-       z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
+       z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
        z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
 
 export writes an order package from a saved scene without opening a window:
@@ -117,6 +117,8 @@ document lives in memory and every answer says nothing was written.
 query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
   box          the box a product reserves, in its own frame and in world millimetres
+  bounds       the box a node occupies, in its own frame and in the world: `--id <node>` of a
+               panel, a body, a product or a container with a part in it
   parts        the cut list -- the published `parts` table of the order package
   diagnostics  every panel problem the catalogue resolves, with a stable code
   niche        the empty space around a point: `--at <x,y,z>` in world millimetres, or `--id`
@@ -940,7 +942,7 @@ mod tests {
             "--id",
             "--at",
             "--resources",
-            "tree|box|parts|diagnostics|niche",
+            "tree|box|bounds|parts|diagnostics|niche",
         ] {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
         }
