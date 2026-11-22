@@ -106,21 +106,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 
 ## Bugs
-- `[ ]` **P19** the plan still sends a session to take the rename that already landed
-  Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is
-   `furniture.scene` and the crates are bare. But `plan/rename.md` still opens with "R1 waits
-   for the release … Take it back with `cargo xtask task take R1`", the `[release]` entry in
-   `plan/debt.md` still says to run the four commits first, and `AGENTS.md` §1 and §9 still
-   send a reader to the file. A session that believes either does work already in the tree, and
-   the plan gate cannot see it because every path still exists.
-  Shape: Decide what the file is now — history, which `git log` already keeps, or a record of
-   what the four commits measured — and with the first choice delete it and every reference to
-   it: `AGENTS.md` §1 and §9, the `[release]` entry in `plan/debt.md`, the row in `plan/map.md`
-   if there is one, and the skills that name it, which `cargo xtask skills` checks as
-   backticked paths.
-  Done: No plan file or skill tells a reader to take R1 or to run its four commits; `cargo
-   xtask skills`, `cargo xtask plan` and `cargo xtask ci` are green with the file gone.
-  `files: plan/rename.md,plan/debt.md,AGENTS.md`
 - `[ ]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
   Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
    only slide toward the far end of its segment, so a ring can be shortened but never
@@ -1172,6 +1157,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **P19** the plan still sends a session to take the rename that already landed
+  Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is
+   `furniture.scene` and the crates are bare. But `plan/rename.md` still opens with "R1 waits
+   for the release … Take it back with `cargo xtask task take R1`", the `[release]` entry in
+   `plan/debt.md` still says to run the four commits first, and `AGENTS.md` §1 and §9 still
+   send a reader to the file. A session that believes either does work already in the tree, and
+   the plan gate cannot see it because every path still exists.
+  Shape: Decide what the file is now — history, which `git log` already keeps, or a record of
+   what the four commits measured — and with the first choice delete it and every reference to
+   it: `AGENTS.md` §1 and §9, the `[release]` entry in `plan/debt.md`, the row in `plan/map.md`
+   if there is one, and the skills that name it, which `cargo xtask skills` checks as
+   backticked paths.
+  done: No plan file, `AGENTS.md` entry or skill tells a reader to take R1 or to run its four
+   commits: `plan/rename.md` opens as the record of the rename that landed at `d4a56f3` and
+   names its four commits, the `[release]` entry has left `plan/debt.md` with its tag, and
+   `cargo xtask plan`, `cargo xtask skills`, `cargo xtask docs` and `cargo xtask ci` are green.
+  `files: plan/rename.md,plan/debt.md,AGENTS.md` — `c4cbca5`
 
 - `[x]` **P26** a stream checkout writes only its own two plan files
   Why: A stream worktree writes plan/BACKLOG.md, plan/map.md and the rest of the shared plan
