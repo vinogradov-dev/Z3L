@@ -2,14 +2,14 @@
 
 use catalog::Directory;
 use geom::Contact;
-use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
+use model::{FillRefusal, Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
 use schemars::JsonSchema;
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
 
 use crate::area_cmds;
-use crate::class_rules::{self, ClassRefusal, CreationRefusal};
+use crate::class_rules::ClassRefusal;
 use crate::contour_cmds;
 use crate::mesh_cmds;
 use crate::node_cmds;
@@ -53,22 +53,22 @@ impl CommandOutcome {
     }
 }
 
-/// What a creating command adds, and where its parameters say it lands.
+/// What a creating command adds, as the word a discovery report prints.
 ///
-/// The level is the class trait the guard reads: a furniture part or fitting is born only inside
-/// the one open product, while a free scene object is not gated (ADR 0098). A command that creates
-/// nothing declares no [`Creation`], and a parameter set that does not name a parent is left to the
-/// command's own parser so a malformed request still reports its parameters.
+/// The level is the class trait ADR 0098 names: a furniture part or fitting belongs to a piece,
+/// while a free scene object belongs to the scene. It is a *description* of what the command
+/// makes, not a gate: a command writes wherever its own parameters are valid, and whether a piece
+/// is open is the interface's question, asked by the surfaces that offer the command (ADR 0226).
+/// A command that creates nothing declares no [`Creation`].
 #[derive(Clone, Copy, Debug)]
 pub struct Creation {
     level: Level,
-    parent_of: fn(&Value) -> Option<Id>,
 }
 
 impl Creation {
-    /// Declares the level of the created node and the parameter that names its parent.
-    pub const fn new(level: Level, parent_of: fn(&Value) -> Option<Id>) -> Self {
-        Self { level, parent_of }
+    /// Declares the class level of the node the command creates.
+    pub const fn new(level: Level) -> Self {
+        Self { level }
     }
 
     /// The class level of the node the command creates.
@@ -123,7 +123,7 @@ impl CommandSpec {
         (self.schema)()
     }
 
-    /// Declares what the command creates, so the session can apply ADR 0098's guard.
+    /// Declares what the command creates, so a discovery surface can say which level it builds.
     pub const fn creating(mut self, creation: Creation) -> Self {
         self.creation = Some(creation);
         self
@@ -141,9 +141,9 @@ impl CommandSpec {
 
     /// The class level of the node the command creates, or `None` when it creates none.
     ///
-    /// A discovery surface reads it — the command line's `commands --json` and, later, the
-    /// assistant — so a caller knows whether an id builds something before it dispatches it. The
-    /// level is the class trait ADR 0098 gates; it says nothing about the parameters.
+    /// A discovery surface reads it — the command line's `commands --json` and the assistant — so a
+    /// caller knows whether an id builds something before it dispatches it. It says nothing about
+    /// where the command may write and nothing about the parameters.
     pub const fn creation_level(self) -> Option<Level> {
         match self.creation {
             Some(creation) => Some(creation.level()),
@@ -169,46 +169,12 @@ impl CommandSpec {
 
     /// Whether the command applies to this session and these parameters.
     ///
-    /// This is a pure check for menus, toolbars and enabled state. It never mutates the document.
+    /// This is a pure check for menus, toolbars and enabled state. It never mutates the document,
+    /// and it is where a surface keeps its own rule — the open product among a creation command's
+    /// parameters, for instance — because a command writes wherever its parameters are valid
+    /// (ADR 0226).
     pub fn enabled(self, session: &Session, params: &Value) -> bool {
         (self.enabled_fn)(session, params)
-    }
-
-    /// Why this command cannot run in this session at all, whatever parameters it is handed.
-    ///
-    /// This is the session's half of [`CommandSpec::enabled`]: a part or a fitting is born only
-    /// inside the open product (ADR 0098), and whether one is open depends on the session rather
-    /// than on the request. A discovery surface lists the commands without a request to judge —
-    /// that is what a caller reads the parameter schema for — so this is the answer it can give,
-    /// and the sentence is the one the command's own refusal carries. A command that creates
-    /// nothing gated has no such condition, and a request that names another parent is left to the
-    /// command's parser and its `enabled` check.
-    pub fn unavailable(self, session: &Session) -> Option<CreationRefusal> {
-        let creation = self.creation?;
-        if !class_rules::is_furniture(creation.level()) {
-            return None;
-        }
-        class_rules::open_product(session.active_product()).err()
-    }
-
-    /// Why the command may not create its node in this session, or `Ok` when it creates nothing
-    /// gated (ADR 0098).
-    ///
-    /// The session asks this after a command has run on a copy and before that copy replaces the
-    /// document, so a refusal writes nothing and leaves the history untouched. The command's own
-    /// `enabled` check asks [`crate::allow_creation`] directly, so the button, the palette and a
-    /// future assistant agree about the refusal.
-    pub(crate) fn creation_refusal(self, session: &Session, params: &Value) -> Result<(), CreationRefusal> {
-        let Some(creation) = self.creation else {
-            return Ok(());
-        };
-        if !class_rules::is_furniture(creation.level()) {
-            return Ok(());
-        }
-        let Some(parent) = (creation.parent_of)(params) else {
-            return Ok(());
-        };
-        class_rules::allow_creation(session.project(), parent, session.active_product())
     }
 
     /// Runs the command on a working copy of the document.
@@ -238,6 +204,7 @@ fn params_schema<P: JsonSchema>() -> Value {
 /// The commands compiled into this build.
 static COMMANDS: &[CommandSpec] = &[
     panel_cmds::CREATE,
+    panel_cmds::FILL,
     panel_cmds::CONTOUR_CREATE,
     panel_cmds::OUTLINE_SET,
     panel_cmds::OUTLINE_CONTOUR,
@@ -353,14 +320,6 @@ pub enum CommandError {
         /// What the class forbids.
         refusal: ClassRefusal,
     },
-    /// A furniture part may not be created outside the open product.
-    #[error("`{command}` cannot create furniture here: {refusal}")]
-    CreationRefused {
-        /// The stable command id.
-        command: &'static str,
-        /// What the session or the target parent refuses.
-        refusal: CreationRefusal,
-    },
     /// Deriving geometry for the command failed.
     #[error("cannot evaluate `{command}`: {message}")]
     Evaluation {
@@ -368,6 +327,26 @@ pub enum CommandError {
         command: &'static str,
         /// A human-readable evaluation message.
         message: String,
+    },
+    /// The point a command measured names no niche, in the query's own sentence.
+    #[error("{message}")]
+    NoNiche {
+        /// The sentence the query prints for the same point.
+        message: String,
+    },
+    /// The void a fill measured leaves no part the board can make.
+    #[error("`{command}` cannot fill the void: {refusal}")]
+    FillRefused {
+        /// The stable command id.
+        command: &'static str,
+        /// Why the measured void has no part in it.
+        refusal: FillRefusal,
+    },
+    /// The workshop's catalogue holds no material the part could be cut from.
+    #[error("`{command}` needs a board: the catalogue holds no panel material")]
+    NoMaterial {
+        /// The stable command id.
+        command: &'static str,
     },
     /// The catalogue does not contain the requested material.
     #[error("unknown material {material}")]
@@ -397,11 +376,6 @@ impl CommandError {
     /// A class gate's refusal, tagged with the command that asked it.
     pub(crate) fn class(command: &'static str, refusal: ClassRefusal) -> Self {
         Self::ClassRefused { command, refusal }
-    }
-
-    /// The creation guard's refusal, tagged with the command that asked it (ADR 0098).
-    pub(crate) fn creation(command: &'static str, refusal: CreationRefusal) -> Self {
-        Self::CreationRefused { command, refusal }
     }
 
     /// A placement that would land a part inside one that stays behind, naming both (ADR 0162).
@@ -585,7 +559,11 @@ mod tests {
         // A pulled area is a body born from a drawing, so it creates one and names its own area.
         let area = registry.get("object.area.extrude").expect("object.area.extrude is registered");
         assert_eq!(area.label().text(Lang::En), "Extrude area");
-        assert_eq!(registry.specs().len(), 65);
+        // A niche is filled by one command the three ribbon cells and any caller share (N37).
+        let fill = registry.get("panel.fill").expect("panel.fill is registered");
+        assert_eq!(fill.label().text(Lang::En), "Fill a niche");
+        assert_eq!(fill.creation_word(), Some("part"));
+        assert_eq!(registry.specs().len(), 66);
     }
 
     #[test]

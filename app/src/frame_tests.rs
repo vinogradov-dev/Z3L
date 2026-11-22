@@ -6728,12 +6728,13 @@ fn a_refused_batch_answers_the_command_sentence_and_no_created_ids() {
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     harness.settle();
     let before = harness.revision();
-    // A panel is born only inside an open product (ADR 0098), and this session has none open.
+    // A parent the document does not hold is the command's own refusal: no copy of the document is
+    // installed, so neither the revision nor the history moves.
     let request = mcp::BatchRequest {
         steps: vec![mcp::StepRequest::new(
             "panel.create",
             serde_json::json!({
-                "parent": 1,
+                "parent": 9_999,
                 "name": "Shelf",
                 "nominal_size": {"length": 700_000, "width": 500_000},
                 "material": "1-1",

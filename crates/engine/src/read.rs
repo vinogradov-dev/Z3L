@@ -117,13 +117,7 @@ pub enum QueryError {
     )]
     NoGeometry(Id),
     /// The point stands outside every product, or the free space around it is not one cell.
-    #[error(
-        "no niche at [{}, {}, {}]: {}",
-        .at[0],
-        .at[1],
-        .at[2],
-        refusal_word(*refusal)
-    )]
+    #[error("{}", no_niche_sentence(*at, *refusal))]
     NoNiche {
         /// The point the question measured, in world millimetres.
         at: [f64; 3],
@@ -365,8 +359,16 @@ fn niche(session: &Session, at: [f64; 3]) -> Result<Value, QueryError> {
     }))
 }
 
+/// The sentence a point with no niche is refused by.
+///
+/// One wording serves the query and `panel.fill`, so a caller reads the same sentence whichever door
+/// measured the void (N37).
+pub(crate) fn no_niche_sentence(at: [f64; 3], refusal: NicheRefusal) -> String {
+    format!("no niche at [{}, {}, {}]: {}", at[0], at[1], at[2], refusal_word(refusal))
+}
+
 /// Why a point has no niche, in the answer's words.
-const fn refusal_word(refusal: NicheRefusal) -> &'static str {
+pub(crate) const fn refusal_word(refusal: NicheRefusal) -> &'static str {
     match refusal {
         NicheRefusal::Outside => "the point is outside every product",
         NicheRefusal::Unrepresentable => "the free space is not one convex cell",

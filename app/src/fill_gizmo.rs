@@ -354,25 +354,12 @@ pub(crate) fn plan_at(
     })
 }
 
-/// The reason a void cannot be filled, in the maker's words.
+/// The reason a void cannot be filled, in the words the model states for every caller.
+///
+/// One wording serves the ghost, `panel.fill` and the query beside them, so a maker and a caller
+/// read the same sentence about one measured void (N37).
 fn refusal_sentence(refusal: FillRefusal) -> String {
-    match refusal {
-        FillRefusal::Outside => "Point at the empty space inside the open product.".to_owned(),
-        FillRefusal::Unrepresentable => {
-            "The empty space here is not one straight shape; point at a plainer gap.".to_owned()
-        }
-        FillRefusal::Footprint => "The open piece's frame is not convex, so no one part takes its shape.".to_owned(),
-        FillRefusal::OtherProduct => "The void belongs to another product; open it to fill it.".to_owned(),
-        FillRefusal::NoFrame => "The open product has no frame.".to_owned(),
-        FillRefusal::TooThin => "The void is thinner than the material.".to_owned(),
-        FillRefusal::TooSmall => "The void is too small for a panel.".to_owned(),
-        FillRefusal::WallsDisagree => {
-            "The walls here lean against each other, so no flat board meets them all; use the largest fit.".to_owned()
-        }
-        FillRefusal::Wedge => {
-            "The void narrows across the board's thickness, where no end bevel helps; use the largest fit.".to_owned()
-        }
-    }
+    refusal.sentence().to_owned()
 }
 
 /// Paints one size at `position`, on a quiet plate so it stays legible over the scene.

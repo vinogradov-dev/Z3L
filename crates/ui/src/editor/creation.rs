@@ -117,6 +117,10 @@ impl Editor {
     ///
     /// The created part becomes the selection and is returned, so a caller that drew it can name the
     /// node it just cut without reading the selection back.
+    ///
+    /// The interface's own rule is asked here, before the command: a part is offered only inside the
+    /// open piece (ADR 0098). The command itself writes wherever its parameters name, because a
+    /// caller that is not a person has no open piece to speak of (ADR 0226).
     #[allow(clippy::too_many_arguments)]
     pub fn create_panel_sized(
         &mut self,
@@ -129,6 +133,8 @@ impl Editor {
         placement: Placement,
         class: Option<ClassCode>,
     ) -> Result<Id, String> {
+        engine::allow_creation(session.project(), parent, session.active_product())
+            .map_err(|refusal| refusal.to_string())?;
         let material = Self::panel_material(session)?;
         let name = Self::free_name(session, parent, &name);
         let params = json(&PanelCreate { parent, name, nominal_size, material, placement, class, outline, bevels })?;

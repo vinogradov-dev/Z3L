@@ -568,14 +568,13 @@ impl Session {
     /// Runs one command on a copy of the document and installs the result.
     ///
     /// Returns the command's outcome and the document as it was before it, which is what the history
-    /// keeps; a failed command leaves the current document untouched. The creation guard is asked
-    /// after the command ran on the copy and before the copy is installed, so a furniture part that
-    /// no open product may receive writes nothing and records no history (ADR 0098).
+    /// keeps; a failed command leaves the current document untouched. The command's own `run` is the
+    /// only gate: whether a piece is open is the interface's question, asked by the surfaces that
+    /// offer the command, so a caller that names a product may write in it (ADR 0226).
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
         let outcome = spec.run(&mut working, &self.directory, params, &*self.contact)?;
-        spec.creation_refusal(self, params).map_err(|refusal| CommandError::creation(spec.id(), refusal))?;
         let previous = std::mem::replace(&mut self.project, working);
         Ok((outcome, previous))
     }
@@ -625,9 +624,9 @@ mod tests {
     use crate::batch::{BatchEffect, BatchOptions, BatchStep};
     use model::{
         ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
-        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor, MachiningParams, PanelContourError,
-        PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue, RectCorner, RectEdge,
-        Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
+        PanelContourError, PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue,
+        RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -638,7 +637,7 @@ mod tests {
     };
     use units::Length;
 
-    use crate::class_rules::{ClassRefusal, CreationRefusal, Dimension};
+    use crate::class_rules::{ClassRefusal, Dimension};
     use crate::node_cmds::{
         AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup,
         NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany,
@@ -651,7 +650,6 @@ mod tests {
         PanelMachiningUpdate, PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize,
         PanelRingBandingClear, PanelRingBandingSet,
     };
-    use text::Lang;
 
     fn sample_session() -> Session {
         Session::with_directory(sample_project(), sample_catalog())
@@ -760,31 +758,28 @@ mod tests {
     }
 
     #[test]
-    fn a_furniture_part_needs_the_open_product_and_names_why_not() {
-        // No product at all: the editor asks for one first.
+    fn a_part_is_written_where_its_parameters_name_and_the_interface_asks_for_the_open_product() {
+        // The command's parameters decide where a part is written: a caller that names a container
+        // writes there, whether or not a piece is open. The open product is the *button's* rule, so
+        // the same request is refused by `enabled` and accepted by the dispatch (ADR 0226).
         let mut session = sample_session();
-        let before = session.project().revision();
-        let params = json_params(&panel_create(&session, "Back"));
-        assert!(!CommandRegistry::new().get("panel.create").expect("registered").enabled(&session, &params));
-        assert!(matches!(
-            session.dispatch("panel.create", &params),
-            Err(CommandError::CreationRefused { command: "panel.create", refusal: CreationRefusal::NoProductOpen })
-        ));
-        assert_eq!(session.project().revision(), before, "a refusal writes nothing");
-        assert!(!session.can_undo(), "a refusal records no history");
-
-        // The open product does not own the root: the target is outside it.
-        let mut session = product_session();
         let root = session.project().root().id();
-        let at_root = json_params(&PanelCreate { parent: root, ..panel_create(&session, "Back") });
-        assert!(!CommandRegistry::new().get("panel.create").expect("registered").enabled(&session, &at_root));
-        assert!(matches!(
-            session.dispatch("panel.create", &at_root),
-            Err(CommandError::CreationRefused { command: "panel.create", refusal: CreationRefusal::ProductClosed })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        let params = json_params(&PanelCreate { parent: root, ..panel_create(&session, "Back") });
+        let spec = CommandRegistry::new().get("panel.create").expect("registered");
+        assert!(!spec.enabled(&session, &params), "the button waits for an open product");
+        let before = session.project().revision();
+        let id = session
+            .dispatch("panel.create", &params)
+            .expect("a caller that names its parent writes")
+            .created_id()
+            .expect("a panel id");
+        assert_eq!(session.project().parent_of(id), Some(root));
+        assert!(session.project().revision() > before, "the write is the command's own");
+        session.undo().expect("one undo step");
+        assert_eq!(session.project().panel(id), None, "one undo takes the whole creation back");
 
-        // A second product is closed while the first is open, so its parts wait too.
+        // A second product is closed while the first is open: its parts wait for the interface, and a
+        // caller that names that piece writes in it.
         let (mut project, first) = sample_product_project();
         let root = project.root().id();
         let envelope = Envelope::new(
@@ -799,52 +794,34 @@ mod tests {
         let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(second), "the second product is open");
         let closed = json_params(&PanelCreate { parent: first, ..panel_create(&session, "Back") });
-        assert!(matches!(
-            session.dispatch("panel.create", &closed),
-            Err(CommandError::CreationRefused { refusal: CreationRefusal::ProductClosed, .. })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        assert!(!spec.enabled(&session, &closed), "the part of a closed piece is not offered");
+        let id = session
+            .dispatch("panel.create", &closed)
+            .expect("the caller named the piece it is sure about")
+            .created_id()
+            .expect("a panel id");
+        assert_eq!(session.project().product_of(id), Some(first), "the part belongs to the piece it named");
 
-        // The contour panel is a part through the same gate.
+        // The contour panel is a part by the same rule: its button waits, its dispatch does not.
         let (mut session, source) = session_with_contour_source();
         let contour = json_params(&contour_panel_create(&session, source, "Top"));
         session.close_product();
-        assert!(matches!(
-            session.dispatch("panel.contour.create", &contour),
-            Err(CommandError::CreationRefused {
-                command: "panel.contour.create",
-                refusal: CreationRefusal::NoProductOpen
-            })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        let contour_spec = CommandRegistry::new().get("panel.contour.create").expect("registered");
+        assert!(!contour_spec.enabled(&session, &contour), "no open piece, no offered button");
+        assert!(session.dispatch("panel.contour.create", &contour).is_ok(), "a caller names the piece");
     }
 
     #[test]
-    fn a_command_that_waits_for_a_product_says_so_without_a_request() {
-        // A discovery surface lists the commands before any request exists: the session's half of
-        // the gate is the only thing it can judge, and it carries the refusal the command itself
-        // would report (ADR 0098, ADR 0185).
+    fn the_registry_names_what_a_command_builds_and_gates_nothing_by_the_session() {
+        // The level is a description of the node a command makes, printed by a discovery surface. It
+        // is no longer a gate: a command writes where its parameters name, and the open product is
+        // asked by the surfaces that offer it (ADR 0226).
         let registry = CommandRegistry::new();
         let create = registry.get("panel.create").expect("registered");
-        let contour = registry.get("panel.contour.create").expect("registered");
-        let closed = sample_session();
-        assert_eq!(create.unavailable(&closed), Some(CreationRefusal::NoProductOpen));
-        assert_eq!(contour.unavailable(&closed), Some(CreationRefusal::NoProductOpen));
-        assert_eq!(
-            CreationRefusal::NoProductOpen.message().text(Lang::En),
-            "Create a product first.",
-            "the sentence is the one the refusal already carries"
-        );
-        let open = product_session();
-        assert_eq!(create.unavailable(&open), None, "an open product is no objection");
-        assert_eq!(contour.unavailable(&open), None);
-        // A command that creates nothing gated has no session condition to report.
-        assert_eq!(registry.get("node.rename").expect("registered").unavailable(&closed), None);
-        assert_eq!(
-            registry.get("object.primitive.create").expect("registered").unavailable(&closed),
-            None,
-            "a primitive is a scene object, not furniture"
-        );
+        assert_eq!(create.creation_level(), Some(Level::Part));
+        assert_eq!(create.creation_word(), Some("part"));
+        assert_eq!(registry.get("panel.contour.create").expect("registered").creation_word(), Some("part"));
+        assert_eq!(registry.get("node.rename").expect("registered").creation_word(), None);
     }
 
     #[test]

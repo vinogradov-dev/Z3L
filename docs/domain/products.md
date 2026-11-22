@@ -182,17 +182,26 @@ the part under the pointer and a double click enters one level further.
 open container above it, the key closes the product and selects the piece again. Escape first drops
 the creation arm and then the levels, so it never skips a step.
 
-**A closed product accepts no new parts.** Moving, renaming, deleting and re-parenting it stay
-allowed; the lock is about adding work, not about owning the object.
+**A closed product is not offered to a person, and is writable by a caller.** The ribbon, the palette
+and the empty-space tool offer new parts only inside the open piece, so a maker never scatters work by
+accident; a command is not gated by it, because a caller names the piece the task means and has no
+"open" at all ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)).
+Moving, renaming, deleting and re-parenting remain allowed either way.
 
 ## 6. Creating parts
 
-- A panel, a facade or a fitting is created only inside the **open** product. The command's `enabled`
-  check refuses when no product is open or when the target parent is not inside it, and the message
-  says which: «сначала создайте изделие» or «изделие закрыто».
+- A person creates a panel, a facade or a fitting only inside the **open** product: the interface's
+  `enabled` check refuses when no product is open or when the target parent is not inside it, and the
+  message says which: «сначала создайте изделие» or «изделие закрыто».
+- A command is not gated by the open piece. `panel.create` writes into the container its `parent`
+  names — a closed product, a group inside one, or the root — because a program has no open piece and
+  the document knows nothing about one
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)). The part
+  is not an orphan when the caller names the piece's group; a stray part is a report's business.
 - The refusal writes nothing: no revision, no history entry.
 - Free modelling is untouched: a primitive, a drawn figure, a mesh object or a hardware model can be
-  created without a product. The guard applies to classes whose `level` is `Part` or `Fitting`.
+  created without a product. The interface's guard applies to classes whose `level` is `Part` or
+  `Fitting`.
 
 ## 7. Filling a niche
 
@@ -253,6 +262,14 @@ empty space.
   command and one undo entry: the outline — a rectangle with its corner cuts, or the ring — and the
   end bevels travel in the same `panel.create`, so a shaped part is never a create followed by a
   second edit.
+- **The same answer is a command a caller can dispatch.** `panel.fill` takes the point in world
+  millimetres, the class, the mode and the place on the free axis, measures the niche with the same
+  `Project::fill_plan` the ghost reads, and writes one `panel.create` — so a caller that cannot point
+  at a splayed cell asks the program for the part instead of computing an outline and a stance itself
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)). It names
+  the piece it writes in, and a caller that is not sure which piece a task means asks the person to
+  open it rather than guessing. A hidden part is the person's sight, not a program's: a caller
+  measures every part in the way.
 - The three fills handle a product in any orientation, because the cell is measured in the product's own
   frame; a curved boundary is measured by the box around its body, so the part fits with a gap. A
   drawer and a facade need their own fill rules.

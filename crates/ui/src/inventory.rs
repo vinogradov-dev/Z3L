@@ -384,6 +384,16 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "panel.fill",
+        // The three ribbon cells arm the empty-space gesture, so the command they write through has
+        // no button of its own: a caller that cannot point names the niche's point, its class and
+        // its mode, and the same model answer makes the part (N37).
+        label: Message::CmdFillNiche,
+        places: &[Place::Api],
+        applies: Applies::Always,
+        icon: None,
+    },
+    Row {
         id: "panel.contour.create",
         label: Message::CmdCreateContourPanel,
         places: &[Place::Api],

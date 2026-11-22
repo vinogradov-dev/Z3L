@@ -1,6 +1,6 @@
 # 0215. The program teaches its domain, and a construction is composed
 
-- Status: Accepted; supersedes the recipe of 0192
+- Status: Accepted; supersedes the recipe of 0192; the `enabled` column of its list is retired by 0226
 - Date: 2026-11-21
 
 ## Context

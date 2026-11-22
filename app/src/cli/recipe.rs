@@ -95,13 +95,13 @@ pub(super) fn session_of(document: model::Project) -> Result<Session, CliError> 
 
 /// Opens the product the recipe builds in.
 ///
-/// A furniture part is born only inside the open product (ADR 0098), and opening one is session
-/// state, not a command: the window opens what the person double-clicks. A headless run has no
-/// person, so `--product` names one and a scene with exactly one product opens it — one product is
-/// no guess. A scene with several and no flag leaves the workspace closed, and the command's own
-/// refusal says so. The open itself is [`Session::open_named_product`], the same call the tool
-/// surface makes for its `product` field, so both doors refuse an id that is not a product in one
-/// sentence (ADR 0212).
+/// Opening a piece is how a person selects the workspace, and it is session state, not a command: the
+/// window opens what the person double-clicks. A headless run has no person, so `--product` names
+/// one and a scene with exactly one product opens it — one product is no guess. A scene with several
+/// and no flag leaves the workspace closed; the steps still write where their own parameters name,
+/// because a command is not gated by the open piece (ADR 0098, ADR 0226). The open itself is
+/// [`Session::open_named_product`], the same call the tool surface makes for its `product` field, so
+/// both doors refuse an id that is not a product in one sentence (ADR 0212).
 pub(super) fn open_product(session: &mut Session, product: Option<model::Id>) -> Result<(), CliError> {
     let chosen = match product {
         Some(id) => Some(id),

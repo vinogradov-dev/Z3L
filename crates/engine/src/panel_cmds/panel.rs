@@ -123,15 +123,7 @@ fn invalid_default(message: &str) -> CommandError {
 /// The `panel.create` command.
 pub(crate) const CREATE: CommandSpec =
     CommandSpec::new::<PanelCreate>(CREATE_ID, CREATE_LABEL, create_enabled, create_run)
-        .creating(Creation::new(Level::Part, created_parent));
-
-/// The parent a creating command's parameters name, or `None` when the parameters do not parse.
-///
-/// A malformed request is left to the command's own parser, which reports it as invalid parameters;
-/// the guard only speaks about a request that already names a container (ADR 0098).
-fn created_parent(params: &Value) -> Option<Id> {
-    PanelCreate::parse(params).ok().map(|params| params.parent)
-}
+        .creating(Creation::new(Level::Part));
 
 /// Stable id of the contour-panel creation command.
 pub const CONTOUR_CREATE_ID: &str = "panel.contour.create";
@@ -185,12 +177,7 @@ pub(crate) const CONTOUR_CREATE: CommandSpec = CommandSpec::new::<PanelContourCr
     contour_create_enabled,
     contour_create_run,
 )
-.creating(Creation::new(Level::Part, contour_created_parent));
-
-/// The parent a contour-panel request names, or `None` when the parameters do not parse.
-fn contour_created_parent(params: &Value) -> Option<Id> {
-    PanelContourCreate::parse(params).ok().map(|params| params.parent)
-}
+.creating(Creation::new(Level::Part));
 
 fn contour_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelContourCreate::parse(params) else {
@@ -473,6 +460,20 @@ fn create_run(
     _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCreate::parse(params)?;
+    let id = create_panel(project, catalog, params)?;
+    Ok(CommandOutcome::created(id))
+}
+
+/// Writes one panel from a typed request, and answers the id of the node it made.
+///
+/// This is the one creation path: `panel.create` parses its parameters into [`PanelCreate`] and a
+/// command that plans a part — a fill of a measured niche — builds the same value and writes it
+/// here, so the two cannot store a board differently.
+pub(super) fn create_panel(
+    project: &mut Project,
+    catalog: &Directory,
+    params: PanelCreate,
+) -> Result<Id, CommandError> {
     params.validate_name()?;
     let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
     let thickness = material.thickness;
@@ -535,7 +536,7 @@ fn create_run(
     if let Some(class) = params.class {
         project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class))?;
     }
-    Ok(CommandOutcome::created(id))
+    Ok(id)
 }
 
 /// Stable id of the panel rename command.

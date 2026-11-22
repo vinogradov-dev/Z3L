@@ -26,6 +26,8 @@ use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI};
 
 use geom::{Contact, DQuat, DVec2, DVec3, Region};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use units::{Degrees, Length};
 
 use super::niche::{document_ring, signed_area, surface_corners};
@@ -93,7 +95,11 @@ impl FillRequest {
 }
 
 /// How a fill tool reads the section the walls leave.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+///
+/// It is a wire word as well as a tool's mode: a command that fills a niche names it, so a caller
+/// that cannot see the void asks for the largest rectangle or for the shape the walls leave.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum FillMode {
     /// The largest rectangle that fits inside the section, keeping the standard rectangle panel.
     #[default]
@@ -150,7 +156,7 @@ pub enum FillRefusal {
     Unrepresentable,
     /// The open product's own footprint is not a convex ring, so the space it reserves is not one cell.
     Footprint,
-    /// The void belongs to another product than the one that is open.
+    /// The void belongs to another product than the one the part is for.
     OtherProduct,
     /// Neither the product nor the measured point has a usable frame.
     NoFrame,
@@ -168,6 +174,38 @@ pub enum FillRefusal {
     ///
     /// `Shape` falls back to the slab section, as above; the classifier's own refusal.
     Wedge,
+}
+
+impl std::fmt::Display for FillRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.sentence())
+    }
+}
+
+impl std::error::Error for FillRefusal {}
+
+impl FillRefusal {
+    /// The sentence the refusal is read by, in the wire's English.
+    ///
+    /// One wording serves the ghost a maker sees and the command a caller dispatches, so the two
+    /// cannot explain one measured void differently.
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::Outside => "Point at the empty space inside the open product.",
+            Self::Unrepresentable => "The empty space here is not one straight shape; point at a plainer gap.",
+            Self::Footprint => "The open piece's frame is not convex, so no one part takes its shape.",
+            Self::OtherProduct => "The void belongs to another product than the one this part is for.",
+            Self::NoFrame => "The open product has no frame.",
+            Self::TooThin => "The void is thinner than the material.",
+            Self::TooSmall => "The void is too small for a panel.",
+            Self::WallsDisagree => {
+                "The walls here lean against each other, so no flat board meets them all; use the largest fit."
+            }
+            Self::Wedge => {
+                "The void narrows across the board's thickness, where no end bevel helps; use the largest fit."
+            }
+        }
+    }
 }
 
 impl Project {

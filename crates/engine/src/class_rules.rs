@@ -136,11 +136,14 @@ impl fmt::Display for CreationRefusal {
 
 impl std::error::Error for CreationRefusal {}
 
-/// `Ok` when a furniture object may be created under `parent`, or the refusal.
+/// `Ok` when the interface may offer a furniture object under `parent`, or the refusal.
 ///
-/// The target must lie inside the one open product: a nested group is inside it, while the root,
-/// another product and a group of another piece are not. Openness is session state, so the caller
-/// passes `open` instead of this function reading a document field (ADR 0098, ADR 0029).
+/// This is the *button's* rule, asked by `enabled` and by the editor's own creation path: the target
+/// must lie inside the one open product — a nested group is inside it, while the root, another product
+/// and a group of another piece are not — because a person chooses the piece they are working in. A
+/// dispatch is not gated by it: a command writes where its parameters name, and a caller has no open
+/// piece at all (ADR 0098, ADR 0226). Openness is session state, so the caller passes `open` instead of
+/// this function reading a document field (ADR 0029).
 pub fn allow_creation(project: &Project, parent: Id, open: Option<Id>) -> Result<(), CreationRefusal> {
     let open = open_product(open)?;
     match project.product_of(parent) {
@@ -151,9 +154,9 @@ pub fn allow_creation(project: &Project, parent: Id, open: Option<Id>) -> Result
 
 /// The half of [`allow_creation`] that no parameter decides: whether a product is open at all.
 ///
-/// A caller with no request to judge — a discovery surface listing what it could dispatch — asks
-/// this one, so the sentence a closed workspace earns is the one the command's own refusal carries.
-/// Both readings go through this function, so neither can drift.
+/// A surface that offers a creation before any request exists — the ribbon, a container's menu —
+/// asks this one, and reads the sentence a closed workspace earns. Both readings go through this
+/// function, so the interface cannot refuse one and offer the other.
 pub fn open_product(open: Option<Id>) -> Result<Id, CreationRefusal> {
     open.ok_or(CreationRefusal::NoProductOpen)
 }

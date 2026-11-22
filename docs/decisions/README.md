@@ -230,6 +230,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0223](0223-a-call-waits-for-the-frame-that-has-the-window.md) | A call waits for the frame that has the window, and a caller that has gone is not performed | Accepted; amends the `busy` answer of 0207 |
 | [0224](0224-two-plan-writers-in-one-checkout-are-one-at-a-time.md) | Two plan writers in one checkout are one at a time | Accepted; amends the `plan/.lock` consequence of 0085 |
 | [0225](0225-a-queued-call-rings-the-window.md) | A queued call rings the window, and the frame that lands it asks for the next one | Accepted; completes the repainting clause 0223 left to X111 |
+| [0226](0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md) | A command names the piece it writes in, and the interface keeps it open | Accepted; amends the command-vs-button clause of 0098 and the `enabled` column of 0185 |
 
 ## Format
 

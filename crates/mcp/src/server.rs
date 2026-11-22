@@ -249,29 +249,23 @@ fn sink_write(sink: &dyn SceneSink, session: &Session, report: &engine::BatchRep
 /// sentence exists so the client hears about it instead of a hung connection.
 const BUSY: &str = "the session is unavailable: a previous call left it in a broken state";
 
-/// One row of `command_list`: the id, the label, what it creates, the schema and the session's answer.
+/// One row of `command_list`: the id, the label, what it creates and the schema of its parameters.
 ///
-/// `enabled` is the session's half of the command's own check: a part is born only inside an open
-/// product, and that is the condition a caller can learn before it writes a request. What the
-/// parameters decide is left to `command_run`, whose refusal is the command's own sentence — a list
-/// carries no request to judge (ADR 0098, ADR 0185).
-fn command_row(session: &Session, spec: engine::CommandSpec) -> Value {
-    let unavailable = spec.unavailable(session);
+/// There is no `enabled` column: a command writes wherever its own parameters are valid, and the
+/// open product is the *interface's* condition, not the command's — a discovery surface that asked
+/// it would tell a caller "no" about a request the dispatch accepts (ADR 0226). What the parameters
+/// decide is left to `command_run`, whose refusal is the command's own sentence.
+fn command_row(_session: &Session, spec: engine::CommandSpec) -> Value {
     let mut row = json!({
         "id": spec.id(),
         "label": spec.label().text(Lang::En),
         "params": spec.params_schema(),
         "family": engine::Family::of(spec.id()).map(engine::Family::word),
-        "enabled": unavailable.is_none(),
     });
-    let Some(object) = row.as_object_mut() else {
-        return row;
-    };
-    if let Some(word) = spec.creation_word() {
+    if let Some(object) = row.as_object_mut()
+        && let Some(word) = spec.creation_word()
+    {
         object.insert("creates".to_owned(), json!(word));
-    }
-    if let Some(refusal) = unavailable {
-        object.insert("reason".to_owned(), json!(refusal.to_string()));
     }
     row
 }

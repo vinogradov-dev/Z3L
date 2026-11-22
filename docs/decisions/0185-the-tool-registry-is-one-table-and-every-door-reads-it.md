@@ -1,6 +1,6 @@
 # 0185. The tool registry is one table, and the CLI and the MCP server are its doors
 
-- Status: Accepted; narrows 0028's tool registry and 0183's "one headless door"
+- Status: Accepted; narrows 0028's tool registry and 0183's "one headless door"; its `enabled` column retired by 0226
 - Date: 2026-11-21
 
 ## Context

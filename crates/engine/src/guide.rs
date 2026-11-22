@@ -50,6 +50,7 @@ pub fn guide() -> Value {
         "steps": steps(),
         "frames": frames(),
         "stances": stances(),
+        "niches": niches(),
         "classes": classes(),
         "units": units(),
         "sides": sides(),
@@ -112,8 +113,7 @@ fn steps() -> Value {
             "step": "frame",
             "command": PRODUCT_CREATE_ID,
             "says": "A piece begins as a product frame: three authored sides and a footprint on its \
-                     base plane. The frame never resizes with its parts, and a part is born only \
-                     inside the open product (ADR 0098).",
+                     base plane. The frame never resizes with its parts (ADR 0098).",
         },
         {
             "order": 2,
@@ -122,7 +122,9 @@ fn steps() -> Value {
             "says": "Every part is a panel created in one of the three stances below, with a class \
                      that names its role. Width, depth and height are solved from the frame: a part \
                      is placed by a length the caller computed, and the program keeps the number it \
-                     was given rather than deriving it.",
+                     was given rather than deriving it. The command names the piece it writes in; \
+                     the interface offers creation only inside the piece the person has open \
+                     (ADR 0098, ADR 0226).",
         },
         {
             "order": 3,
@@ -256,6 +258,46 @@ impl Stance {
     pub fn placement(self) -> Option<Placement> {
         Placement::new(geom::DVec3::ZERO, self.placement_rotation()).ok()
     }
+}
+
+/// The empty space a point inside a piece names, and the one command that fills it.
+///
+/// A caller that knows every size and place builds its panels itself; a void of irregular shape is
+/// where measuring beats computing, and the two doors below answer it from the same model. The rule
+/// about *which* piece is the caller's own care: a caller that is not sure which product the task
+/// means asks the person to open it instead of guessing (ADR 0098, ADR 0226).
+fn niches() -> Value {
+    json!({
+        "says": "The empty space inside a piece is measured, not assumed: a point in world \
+                 millimetres names one convex cell with its walls, and the part that fills it is \
+                 derived from that cell. Use it when the void is not the rectangle you can compute \
+                 — a splayed carcass, a cut corner, a ring — and build the panels by their numbers \
+                 when you already know them.",
+        "ask": {
+            "query": "niche",
+            "arguments": {"at": "[x, y, z] in world millimetres"},
+            "answers": "the product the cell belongs to, the box it reserves, its planes and corners, \
+                        and whether its section is a box, a section or a sloped cell",
+        },
+        "fill": {
+            "command": "panel.fill",
+            "arguments": {
+                "parent": "the container the part lands in: the product or a group inside it",
+                "at": "the point inside the void, world millimetres",
+                "class": "the class the part plays; its fill trait chooses the axis pair",
+                "mode": "`fit` for the largest rectangle, `shape` for the section the walls leave",
+                "free": "the place along the free axis, millimetres; absent, the point answers",
+                "name": "the part's name; absent, its class's word, made unique",
+            },
+            "answers": "the id of the created panel, its class, its nominal size and the stance the \
+                        guide states; one revision and one undo entry",
+            "refuses": "a point in no product, a void that is not one cell, a void of another product \
+                        than `parent`, and a class whose traits carry no fill pair",
+        },
+        "which_product": "Name the product you are sure of. When a task does not say which piece it \
+                          means and more than one product is in the scene, ask the person to open it \
+                          — every answer names `open_product` — instead of writing into a guess.",
+    })
 }
 
 /// The three stances, as the guide prints them.
@@ -525,6 +567,23 @@ mod tests {
             "the front corner is a fillet with the documented radius"
         );
         assert!(corners[0].is_none() && corners[1].is_none() && corners[3].is_none(), "the other corners stay square");
+    }
+
+    #[test]
+    fn the_guide_names_the_niche_and_the_piece_a_caller_works_in() {
+        // A released build ships no prose: the one command that fills a void and the rule about which
+        // piece to write in have to travel with the tool, or a caller guesses both (N37).
+        let guide = guide();
+        assert_eq!(guide["niches"]["ask"]["query"], "niche", "the measurement is a query a caller can ask");
+        assert_eq!(guide["niches"]["fill"]["command"], "panel.fill", "the fill is one command");
+        assert!(
+            guide["niches"]["which_product"].as_str().is_some_and(|rule| rule.contains("open_product")),
+            "the rule says where the open product is read"
+        );
+        assert!(
+            guide["steps"][1]["says"].as_str().is_some_and(|says| says.contains("ADR 0226")),
+            "the build's order says who decides the piece"
+        );
     }
 
     #[test]

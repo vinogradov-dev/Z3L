@@ -64,9 +64,9 @@ pub use object_cmds::{
 };
 pub use panel_cmds::{
     PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet, PanelCornerBandingClear, PanelCornerBandingSet,
-    PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMachiningAdd,
-    PanelMachiningMove, PanelMachiningRemove, PanelMachiningUpdate, PanelMaterialSet, PanelOutlineSet,
-    PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear, PanelRingBandingSet,
+    PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelFill,
+    PanelMachiningAdd, PanelMachiningMove, PanelMachiningRemove, PanelMachiningUpdate, PanelMaterialSet,
+    PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear, PanelRingBandingSet,
 };
 pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};

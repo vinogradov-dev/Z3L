@@ -115,8 +115,8 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     let commands = listed["commands"].as_array().expect("the list holds one row per command");
     assert!(commands.len() > 50, "the whole registry is projected: {}", commands.len());
     let create = commands.iter().find(|row| row["id"] == "panel.create").expect("panel.create is listed");
-    assert_eq!(create["enabled"], json!(true), "an open product is what a part waits for");
-    assert_eq!(create["creates"], json!("part"));
+    assert_eq!(create["creates"], json!("part"), "a part is what the command builds");
+    assert!(create.get("enabled").is_none(), "a command writes where its parameters name, so no session column");
     assert_eq!(create["params"]["additionalProperties"], json!(false), "the schema is the parser's");
 
     // Two steps in one call: one undo entry, one write.
@@ -215,9 +215,11 @@ async fn a_client_names_what_one_step_makes_and_the_next_step_refers_to_it() {
 }
 
 #[tokio::test]
-async fn a_command_that_cannot_run_says_why_before_it_is_called() {
-    // Two products and none open: the rule one product opens itself cannot be a guess.
-    let (session, _products) = session_with(2);
+async fn a_part_is_written_in_the_product_the_request_names_even_when_none_is_open() {
+    // Two products and none open: a caller that is sure which piece it builds in names it, and the
+    // open product is the window's own question rather than the command's (ADR 0098, ADR 0226).
+    let (session, products) = session_with(2);
+    let first = *products.first().expect("two products");
     let server = CommandServer::new(Arc::new(Mutex::new(session)), None);
     let (mut client, task) = connect(server).await;
 
@@ -226,16 +228,17 @@ async fn a_command_that_cannot_run_says_why_before_it_is_called() {
     assert_eq!(listed["open_product"], Value::Null, "no product is open");
     let commands = listed["commands"].as_array().expect("one row per command");
     let create = commands.iter().find(|row| row["id"] == "panel.create").expect("panel.create is listed");
-    assert_eq!(create["enabled"], json!(false), "a part is born only inside an open product");
-    assert_eq!(
-        create["reason"],
-        json!("Create a product first."),
-        "the sentence is the command's own, from the message table"
-    );
-    // A scene object is not gated, so it answers that it can run.
-    let primitive =
-        commands.iter().find(|row| row["id"] == "object.primitive.create").expect("the primitive is listed");
-    assert_eq!(primitive["enabled"], json!(true), "a primitive belongs to the scene, not to a product");
+    assert!(create.get("enabled").is_none(), "the list judges no request, so it carries no verdict");
+
+    let steps = json!({"steps": [{"command": "panel.create", "params": panel(first, "Side")}]});
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
+        .await
+        .expect("the batch answers");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    let created = report["created"].as_array().and_then(|ids| ids.first()).and_then(Value::as_u64);
+    assert!(created.is_some(), "the part is named in the answer: {report}");
 
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
@@ -428,34 +431,6 @@ async fn a_batch_names_the_product_it_works_in() {
     // The list agrees with the batch: one answer about which product is open.
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
     assert_eq!(body(&listed)["open_product"], json!(second.get()));
-
-    let _ = client.close().await;
-    let _ = task.await.expect("the server task never panics");
-}
-
-#[tokio::test]
-async fn a_scene_with_two_products_and_none_named_refuses_in_the_commands_words() {
-    // The same sentence a person reads from `z3l run` on such a scene: the batch does not guess
-    // between two products, and the first step that needs one says what to do.
-    let (session, products) = session_with(2);
-    let first = *products.first().expect("the fixture makes two products");
-    let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
-
-    let steps = json!({"steps": [{"command": "panel.create", "params": panel(first, "Side")}]});
-    let answered = client
-        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(steps)))
-        .await
-        .expect("the refusal is an answer");
-    assert!(answered.is_error.unwrap_or(false), "nothing landed, so the call failed");
-    let refused = body(&answered);
-    assert_eq!(refused["effect"], json!("rolled_back"), "{refused}");
-    assert_eq!(refused["open_product"], Value::Null, "no product was opened by guessing: {refused}");
-    assert_eq!(
-        refused["refusal"]["error"],
-        json!("`panel.create` cannot create furniture here: Create a product first."),
-        "{refused}"
-    );
 
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");

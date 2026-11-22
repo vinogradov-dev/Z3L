@@ -458,6 +458,12 @@ A panel with an issue stays in the document, is drawn where possible and shows a
 All changes are `engine` commands with stable ids and typed parameters. The UI never writes to the document directly.
 
 - `panel.create` — parent, name, nominal length, nominal width, material, placement. Thickness is not passed.
+- `panel.fill` — parent, a point in world millimetres, a class and a fill mode, with an optional place
+  on the free axis and an optional name. It measures the niche at the point, plans the part exactly
+  as the empty-space tool does, and writes it through `panel.create`'s own path: one revision and one
+  undo entry. The class's `fill` trait chooses the axis pair, so a post, a shelf and a back wall are
+  one command with three classes
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)).
 - `panel.contour.create` — parent, name, a constructive object as the source ring, material,
   placement. The ring is copied, anchored at the panel zero and becomes the outline; the panel is a
   contour panel from then on.
