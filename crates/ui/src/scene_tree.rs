@@ -150,12 +150,39 @@ pub(crate) fn show(
     session: &Session,
     selection: &mut Selection,
     flags: &mut ViewFlags,
+    base: Option<Id>,
 ) -> Vec<NodeAction> {
-    let project = session.project();
-    let active = session.active_product();
+    let rows = Rows { project: session.project(), active: session.active_product(), base };
     let mut actions = Vec::new();
-    show_container(ui, project, project.root(), active, selection, flags, &mut actions, 0);
+    show_container(ui, &rows, rows.project.root(), selection, flags, &mut actions, 0);
     actions
+}
+
+/// What every row of one tree frame reads: the document, the product it works in, and the base an
+/// armed boolean is born in.
+///
+/// The three values are one argument because they change together and every level of the recursion
+/// passes them down unchanged, so the row functions stay inside `clippy::too_many_arguments` without
+/// an allow (AGENTS §1.5).
+struct Rows<'a> {
+    project: &'a Project,
+    active: Option<Id>,
+    /// The base ring of an armed boolean, drawn in the base ink rather than the selection ink (X99).
+    base: Option<Id>,
+}
+
+/// What one row is in the frame's selection, and whether it is a boolean's base.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Role {
+    /// The row is selected, so it carries the selection's wash.
+    picked: bool,
+    /// The row is the base an armed boolean is born in, so its name takes the base ink.
+    base: bool,
+}
+
+/// The role of one node's row in this frame.
+fn role_of(rows: &Rows<'_>, selection: &Selection, id: Id) -> Role {
+    Role { picked: selection.contains(id), base: rows.base == Some(id) }
 }
 
 fn container_label(
@@ -196,29 +223,27 @@ fn container_label(
     (text, tooltip)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn show_container(
     ui: &mut Ui,
-    project: &Project,
+    rows: &Rows<'_>,
     container: &Container,
-    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
     actions: &mut Vec<NodeAction>,
     depth: u32,
 ) {
     let id = container.id();
-    let is_root = id == project.root().id();
+    let is_root = id == rows.project.root().id();
     let is_product = container.is_product();
     let state_id = ui.make_persistent_id(("scene_container", id.get()));
     let state = CollapsingState::load_with_default_open(ui.ctx(), state_id, depth < 2);
-    let label = container_label(ui, project, container, active);
-    let (_toggle, header, _) =
-        state.show_header(ui, |ui| row(ui, id, label.0, selection.contains(id), flags, !is_root)).body(|ui| {
-            for child in container.children() {
-                show_node(ui, project, child, active, selection, flags, actions, depth.saturating_add(1));
-            }
-        });
+    let label = container_label(ui, rows.project, container, rows.active);
+    let role = role_of(rows, selection, id);
+    let (_toggle, header, _) = state.show_header(ui, |ui| row(ui, id, label.0, role, flags, !is_root)).body(|ui| {
+        for child in container.children() {
+            show_node(ui, rows, child, selection, flags, actions, depth.saturating_add(1));
+        }
+    });
     let mut header = header.inner;
     if let Some(tooltip) = label.1 {
         header = header.on_hover_text(tooltip);
@@ -234,81 +259,51 @@ fn show_container(
     // The menu reads the flags after the row drew its own toggles, so its captions say what the
     // eye and the padlock show now instead of a copy taken before the row.
     let subject = if is_root { Subject::Root } else { Subject::Node(id) };
-    header.context_menu(|ui| node_menu(ui, subject, project, flags, selection, active, actions));
+    header.context_menu(|ui| node_menu(ui, subject, rows, flags, selection, actions));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn show_node(
     ui: &mut Ui,
-    project: &Project,
+    rows: &Rows<'_>,
     node: &Node,
-    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
     actions: &mut Vec<NodeAction>,
     depth: u32,
 ) {
     match node {
-        Node::Container(container) => {
-            show_container(ui, project, container, active, selection, flags, actions, depth);
-        }
-        Node::Panel(panel) => show_panel(ui, panel, project, active, selection, flags, actions),
-        Node::Object(object) => show_object(ui, object, project, active, selection, flags, actions),
-        Node::Camera(camera) => {
-            show_leaf(
-                ui,
-                camera.id(),
-                camera.name(),
-                Message::TreeBadgeCamera,
-                project,
-                active,
-                selection,
-                flags,
-                actions,
-            );
-        }
-        Node::Light(light) => {
-            show_leaf(
-                ui,
-                light.id(),
-                light.name(),
-                Message::TreeBadgeLight,
-                project,
-                active,
-                selection,
-                flags,
-                actions,
-            );
-        }
+        Node::Container(container) => show_container(ui, rows, container, selection, flags, actions, depth),
+        Node::Panel(panel) => show_panel(ui, rows, panel, selection, flags, actions),
+        Node::Object(object) => show_object(ui, rows, object, selection, flags, actions),
+        Node::Camera(_) => show_leaf(ui, rows, node, Message::TreeBadgeCamera, selection, flags, actions),
+        Node::Light(_) => show_leaf(ui, rows, node, Message::TreeBadgeLight, selection, flags, actions),
     }
 }
 
 /// A camera or a light row: a named leaf with a kind tag and the usual duplicate/delete actions.
-#[allow(clippy::too_many_arguments)]
 fn show_leaf(
     ui: &mut Ui,
-    id: Id,
-    name: &str,
+    rows: &Rows<'_>,
+    node: &Node,
     kind: Message,
-    project: &Project,
-    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
     actions: &mut Vec<NodeAction>,
 ) {
-    let label = RichText::new(format!("{name}  [{}]", kind.text(crate::language(ui.ctx()))));
-    let response = row(ui, id, label, selection.contains(id), flags, true);
+    let id = node.id();
+    let label = RichText::new(format!("{}  [{}]", node.name(), kind.text(crate::language(ui.ctx()))));
+    let role = role_of(rows, selection, id);
+    let response = row(ui, id, label, role, flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), rows, flags, selection, actions));
 }
 
 fn show_object(
     ui: &mut Ui,
+    rows: &Rows<'_>,
     object: &model::Object,
-    project: &Project,
-    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
     actions: &mut Vec<NodeAction>,
@@ -326,11 +321,12 @@ fn show_object(
         model::Geometry::Contours(_) => Message::TreeBadgeContours,
     };
     let label = RichText::new(format!("{}  [{}]", object.name(), kind.text(lang)));
-    let response = row(ui, id, label, selection.contains(id), flags, true);
+    let role = role_of(rows, selection, id);
+    let response = row(ui, id, label, role, flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), rows, flags, selection, actions));
 }
 
 /// One row's context menu: the shared list of the node's actions, drawn where egui anchors it.
@@ -341,13 +337,12 @@ fn show_object(
 fn node_menu(
     ui: &mut Ui,
     subject: Subject,
-    project: &Project,
+    rows: &Rows<'_>,
     flags: &ViewFlags,
     selection: &Selection,
-    active: Option<Id>,
     actions: &mut Vec<NodeAction>,
 ) {
-    let source = MenuSource { project, flags, selection: selection.ids(), active_product: active };
+    let source = MenuSource { project: rows.project, flags, selection: selection.ids(), active_product: rows.active };
     if let Some(action) = node_actions::show(ui, &node_actions::entries(subject, &source)) {
         actions.push(action);
         ui.close();
@@ -356,19 +351,19 @@ fn node_menu(
 
 fn show_panel(
     ui: &mut Ui,
+    rows: &Rows<'_>,
     panel: &Panel,
-    project: &Project,
-    active: Option<Id>,
     selection: &mut Selection,
     flags: &mut ViewFlags,
     actions: &mut Vec<NodeAction>,
 ) {
     let id = panel.id();
-    let response = row(ui, id, RichText::new(panel.name()), selection.contains(id), flags, true);
+    let role = role_of(rows, selection, id);
+    let response = row(ui, id, RichText::new(panel.name()), role, flags, true);
     if response.clicked() {
         select(ui, selection, id);
     }
-    response.context_menu(|ui| node_menu(ui, Subject::Node(id), project, flags, selection, active, actions));
+    response.context_menu(|ui| node_menu(ui, Subject::Node(id), rows, flags, selection, actions));
 }
 
 /// Selects a row by the click it took, with the modifier the window reports for it.
@@ -382,7 +377,7 @@ fn select(ui: &Ui, selection: &mut Selection, id: Id) {
 /// reads as a name and a hidden or locked row still says why it behaves differently. They are
 /// painted inside the row's own rectangle and reserve their cells at all times, so a hover never
 /// moves the text. `toggles` is false for the root, which is a frame and not an object.
-fn row(ui: &mut Ui, id: Id, label: RichText, selected: bool, flags: &mut ViewFlags, toggles: bool) -> egui::Response {
+fn row(ui: &mut Ui, id: Id, label: RichText, role: Role, flags: &mut ViewFlags, toggles: bool) -> egui::Response {
     let height = ui.spacing().interact_size.y.max(TOGGLE_GLYPH + 2.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
     let row_id = ui.make_persistent_id(("scene_row", id.get()));
@@ -396,13 +391,21 @@ fn row(ui: &mut Ui, id: Id, label: RichText, selected: bool, flags: &mut ViewFla
     let label_rect = egui::Rect::from_min_max(rect.min, egui::pos2(label_right, rect.bottom()));
     let response = ui.interact(label_rect, row_id, Sense::click());
     let hovered = ui.rect_contains_pointer(rect);
-    let visuals = ui.style().interact_selectable(&response, selected);
+    let visuals = ui.style().interact_selectable(&response, role.picked);
     // The wash covers the toggles' cells too, so a hovered row reads as one row rather than as a
     // label that stops before two floating captions.
-    if selected || hovered {
+    if role.picked || hovered {
         ui.painter().rect_filled(rect, CornerRadius::same(theme::RADIUS), visuals.weak_bg_fill);
     }
-    let color = if hidden { theme::text_dim(ui) } else { visuals.text_color() };
+    // The base of an armed boolean keeps its ink at rest, under the pointer and while it is also
+    // picked: it is a role of the operation, not a state of the pointer (X99).
+    let color = if hidden {
+        theme::text_dim(ui)
+    } else if role.base {
+        theme::boolean_base(ui)
+    } else {
+        visuals.text_color()
+    };
     let label = if hidden { label.color(color) } else { label };
     let full = label.text().to_owned();
     let padding = ui.spacing().button_padding.x;
@@ -506,11 +509,12 @@ mod tests {
 
     use super::*;
 
-    /// Every text a run drew, in paint order; the row captions and labels are all this test needs.
-    fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
-        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+    /// Every text a run drew and the ink it was painted in, in paint order; the row captions and
+    /// labels are all this test needs.
+    fn drawn_text(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, Color32)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Color32)>) {
             match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Text(text) => out.push((text.galley.text().to_owned(), text.fallback_color)),
                 egui::Shape::Vec(shapes) => {
                     for shape in shapes {
                         walk(shape, out);
@@ -548,16 +552,46 @@ mod tests {
 
     /// One run's texts and its painted icon rasters.
     fn draw(session: &Session, flags: &mut ViewFlags) -> (Vec<String>, usize) {
+        let (texts, images) = draw_with(session, &mut Selection::default(), flags, None);
+        (texts.iter().map(|(text, _)| text.clone()).collect(), images)
+    }
+
+    /// One run of the tree with the selection and the armed base the caller hands it.
+    fn draw_with(
+        session: &Session,
+        selection: &mut Selection,
+        flags: &mut ViewFlags,
+        base: Option<Id>,
+    ) -> (Vec<(String, Color32)>, usize) {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
-        let mut selection = Selection::default();
         let output = ctx.run_ui(Default::default(), |ui| {
-            show(ui, session, &mut selection, flags);
+            show(ui, session, selection, flags, base);
         });
         let texts = drawn_text(&output.shapes);
         let images = drawn_images(&output.shapes);
         output.drop_without_applying_deltas();
         (texts, images)
+    }
+
+    /// The ink a run painted `row` in, for a row the tree drew.
+    fn ink_of_row(texts: &[(String, Color32)], needle: &str) -> Color32 {
+        let (text, ink) = texts
+            .iter()
+            .find(|(text, _)| text.contains(needle))
+            .unwrap_or_else(|| panic!("the tree drew no row named {needle}: {texts:?}"));
+        assert!(text.contains(needle));
+        *ink
+    }
+
+    /// The base ink the frame marks an armed boolean's target with, as the theme reads it.
+    fn base_ink() -> Color32 {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut ink = Color32::TRANSPARENT;
+        let output = ctx.run_ui(Default::default(), |ui| ink = crate::theme::boolean_base(ui));
+        output.drop_without_applying_deltas();
+        ink
     }
 
     fn panel(id: u64) -> Panel {
@@ -578,6 +612,35 @@ mod tests {
 
     fn container(id: u64, children: Vec<Node>) -> Container {
         Container::new(Id::new(id).expect("id"), format!("Container {id}"), Placement::IDENTITY, children)
+    }
+
+    #[test]
+    fn a_booleans_base_row_reads_in_the_base_ink() {
+        // X99: the viewport marks the base ring with an ink of its own while a boolean is armed, and
+        // the tree marks the same node with the same ink, so the row and the ring are one statement.
+        // The mark is the base's, not the selection's: a plain click on the tool drops the base from
+        // the selection, and the base stays marked anyway.
+        let session = Session::with_directory(sample_project(), sample_catalog());
+        let shelf = Id::new(2).expect("shelf id");
+        let mut flags = ViewFlags::default();
+
+        let (plain, _) = draw_with(&session, &mut Selection::default(), &mut flags, None);
+        let resting = ink_of_row(&plain, "Shelf");
+
+        let (marked, _) = draw_with(&session, &mut Selection::default(), &mut flags, Some(shelf));
+        assert_eq!(ink_of_row(&marked, "Shelf"), base_ink(), "the base row wears the base ink");
+        assert_ne!(ink_of_row(&marked, "Shelf"), resting, "which is not the ink a row rests in");
+        assert_eq!(ink_of_row(&marked, "Front"), ink_of_row(&plain, "Front"), "a row beside it is untouched");
+
+        // Picked as well as base: one row, one role, and the base ink still wins.
+        let mut selection = Selection::default();
+        selection.pick(shelf, Pick::Replace);
+        let (picked, _) = draw_with(&session, &mut selection, &mut flags, Some(shelf));
+        assert_eq!(ink_of_row(&picked, "Shelf"), base_ink(), "a picked base keeps the ink it is marked with");
+
+        // Dropping the mode returns the row to the ink every other row wears.
+        let (dropped, _) = draw_with(&session, &mut Selection::default(), &mut flags, None);
+        assert_eq!(ink_of_row(&dropped, "Shelf"), resting, "no boolean, no base ink");
     }
 
     #[test]

@@ -995,8 +995,9 @@ messages! {
         "Select a closed contour first: the boolean is born in its frame",
         "Сначала выделите замкнутый контур: в его системе координат родится результат"
     ],
-    BooleanPick = ["Contours picked: {0}", "Выбрано контуров: {0}"],
-    BooleanPickBody = ["Bodies picked: {0}", "Выбрано тел: {0}"],
+    BooleanPick = ["Contours picked: {}", "Выбрано контуров: {}"],
+    BooleanPickBody = ["Bodies picked: {}", "Выбрано тел: {}"],
+    BooleanBase = ["Base: {}", "База: {}"],
     ToolFillet = ["Fillet", "Скругление"],
     ToolChamfer = ["Chamfer", "Фаска"],
     ToolShell = ["Shell", "Оболочка"],

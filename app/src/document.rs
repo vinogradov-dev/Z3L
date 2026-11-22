@@ -31,7 +31,7 @@ use mesh::{EvaluationCache, object_mesh};
 use model::{CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
-use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
+use scene::{Camera, Lighting, Polyline, Projection, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
@@ -89,14 +89,6 @@ const SELECTION_OUTLINE_WIDTH: f32 = 2.25;
 /// Width of the dark underlay below [`SELECTION_OUTLINE_WIDTH`], which keeps the stroke readable
 /// over a light panel.
 const SELECTION_UNDERLAY_WIDTH: f32 = 3.5;
-
-/// The selected-chain stroke, converted from the scene's explicit line colour so the overlay and
-/// the uploaded chain agree.
-const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
-    (SELECTION_LINE_COLOR[0] * 255.0 + 0.5) as u8,
-    (SELECTION_LINE_COLOR[1] * 255.0 + 0.5) as u8,
-    (SELECTION_LINE_COLOR[2] * 255.0 + 0.5) as u8,
-);
 
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
@@ -399,6 +391,11 @@ pub(crate) struct Document {
     /// The right-click menu of a running polyline: the kind of the next segment and the way out.
     draft_menu: ui::DraftMenu,
     highlighted: Vec<Id>,
+    /// The base of an armed boolean the last upload marked in the base ink (X99).
+    ///
+    /// The arm is view state, so the frame is re-uploaded when it appears, when the base changes and
+    /// when it is dropped: the ink follows the mode exactly as the selection's does.
+    highlighted_base: Option<Id>,
     /// The selected line chains of the frame last uploaded, already carrying any drag preview, so
     /// the screen-space outline follows a moved path without a frame of lag.
     selected_chains: Vec<Polyline>,
@@ -533,6 +530,7 @@ impl Document {
             gizmo: gizmo::Gizmo::default(),
             draft_menu: ui::DraftMenu::default(),
             highlighted: Vec::new(),
+            highlighted_base: None,
             selected_chains: Vec::new(),
             uploaded_preview: None,
             level_bounds,
@@ -732,12 +730,15 @@ impl Document {
         self.file.show(ui)
     }
 
-    /// Re-uploads the frame when the selection moved.
+    /// Re-uploads the frame when the selection or the armed boolean's base moved.
     ///
     /// Selecting is view state, so the revision does not move; the uploaded highlight is the copy
-    /// the last frame was built with, and a difference means the drawn outline is stale.
+    /// the last frame was built with, and a difference means the drawn outline is stale. An armed
+    /// boolean marks its base with its own ink, so arming one is a change to the picture even when
+    /// the selection stands still (X99).
     pub(crate) fn sync_selection(&mut self) -> Result<(), String> {
-        match self.editor.selected_nodes() == self.highlighted {
+        let base = self.editor.boolean_arm().map(|arm| arm.base());
+        match self.editor.selected_nodes() == self.highlighted && base == self.highlighted_base {
             true => Ok(()),
             false => self.upload_scene(),
         }
@@ -750,6 +751,15 @@ impl Document {
     #[cfg(test)]
     pub(crate) fn highlighted_nodes(&self) -> &[Id] {
         &self.highlighted
+    }
+
+    /// The line chains of the frame the last upload built, each with the ink the frame gave it.
+    ///
+    /// This is the frame's own shape list, so a test reads which ring the picture marks as an armed
+    /// boolean's base and which as a picked operand without a GPU (X99).
+    #[cfg(test)]
+    pub(crate) fn highlighted_chains(&self) -> &[Polyline] {
+        &self.selected_chains
     }
 
     /// The rubber band the last frame drew, or `None` while no drag is live (U103).
@@ -1085,7 +1095,10 @@ impl Document {
         for node in self.session.project().top_most_nodes(selection) {
             geometry.extend(self.session.project().geometry_ids_under(node).unwrap_or_default());
         }
-        let frame = self.scene.with_selection_highlight(&geometry);
+        // The base is marked whether or not it is still selected: a click on the tool replaces the
+        // selection, and the frame the result is born in must stay readable (X99).
+        let base = self.editor.boolean_arm().map(|arm| arm.base());
+        let frame = self.scene.with_picks(&geometry, base);
         let frame = match self.preview() {
             Some(Preview::Translation { drawables, delta }) => frame.with_world_translation(drawables, delta),
             Some(Preview::Rotation { drawables, pivot, rotation }) => {
@@ -1098,8 +1111,14 @@ impl Document {
             None => frame,
         };
         // Keep the chains of the frame that is about to be uploaded, after every preview, so the
-        // screen-space outline is drawn where the renderer draws the path.
-        self.selected_chains = frame.polylines().iter().filter(|chain| geometry.contains(&chain.id)).cloned().collect();
+        // screen-space outline is drawn where the renderer draws the path. The base is one of them
+        // even when it left the selection, because it is still an operand (X99).
+        self.selected_chains = frame
+            .polylines()
+            .iter()
+            .filter(|chain| base == Some(chain.id) || geometry.contains(&chain.id))
+            .cloned()
+            .collect();
         let started = Instant::now();
         if let Some(target) = self.target.as_mut() {
             target.upload(&frame)?;
@@ -1107,6 +1126,7 @@ impl Document {
         self.osd.record_upload(started.elapsed());
         self.highlighted.clear();
         self.highlighted.extend_from_slice(selection);
+        self.highlighted_base = base;
         self.uploaded_preview = self.preview_key();
         Ok(())
     }
@@ -1334,6 +1354,7 @@ impl Document {
     pub(crate) fn end_drawing(&mut self) -> Result<(), String> {
         self.draw_gizmo.reset();
         self.highlighted.clear();
+        self.highlighted_base = None;
         self.refresh()
     }
 
@@ -2243,7 +2264,7 @@ impl Document {
     /// keeps the last height the document could hold. A niche's two gaps draw the same card from
     /// `update_fill`, and the inspector draws the same rows from the same draft.
     fn show_tool_card(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, pointer: Option<egui::Pos2>, opacity: u32) {
-        let Some(mut view) = self.card_view() else {
+        let Some(mut view) = self.card_view(ui::language(ui.ctx())) else {
             // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
             // — and the rectangle is not this path's to clear.
             return;
@@ -2307,7 +2328,10 @@ impl Document {
     /// names the tool and holds its accept and its drop: the bar reported those two as buttons, and
     /// the hand that is drawing should not travel to the window's bottom edge to finish. The
     /// inspector keeps the numbers it already mirrors — `tool_view` — and gains no button row.
-    pub(crate) fn card_view(&self) -> Option<ToolView> {
+    ///
+    /// The card prints words, so it is built in the person's language: an armed boolean names the
+    /// base its result is born in under the operation's name (X99).
+    pub(crate) fn card_view(&self, lang: ui::Lang) -> Option<ToolView> {
         if let Some(view) = self.height_view() {
             return Some(view);
         }
@@ -2330,10 +2354,13 @@ impl Document {
             if !arm.is_ready() {
                 return None;
             }
-            return Some(ToolView::actions(
-                Some(arm.label()),
-                ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
-            ));
+            return Some(
+                ToolView::actions(
+                    Some(arm.label()),
+                    ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+                )
+                .with_note(arm.base_note(self.session.project(), lang)),
+            );
         }
         self.editor.contour_edit()?;
         // The corner's motion is the one method of the contour edit: free, or along the segment the
@@ -2347,6 +2374,7 @@ impl Document {
                 on: along,
             }),
             commit: ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
         })
     }
 
@@ -2368,10 +2396,17 @@ impl Document {
                 rows: distances.rows(),
                 toggle: None,
                 commit: ui::ToolCommit::Gesture,
+                note: None,
             });
         }
         let measured = self.move_distances.as_ref()?;
-        Some(ToolView { title: None, rows: measured.distances.rows(), toggle: None, commit: ui::ToolCommit::Gesture })
+        Some(ToolView {
+            title: None,
+            rows: measured.distances.rows(),
+            toggle: None,
+            commit: ui::ToolCommit::Gesture,
+            note: None,
+        })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
@@ -3893,22 +3928,27 @@ impl Document {
         }
     }
 
-    /// Paints the selected line chains over the viewport image as a screen-space outline.
+    /// Paints the picked line chains over the viewport image as a screen-space outline.
     ///
-    /// The renderer draws a chain as a one-pixel `LineList`, which wgpu cannot widen, so a selected
+    /// The renderer draws a chain as a one-pixel `LineList`, which wgpu cannot widen, so a picked
     /// chain is repeated here: a dark underlay first, then the bright stroke. The chains come from
-    /// the frame last uploaded, so a drag preview and its outline agree.
+    /// the frame last uploaded, so a drag preview and its outline agree — and so the stroke takes
+    /// the ink the frame gave the chain, which is the base ink on an armed boolean's target and the
+    /// selection ink on every operand (X99).
     fn paint_selection_outline(&self, ui: &mut egui::Ui, rect: egui::Rect) {
         if self.selected_chains.is_empty() {
             return;
         }
         let painter = ui.painter().with_clip_rect(rect);
-        for points in selection_outline(self.scene.camera, rect, &self.selected_chains) {
-            painter.add(egui::Shape::line(
-                points.clone(),
-                egui::Stroke::new(SELECTION_UNDERLAY_WIDTH, SELECTION_UNDERLAY),
-            ));
-            painter.add(egui::Shape::line(points, egui::Stroke::new(SELECTION_OUTLINE_WIDTH, SELECTION_OUTLINE)));
+        for chain in &self.selected_chains {
+            let ink = theme::scene_ink(chain.color.unwrap_or(scene::SELECTION_LINE_COLOR));
+            for points in selection_outline(self.scene.camera, rect, std::slice::from_ref(chain)) {
+                painter.add(egui::Shape::line(
+                    points.clone(),
+                    egui::Stroke::new(SELECTION_UNDERLAY_WIDTH, SELECTION_UNDERLAY),
+                ));
+                painter.add(egui::Shape::line(points, egui::Stroke::new(SELECTION_OUTLINE_WIDTH, ink)));
+            }
         }
     }
 
@@ -5095,7 +5135,7 @@ mod tests {
     }
 
     fn selection_chain(points: Vec<DVec3>) -> Polyline {
-        Polyline::new(Id::new(7).expect("id"), Arc::from(points), DMat4::IDENTITY, SELECTION_LINE_COLOR)
+        Polyline::new(Id::new(7).expect("id"), Arc::from(points), DMat4::IDENTITY, scene::SELECTION_LINE_COLOR)
     }
 
     #[test]

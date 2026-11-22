@@ -104,8 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-## Bugs
-- `[ ]` **X99** an armed boolean shows which ring is the base
+- `[~]` **X99** an armed boolean shows which ring is the base
   Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
    screen says which ring that is: a plain click on the second ring replaces the selection, so
    the first loses its highlight while it is still an operand, and a Shift-click makes the
@@ -124,6 +123,8 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    against the viewport's background in every theme; the base's name is on the card. `cargo
    xtask ci` is green.
   `files: crates/ui/src/theme.rs,crates/ui/src/editor/boolean.rs,app/src/document.rs,app/src/scene_build.rs`
+
+## Bugs
 - `[ ]` **X100** a contour set is extruded one body per ring
   Why: An intersection of three rings can leave two separate pieces, which the operation stores
    as a contour set, and nothing extrudes one: `object.path.extrude` takes a `Path`, so the

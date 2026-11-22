@@ -128,6 +128,12 @@ pub struct ToolView {
     pub toggle: Option<ToolToggle>,
     /// How the surface offers the tool's one commit.
     pub commit: ToolCommit,
+    /// A line of context under the name, already in the person's language.
+    ///
+    /// An armed boolean prints the base its result is born in here (X99): the frame marks that
+    /// operand with an ink of its own and the card names it, so the picture and the words agree.
+    /// Empty for every tool whose name is the whole story.
+    pub note: Option<String>,
 }
 
 /// The one two-state method a tool offers beside its numbers.
@@ -168,6 +174,7 @@ impl ToolView {
             rows: vec![ToolRow::height(value, range, decimals)],
             toggle: None,
             commit: ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
         }
     }
 
@@ -177,7 +184,17 @@ impl ToolView {
     /// the only decisions left are to accept it or to drop it, and both sit on the row that names
     /// the tool.
     pub fn actions(title: Option<Message>, commit: ToolCommit) -> Self {
-        Self { title, rows: Vec::new(), toggle: None, commit }
+        Self { title, rows: Vec::new(), toggle: None, commit, note: None }
+    }
+
+    /// The same card with a line of context under its name, in the person's language.
+    ///
+    /// A boolean is the one tool that has something to say beside its name: which operand its result
+    /// is born in (X99). It is a builder rather than a constructor argument, because every other
+    /// tool has nothing to add and a parameter they all pass `None` for is a column of noise.
+    pub fn with_note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
     }
 
     /// A tool whose one number is named by a symbol and nothing else.
@@ -191,6 +208,7 @@ impl ToolView {
             rows: vec![lettered(ToolParam::Height, symbol, value, range, decimals)],
             toggle: None,
             commit: ToolCommit::Keys,
+            note: None,
         }
     }
 
@@ -206,7 +224,7 @@ impl ToolView {
             // starts at the bottom rather than at the smallest positive length.
             rows.push(lettered(ToolParam::TopRadius, "R", top, 0.0..=*range.end(), decimals));
         }
-        Self { title: None, rows, toggle: None, commit: ToolCommit::Keys }
+        Self { title: None, rows, toggle: None, commit: ToolCommit::Keys, note: None }
     }
 
     /// Whether the surface draws anything at all.
@@ -371,6 +389,7 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
             outcome.toggle |= toggle_ui(ui, view.toggle, lang);
             pair_ui(ui, view.commit, &mut outcome, lang);
         });
+        note_ui(ui, view.note.as_deref());
         return outcome;
     }
     if titled && let Some(title) = view.title {
@@ -406,7 +425,20 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
         ui.add_space(2.0);
         ui.horizontal(|ui| pair_ui(ui, view.commit, &mut outcome, lang));
     }
+    note_ui(ui, view.note.as_deref());
     outcome
+}
+
+/// The line of context under a tool's name: quiet type, one line, nothing to press.
+///
+/// A note names what the picture already marks — the base a boolean's result is born in (X99) — so
+/// it is secondary ink at the small size: the reader's eye finds it after the operation's name and
+/// before the ground it sits on.
+fn note_ui(ui: &mut Ui, note: Option<&str>) {
+    let Some(note) = note else {
+        return;
+    };
+    ui.label(RichText::new(note).small().color(theme::text_dim(ui)));
 }
 
 /// The tool's ✓ and ✕, when its commit is the pair; the words are the tool's own.
@@ -531,10 +563,19 @@ mod tests {
 
     /// Draws one card frame at `pointer` and returns what it asked for and the rectangle it took.
     fn run(events: Vec<egui::Event>, pointer: Pos2, scale: f32) -> (ToolOutcome, Rect, Vec<String>) {
+        run_view(view(), events, pointer, scale)
+    }
+
+    /// [`run`] over a card of the caller's own: a tool that is not a height plate.
+    fn run_view(
+        mut tool: ToolView,
+        events: Vec<egui::Event>,
+        pointer: Pos2,
+        scale: f32,
+    ) -> (ToolOutcome, Rect, Vec<String>) {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(scale);
         crate::set_language(&ctx, crate::Lang::En);
-        let mut tool = view();
         let mut outcome = ToolOutcome::default();
         let mut rect = Rect::NOTHING;
         let mut texts = Vec::new();
@@ -549,6 +590,26 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         (outcome, rect, texts)
+    }
+
+    #[test]
+    fn a_one_row_card_prints_the_note_under_its_name() {
+        // X99: the armed boolean marks its base in the frame and names it on the card, so the eye
+        // and the words say the same thing. The note is context: the name and its pair are drawn
+        // first, and the note follows them in the quiet ink.
+        let view = ToolView::actions(
+            Some(Message::ToolSubtract),
+            ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+        )
+        .with_note(Some(Message::BooleanBase.with(crate::Lang::En, ["Ring 2"])));
+        let (_, _, texts) = run_view(view, Vec::new(), Pos2::new(200.0, 200.0), 1.0);
+        let named = texts.iter().position(|text| text == "Subtract").expect("the card names the operation");
+        let note = texts.iter().position(|text| text == "Base: Ring 2").expect("and its base: {texts:?}");
+        assert!(note > named, "the note reads under the operation's name: {texts:?}");
+
+        let bare = ToolView::actions(Some(Message::ToolSubtract), ToolCommit::Keys);
+        let (_, _, texts) = run_view(bare, Vec::new(), Pos2::new(200.0, 200.0), 1.0);
+        assert!(!texts.iter().any(|text| text.starts_with("Base:")), "a tool with no base prints no note");
     }
 
     #[test]
@@ -664,6 +725,7 @@ mod tests {
             rows: Vec::new(),
             toggle: Some(ToolToggle { words: Message::AlongContour, on: false }),
             commit: ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
         };
         let mut outcome = ToolOutcome::default();
         let mut rect = Rect::NOTHING;
@@ -780,6 +842,7 @@ mod tests {
             title: None,
             commit: ToolCommit::Gesture,
             toggle: None,
+            note: None,
             rows: vec![ToolRow {
                 param: ToolParam::LowGap,
                 label: Some(FieldLabel::Word(Message::ToolGapLow)),

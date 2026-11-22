@@ -94,6 +94,16 @@ impl BooleanArm {
         &self.operands
     }
 
+    /// The words the card prints under the operation's name: the base the result is born in.
+    ///
+    /// The frame marks that operand with an ink of its own (X99), and the card names it by its
+    /// object name, so the picture and the words say the same thing. An arm whose base left the
+    /// document answers nothing rather than a name the tree does not show.
+    pub fn base_note(&self, project: &Project, lang: Lang) -> Option<String> {
+        let name = project.node(self.base)?.name();
+        Some(Message::BooleanBase.with(lang, [name]))
+    }
+
     /// Whether a result is on screen and the ✓ can store it.
     pub const fn is_ready(&self) -> bool {
         self.previewed

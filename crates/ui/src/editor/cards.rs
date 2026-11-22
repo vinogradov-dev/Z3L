@@ -20,6 +20,7 @@ use model::Id;
 use text::Message;
 
 use super::Editor;
+use super::boolean::BooleanArm;
 use crate::command::{dispatch, json};
 use crate::container_card::ContainerAction;
 use crate::contour_edit::{ContourEdit, ContourTarget};
@@ -45,7 +46,8 @@ impl Editor {
             ui.colored_label(theme::danger(ui), error);
             ui.separator();
         }
-        let actions = scene_tree::show(ui, session, &mut self.selection, &mut self.flags);
+        let base = self.boolean.as_ref().map(BooleanArm::base);
+        let actions = scene_tree::show(ui, session, &mut self.selection, &mut self.flags, base);
         if actions.is_empty() {
             return;
         }

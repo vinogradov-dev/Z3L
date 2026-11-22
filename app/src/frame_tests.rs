@@ -1273,7 +1273,7 @@ fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
     // would accept, which is the draft's own word (ADR 0077).
     harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
     harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
-    let view = harness.app.tabs.active().card_view().expect("a running draft draws its card");
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("a running draft draws its card");
     assert!(view.rows.is_empty(), "a draft asks for no number");
     assert_eq!(view.title, Some(Message::ToolPolyline), "the row names the tool");
     assert!(matches!(view.commit, ui::ToolCommit::Pair { .. }), "and holds its two buttons");
@@ -1295,7 +1295,7 @@ fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
             "an open chain is editable"
         );
     }
-    let view = harness.app.tabs.active().card_view().expect("a contour edit draws its card");
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("a contour edit draws its card");
     assert_eq!(view.title, Some(Message::ContourEdit), "the row names the edit");
     let toggle = view.toggle.expect("the corner motion is one switch on the card");
     assert_eq!(toggle.words, Message::FreeMove, "free movement is the default");
@@ -1304,7 +1304,7 @@ fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
         .tabs
         .active_mut()
         .apply_tool_outcome(&ctx, ui::ToolOutcome { toggle: true, ..ui::ToolOutcome::default() });
-    let view = harness.app.tabs.active().card_view().expect("the card stays up");
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("the card stays up");
     assert_eq!(view.toggle.expect("the switch is still there").words, Message::AlongContour, "the press flips it");
     // The check is the edit's one command: it ends the mode and leaves one undo entry.
     harness.app.tabs.active_mut().apply_tool_outcome(
@@ -6326,6 +6326,119 @@ fn an_armed_boolean_whose_result_is_not_a_solid_refuses_its_enter() {
     assert_eq!(harness.revision(), revision, "a refused commit writes nothing");
     let body = document.session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
     assert_eq!(body.booleans().count(), 0, "the body keeps its history");
+}
+
+/// A headless window whose root holds one closed ring object per rectangle, named `Ring 1`, `Ring
+/// 2`, …, and their ids in that order.
+///
+/// A ring object is a drawn path, which is what a contour boolean combines (ADR 0194, revised by
+/// W2): the arm's base and its operands are `Geometry::Path` and not a body.
+fn rings_session(name: &str, rings: Vec<([i64; 2], [i64; 2])>) -> (Harness, Vec<Id>) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("id"), "Scene", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let mut ids = Vec::new();
+    for (index, (low, high)) in rings.into_iter().enumerate() {
+        let path = model::Path::rectangle([mm(low[0]), mm(low[1])], [mm(high[0]), mm(high[1])]).expect("a ring");
+        let id = project
+            .add_object(root, format!("Ring {}", index + 1), model::Placement::IDENTITY, model::Geometry::Path(path))
+            .expect("a drawn ring");
+        ids.push(id);
+    }
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    (Harness::with_session(name, session), ids)
+}
+
+/// The ink the frame last uploaded gave each ring it draws as a picked line chain.
+fn chain_inks(harness: &Harness) -> Vec<(Id, Option<[f32; 4]>)> {
+    harness.app.tabs.active().highlighted_chains().iter().map(|chain| (chain.id, chain.color)).collect()
+}
+
+#[test]
+fn an_armed_boolean_marks_its_base_ring_and_drops_the_mark_with_the_mode() {
+    // X99: the base is the frame the result is born in. A plain click on the tool replaces the
+    // selection, so the base used to lose its highlight while it was still an operand, and two
+    // rings looked like one selection. The base now takes an ink of its own and the operand keeps
+    // the selection ink, in the frame's own shape list.
+    let (mut harness, rings) =
+        rings_session("frame-ring-boolean-base", vec![([0, 0], [160, 80]), ([80, 0], [240, 80])]);
+    let (base, operand) = (rings[0], rings[1]);
+    harness.settle();
+
+    // Both picked, no boolean: the two rings are one selection, drawn in one ink.
+    harness.app.tabs.active_mut().editor.select_nodes(vec![base, operand]);
+    harness.settle();
+    for (id, ink) in chain_inks(&harness) {
+        assert_eq!(ink, Some(scene::SELECTION_LINE_COLOR), "ring {id:?} is picked and carries the selection ink");
+    }
+
+    let base_ink = harness.app.tabs.active().frame().boolean_base;
+    assert_ne!(base_ink, scene::SELECTION_LINE_COLOR, "the two roles are two inks");
+
+    // Arming marks the base before anything else is picked: the mode is view state the frame has to
+    // follow, so the picture changes with it.
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base]);
+        assert!(
+            document.editor.arm_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the selected ring arms the mode"
+        );
+    }
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == base).map(|(_, ink)| *ink),
+        Some(Some(base_ink)),
+        "arming the mode marks the base at once"
+    );
+
+    // A plain click picks the tool: the base leaves the selection, stays an operand and keeps its ink.
+    harness.app.tabs.active_mut().editor.select_nodes(vec![operand]);
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == base).map(|(_, ink)| *ink),
+        Some(Some(base_ink)),
+        "the base ring takes the base ink"
+    );
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == operand).map(|(_, ink)| *ink),
+        Some(Some(scene::SELECTION_LINE_COLOR)),
+        "the operand keeps the selection ink"
+    );
+
+    // Dropping the mode returns every ring to the selection ink: the mark belongs to the mode.
+    harness.app.tabs.active_mut().cancel_boolean();
+    harness.app.tabs.active_mut().editor.select_nodes(vec![base, operand]);
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(inks.len(), 2, "both rings are picked again: {inks:?}");
+    for (id, ink) in inks {
+        assert_eq!(ink, Some(scene::SELECTION_LINE_COLOR), "ring {id:?} keeps no base ink once the mode is gone");
+    }
+}
+
+#[test]
+fn an_armed_boolean_names_its_base_on_the_card() {
+    // The picture marks the base and the card names it, so the words and the rings agree (X99).
+    let (mut harness, rings) =
+        rings_session("frame-ring-boolean-note", vec![([0, 0], [160, 80]), ([80, 0], [240, 80])]);
+    let (base, operand) = (rings[0], rings[1]);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base]);
+        assert!(document.editor.arm_boolean(engine::ContourOp::Subtract, document.session.project()));
+        document.editor.select_nodes(vec![operand]);
+    }
+    harness.settle();
+
+    let lang = ui::language(&harness.ctx);
+    let view = harness.app.tabs.active().card_view(lang).expect("a result on screen draws the card");
+    let expected = Message::BooleanBase.with(lang, ["Ring 1"]);
+    assert_eq!(view.note.as_deref(), Some(expected.as_str()), "the card names the base the rings mark");
 }
 
 /// A headless window whose scene root holds one drawing of the given rings, and the drawing's id.

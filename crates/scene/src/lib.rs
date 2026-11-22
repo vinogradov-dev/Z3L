@@ -202,6 +202,18 @@ pub struct SceneColors {
     pub product_envelope_active: [f32; 4],
     /// The ink of a closed, empty product's envelope, in gamma space.
     pub product_envelope_inactive: [f32; 4],
+    /// The ink of the base an armed boolean is born in, in gamma space.
+    ///
+    /// The base is the operand the result replaces, and it is not a picked shape: a plain click on
+    /// the tool drops it from the selection while it is still an operand, so it would lose its
+    /// highlight and the picture would stop saying which ring the subtraction cuts into (X99). It
+    /// takes an ink of its own, drawn beside the selection cyan on every picked operand.
+    ///
+    /// The hue is the one no other role claims: the selection is cyan, a guide and the unselected
+    /// path are amber, a refusal is red and the grid axes are red and green. It is rose, and it is
+    /// measured against both backgrounds and against every ink above rather than chosen
+    /// (`crates/ui/src/theme.rs` owns the accessor and the floor, ADR 0219).
+    pub boolean_base: [f32; 4],
     /// The ink of a guide the frame draws for the person rather than for the form, in gamma space.
     ///
     /// A guide is the program's own geometry — the bracket of an open level, a work plane — so it
@@ -222,6 +234,7 @@ impl SceneColors {
         line_ink: [0.95, 0.72, 0.20, 1.0],
         product_envelope_active: [0.88, 0.64, 0.29, 1.0],
         product_envelope_inactive: [0.50, 0.54, 0.60, 1.0],
+        boolean_base: [242.0 / 255.0, 115.0 / 255.0, 168.0 / 255.0, 1.0],
         helper: [226.0 / 255.0, 187.0 / 255.0, 109.0 / 255.0, 1.0],
     };
 
@@ -233,6 +246,7 @@ impl SceneColors {
         line_ink: [0.70, 0.44, 0.03, 1.0],
         product_envelope_active: [0.55, 0.33, 0.05, 1.0],
         product_envelope_inactive: [0.44, 0.47, 0.51, 1.0],
+        boolean_base: [158.0 / 255.0, 46.0 / 255.0, 112.0 / 255.0, 1.0],
         helper: [104.0 / 255.0, 68.0 / 255.0, 11.0 / 255.0, 1.0],
     };
 }
@@ -781,6 +795,9 @@ pub struct SceneFrame {
     pub product_envelope_inactive: [f32; 4],
     /// The ink of a guide the frame draws, in gamma space (see [`SceneColors::helper`]).
     pub helper: [f32; 4],
+    /// The ink of the base an armed boolean is born in, in gamma space (see
+    /// [`SceneColors::boolean_base`]).
+    pub boolean_base: [f32; 4],
     /// Shaded meshes in world space.
     pub drawables: Vec<Drawable>,
     /// Unlit line chains in world space.
@@ -807,6 +824,7 @@ impl Default for SceneFrame {
             product_envelope_active: colors.product_envelope_active,
             product_envelope_inactive: colors.product_envelope_inactive,
             helper: colors.helper,
+            boolean_base: colors.boolean_base,
             drawables: Vec::new(),
             polylines: Vec::new(),
             product_envelopes: Vec::new(),
@@ -832,6 +850,7 @@ impl SceneFrame {
         self.product_envelope_active = colors.product_envelope_active;
         self.product_envelope_inactive = colors.product_envelope_inactive;
         self.helper = colors.helper;
+        self.boolean_base = colors.boolean_base;
     }
 
     /// Adds a drawable to the frame.
@@ -951,17 +970,32 @@ impl SceneFrame {
     /// one object. A line chain takes [`SELECTION_LINE_COLOR`] explicitly: a tint is invisible on a
     /// one-pixel line, and the shell widens it as an overlay.
     pub fn with_selection_highlight(&self, selected: &[Id]) -> Self {
+        self.with_picks(selected, None)
+    }
+
+    /// A copy of the frame with the picks highlighted and, when a boolean is armed, its base in the
+    /// frame's own [base ink](SceneColors::boolean_base).
+    ///
+    /// A boolean is a mode: the target it is born in is the base, and every other picked node joins
+    /// as an operand. The base is often *not* in the selection — a plain click on the tool replaces
+    /// it — so it is drawn from `base` rather than from `selected`, and the two roles keep two inks
+    /// (X99).
+    pub fn with_picks(&self, selected: &[Id], base: Option<Id>) -> Self {
         let mut frame = self.clone();
-        if selected.is_empty() {
+        if selected.is_empty() && base.is_none() {
             return frame;
         }
         for drawable in &mut frame.drawables {
-            if selected.contains(&drawable.id) {
-                tint_selected(&mut drawable.color);
+            if Some(drawable.id) == base {
+                tint(&mut drawable.color, frame.boolean_base, SELECTION_MIX);
+            } else if selected.contains(&drawable.id) {
+                tint(&mut drawable.color, SELECTION_TINT, SELECTION_MIX);
             }
         }
         for polyline in &mut frame.polylines {
-            if selected.contains(&polyline.id) {
+            if Some(polyline.id) == base {
+                polyline.color = Some(frame.boolean_base);
+            } else if selected.contains(&polyline.id) {
                 polyline.color = Some(SELECTION_LINE_COLOR);
             }
         }
@@ -1045,16 +1079,17 @@ impl SceneFrame {
 }
 
 /// Linear RGB colour mixed into the selected drawable.
-const SELECTION_TINT: [f64; 3] = [1.0, 0.55, 0.15];
+const SELECTION_TINT: [f32; 4] = [1.0, 0.55, 0.15, 1.0];
 
-/// Fraction of [`SELECTION_TINT`] mixed into the base colour.
+/// Fraction of a [tint](SELECTION_TINT) or a [base ink](SceneColors::boolean_base) mixed into the
+/// base colour of a body.
 const SELECTION_MIX: f64 = 0.35;
 
-/// Mixes the selection tint into an RGB colour, leaving the alpha channel untouched.
-fn tint_selected(color: &mut [f32; 4]) {
-    for (channel, tint) in color.iter_mut().zip(SELECTION_TINT) {
+/// Mixes the RGB of `tint` into an RGB colour, leaving the alpha channel untouched.
+fn tint(color: &mut [f32; 4], tint: [f32; 4], mix: f64) {
+    for (channel, tint) in color.iter_mut().zip(tint.into_iter().take(3)) {
         let base = f64::from(*channel);
-        *channel = (base * (1.0 - SELECTION_MIX) + tint * SELECTION_MIX) as f32;
+        *channel = (base * (1.0 - mix) + f64::from(tint) * mix) as f32;
     }
 }
 
@@ -1710,6 +1745,62 @@ mod tests {
         assert_ne!(Some(SELECTION_LINE_COLOR), frame.polylines()[0].color, "picking the colour must be visible");
         assert_eq!(highlighted.polylines()[1].color, frame.polylines()[1].color);
         assert_eq!(frame.polylines()[0].color, Some([0.5, 0.5, 0.5, 1.0]), "the base frame keeps its colour");
+    }
+
+    #[test]
+    fn an_armed_booleans_base_ring_takes_the_base_ink_and_its_operands_the_selection_ink() {
+        // X99: the base is the frame the result is born in, and a plain click on the second ring
+        // drops it from the selection, so it needs an ink of its own to stay readable as an operand.
+        let base = Id::new(2).expect("id");
+        let operand = Id::new(3).expect("id");
+        let untouched = Id::new(4).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push_polyline(line_chain(base));
+        frame.push_polyline(line_chain(operand));
+        frame.push_polyline(line_chain(untouched));
+        let ink = SceneColors::DARK.boolean_base;
+        assert_ne!(ink, SELECTION_LINE_COLOR, "the two roles are two inks");
+
+        // The tool is the selection, so the base is not in it: the pair draws apart anyway.
+        let armed = frame.with_picks(&[operand], Some(base));
+        assert_eq!(armed.polylines()[0].color, Some(ink), "the base ring takes the base ink");
+        assert_eq!(armed.polylines()[1].color, Some(SELECTION_LINE_COLOR), "the operand keeps the selection ink");
+        assert_eq!(armed.polylines()[2].color, frame.polylines()[2].color, "a ring beside them is untouched");
+
+        // A base that is also picked keeps the base ink: one ring, one role.
+        let also_picked = frame.with_picks(&[base, operand], Some(base));
+        assert_eq!(also_picked.polylines()[0].color, Some(ink));
+    }
+
+    #[test]
+    fn dropping_the_base_returns_every_ring_to_the_selection_ink() {
+        let base = Id::new(2).expect("id");
+        let operand = Id::new(3).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push_polyline(line_chain(base));
+        frame.push_polyline(line_chain(operand));
+        assert_ne!(frame.with_picks(&[operand], Some(base)).polylines()[0].color, Some(SELECTION_LINE_COLOR));
+
+        let dropped = frame.with_picks(&[base, operand], None);
+        for chain in dropped.polylines() {
+            assert_eq!(chain.color, Some(SELECTION_LINE_COLOR), "no ring keeps the base ink when no boolean is armed");
+        }
+    }
+
+    #[test]
+    fn a_base_body_takes_the_base_ink_and_not_the_selection_tint() {
+        let base = Id::new(2).expect("id");
+        let tool = Id::new(3).expect("id");
+        let mut frame = SceneFrame::default();
+        frame.push(Drawable::new(base, quad_mesh(), DMat4::IDENTITY, [0.5, 0.5, 0.5, 1.0]));
+        frame.push(Drawable::new(tool, quad_mesh(), DMat4::IDENTITY, [0.5, 0.5, 0.5, 1.0]));
+
+        let armed = frame.with_picks(&[tool], Some(base));
+        let base_color = armed.drawables()[0].color;
+        assert_ne!(base_color, frame.drawables()[0].color, "the base is marked while it is the frame");
+        assert_ne!(base_color, armed.drawables()[1].color, "and the tool is a different mark");
+        assert_ne!(Some(base_color), frame.with_picks(&[base], None).drawables().first().map(|d| d.color));
+        assert_eq!(base_color[3], 1.0, "a tint never moves the alpha");
     }
 
     #[test]
