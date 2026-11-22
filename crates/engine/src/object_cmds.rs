@@ -143,7 +143,7 @@ pub struct ObjectExtrudeCreate {
     /// Closed flat contour in the frame of `placement`; the command moves it so its creation pivot
     /// becomes the object's local zero.
     pub contour: Contour,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
     /// Placement relative to the parent container.
     pub placement: Placement,
@@ -221,8 +221,11 @@ pub const OBJECT_CUBOID_CREATE_LABEL: Message = Message::ToolBox;
 /// retired cuboid carried (ADR 0138). The body is the constructive object a drawn box is, so the card,
 /// the contour edit and a body boolean see one payload rather than a second way to store a box.
 ///
-/// The local zero is the centre of the base face: a closed ring anchors at its bounds centre
-/// (ADR 0082), which is the anchor a drawn box already has (ADR 0138).
+/// The placement puts the drawn box's minimum corner at its translation — a caller that measures a
+/// body from the corner it was given keeps the number it computed. The ring itself is rebased to its
+/// own centre, because a closed ring anchors at its bounds centre (ADR 0082), which is the anchor a
+/// drawn box already has (ADR 0138): the node's local zero is the centre of the base face, so
+/// `bounds` reports the body around it and the placement carries the difference.
 ///
 /// [ADR 0082]: ../docs/decisions/0082-the-local-zero-is-the-creation-anchor.md
 /// [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
@@ -233,11 +236,11 @@ pub struct ObjectCuboidCreate {
     pub parent: Id,
     /// User-visible name; it must contain a non-whitespace character.
     pub name: String,
-    /// Side along the local `+X`.
+    /// Extent along the local `+X`, in micrometres.
     pub width: Length,
-    /// Side along the local `+Y`.
+    /// Extent along the local `+Y`, in micrometres.
     pub depth: Length,
-    /// Side along the local `+Z`, which is the extrusion height.
+    /// Extent along the local `+Z`, which is the extrusion height, in micrometres.
     pub height: Length,
     /// Placement relative to the parent container.
     pub placement: Placement,
@@ -376,7 +379,7 @@ pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudeDrawing;
 pub struct ObjectPathExtrude {
     /// The drawing node that becomes the body or the bodies.
     pub object: Id,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
 }
 
@@ -464,7 +467,7 @@ pub const OBJECT_EXTRUDE_HEIGHT_SET_LABEL: Message = Message::CmdSetExtrusionHei
 pub struct ObjectExtrudeHeightSet {
     /// The constructive object whose extrusion height changes.
     pub object: Id,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
 }
 

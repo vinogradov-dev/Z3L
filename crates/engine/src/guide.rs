@@ -16,7 +16,7 @@
 //!
 //! Changes when: the world model, the order of a build, the stance table or a unit changes.
 
-use model::{ClassCode, Envelope, Footprint, Level, Placement, Side, Supply, registry};
+use model::{ClassCode, Envelope, Footprint, Level, Placement, Supply, registry};
 use serde_json::{Value, json};
 use text::Lang;
 use units::Length;
@@ -358,6 +358,10 @@ fn classes() -> Value {
             "supply": row.traits().map(|traits| supply_word(traits.supply())),
             "aliases": row.aliases(),
         });
+        let mut class = class;
+        if let (Some(fill), Some(object)) = (row.traits().and_then(|traits| traits.fill()), class.as_object_mut()) {
+            object.insert("fill".to_owned(), Value::from(fill_word(fill)));
+        }
         if let Some(rows) = group.get_mut("classes").and_then(Value::as_array_mut) {
             rows.push(class);
         }
@@ -385,56 +389,61 @@ const fn supply_word(supply: Supply) -> &'static str {
     }
 }
 
-/// The units every number travels in, which is the mistake that cost a whole build (X115).
-fn units() -> Value {
-    json!({
-        "length": "micrometres, integer: every owning, index and size parameter, and every property \
-                   of kind `length`",
-        "placement": "millimetres, floating point: the translation of a placement, and a world \
-                      point in an answer that names it `_mm`",
-        "angle": "millidegrees, integer: an angle parameter and every property of kind `angle`",
-        "rotation": "a unit quaternion [x, y, z, w] in a placement; Euler angles are a presentation \
-                     and are never stored",
-        "rule": "the published parameter schema says which shape a field has, and the field's name \
-                 says its unit; a number that looks like a length is never assumed to be one",
-    })
-}
-
-/// The four sides of a piece, with the axis each one faces.
-fn sides() -> Value {
-    json!({
-        "rule": "A piece has a front, a back, a left and a right, and every dimension is read \
-                 against them. The front view looks from +Y towards -Y with +Z up, so the side a \
-                 viewer standing in front of the piece sees on their left is +X.",
-        "axes": Side::ALL.iter().map(|side| {
-            json!({
-                "side": side_word(*side),
-                "axis": axis_word(side.axis()),
-            })
-        }).collect::<Vec<Value>>(),
-    })
-}
-
-/// The wire word of a side.
-const fn side_word(side: Side) -> &'static str {
-    match side {
-        Side::Left => "left",
-        Side::Right => "right",
-        Side::Front => "front",
-        Side::Back => "back",
+/// The axis pair a class takes from a void, in the words `docs/domain/classes.md` uses.
+///
+/// `w`, `h` and `d` are the void's width, height and depth — the axes the box answer reports as
+/// `x`, `y` (depth) and `z` — so a caller that hears «полка» reads `10.11` and `w+d` and knows the
+/// board spans the void's width and depth, while «стойка» is `10.10` and `h+d`. A class that fills
+/// nothing carries no word.
+const fn fill_word(fill: model::Fill) -> &'static str {
+    match fill {
+        model::Fill::HeightAndDepth => "h+d",
+        model::Fill::WidthAndDepth => "w+d",
+        model::Fill::WidthAndHeight => "w+h",
     }
 }
 
-/// The signed axis a direction points along, as the wire spells it.
-fn axis_word(axis: geom::DVec3) -> &'static str {
-    let words = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
-    let vectors =
-        [geom::DVec3::X, geom::DVec3::NEG_X, geom::DVec3::Y, geom::DVec3::NEG_Y, geom::DVec3::Z, geom::DVec3::NEG_Z];
-    vectors
-        .iter()
-        .position(|candidate| (*candidate - axis).length() < 1e-9)
-        .and_then(|index| words.get(index).copied())
-        .unwrap_or("none")
+/// The units every number travels in, which is the mistake that cost a whole build (X115).
+fn units() -> Value {
+    json!({
+        "length": "micrometres, integer: every size the document owns — a panel's nominal size, a \
+                   body's sides, an extrusion height, a point in a contour, a machining offset",
+        "placement": "millimetres, floating point: the translation of a placement, and a world \
+                      point in an answer that names it `_mm`",
+        "angle": "millidegrees, integer: an angle parameter, and every angle the inspector shows \
+                  in degrees is that number printed",
+        "rotation": "a unit quaternion [x, y, z, w] in a placement; Euler angles are a presentation \
+                     and are never stored",
+        "rule": "the published parameter schema says which shape a field has, and every field that \
+                 carries a length, an angle or a placement is annotated with the `unit` its type is \
+                 in; an answer that carries a measurement names the unit in the key (`size_um`, \
+                 `origin_mm`). A number that looks like a length is never assumed to be one",
+    })
+}
+
+/// The four sides of a piece are the reader's, not the program's.
+///
+/// A furniture description is spoken from in front of the piece — «слева полки, справа штанга» — so a
+/// caller has to turn the speaker's words into the frame, and the program cannot do it for them: a
+/// second person may read the same sentence the other way round. What the program can state is the
+/// frame and the one reading the sentence usually takes (the owner, 2026-11-22, ADR 0216): the front
+/// is `+Y`, up is `+Z`, and the side the speaker sees on their left is `+X`. A caller writes its
+/// reading back in the answer, so a person corrects the caller and not the document.
+fn sides() -> Value {
+    json!({
+        "rule": "A piece has a front, a back, a left and a right, and a person describing it speaks \
+                 from in front: the front view looks from +Y towards -Y with +Z up, so the side a \
+                 viewer standing in front of the piece sees on their left is +X, and the one they see \
+                 on their right is -X.",
+        "reading": "A description is read from the front view, in the piece's own frame: up is +Z, \
+                    towards the person is -Y. Another person may read the same words the other way \
+                    round, so say back which axis you put each group of parts on — «полки на +X, \
+                    штанга на -X» — instead of leaving the reader to infer it from your numbers.",
+        "in_the_document": "A part is placed by its world placement, and the axes are the ones the \
+                            box answer reports: `size_um` is the piece's own box and `origin_mm` is \
+                            where its zero corner stands, so the +X face of the piece is \
+                            `origin_mm[0] + size_um.x` and the -X face is `origin_mm[0]`.",
+    })
 }
 
 #[cfg(test)]
@@ -523,6 +532,46 @@ mod tests {
         let aliases: Vec<&str> =
             shelf["aliases"].as_array().expect("aliases").iter().filter_map(Value::as_str).collect();
         assert!(aliases.contains(&"полка"), "the row carries the word a person types: {aliases:?}");
+    }
+
+    #[test]
+    fn a_class_that_fills_a_void_says_which_axis_pair_it_takes() {
+        // «Слева полки, справа штанга» reaches the registry as codes: the shelf is 10.11 and takes
+        // the void's width and depth, the post is 10.10 and takes its height and depth, the back is
+        // 10.12 and takes width and height, and a door fills nothing (J19, ADR 0097).
+        let guide = guide();
+        let class = |code: &str| {
+            guide["classes"]
+                .as_array()
+                .expect("classes")
+                .iter()
+                .flat_map(|group| group["classes"].as_array().into_iter().flatten())
+                .find(|class| class["code"] == code)
+                .cloned()
+                .expect("the row is published")
+        };
+        assert_eq!(class("10.11")["fill"], "w+d", "a shelf spans the void's width and depth");
+        assert_eq!(class("10.10")["fill"], "h+d", "a post spans its height and depth");
+        assert_eq!(class("10.12")["fill"], "w+h", "a back stands in the frontal plane");
+        assert!(class("10.20").get("fill").is_none(), "a door fills no void, so it carries no pair");
+    }
+
+    #[test]
+    fn the_sides_are_read_from_the_front_and_the_reading_is_said_back() {
+        // A person describes a piece from in front of it, and a second person may read the same words
+        // the other way round, so the surface states the reading and asks the caller to repeat it
+        // (owner, 2026-11-22, ADR 0216). No command, class or answer carries a side.
+        let guide = guide();
+        let sides = &guide["sides"];
+        assert!(
+            sides["rule"].as_str().is_some_and(|rule| rule.contains("+X") && rule.contains("+Y")),
+            "the frame states which axis a person's left is: {sides:?}"
+        );
+        assert!(
+            sides["reading"].as_str().is_some_and(|reading| reading.contains("say back")),
+            "a caller is told to write its reading back, so the person can correct it: {sides:?}"
+        );
+        assert!(sides.get("axes").is_none(), "the program states no side vocabulary, a caller brings its own");
     }
 
     #[test]

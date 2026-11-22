@@ -582,3 +582,177 @@ async fn a_client_reads_back_the_box_of_the_body_it_just_built() {
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
 }
+
+/// The shelf the description asks for: 500 wide, 500 deep, in the sample catalogue's board.
+const SHELF_UM: [u64; 2] = [500_000, 500_000];
+
+/// The rod the description asks for: 30 by 30 across, 600 long.
+const ROD_UM: [u64; 3] = [30_000, 30_000, 600_000];
+
+#[tokio::test]
+async fn a_caller_that_reads_only_the_surface_puts_the_shelves_where_the_person_said() {
+    // J19, the acceptance test: a session with the built surface and nothing of this repository
+    // written down. It reads the units, the class rows and the frame from `command_list`, the
+    // piece's box from `query box`, and the shapes of the two commands from their schemas — then
+    // resolves «слева пять полок, справа штанга» and writes the six parts in one batch.
+    //
+    // The reading of "left" is the caller's own: the surface states the frame (+X is the side a
+    // person in front of the piece sees on their left) and the caller says its reading back. What is
+    // asserted is that the numbers came from the answers, so a piece built at a thousand times its
+    // size (X115) or on the mirrored side (X118) cannot pass this test.
+    let (mut session, products) = session_with(1);
+    let product = *products.first().expect("one product");
+    assert!(session.open_product(product), "the fixture opens the one product");
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+
+    // What the surface says about the vocabulary it is about to be used with.
+    let listed = body(&client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers"));
+    let guide = &listed["domain"];
+    assert!(
+        guide["units"]["length"].as_str().is_some_and(|unit| unit.starts_with("micrometres")),
+        "a length is micrometres: {}",
+        guide["units"]["length"]
+    );
+    assert!(
+        guide["units"]["placement"].as_str().is_some_and(|unit| unit.starts_with("millimetres")),
+        "a placement is millimetres: {}",
+        guide["units"]["placement"]
+    );
+    let shelf = guide["classes"]
+        .as_array()
+        .expect("classes")
+        .iter()
+        .flat_map(|group| group["classes"].as_array().into_iter().flatten())
+        .find(|class| class["code"] == "10.11")
+        .expect("the shelf row is published");
+    assert_eq!(shelf["label"], json!("Horizontal"), "the word for a shelf is its class: {shelf}");
+    assert_eq!(shelf["fill"], json!("w+d"), "a shelf takes the void's width and depth: {shelf}");
+    let rule = guide["sides"]["rule"].as_str().unwrap_or_default();
+    assert!(rule.contains("+X") && rule.contains("+Y"), "the frame says which axis the person's left is: {rule}");
+
+    // The schema of the command says what the numbers mean, so the caller sends micrometres for the
+    // size and millimetres for the placement's translation.
+    let commands = listed["commands"].as_array().expect("one row per command");
+    let create = commands.iter().find(|row| row["id"] == "panel.create").expect("panel.create is listed");
+    // A field that names a struct is read through its definition, where the units of its own
+    // numbers are written.
+    let nominal = &create["params"]["$defs"]["PanelNominalSize"]["properties"];
+    assert_eq!(nominal["length"]["unit"], json!("micrometres"), "the size is micrometres: {nominal}");
+    assert_eq!(nominal["width"]["unit"], json!("micrometres"), "both of the size's numbers are: {nominal}");
+    let placement = &create["params"]["properties"]["placement"];
+    assert_eq!(placement["unit"], json!("millimetres"), "the translation is millimetres: {placement}");
+
+    // The piece the person is talking about, as the document answers it.
+    let reserved = body(
+        &client
+            .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+                "kind": "box",
+                "node": product.get(),
+            }))))
+            .await
+            .expect("the box is answered"),
+    );
+    let boxed = &reserved["answer"][0];
+    let width_mm = boxed["size_um"]["x"].as_f64().expect("the width") / 1_000.0;
+    let depth_mm = boxed["size_um"]["y"].as_f64().expect("the depth") / 1_000.0;
+    let origin = boxed["origin_mm"].as_array().expect("the origin");
+    let origin_x = origin.first().and_then(Value::as_f64).expect("the x of the origin");
+    let left_face = origin_x + width_mm;
+    assert_eq!((width_mm, depth_mm), (600.0, 560.0), "the piece is the one the fixture made: {boxed}");
+
+    // «Слева пять полок»: the shelf's far edge is the piece's +X face, so its near edge is a shelf's
+    // length in from it, and the five of them climb the piece's height.
+    let shelf_mm = SHELF_UM[0] as f64 / 1_000.0;
+    let shelf_x = left_face - shelf_mm;
+    let mut steps: Vec<Value> = Vec::new();
+    for index in 0..5u64 {
+        steps.push(json!({
+            "command": "panel.create",
+            "as": format!("shelf {}", index.saturating_add(1)),
+            "params": {
+                "parent": product.get(),
+                "name": format!("Shelf {}", index.saturating_add(1)),
+                "nominal_size": {"length": SHELF_UM[0], "width": SHELF_UM[1]},
+                "material": "1-1",
+                "placement": {
+                    "translation": [shelf_x, 30.0, 20.0 + index as f64 * 140.0],
+                    "rotation": [0.0, 0.0, 0.0, 1.0],
+                },
+            },
+        }));
+    }
+    // «Справа штанга»: the -X face of the piece, which is the origin the box answer reports. No
+    // command creates a fitting, so the rod is the body the guide says to build instead — and its
+    // schema states where a body's own zero is.
+    let cuboid = commands.iter().find(|row| row["id"] == "object.cuboid.create").expect("the body is listed");
+    let anchor = cuboid["params"]["description"].as_str().unwrap_or_default();
+    let deep = (depth_mm - ROD_UM[1] as f64 / 1_000.0) / 2.0;
+    steps.push(json!({
+        "command": "object.cuboid.create",
+        "as": "rod",
+        "params": {
+            "parent": product.get(),
+            "name": "Штанга",
+            "width": ROD_UM[0],
+            "depth": ROD_UM[1],
+            "height": ROD_UM[2],
+            "placement": {
+                "translation": [origin_x + 10.0, deep, 60.0],
+                "rotation": [0.0, 0.0, 0.0, 1.0],
+            },
+        },
+    }));
+
+    let answered = client
+        .call_tool(CallToolRequestParams::new(TOOL_BATCH).with_arguments(arguments(json!({
+            "product": product.get(),
+            "steps": steps,
+        }))))
+        .await
+        .expect("the batch answers");
+    let report = body(&answered);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_eq!(report["steps"].as_array().map(Vec::len), Some(6), "five shelves and the rod: {report}");
+    let created: Vec<u64> =
+        report["created"].as_array().expect("the created ids").iter().filter_map(Value::as_u64).collect();
+    assert_eq!(created.len(), 6, "{report}");
+
+    // Every shelf is on the piece's +X side, and the rod is on its -X side: the sides the words named.
+    for id in created.iter().take(5) {
+        let measured = body(
+            &client
+                .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+                    "kind": "bounds",
+                    "node": id,
+                }))))
+                .await
+                .expect("the shelf's box is answered"),
+        );
+        let min = measured["answer"]["world_min_mm"][0].as_f64().expect("the near edge");
+        let max = measured["answer"]["world_max_mm"][0].as_f64().expect("the far edge");
+        assert!((min - shelf_x).abs() < 0.001, "a shelf starts where the answer said: {measured}");
+        assert!((max - left_face).abs() < 0.001, "a shelf ends on the piece's +X face: {measured}");
+    }
+    assert!(
+        anchor.contains("minimum corner at its translation") && anchor.contains("centre of the base face"),
+        "the body's placement puts its corner at the translation and its zero at the base centre: {anchor}"
+    );
+    let rod = body(
+        &client
+            .call_tool(CallToolRequestParams::new(TOOL_QUERY).with_arguments(arguments(json!({
+                "kind": "bounds",
+                "node": created.last(),
+            }))))
+            .await
+            .expect("the rod's box is answered"),
+    );
+    let min = rod["answer"]["world_min_mm"][0].as_f64().expect("the rod's near edge");
+    let max = rod["answer"]["world_max_mm"][0].as_f64().expect("the rod's far edge");
+    assert!((min - origin_x - 10.0).abs() < 0.001, "the rod stands 10 mm in from the -X face: {rod}");
+    let rod_mm = ROD_UM[0] as f64 / 1_000.0;
+    assert!((max - origin_x - 10.0 - rod_mm).abs() < 0.001, "and is its own width thick: {rod}");
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}

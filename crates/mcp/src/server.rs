@@ -46,8 +46,13 @@ one undo entry, and by default a refusal takes back every step before it. A step
 creates with `as` and a later step refers to that name as `{\"$ref\": \"<name>\"}`, so a part and \
 the machining on it are one call. A furniture part is born only inside the open product, so name one with `product` when the scene holds several: opening it \
 is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
-the scene with `query` and never guess a number: a length on the wire is millimetres, an angle is \
-degrees and intrinsic XYZ Euler angles. A window's scene is written to the file it came from only \
+the scene with `query` and never guess a number: a length is integer micrometres, a placement's \
+translation is floating-point millimetres, and an angle is integer millidegrees — every schema \
+annotates the `unit` of each such field, and every answer names it (`size_um`, `origin_mm`). A person \
+describes a piece from in front of it — the front is +Y, up is +Z, so the side they see on their left \
+is +X — and another person may read the same words the other way round: read the description from \
+the front and say back which axis you put each group of parts on. A window's scene is written to the \
+file it came from only \
 when a call asks with `save`, and a scene that was never saved refuses that ask: the person names \
 the file once, and every later save reaches it.";
 
