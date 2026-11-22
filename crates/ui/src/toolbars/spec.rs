@@ -1289,6 +1289,23 @@ mod tests {
     }
 
     #[test]
+    fn the_box_cell_and_the_box_command_are_one_word() {
+        // The cell arms the rectangle gesture (ADR 0138), so its own id is a method and not a
+        // command; a caller that cannot draw still needs the shape by the word the button prints, so
+        // the registry names it with the cell's own message (X105).
+        let box_cell = every_tool()
+            .into_iter()
+            .find(|(_, tool)| tool.id == "model.primitives.cuboid")
+            .map(|(_, tool)| tool)
+            .expect("the box cell");
+        let command = engine::CommandRegistry::new()
+            .get(engine::object_cmds::OBJECT_CUBOID_CREATE_ID)
+            .expect("the box command is registered");
+        assert_eq!(command.label(), box_cell.label, "the button and the registry print two words");
+        assert_eq!(box_cell.label.text(text::Lang::En), "Box");
+    }
+
+    #[test]
     fn the_five_tabs_are_the_approved_nouns_in_order() {
         let names = tabs().iter().map(|tab| tab.label.text(text::Lang::En)).collect::<Vec<_>>();
         assert_eq!(names, ["Sketch", "Model", "Furniture", "Scene", "View"]);

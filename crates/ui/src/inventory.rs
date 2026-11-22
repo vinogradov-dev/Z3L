@@ -696,6 +696,16 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "object.cuboid.create",
+        // The registry's own word is the ribbon cell's, so the id and the button print one shape
+        // (X105). No surface runs it yet: the box cell is the rectangle gesture (ADR 0138), and the
+        // reason lives in `plan/debt.md`.
+        label: Message::ToolBox,
+        places: &[Place::Api],
+        applies: Applies::Always,
+        icon: None,
+    },
+    Row {
         id: "object.extrude.height.set",
         label: Message::CmdSetExtrusionHeight,
         places: &[Place::Ribbon],

@@ -282,6 +282,7 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_PRIMITIVE_CREATE,
     object_cmds::OBJECT_PRIMITIVE_REPLACE,
     object_cmds::OBJECT_EXTRUDE_CREATE,
+    object_cmds::OBJECT_CUBOID_CREATE,
     object_cmds::OBJECT_EXTRUDE_HEIGHT_SET,
     object_cmds::OBJECT_CONTOUR_REPLACE,
     object_cmds::OBJECT_PATH_CREATE,
@@ -584,7 +585,7 @@ mod tests {
         // A pulled area is a body born from a drawing, so it creates one and names its own area.
         let area = registry.get("object.area.extrude").expect("object.area.extrude is registered");
         assert_eq!(area.label().text(Lang::En), "Extrude area");
-        assert_eq!(registry.specs().len(), 64);
+        assert_eq!(registry.specs().len(), 65);
     }
 
     #[test]

@@ -206,6 +206,104 @@ fn evaluate_contour(command: &'static str, contour: &Contour) -> Result<(), Comm
         .map_err(|error| CommandError::Evaluation { command, message: error.to_string() })
 }
 
+/// Stable id of the box creation command.
+pub const OBJECT_CUBOID_CREATE_ID: &str = "object.cuboid.create";
+
+/// User-facing label of the box creation command.
+///
+/// It is the ribbon cell's own message: a caller reading `command_list` finds the shape by the word
+/// the button prints, and one word belongs to one id (X105).
+pub const OBJECT_CUBOID_CREATE_LABEL: Message = Message::ToolBox;
+
+/// Parameters for `object.cuboid.create`.
+///
+/// Three independent sides, because that is what a maker means by a box — the same three numbers the
+/// retired cuboid carried (ADR 0138). The body is the constructive object a drawn box is, so the card,
+/// the contour edit and a body boolean see one payload rather than a second way to store a box.
+///
+/// The local zero is the centre of the base face: a closed ring anchors at its bounds centre
+/// (ADR 0082), which is the anchor a drawn box already has (ADR 0138).
+///
+/// [ADR 0082]: ../docs/decisions/0082-the-local-zero-is-the-creation-anchor.md
+/// [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectCuboidCreate {
+    /// Id of the container that receives the new object.
+    pub parent: Id,
+    /// User-visible name; it must contain a non-whitespace character.
+    pub name: String,
+    /// Side along the local `+X`.
+    pub width: Length,
+    /// Side along the local `+Y`.
+    pub depth: Length,
+    /// Side along the local `+Z`, which is the extrusion height.
+    pub height: Length,
+    /// Placement relative to the parent container.
+    pub placement: Placement,
+}
+
+/// The `object.cuboid.create` command.
+pub(crate) const OBJECT_CUBOID_CREATE: CommandSpec = CommandSpec::new::<ObjectCuboidCreate>(
+    OBJECT_CUBOID_CREATE_ID,
+    OBJECT_CUBOID_CREATE_LABEL,
+    object_cuboid_create_enabled,
+    object_cuboid_create_run,
+);
+
+/// Whether one side of a box can be stored.
+///
+/// A side is a box dimension, not a coordinate: the shortest one the gesture can draw is a micrometre
+/// and the longest is the contour ceiling, so the command refuses exactly what a drawn ring would —
+/// no side is negative, none is zero and none leaves the document's range.
+fn valid_cuboid_side(side: Length) -> bool {
+    side.is_positive() && side.micrometres() <= model::MAX_CONTOUR_COORDINATE.micrometres()
+}
+
+fn object_cuboid_create_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectCuboidCreate>(params, OBJECT_CUBOID_CREATE_ID) else {
+        return false;
+    };
+    !params.name.trim().is_empty()
+        && valid_cuboid_side(params.width)
+        && valid_cuboid_side(params.depth)
+        && valid_cuboid_side(params.height)
+        && session.project().is_container(params.parent)
+}
+
+fn object_cuboid_create_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectCuboidCreate>(params, OBJECT_CUBOID_CREATE_ID)?;
+    validate_name(&params.name, OBJECT_CUBOID_CREATE_ID)?;
+    for (field, side) in [("width", params.width), ("depth", params.depth), ("height", params.height)] {
+        if !valid_cuboid_side(side) {
+            return Err(CommandError::InvalidParams {
+                command: OBJECT_CUBOID_CREATE_ID,
+                message: format!(
+                    "{field} must be positive and at most {} micrometres",
+                    model::MAX_CONTOUR_COORDINATE.micrometres()
+                ),
+            });
+        }
+    }
+    // The base rectangle is the profile the gesture draws and the body is its one sweep, so a box made
+    // by a command and a box drawn by hand are the same payload (ADR 0138). The ring is rebased to its
+    // own centre, which is where a closed ring anchors, instead of restating that rule here.
+    let path = Path::rectangle([Length::ZERO, Length::ZERO], [params.width, params.depth]).map_err(|error| {
+        CommandError::InvalidParams { command: OBJECT_CUBOID_CREATE_ID, message: error.to_string() }
+    })?;
+    let rebased = rebase_origin_at(path, params.placement, FrameAnchor::CreationOrigin).map_err(|error| {
+        CommandError::InvalidParams { command: OBJECT_CUBOID_CREATE_ID, message: error.to_string() }
+    })?;
+    let constructive = Constructive::extrude(rebased.content, params.height).map_err(ProjectError::from)?;
+    let id = project.add_object(params.parent, params.name, rebased.placement, Geometry::Constructive(constructive))?;
+    Ok(CommandOutcome::created(id))
+}
+
 /// Stable id of the contour replacement command.
 pub const OBJECT_CONTOUR_REPLACE_ID: &str = "object.contour.replace";
 
@@ -1392,6 +1490,81 @@ mod tests {
         session.dispatch(OBJECT_COLLAPSE_ID, &value).expect("collapse");
         let baked = session.project().object(id).expect("object").geometry().as_mesh().expect("a baked mesh").clone();
         assert_eq!(baked, evaluated, "the viewport and the collapse share one evaluator");
+    }
+
+    /// A box 200 × 300 × 600 mm at the scene root, with three independent sides (X105).
+    fn cuboid_params(session: &Session, sides: [Length; 3]) -> Value {
+        let [width, depth, height] = sides;
+        serde_json::to_value(ObjectCuboidCreate {
+            parent: session.project().root().id(),
+            name: "Block".to_owned(),
+            width,
+            depth,
+            height,
+            placement: Placement::IDENTITY,
+        })
+        .expect("params serialize")
+    }
+
+    #[test]
+    fn a_box_is_one_body_from_three_sides() {
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let sides = [
+            Length::from_millimetres(200).expect("width"),
+            Length::from_millimetres(300).expect("depth"),
+            Length::from_millimetres(600).expect("height"),
+        ];
+        let value = cuboid_params(&session, sides);
+        let spec = CommandRegistry::new().get(OBJECT_CUBOID_CREATE_ID).expect("registered");
+        assert!(spec.enabled(&session, &value), "three sides and a container is a box");
+        assert_eq!(spec.label(), Message::ToolBox, "the command prints the word on the ribbon cell");
+        let id = session.dispatch(OBJECT_CUBOID_CREATE_ID, &value).expect("create the box").created_id().expect("id");
+        assert_eq!(session.project().revision().get(), 1, "one command, one revision");
+        let object = session.project().object(id).expect("the box");
+        let constructive = object.geometry().as_constructive().expect("a body, not a parameter set");
+        assert_eq!(
+            constructive.contour().expect("the base ring").bounds_micrometres(),
+            ([-100_000, -150_000], [100_000, 150_000]),
+            "the local zero is the centre of the base face"
+        );
+        assert_eq!(
+            constructive.extrude_feature().map(model::Extrude::height),
+            Some(sides[2]),
+            "the third side is the sweep"
+        );
+        let mesh = mesh::evaluate_constructive(constructive).expect("the derived mesh");
+        assert_eq!((mesh.positions().len(), mesh.faces().len()), (8, 6), "one box, not four walls");
+        assert_eq!(
+            mesh.bounds_micrometres(),
+            ([-100_000, -150_000, 0], [100_000, 150_000, 600_000]),
+            "the body spans the three sides it was given"
+        );
+        session.undo().expect("undo the box");
+        assert!(session.project().object(id).is_none(), "one undo entry holds the whole create");
+        assert!(!session.can_undo(), "there is nothing behind the create");
+    }
+
+    #[test]
+    fn a_box_side_outside_the_range_is_refused_without_mutating() {
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let side = Length::from_millimetres(100).expect("a side");
+        let cases = [
+            [Length::ZERO, side, side],
+            [Length::from_millimetres(-100).expect("a negative side"), side, side],
+            [side, side, Length::from_micrometres(model::MAX_CONTOUR_COORDINATE.micrometres() + 1)],
+        ];
+        let spec = CommandRegistry::new().get(OBJECT_CUBOID_CREATE_ID).expect("registered");
+        for sides in cases {
+            let value = cuboid_params(&session, sides);
+            assert!(!spec.enabled(&session, &value), "{sides:?} cannot be a box");
+            let refusal = session.dispatch(OBJECT_CUBOID_CREATE_ID, &value).expect_err("a bad side is refused");
+            assert!(
+                refusal.to_string().contains("width") || refusal.to_string().contains("height"),
+                "the refusal names the side: {refusal}"
+            );
+        }
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal writes nothing");
+        assert!(!session.can_undo());
     }
 
     #[test]

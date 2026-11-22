@@ -83,6 +83,10 @@ primitive is described in section 5.
   before the document changes. Extruding a path object converts that node into the body in place and
   keeps its id, name, placement, pivot_local and properties, so the drawing is not left behind as a
   separate object ([0074](../decisions/0074-an-extrusion-owns-the-path-it-grew-from.md)).
+- A box made without a pointer is the same payload: `object.cuboid.create` builds the base rectangle
+  from three sides and sweeps it, so the node is a constructive body and not a parameter set — the
+  ribbon cell that draws a box is the rectangle gesture, and its word is the label this command
+  carries, so `command_list` names the shape the button prints (X105).
 - A contour is a ring of directed **segments**, at least one: a full circle is one arc and a half
   circle with its diameter is two ([0221](../decisions/0221-a-ring-is-one-closed-chain-not-three-segments.md)).
   A segment is a straight line between two points or a circular arc with a centre, a positive
@@ -334,6 +338,7 @@ in one viewport mode. Its state is view state, not document data
 | `object.primitive.create` | parent, name, primitive kind, size, placement | creates a parametric primitive with the default tessellation, returns its id |
 | `object.primitive.replace` | object, primitive | replaces the parameters in one revision and keeps the node |
 | `object.extrude.create` | parent, name, contour, height, placement | creates a constructive object with one `Extrude`; the contour becomes the body's path |
+| `object.cuboid.create` | parent, name, width, depth, height, placement | creates the same constructive object from a base rectangle it builds itself; the local zero is the centre of the base face, and the word is the ribbon box cell's (`Box`) |
 | `object.path.extrude` | object, height | turns a path node into the body that owns it, in place |
 | `object.extrude.height.set` | object, height | replaces the first extrusion's height and keeps the path |
 | `object.contour.replace` | object, path | replaces the body's path and rebuilds |
