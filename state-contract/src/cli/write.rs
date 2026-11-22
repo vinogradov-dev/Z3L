@@ -589,7 +589,7 @@ fn take(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
 /// `task defer <ID> [--next <text>]`: moves an open entry out of the work order into `## Next`.
 ///
 /// The inverse of [`take`], and the one write an owner needs when a task is real but its moment is
-/// later than the rest of the order (R1 waits for the release): the entry keeps its fields, its
+/// later than the rest of the order (R1 sat there until the release was planned): the entry keeps its fields, its
 /// hint and its note, and stops being scheduled, so no session-start block names it until somebody
 /// takes it back. The order must keep a head, so deferring the current task points `STATE:` at the
 /// next open entry and names it in `## Next` in the same write; deferring a later entry leaves the

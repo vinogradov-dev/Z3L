@@ -52,6 +52,7 @@ to 2031); `K3N` is a lubricants brand on `k3n.ru` since 2022.
 
 - [`docs/philosophy.md`](../philosophy.md) — the thesis, the three laws and the readings of the name.
 - `plan/notes/R1.md` — the measured search: candidates, marks, domains, stores, ruled out roads.
-- `plan/rename.md` — the procedure that moves the name out of the tree.
+- `plan/rename.md` — the record of the rename that landed: what the old name touched, the procedure as
+  it was run and the gotchas that outlived it.
 - ADR [0028](0028-the-assistant-is-a-client-of-the-command-registry.md) — `Faber`, the assistant.
 - Plan: R1.

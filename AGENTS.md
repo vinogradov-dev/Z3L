@@ -26,10 +26,12 @@ whole file. If the anchor is wrong or missing, fix the row — the map is a cont
 area, never read them at start — the task report already quotes the entries that name the task's
 files. `plan/notes/<ID>.md` is the research note of one task: it is where a session writes what it
 measured, decided and ruled out, and the task report prints it, so the next session does not repeat
-the search. Template: `state-contract/templates/NOTE.md`. `plan/rename.md` is the same kind of file: it holds the measured
-inventory and the procedure for the pre-release rename (task R1). `plan/refactor.md` is the third:
-the design rules, the audit procedure and the subtask template for the design-rules refactor
-(task S7). `plan/archive/done.md` is history; `git log --oneline` replaces it.
+the search. Template: `state-contract/templates/NOTE.md`. `plan/refactor.md` is the same kind of
+file: the design rules, the audit procedure and the subtask template for the design-rules refactor
+(task S7). `plan/rename.md` is a fourth and the only one that outlives its task: it is the record of
+the rename that landed at `d4a56f3` (R1), so it is read when a change adds a surface that carries the
+product name, never as a procedure to take. `plan/archive/done.md` is history; `git log --oneline`
+replaces it.
 
 Answering the next step has its own procedure (§1.1); it never re-derives the state from the code.
 
@@ -490,8 +492,9 @@ checkout — which is how a plan line and a source file were lost once.
 - `plan/map.md` — where each feature lives (feature → path + anchor); the dashboard prints it as `MAP`.
 - `cargo xtask help` — every command with a one-line summary, generated from the command table. The plan is read with `task`/`status`, written with the `task` verbs and `state`, and `agents` prints the session contract below, versioned with the tool.
 - `plan/debt.md` — accepted gaps, tagged by area; append-only, an entry leaves when the fix lands.
-- `plan/rename.md` — the pre-release rename (task R1): what the product name touches today, the
-  measured procedure and its gotchas. Read only when R1 is taken.
+- `plan/rename.md` — the pre-release rename, which landed at `d4a56f3` (R1): what the old name
+  touched, what the move cost, the four steps and the gotchas that outlived it. History, not a task
+  to take; read it when a change adds a surface that carries the product name.
 - `plan/refactor.md` — the design-rules refactor (task S7 and its subtasks): how to measure a module,
   the boundary, data, clean-code, documentation and test rules (`B`, `D`, `C`, `H`, `T` ids), the
   legibility test, what to borrow from a reference project, the audit procedure and the subtask

@@ -8,7 +8,7 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 `[gizmo]` manipulation, `[types]` properties and furniture types, `[engine]` commands and history,
 `[perf]` frame and picking cost, `[assistant]`, `[ui]` panels, toolbars and icon artwork, `[design]`
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
-`[release]` a gate that has to run before the first release, `[vendor]`.
+`[vendor]`.
 
 - `[object]` A fit is the largest rectangle **through the pointer**, searched in the section's own chord
   polygon. A pointer standing in an arc's outward bulge is outside that polygon, so no rectangle of it
@@ -56,12 +56,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   lying across the board's thickness at the same height cuts the footprint instead of moving the
   free axis (X73, ADR 0175). `TooSmall` is the honest answer today; a fill that steps over a hidden
   slab is a tool of its own.
-
-- `[release]` The product name leaves the code before the first release: R1 is the measured
-  four-commit procedure in `plan/rename.md`, deferred out of the work order until then so a release
-  does not wait for the whole order. Run `cargo xtask task take R1` and the four commits first.
-  Nothing is released yet, so the file format and the settings directory change outright and no
-  compatibility path is needed.
 
 - `[view-state]` Selection and open containers still live in `ui::Editor` and the view camera in the
   shell, although ADR 0029 places them in the session. Cameras and lights are document nodes with
