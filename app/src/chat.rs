@@ -20,7 +20,7 @@
 //! Changes when: the panel's states, its words, its buttons or the turn's presentation change.
 
 use eframe::egui::{self, Context, Id, RichText, Ui};
-use engine::{AgentMode, BatchOptions, BatchStep, EditScope, Session};
+use engine::{AgentMode, BatchOptions, BatchStep, EditScope, Finding, Session};
 use mcp::{ChatBackend, Conversation, Speaker, Turn};
 use text::{Lang, Message};
 use ui::theme;
@@ -31,6 +31,12 @@ const HEIGHT: f32 = 520.0;
 
 /// The height of the transcript above the field, in points.
 const TRANSCRIPT_HEIGHT: f32 = 300.0;
+
+/// The findings a panel lists before it says how many are left.
+///
+/// Six rows keep the conversation, the findings and the field in one window a person can read at a
+/// glance; the tool answer carries the whole list for the model.
+const FINDINGS_SHOWN: usize = 6;
 
 /// What the panel asked the shell to do this frame, if anything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,6 +73,10 @@ pub(crate) struct Chat {
     scope: Option<EditScope>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
+    /// The rules' findings for the revision the panel last read.
+    findings: Vec<Finding>,
+    /// The revision [`Self::findings`] was derived from, so a frame polls the rules once.
+    findings_revision: Option<u64>,
 }
 
 impl Default for Chat {
@@ -86,7 +96,15 @@ impl Chat {
             turn: None,
             scope: None,
             checklist: Vec::new(),
+            findings: Vec::new(),
+            findings_revision: None,
         }
+    }
+
+    /// The findings the panel last read, in the report's own order.
+    #[cfg(test)]
+    pub(crate) fn findings(&self) -> &[Finding] {
+        &self.findings
     }
 
     /// Whether a turn is running: the field says so and Send gives way to Stop.
@@ -101,6 +119,23 @@ impl Chat {
     /// (X106, ADR 0222). Closing keeps the conversation and the mode, which are the tab's.
     pub(crate) fn toggle(&mut self) {
         self.open = !self.open;
+    }
+
+    /// Re-reads the rules when the document has moved since the last look.
+    ///
+    /// The pass is a derivation and costs a walk of the tree and a pair of boxes per part, so it runs
+    /// once per revision and never per frame. Closing the panel keeps the list, like the
+    /// conversation, and reopening on the same revision shows it without a second walk.
+    pub(crate) fn refresh_findings(&mut self, session: &Session) {
+        if !self.open {
+            return;
+        }
+        let revision = session.project().revision().get();
+        if self.findings_revision == Some(revision) {
+            return;
+        }
+        self.findings = session.inspect();
+        self.findings_revision = Some(revision);
     }
 
     /// Starts a turn on `text`, or says why it cannot.
@@ -192,6 +227,7 @@ impl Chat {
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| self.transcript(ui, lang));
+        self.findings_section(ui, lang);
         if !self.checklist.is_empty() {
             ui.separator();
             ui.label(RichText::new(Message::AssistantChecklist.text(lang)).strong());
@@ -229,6 +265,34 @@ impl Chat {
             AgentMode::Build => Message::AssistantBuildHint,
         };
         ui.label(RichText::new(hint.text(lang)).color(theme::text_dim(ui)));
+    }
+
+    /// The rules' findings: what the code proved, before the model explains it.
+    ///
+    /// The person reads this list with or without a model connected, so it is the panel's own and
+    /// never the model's answer. A row is one finding: the severity in its ink and the sentence the
+    /// rule wrote, in the interface's language. The list is capped so a scene with thirty mistakes
+    /// still leaves the conversation readable; the tool answer carries every one.
+    fn findings_section(&self, ui: &mut Ui, lang: Lang) {
+        ui.separator();
+        ui.label(RichText::new(Message::AssistantFindings.text(lang)).strong());
+        if self.findings.is_empty() {
+            ui.label(RichText::new(Message::AssistantFindingsNone.text(lang)).color(theme::text_dim(ui)));
+            return;
+        }
+        for finding in self.findings.iter().take(FINDINGS_SHOWN) {
+            let (ink, word) = match finding.severity {
+                engine::Severity::Error => (theme::danger(ui), Message::FindingSeverityError),
+                engine::Severity::Warning => (theme::warn(ui), Message::FindingSeverityWarning),
+                engine::Severity::Info => (theme::text_dim(ui), Message::FindingSeverityInfo),
+            };
+            ui.label(RichText::new(format!("{}: {}", word.text(lang), finding.text(lang))).color(ink));
+        }
+        if let Some(more) = self.findings.len().checked_sub(FINDINGS_SHOWN).filter(|more| *more > 0) {
+            ui.label(
+                RichText::new(Message::AssistantFindingsMore.with(lang, [more.to_string()])).color(theme::text_dim(ui)),
+            );
+        }
     }
 
     /// The conversation: who spoke, in the ink the speaker deserves.

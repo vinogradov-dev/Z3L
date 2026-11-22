@@ -48,8 +48,8 @@ use tokio::time::timeout;
 use crate::ServeError;
 use crate::server::{result, tool_error};
 use crate::tools::{
-    Answer, BatchRequest, CommandListRequest, RunRequest, TOOL_BATCH, TOOL_INSPECT, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
-    attached_definitions, parse,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, RunRequest, TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT,
+    TOOL_LIST, TOOL_QUERY, TOOL_RUN, attached_definitions, parse,
 };
 
 /// The file the channel publishes its port and token in, inside the settings folder.
@@ -104,6 +104,8 @@ pub enum Call {
     Dispatch(BatchRequest),
     /// `query`: one question the read model already answers.
     Ask(Query),
+    /// `inspect`: the mistakes the rules can prove, in the document a person is looking at.
+    Findings,
     /// `ui_inspect`: the window's own state.
     Inspect,
 }
@@ -115,6 +117,7 @@ impl Call {
             Self::List => "listing",
             Self::Dispatch(_) => "batch",
             Self::Ask(_) => "query",
+            Self::Findings => "inspection",
             Self::Inspect => "window report",
         }
     }
@@ -638,7 +641,7 @@ impl AttachedServer {
     }
 }
 
-/// The tool list of the attached channel: the headless four and the window's own report.
+/// The tool list of the attached channel: the headless five and the window's own report.
 const INSTRUCTIONS: &str = "\
 These tools drive a running Z3L window: the document a person is looking at, not a file. Call \
 `ui_inspect` first to learn which scenes are open, which one is in front and what is selected; \
@@ -697,12 +700,16 @@ fn intent(name: &str, arguments: Option<Map<String, Value>>) -> Result<Call, Err
             Call::Dispatch(request)
         }
         TOOL_QUERY => Call::Ask(parse::<Query>(TOOL_QUERY, arguments).map_err(tool_error)?),
+        TOOL_FINDINGS => {
+            let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
+            Call::Findings
+        }
         TOOL_INSPECT => Call::Inspect,
         other => {
             return Err(ErrorData::invalid_params(
                 format!(
                     "no tool is named `{other}`; a window offers {TOOL_INSPECT}, {TOOL_LIST}, {TOOL_RUN}, \
-                     {TOOL_BATCH}, {TOOL_QUERY}"
+                     {TOOL_BATCH}, {TOOL_QUERY}, {TOOL_FINDINGS}"
                 ),
                 None,
             ));

@@ -1,4 +1,4 @@
-//! The served session: one document, four tools, and the protocol over a pair of streams.
+//! The served session: one document, five tools, and the protocol over a pair of streams.
 //!
 //! The server owns the one session a headless process has, behind a mutex because the protocol may
 //! poll it from any thread and a person's window may hold the same handle later (ADR 0188). Every
@@ -29,8 +29,8 @@ use text::Lang;
 use crate::SceneSink;
 use crate::report::{self, Write};
 use crate::tools::{
-    Answer, BatchRequest, CommandListRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
-    parse,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_FINDINGS,
+    TOOL_LIST, TOOL_QUERY, TOOL_RUN, parse,
 };
 
 /// What the server tells a client about the vocabulary it is about to use.
@@ -48,7 +48,11 @@ the machining on it are one call. A furniture part is born only inside the open 
 is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
 the scene with `query` and never guess a number: a length is integer micrometres, a placement's \
 translation is floating-point millimetres, and an angle is integer millidegrees — every schema \
-annotates the `unit` of each such field, and every answer names it (`size_um`, `origin_mm`). A person \
+annotates the `unit` of each such field, and every answer names it (`size_um`, `origin_mm`). Call \
+`inspect` to hear the mistakes the rules can prove — a part outside its product's envelope, two \
+bodies sharing volume, a shelf that does not fit, a rail in the wrong place, a missing or hidden edge \
+band, a wrong front gap and a part larger than its sheet — each naming the nodes it blames and the \
+commands a fix would dispatch: the rules find the mistake and the model explains it. A person \
 describes a piece from in front of it — the front is +Y, up is +Z, so the side they see on their left \
 is +X — and another person may read the same words the other way round: read the description from \
 the front and say back which axis you put each group of parts on. A window's scene is written to the \
@@ -129,12 +133,25 @@ impl CommandServer {
                 let query = parse::<Query>(TOOL_QUERY, arguments).map_err(tool_error)?;
                 Ok(self.ask(query))
             }
+            TOOL_FINDINGS => {
+                let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
+                Ok(self.findings())
+            }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "no tool is named `{other}`; this server offers {TOOL_LIST}, {TOOL_RUN}, {TOOL_BATCH}, {TOOL_QUERY}"
+                    "no tool is named `{other}`; this server offers {TOOL_LIST}, {TOOL_RUN}, {TOOL_BATCH}, \
+                     {TOOL_QUERY}, {TOOL_FINDINGS}"
                 ),
                 None,
             )),
+        }
+    }
+
+    /// The `inspect` answer: the rules' findings, and the revision they read.
+    pub fn findings(&self) -> Answer {
+        match self.session.lock() {
+            Ok(session) => Answer::ok(findings(&session)),
+            Err(_) => Answer::refused(BUSY),
         }
     }
 }
@@ -238,6 +255,19 @@ pub(crate) fn step_of(step: &StepRequest) -> BatchStep {
         Some(name) => engine_step.named(name.clone()),
         None => engine_step,
     }
+}
+
+/// The `inspect` answer: the mistakes the rules prove, and the revision they read.
+///
+/// One pass, one list, ordered by severity then code (ADR 0191). It is a free function because the
+/// window's door and the headless door answer it, and a second copy of the report is the second
+/// reading ADR 0185 forbids. Nothing is written: the revision is the one the document already has.
+pub fn findings(session: &Session) -> Value {
+    let findings: Vec<Value> = session.inspect().iter().map(engine::Finding::wire).collect();
+    json!({
+        "revision": session.project().revision().get(),
+        "findings": findings,
+    })
 }
 
 /// The `query` answer: the read model's own report, untouched.

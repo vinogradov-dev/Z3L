@@ -3,9 +3,10 @@
 //! The tools are a projection of the command registry, never a second list of what the program can
 //! do: `command_list` reads [`engine::CommandRegistry::specs`], `command_run` and `command_batch`
 //! hand their steps to [`engine::Session::batch`] — the same call the command line's recipe and a
-//! chat turn make — and `query` asks [`engine::Session::read`] the questions it already answers. Four
-//! coarse tools rather than two per command id, because a model that spends its budget on transport
-//! never reaches the document (ADR 0185).
+//! chat turn make — `query` asks [`engine::Session::read`] the questions it already answers, and
+//! `inspect` reads the mistakes the rules prove ([`engine::Session::inspect`]). Five coarse tools
+//! rather than two per command id, because a model that spends its budget on transport never
+//! reaches the document (ADR 0185, ADR 0191).
 //!
 //! This crate is a protocol adapter and holds no brain: no tool decides anything, and no command is
 //! re-implemented here. It sits beside `ui` at layer 7 and depends on `engine`, `model` and `text`;
@@ -53,10 +54,10 @@ pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, Wake
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
 pub use report::PLAN_NOTE;
-pub use server::{CommandServer, Door, asking, dispatch, listing, serve_session};
+pub use server::{CommandServer, Door, asking, dispatch, findings, listing, serve_session};
 pub use tools::{
-    Answer, BatchRequest, CommandListRequest, InspectRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_INSPECT,
-    TOOL_LIST, TOOL_QUERY, TOOL_RUN,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, InspectRequest, RunRequest, StepRequest, TOOL_BATCH,
+    TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
 };
 
 /// Where a served session writes the document a batch changed.

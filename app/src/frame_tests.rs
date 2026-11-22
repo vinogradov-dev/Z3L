@@ -7007,6 +7007,38 @@ fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
 }
 
 #[test]
+fn the_assistant_panel_lists_what_the_rules_found() {
+    // ADR 0191 in the window: the rules find the mistake, the panel shows it and the model only
+    // explains it. The fixture's panel is 700 mm wide in a 600 mm envelope, so the one finding is
+    // the envelope rule and it names the panel the person can select.
+    let (mut harness, panel) = chat_fixture("frame-findings");
+    harness.app.chat.open = true;
+    harness.frame();
+    let findings = harness.app.chat.findings();
+    assert!(
+        findings.iter().any(|finding| finding.code == engine::Code::EnvelopeOut && finding.nodes.contains(&panel)),
+        "the panel lists the envelope finding: {findings:?}"
+    );
+
+    // The panel re-reads the rules when the document moves: a part that fits leaves no finding.
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .session
+        .dispatch(
+            "panel.resize",
+            &serde_json::json!({
+                "panel": panel.get(),
+                "nominal_size": {"length": 500_000, "width": 400_000},
+            }),
+        )
+        .expect("the panel fits the envelope");
+    harness.frame();
+    assert!(harness.app.chat.findings().is_empty(), "a clean scene reports nothing: {:?}", harness.app.chat.findings());
+}
+
+#[test]
 fn the_panel_in_plan_mode_draws_the_plan_and_writes_nothing() {
     // ADR 0190: the first mode is plan, the answer runs with writing off, and what a person sees is
     // the same dispatch the command line's dry run measured — not prose the model imagined.

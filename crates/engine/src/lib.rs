@@ -22,6 +22,7 @@ mod contour_cmds;
 mod diagnostics;
 mod family;
 mod guide;
+pub mod inspect;
 pub mod mesh_cmds;
 mod no_contact;
 pub mod node_cmds;
@@ -50,6 +51,7 @@ pub use contour_cmds::{
 pub use diagnostics::{PanelDiagnostic, diagnose_panel};
 pub use family::Family;
 pub use guide::{EXAMPLE_CORNER_RADIUS, Stance, example_frame, guide};
+pub use inspect::{Code, Finding, Severity, SuggestedCommand, inspect};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
 pub use no_contact::NoContact;
 pub use node_cmds::{

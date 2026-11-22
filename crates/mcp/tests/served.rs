@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine::Session;
-use mcp::{CommandServer, SceneSink, TOOL_BATCH, TOOL_LIST, TOOL_QUERY, TOOL_RUN};
+use mcp::{CommandServer, SceneSink, TOOL_BATCH, TOOL_FINDINGS, TOOL_LIST, TOOL_QUERY, TOOL_RUN};
 use model::{ClassCode, Envelope, Id, Placement, Project};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
@@ -103,10 +103,10 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     let (mut client, task) =
         connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
 
-    // What the server offers: four coarse tools, not one tool per command id.
+    // What the server offers: five coarse tools, not one tool per command id.
     let tools = client.list_tools(None).await.expect("the tool list answers");
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
-    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY]);
+    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS]);
 
     // `command_list` names every command with the schema of its parameters.
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
@@ -141,6 +141,19 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
         .expect("the query answers");
     let tree = body(&asked);
     assert_eq!(tree["revision"], report["revision"], "the read model reads the same document");
+
+    // `inspect` is the rules' report: one list, and each finding names the nodes it blames.
+    let inspected = client.call_tool(CallToolRequestParams::new(TOOL_FINDINGS)).await.expect("the inspection answers");
+    let inspection = body(&inspected);
+    assert_eq!(inspection["revision"], report["revision"], "the inspection reads the same document");
+    let findings = inspection["findings"].as_array().expect("the report holds a list");
+    assert!(!findings.is_empty(), "the two panels leave the product's envelope: {inspection}");
+    for finding in findings {
+        assert!(finding["code"].is_string() && finding["severity"].is_string(), "{finding}");
+        assert!(finding["nodes"].as_array().is_some_and(|nodes| !nodes.is_empty()), "{finding}");
+        assert!(finding["text"].as_str().is_some_and(|text| !text.trim().is_empty()), "{finding}");
+        assert!(finding["suggested_commands"].is_array(), "the command list is always present: {finding}");
+    }
 
     // The history the tools moved: one entry for the batch, and `command_run` adds one of its own.
     let renamed = client

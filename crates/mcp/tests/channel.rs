@@ -70,6 +70,7 @@ fn answer(session: &mut Session, call: &Call) -> Answer {
         Call::List => Answer::ok(listing(session)),
         Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None }),
         Call::Ask(query) => mcp::asking(session, *query),
+        Call::Findings => Answer::ok(mcp::findings(session)),
         Call::Inspect => Answer::ok(json!(mcp::Window::default())),
     }
 }
@@ -106,11 +107,12 @@ async fn a_token_reaches_the_commands_and_a_request_without_one_never_does() {
     let mut session = session();
     let mut client = client(&directory).await;
 
-    // What a window offers: the headless four and the window's own report.
+    // What a window offers: the headless five and the window's own report.
     let tools = tokio::time::timeout(DEADLINE, client.list_tools(None)).await.expect("the list answers").expect("ok");
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
     assert!(names.contains(&TOOL_INSPECT), "an attached window reports on itself: {names:?}");
-    assert_eq!(names.len(), 5, "four coarse tools and the window report");
+    assert!(names.contains(&mcp::TOOL_FINDINGS), "and it inspects the document: {names:?}");
+    assert_eq!(names.len(), 6, "five coarse tools and the window report");
 
     // `command_list` is answered by the host, at the moment a frame would answer it.
     let body = called(&mut client, CallToolRequestParams::new(TOOL_LIST), &mut mailbox, &mut session).await;
@@ -119,6 +121,10 @@ async fn a_token_reaches_the_commands_and_a_request_without_one_never_does() {
         body["commands"].as_array().is_some_and(|rows| rows.len() > 50),
         "the whole registry is projected through the channel: {body}"
     );
+
+    // `inspect` is the rules' answer, and it travels the same queue.
+    let body = called(&mut client, CallToolRequestParams::new(mcp::TOOL_FINDINGS), &mut mailbox, &mut session).await;
+    assert!(body["findings"].is_array(), "the inspection answers with a list: {body}");
 
     // `ui_inspect` is the window's own answer, and it travels the same queue.
     let body = called(&mut client, CallToolRequestParams::new(TOOL_INSPECT), &mut mailbox, &mut session).await;

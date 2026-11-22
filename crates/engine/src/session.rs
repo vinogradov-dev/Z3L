@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use catalog::Directory;
 use geom::Contact;
-use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
+use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError, WorkshopProfile};
 use param::EdgeBandProfile;
 use serde_json::Value;
 use thiserror::Error;
@@ -68,6 +68,13 @@ pub struct Session {
     /// installed keeps the world-box reading, which is what the document did before the port existed
     /// (ADR 0179).
     contact: Arc<dyn Contact>,
+    /// The workshop's own numbers the inspector reads.
+    ///
+    /// Settings and never document data (`PROJECT.md`, §Domain specifications): the scene file does
+    /// not carry it, so the same document opened in another shop is measured by that shop's gaps and
+    /// sheet. The shell seeds it from the workspace settings (J12); a session born without one uses
+    /// the record's defaults.
+    profile: WorkshopProfile,
     /// The one product the user is working in, or `None` while every product is closed.
     ///
     /// Openness is view state per session (ADR 0098, ADR 0029): it is opened and closed by a view
@@ -136,6 +143,7 @@ impl Session {
             next_scope: 0,
             preview: Preview::new(),
             contact: Arc::new(NoContact),
+            profile: WorkshopProfile::default(),
             active_product: None,
             agent: AgentMode::Build,
         }
@@ -153,6 +161,32 @@ impl Session {
     /// The contact adapter this session measures a body with.
     pub fn contact(&self) -> &dyn Contact {
         &*self.contact
+    }
+
+    /// The workshop's numbers the inspector reads, as the workspace settings will seed them.
+    pub fn profile(&self) -> &WorkshopProfile {
+        &self.profile
+    }
+
+    /// Replaces the workshop's numbers: a setting changes, no revision and no undo entry.
+    pub fn set_profile(&mut self, profile: WorkshopProfile) {
+        self.profile = profile;
+    }
+
+    /// The same session reading `profile` instead of the record's defaults.
+    pub fn with_profile(mut self, profile: WorkshopProfile) -> Self {
+        self.profile = profile;
+        self
+    }
+
+    /// The mistakes the rules can prove, in the report's stable order, writing nothing.
+    ///
+    /// The pass reads the document, the catalogue, the profile and the contact adapter the session
+    /// already holds, so the tool, the command line and the panel cannot disagree about a finding
+    /// (ADR 0191). It is a derivation like [`Session::panel_diagnostics`]: no revision moves and the
+    /// history never sees it.
+    pub fn inspect(&self) -> Vec<crate::inspect::Finding> {
+        crate::inspect::inspect(&self.project, &self.directory, &self.profile, &*self.contact)
     }
 
     /// The one open product, or `None` when every product is closed (ADR 0098).
@@ -536,6 +570,7 @@ impl Session {
             directory_version: self.directory_version,
             edit: None,
             next_scope: self.next_scope,
+            profile: WorkshopProfile::default(),
             preview: Preview::new(),
             contact: Arc::clone(&self.contact),
             active_product: self.active_product,

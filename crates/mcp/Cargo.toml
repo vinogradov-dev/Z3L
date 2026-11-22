@@ -26,7 +26,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 # A client we did not write, over a pipe: the served session is driven the way a foreign client
-# drives it, and the four tools answer with what the registry holds.
+# drives it, and the five tools answer with what the registry holds.
 rmcp = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["macros"] }
 testkit = { workspace = true }

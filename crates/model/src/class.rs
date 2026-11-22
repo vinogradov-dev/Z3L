@@ -84,6 +84,13 @@ impl ClassCode {
     /// `fill` trait is what makes the wall cell a way to fill a void rather than a typed board.
     pub const BACK_PANEL: Self = Self(101_200);
 
+    /// The `hanging rail` row, «штанга» / hanging rail, the linear part a wardrobe hangs clothes
+    /// from.
+    ///
+    /// The class exists so the inspector can find a rail and measure where it hangs; no command
+    /// creates a fitting yet, so a rail is a body or a panel a caller classes by hand.
+    pub const HANGING_RAIL: Self = Self(200_600);
+
     /// The largest assignable code.
     pub const MAX: Self = Self(CLASS_MAX_CODE);
 

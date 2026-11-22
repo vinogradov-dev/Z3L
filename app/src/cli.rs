@@ -22,6 +22,7 @@
 
 mod commands;
 mod guide;
+mod inspect;
 mod query;
 mod recipe;
 mod render;
@@ -60,6 +61,7 @@ usage: z3l                 open the editor
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
+       z3l inspect <scene.z3l> [--product <node>]
        z3l query --resources
        z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
        z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
@@ -111,7 +113,7 @@ document lives in memory and every answer says nothing was written.
   --product <node>   the product the tools work in; a scene with exactly one product opens it
   --attach           serve the local control channel instead of the standard streams: 127.0.0.1 on
                      an ephemeral port, a token minted for this run and written into the settings
-                     folder, and `ui_inspect` beside the four tools. The channel stops when standard
+                     folder, and `ui_inspect` beside the five tools. The channel stops when standard
                      input closes, and that is how a parent ends it.
 
 query reads the scene and prints one JSON answer; it never writes:
@@ -129,6 +131,11 @@ query reads the scene and prints one JSON answer; it never writes:
                type of their answers; the reserved boxes, the tree, the cut list and the issues
                are stable, so a resource is read at z3l://scene/<name> and cached by the
                revision the answer carries
+
+inspect runs the seven rules over a saved scene and prints one JSON list of what they prove:
+  --product <node>   the product the rules start from; a scene with one product is read without it
+  Every finding carries its stable code, its severity, the document ids it blames, one sentence and
+  the commands a fix would dispatch; nothing is written and the file is never changed.
 ";
 
 /// What one run of the program does.
@@ -167,6 +174,8 @@ pub enum Command {
     Mcp(McpArgs),
     /// Read the scene and print one JSON report.
     Query(QueryArgs),
+    /// Run the inspector's rules over a saved scene and print what they prove.
+    Inspect(InspectArgs),
 }
 
 /// One `run` request, already checked.
@@ -206,6 +215,15 @@ pub struct QueryArgs {
     pub id: Option<Id>,
     /// The point `niche` measures, in world millimetres.
     pub at: Option<[f64; 3]>,
+}
+
+/// One `inspect` request, already checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// The product the rules start from; the document's only product when it is absent.
+    pub product: Option<Id>,
 }
 
 /// One `export` request, already checked.
@@ -346,6 +364,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         Some("run") => run_args(&args[1..]),
         Some("mcp") => mcp_args(&args[1..]),
         Some("query") => query_args(&args[1..]),
+        Some("inspect") => inspect_args(&args[1..]),
         Some("render") => render_args(&args[1..]),
         Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
@@ -572,6 +591,28 @@ fn mcp_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Mcp(McpArgs { scene, product, attach }))
 }
 
+/// Reads the words after `inspect`: one scene and an optional product.
+fn inspect_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut product: Option<Id> = None;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not an inspect option; run `z3l --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("inspect reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    let scene = scene.ok_or_else(|| CliError::Usage("inspect needs a scene: `z3l inspect <scene.z3l>`".to_owned()))?;
+    Ok(Command::Inspect(InspectArgs { scene, product }))
+}
+
 /// Reads the words after `query`: the resource table, or one scene and one report.
 ///
 /// `--resources` names a table that needs no scene, so the first two words a line writes are read
@@ -719,6 +760,10 @@ pub fn run(command: &Command) -> Option<i32> {
             Ok(report) => print_stdout(&(report + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
+        Command::Inspect(args) => Some(match inspect::report(args) {
+            Ok(report) => print_stdout(&(report + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
         Command::Mcp(args) => Some(match served::perform(args) {
             Ok(()) => EXIT_OK,
             Err(error) => fail(&error, EXIT_FAILED),
@@ -749,7 +794,7 @@ mod tests {
     use std::path::Path;
 
     use model::{PanelNominalSize, Placement, Project};
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use testkit::{millimetres, sample_material_id, sample_product_project, scratch_dir};
 
     use super::*;
@@ -768,12 +813,40 @@ mod tests {
         path
     }
 
+    /// The revision the scene file holds, read the way the door reads it.
+    fn args_product_revision(path: &Path) -> u64 {
+        SceneFile::read(path).expect("the saved scene reads").into_document().revision().get()
+    }
+
     /// One panel under the product, so at least one table has a record that came from the document.
     fn add_side(project: &mut Project, product: model::Id) {
         let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
         project
             .add_panel(product, "Side", size, Some(sample_material_id()), millimetres(18), Placement::IDENTITY)
             .expect("the side is added");
+    }
+
+    #[test]
+    fn an_inspect_line_prints_what_the_rules_prove() {
+        let directory = scratch_dir("j9-inspect");
+        let scene = saved_scene(&directory);
+        let command = parse(&words(&["inspect", &scene.display().to_string()])).expect("the line parses");
+        let Command::Inspect(args) = command else {
+            panic!("the line names an inspection");
+        };
+        let report: Value =
+            serde_json::from_str(&inspect::report(&args).expect("the rules run")).expect("one JSON value");
+        let findings = report["findings"].as_array().expect("the report holds a list");
+        assert!(
+            findings.iter().any(|finding| finding["code"] == json!("envelope_out")),
+            "the fixture's 700 mm panel leaves the 600 mm envelope: {report}"
+        );
+        assert!(findings.iter().all(|finding| finding["nodes"].as_array().is_some_and(|nodes| !nodes.is_empty())));
+        assert_eq!(
+            report["document"]["revision"],
+            json!(args_product_revision(&scene)),
+            "the report names the revision it read"
+        );
     }
 
     #[test]
